@@ -18,6 +18,9 @@ import { reconcilePaths, reconcileRoots } from "../../../src/indexer/reconcile";
 import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { EMBEDDING_DIM } from "../../../src/storage/repositories/index-schema";
+import { upsertUtilityScore } from "../../../src/storage/repositories/index-utility-repository";
+import { upsertUnitVectors } from "../../../src/storage/repositories/units-repository";
 import {
   type Cleanup,
   sandboxStashDir,
@@ -398,6 +401,135 @@ describe("reconcileRoots", () => {
     }
   });
 
+  test("F2: a rename among 3+ byte-identical gone candidates never inherits any of their entries.id or usage history", async () => {
+    const dbPath = newDbPath();
+    const db = openDb(dbPath);
+    try {
+      // Three byte-identical files: alpha gets renamed, beta is deleted,
+      // gamma is left untouched. alpha's old path AND beta's old path both
+      // land in the SAME goneByHash bucket for the renamed file's shared
+      // hash (2 candidates) — the exact ambiguous shape F2 guards against.
+      // Content is written directly (not via writeNote, whose heading bakes
+      // in the filename) so the three files are truly byte-identical and
+      // therefore genuinely share one content_hash.
+      const sharedContent = "---\ndescription: a plain note\n---\n\n# Shared\n\nShared triple body.\n";
+      const alpha = path.join(stashDir, "memories", "alpha.md");
+      const beta = path.join(stashDir, "memories", "beta.md");
+      const gamma = path.join(stashDir, "memories", "gamma.md");
+      for (const p of [alpha, beta, gamma]) fs.writeFileSync(p, sharedContent, "utf8");
+      const counts1 = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+      expect(counts1.added).toBe(3);
+
+      const before = entriesTable(db);
+      const alphaBefore = before.find((e) => e.file_path === alpha)!;
+      const betaBefore = before.find((e) => e.file_path === beta)!;
+      const gammaBefore = before.find((e) => e.file_path === gamma)!;
+
+      // Seed usage history against BOTH candidates that end up "gone" this
+      // run, so a wrong claim by either one is caught regardless of which
+      // row the unordered bucket happens to list first.
+      const usage = {
+        utility: 0.9,
+        showCount: 7,
+        searchCount: 3,
+        selectRate: 0.5,
+        lastUsedAt: new Date().toISOString(),
+      };
+      expect(upsertUtilityScore(db, alphaBefore.id, usage)).toBe(true);
+      expect(upsertUtilityScore(db, betaBefore.id, usage)).toBe(true);
+
+      fs.rmSync(beta);
+      const renamedPath = path.join(stashDir, "memories", "alpha-renamed.md");
+      fs.renameSync(alpha, renamedPath);
+
+      const counts2 = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+
+      // Both ambiguous "gone" rows are genuinely gone — never silently
+      // stranded and never kept alive under a hijacked identity.
+      expect(counts2.removed).toBe(2);
+      const after = entriesTable(db);
+      expect(after.length).toBe(2); // the renamed file (fresh row) + untouched gamma
+      const renamedRow = after.find((e) => e.file_path === renamedPath)!;
+      expect(renamedRow).toBeDefined();
+      expect(after.some((e) => e.id === gammaBefore.id)).toBe(true);
+
+      // A fresh identity — not a hijack of either ambiguous candidate's row.
+      expect(renamedRow.id).not.toBe(alphaBefore.id);
+      expect(renamedRow.id).not.toBe(betaBefore.id);
+      expect(entriesTable(db).some((e) => e.id === alphaBefore.id)).toBe(false);
+      expect(entriesTable(db).some((e) => e.id === betaBefore.id)).toBe(false);
+
+      // No usage history inherited under the new identity — neither
+      // candidate's `utility_scores` row followed the renamed file.
+      const utilityForRenamed = db.prepare("SELECT 1 FROM utility_scores WHERE entry_id = ?").get(renamedRow.id);
+      expect(utilityForRenamed).toBeNull();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("F3: a NEW file that cannot be stat'd (ELOOP, no existing row) is reported, not silently unchanged", async () => {
+    const dbPath = newDbPath();
+    const db = openDb(dbPath);
+    try {
+      // A self-referential symlink under workflows/ is walked (the akm
+      // adapter's workflow-symlink allowance lists it from its dirent alone,
+      // without stat'ing it — #791) but throws ELOOP on the later, per-file
+      // stat() classifyFile performs. Reproducible without root, unlike a
+      // real permission-denied file.
+      const loopPath = path.join(stashDir, "workflows", "loop.md");
+      fs.mkdirSync(path.dirname(loopPath), { recursive: true });
+      fs.symlinkSync(loopPath, loopPath);
+
+      const counts = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+
+      // Still a no-op on the index (nothing to write for a file that cannot
+      // be read), but no longer a SILENT one.
+      expect(entriesTable(db)).toEqual([]);
+      expect(counts.warnings.length).toBeGreaterThan(0);
+      expect(counts.warnings.some((w) => w.includes(loopPath))).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("F5: a same-size edit that restores the exact mtime is still detected via ctime (rsync -a style)", async () => {
+    const dbPath = newDbPath();
+    const db = openDb(dbPath);
+    try {
+      const alpha = writeNote("memories/alpha.md", { body: "Original." });
+      // A whole-second mtime survives the Date <-> utimesSync round trip
+      // with zero precision loss, so "restore the exact mtime" below
+      // reproduces bit-for-bit what rsync -a / cp -p / reproducible-build
+      // tooling do — no flaky sub-millisecond drift in this assertion.
+      const fixedMtime = new Date(Math.floor(Date.now() / 1000) * 1000);
+      fs.utimesSync(alpha, fixedMtime, fixedMtime);
+      await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+
+      const before = entriesTable(db).find((e) => e.file_path === alpha)!;
+      const sizeBefore = fs.statSync(alpha).size;
+
+      // "Original." and "Different" are both 9 characters, so `size` does
+      // not move either — only `ctime` (which no tool can hold fixed across
+      // a real content write) still tells the two states apart.
+      const rewritten = fs.readFileSync(alpha, "utf8").replace("Original.", "Different");
+      fs.writeFileSync(alpha, rewritten, "utf8");
+      fs.utimesSync(alpha, fixedMtime, fixedMtime);
+
+      expect(fs.statSync(alpha).size).toBe(sizeBefore);
+      expect(fs.statSync(alpha).mtimeMs).toBe(fixedMtime.getTime());
+
+      const counts = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+
+      expect(counts.changed).toBe(1);
+      expect(counts.unchanged).toBe(0);
+      const after = entriesTable(db).find((e) => e.id === before.id)!;
+      expect(after.content_hash).not.toBe(before.content_hash);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   test("orphaned unit_texts/units_fts are pruned once no entry references them, vectors table untouched", async () => {
     const dbPath = newDbPath();
     const db = openDb(dbPath);
@@ -503,6 +635,54 @@ describe("reconcilePaths", () => {
         warnings: [],
       });
       expect(entriesTable(db)).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("F4: reconcilePaths prunes only the unit hashes its own write orphaned; vectors survive", async () => {
+    const dbPath = newDbPath();
+    const db = openDb(dbPath);
+    try {
+      const bundleId = currentBundleId();
+      const alpha = writeNote("memories/alpha.md", { description: "Original card description." });
+
+      await reconcilePaths(db, [alpha], bundleId);
+      const entryId = entriesTable(db).find((e) => e.file_path === alpha)!.id;
+      const oldHash = entryUnitsForEntry(db, entryId)[0]!.unit_hash; // ordinal 0 = the card unit
+      expect(unitTextsTable(db).some((u) => u.unit_hash === oldHash)).toBe(true);
+
+      // Seed a vector row for the old hash directly, as if it had already
+      // been embedded — proves the prune drops only unit_texts/units_fts,
+      // never the vector store.
+      const vector = new Array(EMBEDDING_DIM).fill(0.1);
+      const { inserted } = upsertUnitVectors(db, [{ hash: oldHash, identity: "test-identity", vector }]);
+      expect(inserted).toBe(1);
+
+      // Only the description (card text) changes; the body/fragment stays
+      // put, so this isolates the prune to exactly the one replaced hash.
+      fs.writeFileSync(
+        alpha,
+        "---\ndescription: Rewritten card description.\n---\n\n# alpha\n\nBody content for this note.\n",
+        "utf8",
+      );
+      bumpMtimeForward(alpha);
+
+      const counts = await reconcilePaths(db, [alpha], bundleId);
+      expect(counts.changed).toBe(1);
+
+      const newHash = entryUnitsForEntry(db, entryId)[0]!.unit_hash;
+      expect(newHash).not.toBe(oldHash);
+
+      // The old hash's text/FTS rows are pruned (this write's own narrow
+      // orphan-cleanup, not the whole-table sweep reconcileRoots runs) and
+      // the new hash is present...
+      expect(unitTextsTable(db).some((u) => u.unit_hash === oldHash)).toBe(false);
+      expect(db.prepare("SELECT 1 FROM units_fts WHERE unit_hash = ?").get(oldHash)).toBeNull();
+      expect(unitTextsTable(db).some((u) => u.unit_hash === newHash)).toBe(true);
+      // ...but the old hash's VECTOR row survives: dropping the text must
+      // not drop the embedding.
+      expect(db.prepare("SELECT 1 FROM units WHERE unit_hash = ?").get(oldHash)).toBeDefined();
     } finally {
       closeDatabase(db);
     }

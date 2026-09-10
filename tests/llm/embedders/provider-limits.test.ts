@@ -294,3 +294,46 @@ describe("unitMaxChars", () => {
     expect(chars).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("probeProviderLimits: implausible window is rejected, not passed through (F1)", () => {
+  // Previously this exact windowTokens:1 shape was asserted "accepted" by a
+  // unitMaxChars-level test: unitMaxChars(1) floors to 0 without going
+  // negative, but 0 is exactly the value that makes deriveUnits throw
+  // RangeError downstream — so "not negative" was true but not actually
+  // safe. The real fix belongs in the probe, not in unitMaxChars, so the
+  // regression coverage moves here: a window this small must never reach a
+  // caller at all.
+  test("a probed llama.cpp window too small to clear its own header margin falls back to the default window instead of crashing deriveUnits downstream", async () => {
+    const limits = await withMockedFetch(
+      () => probeProviderLimits(baseConfig()),
+      async (url) => {
+        if (url.endsWith("/props")) {
+          return jsonResponse({ default_generation_settings: { n_ctx: 1 }, total_slots: 2 });
+        }
+        if (url.endsWith("/tokenize")) return jsonResponse({}, 404);
+        throw new Error(`unexpected url: ${url}`);
+      },
+    );
+    expect(limits.source).toBe("default");
+    expect(limits.windowTokens).toBe(DEFAULT_WINDOW_TOKENS);
+    expect(unitMaxChars(limits)).toBeGreaterThan(0);
+  });
+
+  test("a probed Ollama window exactly at the header margin (zero room for real text) falls back to the default window", async () => {
+    const limits = await withMockedFetch(
+      () =>
+        probeProviderLimits(
+          baseConfig({ endpoint: "http://127.0.0.1:11434/v1/embeddings", model: "nomic-embed-text" }),
+        ),
+      async (url) => {
+        if (url.endsWith("/props")) return jsonResponse({}, 404);
+        if (url.endsWith("/api/show")) {
+          return jsonResponse({ model_info: { "nomic-bert.context_length": UNIT_HEADER_MARGIN_TOKENS } });
+        }
+        throw new Error(`unexpected url: ${url}`);
+      },
+    );
+    expect(limits.source).toBe("default");
+    expect(limits.windowTokens).toBe(DEFAULT_WINDOW_TOKENS);
+  });
+});
