@@ -438,8 +438,9 @@ function float32BufferToVector(buf: Buffer): EmbeddingVector {
  * this one — this function simply stops reading them).
  *
  * No re-embedding, no network: reads the entry's own already-indexed card
- * vector and reuses {@link searchUnits}'s KNN, then groups the raw unit hits
- * back to entries the same way search does ({@link groupUnitHitsByEntry}).
+ * vector via a `units` rowid lookup (not a `units_vec` aux-column scan) and
+ * reuses {@link searchUnits}'s KNN, then groups the raw unit hits back to
+ * entries the same way search does ({@link groupUnitHitsByEntry}).
  * The querying entry is excluded from its own result — its card is its own
  * nearest neighbour at distance 0, and a caller asking for `k` neighbours
  * wants `k` genuinely OTHER entries, not one slot spent confirming an entry
@@ -461,9 +462,14 @@ export function getNeighborsByEntryId(db: Database, id: number, k: number): DbVe
     .get(id) as { unitHash: string } | undefined;
   if (!cardRow) return [];
 
-  const vecRow = db
-    .prepare("SELECT embedding FROM units_vec WHERE unit_hash = ? AND identity = ?")
-    .get(cardRow.unitHash, identity) as { embedding: Buffer } | undefined;
+  const unitRow = db
+    .prepare("SELECT unit_id AS unitId FROM units WHERE unit_hash = ? AND identity = ?")
+    .get(cardRow.unitHash, identity) as { unitId: number } | undefined;
+  if (!unitRow) return [];
+
+  const vecRow = db.prepare("SELECT embedding FROM units_vec WHERE unit_id = ?").get(unitRow.unitId) as
+    | { embedding: Buffer }
+    | undefined;
   if (!vecRow) return [];
 
   const queryVector = float32BufferToVector(vecRow.embedding);

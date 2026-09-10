@@ -22,12 +22,14 @@ import { ConfigError } from "../../src/core/errors";
 import type { Database } from "../../src/storage/database";
 import { openDatabase } from "../../src/storage/database";
 import { deleteAllEntries } from "../../src/storage/repositories/index-entries-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import { ensureSchema } from "../../src/storage/repositories/index-schema";
 import { isVecAvailable, loadVecExtension, purgeEmbeddings } from "../../src/storage/repositories/index-vec-repository";
 import {
   deleteEntryUnits,
   dropOtherIdentities,
   ensureUnitTables,
+  getNeighborsByEntryId,
   groupUnitHitsByEntry,
   listMissingHashes,
   replaceEntryUnits,
@@ -291,6 +293,46 @@ describe("units-repository", () => {
       expect(groupUnitHitsByEntry(db, []).size).toBe(0);
       const grouped = groupUnitHitsByEntry(db, [{ unitId: 1, hash: "orphan", distance: 0.2 }]);
       expect(grouped.size).toBe(0);
+    });
+  });
+
+  describe("getNeighborsByEntryId", () => {
+    test("returns the k nearest OTHER entries by card-unit distance, via a units rowid lookup", () => {
+      withTempDb((db) => {
+        setMeta(db, "embeddingIdentity", IDENTITY_A);
+        const near = insertEntry(db, "stash//memories/near");
+        replaceEntryUnits(db, near, [{ ordinal: 0, fragmentId: null, hash: "near-card" }]);
+        const far = insertEntry(db, "stash//memories/far");
+        replaceEntryUnits(db, far, [{ ordinal: 0, fragmentId: null, hash: "far-card" }]);
+        const query = insertEntry(db, "stash//memories/query");
+        replaceEntryUnits(db, query, [{ ordinal: 0, fragmentId: null, hash: "query-card" }]);
+        upsertUnitVectors(db, [
+          { hash: "query-card", identity: IDENTITY_A, vector: [1, 0, 0, 0] },
+          { hash: "near-card", identity: IDENTITY_A, vector: [1, 0, 0, 0] },
+          { hash: "far-card", identity: IDENTITY_A, vector: [0, 0, 0, 1] },
+        ]);
+
+        const neighbors = getNeighborsByEntryId(db, query, 2);
+
+        expect(neighbors.map((n) => n.id)).toEqual([near, far]);
+        expect(neighbors[0]?.distance).toBeLessThan(neighbors[1]?.distance ?? Number.POSITIVE_INFINITY);
+      });
+    });
+
+    test("returns [] for k <= 0, no active identity, or a query entry with no vector", () => {
+      withTempDb((db) => {
+        const entryId = insertEntry(db, "stash//memories/lonely");
+        replaceEntryUnits(db, entryId, [{ ordinal: 0, fragmentId: null, hash: "lonely-card" }]);
+
+        // No embeddingIdentity meta set yet.
+        expect(getNeighborsByEntryId(db, entryId, 5)).toEqual([]);
+
+        setMeta(db, "embeddingIdentity", IDENTITY_A);
+        // k <= 0 short-circuits before any lookup.
+        expect(getNeighborsByEntryId(db, entryId, 0)).toEqual([]);
+        // Card unit has no vector for the active identity yet (drain hasn't reached it).
+        expect(getNeighborsByEntryId(db, entryId, 5)).toEqual([]);
+      });
     });
   });
 
