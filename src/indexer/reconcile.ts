@@ -255,12 +255,16 @@ export async function reconcileRoots(
     const allFileStates = getFileStatesByBundle(db, root.bundleId);
     const orphanedFileStates = allFileStates.filter((row) => !entryPaths.has(row.path));
     if (orphanedFileStates.length > 0) {
-      withImmediateTransaction(db, () => {
-        deleteFileStates(
-          db,
-          orphanedFileStates.map((row) => row.path),
-        );
-      });
+      withImmediateTransaction(
+        db,
+        () => {
+          deleteFileStates(
+            db,
+            orphanedFileStates.map((row) => row.path),
+          );
+        },
+        "index",
+      );
     }
     const storedByPath = new Map(allFileStates.filter((row) => entryPaths.has(row.path)).map((row) => [row.path, row]));
     const currentPaths = new Set(walked.files.map((file) => file.absPath));
@@ -855,79 +859,87 @@ function applyChange(
   // commits — see the call site past `withImmediateTransaction` for why.
   let orphanedUnitHashes: string[] = [];
 
-  const result = withImmediateTransaction(db, () => {
-    // A materialized file has one current owner: if `entries` already holds a
-    // row at this exact path under a DIFFERENT item_ref — the same physical
-    // file reconciled earlier under another bundle identity (a config change,
-    // or a write path with no stable configured bundle to anchor to) — drop
-    // that stale row before publishing the canonical one below, mirroring
-    // the pre-redesign write path's own supersede check
-    // (index-written-assets.ts's prior `supersededIds` logic). Without this a
-    // second identity's reconcile leaves two rows at one file_path and any
-    // plain `WHERE file_path = ?` lookup can return either.
-    //
-    // `reconcileRoots`'s full walk passes `supersedeOtherBundles: false`: a
-    // NESTED bundle (`akm bundle add ./vendor` where vendor sits inside the
-    // primary stash) walks the same physical file from BOTH roots by design
-    // — the enclosing bundle's own path-derived conceptId and the nested
-    // bundle's own conceptId are two legitimate, simultaneously-valid
-    // identities for it, and an unqualified ref can only resolve through the
-    // enclosing bundle's copy (`lookupBundleRefWithResolutionUsing`,
-    // indexer.ts, stops at the first candidate whose physical owner has no
-    // matching row rather than trying a later, more specific source). Which
-    // of the two ends up the durable survivor when they physically collide on
-    // the SAME file is `resolvePhysicalOverlaps`'s job, run once after every
-    // root has had its own turn (see its own doc comment) — not this
-    // per-file, order-dependent supersede. Only `reconcilePaths` (the
-    // write-time path, which reconciles ONE bundle at a time with no
-    // whole-root visibility into a sibling bundle that might physically
-    // overlap it, so it has no later pass to rely on) still needs the
-    // stale-identity cleanup this guards.
-    if (supersedeOtherBundles) supersedeOtherItemRefsAtPath(db, file.absPath, provenance.itemRef);
-    const written = renameSource
-      ? repointOrInsert(db, renameSource.path, file.absPath, entryWithSize, searchText, provenance, hash)
-      : upsertOrInsert(db, file.absPath, entryWithSize, searchText, provenance, hash);
-    if (renameSource) deleteFileStates(db, [renameSource.path]);
-    upsertFileState(db, {
-      path: file.absPath,
-      bundleId: ctx.bundleId,
-      size: stat.size,
-      mtimeMs: stat.mtimeMs,
-      ctimeMs: stat.ctimeMs,
-      blobHash: hash,
-      adapterId: ctx.adapter.id,
-    });
+  const result = withImmediateTransaction(
+    db,
+    () => {
+      // A materialized file has one current owner: if `entries` already holds a
+      // row at this exact path under a DIFFERENT item_ref — the same physical
+      // file reconciled earlier under another bundle identity (a config change,
+      // or a write path with no stable configured bundle to anchor to) — drop
+      // that stale row before publishing the canonical one below, mirroring
+      // the pre-redesign write path's own supersede check
+      // (index-written-assets.ts's prior `supersededIds` logic). Without this a
+      // second identity's reconcile leaves two rows at one file_path and any
+      // plain `WHERE file_path = ?` lookup can return either.
+      //
+      // `reconcileRoots`'s full walk passes `supersedeOtherBundles: false`: a
+      // NESTED bundle (`akm bundle add ./vendor` where vendor sits inside the
+      // primary stash) walks the same physical file from BOTH roots by design
+      // — the enclosing bundle's own path-derived conceptId and the nested
+      // bundle's own conceptId are two legitimate, simultaneously-valid
+      // identities for it, and an unqualified ref can only resolve through the
+      // enclosing bundle's copy (`lookupBundleRefWithResolutionUsing`,
+      // indexer.ts, stops at the first candidate whose physical owner has no
+      // matching row rather than trying a later, more specific source). Which
+      // of the two ends up the durable survivor when they physically collide on
+      // the SAME file is `resolvePhysicalOverlaps`'s job, run once after every
+      // root has had its own turn (see its own doc comment) — not this
+      // per-file, order-dependent supersede. Only `reconcilePaths` (the
+      // write-time path, which reconciles ONE bundle at a time with no
+      // whole-root visibility into a sibling bundle that might physically
+      // overlap it, so it has no later pass to rely on) still needs the
+      // stale-identity cleanup this guards.
+      if (supersedeOtherBundles) supersedeOtherItemRefsAtPath(db, file.absPath, provenance.itemRef);
+      const written = renameSource
+        ? repointOrInsert(db, renameSource.path, file.absPath, entryWithSize, searchText, provenance, hash)
+        : upsertOrInsert(db, file.absPath, entryWithSize, searchText, provenance, hash);
+      if (renameSource) deleteFileStates(db, [renameSource.path]);
+      upsertFileState(db, {
+        path: file.absPath,
+        bundleId: ctx.bundleId,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+        blobHash: hash,
+        adapterId: ctx.adapter.id,
+      });
 
-    const units = deriveUnits(toUnitSource(written.entryId, entry), maxChars);
-    const { inserted } = insertNewUnitTexts(
-      db,
-      units.map((unit) => ({ hash: unit.hash, kind: unit.fragmentId === null ? "card" : "fragment", text: unit.text })),
-    );
-    // Capture the entry's PREVIOUS unit_hash mapping before replaceEntryUnits
-    // overwrites it — this write's own replaced hashes are exactly the ones
-    // it may have just orphaned (F4). A brand-new entry simply has no prior
-    // mapping, so this is empty and nothing below does any work.
-    const previousHashes = (
-      db.prepare("SELECT unit_hash FROM entry_units WHERE entry_id = ?").all(written.entryId) as {
-        unit_hash: string;
-      }[]
-    ).map((row) => row.unit_hash);
-    replaceEntryUnits(
-      db,
-      written.entryId,
-      units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
-    );
-    const currentHashes = new Set(units.map((unit) => unit.hash));
-    orphanedUnitHashes = previousHashes.filter((oldHash) => !currentHashes.has(oldHash));
+      const units = deriveUnits(toUnitSource(written.entryId, entry), maxChars);
+      const { inserted } = insertNewUnitTexts(
+        db,
+        units.map((unit) => ({
+          hash: unit.hash,
+          kind: unit.fragmentId === null ? "card" : "fragment",
+          text: unit.text,
+        })),
+      );
+      // Capture the entry's PREVIOUS unit_hash mapping before replaceEntryUnits
+      // overwrites it — this write's own replaced hashes are exactly the ones
+      // it may have just orphaned (F4). A brand-new entry simply has no prior
+      // mapping, so this is empty and nothing below does any work.
+      const previousHashes = (
+        db.prepare("SELECT unit_hash FROM entry_units WHERE entry_id = ?").all(written.entryId) as {
+          unit_hash: string;
+        }[]
+      ).map((row) => row.unit_hash);
+      replaceEntryUnits(
+        db,
+        written.entryId,
+        units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
+      );
+      const currentHashes = new Set(units.map((unit) => unit.hash));
+      orphanedUnitHashes = previousHashes.filter((oldHash) => !currentHashes.has(oldHash));
 
-    return {
-      outcome: written.outcome,
-      unitsAdded: inserted,
-      entryId: written.entryId,
-      entry: entryWithSize,
-      provenance,
-    } satisfies FileResult;
-  });
+      return {
+        outcome: written.outcome,
+        unitsAdded: inserted,
+        entryId: written.entryId,
+        entry: entryWithSize,
+        provenance,
+      } satisfies FileResult;
+    },
+    "index",
+  );
 
   // Outside the transaction (mirroring reconcileRoots's own end-of-run
   // pruneOrphanUnitTexts, which also runs after every per-file write has
@@ -1078,66 +1090,76 @@ function resolvePhysicalOverlaps(db: Database, roots: readonly { path: string; b
     .all() as { file_path: string }[];
 
   for (const { file_path: filePath } of collisions) {
-    withImmediateTransaction(db, () => {
-      const rows = db.prepare("SELECT id, bundle_id AS bundleId FROM entries WHERE file_path = ?").all(filePath) as {
-        id: number;
-        bundleId: string;
-      }[];
-      if (rows.length < 2 || !rows.every((row) => rootPathByBundle.has(row.bundleId))) return;
+    withImmediateTransaction(
+      db,
+      () => {
+        const rows = db.prepare("SELECT id, bundle_id AS bundleId FROM entries WHERE file_path = ?").all(filePath) as {
+          id: number;
+          bundleId: string;
+        }[];
+        if (rows.length < 2 || !rows.every((row) => rootPathByBundle.has(row.bundleId))) return;
 
-      let winner = rows[0]!;
-      for (const row of rows) {
-        if ((rootPathByBundle.get(row.bundleId) ?? "").length < (rootPathByBundle.get(winner.bundleId) ?? "").length) {
-          winner = row;
+        let winner = rows[0]!;
+        for (const row of rows) {
+          if (
+            (rootPathByBundle.get(row.bundleId) ?? "").length < (rootPathByBundle.get(winner.bundleId) ?? "").length
+          ) {
+            winner = row;
+          }
         }
-      }
-      const losers = rows.filter((row) => row.id !== winner.id);
-      deleteEntriesByIds(
-        db,
-        losers.map((row) => row.id),
-      );
+        const losers = rows.filter((row) => row.id !== winner.id);
+        deleteEntriesByIds(
+          db,
+          losers.map((row) => row.id),
+        );
 
-      // `files` has one row per path (the global PK), so whichever losing
-      // bundle wrote it last this run may currently own its tracking even
-      // though it just lost the collision. Repoint it at the winner with a
-      // fresh stat: the winner's own next reconcile then sees this path as
-      // already tracked (an "unchanged" short-circuit), and a demoted loser
-      // sees it as untracked — able to compete again if it ever regains sole
-      // physical access to the file.
-      try {
-        const stat = fs.statSync(filePath);
-        const winnerRow = db
-          .prepare("SELECT content_hash AS hash, adapter_id AS adapterId FROM entries WHERE id = ?")
-          .get(winner.id) as { hash: string; adapterId: string } | undefined;
-        if (winnerRow) {
-          upsertFileState(db, {
-            path: filePath,
-            bundleId: winner.bundleId,
-            size: stat.size,
-            mtimeMs: stat.mtimeMs,
-            ctimeMs: stat.ctimeMs,
-            blobHash: winnerRow.hash,
-            adapterId: winnerRow.adapterId,
-          });
+        // `files` has one row per path (the global PK), so whichever losing
+        // bundle wrote it last this run may currently own its tracking even
+        // though it just lost the collision. Repoint it at the winner with a
+        // fresh stat: the winner's own next reconcile then sees this path as
+        // already tracked (an "unchanged" short-circuit), and a demoted loser
+        // sees it as untracked — able to compete again if it ever regains sole
+        // physical access to the file.
+        try {
+          const stat = fs.statSync(filePath);
+          const winnerRow = db
+            .prepare("SELECT content_hash AS hash, adapter_id AS adapterId FROM entries WHERE id = ?")
+            .get(winner.id) as { hash: string; adapterId: string } | undefined;
+          if (winnerRow) {
+            upsertFileState(db, {
+              path: filePath,
+              bundleId: winner.bundleId,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              ctimeMs: stat.ctimeMs,
+              blobHash: winnerRow.hash,
+              adapterId: winnerRow.adapterId,
+            });
+          }
+        } catch {
+          // Vanished between the write and this pass — the next gone-path sweep handles it.
         }
-      } catch {
-        // Vanished between the write and this pass — the next gone-path sweep handles it.
-      }
-    });
+      },
+      "index",
+    );
   }
 }
 
 /** Delete a gone path's `entries` row (cascade removes `entry_units`) and its `files` row. Returns whether anything existed. */
 function deleteFileAndEntryByPath(db: Database, filePath: string): boolean {
-  return withImmediateTransaction(db, () => {
-    const entryIds = (db.prepare("SELECT id FROM entries WHERE file_path = ?").all(filePath) as { id: number }[]).map(
-      (row) => row.id,
-    );
-    if (entryIds.length > 0) deleteEntriesByIds(db, entryIds);
-    const hadFileRow = getFileState(db, filePath) !== undefined;
-    if (hadFileRow) deleteFileStates(db, [filePath]);
-    return entryIds.length > 0 || hadFileRow;
-  });
+  return withImmediateTransaction(
+    db,
+    () => {
+      const entryIds = (db.prepare("SELECT id FROM entries WHERE file_path = ?").all(filePath) as { id: number }[]).map(
+        (row) => row.id,
+      );
+      if (entryIds.length > 0) deleteEntriesByIds(db, entryIds);
+      const hadFileRow = getFileState(db, filePath) !== undefined;
+      if (hadFileRow) deleteFileStates(db, [filePath]);
+      return entryIds.length > 0 || hadFileRow;
+    },
+    "index",
+  );
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────

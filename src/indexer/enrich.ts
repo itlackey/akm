@@ -336,25 +336,33 @@ function applyEnrichmentToEntry(
   }
   const searchText = buildSearchText(merged);
 
-  return withImmediateTransaction(db, () => {
-    const live = db
-      .prepare("SELECT content_hash AS contentHash, item_ref AS itemRef FROM entries WHERE id = ?")
-      .get(candidate.entryId) as { contentHash: string | null; itemRef: string } | undefined;
-    if (!live || live.contentHash !== candidate.blobHash || live.itemRef !== candidate.provenance.itemRef) {
-      return false;
-    }
+  return withImmediateTransaction(
+    db,
+    () => {
+      const live = db
+        .prepare("SELECT content_hash AS contentHash, item_ref AS itemRef FROM entries WHERE id = ?")
+        .get(candidate.entryId) as { contentHash: string | null; itemRef: string } | undefined;
+      if (!live || live.contentHash !== candidate.blobHash || live.itemRef !== candidate.provenance.itemRef) {
+        return false;
+      }
 
-    upsertEntry(db, candidate.filePath, merged, searchText, candidate.provenance);
-    const units = deriveUnits(toUnitSource(candidate.entryId, merged), maxChars);
-    insertNewUnitTexts(
-      db,
-      units.map((unit) => ({ hash: unit.hash, kind: unit.fragmentId === null ? "card" : "fragment", text: unit.text })),
-    );
-    replaceEntryUnits(
-      db,
-      candidate.entryId,
-      units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
-    );
-    return true;
-  });
+      upsertEntry(db, candidate.filePath, merged, searchText, candidate.provenance);
+      const units = deriveUnits(toUnitSource(candidate.entryId, merged), maxChars);
+      insertNewUnitTexts(
+        db,
+        units.map((unit) => ({
+          hash: unit.hash,
+          kind: unit.fragmentId === null ? "card" : "fragment",
+          text: unit.text,
+        })),
+      );
+      replaceEntryUnits(
+        db,
+        candidate.entryId,
+        units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
+      );
+      return true;
+    },
+    "index",
+  );
 }
