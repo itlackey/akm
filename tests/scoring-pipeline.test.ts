@@ -217,6 +217,36 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
     }
   });
 
+  // index-redesign-contract.md B5f item 1 — `ref` is ALWAYS the entry ref now,
+  // even for a type that allows fragment refs (a knowledge/memory doc, unlike
+  // the skill/instruction case above). The fragment-qualified ref lives only
+  // on `selectedRef`, an explicit field for a consumer that genuinely wants it
+  // (curate's context assembly, show's #fragment handling).
+  test("a fragment match on a fragment-eligible type still gets an entry-level ref; selectedRef carries the fragment", async () => {
+    const stashDir = tmpStash();
+    const hit = await buildDbHit({
+      entry: { name: "api-guide", type: "knowledge" },
+      path: path.join(stashDir, "knowledge/api-guide.md"),
+      itemRef: "stash//knowledge/api-guide",
+      bundleId: "stash",
+      conceptId: "knowledge/api-guide",
+      score: 0.5,
+      query: "matched heading",
+      rankingMode: "fts",
+      fragmentId: "akm-fragment-matched-heading",
+      defaultStashDir: stashDir,
+      allSourceDirs: [stashDir],
+      sources: [{ path: stashDir }],
+      config: { semanticSearchMode: "off" },
+    });
+
+    expect(hit.ref).toBe("knowledge/api-guide");
+    expect(hit.selectedRef).toBe("knowledge/api-guide#akm-fragment-matched-heading");
+    expect(hit.parentRef).toBe("knowledge/api-guide");
+    expect(hit.action).toContain("akm show knowledge/api-guide");
+    expect(hit.action).not.toContain("#akm-fragment-matched-heading");
+  });
+
   // Issue #856: the lexical ladder stage computed during FTS search must
   // survive into the serializable hit as `matchStage`, not just live on the
   // internal Symbol-keyed attribution.

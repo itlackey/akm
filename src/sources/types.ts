@@ -38,6 +38,12 @@ export interface SourceSearchHit extends FragmentProvenance {
   type: string;
   name: string;
   path: string;
+  /**
+   * index-redesign-contract.md B5f item 1 — always the entry ref, never
+   * `${entryRef}#${fragmentId}`, even when the best-matching evidence
+   * (`matchedUnit`) is a Markdown fragment. A consumer that wants the
+   * fragment-qualified ref reads `selectedRef` (`FragmentProvenance`) instead.
+   */
   ref: string;
   origin?: string | null;
   /** Env-only: key names surfaced in search results (no values). */
@@ -54,9 +60,10 @@ export interface SourceSearchHit extends FragmentProvenance {
   whyMatched?: string[];
   run?: string;
   /**
-   * Approximate tokens for the content addressed by `ref`: selected-fragment
-   * size for fragment refs, otherwise parent file size. See
-   * `parentEstimatedTokens` when a fragment hit also needs whole-file cost.
+   * Approximate tokens for the content addressed by `ref` — always the whole
+   * entry's size now that `ref` never carries a fragment selector (see `ref`'s
+   * own doc). A fragment hit's OWN size is `fragmentEstimatedTokens`
+   * (`FragmentProvenance`), reached via `selectedRef`.
    */
   estimatedTokens?: number;
   /**

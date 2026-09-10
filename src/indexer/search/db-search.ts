@@ -1169,10 +1169,16 @@ export async function buildDbHit(input: {
       ? (input.bundleId ?? undefined)
       : undefined);
   const parentRef = resolveSearchHitRef(input.entry, input, defaultBundleId);
-  // Fragments prove lexical relevance, but executable assets must retain the
-  // parent ref consumed by their advertised action (for example workflow run).
-  // The central type-presentation contract opts those types out explicitly.
-  const ref = input.fragmentId && allowsFragmentRef(input.entry.type) ? `${parentRef}#${input.fragmentId}` : parentRef;
+  // index-redesign-contract.md B5f item 1 — the hit's primary `ref` is ALWAYS
+  // the entry ref now, never `${parentRef}#${fragmentId}`. On the units path
+  // the best-matching unit for a hit is routinely a Markdown fragment (unit
+  // kind `fragment`), so a fragment-suffixed `ref` here would silently mismatch
+  // every consumer (a judgment, a stored `derivedFrom`, a copy-pasted CLI
+  // command) that names the bare entry. A consumer that genuinely wants the
+  // matched fragment's own ref reads `selectedRef` below instead — computed
+  // exactly the way `ref` itself used to be, so its availability (gated by
+  // `allowsFragmentRef`) is unchanged; only the PRIMARY ref stopped carrying it.
+  const ref = parentRef;
 
   const editable = isEditable(absolutePath, input.config, input.sources);
   const indexedFragment =
@@ -1181,7 +1187,11 @@ export async function buildDbHit(input: {
         ? getIndexedMarkdownFragment(input.db, input.itemRef, input.fragmentId)
         : undefined
       : (input.indexedFragment ?? undefined);
-  const selectedRef = input.fragmentId && ref !== parentRef ? `${parentRef}#${input.fragmentId}` : undefined;
+  // Fragments prove lexical relevance, but executable assets must retain the
+  // parent ref consumed by their advertised action (for example workflow run).
+  // The central type-presentation contract opts those types out explicitly.
+  const selectedRef =
+    input.fragmentId && allowsFragmentRef(input.entry.type) ? `${parentRef}#${input.fragmentId}` : undefined;
   const parentEstimatedTokens =
     typeof input.entry.fileSize === "number"
       ? Math.round(input.entry.fileSize / 4)
@@ -1189,8 +1199,10 @@ export async function buildDbHit(input: {
         ? Math.round(indexedFragment.parentChars / 4)
         : undefined;
   const fragmentEstimatedTokens = indexedFragment ? Math.round(indexedFragment.fragmentChars / 4) : undefined;
-  const estimatedTokens =
-    selectedRef === ref && fragmentEstimatedTokens !== undefined ? fragmentEstimatedTokens : parentEstimatedTokens;
+  // `ref` addresses the whole entry now (see above), so the size it stands for
+  // is always the parent's — a caller that wants the fragment's own size reads
+  // `fragmentEstimatedTokens` from the `selectedRef` block below.
+  const estimatedTokens = parentEstimatedTokens;
 
   const hit: SourceSearchHit = {
     type: input.entry.type,

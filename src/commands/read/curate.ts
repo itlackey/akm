@@ -57,6 +57,14 @@ export type CuratedStashItem = {
   type: string;
   name: string;
   ref: string;
+  /**
+   * index-redesign-contract.md B5f item 1 — the fragment-qualified ref when
+   * the underlying search hit matched a Markdown fragment (`hit.selectedRef`),
+   * carried through so `packCuratedHits` and the curated `followUp` command
+   * can still reach the matched section directly now that `ref` itself is
+   * always the bare entry ref.
+   */
+  selectedRef?: string;
   path: string;
   editable: boolean;
   editHint?: string;
@@ -330,10 +338,12 @@ export interface CuratePackResult {
 /**
  * Pack a curate result's stash hits into a single token-budgeted blob:
  * resolve each hit's content via the SAME path `akm show` uses
- * (`akmShowUnified` — this also means a `ref#fragment` hit packs just the
- * matched section), then greedily accumulate hits, in the ranking order
- * `curateSearchResults` already produced, until the next hit would exceed
- * `budgetTokens`.
+ * (`akmShowUnified`, called with `item.selectedRef ?? item.ref` — this also
+ * means a hit whose search match was a Markdown fragment packs just the
+ * matched section, not the whole entry `item.ref` now always addresses; see
+ * index-redesign-contract.md B5f item 1), then greedily accumulate hits, in
+ * the ranking order `curateSearchResults` already produced, until the next
+ * hit would exceed `budgetTokens`.
  *
  * Registry hits are never packed — only `CuratedStashItem`s (locked
  * contract, AGENTS.md: registry results stay separate/opt-in).
@@ -350,7 +360,7 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   for (const item of stashItems) {
     let shown: ShowResponse | undefined;
     try {
-      shown = await akmShowUnified({ ref: item.ref, skipLogging: true });
+      shown = await akmShowUnified({ ref: item.selectedRef ?? item.ref, skipLogging: true });
     } catch {
       continue;
     }
@@ -384,9 +394,15 @@ async function enrichCuratedStashHit(
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
 ): Promise<CuratedStashItem> {
+  // index-redesign-contract.md B5f item 1 — `hit.ref` is always the bare entry
+  // ref now; `contentRef` is the fragment-qualified ref when the search match
+  // was a Markdown fragment (`hit.selectedRef`), so the preview/description
+  // resolved below and the curated item's own `followUp` still land on the
+  // matched section instead of regressing to the whole entry.
+  const contentRef = hit.selectedRef ?? hit.ref;
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: hit.ref, eventSource, skipLogging: true });
+    shown = await akmShowUnified({ ref: contentRef, eventSource, skipLogging: true });
   } catch {
     shown = undefined;
   }
@@ -405,10 +421,13 @@ async function enrichCuratedStashHit(
     type: shown?.type ?? hit.type,
     name: shown?.name ?? hit.name,
     ref: hit.ref,
+    ...(hit.selectedRef ? { selectedRef: hit.selectedRef } : {}),
     path: shown?.path ?? hit.path,
     editable: shown?.editable ?? hit.editable ?? false,
     ...((shown?.editable ?? hit.editable ?? false) === false
-      ? { editHint: shown?.editHint ?? hit.editHint ?? `This asset is read-only. Inspect it with: akm show ${hit.ref}` }
+      ? {
+          editHint: shown?.editHint ?? hit.editHint ?? `This asset is read-only. Inspect it with: akm show ${hit.ref}`,
+        }
       : {}),
     ...(description ? { description } : {}),
     ...(preview ? { preview } : {}),
@@ -416,7 +435,7 @@ async function enrichCuratedStashHit(
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
     ...(mergedSupportRefs.length > 0 ? { supportRefs: mergedSupportRefs } : {}),
-    followUp: `akm show ${hit.ref}`,
+    followUp: `akm show ${contentRef}`,
     reason: buildCuratedReason(query, shown?.type ?? hit.type),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
