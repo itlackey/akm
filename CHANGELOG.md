@@ -159,6 +159,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (#951).** These are akm's resolved data/config/cache/state directories, so a
   script can read `akm info --format json | jq -r .dataDir` instead of hardcoding
   a path that differs between a host install and a container.
+- **A real `curate_rerank` implementation: `search.curateRerank`, a cross-
+  encoder rerank pass over `akm curate`'s already-selected candidates (#951).**
+  `curate_rerank` was a dead `llm.features.*` key removed in 0.8.0 with no wire
+  call ever implemented under it. `search.curateRerank.{enabled, endpoint,
+  model, apiKey, timeoutMs, topN}` configures a standalone `/rerank`-style
+  endpoint (`src/llm/rerank-client.ts`, `POST {model, query, documents}` →
+  `{results: [{index, relevance_score}]}`); when enabled, curate sends its top
+  `topN` (default 8) already-ranked candidates and reorders them by the
+  endpoint's scores. Disabled by default, and best-effort like every other
+  bounded LLM feature: a misconfigured endpoint, network failure, timeout, or
+  malformed response falls back to curate's own ranking unchanged rather than
+  failing the command. Deliberately its own config arm rather than a third
+  `engines` kind alongside `"llm"`/`"agent"` — that union's kinds are
+  load-bearing through execution-lowering, runner dispatch, and the harness
+  model map, none of which a reranker touches.
+- **Per-run task log files are purged past the retention window (#951).**
+  `tasks/logs/<taskId>/<timestamp>.log` (the per-run human-readable tail;
+  `logs.db` is the durable, already-purged record) had file separation but no
+  cleanup, so old run files accumulated forever. `akm improve`'s existing
+  retention pass now also deletes `.log` files under `getTaskLogDir()` older
+  than the same `improve.eventRetentionDays` window (default 90d, `0` disables
+  it) it already uses for `task_logs`/events/`improve_runs` — bounded to that
+  one directory, one level of `<taskId>` subdirectories, `.log` files only.
+  Path-agnostic bundled scripts and the `akm show env/<name>`/`akm task list`
+  items from the same review were previously confirmed shipped and are
+  unchanged here.
 - **`akm index --reembed` forces a full re-embed (#955).** Bypasses the
   compatibility check above entirely and purges + regenerates every stored
   embedding, for the rare case where the check's verdict should not be trusted. A

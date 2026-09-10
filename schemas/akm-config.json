@@ -596,6 +596,34 @@
             }
           },
           "additionalProperties": true
+        },
+        "curateRerank": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "apiKey": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "topN": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 50
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
@@ -2293,6 +2321,34 @@
                   "minimum": 0,
                   "maximum": 1,
                   "default": 0.2
+                }
+              },
+              "additionalProperties": true
+            },
+            "curateRerank": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "endpoint": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "apiKey": {
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "topN": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 50
                 }
               },
               "additionalProperties": true
