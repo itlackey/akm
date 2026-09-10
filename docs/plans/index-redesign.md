@@ -150,13 +150,21 @@ Six parallel modules against one contract, one integrator, one gate:
 | units and stores | `units`, `units_fts`, `units_vec`; card and fragment units with headers and the real-token split |
 | write-time indexing | the write paths index what they wrote, inline |
 | drain | the embedding queue on the existing batching code, provider limits probed |
-| search | one query, reciprocal-rank fusion, grouping, the matched unit in the hit |
+| search | one query, magnitude-scored fusion under a lexical-tier priority, grouping, the matched unit in the hit |
 | removal and migration | delete the machinery above, new generation, `akm index status`, docs |
 
-The units, store and provider-limits modules already in progress are the first three rows'
-foundations and carry over unchanged in role.
+All six shipped. The search row is the one whose deliverable changed during the
+build: reciprocal-rank fusion was the plan and lost on measurement, so what shipped
+scores lexical evidence by magnitude and ranks the lexical tier ahead of the fused
+score — see the Search section above for the table and the two rejected alternatives.
 
 ## Measure first
+
+These are the sizing queries that were run BEFORE the build, against the pre-redesign
+schema, to get the corpus token count the Cost section quotes. They do not run on a
+0.9.16 index: `entries.search_text` and `entry_fragments_fts` are both gone. The
+equivalent on the new schema is `akm index status`, which reports files, entries,
+distinct units and how many carry a vector for the active identity.
 
 ```sql
 SELECT COUNT(*) AS entries, SUM(length(search_text)) / 4 AS corpus_rho4_tokens FROM entries;

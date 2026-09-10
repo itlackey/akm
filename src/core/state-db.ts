@@ -764,15 +764,6 @@ function sleepSyncMs(ms: number): void {
 }
 
 /**
- * Open, but deliberately do not finish, an immediate transaction.
- *
- * This is the split-phase counterpart to {@link withImmediateTransaction} for
- * the source-update coordinator: index finalization must mutate state.db in a
- * transaction that remains pending until content, lockfile, and index
- * publication have all succeeded. The caller that asked for this split phase
- * owns the matching COMMIT/ROLLBACK.
- */
-/**
  * Which physical database an exhausted-retry BEGIN failure is reported
  * against (field follow-up to #956). Every existing caller of
  * {@link beginImmediateTransaction} / {@link withImmediateTransaction} passed
@@ -818,6 +809,15 @@ function throwBeginFailure(err: unknown, dbKind: ImmediateTransactionDbKind): ne
   throw err;
 }
 
+/**
+ * Open, but deliberately do not finish, an immediate transaction.
+ *
+ * This is the split-phase counterpart to {@link withImmediateTransaction} for
+ * the source-update coordinator: index finalization must mutate state.db in a
+ * transaction that remains pending until content, lockfile, and index
+ * publication have all succeeded. The caller that asked for this split phase
+ * owns the matching COMMIT/ROLLBACK.
+ */
 export function beginImmediateTransaction(db: Database, dbKind: ImmediateTransactionDbKind = "state"): void {
   if (db.inTransaction) {
     throw new Error("beginImmediateTransaction requires a connection with no active transaction");
