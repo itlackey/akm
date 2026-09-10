@@ -7,7 +7,7 @@ import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
-import { isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -127,11 +127,11 @@ function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
  */
 async function runShowPromptCli(
   refArg: string,
+  parsedRef: AssetRef,
   taskArg: string | undefined,
   targetArg: string | undefined,
   resolvedPlan: ResolvedImprovePlan,
 ): Promise<void> {
-  const parsedRef = parseRefInput(refArg);
   const readSource = resolveImproveReadSource(resolvedPlan.config as AkmConfig, parsedRef, targetArg);
   const preview = await renderReflectPromptPreview({
     ref: refArg,
@@ -334,7 +334,7 @@ export const improveCommand = defineCommand({
             "INVALID_FLAG_VALUE",
           );
         }
-        await runShowPromptCli(scopeArg, taskArg, targetArg, resolvedPlan);
+        await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
         return;
       }
       if (args["require-engines"]) assertRequiredEnginesAvailable(resolvedPlan);
