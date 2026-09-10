@@ -14,9 +14,11 @@ import type { MemoryEntry } from "./types";
 /**
  * Conservative chars-per-token estimate used when computing prompt budgets.
  * English text averages roughly 4 chars/token for most LLM tokenizers. We use
- * 3 to stay conservative (shorter tokens = more tokens per char).
+ * 3 to stay conservative (shorter tokens = more tokens per char). Exported so
+ * other context-length-driven budgets (e.g. reflect's direct-LLM content cap,
+ * #952) share this single estimate instead of redeclaring it.
  */
-const CHARS_PER_TOKEN = 3;
+export const CHARS_PER_TOKEN = 3;
 
 /**
  * Overhead budget reserved for the system prompt, chunk header lines, and per-

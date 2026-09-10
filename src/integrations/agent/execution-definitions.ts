@@ -7,6 +7,7 @@ import { cloneExecutionJsonObject } from "../../execution/json";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import type { ExecutionEngineDefinition } from "./execution-cascade";
+import { engineModelAndInference } from "./model-map";
 import { OPENCODE_SDK_SERVER_BIN } from "./profiles";
 import type { RunnerSpec } from "./runner";
 
@@ -32,21 +33,11 @@ function withoutUndefined<T extends Record<string, unknown>>(value: T): Record<s
 
 function engineDefaults(engine: EngineConfig): UnresolvedExecutionDefaults {
   const defaults: Record<string, unknown> = {};
-  if (own(engine, "model")) defaults.model = engine.model;
+  const { model, inference } = engineModelAndInference(engine);
+  if (model !== undefined) defaults.model = model;
   if (own(engine, "timeoutMs")) defaults.timeout = engine.timeoutMs;
   if (engine.kind === "agent" && own(engine, "workspace")) defaults.workspace = engine.workspace;
-  if (engine.kind === "llm") {
-    const inference = withoutUndefined({
-      temperature: ownValue(engine, "temperature"),
-      maxTokens: ownValue(engine, "maxTokens"),
-      supportsJsonSchema: ownValue(engine, "supportsJsonSchema"),
-      extraParams: ownValue(engine, "extraParams"),
-      contextLength: ownValue(engine, "contextLength"),
-      enableThinking: ownValue(engine, "enableThinking"),
-      reasoningEffort: ownValue(engine, "reasoningEffort"),
-    });
-    if (Object.keys(inference).length > 0) defaults.inference = inference;
-  }
+  if (inference !== undefined) defaults.inference = inference;
   return Object.freeze(defaults) as UnresolvedExecutionDefaults;
 }
 

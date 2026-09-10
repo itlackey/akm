@@ -61,6 +61,12 @@
  *     `uses:`/`with:`, `timeout:`, optional `schedule:`) — static files
  *     proving akm doesn't tighten its schema in a way that breaks a real
  *     consumer.
+ *   - a v22 derived index carrying a LIVE embedding (#955, `index-v22-with-
+ *     embedding.sql`) — the v22->v23 generation rebuild
+ *     (`rebuildIncompatibleIndexGeneration`, `index-schema.ts`) salvages the
+ *     vector into `embedding_salvage` before dropping `embeddings`, and the
+ *     next embedding pass (`generateEmbeddingsForDb`) hands it straight back
+ *     to the re-walked entry with zero provider calls.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates the `--scheduler-context` marker
@@ -84,9 +90,12 @@ import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCach
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { resetQuiet, setQuiet } from "../../src/core/warn";
+import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
+import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
@@ -105,6 +114,7 @@ import {
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-release-corpus");
 
@@ -136,6 +146,76 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("#955: a v22 embedding survives the v23 generation bump via salvage and is reused with zero provider calls", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-embedding-"));
+    try {
+      const dbPath = path.join(root, "index.db");
+      const legacy = new Database(dbPath);
+      legacy.exec(readFixture("index-v22-with-embedding.sql"));
+      legacy.close();
+
+      // Opening under the current binary rebuilds entries/embeddings/FTS
+      // (index.db is regenerable) but the embedding_salvage table is exempt
+      // from the drop list — the vector salvaged just before `embeddings`
+      // was dropped survives the rebuild.
+      const upgraded = openIndexDatabase(dbPath);
+      try {
+        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 1 });
+
+        // The next index run re-walks the stash and re-inserts the SAME
+        // (unchanged) content — same search_text, new id.
+        upgraded
+          .prepare(
+            `INSERT INTO entries
+               (item_ref, bundle_id, component_id, concept_id, adapter_id, type,
+                file_path, content_hash, document_json, search_text, derived_from)
+             VALUES (?, 'stash', 'stash', 'knowledge/v22-embedded', 'akm', 'knowledge',
+                     '/fixture/v22-embedded.md', NULL, ?, ?, NULL)`,
+          )
+          .run(
+            "stash//knowledge/v22-embedded",
+            JSON.stringify({ name: "v22-embedded", type: "knowledge" }),
+            "v22-embedded prior release parent row with an embedding whole body evidence",
+          );
+
+        // A throwing embedder proves the vector came back from salvage, not
+        // a provider call — `rebuildIncompatibleIndexGeneration` clears
+        // `embeddingFingerprint` along with the rest of `index_meta`, so this
+        // relies only on the fingerprint the config below derives matching
+        // what the fixture salvaged under ("local:test-model").
+        overrideSeam(_setEmbedderForTests, {
+          embedBatch: async () => {
+            throw new Error("the provider must never be called — the vector should come back from salvage");
+          },
+        });
+        const messages: string[] = [];
+        const result = await generateEmbeddingsForDb(
+          upgraded,
+          { semanticSearchMode: "auto", embedding: { localModel: "test-model" } },
+          (event) => messages.push(event.message),
+        );
+
+        expect(result.success).toBe(true);
+        expect(messages.some((m) => m.includes("Reused 1 embedding"))).toBe(true);
+        expect(getEmbeddingCount(upgraded)).toBe(1);
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 0 });
+        const row = upgraded.prepare("SELECT embedding FROM embeddings LIMIT 1").get() as
+          | { embedding: Buffer }
+          | undefined;
+        if (!row) throw new Error("expected an embedding row");
+        const vec = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, 3);
+        expect(Array.from(vec)).toEqual([1, 2, 3]);
+      } finally {
+        closeDatabase(upgraded);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   describe("task source v2/v3 (auto-shimmed to v4)", () => {
     let warnSpy: ReturnType<typeof spyOn>;
 

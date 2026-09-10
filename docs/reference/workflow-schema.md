@@ -1352,7 +1352,11 @@ optional user `models.json` files:
 
 Resolution checks the selected engine name or canonical harness column. A
 known alias without that column fails rather than guessing a provider model;
-an unknown string is treated as an exact model selector. See the [Author's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#choosing-engines-and-models)
+an unknown string is treated as an exact model selector. A column may itself
+be an `engine`-backed indirection (0.9.15) rather than a literal model string
+— see [Model-map files](configuration.md#model-map-files) — so a step naming
+`model: fast` also benefits from whatever engine-backed mapping the operator
+configured for the selected engine, with no workflow-authored change. See the [Author's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#choosing-engines-and-models)
 for guidance on which tier to pick per step.
 
 ## See also

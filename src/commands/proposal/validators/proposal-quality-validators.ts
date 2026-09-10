@@ -81,6 +81,7 @@ function refNameTail(inputRef: string): string {
 }
 
 import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
+import { REFLECT_TRUNCATION_MARKER } from "../../../integrations/agent/prompts";
 import type { ProposalValidator } from "../proposal-types";
 
 // ── Description / when_to_use shape ─────────────────────────────────────────
@@ -424,6 +425,34 @@ const reflectSizeGuardValidator: ProposalValidator = {
 };
 
 /**
+ * Accept-time data-loss guard (#952 Addendum). `sanitizeReflectPayload`
+ * already defers a proposal whose body echoes {@link REFLECT_TRUNCATION_MARKER}
+ * (the notice appended when the source asset was too large to send in full)
+ * with `reflect-truncation-leak` — but that is a creation-time check, and a
+ * proposal can reach `proposal accept` / drain promotion without ever going
+ * through it (e.g. a defer that a human then accepts anyway, or a future
+ * reflect code path that mints proposals directly). A leaked marker replacing
+ * real asset content on disk is data loss, not a quality nit, so unlike the
+ * rest of this file's validators this one is NOT wrapped by {@link advisory}
+ * — it blocks acceptance the same way the generic/canonical validators do.
+ */
+const reflectTruncationMarkerValidator: ProposalValidator = {
+  name: "reflect-truncation-marker",
+  appliesTo(proposal) {
+    return proposal.source === "reflect" && typeof proposal.payload?.content === "string";
+  },
+  validate(proposal) {
+    if (!proposalContent(proposal).includes(REFLECT_TRUNCATION_MARKER)) return [];
+    return [
+      {
+        kind: "reflect-truncation-marker-leak",
+        message: `Proposal ${proposal.id} (${proposal.ref}) body still contains the reflect truncation marker "${REFLECT_TRUNCATION_MARKER}" — the source asset was too large to send in full and this body would overwrite it with an incomplete rewrite. Reflect this ref again (or raise its content budget) and re-propose.`,
+      },
+    ];
+  },
+};
+
+/**
  * Report a validator's findings as advisory.
  *
  * These validators judge prose quality — a description that reads like a
@@ -449,11 +478,17 @@ function advisory(validator: ProposalValidator): ProposalValidator {
 /**
  * Full set of quality validators in registration order. Appended onto
  * {@link defaultProposalValidators} so they run inside `validateProposal` on
- * `proposal accept` automatically, and report without blocking.
+ * `proposal accept` automatically. All prose-quality checks report without
+ * blocking (see {@link advisory}); {@link reflectTruncationMarkerValidator} is
+ * the one exception and blocks, since it guards against data loss rather than
+ * prose quality.
  */
 export const defaultProposalQualityValidators: ProposalValidator[] = [
-  descriptionQualityValidator,
-  lessonContentQualityValidator,
-  sourceNotSupersededValidator,
-  reflectSizeGuardValidator,
-].map(advisory);
+  ...[
+    descriptionQualityValidator,
+    lessonContentQualityValidator,
+    sourceNotSupersededValidator,
+    reflectSizeGuardValidator,
+  ].map(advisory),
+  reflectTruncationMarkerValidator,
+];

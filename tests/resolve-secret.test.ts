@@ -10,8 +10,23 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveSecret } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 
 const ENV_VAR = "AKM_TEST_RESOLVE_SECRET_VAR";
+
+function captureWarnings(fn: () => void): string[] {
+  const warnings: string[] = [];
+  _resetWarnOnceForTests();
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  try {
+    fn();
+    return warnings;
+  } finally {
+    _setWarnSinkForTests(undefined);
+  }
+}
 
 describe("resolveSecret (#917)", () => {
   beforeEach(() => {
@@ -56,5 +71,46 @@ describe("resolveSecret (#917)", () => {
 
   test("secret:// with no resolver supplied throws rather than sending the raw ref as the credential", () => {
     expect(() => resolveSecret("secret://lab-api-key")).toThrow(ConfigError);
+  });
+});
+
+describe("resolveSecret empty $VAR warning (#953)", () => {
+  beforeEach(() => {
+    delete process.env[ENV_VAR];
+  });
+  afterEach(() => {
+    delete process.env[ENV_VAR];
+  });
+
+  test("an unset $VAR still substitutes empty, but warns once naming the variable", () => {
+    const warnings = captureWarnings(() => {
+      expect(resolveSecret(`$${ENV_VAR}`)).toBe("");
+    });
+    expect(warnings.some((w) => w.includes(ENV_VAR))).toBe(true);
+  });
+
+  test("an empty (but set) $VAR also warns", () => {
+    process.env[ENV_VAR] = "";
+    const warnings = captureWarnings(() => {
+      expect(resolveSecret(`\${${ENV_VAR}}`)).toBe("");
+    });
+    expect(warnings.some((w) => w.includes(ENV_VAR))).toBe(true);
+  });
+
+  test("warns only once per variable name across repeated calls", () => {
+    const warnings = captureWarnings(() => {
+      resolveSecret(`$${ENV_VAR}`);
+      resolveSecret(`$${ENV_VAR}`);
+      resolveSecret(`$${ENV_VAR}`);
+    });
+    expect(warnings.length).toBe(1);
+  });
+
+  test("a set, non-empty $VAR never warns", () => {
+    process.env[ENV_VAR] = "from-env";
+    const warnings = captureWarnings(() => {
+      expect(resolveSecret(`$${ENV_VAR}`)).toBe("from-env");
+    });
+    expect(warnings).toEqual([]);
   });
 });

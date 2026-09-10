@@ -30,15 +30,19 @@
  *      and there was previously no way to know that from the CLI side.
  *
  * Read-only: this never fetches, writes, or mutates the plugin cache or
- * marketplace clone. Check 2 is the one deliberate exception to "`akm
- * health` makes no network call" (see `./health-advisories.md`): a plugin's
+ * marketplace clone. Check 2 is one of two deliberate exceptions to "`akm
+ * health` makes no network call" (see `./health-advisories.md`; the other is
+ * the `cli-version` advisory in `./version-drift.ts`, #950): a plugin's
  * local marketplace clone is not proof of what is newest upstream — the
  * incident above involved a clone that hadn't seen the fix's tag at all — so
  * the only way to ever detect drift is to ask the remote what tags exist.
  * That query is a `git ls-remote --tags` (lists refs; fetches nothing,
  * writes nothing) with a short timeout, and any failure (offline, no
  * remote, timeout) degrades to "installed version reported, no staleness
- * claim" rather than a false positive or a hang.
+ * claim" rather than a false positive or a hang. Unlike `cli-version`, this
+ * check is NOT gated behind `--probe`/`--no-probe` — it predates that flag
+ * and stays unconditional; see `./version-drift.ts` for why the newer check
+ * chose the opposite default.
  *
  * Every collector here is best-effort and silent on missing/unreadable
  * input: no Claude plugin installed, no marketplace clone, an unreadable

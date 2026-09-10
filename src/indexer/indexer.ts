@@ -11,12 +11,14 @@ import type { BundleComponent } from "../core/adapter/types";
 import { isHttpUrl, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
-import { ConfigError } from "../core/errors";
-import { isLoopbackEndpoint } from "../core/loopback";
+import { AkmError, ConfigError, TransientError } from "../core/errors";
+import { probeLock } from "../core/file-lock";
+import { defaultConcurrencyForEndpoint } from "../core/loopback";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
-import { withStateDb } from "../core/state-db";
+import { formatLockHolderPid } from "../core/run-lock";
+import { isSqliteContentionError, withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
 import {
@@ -57,6 +59,7 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
  * See the index-consistency ADR (2026-06) for the full analysis.
  */
 import type { Database } from "../storage/database";
+import { salvageEmbeddingsBeforeDiscard } from "../storage/repositories/embedding-salvage-repository";
 import {
   closeDatabase,
   openExistingDatabase,
@@ -100,6 +103,7 @@ import {
 } from "../storage/repositories/index-vec-repository";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { deleteStoredGraph } from "./db/graph-db";
+import { indexRebuildLockPath } from "./index-rebuild-lock";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import {
   type AdapterConceptOwner,
@@ -229,6 +233,12 @@ interface IndexOptions {
    * without actually deleting them.
    */
   dryRun?: boolean;
+  /**
+   * When true (`akm index --reembed`), force a full purge + re-embed of
+   * every entry regardless of the embedding-fingerprint canary (#955) — an
+   * explicit operator override for when its verdict should not be trusted.
+   */
+  reembed?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
   /**
@@ -280,19 +290,17 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 export function getDefaultLlmConcurrency(llmConfig?: LlmConnectionConfig): number {
   if (typeof llmConfig?.concurrency === "number") return llmConfig.concurrency;
-  // Local model servers stay at 1 (single loaded model; parallel requests
-  // trigger reload thrash); an absent or unparseable endpoint fails safe as
-  // local. ONE classifier decides what "local" means (`core/loopback.ts`,
-  // shared with the workflow engine's frozen concurrency default).
-  if (isLoopbackEndpoint(llmConfig?.endpoint)) return 1;
-  // Remote endpoints default to a modest 2-wide pool (owner ruling 2026-07-21):
-  // enough to overlap request latency without hammering rate-limited APIs.
-  // The explicit-override branch above only fires for
-  // callers that put `concurrency` on the connection themselves —
-  // `engines.<name>.concurrency` is a valid schema field but `resolveLlmEngineUse`
-  // does NOT copy it into the resolved connection, so on the enrichment path the
-  // auto-derived 1/2 is what runs (see docs/architecture/internals/indexing.md).
-  return 2;
+  // ONE classifier decides the local-vs-remote default (`core/loopback.ts`'s
+  // `defaultConcurrencyForEndpoint`), shared with the embedding pool
+  // (`resolveEmbeddingConcurrency`, `src/llm/embedders/remote.ts`) and the
+  // workflow engine's frozen concurrency default.
+  //
+  // The explicit-override branch above only fires for callers that put
+  // `concurrency` on the connection themselves — `engines.<name>.concurrency`
+  // is a valid schema field but `resolveLlmEngineUse` does NOT copy it into
+  // the resolved connection, so on the enrichment path the auto-derived 1/2
+  // is what runs (see docs/architecture/internals/indexing.md).
+  return defaultConcurrencyForEndpoint(llmConfig?.endpoint);
 }
 
 // ── Phase functions ──────────────────────────────────────────────────────────
@@ -459,21 +467,70 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
   ctx.timing.tLlmEnd = Date.now();
 }
 
+/** Result of the shared embedding pass — see {@link runEmbeddingPass}. */
+export interface EmbeddingPassResult {
+  embeddingResult: EmbeddingGenerationResult;
+  verification: IndexVerification;
+}
+
+/**
+ * The ONE embedding-phase implementation (#954): generate and
+ * store vectors for every entry missing one, then compute the `hasEmbeddings`
+ * fact and the semantic-search verification off the result. `akmIndex`'s own
+ * (non-deferred) run calls this from {@link runEmbeddingPhase} below; `akm
+ * bundle update`'s coordinator calls it directly on its own connection AFTER
+ * its unified update transaction commits, since the ambient-transaction drift
+ * guard (and the whole point of per-batch commit, #954) requires `db` to have
+ * no ambient transaction open.
+ */
+export async function runEmbeddingPass(params: {
+  db: Database;
+  config: AkmConfig;
+  onProgress: (event: IndexProgressEvent) => void;
+  signal?: AbortSignal;
+  reembed?: boolean;
+}): Promise<EmbeddingPassResult> {
+  const { db, config, onProgress, signal, reembed } = params;
+  const embeddingResult = await generateEmbeddingsForDb(db, config, onProgress, signal, undefined, {
+    forceReembed: reembed,
+  });
+  setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
+  const semanticEntryCount = getEmbeddableEntryCount(db);
+  onProgress({ phase: "finalize", message: "Verifying semantic search state." });
+  const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
+  onProgress({ phase: "verify", message: verification.message });
+  return { embeddingResult, verification };
+}
+
 /**
  * Embedding phase: generate and store vector embeddings for all unembedded
- * entries. Writes `ctx.embeddingResult` for the finalize phase.
+ * entries. Writes `ctx.embeddingResult` and `ctx.verification` for the
+ * finalize phase / caller.
  */
 async function runEmbeddingPhase(ctx: IndexRunContext): Promise<void> {
-  const { db, config, signal, onProgress } = ctx;
+  const { db, config, signal, onProgress, reembed, deferredUpdateTransaction } = ctx;
 
   throwIfAborted(signal);
+
+  if (deferredUpdateTransaction) {
+    // `akm bundle update`'s deferred pass (#954): the embedding
+    // phase runs AFTER the coordinator's own commit, on its own connection,
+    // via the coordinator's direct `runEmbeddingPass` call — never here,
+    // inside the borrowed transaction (the ambient-transaction drift guard
+    // would reject it anyway). `runFinalizePhase` records semantic state as
+    // "pending".
+    ctx.timing.tEmbedEnd = Date.now();
+    return;
+  }
 
   // Forward the signal. Without it generateEmbeddingsForDb's abort machinery was
   // inert — its throwIfAborted checks and the signal it threads into embedBatch
   // (which RemoteEmbedder passes to every fetch and LocalEmbedder honours between
   // chunks) never saw a controller. Ctrl-C and the improve budget abort could not
   // stop the embedding phase, the longest phase of an index run.
-  ctx.embeddingResult = await generateEmbeddingsForDb(db, config, onProgress, signal);
+  const { embeddingResult, verification } = await runEmbeddingPass({ db, config, onProgress, signal, reembed });
+  ctx.embeddingResult = embeddingResult;
+  ctx.verification = verification;
   ctx.timing.tEmbedEnd = Date.now();
 }
 
@@ -482,11 +539,8 @@ async function runEmbeddingPhase(ctx: IndexRunContext): Promise<void> {
  * usage events, recompute utility scores, update index metadata, and emit the
  * verify event.
  */
-async function runFinalizePhase(
-  ctx: IndexRunContext,
-  deferredUpdateTransaction?: DeferredUpdateIndexTransaction,
-): Promise<void> {
-  const { db, config, sources, sourceDirs, stashDir, signal, onProgress } = ctx;
+async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
+  const { db, config, sources, sourceDirs, stashDir, signal, onProgress, deferredUpdateTransaction } = ctx;
   ctx.timing.tFinalizeStart = Date.now();
 
   // `upsertEntry` and every canonical delete own their FTS projection. This is
@@ -531,26 +585,41 @@ async function runFinalizePhase(
   // An incomplete run preserves the prior freshness watermark. Advancing it
   // could make a recovered source look unchanged even though this run never
   // persisted its files.
-  const embeddingResult = ctx.embeddingResult ?? { success: false };
   if (ctx.scanComplete) {
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "stashDir", stashDir);
     setMeta(db, "stashDirs", JSON.stringify(sourceDirs));
     setMeta(db, "sourceOwners", JSON.stringify(sourceOwners(sources)));
   }
-  setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
 
   warnIfVecMissing(db);
 
   const totalEntries = getEntryCount(db);
-  const semanticEntryCount = getEmbeddableEntryCount(db);
-  onProgress({ phase: "finalize", message: "Verifying semantic search state." });
-  const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
 
-  onProgress({ phase: "verify", message: verification.message });
+  if (deferredUpdateTransaction) {
+    // #954: the embedding phase was skipped for this borrowed
+    // transaction — record semantic state as pending, never ready, until the
+    // coordinator's own post-commit `runEmbeddingPass` call reports the
+    // truth on a fresh connection.
+    setMeta(db, "hasEmbeddings", "0");
+    const semanticEntryCount = getEmbeddableEntryCount(db);
+    const message = "Semantic index update deferred until after the source-update commit.";
+    onProgress({ phase: "verify", message });
+    ctx.verification = {
+      ok: true,
+      message,
+      semanticSearchEnabled: config.semanticSearchMode === "auto",
+      semanticSearchMode: config.semanticSearchMode,
+      semanticStatus: config.semanticSearchMode === "off" ? "disabled" : "pending",
+      embeddingProvider: getEmbeddingProvider(config.embedding),
+      entryCount: semanticEntryCount,
+      embeddingCount: getEmbeddingCount(db),
+      vecAvailable: isVecAvailable(db),
+    };
+  }
+  // Non-deferred: ctx.verification was already populated by runEmbeddingPhase
+  // (via the shared runEmbeddingPass).
 
-  // Store verification result and totalEntries on ctx for the caller to use
-  ctx.verification = verification;
   ctx.totalEntries = totalEntries;
   ctx.timing.tFinalizeEnd = Date.now();
 
@@ -626,6 +695,47 @@ export function _setAkmIndexForTests(fake?: typeof akmIndexReal): void {
   akmIndexOverride = fake;
 }
 
+/**
+ * Read-only description of the rebuild lock's current holder, appended to a
+ * reclassified index.db contention message when known (field follow-up to
+ * #956). `probeLock` only inspects the sentinel — it never acquires or
+ * mutates it — so this is safe to call from inside an error path.
+ */
+function describeIndexRebuildLockHolder(): string {
+  const probe = probeLock(indexRebuildLockPath());
+  if (probe.state !== "held") return "";
+  return ` The rebuild lock is currently held by pid ${formatLockHolderPid({
+    pid: probe.holderPid,
+    launcherPid: probe.launcherPid ?? null,
+  })}.`;
+}
+
+/**
+ * Reclassify a contention-shaped error escaping the walk, index, or
+ * embedding phase into a retryable-shortly `TransientError` (field
+ * follow-up to #956, dev-team field review 2026-09-10): a concurrent writer
+ * (another `akm index`, a source-update embedding pass, the per-command
+ * background reindex) can make index.db busy, and the raw SQLite driver
+ * error ("database is locked") used to escape as exit 70
+ * (internal/unclassified) instead of the "retry shortly" contract exit 75
+ * gives a scheduler to branch on — mirroring `STATE_DB_CONTENDED`'s
+ * precedent for state.db (`core/state-db.ts`). Reuses the ONE shared
+ * classifier, `isSqliteContentionError`, rather than a second one. An error
+ * that is already a classified akm error (e.g. a `STATE_DB_CONTENDED`
+ * TransientError from an inner state.db write) is never re-wrapped — only a
+ * raw, unclassified error matching the shared contention shape is
+ * reclassified. Every other error is rethrown unchanged.
+ */
+export function reclassifyIndexDbContention(error: unknown): unknown {
+  if (error instanceof AkmError || !isSqliteContentionError(error)) return error;
+  const contended = new TransientError(
+    `akm's index database is busy (another akm process is writing it); retry shortly.${describeIndexRebuildLockHolder()}`,
+    "INDEX_DB_CONTENDED",
+  );
+  contended.cause = error;
+  return contended;
+}
+
 export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
   try {
     const override = akmIndexOverride;
@@ -640,7 +750,7 @@ export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
         // rollback before closing its borrowed unified handle.
       }
     }
-    throw error;
+    throw reclassifyIndexDbContention(error);
   }
 }
 
@@ -768,10 +878,12 @@ interface CreateIndexRunContextOptions {
   sourceDirs: string[];
   full: boolean;
   clean: boolean;
+  reembed: boolean;
   stashDir: string;
   onProgress: (event: IndexProgressEvent) => void;
   signal: AbortSignal | undefined;
   t0: number;
+  deferredUpdateTransaction?: DeferredUpdateIndexTransaction;
 }
 
 function createIndexRunContext(options: CreateIndexRunContextOptions): IndexRunContext {
@@ -834,6 +946,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const full = options?.full === true;
     const clean = options?.clean === true;
     const dryRun = options?.dryRun === true;
+    const reembed = options?.reembed === true;
 
     // Load config and resolve all stash sources
     const { loadConfig, mutateConfig } = await import("../core/config/config.js");
@@ -860,6 +973,11 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       force: full,
       materialize: options.hydrateSources !== false,
       secrets: storeSecretResolver,
+      // Same progress channel as every other phase (#954) — a
+      // stalled clone/fetch here runs BEFORE index.db is even opened, so
+      // without this it looked identical to "no database open, nothing
+      // written".
+      onProgress: (message) => onProgress({ phase: "preflight", message }),
     });
     const sourceCacheEnd = Date.now();
     const allSourceEntries = resolveSourceEntries(stashDir, config);
@@ -898,10 +1016,12 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         sourceDirs: allSourceDirs,
         full,
         clean,
+        reembed,
         stashDir,
         onProgress,
         signal,
         t0,
+        deferredUpdateTransaction: options.deferredUpdateTransaction,
       });
       indexRunContext = ctx;
 
@@ -945,7 +1065,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       cleanEnd = Date.now();
 
       await runEmbeddingPhase(ctx);
-      await runFinalizePhase(ctx, options.deferredUpdateTransaction);
+      await runFinalizePhase(ctx);
       // ────────────────────────────────────────────────────────────────────────
 
       // runFinalizePhase always populates these before returning.
@@ -1688,6 +1808,14 @@ function persistDirRecords(
     // transaction so delete and re-insert are atomic — a concurrent reader
     // never observes an empty database between the two operations.
     if (fullDelete) {
+      // #955: copy every (search_text hash, embedding) pair about to be
+      // discarded wholesale into `embedding_salvage`, tagged with the
+      // fingerprint the discarded vectors were generated under, BEFORE the
+      // wipe below — inside the SAME transaction so the copy and the
+      // discard commit or roll back together. The embedding phase later in
+      // this run hands salvaged vectors back to unchanged content instead
+      // of re-embedding the whole corpus.
+      salvageEmbeddingsBeforeDiscard(db);
       // Entries and every child materialization share one deletion authority.
       // Usage events live in state.db and survive so finalize can relink them
       // to the replacement generation's row ids.

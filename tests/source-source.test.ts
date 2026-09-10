@@ -610,6 +610,33 @@ describe("ensureSourceCaches", () => {
     }
   });
 
+  test("reports 'Hydrating source i/n' progress per source before its sync resolves (#954)", async () => {
+    const delayed = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+    const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockImplementation(delayed);
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockImplementation(delayed);
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      bundles: {
+        "npm-source": { npm: "npm:test-pkg@1.2.3" },
+        "git-source": { git: "https://github.com/example/repo.git" },
+      },
+    };
+    const messages: string[] = [];
+    try {
+      await ensureSourceCaches(config, { onProgress: (message) => messages.push(message) });
+      expect(npmSyncSpy).toHaveBeenCalledTimes(1);
+      expect(gitSpy).toHaveBeenCalledTimes(1);
+      // One "Hydrating source i/2: <name>" event per source, fired BEFORE
+      // that source's sync resolves — proving the caller sees progress
+      // while a slow sync is still in flight, not only after the whole call
+      // returns.
+      expect(messages.filter((m) => /^Hydrating source \d+\/2: /.test(m))).toHaveLength(2);
+    } finally {
+      npmSyncSpy.mockRestore();
+      gitSpy.mockRestore();
+    }
+  });
+
   test("git and website sources are still refreshed via the consolidated loop (R2 characterization)", async () => {
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({

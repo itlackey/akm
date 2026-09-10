@@ -12,9 +12,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { UsageError } from "../../src/core/errors";
+import { getCurrentWorkflowScopeKey } from "../../src/workflows/authoring/scope-key";
 import type { UnitDispatcher } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
-import { getWorkflowStatus, listWorkflowRuns } from "../../src/workflows/runtime/runs";
+import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -212,5 +213,26 @@ describe("#919 — `--new` starts a fresh run without touching the active one", 
     if (!(error instanceof UsageError)) throw new Error("unreachable");
     expect(error.hint()).toContain("--new");
     expect(error.hint()).toContain(`akm workflow abandon ${first.run.id}`);
+    // #942: the message itself (not just the hint) names the blocking run's
+    // id and scope, so an operator sees which run and where without having
+    // to also print the hint.
+    expect(error.message).toContain(first.run.id);
+    expect(error.message).toContain(getCurrentWorkflowScopeKey());
+  });
+});
+
+describe("#942 — publishWorkflowRunV4's own scope-local guard names the blocking run's id and scope", () => {
+  test("a direct second startWorkflowRun (bypassing the resolveRunSpecifier resume path) fails with id + scope", async () => {
+    writeTwoStepWorkflow("direct-guard");
+
+    const first = await startWorkflowRun("workflows/direct-guard");
+    expect(first.run.status).toBe("active");
+
+    const error = await startWorkflowRun("workflows/direct-guard").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UsageError);
+    if (!(error instanceof UsageError)) throw new Error("unreachable");
+    expect(error.code).toBe("RESOURCE_ALREADY_EXISTS");
+    expect(error.message).toContain(first.run.id);
+    expect(error.message).toContain(getCurrentWorkflowScopeKey());
   });
 });

@@ -5,6 +5,7 @@ import path from "node:path";
 import { assembleInfo } from "../../src/commands/sources/info";
 import { resolveStashDir } from "../../src/core/common";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
 import { resetQuiet, setQuiet } from "../../src/core/warn";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
@@ -218,6 +219,18 @@ describe("assembleInfo", () => {
     const info = assembleInfo();
     expect(info.defaultBundle).toBeNull();
     expect(typeof info.bundleDir).toBe("string");
+  });
+
+  // #951: scripts (e.g. a host-vs-container health script) previously had to
+  // hardcode akm's data/config/cache/state roots; assembleInfo now exposes
+  // the same resolvers `akm health`/paths.ts use, alongside bundleDir.
+  test("exposes dataDir/configDir/cacheDir/stateDir alongside bundleDir", () => {
+    const info = assembleInfo();
+
+    expect(info.dataDir).toBe(getDataDir());
+    expect(info.configDir).toBe(getConfigDir());
+    expect(info.cacheDir).toBe(getCacheDir());
+    expect(info.stateDir).toBe(getStateDir());
   });
 
   // R-057(b): readIndexStats' error branch used to write straight to

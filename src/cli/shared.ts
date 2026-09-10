@@ -35,6 +35,8 @@ export { parseAllFlagValues };
  *   2  usage error
  *   4  health warn (health command only)
  *  70  internal / unclassified (sysexits EX_SOFTWARE — akm threw unexpectedly)
+ *  75  transient (sysexits EX_TEMPFAIL — retry shortly; another akm process
+ *      holds a lock or is writing state.db right now, not a bad command line)
  *  78  config error
  */
 export const EXIT_CODES = {
@@ -45,6 +47,11 @@ export const EXIT_CODES = {
   // sysexits.h EX_SOFTWARE. Distinct from GENERAL(1) so scripts can tell an
   // expected "not found" outcome from akm itself throwing an unexpected error.
   INTERNAL: 70,
+  // sysexits.h EX_TEMPFAIL (#948 addendum). Distinct from USAGE(2): a
+  // scheduler or cron wrapper classifies 2 as "fix the command line", but a
+  // TransientError means "try again in a few seconds" — a different retry
+  // contract callers can branch on.
+  TEMPFAIL: 75,
   CONFIG: 78,
 } as const;
 
@@ -69,6 +76,8 @@ function classifyExitCode(error: unknown): number {
       return EXIT_CODES.CONFIG;
     case "not-found":
       return EXIT_CODES.GENERAL;
+    case "transient":
+      return EXIT_CODES.TEMPFAIL;
     default:
       return assertNever(error.kind, "classifyExitCode");
   }

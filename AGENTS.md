@@ -40,7 +40,7 @@
 - New test files should not mutate `process.env.HOME =`, `process.chdir(...)`, or `globalThis.fetch =` directly. There is no lint gate for this any more (the static checker was deleted in 0.9.8 as redundant): `src/core/paths.ts` throws `TEST_ISOLATION_MISSING` at runtime when isolation is missing, and the preload tripwire above catches leaks. Use `withMockedFetch` for fetch swaps and restore cwd in a `finally` block when chdir is unavoidable.
 
 ## CLI Contract
-- Failures render to `stderr` as `{ok:false, error, code}`. The canonical exit-code table (`EXIT_CODES` in `src/cli/shared.ts`) is: `0` success, `1` general error / not found, `2` usage error, `4` health warn (`akm health` only), `70` internal / unclassified (any thrown value that is not an `AkmError` — sysexits `EX_SOFTWARE`), `78` config error.
+- Failures render to `stderr` as `{ok:false, error, code}`. The canonical exit-code table (`EXIT_CODES` in `src/cli/shared.ts`) is: `0` success, `1` general error / not found, `2` usage error, `4` health warn (`akm health` only), `70` internal / unclassified (any thrown value that is not an `AkmError` — sysexits `EX_SOFTWARE`), `75` transient / retry shortly (`TransientError` — sysexits `EX_TEMPFAIL`; another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line), `78` config error.
 
 ## LLM Defaults
 

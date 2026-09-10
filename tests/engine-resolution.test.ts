@@ -7,10 +7,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { deepMergeConfig } from "../src/core/config/deep-merge";
+import { ConfigError } from "../src/core/errors";
 import { resolveDispatchModel } from "../src/integrations/agent/builder-shared";
 import {
   collectEngineCredentialValues,
   lookupApiKeyFileValue,
+  lookupApiKeySecretRefValue,
   materializeLlmConnection,
   resolveEngine,
   resolveLlmCredentialValue,
@@ -345,7 +347,7 @@ describe("file-backed engine credential (#905)", () => {
     // shared seam every dispatch path (incl. SDK fallback) calls through.
     const { filePath, dir } = makeTmpFile("from-file\n");
     try {
-      const value = resolveLlmCredentialValue("filed", { names: ["SOME_VAR"], required: false }, filePath, {
+      const value = resolveLlmCredentialValue("filed", { names: ["SOME_VAR"], required: false }, filePath, undefined, {
         SOME_VAR: "from-env",
       });
       expect(value).toBe("from-env");
@@ -418,5 +420,69 @@ describe("file-backed engine credential (#905)", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("secret-store engine credential (#953)", () => {
+  function withSecretRefEngine(ref: string) {
+    return {
+      ...config,
+      engines: {
+        ...config.engines,
+        secreted: {
+          kind: "llm" as const,
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "base-model",
+          apiKey: ref,
+        },
+      },
+    };
+  }
+
+  test("resolves secret:// onto ResolvedLlmUse without reading it", () => {
+    const resolved = resolveLlmEngineUse(withSecretRefEngine("secret://953-lab-key"), [{ engine: "secreted" }]);
+    expect(resolved.apiKeySecretRef).toBe("secret://953-lab-key");
+    expect(resolved.credential).toBeUndefined();
+    expect(resolved.apiKeyFile).toBeUndefined();
+    expect(Object.hasOwn(resolved.connection, "apiKey")).toBe(false);
+  });
+
+  test("resolveEngine forwards apiKeySecretRef through to the lowered llm runner", () => {
+    const resolved = resolveEngine("secreted", withSecretRefEngine("secret://953-lab-key"));
+    expect(resolved.kind).toBe("llm");
+    if (resolved.kind !== "llm") throw new Error("fixture must lower to llm");
+    expect(resolved.apiKeySecretRef).toBe("secret://953-lab-key");
+    expect(resolved.credential).toBeUndefined();
+  });
+
+  test("a literal (non-reference) apiKey is still rejected — only $VAR/${VAR}/secret:// are accepted here", () => {
+    expect(() =>
+      resolveLlmEngineUse(withSecretRefEngine("sk-literal-not-a-reference"), [{ engine: "secreted" }]),
+    ).toThrow(/invalid symbolic apiKey reference/);
+  });
+
+  test("an unresolved secret:// reference throws SECRET_REFERENCE_UNRESOLVED naming only the reference, never a value", () => {
+    // No secret store is configured in this sandboxed test HOME, so the
+    // reference deterministically fails to resolve.
+    const resolved = resolveLlmEngineUse(withSecretRefEngine("secret://953-unset-lab-key"), [{ engine: "secreted" }]);
+    let threw: unknown;
+    try {
+      materializeLlmConnection(resolved);
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(ConfigError);
+    const err = threw as ConfigError;
+    expect(err.code).toBe("SECRET_REFERENCE_UNRESOLVED");
+    expect(err.message).toContain("secret://953-unset-lab-key");
+  });
+
+  test("lookupApiKeySecretRefValue is best-effort: undefined when unresolved, never throws", () => {
+    expect(lookupApiKeySecretRefValue("secret://953-unset-lab-key")).toBeUndefined();
+  });
+
+  test("collectEngineCredentialValues never throws for a secret-store-backed engine whose reference cannot resolve", () => {
+    expect(() => collectEngineCredentialValues(withSecretRefEngine("secret://953-unset-lab-key"))).not.toThrow();
+    expect(collectEngineCredentialValues(withSecretRefEngine("secret://953-unset-lab-key"))).toEqual([]);
   });
 });

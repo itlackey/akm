@@ -57,3 +57,68 @@ describe("akm models copy-defaults", () => {
     expect(models?.subCommands?.["copy-defaults"]?.args).toHaveProperty("overwrite");
   });
 });
+
+describe("akm models list (#946)", () => {
+  test("reports source/via/engine for literal, user-overridden, and engine-backed columns", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-models-list-"));
+    const userMap = path.join(root, "akm", "models.json");
+    try {
+      fs.mkdirSync(path.dirname(userMap), { recursive: true });
+      fs.writeFileSync(
+        userMap,
+        JSON.stringify({
+          version: 1,
+          aliases: {
+            fast: { claude: "operator-haiku", opencode: { engine: "local-fast" } },
+          },
+        }),
+      );
+      const configDir = path.dirname(userMap);
+      fs.writeFileSync(
+        path.join(configDir, "config.json"),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          engines: {
+            "local-fast": { kind: "agent", platform: "opencode", model: "krang/qwen3.5-9b" },
+          },
+        }),
+      );
+
+      await withEnv({ XDG_CONFIG_HOME: root }, async () => {
+        const result = await runCliCapture(["models", "list"]);
+        expect(result.code).toBe(0);
+        const parsed = JSON.parse(result.stdout) as {
+          rows: Array<{
+            alias: string;
+            column: string;
+            model: string;
+            source: string;
+            via: string;
+            engine?: string;
+          }>;
+        };
+        const fastClaude = parsed.rows.find((row) => row.alias === "fast" && row.column === "claude");
+        expect(fastClaude).toMatchObject({ model: "operator-haiku", source: "user", via: "literal" });
+        expect(fastClaude).not.toHaveProperty("engine");
+
+        const fastOpencode = parsed.rows.find((row) => row.alias === "fast" && row.column === "opencode");
+        expect(fastOpencode).toMatchObject({
+          model: "krang/qwen3.5-9b",
+          source: "user",
+          via: "engine",
+          engine: "local-fast",
+        });
+
+        const balancedClaude = parsed.rows.find((row) => row.alias === "balanced" && row.column === "claude");
+        expect(balancedClaude).toMatchObject({ source: "default", via: "literal" });
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("is registered as a system command", async () => {
+    const models = (main.subCommands as Record<string, { subCommands?: Record<string, unknown> }>).models;
+    expect(models?.subCommands).toHaveProperty("list");
+  });
+});

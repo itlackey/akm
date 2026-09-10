@@ -31,7 +31,7 @@ import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatt
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { getDbPath, getIndexWriterLockPath } from "../../../src/core/paths";
+import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
@@ -1924,5 +1924,36 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     state.close();
 
     expect(() => getProposal(stash, created.id)).toThrow(/invalid current ref/i);
+  });
+});
+
+// ── #956 fix (fix-index item 1) — a rebuild-in-progress skip is fail-open ──
+
+describe("akmProposalAccept succeeds while a live index rebuild holds the lock (#956 fix)", () => {
+  test("finalizes normally instead of throwing 'index finalization failed'", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const created = createProposal(stash, {
+      ref: "lessons/accept-during-rebuild",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    // A live pid holds the index rebuild lock — indexWrittenAssets must skip
+    // its inline upsert (the in-progress rebuild will pick up the change on
+    // its own) and report the skip as success, not failure, so the caller
+    // that gates on that boolean never sees "index finalization failed"
+    // while an unrelated `akm index` run is in progress.
+    const lockPath = getIndexRebuildLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+
+    const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+
+    fs.rmSync(lockPath, { force: true });
+    expect(accepted.proposal.status).toBe("accepted");
+    expect(getProposal(stash, created.id).status).toBe("accepted");
   });
 });

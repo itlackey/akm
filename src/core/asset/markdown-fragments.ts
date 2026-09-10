@@ -14,6 +14,8 @@ import { markdownHeadingSlug, parseMarkdownToc } from "./markdown";
 
 export const MARKDOWN_FRAGMENT_MAX_CHARS = 1600;
 export const MARKDOWN_FRAGMENT_PREFIX = "akm-fragment-";
+export const MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS = 3200;
+export const MARKDOWN_FRAGMENT_SELECTED_LABEL = "[Selected matching fragment]";
 
 export interface MarkdownFragment {
   fragmentId: string;
@@ -162,4 +164,47 @@ export function fragmentForSelector(body: string, selector: string): MarkdownFra
   return splitMarkdownFragments(body).find(
     (fragment) => fragment.fragmentId === selector || fragment.headingSlug === selector,
   );
+}
+
+export interface MarkdownLeadContext {
+  content: string;
+  truncated: boolean;
+}
+
+/**
+ * Assemble the document lead and selected fragment under one hard character
+ * budget. The selected match is always labelled and last. When both pieces do
+ * not fit, lead bytes are discarded before any selected-fragment bytes so the
+ * evidence that caused retrieval remains intact whenever the caller's budget
+ * can hold it.
+ */
+export function buildMarkdownLeadContext(
+  fragments: readonly MarkdownFragment[],
+  selectedOrdinal: number,
+  maxChars = MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
+): MarkdownLeadContext {
+  if (!Number.isSafeInteger(maxChars) || maxChars <= 0) {
+    throw new RangeError("Markdown fragment context maxChars must be a positive safe integer");
+  }
+  const selected = fragments[selectedOrdinal];
+  if (!selected) throw new RangeError(`Markdown fragment ordinal ${selectedOrdinal} is out of range`);
+
+  const selectedBlock = `${MARKDOWN_FRAGMENT_SELECTED_LABEL}\n${selected.text}`;
+  if (selectedBlock.length > maxChars) {
+    return { content: selectedBlock.slice(0, maxChars), truncated: true };
+  }
+
+  const lead = fragments[0];
+  if (!lead || lead.ordinal === selected.ordinal) return { content: selectedBlock, truncated: false };
+
+  const separator = "\n\n";
+  const availableLeadChars = maxChars - selectedBlock.length - separator.length;
+  if (availableLeadChars <= 0) return { content: selectedBlock, truncated: true };
+
+  const leadText = lead.text.slice(0, availableLeadChars).trimEnd();
+  if (!leadText) return { content: selectedBlock, truncated: true };
+  return {
+    content: `${leadText}${separator}${selectedBlock}`,
+    truncated: leadText.length < lead.text.length,
+  };
 }

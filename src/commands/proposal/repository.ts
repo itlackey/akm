@@ -116,7 +116,11 @@ import {
   type ProposalSource,
   type ProposalStatus,
 } from "./proposal-types";
-import { hasCanonicalProposalValidator } from "./validators/proposal-validators";
+import {
+  canonicalOnlyProposalValidators,
+  hasCanonicalProposalValidator,
+  runProposalValidators,
+} from "./validators/proposal-validators";
 import { repairProposalContent, validateProposal } from "./validators/proposals";
 
 const PROMOTION_LINT_ISSUE_TYPES = new Set<LintIssueType>(["unquoted-colon", "missing-ref", "stale-path"]);
@@ -630,17 +634,25 @@ export function createProposal(
   const mintedBeforeHash = mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined;
 
   if (hasCanonicalProposalValidator(parsedRef.type)) {
-    const report = validateProposal({
-      id: "pending",
-      ref: normalizedRef,
-      status: "pending",
-      source: input.source,
-      createdAt: "",
-      updatedAt: "",
-      payload: { ...input.payload, content: proposalContent },
-      changes: mintedChanges,
-      proposedTarget: { source: proposalTarget.source, root: targetRoot },
-    });
+    // Mint-time gate: structural shape only (generic + canonical-per-type),
+    // NOT the full quality-validator list — see canonicalOnlyProposalValidators'
+    // doc comment (#952 review round 2). Quality validators (including the
+    // blocking reflect-truncation-marker guard) run at `proposal accept` /
+    // drain-promotion time via validateProposal instead.
+    const report = runProposalValidators(
+      {
+        id: "pending",
+        ref: normalizedRef,
+        status: "pending",
+        source: input.source,
+        createdAt: "",
+        updatedAt: "",
+        payload: { ...input.payload, content: proposalContent },
+        changes: mintedChanges,
+        proposedTarget: { source: proposalTarget.source, root: targetRoot },
+      },
+      canonicalOnlyProposalValidators,
+    );
     if (!report.ok) {
       return rejectProposal(
         "invalid_canonical_structure",

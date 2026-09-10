@@ -67,3 +67,33 @@ describe("standalone extract CLI engine boundary", () => {
     expect(help).not.toMatch(/cron fallback|falls back to .*cron/i);
   });
 });
+
+describe("improve --run/--since are report-only flags (#944)", () => {
+  test("--run with no scope is rejected before any lock/log/index side effect", async () => {
+    const result = await runCli(["improve", "--run", "abc123"]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stderr) as { error: string; code?: string };
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.error).toContain("--run");
+    expect(parsed.error).toContain("akm improve report");
+  });
+
+  test("--since with a real scope is rejected the same way", async () => {
+    const result = await runCli(["improve", "skill", "--since", "7d"]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stderr) as { error: string; code?: string };
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.error).toContain("--since");
+    expect(parsed.error).toContain("akm improve report");
+  });
+
+  test("--run is not rejected by the report-only-flag guard when the scope is report", async () => {
+    const result = await runCli(["improve", "report", "--run", "abc123"]);
+    // No improve_runs row exists in this fresh sandbox, so runImproveReportQuery
+    // itself fails to find it — that is a different, expected error. What this
+    // asserts is narrower: the report-only-flag guard this item adds must not
+    // also fire once the scope is actually "report".
+    const parsed = JSON.parse(result.stderr || "{}") as { error?: string };
+    expect(parsed.error ?? "").not.toContain("only applies to");
+  });
+});

@@ -483,6 +483,35 @@ export function formatListPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
+/** Render `akm models list`'s `{ rows }` as a column-aligned table (#946). */
+export function formatModelsListPlain(r: Record<string, unknown>): string {
+  const rows = Array.isArray(r.rows) ? (r.rows as Record<string, unknown>[]) : [];
+  if (rows.length === 0) return "No model aliases configured.";
+  const headers = ["ALIAS", "COLUMN", "MODEL", "SOURCE", "VIA", "ENGINE"] as const;
+  const cells: string[][] = rows.map((row) => [
+    String(row.alias ?? "?"),
+    String(row.column ?? "?"),
+    String(row.model ?? "?"),
+    String(row.source ?? "?"),
+    String(row.via ?? "?"),
+    row.engine !== undefined ? String(row.engine) : "-",
+  ]);
+  const widths = headers.map((header, i) => {
+    let width = header.length;
+    for (const cols of cells) {
+      const cell = cols[i];
+      if (cell !== undefined && cell.length > width) width = cell.length;
+    }
+    return width;
+  });
+  const renderRow = (cols: readonly string[]): string =>
+    cols
+      .map((cell, i) => cell.padEnd(widths[i] ?? cell.length))
+      .join("  ")
+      .trimEnd();
+  return [renderRow(headers), ...cells.map(renderRow)].join("\n");
+}
+
 /** Render a single `SourceEntry` — `akm bundle show <name>`'s detail view of one `list` row. */
 export function formatBundleShowPlain(r: Record<string, unknown>): string {
   const name = typeof r.name === "string" ? r.name : "unknown";

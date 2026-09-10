@@ -5,6 +5,7 @@ import {
   type CronExec,
   type CronExecResult,
   cronBlockBody,
+  extractCronInvocation,
   extractInstalledTarget,
   listBlocks,
   removeBlock,
@@ -62,6 +63,18 @@ describe("cron backend helpers", () => {
     expect(line).not.toContain("AKM_LLM_API_KEY");
   });
 
+  // #951: the raw crontab redirect is a bootstrap safety net that only
+  // needs to catch akm crashing before it reaches its own per-run log
+  // (src/tasks/run/task-log.ts); an unconditional `>>` append grew forever
+  // (a two-month-old "No stash directory found" line survived in every
+  // container). Truncate instead so the file always holds exactly the
+  // latest run's raw output.
+  test("buildCronLine truncates the raw log redirect instead of appending forever", () => {
+    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", contextPath());
+    expect(line).toContain("> /var/log/akm/ping.log 2>&1");
+    expect(line).not.toContain(">>");
+  });
+
   test("buildCronLine renders a qualified workflow binding without task-only arguments", () => {
     const workflow: SchedulerBinding = {
       ...TASK,
@@ -89,6 +102,19 @@ describe("cron backend helpers", () => {
     expect(extractInstalledTarget(cronBlockBody(withTarget, false))).toBe("team-stash");
     const primary = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", contextPath());
     expect(extractInstalledTarget(primary)).toBeUndefined();
+  });
+
+  // #951: `extractCronInvocation` must parse a freshly built `>` (truncate)
+  // row and the identical row with `>` replaced by `>>` (the append form
+  // every pre-change row on disk still has) into the same invocation — a
+  // rolling upgrade reads both shapes side by side, and the parse must not
+  // depend on which redirect operator wrote the row.
+  test("extractCronInvocation parses a truncating `>` row the same as the pre-change `>>` row", () => {
+    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", contextPath());
+    expect(line).toContain(" > ");
+    const legacyAppendLine = line.replace(" > ", " >> ");
+    expect(legacyAppendLine).toContain(" >> ");
+    expect(extractCronInvocation(legacyAppendLine)).toEqual(extractCronInvocation(line));
   });
 
   test("buildCronLine quotes paths containing spaces", () => {
@@ -765,6 +791,9 @@ describe("cron backend drift detection", () => {
     expect(wrapperContent).toContain(`/${"x".repeat(1100)}`);
     expect(installedCrontab).toContain(`sh ${wrapperPath}`);
     expect(installedCrontab).not.toContain("x".repeat(1100));
+    // #951: the wrapper-spill redirect truncates too, same as the direct line.
+    expect(installedCrontab).toContain("> ");
+    expect(installedCrontab).not.toContain(">>");
     for (const line of installedCrontab.split("\n")) {
       if (line.startsWith("#")) continue;
       expect(Buffer.byteLength(line, "utf8")).toBeLessThanOrEqual(1000);

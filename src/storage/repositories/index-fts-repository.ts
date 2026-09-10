@@ -9,7 +9,7 @@
  * explicit full recovery rebuild.
  */
 
-import { fragmentForSelector, splitMarkdownFragments } from "../../core/asset/markdown-fragments";
+import { splitMarkdownFragments } from "../../core/asset/markdown-fragments";
 import { stableFtsScore } from "../../core/lexical-score";
 import { warn } from "../../core/warn";
 import type { IndexDocument } from "../../indexer/passes/metadata";
@@ -124,14 +124,87 @@ export function getIndexedMarkdownFragment(
   db: Database,
   itemRef: string,
   fragmentId: string,
-): { content: string } | undefined {
-  const row = db
-    .prepare(
-      "SELECT s.safe_markdown FROM entry_fragments_fts f JOIN entry_fragments s ON s.entry_id = f.entry_id JOIN entries e ON e.id = f.entry_id WHERE e.item_ref = ? AND f.fragment_id = ?",
-    )
-    .get(itemRef, fragmentId) as { safe_markdown: string } | undefined;
-  const fragment = row ? fragmentForSelector(row.safe_markdown, fragmentId) : undefined;
-  return fragment ? { content: fragment.text } : undefined;
+): IndexedMarkdownFragment | undefined {
+  return getIndexedMarkdownFragments(db, [{ itemRef, fragmentId }])[0];
+}
+
+/**
+ * Batch the selected-hit projection read. Search commonly enriches several
+ * fragment hits at once; reading all indexed-safe parents in chunks avoids an
+ * N-query loop, while grouping selectors by parent ensures each safe revision
+ * is split at most once.
+ */
+export function getIndexedMarkdownFragments(
+  db: Database,
+  selections: readonly IndexedMarkdownFragmentSelection[],
+): Array<IndexedMarkdownFragment | undefined> {
+  if (selections.length === 0) return [];
+  const itemRefs = [...new Set(selections.map((selection) => selection.itemRef))];
+  const sourceByRef = new Map<string, string>();
+  for (let offset = 0; offset < itemRefs.length; offset += SQLITE_CHUNK_SIZE) {
+    const chunk = itemRefs.slice(offset, offset + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT e.item_ref, s.safe_markdown FROM entry_fragments s JOIN entries e ON e.id = s.entry_id WHERE e.item_ref IN (${placeholders})`,
+      )
+      .all(...chunk) as Array<{ item_ref: string; safe_markdown: string }>;
+    for (const row of rows) sourceByRef.set(row.item_ref, row.safe_markdown);
+  }
+
+  const fragmentsByRef = new Map<string, ReturnType<typeof splitMarkdownFragments>>();
+  for (const [itemRef, safeMarkdown] of sourceByRef) {
+    fragmentsByRef.set(itemRef, splitMarkdownFragments(safeMarkdown));
+  }
+  return selections.map((selection) => {
+    const safeMarkdown = sourceByRef.get(selection.itemRef);
+    const fragments = fragmentsByRef.get(selection.itemRef);
+    if (safeMarkdown === undefined || !fragments) return undefined;
+    const fragment = fragments.find(
+      (candidate) => candidate.fragmentId === selection.fragmentId || candidate.headingSlug === selection.fragmentId,
+    );
+    return fragment ? materializeIndexedMarkdownFragment(fragment, fragments, safeMarkdown.length) : undefined;
+  });
+}
+
+function materializeIndexedMarkdownFragment(
+  fragment: ReturnType<typeof splitMarkdownFragments>[number],
+  fragments: ReturnType<typeof splitMarkdownFragments>,
+  parentChars: number,
+): IndexedMarkdownFragment {
+  return {
+    content: fragment.text,
+    ordinal: fragment.ordinal,
+    count: fragments.length,
+    startLine: fragment.startLine,
+    endLine: fragment.endLine,
+    previousFragmentId: fragments[fragment.ordinal - 1]?.fragmentId,
+    nextFragmentId: fragments[fragment.ordinal + 1]?.fragmentId,
+    fragmentChars: fragment.text.length,
+    parentChars,
+    fragments,
+  };
+}
+
+export interface IndexedMarkdownFragmentSelection {
+  itemRef: string;
+  fragmentId: string;
+}
+
+/** Indexed-safe fragment data used by show context assembly and hit provenance. */
+export interface IndexedMarkdownFragment {
+  content: string;
+  /** Internal zero-based position. Public output converts this to one-based. */
+  ordinal: number;
+  count: number;
+  startLine: number;
+  endLine: number;
+  previousFragmentId?: string;
+  nextFragmentId?: string;
+  fragmentChars: number;
+  parentChars: number;
+  /** Complete indexed revision; never surfaced directly in JSON. */
+  fragments: ReturnType<typeof splitMarkdownFragments>;
 }
 
 function runFtsQuery(

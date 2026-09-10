@@ -139,8 +139,17 @@ export class LocalEmbedder implements Embedder {
    * Embed a batch of texts. Processes in chunks of `LOCAL_BATCH_SIZE` (32) so
    * the transformers pipeline can run genuine batched inference rather than one
    * call per text. Each chunk is checked against the AbortSignal between calls.
+   *
+   * `onBatch`, when given, fires once per chunk (indices into `texts` + the
+   * chunk's embeddings) as it completes (#954) — parity with
+   * `RemoteEmbedder.embedBatch`'s per-provider-batch commit callback, so a
+   * caller committing per batch does not need to special-case the local path.
    */
-  async embedBatch(texts: string[], signal?: AbortSignal): Promise<EmbeddingVector[]> {
+  async embedBatch(
+    texts: string[],
+    signal?: AbortSignal,
+    onBatch?: (indices: number[], embeddings: EmbeddingVector[]) => void,
+  ): Promise<EmbeddingVector[]> {
     if (texts.length === 0) return [];
     if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
@@ -167,9 +176,15 @@ export class LocalEmbedder implements Embedder {
       if (batch !== chunk.length || batchResult.data.length !== batch * dim) {
         throw new Error("unexpected pipeline return shape for batch input");
       }
+      const chunkEmbeddings: EmbeddingVector[] = [];
       for (let row = 0; row < chunk.length; row++) {
-        results.push(Array.from(batchResult.data.subarray(row * dim, (row + 1) * dim)) as number[]);
+        chunkEmbeddings.push(Array.from(batchResult.data.subarray(row * dim, (row + 1) * dim)) as number[]);
       }
+      results.push(...chunkEmbeddings);
+      onBatch?.(
+        Array.from({ length: chunk.length }, (_, row) => i + row),
+        chunkEmbeddings,
+      );
     }
     return results;
   }

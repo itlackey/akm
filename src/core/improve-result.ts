@@ -4,6 +4,7 @@
 
 import { cloneExecutionJsonObject } from "../execution/json";
 import { isRecord } from "./common";
+import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./config/engine-semantics";
 import type { AkmImproveResult } from "./improve-types";
 
 export type ImproveResultEnvelope = AkmImproveResult;
@@ -27,6 +28,7 @@ const COMMON_FIELDS = [
   "plannedRefs",
   "plan",
   "actions",
+  "skippedProcesses",
   "distillSkipped",
   "validationFailures",
   "schemaRepairs",
@@ -57,6 +59,7 @@ const COMMON_FIELDS = [
   "sync",
   "writtenPaths",
   "terminated",
+  "usageReport",
 ] as const;
 
 const V2_FIELDS = new Set<string>([...COMMON_FIELDS, "strategy", "strategyFilteredRefs"]);
@@ -190,6 +193,47 @@ function validateProactivePlan(value: unknown): void {
   }
 }
 
+/** #947 — plan.processes: one row per IMPROVE_PROCESS_ENGINE_CAPABILITIES name, plus an optional "triage.judgment" row. */
+function validateProcessRoutingRows(value: unknown): void {
+  if (!Array.isArray(value)) fail("plan.processes must be an array");
+  const canonicalNames = Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES);
+  const engineKinds = new Set(["llm", "agent", "sdk"]);
+  const seen = new Set<string>();
+  for (const row of value) {
+    if (!isRecord(row)) fail("plan.processes entries must be objects");
+    requireExactFields(
+      row,
+      new Set(["process", "enabled", "engine", "model", "engineKind", "notices", "unavailable", "eligibleRefs"]),
+    );
+    if (
+      typeof row.process !== "string" ||
+      !(canonicalNames.includes(row.process) || row.process === "triage.judgment")
+    ) {
+      fail("plan.processes.process is invalid");
+    }
+    if (seen.has(row.process)) fail(`plan.processes must not repeat "${row.process}"`);
+    seen.add(row.process);
+    if (typeof row.enabled !== "boolean") fail("plan.processes.enabled must be a boolean");
+    if (row.engine !== undefined && typeof row.engine !== "string") fail("plan.processes.engine must be a string");
+    if (row.model !== undefined && typeof row.model !== "string") fail("plan.processes.model must be a string");
+    if (row.engineKind !== undefined && (typeof row.engineKind !== "string" || !engineKinds.has(row.engineKind))) {
+      fail("plan.processes.engineKind is invalid");
+    }
+    validateLoweringNotices(row.notices);
+    if (row.unavailable !== undefined) {
+      if (!isRecord(row.unavailable)) fail("plan.processes.unavailable must be an object");
+      requireExactFields(row.unavailable, new Set(["configKey", "reason"]));
+      if (typeof row.unavailable.configKey !== "string" || typeof row.unavailable.reason !== "string") {
+        fail("plan.processes.unavailable must contain string configKey and reason");
+      }
+    }
+    if (row.eligibleRefs !== undefined) requireCount(row, "eligibleRefs", "plan.processes entry");
+  }
+  for (const name of canonicalNames) {
+    if (!seen.has(name)) fail(`plan.processes must contain exactly one "${name}" row`);
+  }
+}
+
 function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: readonly string[]): void {
   if (!isRecord(value)) fail("plan must be an object");
   requireExactFields(
@@ -202,6 +246,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
       "limits",
       "gates",
       "effectiveRefs",
+      "processes",
       "proactive",
       "consolidation",
       "stages",
@@ -333,6 +378,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.limits.totalCeiling !== undefined && value.effectiveRefs.length > (value.limits.totalCeiling as number)) {
     fail("plan.effectiveRefs cannot exceed plan.limits.totalCeiling");
   }
+  validateProcessRoutingRows(value.processes);
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 
@@ -386,6 +432,7 @@ function validateCommon(value: Record<string, unknown>): void {
 
   for (const field of [
     "actions",
+    "skippedProcesses",
     "validationFailures",
     "schemaRepairs",
     "extract",
@@ -433,6 +480,7 @@ function validateCommon(value: Record<string, unknown>): void {
     "terminated",
     "plan",
     "deadUrlCoverage",
+    "usageReport",
   ] as const) {
     if (value[field] !== undefined && !isRecord(value[field])) fail(`${field} must be an object`);
   }

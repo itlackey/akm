@@ -48,6 +48,7 @@ import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
+import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { _setRegistryNetworkOverridesForTests } from "../src/registry/network";
 import { resetAllSeams } from "./_helpers/seams";
@@ -307,6 +308,7 @@ function resetSingletons(): void {
   clearEmbeddingCache();
   resetLocalEmbedder();
   resetGraphBoostCache();
+  _setAssetMutationLeaseSyncTimingForTests(undefined);
   // Enable quiet mode by default in tests so production [improve]/warn/info
   // lines do not flood stderr and bury bun's "(fail) <test name>" output.
   // Individual tests that need to assert on log output can call setQuiet(false)

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
+  getConfigValueSource,
   getImproveProcessConfig,
   type ImproveProfileConfig,
   loadConfig,
@@ -14,11 +15,13 @@ import {
   updateConfig,
 } from "../src/core/config/config";
 import { backupExistingConfig } from "../src/core/config/config-io";
+import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schema";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import {
   type Cleanup,
+  mockHomedir,
   sandboxHome,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -524,6 +527,23 @@ describe("embedding config", () => {
     saveConfig({ ...loadConfig(), embedding: undefined });
     expect(loadConfig().embedding).toBeUndefined();
   });
+
+  test("ignores the retired `embedding.chunkSize` key, unvalidated, with no error and no warning (#954)", () => {
+    // Nothing in src/ ever read embedding.chunkSize; it is dead, not migrated. Before #954 it was
+    // still a *validated* schema field (positiveInt), so an out-of-range value failed config
+    // load even though the value was never used. Retiring the key drops the validation with it:
+    // `embedding` stays `.passthrough()`, so a config that still sets chunkSize — valid or not —
+    // is simply carried through unread, never rejected and never warned about. -3 is chosen
+    // because it fails the old `positiveInt` (int + positive) validation, making this the
+    // distinguishing case: it throws on the unchanged schema and loads clean once retired.
+    writeCurrentConfig({ embedding: { chunkSize: -3 } });
+    const warnings = captureWarnings(() => {
+      expect(() => loadConfig()).not.toThrow();
+    });
+    expect(warnings).toEqual([]);
+    expect(loadConfig().embedding?.chunkSize).toBe(-3);
+    expect(Object.keys(EmbeddingConnectionConfigSchema.shape)).not.toContain("chunkSize");
+  });
 });
 
 // ── LLM engine config ───────────────────────────────────────────────────────
@@ -915,6 +935,279 @@ describe("0.9 config shape parsing", () => {
       expect(config.engines?.cloud?.apiKey).toBe("sk-secret");
     });
     expect(warnings.some((w) => w.includes("engines.<name>.apiKey"))).toBe(true);
+  });
+});
+
+// ── `extends` inheritance (#945) ────────────────────────────────────────────
+
+describe("extends inheritance (#945)", () => {
+  test("merges a base config from a relative path, local wins", () => {
+    const dir = path.dirname(getConfigPath());
+    fs.mkdirSync(path.join(dir, "shared"), { recursive: true });
+    writeRawConfig(
+      path.join(dir, "shared", "shared.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          fast: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "base-model" },
+        },
+        output: { format: "text", detail: "full" },
+      }),
+    );
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        extends: "./shared/shared.json",
+        output: { detail: "brief" },
+      }),
+    );
+
+    const config = loadConfig();
+    expect(config.engines?.fast?.model).toBe("base-model");
+    // Local wins: output.detail overridden, output.format inherited.
+    expect(config.output).toEqual({ format: "text", detail: "brief" });
+  });
+
+  test("expands ~ in a filesystem extends path", () => {
+    const home = mockHomedir();
+    try {
+      fs.mkdirSync(path.join(home.dir, "fleet"), { recursive: true });
+      fs.writeFileSync(
+        path.join(home.dir, "fleet", "shared.json"),
+        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "auto" }),
+      );
+      writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "~/fleet/shared.json" }));
+
+      expect(loadConfig().semanticSearchMode).toBe("auto");
+    } finally {
+      home.cleanup();
+    }
+  });
+
+  test("supports a chain (A extends B extends C)", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(path.join(dir, "c.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
+    writeRawConfig(
+      path.join(dir, "b.json"),
+      JSON.stringify({ configVersion: "0.9.0", extends: "./c.json", semanticSearchMode: "auto" }),
+    );
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./b.json" }));
+
+    const config = loadConfig();
+    expect(config.archiveRetentionDays).toBe(30);
+    expect(config.semanticSearchMode).toBe("auto");
+  });
+
+  test("throws ConfigError on a two-hop cycle", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(path.join(dir, "b.json"), JSON.stringify({ configVersion: "0.9.0", extends: getConfigPath() }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: path.join(dir, "b.json") }));
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/cycle/i);
+  });
+
+  test("throws ConfigError when extends resolves to a self-loop", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: getConfigPath() }));
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/cycle/i);
+  });
+
+  test("throws ConfigError on a missing extends file, naming the ref", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./does-not-exist.json" }));
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/does-not-exist\.json/);
+  });
+
+  test("throws ConfigError when extends is not a non-empty string", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "" }));
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  test("the base config runs through its own independent version-shim pass", () => {
+    // The synthetic "0.0.1" -> "0.9.0" shim moves a root `defaultEngine` under
+    // `defaults.llmEngine` (config-version-shim.ts). Writing the BASE at that
+    // old version proves the base gets its own shim pass, independent of the
+    // (current-version) local file that extends it.
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(
+      path.join(dir, "old-base.json"),
+      JSON.stringify({
+        configVersion: "0.0.1",
+        defaultEngine: "legacy",
+        engines: { legacy: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "m" } },
+      }),
+    );
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./old-base.json" }));
+
+    const config = loadConfig();
+    expect(config.defaults?.llmEngine).toBe("legacy");
+    expect((config as unknown as Record<string, unknown>).defaultEngine).toBeUndefined();
+  });
+
+  test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
+    const fleetDir = makeTmpDir();
+    try {
+      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
+      fs.writeFileSync(
+        path.join(fleetDir, "config", "shared.json"),
+        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 14 }),
+      );
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          bundles: { fleet: { path: fleetDir } },
+          extends: "fleet//config/shared.json",
+        }),
+      );
+
+      const config = loadConfig();
+      expect(config.archiveRetentionDays).toBe(14);
+    } finally {
+      cleanup(fleetDir);
+    }
+  });
+
+  test("extends bundle ref against a non-filesystem bundle is a ConfigError naming the bundle", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        bundles: { fleet: { git: "https://example.test/fleet.git" } },
+        extends: "fleet//config/shared.json",
+      }),
+    );
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/fleet/);
+  });
+
+  test("rejects an absolute path after bundle//", () => {
+    const fleetDir = makeTmpDir();
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          bundles: { fleet: { path: fleetDir } },
+          extends: "fleet///etc/passwd",
+        }),
+      );
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(/absolute/);
+    } finally {
+      cleanup(fleetDir);
+    }
+  });
+
+  test("rejects a bundle//<path> that escapes the bundle's content root", () => {
+    const fleetDir = makeTmpDir();
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          bundles: { fleet: { path: path.join(fleetDir, "content") } },
+          extends: "fleet//../outside.json",
+        }),
+      );
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(/escapes/);
+    } finally {
+      cleanup(fleetDir);
+    }
+  });
+
+  test("config get extends returns the locally configured ref (not silently dropped)", () => {
+    // Deliberate deviation from a literal "strip extends before validation"
+    // reading: `mutateConfig` (config set/unset) reads the EFFECTIVE config as
+    // `current` and writes a mutated copy of the SAME object back to the local
+    // file (pre-existing behavior — see DEFAULT_CONFIG baking into config.json
+    // on any write). Stripping `extends` from the effective object would mean
+    // any `config set` after adopting `extends` silently deletes the
+    // directive from disk. Keeping it lets it round-trip.
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 7 }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+
+    const config = loadConfig();
+    expect(config.archiveRetentionDays).toBe(7);
+    expect((config as unknown as Record<string, unknown>).extends).toBe("./base.json");
+  });
+
+  test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
+    // Round-1 review finding: mutateConfig used to write the entire
+    // extends-merged EFFECTIVE config back to the local file on any
+    // `config set`/`unset`, baking every inherited field (engines,
+    // improve.strategies, ...) into the local file on the very next
+    // ordinary write — defeating the whole point of `extends`.
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(
+      path.join(dir, "base.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          fast: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "base-model" },
+        },
+        improve: { strategies: { nightly: { engine: "fast" } } },
+        archiveRetentionDays: 30,
+      }),
+    );
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+
+    // `akm config set output.detail full` — an unrelated key. `updateConfig`
+    // goes through `mutateConfig` the same way `config set`'s CLI handler does.
+    updateConfig({ output: { detail: "full" } });
+
+    const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(raw.extends).toBe("./base.json");
+    expect(raw.output).toEqual({ detail: "full" });
+    // The base's fields must NOT have been duplicated into the local file.
+    expect(raw.engines).toBeUndefined();
+    expect(raw.improve).toBeUndefined();
+    expect(raw.archiveRetentionDays).toBeUndefined();
+
+    // The effective (loaded) config is unaffected: still inherited.
+    const config = loadConfig();
+    expect(config.engines?.fast?.model).toBe("base-model");
+    expect(config.archiveRetentionDays).toBe(30);
+    expect(config.output).toEqual({ format: "json", detail: "full" });
+  });
+});
+
+describe("getConfigValueSource (#945)", () => {
+  test("reports 'default' when no config.json exists", () => {
+    expect(getConfigValueSource("semanticSearchMode")).toBe("default");
+  });
+
+  test("reports 'local' for a key set in the local file", () => {
+    writeCurrentConfig({ semanticSearchMode: "auto" });
+    expect(getConfigValueSource("semanticSearchMode")).toBe("local");
+  });
+
+  test("reports 'extends:<ref>' for a key that only the base sets", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+
+    expect(getConfigValueSource("archiveRetentionDays")).toBe("extends:./base.json");
+  });
+
+  test("reports 'default' for a key neither the local file nor any base sets", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0" }));
+    expect(getConfigValueSource("archiveRetentionDays")).toBe("default");
+  });
+
+  test("prefers 'local' over an inherited value for the same key", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({ configVersion: "0.9.0", extends: "./base.json", archiveRetentionDays: 5 }),
+    );
+
+    expect(getConfigValueSource("archiveRetentionDays")).toBe("local");
   });
 });
 

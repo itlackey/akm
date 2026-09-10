@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
+import { dominantAgentFailureReason } from "../src/commands/health/checks";
 import { summarizePhaseDurations } from "../src/commands/health/improve-metrics";
 import { matchImproveTaskId } from "../src/commands/health/task-runs";
 import type { WindowResult } from "../src/commands/health/types";
@@ -77,5 +78,31 @@ describe("matchImproveTaskId", () => {
 
   test("returns 'manual' for an unparseable start timestamp", () => {
     expect(matchImproveTaskId("not-a-date", "2026-01-01T00:01:00Z", [])).toBe("manual");
+  });
+});
+
+describe("dominantAgentFailureReason", () => {
+  test("exactly 50% counts as dominant", () => {
+    expect(dominantAgentFailureReason({ timeout: 6, non_zero_exit: 6 })).toEqual({
+      reason: "non_zero_exit",
+      count: 6,
+      total: 12,
+    });
+  });
+
+  test("below 50% is undefined", () => {
+    expect(dominantAgentFailureReason({ timeout: 5, non_zero_exit: 4, spawn_failed: 3 })).toBeUndefined();
+  });
+
+  test("a tie between two reasons picks the alphabetically first", () => {
+    expect(dominantAgentFailureReason({ timeout: 5, spawn_failed: 5 })).toEqual({
+      reason: "spawn_failed",
+      count: 5,
+      total: 10,
+    });
+  });
+
+  test("an empty object is undefined", () => {
+    expect(dominantAgentFailureReason({})).toBeUndefined();
   });
 });

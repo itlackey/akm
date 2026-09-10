@@ -3,6 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { setSecret } from "../src/commands/env/secret";
 import * as healthChecks from "../src/commands/health/checks";
 import {
   HEALTH_CHECKS,
@@ -12,6 +16,7 @@ import {
 } from "../src/commands/health/checks";
 import type { AkmConfig } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
+import { withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const llm = {
   kind: "llm" as const,
@@ -297,6 +302,141 @@ describe("health engine probes", () => {
     expect(JSON.stringify(improve)).not.toContain("PRIVATE_IMPROVE_TOKEN");
   });
 
+  test("#950: names the env asset that supplies an unavailable required credential, never the variable name", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
+      defaults: { llmEngine: "improve" },
+    };
+    const improve = await runDefaultLlmEngineProbe({
+      loadConfig: () => config,
+      env: {},
+      listEnvAssets: () => [{ ref: "env/lab", path: "/stash/env/lab.env", keys: ["PRIVATE_IMPROVE_TOKEN"] }],
+    });
+    expect(improve.status).toBe("warn");
+    expect(improve.message).toContain("env/lab");
+    expect(improve.message).toContain("akm env run env/lab");
+    expect(improve.evidence?.suppliedByEnvAsset).toBe("env/lab");
+    expect(JSON.stringify(improve)).not.toContain("PRIVATE_IMPROVE_TOKEN");
+  });
+
+  test("#950: no matching env asset keeps the generic unavailable message and a null suppliedByEnvAsset", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
+      defaults: { llmEngine: "improve" },
+    };
+    const improve = await runDefaultLlmEngineProbe({
+      loadConfig: () => config,
+      env: {},
+      listEnvAssets: () => [{ ref: "env/other", path: "/stash/env/other.env", keys: ["SOME_OTHER_VAR"] }],
+    });
+    expect(improve.status).toBe("warn");
+    expect(improve.message).toContain("required credential is unavailable");
+    expect(improve.evidence?.suppliedByEnvAsset).toBeNull();
+  });
+
+  test("#950: SDK engine names the env asset that supplies its missing fallback credential", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: {
+        sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "improve" },
+        improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" },
+      },
+      defaults: { engine: "sdk" },
+    };
+    const result = await runDefaultEngineProbe({
+      loadConfig: () => config,
+      resolvePackage: () => "/sdk/package.json",
+      spawnSync: (() => ({ status: 0 })) as never,
+      env: {},
+      listEnvAssets: () => [{ ref: "env/lab", path: "/stash/env/lab.env", keys: ["PRIVATE_IMPROVE_TOKEN"] }],
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain('SDK engine "sdk" is incomplete: missing');
+    expect(result.message).toContain("env/lab");
+    expect(result.message).toContain("akm env run env/lab");
+    expect(result.evidence).toMatchObject({ suppliedByEnvAsset: "env/lab" });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_IMPROVE_TOKEN");
+  });
+
+  test("#950: walks env assets at most once per probe run across multiple engines with missing credentials", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: {
+        improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" },
+        distill: { ...llm, endpoint: "https://example.test/v2/chat/completions", apiKey: "$PRIVATE_DISTILL_TOKEN" },
+      },
+    };
+    let calls = 0;
+    const result = await runConfiguredEnginesProbe({
+      loadConfig: () => config,
+      env: {},
+      listEnvAssets: () => {
+        calls += 1;
+        return [];
+      },
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("2 of 2");
+    expect(calls).toBe(1);
+  });
+
+  test("#950: the default listEnvAssets seam honours the injected loadConfig, not the real one", async () => {
+    const labStashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-health-lab-"));
+    fs.mkdirSync(path.join(labStashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(labStashDir, "env", "lab.env"), "PRIVATE_IMPROVE_TOKEN=secret\n", "utf8");
+    try {
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        engines: { improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
+        defaults: { llmEngine: "improve" },
+        bundles: { lab: { path: labStashDir } },
+        defaultBundle: "lab",
+      };
+      // No listEnvAssets seam injected: this exercises the default seam,
+      // which must walk the *injected* config's bundles, not the real
+      // (sandboxed, unrelated) HOME/XDG config `loadConfig()` would read.
+      const result = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: {} });
+      expect(result.status).toBe("warn");
+      expect(result.evidence?.suppliedByEnvAsset).toBe("env/lab");
+      expect(JSON.stringify(result)).not.toContain("PRIVATE_IMPROVE_TOKEN");
+    } finally {
+      fs.rmSync(labStashDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a secret:// engine reports available only when the store resolves it (#953)", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        engines: {
+          agent: { kind: "agent", platform: "claude" },
+          improve: { ...llm, apiKey: "secret://953-health-probe-key" },
+        },
+        defaults: { engine: "agent", llmEngine: "improve" },
+      };
+
+      const unavailable = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: {} });
+      expect(unavailable.status).toBe("warn");
+      expect(unavailable.message).toContain("required credential is unavailable");
+
+      setSecret(path.join(storage.stashDir, "secrets", "953-health-probe-key"), Buffer.from("health-probe-secret"));
+      const available = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: {} });
+      expect(available.status).not.toBe("warn");
+      expect(JSON.stringify(available)).not.toContain("health-probe-secret");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("warns when an enabled active improve process lacks its required credential", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
@@ -405,6 +545,109 @@ describe("health engine probes", () => {
     expect(result.status).toBe("pass");
     expect(result.evidence).toMatchObject({ engines: { extract: "lab" } });
     expect(result.message).toContain('extract: "lab"');
+  });
+
+  test("fails when every enabled LLM-backed process of the active strategy is unavailable (#957)", () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      // No credentialed fallback engine anywhere — every default-strategy
+      // process that needs an LLM engine resolves to "private", whose
+      // credential is not in `env`. proactiveMaintenance stays enabled (it
+      // has no engine capability) so the plan does not hit the separate
+      // ALL-disabled ConfigError guard.
+      engines: { private: { ...llm, apiKey: "$PRIVATE_ALL_UNAVAILABLE_TOKEN" } },
+      defaults: { llmEngine: "private" },
+      improve: {
+        strategies: {
+          default: { processes: { proactiveMaintenance: { enabled: true } } },
+        },
+      },
+    };
+
+    const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
+
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("no-op");
+    expect(result.evidence).toMatchObject({
+      strategy: "default",
+      unavailableProcesses: expect.arrayContaining(["reflect", "distill", "consolidate", "validation"]),
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_ALL_UNAVAILABLE_TOKEN");
+  });
+
+  test("fails for the shipped default strategy with no non-LLM process enabled and every LLM engine credential-unavailable (#957 round 2)", () => {
+    // Reproduces the issue's exact scenario: the *unmodified* default
+    // strategy (proactiveMaintenance and triage left disabled, as shipped —
+    // no `improve.strategies` override at all) with every capability:"llm"
+    // process pointed at a credential-unavailable engine. This used to trip
+    // buildImprovePlan's ALL-disabled ConfigError guard (every process ends
+    // up disabled, not just the LLM-backed ones), which made
+    // `resolveImprovePlan` throw and fall into the probe's catch block —
+    // regressing this exact case from `warn` to `unknown`/`warn` with a
+    // misleading "engine that is not configured" message instead of the
+    // accurate credential-unavailable `fail`.
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { private: { ...llm, apiKey: "$PRIVATE_DEFAULT_STRATEGY_TOKEN" } },
+      defaults: { llmEngine: "private" },
+    };
+
+    const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
+
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("no-op");
+    expect(result.message).not.toContain("is unavailable:");
+    expect(result.evidence).toMatchObject({
+      strategy: "default",
+      unavailableProcesses: expect.arrayContaining(["reflect", "distill", "consolidate", "graphExtraction"]),
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_DEFAULT_STRATEGY_TOKEN");
+  });
+
+  test("fails when only LLM-backed processes are enabled and nothing else — every one named in unavailableProcesses (#957 addendum)", () => {
+    // Unlike the #957 (proactiveMaintenance stays enabled) and #957 round 2
+    // (relies on memoryInference silently disappearing via the autonomy gate)
+    // cases above, this pins the strategy explicitly: every LLM-backed
+    // process this strategy could enable is enabled and shares the single
+    // credential-unavailable "private" engine; every non-LLM-backed process
+    // (proactiveMaintenance, triage) and the autonomy-gated memoryInference
+    // lane are explicitly off, so nothing is left to keep the check at warn.
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { private: { ...llm, apiKey: "$PRIVATE_ONLY_LLM_TOKEN" } },
+      defaults: { llmEngine: "private" },
+      improve: {
+        strategies: {
+          default: {
+            processes: {
+              reflect: { enabled: true },
+              distill: { enabled: true },
+              consolidate: { enabled: true },
+              graphExtraction: { enabled: true },
+              validation: { enabled: true },
+              memoryInference: { enabled: false },
+              extract: { enabled: false },
+              proactiveMaintenance: { enabled: false },
+              triage: { enabled: false },
+            },
+          },
+        },
+      },
+    };
+
+    const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
+
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("no-op");
+    const evidence = result.evidence as { strategy: string; unavailableProcesses: string[] };
+    expect(evidence.strategy).toBe("default");
+    expect([...evidence.unavailableProcesses].sort()).toEqual(
+      ["consolidate", "distill", "graphExtraction", "reflect", "validation"].sort(),
+    );
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_ONLY_LLM_TOKEN");
   });
 });
 

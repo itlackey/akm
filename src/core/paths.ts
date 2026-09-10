@@ -270,6 +270,18 @@ export function getIndexWriterLockPath(): string {
   return path.join(getDataDir(), "index.db.write.lock");
 }
 
+/**
+ * Path to the opt-in, PID-liveness-only rebuild lock an explicit `akm index`
+ * run acquires (#956). Distinct from {@link getIndexWriterLockPath}'s
+ * `index.db.write.lock`, which is the asset-mutation lease and unrelated to
+ * indexing since #872 — this lock never blocks and is never required, it
+ * only lets a scheduled/opportunistic `akm index --skip-if-locked` step
+ * aside instead of contending with a run already in progress.
+ */
+export function getIndexRebuildLockPath(): string {
+  return path.join(getDataDir(), "index.rebuild.lock");
+}
+
 export function getMaintenanceBarrierPath(): string {
   return path.join(getDataDir(), "maintenance.barrier.lock");
 }

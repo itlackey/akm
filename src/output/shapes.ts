@@ -25,6 +25,7 @@ import { curateShapes } from "./shapes/curate";
 import { envListShapes } from "./shapes/env-list";
 import { eventsShapes } from "./shapes/events";
 import { migrateShapes } from "./shapes/migrate";
+import { modelsListShapes } from "./shapes/models-list";
 import { passthroughShapes } from "./shapes/passthrough";
 import { proposalAcceptShapes } from "./shapes/proposal/accept";
 import { proposalDiffShapes } from "./shapes/proposal/diff";
@@ -59,6 +60,7 @@ const BUILT_IN_OUTPUT_SHAPES: OutputShapeEntry[] = [
   ...envListShapes,
   ...secretListShapes,
   ...migrateShapes,
+  ...modelsListShapes,
   // Passthrough commands are registered last so an explicit dedicated handler
   // above always wins over the identity-stamp fallback for the same name.
   ...passthroughShapes,
@@ -119,6 +121,8 @@ const LIST_RESULT_COLLECTION_KEYS: Readonly<Record<string, string>> = {
   "workflow-list": "runs",
   "task-history": "rows",
   "log-list": "events", // `akm log list`
+  "config-diff": "rows", // `akm config diff`
+  "models-list": "rows", // `akm models list`
 };
 
 function withResultsAlias(command: OutputCommandName, shaped: unknown): unknown {

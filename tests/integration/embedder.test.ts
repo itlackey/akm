@@ -721,3 +721,131 @@ describe("local embedder batching — Tensor return shape (WS-3a blocker fix)", 
     expect(callCount).toBe(1);
   });
 });
+
+describe("RemoteEmbedder.embedBatch against a real server: context-size split (#954)", () => {
+  test("a server that 413s any batch with more than one input makes every document embed individually", async () => {
+    const requestSizes: number[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = (await request.json()) as { input: string[] };
+        requestSizes.push(body.input.length);
+        if (body.input.length > 1) {
+          return new Response(JSON.stringify({ error: "exceed_context_size_error" }), {
+            status: 413,
+            headers: { "Content-Type": "application/json", Connection: "close" },
+          });
+        }
+        return new Response(JSON.stringify({ data: [{ embedding: [1, 0, 0], index: 0 }], model: "test", usage: {} }), {
+          headers: { "Content-Type": "application/json", Connection: "close" },
+        });
+      },
+    });
+    try {
+      const embedder = new RemoteEmbedder({ endpoint: `http://localhost:${server.port}`, model: "test-model" });
+      const texts = ["doc-a", "doc-b", "doc-c", "doc-d"];
+      const results = await embedder.embedBatch(texts);
+      expect(results).toHaveLength(4);
+      expect(results.every((r) => r !== undefined)).toBe(true);
+      // Every request that ultimately succeeded carried exactly one document.
+      expect(requestSizes.filter((size) => size === 1)).toHaveLength(4);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("RemoteEmbedder.embedBatch against a real server: timeout back-off retry (#954)", () => {
+  // A request timeout never drops its batch
+  // outright any more — it backs off (so the server can drain the abandoned
+  // request) and retries the SAME request once before ever splitting or
+  // skipping. This test covers the first required case: a first request
+  // that outlives the client's timeout, followed by a normal response,
+  // must produce exactly one retry and no skipped documents.
+  test("a first request that outlives the timeout retries once after a back-off and succeeds, with nothing skipped", async () => {
+    const timeoutMs = 300;
+    let requestCount = 0;
+    const requestTimestamps: number[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestCount++;
+        requestTimestamps.push(Date.now());
+        const thisRequest = requestCount;
+        const body = (await request.json()) as { input: string[] };
+        if (thisRequest === 1) {
+          // Sleeps 3x the client's timeout: the client has already given up
+          // and moved on well before this responds, exercising exactly the
+          // field-report mechanism (akm abandons the request, the server
+          // keeps computing it).
+          await new Promise((resolve) => setTimeout(resolve, timeoutMs * 3));
+        }
+        const data = body.input.map((_t, i) => ({ embedding: [1, 0], index: i }));
+        return new Response(JSON.stringify({ data, model: "test", usage: {} }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    try {
+      const embedder = new RemoteEmbedder({
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+        timeoutMs,
+      });
+      const skips: unknown[] = [];
+      const results = await embedder.embedBatch(["doc-a", "doc-b"], undefined, (skip) => skips.push(skip));
+
+      expect(results.every((r) => r !== undefined)).toBe(true);
+      expect(skips).toHaveLength(0);
+      // Exactly one retry: the sleeping first request, then a successful second.
+      expect(requestCount).toBe(2);
+      // Request-timing log proving a real back-off elapsed between the
+      // client giving up on request 1 (at `timeoutMs`) and request 2 being
+      // dispatched, rather than an immediate retry.
+      const gapAfterClientTimeout = (requestTimestamps[1] as number) - ((requestTimestamps[0] as number) + timeoutMs);
+      expect(gapAfterClientTimeout).toBeGreaterThanOrEqual(1_500);
+    } finally {
+      server.stop(true);
+    }
+  }, 30_000);
+});
+
+describe("RemoteEmbedder.embedBatch against a real server: bounded concurrency (#954)", () => {
+  // The in-flight window defaults to 1 loopback / 2 remote when
+  // `embedding.concurrency` is unset; #954 lets that config key
+  // override the default in either direction. The real-server case that
+  // matters is loopback, since a test server binds to localhost; the 2-wide
+  // remote default is covered against a mocked fetch in
+  // tests/embedder-batching.test.ts (a real, unresolvable "remote" hostname
+  // would make this test flaky/offline-dependent for no added coverage).
+  test("a loopback endpoint never overlaps requests against a real server", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const body = (await request.json()) as { input: string[] };
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight--;
+        const data = body.input.map(() => ({ embedding: [1, 0], index: 0 }));
+        return new Response(JSON.stringify({ data, model: "test", usage: {} }), {
+          headers: { "Content-Type": "application/json", Connection: "close" },
+        });
+      },
+    });
+    try {
+      const embedder = new RemoteEmbedder({
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+        batchSize: 1,
+      });
+      const texts = Array.from({ length: 4 }, (_, i) => `doc-${i}`);
+      await embedder.embedBatch(texts);
+      expect(maxInFlight).toBe(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+});

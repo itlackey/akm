@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
-import { akmShowUnified } from "../../src/commands/read/show";
+import { akmShowUnified, showLocal } from "../../src/commands/read/show";
 import { parseBundleRef } from "../../src/core/asset/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
@@ -477,5 +477,147 @@ jobs:
           args.some((a) => String(a).includes("not a Markdown document")),
       ),
     ).toBe(true);
+  });
+
+  test("fragment lead context is indexed-safe, provenance-rich, stale-revision stable, and bounded", async () => {
+    const assetPath = path.join(stashDir, "knowledge", "memory.md");
+    const sections = Array.from({ length: 24 }, (_, index) => {
+      const marker = index === 23 ? "latefragmentneedle selected proof" : `ordinary section ${index + 1}`;
+      return `## Turn ${index + 1}\n${marker} ${"context ".repeat(105)}`;
+    });
+    const original = [
+      "# Profile",
+      "I take yoga classes at Serenity Yoga.",
+      "<!-- COMMENT_SECRET -->",
+      "[private portal](https://secret.invalid/token)",
+      "```text",
+      "FENCED_SECRET",
+      "```",
+      ...sections,
+    ].join("\n\n");
+    writeFile(assetPath, original);
+    await akmIndex({ stashDir, full: true });
+
+    const hit = (await akmSearch({ query: "latefragmentneedle", type: "knowledge", skipLogging: true })).hits.find(
+      (candidate): candidate is SourceSearchHit => "path" in candidate,
+    );
+    if (!hit) throw new Error("expected fragment hit");
+    expect(hit.ref).toMatch(/#akm-fragment-/);
+    expect(hit.selectedRef).toBe(hit.ref);
+    expect(hit.parentRef).toBe("knowledge/memory");
+    expect(hit.fragmentOrdinal).toBeGreaterThan(20);
+    expect(hit.fragmentCount).toBeGreaterThanOrEqual(hit.fragmentOrdinal!);
+    expect(hit.startLine).toBeGreaterThan(20);
+    expect(hit.previousRef).toMatch(/#akm-fragment-/);
+    expect(hit.fragmentEstimatedTokens).toBe(hit.estimatedTokens);
+    expect(hit.parentEstimatedTokens).toBeGreaterThan(hit.estimatedTokens!);
+    expect(hit.matchStage).toBe("exact");
+
+    const exact = await akmShowUnified({ ref: hit.ref, skipLogging: true });
+    expect(exact.content).toContain("latefragmentneedle selected proof");
+    expect(exact.content).not.toContain("Serenity Yoga");
+    expect(exact.contextMode).toBe("exact");
+    expect(exact.selectedRef).toBe(hit.ref);
+
+    // Opaque selectors continue to resolve the indexed revision even if disk
+    // changes before show. Context assembly must not reconstruct from this
+    // newer raw file or reintroduce bytes removed by the safe projection.
+    writeFile(assetPath, "# Replaced\nNEW_DISK_ONLY <!-- NEW_COMMENT_SECRET -->");
+    const contextual = await akmShowUnified({
+      ref: hit.ref,
+      contextMode: "lead",
+      maxContextChars: 3200,
+      skipLogging: true,
+    });
+    expect(contextual.content?.length).toBeLessThanOrEqual(3200);
+    expect(contextual.content).toContain("Serenity Yoga");
+    expect(contextual.content).toEndWith(exact.content!);
+    expect(contextual.content).toContain("[Selected matching fragment]");
+    expect(contextual.content).not.toContain("NEW_DISK_ONLY");
+    expect(contextual.content).not.toContain("COMMENT_SECRET");
+    expect(contextual.content).not.toContain("FENCED_SECRET");
+    expect(contextual.content).not.toContain("secret.invalid");
+    expect(contextual).toMatchObject({
+      ref: "knowledge/memory",
+      selectedRef: hit.ref,
+      parentRef: "knowledge/memory",
+      fragmentOrdinal: hit.fragmentOrdinal,
+      fragmentCount: hit.fragmentCount,
+      contextMode: "lead",
+      contextMaxChars: 3200,
+    });
+  });
+
+  test("lead budgets preserve a fitting selected fragment before lead and canonicalize heading aliases", async () => {
+    writeFile(
+      path.join(stashDir, "knowledge", "friendly.md"),
+      ["# Lead", `lead ${"background ".repeat(80)}`, "", "# Details", "decisive selected answer"].join("\n"),
+    );
+    await akmIndex({ stashDir, full: true });
+
+    const exact = await akmShowUnified({ ref: "knowledge/friendly#details", skipLogging: true });
+    const selectedBlock = `[Selected matching fragment]\n${exact.content}`;
+    const shown = await akmShowUnified({
+      ref: "knowledge/friendly#details",
+      contextMode: "lead",
+      maxContextChars: selectedBlock.length + 12,
+      skipLogging: true,
+    });
+
+    expect(shown.content?.length).toBeLessThanOrEqual(selectedBlock.length + 12);
+    expect(shown.content).toEndWith(selectedBlock);
+    expect(shown.content).not.toContain("background");
+    expect(shown.contextTruncated).toBe(true);
+    expect(shown.selectedRef).toMatch(/^knowledge\/friendly#akm-fragment-/);
+    expect(shown.selectedRef).not.toContain("#details");
+    expect(shown.fragmentOrdinal).toBe(2);
+  });
+
+  test("source-live exact heading responses do not claim indexed-safe provenance", async () => {
+    const assetPath = path.join(stashDir, "knowledge", "source-live.md");
+    writeFile(assetPath, "# Lead\nold lead\n\n# Details\nold indexed detail");
+    await akmIndex({ stashDir, full: true });
+
+    // Bypass unified show's normal freshness pass to model a disk revision
+    // changing after lookup. Exact friendly headings intentionally render the
+    // source-live bytes, including bytes the indexed-safe projection removes.
+    writeFile(
+      assetPath,
+      [
+        "# Lead",
+        "new lead",
+        "",
+        "# Details",
+        "new source-live detail",
+        "<!-- SOURCE_LIVE_COMMENT -->",
+        "[source-live link](https://source-live.invalid/token)",
+        "```text",
+        "SOURCE_LIVE_FENCE",
+        "```",
+      ].join("\n"),
+    );
+    const exact = await showLocal({ ref: "knowledge/source-live#details" });
+
+    expect(exact.content).toContain("new source-live detail");
+    expect(exact.content).toContain("SOURCE_LIVE_COMMENT");
+    expect(exact.content).toContain("source-live.invalid/token");
+    expect(exact.content).toContain("SOURCE_LIVE_FENCE");
+    expect(exact.selectedRef).toBeUndefined();
+    expect(exact.parentRef).toBeUndefined();
+    expect(exact.fragmentOrdinal).toBeUndefined();
+    expect(exact.fragmentChars).toBeUndefined();
+    expect(exact.contextMode).toBeUndefined();
+  });
+
+  test("lead context rejects whole assets and invalid budgets", async () => {
+    writeFile(path.join(stashDir, "knowledge", "plain.md"), "# Plain\nbody");
+    await akmIndex({ stashDir, full: true });
+
+    await expect(
+      akmShowUnified({ ref: "knowledge/plain", contextMode: "lead", skipLogging: true }),
+    ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
+    await expect(
+      akmShowUnified({ ref: "knowledge/plain#plain", contextMode: "exact", maxContextChars: 10, skipLogging: true }),
+    ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
   });
 });

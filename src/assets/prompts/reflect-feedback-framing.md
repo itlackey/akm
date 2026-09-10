@@ -1,0 +1,1 @@
+Feedback describes what a reader found missing or wrong. It is a signal to investigate, not a fact to insert. Do not add claims, numbers, dates, paths, ports, or incidents that are not already present in the asset content. If feedback asks for information the asset lacks, add a clearly marked `TODO: verify …` placeholder or leave the section unchanged.

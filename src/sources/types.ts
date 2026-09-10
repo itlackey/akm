@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { ProgramExecCore } from "../workflows/program/schema";
 
@@ -11,8 +12,29 @@ export type SearchHitSize = "small" | "medium" | "large";
 export type BeliefFilterMode = "all" | "current" | "historical";
 /** Actual local ranking mode, including a semantic attempt that failed at runtime. */
 export type SearchExecutionMode = "semantic" | "keyword" | "fts-fallback";
+export type FragmentContextMode = "exact" | "lead";
 
-export interface SourceSearchHit {
+/** Public provenance for an indexed-safe Markdown fragment selection. */
+export interface FragmentProvenance {
+  /** Fragment-qualified selector that search chose or show resolved. */
+  selectedRef?: string;
+  /** Canonical parent asset ref, without a selector. */
+  parentRef?: string;
+  /** One-based fragment position, matching the number in opaque selectors. */
+  fragmentOrdinal?: number;
+  fragmentCount?: number;
+  /** One-based authored source line bounds from the line-preserving safe projection. */
+  startLine?: number;
+  endLine?: number;
+  previousRef?: string;
+  nextRef?: string;
+  fragmentChars?: number;
+  fragmentEstimatedTokens?: number;
+  parentChars?: number;
+  parentEstimatedTokens?: number;
+}
+
+export interface SourceSearchHit extends FragmentProvenance {
   type: string;
   name: string;
   path: string;
@@ -31,7 +53,11 @@ export interface SourceSearchHit {
   score?: number;
   whyMatched?: string[];
   run?: string;
-  /** Approximate token count derived from fileSize (fileSize / 4). Helps agents decide whether to load full content. */
+  /**
+   * Approximate tokens for the content addressed by `ref`: selected-fragment
+   * size for fragment refs, otherwise parent file size. See
+   * `parentEstimatedTokens` when a fragment hit also needs whole-file cost.
+   */
   estimatedTokens?: number;
   /**
    * Non-fatal hit-level warnings surfaced by the indexer or a registry provider
@@ -400,6 +426,16 @@ export interface UpdateResponse {
     directoriesSkipped: number;
     /** False when the run preserved LKG rows because at least one source scan was incomplete. */
     scanComplete?: boolean;
+    /**
+     * Semantic-search state after this update's embedding pass (#954). A
+     * managed/plain-source update runs the embedding phase AFTER its atomic
+     * content/lock/index/state commit, on its own connection — a failing
+     * pass (provider down) still reports the update `processed`/successful,
+     * with this field the only sign semantic search fell behind
+     * (`"blocked"`), exactly like a plain `akm index` whose embedding phase
+     * failed.
+     */
+    semanticStatus?: "disabled" | SemanticSearchRuntimeStatus;
   };
 }
 
@@ -412,7 +448,7 @@ export interface UpdateResponse {
  */
 export type ShowDetailLevel = "brief" | "summary" | "normal" | "full";
 
-export interface ShowResponse {
+export interface ShowResponse extends FragmentProvenance {
   schemaVersion?: number;
   type: string;
   name: string;
@@ -464,6 +500,12 @@ export interface ShowResponse {
     total: number;
     hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
   };
+  /** Fragment presentation requested by the caller; absent for whole assets. */
+  contextMode?: FragmentContextMode;
+  /** Effective hard content budget for contextual fragment presentation. */
+  contextMaxChars?: number;
+  /** True when either lead or selected-fragment bytes were omitted for the budget. */
+  contextTruncated?: boolean;
 }
 
 export interface UpgradeCheckResponse {
@@ -506,6 +548,17 @@ export interface InfoResponse {
   bundleDir: string;
   /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
   defaultBundle: string | null;
+  /**
+   * Resolved per-platform directories (#951) — XDG on Linux/macOS,
+   * APPDATA/LOCALAPPDATA on Windows (see `src/core/paths.ts`) — so a script
+   * can read akm's paths with `akm info --format json | jq -r .dataDir`
+   * instead of hardcoding `~/.local/share/akm` vs. a container's
+   * `/opt/akm/data` and drifting.
+   */
+  dataDir: string;
+  configDir: string;
+  cacheDir: string;
+  stateDir: string;
   assetTypes: string[];
   searchModes: string[];
   semanticSearch: {

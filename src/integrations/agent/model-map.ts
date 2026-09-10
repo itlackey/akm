@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFileAtomic } from "../../core/common";
+import type { EngineConfig } from "../../core/config/config-types";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../../core/config/engine-semantics";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getConfigDir } from "../../core/paths";
@@ -31,6 +32,15 @@ let standaloneInstalledModelMapText: string | undefined;
 export interface ModelMapProfileLayer {
   readonly model?: string;
   readonly inference?: ExecutionJsonObject | null;
+  /**
+   * Indirection to a configured `engines.<name>` connection: borrow that
+   * engine's own `model` (and, for an `llm`-kind engine, its inference
+   * defaults) instead of hand-typing a literal model string here (#946).
+   * Mutually exclusive with `model` at the same layer; resolved once at merge
+   * time in {@link mergeModelMapLayers} so every downstream consumer keeps
+   * seeing only a concrete `{ model, inference }` profile.
+   */
+  readonly engine?: string;
 }
 
 export type ModelMapEntryLayer = string | ModelMapProfileLayer;
@@ -121,12 +131,24 @@ function ownValue<T>(record: Readonly<Record<string, T>> | undefined, key: strin
 function parseProfileLayer(value: unknown, source: string, jsonPath: string): ModelMapEntryLayer {
   if (typeof value === "string") return requireNonemptyString(value, source, jsonPath);
   const record = requireRecord(value, source, jsonPath);
-  assertOnlyKeys(record, ["model", "inference"], source, jsonPath);
-  if (!Object.hasOwn(record, "model") && !Object.hasOwn(record, "inference")) {
-    invalid(source, jsonPath, "structured profile must contain model and/or inference");
+  assertOnlyKeys(record, ["model", "inference", "engine"], source, jsonPath);
+  if (!Object.hasOwn(record, "model") && !Object.hasOwn(record, "inference") && !Object.hasOwn(record, "engine")) {
+    invalid(source, jsonPath, "structured profile must contain model, inference, and/or engine");
   }
-  const out: { model?: string; inference?: ExecutionJsonObject | null } = {};
+  if (Object.hasOwn(record, "model") && Object.hasOwn(record, "engine")) {
+    invalid(source, jsonPath, "model and engine cannot both be set; engine is an indirection for the model value");
+  }
+  const out: { model?: string; inference?: ExecutionJsonObject | null; engine?: string } = {};
   if (Object.hasOwn(record, "model")) out.model = requireNonemptyString(record.model, source, `${jsonPath}.model`);
+  if (Object.hasOwn(record, "engine")) {
+    const rawEngine = requireNonemptyString(record.engine, source, `${jsonPath}.engine`);
+    const engine = rawEngine.toLowerCase();
+    assertSafeMapKey(engine, source, `${jsonPath}.engine`);
+    if (!ENGINE_KEY_PATTERN.test(engine)) {
+      invalid(source, `${jsonPath}.engine`, "engine reference must be lowercase kebab-case");
+    }
+    out.engine = engine;
+  }
   if (Object.hasOwn(record, "inference")) {
     if (record.inference === null) out.inference = null;
     else {
@@ -211,10 +233,21 @@ function normalizeLayerEntry(entry: ModelMapEntryLayer): ModelMapProfileLayer {
 
 function mergeProfiles(base: ModelMapProfileLayer | undefined, overlay: ModelMapEntryLayer): ModelMapProfileLayer {
   const next = normalizeLayerEntry(overlay);
-  const out: { model?: string; inference?: ExecutionJsonObject | null } = {};
+  const out: { model?: string; inference?: ExecutionJsonObject | null; engine?: string } = {};
   if (base?.model !== undefined) out.model = base.model;
+  if (base?.engine !== undefined) out.engine = base.engine;
   if (base && Object.hasOwn(base, "inference")) out.inference = base.inference;
-  if (next.model !== undefined) out.model = next.model;
+  // A literal `model` and an `engine` indirection are mutually exclusive within
+  // one layer (enforced at parse time); across layers, whichever the nearer
+  // layer sets replaces the other so the merged profile keeps that invariant.
+  if (next.model !== undefined) {
+    out.model = next.model;
+    delete out.engine;
+  }
+  if (next.engine !== undefined) {
+    out.engine = next.engine;
+    delete out.model;
+  }
   if (Object.hasOwn(next, "inference")) {
     out.inference =
       next.inference !== null && next.inference !== undefined && isJsonObject(base?.inference)
@@ -224,29 +257,126 @@ function mergeProfiles(base: ModelMapProfileLayer | undefined, overlay: ModelMap
   return Object.freeze(out);
 }
 
-/** Overlay user fields over installed fields, then enforce usable merged profiles. */
-export function mergeModelMapLayers(installed: ModelMapLayerV1, user?: ModelMapLayerV1): ResolvedModelMapV1 {
+export interface EngineModelAndInference {
+  readonly model?: string;
+  readonly inference?: ExecutionJsonObject;
+}
+
+/**
+ * Derive the `{ model, inference }` a model-map profile borrows from a
+ * configured engine (#946). Shared verbatim by
+ * `execution-definitions.ts`'s own execution-defaults derivation
+ * (`engineDefaults`) so the two paths cannot silently diverge. `model` is
+ * copied verbatim from the engine's own config value; it must already be
+ * meaningful for the model-map column's platform (akm does not translate
+ * between an engine's connection and an agent platform's own provider
+ * registry). Only `kind: "llm"` engines contribute inference defaults — an
+ * agent-kind engine's schema carries no temperature/thinking fields.
+ */
+export function engineModelAndInference(engine: EngineConfig): EngineModelAndInference {
+  const out: { model?: string; inference?: ExecutionJsonObject } = {};
+  if (Object.hasOwn(engine, "model") && engine.model !== undefined) out.model = engine.model;
+  if (engine.kind === "llm") {
+    const inference: Record<string, unknown> = {};
+    if (Object.hasOwn(engine, "temperature")) inference.temperature = engine.temperature;
+    if (Object.hasOwn(engine, "maxTokens")) inference.maxTokens = engine.maxTokens;
+    if (Object.hasOwn(engine, "supportsJsonSchema")) inference.supportsJsonSchema = engine.supportsJsonSchema;
+    if (Object.hasOwn(engine, "extraParams")) inference.extraParams = engine.extraParams;
+    if (Object.hasOwn(engine, "contextLength")) inference.contextLength = engine.contextLength;
+    if (Object.hasOwn(engine, "enableThinking")) inference.enableThinking = engine.enableThinking;
+    if (Object.hasOwn(engine, "reasoningEffort")) inference.reasoningEffort = engine.reasoningEffort;
+    if (Object.keys(inference).length > 0) out.inference = inference as ExecutionJsonObject;
+  }
+  return Object.freeze(out);
+}
+
+/** Overlay user fields over installed fields, per (alias, column), without resolving `engine` indirection. */
+function mergeRawProfileLayers(
+  installed: ModelMapLayerV1,
+  user?: ModelMapLayerV1,
+): Map<string, Map<string, ModelMapProfileLayer>> {
   const aliases = new Map<string, Map<string, ModelMapProfileLayer>>();
   const apply = (layer: ModelMapLayerV1): void => {
-    for (const [alias, engines] of Object.entries(layer.aliases)) {
+    for (const [alias, layerEngines] of Object.entries(layer.aliases)) {
       const mergedEngines = aliases.get(alias) ?? new Map<string, ModelMapProfileLayer>();
-      for (const [engine, profile] of Object.entries(engines)) {
-        mergedEngines.set(engine, mergeProfiles(mergedEngines.get(engine), profile));
+      for (const [engineKey, profile] of Object.entries(layerEngines)) {
+        mergedEngines.set(engineKey, mergeProfiles(mergedEngines.get(engineKey), profile));
       }
       aliases.set(alias, mergedEngines);
     }
   };
   apply(installed);
   if (user) apply(user);
+  return aliases;
+}
+
+/**
+ * The overlaid-but-unresolved profile per (alias, column), before any
+ * `engine` indirection is expanded. `akm models list` (#946) uses this to
+ * report whether a column resolves through a literal `model` or an `engine`
+ * reference — information {@link mergeModelMapLayers} collapses away once it
+ * performs the final resolution.
+ */
+export function mergedModelMapProfiles(
+  installed: ModelMapLayerV1,
+  user?: ModelMapLayerV1,
+): Readonly<Record<string, Readonly<Record<string, ModelMapProfileLayer>>>> {
+  const aliases = mergeRawProfileLayers(installed, user);
+  const out: Array<readonly [string, Readonly<Record<string, ModelMapProfileLayer>>]> = [];
+  for (const [alias, engineProfiles] of aliases) out.push([alias, freezeRecord(engineProfiles)]);
+  return freezeRecord(out);
+}
+
+/**
+ * Overlay user fields over installed fields, resolve any `engine` indirection
+ * against configured engines, then enforce usable merged profiles.
+ */
+export function mergeModelMapLayers(
+  installed: ModelMapLayerV1,
+  user?: ModelMapLayerV1,
+  engines?: Readonly<Record<string, EngineConfig>>,
+): ResolvedModelMapV1 {
+  const aliases = mergeRawProfileLayers(installed, user);
 
   const resolvedAliases: Array<readonly [string, Readonly<Record<string, ResolvedModelMapProfile>>]> = [];
-  for (const [alias, engines] of aliases) {
+  for (const [alias, engineProfiles] of aliases) {
     const resolvedEngines: Array<readonly [string, ResolvedModelMapProfile]> = [];
-    for (const [engine, profile] of engines) {
-      if (profile.model === undefined) {
-        invalid("merged models.json", `$.aliases.${alias}.${engine}.model`, "a usable model is required after overlay");
+    for (const [engineKey, profile] of engineProfiles) {
+      let model = profile.model;
+      let inference = Object.hasOwn(profile, "inference") ? profile.inference : undefined;
+      if (model === undefined && profile.engine !== undefined) {
+        const target = ownValue(engines, profile.engine);
+        if (target === undefined) {
+          invalid(
+            "merged models.json",
+            `$.aliases.${alias}.${engineKey}.engine`,
+            `references unknown engine ${JSON.stringify(profile.engine)}; a usable model is required after overlay`,
+          );
+        }
+        const expansion = engineModelAndInference(target);
+        if (expansion.model === undefined) {
+          invalid(
+            "merged models.json",
+            `$.aliases.${alias}.${engineKey}.engine`,
+            `engine ${JSON.stringify(profile.engine)} has no usable model; a usable model is required after overlay`,
+          );
+        }
+        model = expansion.model;
+        inference =
+          inference === undefined
+            ? expansion.inference
+            : inference !== null && isJsonObject(expansion.inference)
+              ? (mergeJsonValue(expansion.inference, inference) as ExecutionJsonObject)
+              : inference;
       }
-      resolvedEngines.push([engine, Object.freeze({ ...profile, model: profile.model })]);
+      if (model === undefined) {
+        invalid(
+          "merged models.json",
+          `$.aliases.${alias}.${engineKey}.model`,
+          "a usable model is required after overlay",
+        );
+      }
+      resolvedEngines.push([engineKey, Object.freeze(inference !== undefined ? { model, inference } : { model })]);
     }
     resolvedAliases.push([alias, freezeRecord(resolvedEngines)]);
   }
@@ -300,6 +430,8 @@ export function userModelMapPath(env: NodeJS.ProcessEnv = process.env): string {
 export interface LoadModelMapOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly installedText?: string;
+  /** Configured engines an `engine`-backed profile may resolve against (#946). */
+  readonly engines?: Readonly<Record<string, EngineConfig>>;
 }
 
 export interface LoadedModelMap {
@@ -404,14 +536,26 @@ export function readInstalledModelMapText(options: LoadModelMapOptions = {}): st
   );
 }
 
-/** Load the installed authority plus the optional operator overlay. */
-export function loadModelMap(options: LoadModelMapOptions = {}): LoadedModelMap {
+export interface LoadedModelMapLayers {
+  readonly installed: ModelMapLayerV1;
+  readonly user?: ModelMapLayerV1;
+  readonly userPath: string;
+  readonly userStatus: "absent" | "loaded";
+}
+
+/** Read and parse the installed authority plus the optional operator overlay, without resolving them. */
+export function loadModelMapLayers(options: LoadModelMapOptions = {}): LoadedModelMapLayers {
   const installed = parseModelMapLayer(readInstalledModelMapText(options), "installed models.json");
   const userPath = userModelMapPath(options.env);
   const userText = readModelMapFile(userPath, "User models.json", true);
-  let user: ModelMapLayerV1 | undefined;
-  if (userText !== undefined) user = parseModelMapLayer(userText, `user models.json (${userPath})`);
-  return Object.freeze({ map: mergeModelMapLayers(installed, user), userPath, userStatus: user ? "loaded" : "absent" });
+  const user = userText !== undefined ? parseModelMapLayer(userText, `user models.json (${userPath})`) : undefined;
+  return Object.freeze({ installed, ...(user ? { user } : {}), userPath, userStatus: user ? "loaded" : "absent" });
+}
+
+/** Load the installed authority plus the optional operator overlay. */
+export function loadModelMap(options: LoadModelMapOptions = {}): LoadedModelMap {
+  const { installed, user, userPath, userStatus } = loadModelMapLayers(options);
+  return Object.freeze({ map: mergeModelMapLayers(installed, user, options.engines), userPath, userStatus });
 }
 
 export interface CopyDefaultModelMapOptions extends LoadModelMapOptions {

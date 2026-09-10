@@ -64,6 +64,25 @@ export function isAgentTaskHistoryRow(row: TaskHistoryRow): boolean {
   return row.target_kind === "command";
 }
 
+/**
+ * #943: reason-value breakdown for a set of agent (command-kind) task
+ * failure rows — how much of the observed failures are `timeout` vs
+ * `non_zero_exit` vs `spawn_failed` etc., so `akm health`'s `task-fail-rate`
+ * advisory can say "timeout-dominant" from data rather than log grep. Keeps
+ * the existing `AgentFailureReason` vocabulary verbatim (spawn.ts) — a
+ * reason-per-row read failure (already warned by {@link taskFailureDetail})
+ * still counts under `"unknown"` rather than being dropped, so the total
+ * always equals `agentFailures.length`.
+ */
+export function countAgentFailureReasons(agentFailures: readonly TaskHistoryRow[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of agentFailures) {
+    const reason = String(taskFailureDetail(row)?.reason ?? "unknown");
+    counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  return counts;
+}
+
 function createUnknownImproveMetrics(): ImproveHealthMetrics {
   return {
     invoked: 0,

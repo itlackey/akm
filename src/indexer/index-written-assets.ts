@@ -26,8 +26,10 @@ import path from "node:path";
 import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
 import { loadConfig } from "../core/config/config";
 import { isDataDirUnreadableError } from "../core/errors";
+import { probeLock } from "../core/file-lock";
 import { isPathAbsent } from "../core/path-access";
-import { getDbPath } from "../core/paths";
+import { getDbPath, getIndexRebuildLockPath } from "../core/paths";
+import { formatLockHolderPid } from "../core/run-lock";
 import { warn, warnVerbose } from "../core/warn";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { deleteEntriesByIds, getEntryCount, upsertEntry } from "../storage/repositories/index-entries-repository";
@@ -63,6 +65,13 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
  * An absent or empty index is skipped on purpose — bootstrap belongs to the
  * first read (`ensureIndex`) or an explicit `akm index`, which also cover
  * embeddings and the other passes this fast path skips.
+ *
+ * A live rebuild holding the rebuild lock is the SAME kind of skip, not a
+ * failure (#956 fix): a live `akm index` run owns bringing the index to the
+ * expected state on its own, so this call returns `true` on that skip
+ * exactly like the absent-index and empty-index cases above. Callers that
+ * gate their own success on this boolean (`acceptProposal`, `source clone`)
+ * must never fail or warn just because a concurrent rebuild is in progress.
  */
 export async function indexWrittenAssets(
   stashDir: string,
@@ -74,6 +83,26 @@ export async function indexWrittenAssets(
 ): Promise<boolean> {
   try {
     return await (async () => {
+      // #956: a live `akm index` rebuild holds index.db under one long
+      // transaction (persistDirRecords), which this fast path's own 5s
+      // busy_timeout would just contend with pointlessly. Interactive
+      // commands (remember, import, extract session assets) must never wait
+      // on it — skip the inline upsert/embedding entirely; the write itself
+      // (file + commit) has already succeeded by the time this runs, and the
+      // rebuild in progress will pick up the change on its own.
+      const rebuildProbe = probeLock(getIndexRebuildLockPath());
+      if (rebuildProbe.state === "held") {
+        // #956: name the launcher pid alongside the holder pid when known —
+        // every process listing and task log shows the launcher's pid, not
+        // the bun/node child's.
+        const holderLabel = formatLockHolderPid({
+          pid: rebuildProbe.holderPid,
+          launcherPid: rebuildProbe.launcherPid ?? null,
+        });
+        warn(`index rebuild in progress (pid ${holderLabel}); the next index pass will index ${filePaths.join(", ")}`);
+        return true;
+      }
+
       const dbPath = getDbPath();
       // `true` here means "the index is in the state the caller expects" — and
       // `acceptProposal` advances its journal to `index-finalized` on the

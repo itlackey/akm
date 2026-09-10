@@ -61,6 +61,22 @@
  * of events.jsonl is replaced by WAL-mode serialised writes — acceptable because
  * CLI commands are almost always single-writer.
  *
+ * ## Writer contention (#948)
+ *
+ * Every open already carries a 30s `busy_timeout` (`sqlite-pragmas.ts`), so a
+ * single blocked statement waits before failing. `withImmediateTransaction`
+ * additionally retries `BEGIN IMMEDIATE` itself
+ * ({@link WITH_IMMEDIATE_TX_MAX_ATTEMPTS} attempts) for the rarer case of two
+ * writers racing the BEGIN statement back-to-back. If every attempt is still
+ * contention-shaped ({@link isSqliteContentionError} — SQLITE_BUSY/LOCKED, the
+ * matching message text, or the phantom-BEGIN marker), the exhaustion throw is
+ * reclassified into `TransientError("STATE_DB_CONTENDED")` (exit 75, #948
+ * addendum) instead of surfacing the raw driver text: another akm process (an
+ * unrelated `improve`, `workflow run`, or task run — not necessarily
+ * contending for the same row) is writing state.db right now. A genuinely
+ * unrelated error (real corruption, a body-thrown failure) is never
+ * reclassified and rethrows exactly as raised.
+ *
  * @module state-db
  */
 
@@ -72,6 +88,7 @@ import { type Database, openDatabase, type SqlValue } from "../storage/database"
 import { assertMigrationLedger, type MigrationLedgerState } from "../storage/engines/sqlite-migrations";
 import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
 import { pkgVersion } from "../version";
+import { TransientError } from "./errors";
 import { acquireMaintenanceActivitySync } from "./maintenance-barrier";
 import { getDataDir } from "./paths";
 import { runMigrations, STATE_MIGRATIONS } from "./state/migrations";
@@ -662,20 +679,29 @@ export function withStateDbTelemetry(fn: (db: Database) => void, busyTimeoutMs =
  * the live queue state rather than clobbering each other.
  */
 /**
- * Errors `BEGIN IMMEDIATE` can throw under concurrent-writer contention that are
- * transient (the statement did NOT start a usable transaction) and safe to
- * retry:
- *   - "database is locked" / SQLITE_BUSY — another writer holds the lock.
- * These are start-of-transaction failures only; an error thrown by `fn` is a
- * real failure and is NEVER retried.
+ * Whether `err` is one of the SQLite conditions a concurrent-writer race can
+ * throw that are transient — the statement did NOT corrupt anything, another
+ * writer just holds the lock right now — and therefore safe to retry or
+ * reclassify as ordinary contention rather than a genuine failure:
+ *   - `SQLITE_BUSY` / `SQLITE_LOCKED` (either driver's `.code`).
+ *   - "database is locked" / "database table is locked" message text.
+ *   - the phantom-BEGIN marker synthesized below when `BEGIN IMMEDIATE`
+ *     returns without actually opening a transaction.
  *
- * "cannot start a transaction within a transaction" is deliberately NOT
- * retryable: it means a transaction is already open on this connection (a
- * re-entrant call — handled by the entry guard in withImmediateTransaction),
- * and "retrying" it with a ROLLBACK would destroy the caller's transaction
- * (issue #686).
+ * This is the single shared classifier for "is this ordinary state.db
+ * contention" (#948) — `isRetryableBeginError` below delegates to it, and so
+ * does {@link WorkflowRunsRepository}'s lease-contention classifier (which
+ * additionally matches a couple of corruption-shaped texts specific to its
+ * own narrower cross-process race and keeps its own live-lease confirmation
+ * before reclassifying). Matching this set alone is never sufficient to
+ * declare something DEFINITELY contention when a caller needs corroborating
+ * evidence (see the lease path); for `beginImmediateTransaction`'s own
+ * exhaustion case there is no such evidence available, so the five 30s
+ * `busy_timeout` waits already spent stand as the evidence instead.
  */
-function isRetryableBeginError(err: unknown): boolean {
+export function isSqliteContentionError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | undefined)?.code;
+  if (code === "SQLITE_BUSY" || code === "SQLITE_LOCKED") return true;
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
     msg.includes("database is locked") ||
@@ -684,6 +710,21 @@ function isRetryableBeginError(err: unknown): boolean {
     // without opening a transaction. Safe to retry: fn() has not run.
     msg.includes("did not open a transaction")
   );
+}
+
+/**
+ * Errors `BEGIN IMMEDIATE` can throw under concurrent-writer contention that
+ * are transient (the statement did NOT start a usable transaction) and safe
+ * to retry. An error thrown by `fn` is a real failure and is NEVER retried.
+ *
+ * "cannot start a transaction within a transaction" is deliberately NOT
+ * retryable: it means a transaction is already open on this connection (a
+ * re-entrant call — handled by the entry guard in withImmediateTransaction),
+ * and "retrying" it with a ROLLBACK would destroy the caller's transaction
+ * (issue #686).
+ */
+function isRetryableBeginError(err: unknown): boolean {
+  return isSqliteContentionError(err);
 }
 
 const WITH_IMMEDIATE_TX_MAX_ATTEMPTS = 5;
@@ -703,6 +744,29 @@ function sleepSyncMs(ms: number): void {
  * publication have all succeeded. The caller that asked for this split phase
  * owns the matching COMMIT/ROLLBACK.
  */
+/**
+ * Reclassify an exhausted-retry BEGIN failure that is still contention-shaped
+ * (#948) into a `TransientError("STATE_DB_CONTENDED")`, mirroring the
+ * RUN_LEASE_HELD precedent (`WorkflowRunsRepository.acquireEngineLease`): the
+ * driver text is accurate but unhelpful (`{"ok":false,"error":"database is
+ * locked"}`, exit 70/INTERNAL) — this instead reads as a retryable-shortly
+ * signal (exit 75, sysexits EX_TEMPFAIL — #948 addendum) with the original
+ * error preserved as `cause` for `--verbose`/debugging. A genuinely unrelated
+ * error (not contention-shaped) is rethrown exactly as raised, never
+ * reclassified.
+ */
+function throwBeginFailure(err: unknown): never {
+  if (isSqliteContentionError(err)) {
+    const contended = new TransientError(
+      "akm's state database is busy (another akm process is writing it); retry shortly.",
+      "STATE_DB_CONTENDED",
+    );
+    contended.cause = err;
+    throw contended;
+  }
+  throw err;
+}
+
 export function beginImmediateTransaction(db: Database): void {
   if (db.inTransaction) {
     throw new Error("beginImmediateTransaction requires a connection with no active transaction");
@@ -728,10 +792,10 @@ export function beginImmediateTransaction(db: Database): void {
         sleepSyncMs(2 ** (attempt - 1));
         continue;
       }
-      throw err;
+      throwBeginFailure(err);
     }
   }
-  throw lastBeginErr;
+  throwBeginFailure(lastBeginErr);
 }
 
 export function withImmediateTransaction<T>(db: Database, fn: () => T): T {

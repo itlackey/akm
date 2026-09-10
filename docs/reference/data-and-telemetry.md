@@ -230,6 +230,14 @@ the set of types the code actually emits at HEAD (verified against every
 | `llm_usage_summary` | The owning LLM telemetry sink's terminal-record count marker | `expectedTerminalRecords` |
 | `health_probe` | `akm health`'s state.db round-trip write/read probe. **Not durably retained**: the row is inserted then deleted within the same connection once the round trip is confirmed, so the net effect on the `events` table is always zero rows | n/a (ephemeral) |
 
+`llm_usage` rows also carry `process`/`engine`/`stage` (each optional; a call
+made outside any attributed scope carries none of them). `akm improve`
+(#944) aggregates a run's own `llm_usage` events into a process x engine x
+model cross-tab — `summarizeLlmUsageCrossTab` in `src/commands/health/llm-usage.ts`
+— persisted on the run result as `usageReport.byProcessEngineModel` and
+queryable per-run or aggregated with `akm improve report`; see
+`docs/reference/cli.md`'s `#### improve report` section.
+
 ### 2. Usage Events Table
 
 `usage_events` is the local analytical record behind utility ranking,

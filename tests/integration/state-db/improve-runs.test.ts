@@ -18,7 +18,9 @@ import type { AkmImproveResult } from "../../../src/commands/improve/improve";
 import { openStateDatabase } from "../../../src/core/state-db";
 import {
   computeImproveRunMetrics,
+  countImproveRunsSince,
   purgeOldImproveRuns,
+  queryImproveRuns,
   recordImproveRun,
 } from "../../../src/storage/repositories/improve-runs-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -395,6 +397,97 @@ describe("recordImproveRun", () => {
       expect(persisted.distillSkipped?.samples.length).toBe(3);
       const metrics = JSON.parse(row.metrics_json) as Record<string, number>;
       expect(metrics.skippedCount).toBe(13000);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// #950: `engine-last-used`'s lookback gate only needs to know whether any
+// run happened in the window, not the rows themselves — countImproveRunsSince
+// is a SELECT COUNT(*) sibling of queryImproveRuns so that gate stops loading
+// every result_json blob in the window just to test for zero.
+describe("countImproveRunsSince", () => {
+  test("counts only non-dry-run rows with started_at >= since", () => {
+    const db = openStateDatabase();
+    try {
+      const since = "2026-06-01T00:00:00.000Z";
+      recordImproveRun(db, {
+        id: "run-in-window",
+        startedAt: "2026-06-02T00:00:00.000Z",
+        completedAt: "2026-06-02T00:01:00.000Z",
+        stashDir: "/tmp/test-stash",
+        dryRun: false,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: buildMinimalResult(),
+      });
+      recordImproveRun(db, {
+        id: "run-before-window",
+        startedAt: "2026-05-31T00:00:00.000Z",
+        completedAt: "2026-05-31T00:01:00.000Z",
+        stashDir: "/tmp/test-stash",
+        dryRun: false,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: buildMinimalResult(),
+      });
+      recordImproveRun(db, {
+        id: "run-dry-in-window",
+        startedAt: "2026-06-03T00:00:00.000Z",
+        completedAt: "2026-06-03T00:01:00.000Z",
+        stashDir: "/tmp/test-stash",
+        dryRun: true,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: buildMinimalResult({ dryRun: true }),
+      });
+
+      expect(countImproveRunsSince(db, since)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("returns 0 when nothing has been recorded", () => {
+    const db = openStateDatabase();
+    try {
+      expect(countImproveRunsSince(db, "2026-06-01T00:00:00.000Z")).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("agrees with queryImproveRuns(...).length for the same window", () => {
+    const db = openStateDatabase();
+    try {
+      const since = "2026-06-01T00:00:00.000Z";
+      for (const id of ["run-a", "run-b", "run-c"]) {
+        recordImproveRun(db, {
+          id,
+          startedAt: "2026-06-05T00:00:00.000Z",
+          completedAt: "2026-06-05T00:01:00.000Z",
+          stashDir: "/tmp/test-stash",
+          dryRun: false,
+          strategy: "default",
+          scopeMode: "all",
+          scopeValue: null,
+          guidance: null,
+          ok: true,
+          result: buildMinimalResult(),
+        });
+      }
+
+      expect(countImproveRunsSince(db, since)).toBe(queryImproveRuns(db, since).length);
     } finally {
       db.close();
     }

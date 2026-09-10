@@ -40,7 +40,11 @@ import {
 } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
+import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
+import { getOutputMode } from "../../output/context";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
+import { akmSearch, parseSearchSource } from "../read/search";
+import { rejectRetiredSourceFlag } from "../read/search-cli";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -525,6 +529,48 @@ const tasksPruneCommand = defineJsonCommand({
   },
 });
 
+/**
+ * #951: `akm task list` — a pure, zero-logic delegating alias for
+ * `akm search --type task`. 0.9.0 removed `task list` because it was a
+ * second, redundant IMPLEMENTATION of task listing, not because the
+ * spelling itself was off-limits; this reuses `search`'s exact envelope
+ * (its `results` alias comes along for free) instead of adding a second one.
+ * `query`/`--limit`/`--from` are handled identically to `searchCommand.run()`
+ * for the same inputs, including the retired `--source` guard (`../read/
+ * search-cli.ts`'s `rejectRetiredSourceFlag`, reused rather than copied) so
+ * `akm task list --source x` fails with the same actionable rename message
+ * as `akm search --type task --source x` instead of citty's silent absorb.
+ */
+const tasksListCommand = defineJsonCommand({
+  meta: { name: "list", description: "List task assets (alias for `akm search --type task`)" },
+  args: {
+    query: {
+      type: "positional",
+      description: "Search query (omit to list all tasks)",
+      required: false,
+      default: "",
+    },
+    limit: { type: "string", description: "Maximum number of results" },
+    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
+  },
+  async run({ args }) {
+    rejectRetiredSourceFlag();
+    const query = (args.query ?? "").trim();
+    const limit = parsePositiveIntFlag(args.limit ?? undefined);
+    const source = parseSearchSource(args.from);
+    const outputMode = getOutputMode();
+    const result = await akmSearch({
+      query,
+      type: "task",
+      limit,
+      source,
+      eventSource: resolveUsageEventSource(),
+      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+    });
+    output("search", result);
+  },
+});
+
 export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
@@ -537,12 +583,14 @@ export const taskCommand = defineGroupCommand({
     explain: tasksExplainCommand,
     validate: tasksValidateCommand,
     history: tasksHistoryCommand,
+    list: tasksListCommand,
     sync: tasksSyncCommand,
     prune: tasksPruneCommand,
     doctor: tasksDoctorCommand,
   },
-  // Bare `akm task` reports scheduler diagnostics. Inspection of individual
-  // tasks moved to the generic `akm search` / `akm show <bundle//tasks/id>`.
+  // Bare `akm task` reports scheduler diagnostics. Deeper inspection of
+  // individual tasks is the generic `akm show <bundle//tasks/id>`; `list`
+  // above is a delegating alias for `akm search --type task` (#951).
   // No `defaultRun`: bare `akm task` is a usage error (exit 2), the canonical
   // bare-group behavior — owner ruling 12. Run `akm task doctor` for what the
   // bare form used to run.

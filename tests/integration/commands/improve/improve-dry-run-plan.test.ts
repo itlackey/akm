@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { computeSafeChunkSize } from "../../../../src/commands/improve/consolidate/chunking";
 import { akmImprove } from "../../../../src/commands/improve/improve";
+import type { ImproveProcessName } from "../../../../src/commands/improve/improve-strategies";
 import { upsertAssetSalience } from "../../../../src/commands/improve/salience";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
@@ -52,6 +53,7 @@ function plannerConfig(args?: {
   consolidate?: Record<string, unknown>;
   extract?: Record<string, unknown>;
   triage?: Record<string, unknown>;
+  reflect?: Record<string, unknown>;
 }): AkmConfig {
   return withTestImproveLlm({
     semanticSearchMode: "off",
@@ -59,7 +61,7 @@ function plannerConfig(args?: {
       strategies: {
         default: {
           processes: {
-            reflect: { enabled: true, limit: 4 },
+            reflect: { enabled: true, limit: 4, ...(args?.reflect ?? {}) },
             distill: { enabled: false },
             consolidate: { enabled: false, ...(args?.consolidate ?? {}) },
             memoryInference: { enabled: false },
@@ -378,6 +380,82 @@ describe("#800 effective dry-run planner", () => {
     expect(result.plan?.effectiveRefs.every((entry) => entry.lane === "proactive")).toBe(true);
     expect(result.plan?.gates.some((gate) => gate.name === "limit" && gate.removed === 1)).toBe(true);
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
+  });
+
+  test("plan.processes reports resolved engine/model per process, honors a --strategy override, and counts eligibleRefs (#947)", async () => {
+    const { stashDir } = isolatedStorage();
+    const config = withImproveAutonomy(
+      withTestImproveLlm({
+        semanticSearchMode: "off",
+        engines: {
+          "consolidate-engine-a": {
+            kind: "llm",
+            endpoint: "http://127.0.0.1:1/v1/chat/completions",
+            model: "model-a",
+          },
+          "consolidate-engine-b": {
+            kind: "llm",
+            endpoint: "http://127.0.0.1:1/v1/chat/completions",
+            model: "model-b",
+          },
+        },
+        improve: {
+          strategies: {
+            default: {
+              processes: {
+                reflect: { enabled: true, limit: 4 },
+                distill: { enabled: false },
+                consolidate: { enabled: true, engine: "consolidate-engine-a" },
+                memoryInference: { enabled: false },
+                graphExtraction: { enabled: false },
+                extract: { enabled: false },
+                validation: { enabled: false },
+                triage: { enabled: false },
+                proactiveMaintenance: { enabled: false },
+              },
+            },
+            alt: { processes: { consolidate: { engine: "consolidate-engine-b" } } },
+          },
+        },
+      } as AkmConfig),
+    );
+    await indexSkills(stashDir, 3, config);
+
+    const defaultRun = await akmImprove({ scope: "skill", stashDir, config, dryRun: true });
+    const altRun = await akmImprove({ scope: "skill", stashDir, config, dryRun: true, strategy: "alt" });
+
+    // Acceptance criterion (#947): changing processes.consolidate.engine and
+    // re-planning shows the new engine, and neither plan dispatches anything.
+    const consolidateDefault = defaultRun.plan?.processes.find((row) => row.process === "consolidate");
+    const consolidateAlt = altRun.plan?.processes.find((row) => row.process === "consolidate");
+    expect(consolidateDefault).toMatchObject({ enabled: true, engine: "consolidate-engine-a", model: "model-a" });
+    expect(consolidateAlt).toMatchObject({ enabled: true, engine: "consolidate-engine-b", model: "model-b" });
+    expect(defaultRun.plan?.dispatch).toBe(false);
+    expect(altRun.plan?.dispatch).toBe(false);
+    expect(defaultRun.plan?.mode).toBe("estimate");
+
+    const reflectRow = defaultRun.plan?.processes.find((row) => row.process === "reflect");
+    expect(reflectRow).toMatchObject({ enabled: true, engine: "test-improve-llm", model: "test-model" });
+    expect(Array.isArray(reflectRow?.notices)).toBe(true);
+    expect(reflectRow?.eligibleRefs).toBe(defaultRun.plan?.effectiveRefs.length);
+
+    const distillRow = defaultRun.plan?.processes.find((row) => row.process === "distill");
+    expect(distillRow?.enabled).toBe(false);
+    expect(distillRow?.eligibleRefs).toBe(0);
+
+    // One row per IMPROVE_PROCESS_ENGINE_CAPABILITIES name — no row lost or duplicated.
+    const expectedProcesses: ImproveProcessName[] = [
+      "reflect",
+      "distill",
+      "consolidate",
+      "memoryInference",
+      "graphExtraction",
+      "extract",
+      "validation",
+      "triage",
+      "proactiveMaintenance",
+    ];
+    expect(defaultRun.plan?.processes.map((row) => row.process).sort()).toEqual(expectedProcesses.sort());
   });
 
   test("proactive dry-run reports due population, selected refs, and differs from default", async () => {
@@ -991,10 +1069,23 @@ describe("#800 effective dry-run planner", () => {
     });
   });
 
+  // #800/#957 — once the shared "planner" engine's credential is unavailable,
+  // the enabled "consolidate" override loses its runner (folded into
+  // `engineUnavailable`), which used to trip the "no improve process can run"
+  // guard even on a dry run that never dispatches (#958). `--dry-run`/`--plan`
+  // now passes `allowAllDisabled` so the guard returns the plan instead of
+  // throwing, and the credential-unavailable process carries its structurally
+  // resolved engine/model/contextLength on its `engineUnavailable` entry so
+  // this preview can still show them without ever materializing the
+  // credential. "reflect" is disabled here so exactly one process
+  // (consolidate) is unavailable.
   test("consolidation preview reads frozen context length without materializing a required credential", async () => {
     const { stashDir } = isolatedStorage();
     const credentialName = "AKM_800_CONSOLIDATION_PLAN_KEY";
-    const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 2, maxChunkSize: 50 } });
+    const config = plannerConfig({
+      reflect: { enabled: false },
+      consolidate: { enabled: true, minPoolSize: 2, maxChunkSize: 50 },
+    });
     config.engines = {
       planner: {
         kind: "llm",
@@ -1022,8 +1113,24 @@ describe("#800 effective dry-run planner", () => {
     );
 
     expect(networkCalls).toBe(0);
+    // The credential is unavailable, so this dry run now reports consolidate
+    // as skipped rather than reporting it as runnable.
+    expect(result.plan?.consolidation.wouldRun).toBe(false);
+    expect(result.skippedProcesses).toHaveLength(1);
+    expect(result.skippedProcesses?.[0]?.process).toBe("consolidate");
+    expect(result.skippedProcesses?.[0]?.reason).toContain(`$${credentialName}`);
+    // The preview still reads the resolved context length without
+    // materializing the credential.
     expect(result.plan?.consolidation.effective.chunkSize).toBe(computeSafeChunkSize(8_000, 500, 50));
-    expect(result.plan?.consolidation.wouldRun).toBe(true);
+    const consolidateRow = result.plan?.processes.find((row) => row.process === "consolidate");
+    expect(consolidateRow).toMatchObject({
+      process: "consolidate",
+      enabled: false,
+      engine: "planner",
+      model: "planner",
+    });
+    expect(consolidateRow?.unavailable).toBeDefined();
+    expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
   });
 
   test("extract preview evaluates the same min-new-sessions gate without dispatch", async () => {

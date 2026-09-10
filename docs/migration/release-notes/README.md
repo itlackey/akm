@@ -7,6 +7,11 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.9.15](0.9.15.md) — exit-code 75 for lease/state.db contention,
+  `--require-engines` scheduled task templates, `--no-probe` cli-version
+  skip, thinking-control wire forms, embedding re-embed safety and
+  cross-rebuild vector salvage, launcher signal forwarding, a default
+  per-document embedding cap, and `extends` config inheritance
 - [0.9.14](0.9.14.md) — index v22-to-v23 derived-cache rebuild, lexical
   fragments, and collapse-detector canary re-minting
 - [0.9.2](0.9.2.md) — task source v4 migration, workflow source IR v1 and

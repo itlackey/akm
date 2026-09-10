@@ -83,7 +83,6 @@ const RETIRED_COMMAND_HINTS: Record<string, string> = {
   "task disable":
     "`akm task disable` was removed in 0.9 — set `enabled: false` in the task YAML, then `akm task sync`.",
   "task init": "`akm task init` was removed in 0.9 — `akm setup` seeds the default schedules.",
-  "task list": "there is no `task list` — task files are indexed assets; use `akm search --type task`.",
   "task show": "there is no `task show` — task files are indexed assets; use `akm show <ref>`.",
   "task remove": "there is no `task remove` — delete the task YAML, then run `akm task sync` to unbind it.",
   // `improve canary` is NOT here: `akm improve` is a leaf command (a

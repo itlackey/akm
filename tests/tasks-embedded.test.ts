@@ -62,6 +62,17 @@ describe("embedded task registry", () => {
     for (const task of improveTasks) expect(task.command).toContain("--skip-if-locked");
   });
 
+  // #957: scheduled improve runs should fail loudly (exit 78) rather than
+  // silently degrade when an engine/credential is unavailable — the whole
+  // point of a nightly job is that nobody is watching it fail quietly.
+  test("every scheduled improve template requires available engines (#957)", () => {
+    const scheduledImproveTasks = listEmbeddedTasks().filter(
+      (t) => t.label === "core/improve" || t.label.startsWith("improve/"),
+    );
+    expect(scheduledImproveTasks.length).toBe(6);
+    for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-engines");
+  });
+
   test("every enabled embedded command resolves to a real top-level CLI command", () => {
     const topLevelArgs = main.args as ArgsDef;
     const topLevelCommands = main.subCommands ?? {};

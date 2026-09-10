@@ -10,6 +10,14 @@
 export interface HealthMetrics {
   taskFailRate: number;
   agentFailureRate: number;
+  /**
+   * #943: reason-value breakdown behind {@link agentFailureRate} — how many
+   * command-task failures in the window carry each `detail.reason` value
+   * (`timeout`, `non_zero_exit`, `spawn_failed`, …; see `AgentFailureReason`
+   * in `src/integrations/agent/spawn.ts`). Lets a health consumer see
+   * "timeout-dominant" from data instead of grepping task logs.
+   */
+  agentFailureReasonCounts: Record<string, number>;
   stuckActiveRuns: number;
   logBackingRate: number;
   probeRoundTripMs: number | null;
@@ -32,6 +40,8 @@ export interface LlmUsageAggregate {
   completionTokens: number;
   totalTokens: number;
   reasoningTokens: number;
+  /** Count of calls whose `outcome` was `"error"` (#944). Additive to the existing shape. */
+  failures: number;
   /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
   byStage: Record<string, LlmUsageStageAggregate>;
   /** Per-process breakdown using durable improve/runtime attribution. */
@@ -48,4 +58,23 @@ export interface LlmUsageStageAggregate {
   completionTokens: number;
   totalTokens: number;
   reasoningTokens: number;
+  /** Count of calls whose `outcome` was `"error"` (#944). Additive to the existing shape. */
+  failures: number;
+}
+
+/**
+ * One row of the process x engine x model cross-tab (#944) —
+ * {@link LlmUsageStageAggregate}'s fields keyed on the composite identity of a
+ * call, instead of on one dimension at a time like `byStage`/`byProcess`/
+ * `byEngine`. Answers "which engine/model did a given process actually use,
+ * and what did it cost" in one row instead of requiring a caller to
+ * cross-reference three separate 1-D breakdowns by hand.
+ */
+export interface LlmUsageCrossTabRow extends LlmUsageStageAggregate {
+  /** Owning process, or `"unattributed"` when the call carried no `process`. */
+  process: string;
+  /** Selected engine name, or `"unattributed"` when the call carried no `engine`. */
+  engine: string;
+  /** Model id, or `"unattributed"` when the call carried no `model`. */
+  model: string;
 }

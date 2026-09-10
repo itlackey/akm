@@ -117,6 +117,8 @@ import { taskCommand } from "./commands/tasks/tasks-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
+import { launcherPidFromEnv } from "./core/file-lock";
+import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
@@ -333,8 +335,10 @@ const healthCommand = defineCommand({
     probe: {
       type: "boolean",
       default: true,
-      description: "Probe default-llm-engine / configured-engines reachability (on by default).",
-      negativeDescription: "Skip the reachability probes (for an offline or air-gapped host).",
+      description:
+        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, and check the scheduler's recorded akm binary version (on by default).",
+      negativeDescription:
+        "Skip the reachability probes, the update check, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
   },
   async run({ args }) {
@@ -615,6 +619,7 @@ export const main = defineCommand({
       "  2   usage error\n" +
       "  4   health warn (akm health only)\n" +
       "  70  internal / unclassified error\n" +
+      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)\n" +
       "  78  config error",
   },
   args: {
@@ -1161,5 +1166,38 @@ async function runCli(): Promise<void> {
 // sets `AKM_STANDALONE_ENTRY=1` before importing this file. The test harness
 // sets neither, so importing cli.ts under Bun stays inert as before.
 if (import.meta.main || process.env.AKM_NODE_ENTRY === "1" || process.env.AKM_STANDALONE_ENTRY === "1") {
-  await runCli();
+  // #956: a launcher that dies WITHOUT delivering a signal
+  // (SIGKILL, an OOM kill, a supervisor that force-removes the process)
+  // still reparents this process to init with nothing to catch — the field
+  // evidence was 40 orphaned `bun …/dist/cli.js` processes in one day, some
+  // from a curate hook killing its own launcher on timeout. Active for
+  // EVERY command (not only `index`), since a hook-invoked `curate`/`search`
+  // child is orphaned the same way. Inert when there is no launcher
+  // (AKM_LAUNCHER_PID unset — a direct `bun src/cli.ts` run, or any test
+  // harness that imports this module without setting it): only a real
+  // launcher-managed run has a parent worth watching.
+  const parentWatchdog = launcherPidFromEnv()
+    ? startParentDeathWatchdog({
+        initialPpid: process.ppid,
+        onOrphaned: () => {
+          // Self-delivers the same signal a real SIGTERM would be. `akm
+          // index`'s own AbortController listens for it
+          // (commands/sources/stash-cli.ts) and gets a graceful, in-process
+          // shutdown. Every other command has no SIGTERM listener of its
+          // own, so this self-signal terminates it directly via the
+          // runtime's default disposition WITHOUT running `exit` handlers
+          // (lock release included) — it stops the orphaned process, which
+          // is the goal here, but any lock it held is left for the next
+          // acquirer's dead-pid stale-reclaim (file-lock.ts) to clear, not
+          // released in-process. No second, parallel abort path to keep in
+          // sync either way.
+          process.kill(process.pid, "SIGTERM");
+        },
+      })
+    : undefined;
+  try {
+    await runCli();
+  } finally {
+    parentWatchdog?.stop();
+  }
 }

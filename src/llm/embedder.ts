@@ -32,7 +32,7 @@ import {
   isTransformersAvailable as isTransformersAvailableReal,
   LocalEmbedder,
 } from "./embedders/local";
-import type { EmbeddingBatchSkip } from "./embedders/remote";
+import type { EmbeddingBatchCommit, EmbeddingSkipHandler } from "./embedders/remote";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
@@ -40,7 +40,7 @@ import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 export { clearEmbeddingCache } from "./embedders/cache";
 export { _setTransformersLoaderForTests, DEFAULT_LOCAL_MODEL } from "./embedders/local";
-export type { EmbeddingBatchSkip } from "./embedders/remote";
+export type { EmbeddingBatchCommit, EmbeddingBatchSkip, EmbeddingSkipHandler } from "./embedders/remote";
 export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 // ── Test seam ────────────────────────────────────────────────────────────────
@@ -168,24 +168,39 @@ async function embedOnce(
  * skipped and why; the result array holds `undefined` at those indices.
  * Uses the LocalEmbedder.embedBatch path for the local transformer pipeline,
  * which processes texts in chunks of 32 for genuine batched inference.
+ *
+ * `onBatch`, when given, fires once per provider/local batch as it completes
+ * (#954) so a caller can commit each batch's rows durably as they land
+ * rather than buffering the whole call — see `EmbeddingBatchCommit`.
  */
 export async function embedBatch(
   texts: string[],
   embeddingConfig?: EmbeddingConnectionConfig,
   signal?: AbortSignal,
-  onSkip?: (skip: EmbeddingBatchSkip) => void,
+  onSkip?: EmbeddingSkipHandler,
+  onBatch?: EmbeddingBatchCommit,
 ): Promise<(EmbeddingVector | undefined)[]> {
-  if (embedderOverrides?.embedBatch) return embedderOverrides.embedBatch(texts, embeddingConfig, signal);
+  if (embedderOverrides?.embedBatch) {
+    return embedderOverrides.embedBatch(texts, embeddingConfig, signal, onSkip, onBatch);
+  }
 
   if (texts.length === 0) return [];
 
   // Deterministic mode (env-gated, test/bench only): model-free, stable.
   if (isDeterministicEmbedEnabled()) {
-    return texts.map((t) => deterministicEmbed(t));
+    const embeddings = texts.map((t) => deterministicEmbed(t));
+    // One onBatch commit for the whole call, like the local/remote batched
+    // paths — firing once per text opened one materializer transaction per
+    // entry in deterministic (test/bench) mode.
+    onBatch?.(
+      embeddings.map((_embedding, i) => i),
+      embeddings,
+    );
+    return embeddings;
   }
 
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
-    return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal, onSkip);
+    return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal, onSkip, onBatch);
   }
 
   // Local transformer: use the batched path (chunks of 32 via LocalEmbedder).
@@ -193,14 +208,16 @@ export async function embedBatch(
   // the default model), so fall back to per-text embedWithModel in that case.
   const localModel = embeddingConfig?.localModel;
   if (!localModel) {
-    return getLocalEmbedder().embedBatch(texts, signal);
+    return getLocalEmbedder().embedBatch(texts, signal, onBatch);
   }
   const results: EmbeddingVector[] = [];
-  for (const text of texts) {
+  for (const [i, text] of texts.entries()) {
     if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
     }
-    results.push(await getLocalEmbedder().embedWithModel(text, localModel));
+    const embedding = await getLocalEmbedder().embedWithModel(text, localModel);
+    results.push(embedding);
+    onBatch?.([i], [embedding]);
   }
   return results;
 }

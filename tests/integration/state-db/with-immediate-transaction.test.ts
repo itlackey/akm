@@ -18,6 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
+import { TransientError } from "../../../src/core/errors";
 import { openStateDatabase, withImmediateTransaction } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -141,5 +142,70 @@ describe("withImmediateTransaction", () => {
     // Connection is left usable (no lingering transaction).
     expect(() => withImmediateTransaction(db, () => db.prepare("INSERT INTO t (x) VALUES (2)").run())).not.toThrow();
     expect((db.prepare("SELECT count(*) AS c FROM t").get() as { c: number }).c).toBe(1);
+  });
+
+  test("exhaustion of every retry with a persistent contention-shaped error reclassifies to STATE_DB_CONTENDED (#948)", () => {
+    // Every BEGIN IMMEDIATE attempt fails "database is locked" — a sustained
+    // writer contention that outlasts all WITH_IMMEDIATE_TX_MAX_ATTEMPTS
+    // retries. The body must never run (no transaction ever opened), and the
+    // raw driver error must not escape the CLI as a bare exit-70 crash.
+    let beginAttempts = 0;
+    const fake = {
+      exec: (sql: string) => {
+        if (sql === "BEGIN IMMEDIATE") {
+          beginAttempts += 1;
+          throw new Error("database is locked");
+        }
+        db.exec(sql);
+      },
+      get inTransaction() {
+        return db.inTransaction;
+      },
+    } as unknown as Database;
+
+    let bodyCalls = 0;
+    let caught: unknown;
+    try {
+      withImmediateTransaction(fake, () => {
+        bodyCalls += 1;
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(beginAttempts).toBe(5);
+    expect(bodyCalls).toBe(0);
+    expect(caught).toBeInstanceOf(TransientError);
+    expect((caught as TransientError).code).toBe("STATE_DB_CONTENDED");
+    expect((caught as Error).message).toBe(
+      "akm's state database is busy (another akm process is writing it); retry shortly.",
+    );
+    // The original driver text survives as `cause` for debugging/--verbose.
+    expect((caught as Error).cause).toBeInstanceOf(Error);
+    expect(((caught as Error).cause as Error).message).toBe("database is locked");
+  });
+
+  test("a genuine non-contention error at BEGIN is rethrown exactly as raised, never reclassified", () => {
+    const fake = {
+      exec: (sql: string) => {
+        if (sql === "BEGIN IMMEDIATE") {
+          throw new Error("disk full");
+        }
+        db.exec(sql);
+      },
+      get inTransaction() {
+        return db.inTransaction;
+      },
+    } as unknown as Database;
+
+    let caught: unknown;
+    try {
+      withImmediateTransaction(fake, () => "unreachable");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).not.toBeInstanceOf(TransientError);
+    expect((caught as Error).message).toBe("disk full");
   });
 });

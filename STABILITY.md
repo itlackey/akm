@@ -57,9 +57,9 @@ enumeration of the whole `proposal` noun group.
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
-| `akm workflow status` | Stable | |
+| `akm workflow status` | Stable | `--all-scopes` added in 0.9.15 (#942), additive. |
 | `akm workflow plan` | Evolving | New in 0.9.2; secret-free provenance output; envelope shape may change. |
-| `akm workflow list` | Stable | |
+| `akm workflow list` | Stable | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942), both additive. |
 | `akm workflow create` | Stable | |
 | `akm workflow resume` | Stable | |
 | `akm workflow abandon` | Stable | |
@@ -75,9 +75,10 @@ enumeration of the whole `proposal` noun group.
 | `akm migrate apply` | Internal | Forwards to the standalone `akm-migrate` tool; renders its result through the normal `--format` pipeline (not exempt — see below). Listed (not hidden) in `--help`/completions. |
 | `akm config path` | Stable | |
 | `akm config list` | Stable | |
-| `akm config get` | Stable | |
+| `akm config get` | Stable | Default bare-value shape unchanged; `--show-source` (0.9.15, opt-in) wraps it as `{ value, source }`. |
 | `akm config set` | Stable | |
 | `akm config unset` | Stable | |
+| `akm config diff` | Evolving | New in 0.9.15; compares effective (post-`extends`) configs, secrets redacted. |
 | `akm feedback` | Stable | |
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
@@ -113,6 +114,7 @@ enumeration of the whole `proposal` noun group.
 | `akm task doctor` | Evolving | |
 | `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
 | `akm task validate` | Evolving | New in 0.9.11; read-only, and the only `task` subcommand that takes a bare filesystem path instead of a ref — the file need not belong to any configured bundle. |
+| `akm task list` | Evolving | New in 0.9.15 (#951); a pure delegating alias for `akm search --type task` — same envelope, no separate implementation. |
 
 ## Stable
 
@@ -218,6 +220,7 @@ enumeration of the whole `proposal` noun group.
   | `2` | Usage / bad input |
   | `4` | Health warning (`akm health` only) |
   | `70` | Internal / unclassified |
+  | `75` | Transient — retry shortly (`TransientError`, sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` right now |
   | `78` | Configuration error |
 
   **From 0.9.12**, every success envelope produced by the passthrough stamp

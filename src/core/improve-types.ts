@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { LlmUsageCrossTabRow } from "../commands/health/types";
+import type { EngineUnavailableProcess, ProcessRoutingRow } from "../commands/improve/improve-strategies";
 import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
@@ -169,6 +171,16 @@ export interface ImproveExecutionPlan {
   };
   gates: ImprovePlanGate[];
   effectiveRefs: Array<{ ref: string; lane: ImprovePlanLane; reason: ImproveEligibleRef["reason"] }>;
+  /**
+   * Resolved process -> engine -> model routing table (#947), one row per
+   * `IMPROVE_PROCESS_ENGINE_CAPABILITIES` name plus a `"triage.judgment"` row
+   * when configured. Present on dry AND live results — this is a preflight
+   * projection, not a dispatch report; #944's post-run cost/routing report is
+   * a separate, additional field. Sourced from `ResolvedImprovePlan`, which
+   * is resolved before any side effect on every invocation (dry or live), so
+   * `--dry-run`/`--plan` shows a `--strategy` override for free.
+   */
+  processes: ProcessRoutingRow[];
   proactive?: {
     configured: { dueDays?: number; maxPerRun?: number; limit?: number };
     effective: { dueDays: number; maxPerRun: number };
@@ -797,6 +809,26 @@ export interface AkmImproveResult {
    * for stashes whose profile accepts every indexed type).
    */
   strategyFilteredRefs?: ImproveEligibleRef[];
+  /**
+   * #957 — processes the active strategy enabled but whose engine could not
+   * be resolved (no engine selected) or whose credential could not be
+   * resolved in this process's own environment (the scheduler-vs-shell
+   * mismatch #957 exists for). Sourced verbatim from
+   * `ResolvedImprovePlan.engineUnavailable`; omitted entirely when nothing
+   * was skipped this way.
+   *
+   * Like `AkmExtractResult.skipReasons` (#912, see that field's doc comment):
+   * `ok` still means the run completed, not that it did work, and the exit
+   * code follows `ok` — a scheduler must not start failing because one LLM
+   * process's credential is temporarily missing while others still run.
+   * Consumers that need to know branch on this field's presence/length
+   * (or `akm improve --require-engines`, which aborts up front instead of
+   * degrading). A credential-unavailable `reason` names the engine and WHICH
+   * env var / apiKeyFile path / secret reference is missing — never its
+   * value — so an operator whose own shell passes config validation can see
+   * why the scheduler's stripped-down environment does not.
+   */
+  skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
   actions?: ImproveActionResult[];
   /**
    * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
@@ -931,4 +963,24 @@ export interface AkmImproveResult {
   writtenPaths?: string[];
   /** Present only when a started run was persisted after abnormal termination. */
   terminated?: { reason: string; at: string; errorMessage?: string };
+  /**
+   * #944 — this run's LLM call/token/failure accounting, split by process x
+   * engine x model, plus which strategy-enabled processes made zero calls and
+   * why. `byProcessEngineModel` is `summarizeLlmUsageCrossTab` over this run's
+   * own `llm_usage` events (bounded to `[startedAt, completedAt)`, the same
+   * per-run event-scoping technique `health/windows.ts` already uses for wall
+   * time — events carry no `runId` column). `noCalls` covers every process the
+   * active strategy enabled (including one disabled for `engineUnavailable`)
+   * that ended the run with zero attributed calls; `reason` is drawn from the
+   * existing `improve_skipped` reason vocabulary
+   * (`"engine_unavailable"`/`"strategy_filtered_all_passes"`/`"autonomy_gated"`,
+   * a reflect/distill `skippedByReason` dominant key, or `"no_signal"` as the
+   * fallback) — never a fabricated category. Omitted entirely when both
+   * arrays would be empty (e.g. a dry run, or a run that made no LLM calls
+   * and enabled no LLM-backed process).
+   */
+  usageReport?: {
+    byProcessEngineModel: readonly Readonly<LlmUsageCrossTabRow>[];
+    noCalls: readonly Readonly<{ process: string; engine?: string; reason: string }>[];
+  };
 }

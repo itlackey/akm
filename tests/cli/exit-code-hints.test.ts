@@ -68,6 +68,12 @@ describe("embedded exit-code hints", () => {
     expect(retiredCommandHint(["task"], "show")).toContain("akm show");
   });
 
+  // `task list` is now a real subcommand (alias for `search --type task`), so
+  // it must NOT surface the old retired-command hint anymore.
+  test("task list is a real subcommand and no longer produces a retired-command hint", () => {
+    expect(retiredCommandHint(["task"], "list")).toBeUndefined();
+  });
+
   test("retired flags (as opposed to commands) hint their replacement procedure", () => {
     expect(retiredFlagHint(["index"], "--background")).toContain("--quiet");
     expect(retiredFlagHint(["setup"], "--detect-only")).toContain("akm setup");

@@ -121,6 +121,20 @@ key in task source v4: `agent`, `engine`, `model`, `inference`, `tools`,
 number, or boolean values. Keep credentials out of task source; `redact`
 contains environment variable names, never secret values.
 
+`timeout:` (milliseconds) means a different mechanism depending on the
+target. For `run:` (native shell/script) and `workflows/<name>` targets it is
+an outer supervisory deadline: the runner kills the child process, or aborts
+the workflow run at its next step boundary, when it fires. For `uses:
+akm/command`, `commands/<name>`, and any other agent/LLM dispatch target
+there is no outer process kill — `timeout:` instead resolves through the
+execution cascade (config/persona/command/task layers) into the dispatch's
+own deadline, and the SDK/CLI runner races each phase against it internally.
+Either way, a dispatch that times out is recorded as `status: failed` with
+`detail.reason: "timeout"` in `task_history` — not a silent `completed` — and
+`akm task run` exits non-zero for it; see [health-advisories.md's
+`task-fail-rate` row](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/health-advisories.md)
+for how `akm health` surfaces a timeout-dominant failure pattern.
+
 ## Scheduling
 
 Scheduling is **optional**. Omit `schedule:` entirely for a manual-only
@@ -381,7 +395,8 @@ for full before/after examples and recovery guidance.
 
 ## Operations
 
-- `akm search --type task` and `akm show tasks/<id>` inspect task assets.
+- `akm search --type task` (or its alias `akm task list`) and
+  `akm show tasks/<id>` inspect task assets.
 - `akm task explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running
   anything — see [`akm task explain`](#akm-task-explain) above.

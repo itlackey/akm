@@ -4,11 +4,13 @@
 
 import { describe, expect, test } from "bun:test";
 import crypto from "node:crypto";
+import { embedBatch } from "../src/llm/embedder";
 import {
   DETERMINISTIC_EMBED_DIM,
   deterministicEmbed,
   isDeterministicEmbedEnabled,
 } from "../src/llm/embedders/deterministic";
+import type { EmbeddingVector } from "../src/llm/embedders/types";
 import { cosineSimilarity } from "../src/llm/embedders/types";
 
 describe("deterministicEmbed", () => {
@@ -77,6 +79,33 @@ describe("deterministicEmbed", () => {
       expect(isDeterministicEmbedEnabled()).toBe(false);
       delete process.env.AKM_EMBED_DETERMINISTIC;
       expect(isDeterministicEmbedEnabled()).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.AKM_EMBED_DETERMINISTIC;
+      else process.env.AKM_EMBED_DETERMINISTIC = prev;
+    }
+  });
+});
+
+describe("embedBatch: deterministic branch fires one onBatch commit (#954 nit fix)", () => {
+  test("commits the whole call in a single onBatch, not once per text", async () => {
+    const prev = process.env.AKM_EMBED_DETERMINISTIC;
+    try {
+      process.env.AKM_EMBED_DETERMINISTIC = "1";
+      const commits: Array<{ indices: number[]; embeddings: (EmbeddingVector | undefined)[] }> = [];
+      const results = await embedBatch(
+        ["alpha release notes", "beta release notes", "gamma release notes"],
+        undefined,
+        undefined,
+        undefined,
+        (indices, embeddings) => commits.push({ indices, embeddings }),
+      );
+      // A per-text onBatch call would open one materializer transaction per
+      // entry in deterministic (test/bench) mode — the whole call must
+      // commit in exactly one onBatch, matching the local/remote batched paths.
+      expect(commits).toHaveLength(1);
+      expect(commits[0]?.indices).toEqual([0, 1, 2]);
+      expect(commits[0]?.embeddings).toEqual(results);
+      expect(results).toHaveLength(3);
     } finally {
       if (prev === undefined) delete process.env.AKM_EMBED_DETERMINISTIC;
       else process.env.AKM_EMBED_DETERMINISTIC = prev;

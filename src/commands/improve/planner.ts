@@ -13,6 +13,7 @@
 
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { ImproveEligibleRef, ImproveExecutionPlan, ImprovePlanGate } from "../../core/improve-types";
+import type { ProcessRoutingRow } from "./improve-strategies";
 import { parseMemoryName } from "./memory/derived-ref";
 
 export interface EffectiveRefSelection {
@@ -112,6 +113,7 @@ export interface ImprovePlanProjectionInput {
   effectiveLimit?: number;
   replayBudget: number;
   gates: readonly ImprovePlanGate[];
+  processes: readonly ProcessRoutingRow[];
   proactive?: ImproveExecutionPlan["proactive"];
   consolidation: ImproveExecutionPlan["consolidation"];
   stageConfig: {
@@ -146,6 +148,7 @@ export function buildImproveExecutionPlan(input: ImprovePlanProjectionInput): Im
     },
     gates: input.gates.map((gate) => ({ ...gate })),
     effectiveRefs,
+    processes: input.processes.map((row) => ({ ...row })),
     ...(input.proactive
       ? {
           proactive: {

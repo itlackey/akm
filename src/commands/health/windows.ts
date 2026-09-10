@@ -17,6 +17,7 @@ import { queryTaskHistory, type TaskHistoryRow } from "../../storage/repositorie
 import {
   buildImproveSkipSummary,
   computeWallTimeStats,
+  countAgentFailureReasons,
   isAgentTaskHistoryRow,
   roundRate,
   summarizeImproveCompleted,
@@ -205,6 +206,7 @@ export function buildWindowMetrics(
   const logBackingRate = taskRowsWithLogs.length === 0 ? 1 : existingLogRows.length / taskRowsWithLogs.length;
   const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
   const agentFailureRate = agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length;
+  const agentFailureReasonCounts = countAgentFailureReasons(agentFailures);
 
   const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.filter(
     (event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime(),
@@ -251,6 +253,7 @@ export function buildWindowMetrics(
   const metrics: HealthMetrics = {
     taskFailRate: roundRate(taskFailRate),
     agentFailureRate: roundRate(agentFailureRate),
+    agentFailureReasonCounts,
     stuckActiveRuns,
     logBackingRate: roundRate(logBackingRate),
     probeRoundTripMs: null,

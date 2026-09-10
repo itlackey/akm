@@ -5,9 +5,12 @@
 /**
  * Typed error classes for structured exit code classification.
  *
- * - ConfigError  -> exit 78  (configuration / environment problems)
- * - UsageError   -> exit 2   (bad CLI arguments or invalid input)
- * - NotFoundError -> exit 1  (requested resource missing)
+ * - ConfigError    -> exit 78  (configuration / environment problems)
+ * - UsageError     -> exit 2   (bad CLI arguments or invalid input)
+ * - NotFoundError  -> exit 1   (requested resource missing)
+ * - TransientError -> exit 75  (sysexits EX_TEMPFAIL — retry shortly; another
+ *                                akm process holds a lock or is writing
+ *                                state.db right now, not a bad command line)
  *
  * Each error carries a machine-readable `code` field. Codes are stable
  * identifiers safe to consume from scripts and JSON output. Existing throw
@@ -131,14 +134,55 @@ export type UsageErrorCode =
   // from `completeWorkflowStep`'s write transaction, which SQLite rolls back
   // whole: the step stays pending, the run stays active, fail-before-mutation
   // preserved.
-  | "WORKFLOW_OUTPUT_INVALID"
+  | "WORKFLOW_OUTPUT_INVALID";
+
+/**
+ * Stable, machine-readable codes for TransientError — a retryable-shortly
+ * signal distinct from every UsageError code (#948 addendum, dev-team field
+ * review 2026-09-09): schedulers classify exit 2 as "fix the command line",
+ * but these two conditions mean "try again in a few seconds", a different
+ * contract a cron wrapper or scheduler can branch on.
+ */
+export type TransientErrorCode =
   // A run's single-driver engine lease (R2) is live and held by another
   // engine invocation — refusing to acquire it (`akm workflow run` racing an
   // in-flight one) or to advance its step spine manually (`akm workflow
-  // complete` racing the engine). Distinct from every other UsageError code:
-  // a caller branching on `code` can retry this one once the named expiry
-  // passes, which is never true of a bad flag or malformed input.
-  | "RUN_LEASE_HELD";
+  // complete` racing the engine). Moved off UsageError by the #948 addendum:
+  // a held lease is not a bad command line, it is ordinary contention a
+  // caller can retry once the named expiry passes.
+  | "RUN_LEASE_HELD"
+  // #948: `withImmediateTransaction`/`beginImmediateTransaction`
+  // (src/core/state-db.ts) exhausted every BEGIN IMMEDIATE retry attempt and
+  // the failure is still contention-shaped (`isSqliteContentionError`) —
+  // another akm process is writing state.db right now, not a genuine
+  // corruption/unrelated failure. The original driver error survives as
+  // `cause`.
+  | "STATE_DB_CONTENDED"
+  // Field follow-up to #956 (dev-team field review 2026-09-10): a
+  // concurrent `akm index` (or any other writer touching index.db — source
+  // add/update, the implicit per-command background reindex) can make a
+  // rebuild's write hit the same contention-shaped SQLite condition
+  // `isSqliteContentionError` already classifies for state.db, but index.db
+  // writes had no reclassification boundary of their own — the raw driver
+  // error ("database is locked") escaped `akmIndex` as exit 70
+  // (internal/unclassified) instead of this "retry shortly" contract.
+  // Thrown from `akmIndex`'s outer catch (src/indexer/indexer.ts), the one
+  // function every caller goes through, for a contention-shaped error
+  // escaping the walk, index, or embedding phase. The original driver error
+  // survives as `cause`.
+  | "INDEX_DB_CONTENDED"
+  // Field follow-up to #956 (G1, dev-team field review 2026-09-10): two real
+  // concurrent akm processes (e.g. two plain `akm index` runs started back
+  // to back by a scheduler) can both reach `acquireMaintenanceBarrier()` —
+  // the short critical section that registers the opt-in rebuild lock — in
+  // the same instant. The barrier is meant to be held for milliseconds, so
+  // losing that race is ordinary contention, never a broken config file:
+  // previously this threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing
+  // as exit 78 and telling a supervisor to stop retrying a normal lock
+  // collision. Thrown from `acquireMaintenanceBarrier`
+  // (src/core/maintenance-barrier.ts) once its own brief backoff-and-retry
+  // window is exhausted.
+  | "MAINTENANCE_BARRIER_BUSY";
 
 /** Stable, machine-readable codes for NotFoundError. */
 export type NotFoundErrorCode =
@@ -148,7 +192,8 @@ export type NotFoundErrorCode =
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "DANGEROUS_ENV_KEY"
-  | "FILE_NOT_FOUND";
+  | "FILE_NOT_FOUND"
+  | "IMPROVE_RUN_NOT_FOUND";
 
 /**
  * Default hint for each ConfigError code. Keep these short, actionable, and
@@ -247,8 +292,18 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   // P3b (docs/plans/specs/p3b-child-executor.md §4.3).
   WORKFLOW_OUTPUT_INVALID:
     "Check each `outputs:` entry's `from:` against the step artifact it names, and its `schema:` against the value that step actually promotes.",
+};
+
+/** Default hint for each TransientErrorCode. */
+const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   RUN_LEASE_HELD:
     "Wait for the named engine invocation to finish or for the lease to expire, then retry. `akm workflow status <id>` shows the current lease.",
+  STATE_DB_CONTENDED:
+    "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
+  INDEX_DB_CONTENDED:
+    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+  MAINTENANCE_BARRIER_BUSY:
+    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled index/improve/workflow runs.",
 };
 
 /** Default hint for each NotFoundError code. */
@@ -261,6 +316,8 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   // for a mistyped id, which points at the wrong thing entirely.
   PROPOSAL_NOT_FOUND: "Run `akm proposal list` to see pending proposals and their ids.",
   FILE_NOT_FOUND: "Check the path exists and is readable.",
+  IMPROVE_RUN_NOT_FOUND:
+    "Run `akm improve` first, or `akm improve report --since 30d` to see recent run ids in `runIds`.",
 };
 
 /**
@@ -270,7 +327,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
  * adding a new error class forces a compile-time error at the switch until a
  * case is added — there is no silent `default` fall-through to a wrong code.
  */
-export type AkmErrorKind = "config" | "usage" | "not-found";
+export type AkmErrorKind = "config" | "usage" | "not-found" | "transient";
 
 /**
  * Base class for all akm-thrown, classified errors. Carries the `kind`
@@ -318,6 +375,32 @@ export class UsageError extends AkmError {
   }
   hint(): string | undefined {
     return this._hint ?? USAGE_HINTS[this.code];
+  }
+}
+
+/**
+ * Raised when a condition is ordinary, retryable contention rather than a
+ * bad command line or a genuine failure — another akm process holds a lock
+ * or is writing state.db right now. Distinct from `UsageError` (#948
+ * addendum, dev-team field review 2026-09-09): schedulers classify exit 2 as
+ * "fix the command line", so contention needs its own exit code (75,
+ * sysexits EX_TEMPFAIL) a cron wrapper can branch on to retry instead of
+ * alerting.
+ */
+export class TransientError extends AkmError {
+  readonly kind = "transient" as const;
+  readonly code: TransientErrorCode;
+  private readonly _hint?: string;
+  constructor(msg: string, code: TransientErrorCode, hint?: string) {
+    super(msg);
+    this.name = "TransientError";
+    this.code = code;
+    this._hint = hint;
+    // Fixes `instanceof` checks under ES5 transpilation targets.
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+  hint(): string | undefined {
+    return this._hint ?? TRANSIENT_HINTS[this.code];
   }
 }
 

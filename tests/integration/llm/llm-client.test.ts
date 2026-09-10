@@ -178,14 +178,25 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
 describe("chatCompletion thinking controls", () => {
   const messages = [{ role: "user" as const, content: "Return a result" }];
 
-  test("sends vLLM thinking controls through chat_template_kwargs", async () => {
+  // #949: which wire form a backend honors depends on the backend, not on
+  // akm's own `provider` label — a gateway in front of a local model can drop
+  // one form or the other, and `provider` says nothing about what actually
+  // sits behind the endpoint. Both `chat_template_kwargs.enable_thinking` and
+  // top-level `enable_thinking` are sent whenever `enableThinking` is
+  // resolved, for every `provider` value (including none at all).
+  test.each([
+    ["vllm"],
+    ["openai"],
+    ["lmstudio"],
+    [undefined],
+  ])("sends both thinking-control wire forms regardless of provider (provider: %s)", async (provider) => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", provider: "vllm" }, messages, {
+      await chatCompletion({ endpoint: url, model: "test-model", provider }, messages, {
         enableThinking: false,
       });
       expect(requestBody).toEqual({
@@ -193,13 +204,14 @@ describe("chatCompletion thinking controls", () => {
         messages,
         temperature: 0.3,
         chat_template_kwargs: { enable_thinking: false },
+        enable_thinking: false,
       });
     } finally {
       server.stop(true);
     }
   });
 
-  test("sends first-class reasoning_effort alongside the provider thinking control", async () => {
+  test("sends first-class reasoning_effort alongside both thinking-control wire forms", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
@@ -216,6 +228,7 @@ describe("chatCompletion thinking controls", () => {
         messages,
         temperature: 0.3,
         chat_template_kwargs: { enable_thinking: false },
+        enable_thinking: false,
         reasoning_effort: "none",
       });
     } finally {
@@ -272,21 +285,18 @@ describe("chatCompletion thinking controls", () => {
     }
   });
 
-  test("preserves the top-level control for non-vLLM providers", async () => {
+  test("sends neither thinking-control wire form when enableThinking is unset", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", provider: "lmstudio" }, messages, {
-        enableThinking: false,
-      });
+      await chatCompletion({ endpoint: url, model: "test-model", provider: "lmstudio" }, messages);
       expect(requestBody).toEqual({
         model: "test-model",
         messages,
         temperature: 0.3,
-        enable_thinking: false,
       });
     } finally {
       server.stop(true);

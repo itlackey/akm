@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { randomUUID } from "node:crypto";
-import { NotFoundError, UsageError } from "../../core/errors";
-import { openStateDatabase, withImmediateTransaction } from "../../core/state-db";
+import { NotFoundError, TransientError, UsageError } from "../../core/errors";
+import { isSqliteContentionError, openStateDatabase, withImmediateTransaction } from "../../core/state-db";
 import { borrowScopedStateDb, withStateDbScope } from "../../core/state-db-scope";
 import { sleepSync } from "../../runtime";
 import type { WorkflowRunStatus, WorkflowRunStepStatus } from "../../sources/types";
@@ -302,7 +302,8 @@ export interface PublishChildWorkflowRunInput {
 
 /** Filter object for {@link WorkflowRunsRepository.listRuns}. */
 export interface ListRunsFilter {
-  scopeKey: string;
+  /** `null` (#942, `akm workflow list --all-scopes`) omits the scope predicate — every scope. */
+  scopeKey: string | null;
   workflowRef?: string;
   workflowRefs?: readonly string[];
   /**
@@ -327,23 +328,20 @@ export interface ListRunsFilter {
 /**
  * Whether `error` is one of the specific SQLite conditions a run-lease
  * statement can throw under real cross-process contention on the same row:
- * `SQLITE_BUSY`/`SQLITE_LOCKED` (both drivers), or the message text a
- * transient contention blip has been observed producing, "database is
- * locked", "disk I/O error", or "database disk image is malformed".
- * Matching on this set alone is never sufficient to call something lease
- * contention — see {@link WorkflowRunsRepository.acquireEngineLease}, which
- * additionally requires a fresh read confirming a live lease before
- * substituting the lease-held message for the original error.
+ * the shared {@link isSqliteContentionError} classifier (SQLITE_BUSY/LOCKED,
+ * "database is locked", "database table is locked", the phantom-BEGIN
+ * marker) plus two corruption-shaped message texts a transient contention
+ * blip has been observed producing on this specific race, "disk I/O error"
+ * and "database disk image is malformed". Matching on this set alone is
+ * never sufficient to call something lease contention — see
+ * {@link WorkflowRunsRepository.acquireEngineLease}, which additionally
+ * requires a fresh read confirming a live lease before substituting the
+ * lease-held message for the original error.
  */
 function isLeaseContentionSqliteError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | undefined)?.code;
-  if (code === "SQLITE_BUSY" || code === "SQLITE_LOCKED") return true;
+  if (isSqliteContentionError(error)) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("database is locked") ||
-    message.includes("disk I/O error") ||
-    message.includes("database disk image is malformed")
-  );
+  return message.includes("disk I/O error") || message.includes("database disk image is malformed");
 }
 
 const LEASE_RETRY_ATTEMPTS = 4;
@@ -414,10 +412,13 @@ export class WorkflowRunsRepository {
    * operator to `akm workflow abandon` a child a parent is actively driving.
    * For any database with no child rows the result is byte-identical, same
    * as the other three B-N10 sites below.
+   *
+   * Always scope-local: `scopeKey` is a real scope, never "every scope" — see
+   * {@link findActiveRunOutsideScope} for the cross-scope warning's query.
    */
   findActiveRunForScope(
     workflowRefs: string | readonly string[],
-    scopeKey: string | null,
+    scopeKey: string,
   ): { id: string; current_step_id: string | null } | undefined {
     const refs = typeof workflowRefs === "string" ? [workflowRefs] : [...workflowRefs];
     if (refs.length === 0) return undefined;
@@ -426,6 +427,30 @@ export class WorkflowRunsRepository {
         `SELECT id, current_step_id FROM workflow_runs WHERE workflow_ref IN (${refs.map(() => "?").join(", ")}) AND scope_key = ? AND status = 'active' AND parent_run_id IS NULL ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
       )
       .get(...refs, scopeKey) as { id: string; current_step_id: string | null } | undefined;
+  }
+
+  /**
+   * The cross-scope start warning's query (#942): the most recently active
+   * run of these refs OUTSIDE `scopeKey` — i.e. `scope_key IS NULL OR
+   * scope_key != scopeKey`, not merely "the most recent active run of these
+   * refs anywhere". A same-scope active row must never win the `LIMIT 1` and
+   * mask a DIFFERENT scope's run: with `--new`/`--force`, the caller's own
+   * active run could otherwise sort first (most recently updated) and hide a
+   * third scope's run entirely, so `startWorkflowRun` silently warned about
+   * nothing while a genuinely stale run in another scope went unreported.
+   * `findActiveRunForScope` deliberately stays scope-local and is never used
+   * for this purpose.
+   */
+  findActiveRunOutsideScope(workflowRefs: string | readonly string[], scopeKey: string): WorkflowRunRow | undefined {
+    const refs = typeof workflowRefs === "string" ? [workflowRefs] : [...workflowRefs];
+    if (refs.length === 0) return undefined;
+    return (
+      (this.db
+        .prepare(
+          `SELECT * FROM workflow_runs WHERE workflow_ref IN (${refs.map(() => "?").join(", ")}) AND (scope_key IS NULL OR scope_key != ?) AND status = 'active' AND parent_run_id IS NULL ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
+        )
+        .get(...refs, scopeKey) as WorkflowRunRow | undefined) ?? undefined
+    );
   }
 
   getRunById(runId: string): WorkflowRunRow | undefined {
@@ -442,11 +467,11 @@ export class WorkflowRunsRepository {
    * to directly through this path — a parent-driven child would then have
    * TWO drivers. For any database with no child rows the result is
    * byte-identical.
+   *
+   * Always scope-local: `scopeKey` is a real scope, never "every scope" — see
+   * {@link findActiveRunOutsideScope} for the cross-scope warning's query.
    */
-  getActiveRunRowForScope(
-    workflowRefs: string | readonly string[],
-    scopeKey: string | null,
-  ): WorkflowRunRow | undefined {
+  getActiveRunRowForScope(workflowRefs: string | readonly string[], scopeKey: string): WorkflowRunRow | undefined {
     const refs = typeof workflowRefs === "string" ? [workflowRefs] : [...workflowRefs];
     if (refs.length === 0) return undefined;
     return (
@@ -484,8 +509,13 @@ export class WorkflowRunsRepository {
   listRuns(filter: ListRunsFilter): WorkflowRunRow[] {
     const filters: string[] = [];
     const params: string[] = [];
-    filters.push("scope_key = ?");
-    params.push(filter.scopeKey);
+    // `scopeKey: null` (#942) is "every scope" — the predicate is omitted
+    // rather than bound as SQL NULL (which would match nothing, since a real
+    // `scope_key` column value is never NULL for a fresh run).
+    if (filter.scopeKey !== null) {
+      filters.push("scope_key = ?");
+      params.push(filter.scopeKey);
+    }
     if (filter.workflowRef) {
       filters.push("workflow_ref = ?");
       params.push(filter.workflowRef);
@@ -676,11 +706,18 @@ export class WorkflowRunsRepository {
     this.immediateTransaction((db) => {
       input.revalidateSources();
       if (!input.force) {
+        // The uniqueness guard must never silently skip its scope predicate
+        // (#942) — every real caller (`startWorkflowRun`) stamps a concrete
+        // scope key, so a null one here means the caller is misusing this
+        // top-level guard, not that scoping should be waived.
+        if (input.run.scopeKey === null) {
+          throw new Error("publishWorkflowRunV4: run.scopeKey must not be null for the scope uniqueness guard.");
+        }
         const existing = this.findActiveRunForScope(input.workflowRefs, input.run.scopeKey);
         if (existing) {
           throw new UsageError(
             `Workflow ${input.run.workflowRef} already has an active run in this scope ` +
-              `(id=${existing.id}, step=${existing.current_step_id ?? "—"}). ` +
+              `(id=${existing.id}, scope=${input.run.scopeKey}, step=${existing.current_step_id ?? "—"}). ` +
               `Use 'akm workflow run ${input.run.workflowRef}' to resume it or ` +
               `'akm workflow abandon ${existing.id}' to give up on it.`,
             "RESOURCE_ALREADY_EXISTS",
@@ -878,7 +915,7 @@ export class WorkflowRunsRepository {
       if (!isLeaseContentionSqliteError(error)) throw error;
       const row = this.tryReadLeaseColumns(runId);
       if (row?.engine_lease_holder && row.engine_lease_until && row.engine_lease_until >= now) {
-        throw new UsageError(
+        throw new TransientError(
           `Workflow run ${runId} is already being driven by engine ${row.engine_lease_holder} ` +
             `(run lease expires ${row.engine_lease_until}). A second \`akm workflow run\` would race it — ` +
             `wait for that invocation to finish or for the lease to expire.`,

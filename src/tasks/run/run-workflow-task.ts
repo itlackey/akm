@@ -215,6 +215,22 @@ export async function runWorkflowTask(input: {
  * here is a *compile* error rather than silently collapsing to "completed".
  * The previous silent `default: "completed"` is preserved only for the
  * `undefined` (no-detail) case, which is handled up front.
+ *
+ * #943: is `undefined` reachable from a timeout (i.e. can a wedged/killed run
+ * produce `status: "completed"`)? No. This function is only ever called as
+ * `mapWorkflowStatus(detail?.status)` behind `failure ? "failed" : ...` in
+ * {@link runWorkflowTask} — `failure` is `error ?? gateError ?? timeoutError`,
+ * and `detail` is left `undefined` only in the `catch` branch that also sets
+ * `error` (making `failure` truthy). So whenever this function runs, either
+ * `failure` already short-circuited the caller to `"failed"` without
+ * consulting it, or the run awaited successfully and `detail` (thus
+ * `detail.status`) is guaranteed set by `RunWorkflowResult["run"]`, a
+ * required field. `status === undefined` is therefore unreachable today; it
+ * stays mapped to `"completed"` defensively rather than thrown on, since a
+ * literal `undefined` can only mean "the runtime told us nothing went
+ * wrong" — never observed from `runWorkflowStepsImpl`, but if some future
+ * caller ever passes it, failing loudly on "no evidence of failure" would be
+ * a worse trade than the status quo.
  */
 function mapWorkflowStatus(status: WorkflowRunStatus | undefined): TaskRunStatus {
   // No run detail → treat as completed (unchanged from the prior silent default).

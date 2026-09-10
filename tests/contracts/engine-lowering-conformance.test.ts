@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setSecret } from "../../src/commands/env/secret";
 import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-source";
 import type { AkmConfig } from "../../src/core/config/config";
 import { redactSensitiveText } from "../../src/core/redaction";
@@ -47,7 +48,7 @@ import {
   closeServer as closeOpencodeSdkServer,
 } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { LlmCallError, type LlmCallErrorCode } from "../../src/llm/client";
-import { mutateScopedEnv, withEnv } from "../_helpers/sandbox";
+import { mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const CLI_HARNESSES = HARNESS_REGISTRY.filter((harness) => harness.agentBuilder).map((harness) => harness.id);
 
@@ -1804,6 +1805,30 @@ describe("optimistic lowering safety", () => {
       expect(collectDispatchSensitiveValues(sdkFromFile, { envSource }, envSource)).toContain(fileSecret);
     } finally {
       fs.rmSync(keyDir, { recursive: true, force: true });
+    }
+
+    // #953: a secret-store-backed credential is also read at dispatch, so the
+    // scrub set must carry it exactly like the env- and file-backed ones.
+    const storage = withIsolatedAkmStorage();
+    try {
+      const primaryStoreSecret = "primary-store-secret-a1b2";
+      const fallbackStoreSecret = "fallback-store-secret-c3d4";
+      setSecret(path.join(storage.stashDir, "secrets", "primary-key"), Buffer.from(primaryStoreSecret));
+      setSecret(path.join(storage.stashDir, "secrets", "fallback-key"), Buffer.from(fallbackStoreSecret));
+      const primaryFromStore: RunnerSpec = {
+        ...primary,
+        credential: undefined,
+        apiKeySecretRef: "secret://primary-key",
+      };
+      expect(collectDispatchSensitiveValues(primaryFromStore, { envSource }, envSource)).toContain(primaryStoreSecret);
+      const sdkFromStore: RunnerSpec = {
+        ...sdk,
+        fallbackCredential: undefined,
+        fallbackApiKeySecretRef: "secret://fallback-key",
+      };
+      expect(collectDispatchSensitiveValues(sdkFromStore, { envSource }, envSource)).toContain(fallbackStoreSecret);
+    } finally {
+      storage.cleanup();
     }
 
     const result = await withEnv({ PRIMARY_SYMBOLIC_KEY: primarySecret, FALLBACK_SYMBOLIC_KEY: fallbackSecret }, () =>

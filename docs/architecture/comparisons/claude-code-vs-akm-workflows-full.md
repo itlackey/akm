@@ -299,7 +299,13 @@ anchor (`.akm/config.json` root → git root → bundle dir → cwd),
 `src/workflows/authoring/scope-key.ts`. Within a `(workflow_ref, scope_key)`
 pair, `startWorkflowRun` enforces a **single active run** unless `--force` is
 passed internally. The public CLI exposes no parallel-start flag: invoking
-`workflow run` by ref continues the active run in that scope.
+`workflow run` by ref continues the active run in that scope. This guard is
+scope-local by design (two unrelated projects sharing one `state.db` must be
+able to run the same-named workflow independently), so two *different*
+scopes can each hold their own active run of the same ref — starting one
+warns about an active run in another scope (naming its id and scope) rather
+than blocking it, and `akm workflow list --all-scopes` / `status` / `resume`
+/ `abandon <run-id>` see and act across scopes (#942).
 
 Orchestrated runs add a second, unrelated guard: the **run lease**. `akm
 workflow run` takes a lease (a random holder id, 90s expiry, renewed between

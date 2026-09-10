@@ -16,7 +16,7 @@ import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
+import { getIndexedMarkdownFragments, searchFts } from "../../../src/storage/repositories/index-fts-repository";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -181,6 +181,50 @@ describe("isolated lexical Markdown fragments (#937)", () => {
       // CI budget, deliberately roomy; this catches a return to client OFFSET
       // pagination without encoding machine-specific microbenchmarks.
       expect(elapsedMs).toBeLessThan(1000);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("batch-enriches selected fragment provenance within a bounded p95 cost", () => {
+    const db = open();
+    try {
+      for (let index = 0; index < 20; index++) {
+        const name = `enrichment-${index}`;
+        const safeBody = Array.from(
+          { length: 30 },
+          (_, ordinal) =>
+            `## Turn ${ordinal + 1}\nbatchedneedle parent ${index} turn ${ordinal} ${"context ".repeat(80)}`,
+        ).join("\n\n");
+        const entry: IndexDocument = { name, type: "knowledge", content: "ordinary parent projection" };
+        setMarkdownFragmentContent(entry, safeBody);
+        upsertEntry(
+          db,
+          `/fixture/knowledge/${name}.md`,
+          entry,
+          buildSearchText(entry),
+          deriveEntryProvenance({ bundleId: "fixture", componentId: "fixture", adapterId: "akm" }, "knowledge", name),
+        );
+      }
+      const hits = searchFts(db, "batchedneedle", 20);
+      const selections = hits.flatMap((hit) =>
+        hit.fragmentId ? [{ itemRef: hit.itemRef, fragmentId: hit.fragmentId }] : [],
+      );
+      expect(selections).toHaveLength(20);
+
+      const timings: number[] = [];
+      let enriched: ReturnType<typeof getIndexedMarkdownFragments> = [];
+      for (let run = 0; run < 25; run++) {
+        const started = performance.now();
+        enriched = getIndexedMarkdownFragments(db, selections);
+        timings.push(performance.now() - started);
+      }
+      const p95 = timings.sort((left, right) => left - right)[Math.floor(timings.length * 0.95)]!;
+      expect(enriched).toHaveLength(20);
+      expect(enriched.every((fragment) => fragment?.count === 30)).toBe(true);
+      // Deliberately roomy CI budget: catches an accidental return to one
+      // query or repeated full-parent split per selected fragment.
+      expect(p95).toBeLessThan(1000);
     } finally {
       closeDatabase(db);
     }

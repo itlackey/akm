@@ -399,3 +399,41 @@ export function getEmbeddingCount(db: Database): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
   return row.cnt;
 }
+
+/** One already-embedded entry sampled for the embedding-fingerprint canary (#955). */
+export interface EmbeddingCanarySample {
+  id: number;
+  searchText: string;
+  vector: EmbeddingVector;
+}
+
+/**
+ * Sample up to `limit` already-embedded entries (id, search text, and the
+ * stored vector) for the embedding-fingerprint canary check: re-embedding
+ * these texts with the CURRENT config and comparing against `vector` is how
+ * a model-string rename is told apart from a genuine model/dimension change
+ * (#955), without trusting the config string alone.
+ *
+ * Ordered by `id` for a deterministic, cheap sample (no `ORDER BY RANDOM()`)
+ * — the canary only needs "some" already-verified vectors, not a
+ * statistically representative one. A corrupt stored BLOB (see
+ * `bufferToFloat32`) is skipped rather than failing the whole sample.
+ */
+export function sampleEmbeddedEntriesForCanary(db: Database, limit: number): EmbeddingCanarySample[] {
+  const rows = db
+    .prepare(`
+      SELECT e.id, e.search_text AS searchText, em.embedding AS embedding
+      FROM entries e
+      JOIN embeddings em ON em.id = e.id
+      ORDER BY e.id
+      LIMIT ?
+    `)
+    .all(limit) as Array<{ id: number; searchText: string; embedding: Buffer }>;
+
+  const samples: EmbeddingCanarySample[] = [];
+  for (const row of rows) {
+    const vector = bufferToFloat32(row.embedding, Math.floor(row.embedding.byteLength / 4));
+    if (vector) samples.push({ id: row.id, searchText: row.searchText, vector });
+  }
+  return samples;
+}

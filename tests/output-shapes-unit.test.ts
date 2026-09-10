@@ -169,6 +169,43 @@ describe("shapeSearchHit — local stash hits", () => {
       expect(shapeSearchHit(hitWithStage, "full")).toEqual(hitWithStage);
     });
   });
+
+  test("fragment provenance survives brief, normal, and agent projections", () => {
+    const fragmentHit = {
+      ...fullHit,
+      ref: "knowledge/guide#akm-fragment-3-abc",
+      selectedRef: "knowledge/guide#akm-fragment-3-abc",
+      parentRef: "knowledge/guide",
+      fragmentOrdinal: 3,
+      fragmentCount: 5,
+      startLine: 40,
+      endLine: 47,
+      previousRef: "knowledge/guide#akm-fragment-2-def",
+      nextRef: "knowledge/guide#akm-fragment-4-ghi",
+      fragmentChars: 400,
+      fragmentEstimatedTokens: 100,
+      parentChars: 8000,
+      parentEstimatedTokens: 2000,
+    };
+
+    expect(shapeSearchHit(fragmentHit, "brief")).toMatchObject({
+      selectedRef: fragmentHit.selectedRef,
+      parentRef: fragmentHit.parentRef,
+      fragmentOrdinal: 3,
+      fragmentCount: 5,
+      parentEstimatedTokens: 2000,
+    });
+    expect(shapeSearchHit(fragmentHit, "normal")).toMatchObject({
+      startLine: 40,
+      endLine: 47,
+      fragmentEstimatedTokens: 100,
+    });
+    expect(shapeSearchHitForAgent(fragmentHit)).toMatchObject({
+      selectedRef: fragmentHit.selectedRef,
+      previousRef: fragmentHit.previousRef,
+      nextRef: fragmentHit.nextRef,
+    });
+  });
 });
 
 describe("shapeSearchHit — registry hits", () => {
@@ -384,6 +421,36 @@ describe("shapeShowOutput", () => {
 
   test("ref is present in shape=agent", () => {
     expect(shapeShowOutput(fullShow, "normal", "agent").ref).toBe("team//skills/deploy");
+  });
+
+  test("fragment provenance and context status survive every show shape", () => {
+    const fragmentShow = {
+      ...fullShow,
+      selectedRef: "team//skills/deploy#akm-fragment-2-abc",
+      parentRef: "team//skills/deploy",
+      fragmentOrdinal: 2,
+      fragmentCount: 3,
+      startLine: 12,
+      endLine: 18,
+      fragmentChars: 200,
+      fragmentEstimatedTokens: 50,
+      parentChars: 1200,
+      parentEstimatedTokens: 300,
+      contextMode: "lead",
+      contextMaxChars: 800,
+      contextTruncated: true,
+    };
+
+    for (const shape of ["human", "summary", "agent"] as const) {
+      expect(shapeShowOutput(fragmentShow, "normal", shape)).toMatchObject({
+        selectedRef: fragmentShow.selectedRef,
+        parentRef: fragmentShow.parentRef,
+        fragmentOrdinal: 2,
+        contextMode: "lead",
+        contextMaxChars: 800,
+        contextTruncated: true,
+      });
+    }
   });
 
   // D-14: `path` and `editable` are projected at every --detail level, not
@@ -645,6 +712,12 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
     ["workflow-list", "runs", { runs: [{ id: "w1" }] }],
     ["task-history", "rows", { rows: [{ id: "t1" }] }],
     ["log-list", "events", { events: [{ eventType: "add", ref: "lessons/x", ts: "2024-01-01T00:00:00Z" }] }],
+    ["config-diff", "rows", { rows: [{ path: "semanticSearchMode", local: "off", other: "auto" }] }],
+    [
+      "models-list",
+      "rows",
+      { rows: [{ alias: "fast", column: "claude", model: "claude-haiku", source: "default", via: "literal" }] },
+    ],
   ];
 
   for (const [command, key, raw] of LIST_COMMANDS) {

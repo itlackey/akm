@@ -37,10 +37,22 @@ import {
 } from "../core/file-lock";
 import { tryAcquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDbPath, getIndexWriterLockPath } from "../core/paths";
+import { warn } from "../core/warn";
 import { sleepSync } from "../runtime";
 
 const ASSET_MUTATION_WAIT_MS = 100;
 const DEFAULT_ASSET_MUTATION_MAX_WAIT_MS = 10 * 60 * 1000;
+/** How often a blocked sync waiter re-announces that it is still waiting. Mirrors the async path's cadence. */
+const ASSET_MUTATION_WAIT_NOTICE_INTERVAL_MS = 15_000;
+
+/** TEST-ONLY. Shrinks the sync path's max-wait/notice-cadence so a test doesn't block for real minutes/seconds. */
+let syncTimingOverridesForTests: { maxWaitMs?: number; waitNoticeIntervalMs?: number } | undefined;
+export function _setAssetMutationLeaseSyncTimingForTests(overrides?: {
+  maxWaitMs?: number;
+  waitNoticeIntervalMs?: number;
+}): void {
+  syncTimingOverridesForTests = overrides;
+}
 
 const leaseContext = new AsyncLocalStorage<Set<string>>();
 
@@ -68,6 +80,25 @@ function buildPayload(purpose: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Describe who currently holds `lockPath`, from `probeLock`'s own payload
+ * (the same `purpose`/`pid`/`startedAt` fields `buildPayload` writes) —
+ * never the waiting caller's own `purpose`, which names what SELF is trying
+ * to do, not who is in the way.
+ */
+function describeAssetMutationHolder(lockPath: string): string {
+  const probe = probeLock(lockPath);
+  const rawContent = probe.state === "held" || probe.state === "stale" ? probe.rawContent : undefined;
+  if (!rawContent) return "an asset write";
+  try {
+    const payload = JSON.parse(rawContent) as { pid?: number; purpose?: string; startedAt?: string };
+    const who = payload.purpose ?? "an asset write";
+    return `${who} (pid ${payload.pid ?? "?"}, started ${payload.startedAt ?? "?"})`;
+  } catch {
+    return "an asset write";
+  }
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -173,13 +204,25 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
   const context = inherited ?? new Set<string>();
   const execute = (): T => {
     const startedAt = Date.now();
+    const maxWaitMs = syncTimingOverridesForTests?.maxWaitMs ?? DEFAULT_ASSET_MUTATION_MAX_WAIT_MS;
+    const waitNoticeIntervalMs =
+      syncTimingOverridesForTests?.waitNoticeIntervalMs ?? ASSET_MUTATION_WAIT_NOTICE_INTERVAL_MS;
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lease: AssetMutationLease | undefined;
+    let lastWaitNoticeMs = 0;
     while (!lease) {
       lease = tryAcquireAssetMutationLease(lockPath, purpose);
       if (!lease) {
-        if (Date.now() - startedAt >= DEFAULT_ASSET_MUTATION_MAX_WAIT_MS) {
+        const waitedMs = Date.now() - startedAt;
+        if (waitedMs >= maxWaitMs) {
           throw new Error(`timed out waiting for asset mutation lease for ${purpose}`);
+        }
+        // #956: the sync path used to wait up to 10 minutes with zero
+        // progress feedback. Mirror the async path's 15s onWait cadence, but
+        // actually warn by default — no caller wires onWait on this path.
+        if (waitedMs - lastWaitNoticeMs >= waitNoticeIntervalMs) {
+          warn(`waiting for ${describeAssetMutationHolder(lockPath)} — ${Math.round(waitedMs / 1000)}s`);
+          lastWaitNoticeMs = waitedMs;
         }
         sleepSync(ASSET_MUTATION_WAIT_MS);
       }

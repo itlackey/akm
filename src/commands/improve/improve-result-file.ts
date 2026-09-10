@@ -29,7 +29,7 @@
 import crypto from "node:crypto";
 import { decodeImproveResult } from "../../core/improve-result";
 import { redactSensitiveValue } from "../../core/redaction";
-import { withStateDb } from "../../core/state-db";
+import { withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { recordImproveRun } from "../../storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "./improve";
 
@@ -75,18 +75,25 @@ export function recordImproveRunResult(
     const resolvedStartedAt =
       startedAt ??
       runId.slice(0, 24).replace(/^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1$2:$3:$4.$5Z");
-    recordImproveRun(db, {
-      id: runId,
-      startedAt: resolvedStartedAt,
-      completedAt,
-      stashDir,
-      dryRun: Boolean(result.dryRun),
-      strategy: redactSensitiveValue(decoded.strategy, sensitiveValues),
-      scopeMode: result.scope?.mode ?? "all",
-      scopeValue: persistedResult.scope?.value ?? null,
-      guidance: persistedResult.guidance ?? null,
-      ok: Boolean(result.ok),
-      result: persistedResult,
+    // #948: route through the shared BEGIN IMMEDIATE retry/reclassify helper
+    // instead of a bare write — this INSERT used to rely solely on the
+    // connection's 30s busy_timeout, with no retry and no friendly
+    // reclassification on exhaustion, so a raw "database is locked" from
+    // improve's own ledger write could reach the CLI as exit 70.
+    withImmediateTransaction(db, () => {
+      recordImproveRun(db, {
+        id: runId,
+        startedAt: resolvedStartedAt,
+        completedAt,
+        stashDir,
+        dryRun: Boolean(result.dryRun),
+        strategy: redactSensitiveValue(decoded.strategy, sensitiveValues),
+        scopeMode: result.scope?.mode ?? "all",
+        scopeValue: persistedResult.scope?.value ?? null,
+        guidance: persistedResult.guidance ?? null,
+        ok: Boolean(result.ok),
+        result: persistedResult,
+      });
     });
   });
 }
@@ -154,27 +161,32 @@ export function recordTerminatedImproveRun(
   );
 
   withStateDb((db) => {
-    recordImproveRun(db, {
-      id: runId,
-      startedAt,
-      completedAt,
-      stashDir,
-      dryRun: Boolean(ctx.dryRun),
-      strategy: persistedStrategy,
-      scopeMode: ctx.scopeMode ?? "all",
-      scopeValue: persistedScopeValue ?? null,
-      guidance: null,
-      ok: false,
-      result: minimalResult,
-      metadata: {
-        terminated: {
-          reason: persistedReason,
-          at: completedAt,
-          ...(ctx.errorMessage
-            ? { errorMessage: redactSensitiveValue(ctx.errorMessage, ctx.sensitiveValues ?? []) }
-            : {}),
+    // #948: same rationale as recordImproveRunResult above — this is the
+    // signal-handler/terminated-run write path, which must not itself raise
+    // a raw "database is locked" while trying to record why the run ended.
+    withImmediateTransaction(db, () => {
+      recordImproveRun(db, {
+        id: runId,
+        startedAt,
+        completedAt,
+        stashDir,
+        dryRun: Boolean(ctx.dryRun),
+        strategy: persistedStrategy,
+        scopeMode: ctx.scopeMode ?? "all",
+        scopeValue: persistedScopeValue ?? null,
+        guidance: null,
+        ok: false,
+        result: minimalResult,
+        metadata: {
+          terminated: {
+            reason: persistedReason,
+            at: completedAt,
+            ...(ctx.errorMessage
+              ? { errorMessage: redactSensitiveValue(ctx.errorMessage, ctx.sensitiveValues ?? []) }
+              : {}),
+          },
         },
-      },
+      });
     });
   });
 }

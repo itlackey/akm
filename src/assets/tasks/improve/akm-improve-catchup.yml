@@ -1,5 +1,5 @@
 version: 4
-run: akm improve --strategy catchup --skip-if-locked
+run: akm improve --strategy catchup --skip-if-locked --require-engines
 description: Manual recovery — consolidation + triage drain (run on demand via `akm task run akm-improve-catchup`)
 # Manual-recovery task: ships disabled (the retired registerDefaultTasks
 # marked it enableMode: "manual"). `akm task run` works while disabled;

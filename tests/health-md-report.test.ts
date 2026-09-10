@@ -261,6 +261,7 @@ describe("renderWindowCompareMd", () => {
         metrics: {
           taskFailRate: 0,
           agentFailureRate: 0,
+          agentFailureReasonCounts: {},
           stuckActiveRuns: 0,
           logBackingRate: 1,
           probeRoundTripMs: null,
@@ -271,6 +272,7 @@ describe("renderWindowCompareMd", () => {
             completionTokens: 0,
             totalTokens: 0,
             reasoningTokens: 0,
+            failures: 0,
             byStage: {},
             byProcess: {},
             byEngine: {},
@@ -300,6 +302,7 @@ describe("renderWindowCompareMd", () => {
       metrics: {
         taskFailRate: 0,
         agentFailureRate: 0,
+        agentFailureReasonCounts: {},
         stuckActiveRuns: 0,
         logBackingRate: 1,
         probeRoundTripMs: null,
@@ -310,6 +313,7 @@ describe("renderWindowCompareMd", () => {
           completionTokens: 0,
           totalTokens: 0,
           reasoningTokens: 0,
+          failures: 0,
           byStage: {},
           byProcess: {},
           byEngine: {},

@@ -354,8 +354,16 @@ function planConsolidationPass(args: {
         readOnly: eventsCtx?.readOnly === true,
       })
     : { poolSize: 0, candidatePoolSize: 0, dedupPoolSize: 0, memories: [] };
+  // #800/#957 round 3 — a credential-unavailable consolidate engine still
+  // resolved a context length structurally; read it off the `engineUnavailable`
+  // entry instead of falling back to the generic default, so a dry-run
+  // preview reflects the real engine even when its credential isn't
+  // materialized here.
+  const consolidateUnavailable = resolvedPlan.engineUnavailable.find((item) => item.process === "consolidate");
   const chunkSize = computeSafeChunkSize(
-    resolvedPlan.processes.consolidate.runner?.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
+    resolvedPlan.processes.consolidate.runner?.connection.contextLength ??
+      consolidateUnavailable?.contextLength ??
+      DEFAULT_CONTEXT_LENGTH_TOKENS,
     500,
     processConfig?.maxChunkSize,
   );

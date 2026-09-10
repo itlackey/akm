@@ -22,7 +22,7 @@ import {
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
-import { lookupApiKeyFileValue } from "../../integrations/agent/engine-resolution";
+import { lookupApiKeyFileValue, lookupApiKeySecretRefValue } from "../../integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { UnitDispatcher } from "./unit-dispatch";
 
@@ -36,19 +36,20 @@ export interface DispatchSecretSources {
 /**
  * Every exact value that must never survive into the journal from ONE frozen
  * dispatch: the resolved `env` bindings injected into the child, the selected
- * engine's (and its SDK fallback's) credential — an env value, or a
- * file-backed one (#905) — and any `envPassthrough` value the redaction
- * policy does not consider safe to expose.
+ * engine's (and its SDK fallback's) credential — an env value, a file-backed
+ * one (#905), or a secret-store-backed one (#953) — and any `envPassthrough`
+ * value the redaction policy does not consider safe to expose.
  *
  * Shared by the unit path and the gate-judge path. There is deliberately ONE
  * collector: a second, parallel implementation is exactly how a dispatch path
  * silently loses the scrub.
  *
- * The credential values are read from `process.env` (or disk, for a file-
- * backed one) AT CALL TIME, so a caller must collect no earlier than the
- * dispatch whose outcome it scrubs. A snapshot taken when the dispatch was
- * merely *planned* can predate a credential the dispatch then resolves live,
- * leaving the exact value it must remove out of the set.
+ * The credential values are read from `process.env` (or disk / the secret
+ * store, for a file- or store-backed one) AT CALL TIME, so a caller must
+ * collect no earlier than the dispatch whose outcome it scrubs. A snapshot
+ * taken when the dispatch was merely *planned* can predate a credential the
+ * dispatch then resolves live, leaving the exact value it must remove out of
+ * the set.
  */
 export function collectWorkflowDispatchSensitiveValues(
   dispatch: DispatchSecretSources,
@@ -68,6 +69,11 @@ export function collectWorkflowDispatchSensitiveValues(
         const value = lookupApiKeyFileValue(runner.apiKeyFile);
         if (value) values.add(value);
       }
+      // #953: secret-store-backed credential — same best-effort rationale.
+      if (runner.apiKeySecretRef) {
+        const value = lookupApiKeySecretRefValue(runner.apiKeySecretRef);
+        if (value) values.add(value);
+      }
       return;
     }
     for (const name of runner.profile.envPassthrough ?? []) {
@@ -81,6 +87,10 @@ export function collectWorkflowDispatchSensitiveValues(
       }
       if (runner.fallbackApiKeyFile) {
         const value = lookupApiKeyFileValue(runner.fallbackApiKeyFile);
+        if (value) values.add(value);
+      }
+      if (runner.fallbackApiKeySecretRef) {
+        const value = lookupApiKeySecretRefValue(runner.fallbackApiKeySecretRef);
         if (value) values.add(value);
       }
     }

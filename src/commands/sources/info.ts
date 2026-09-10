@@ -6,7 +6,7 @@ import { placementTypes } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
 import { getSources, loadConfig } from "../../core/config/config";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
-import { getDbPath } from "../../core/paths";
+import { getCacheDir, getConfigDir, getDataDir, getDbPath, getStateDir } from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
 import { error } from "../../core/warn";
 import type { InfoResponse } from "../../sources/types";
@@ -81,6 +81,10 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     version: pkgVersion,
     bundleDir: stashDir,
     defaultBundle,
+    dataDir: getDataDir(),
+    configDir: getConfigDir(),
+    cacheDir: getCacheDir(),
+    stateDir: getStateDir(),
     assetTypes,
     searchModes,
     semanticSearch: {

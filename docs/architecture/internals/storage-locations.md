@@ -210,6 +210,21 @@ Used by JS cosine-similarity fallback when `sqlite-vec` is absent.
 
 Created only when `sqlite-vec` is loadable. Columns: `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`. Dropped and recreated if embedding dimension changes.
 
+#### Table: `embedding_salvage` (#955)
+
+| Column | Type | Notes |
+|---|---|---|
+| `content_hash` | TEXT PRIMARY KEY | `sha256(entries.search_text)` |
+| `fingerprint` | TEXT NOT NULL | The `embeddingFingerprint` the salvaged vector was generated under |
+| `embedding` | BLOB NOT NULL | Float32 vector, little-endian IEEE-754 — copied verbatim from `embeddings.embedding` |
+| `salvaged_at` | TEXT NOT NULL | ISO-8601 timestamp of the discard that salvaged this row |
+
+Transient and self-emptying, not a second embedding cache: rows are written
+only at the two points that discard `embeddings` wholesale (a full-index
+rebuild, a generation bump) and are consumed — or the whole table purged —
+by the very next embedding pass. See "Embedding reuse across rebuilds" in
+[Indexing](indexing.md#embedding-phase).
+
 #### Workflow source indexing
 
 Peer `.md` and `.yml` workflow sources compile directly to source IR version 1.
@@ -302,7 +317,7 @@ plans are rejected rather than upgraded or replayed through another runtime.
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID v4 |
 | `workflow_ref` | TEXT NOT NULL | e.g. `workflows/review-todos` |
-| `scope_key` | TEXT | Directory hash; isolates runs per project |
+| `scope_key` | TEXT | Directory hash; isolates runs per project. Gates `list`'s default filter, `akm show`'s active-run nudge, and `startWorkflowRun`'s own-scope uniqueness guard (unchanged, still per-scope) — so two DIFFERENT scopes can each hold their own active run of the same ref; starting one warns about the other rather than blocking it (#942). `akm workflow list --all-scopes` sees across scopes, and `status`/`resume`/`abandon <run-id>` already act on a run regardless of which scope started it |
 | `workflow_entry_id` | INTEGER | Optional FK into `index.db entries.id` |
 | `workflow_title` | TEXT NOT NULL | Human-readable title |
 | `status` | TEXT NOT NULL | `active`, `completed`, `blocked`, `failed` |

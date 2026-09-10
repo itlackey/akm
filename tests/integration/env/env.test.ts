@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildShellExportScript, createEnv, listKeys, loadEnv } from "../../../src/commands/env/env";
-import { sensitiveMarkerPath } from "../../../src/commands/env/marker-path";
+import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
 import { getDbPath } from "../../../src/core/paths";
 import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../../src/indexer/indexer";

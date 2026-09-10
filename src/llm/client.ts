@@ -424,13 +424,18 @@ async function chatCompletionAttemptOnce(
           },
         }
       : {};
+  // #949: which of these two wire forms a backend honors is a fact about the
+  // backend (and any gateway in front of it), not about akm's own `provider`
+  // label — a llama.cpp build honors chat_template_kwargs, a bare
+  // `enable_thinking` is honored by nothing observed, and a gateway
+  // (freellmapi, Bifrost) can drop either one depending on how it was built.
+  // Send both whenever thinking is explicitly resolved so the same engine
+  // block keeps working across a direct vhost or any gateway in front of it.
   const resolvedEnableThinking = options?.enableThinking ?? config.enableThinking;
   const thinkingParams =
     resolvedEnableThinking === undefined
       ? {}
-      : config.provider === "vllm"
-        ? { chat_template_kwargs: { enable_thinking: resolvedEnableThinking } }
-        : { enable_thinking: resolvedEnableThinking };
+      : { chat_template_kwargs: { enable_thinking: resolvedEnableThinking }, enable_thinking: resolvedEnableThinking };
   const reasoningEffortParams =
     config.reasoningEffort === undefined ? {} : { reasoning_effort: config.reasoningEffort };
 
@@ -641,4 +646,27 @@ export async function probeLlmEndpoint(
   } catch (err) {
     return { reachable: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * Endpoint-keyed probe memoization (#957): every caller that probes several
+ * engine connections in one pass (`akm health`'s engine checks, `akm
+ * improve --require-engines`) shares one in-flight probe per distinct
+ * endpoint (trailing slashes normalized) instead of firing a duplicate probe
+ * when two engines point at the same server. `cache` must be scoped to one
+ * invocation and never shared across calls — a stale "reachable" surviving
+ * past the run that produced it is the failure mode this exists to avoid.
+ */
+export function probeEndpointOnce<T>(
+  connection: LlmConnectionConfig,
+  cache: Map<string, Promise<T>>,
+  probe: (connection: LlmConnectionConfig) => Promise<T>,
+): Promise<T> {
+  const key = connection.endpoint.replace(/\/+$/, "");
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = probe(connection);
+    cache.set(key, pending);
+  }
+  return pending;
 }

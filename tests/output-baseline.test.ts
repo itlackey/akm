@@ -154,6 +154,16 @@ describe("output baseline", () => {
     expect(output).toContain("run:");
   });
 
+  test("show text output for an env asset lists key names, never values (#951)", async () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    writeFile(path.join(stashDir, "env", "prod.env"), "API_KEY=DO_NOT_PRINT\nOTHER_KEY=DO_NOT_PRINT_EITHER\n");
+
+    const output = await runCli(stashDir, ["show", "env/prod", "--format=text"]);
+
+    expect(output).toContain("keys: API_KEY, OTHER_KEY");
+    expect(output).not.toContain("DO_NOT_PRINT");
+  });
+
   test("show shaped output includes action across all asset types", async () => {
     const stashDir = makeTempDir("akm-output-stash-");
     const envDirs = {

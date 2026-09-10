@@ -114,6 +114,7 @@ export interface CliResult {
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
 const EXIT_INTERNAL = 70;
+const EXIT_TEMPFAIL = 75;
 const EXIT_CONFIG = 78;
 
 /** Mirror of `classifyExitCode` in src/cli/shared.ts for errors that escape. */
@@ -126,6 +127,8 @@ function classifyExitCode(error: unknown): number {
       return EXIT_CONFIG;
     case "not-found":
       return EXIT_GENERAL;
+    case "transient":
+      return EXIT_TEMPFAIL;
   }
 }
 

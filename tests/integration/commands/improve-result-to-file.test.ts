@@ -13,11 +13,16 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmImproveResult } from "../../../src/commands/improve/improve";
-import { buildImproveRunId, recordImproveRunResult } from "../../../src/commands/improve/improve-result-file";
+import {
+  buildImproveRunId,
+  recordImproveRunResult,
+  recordTerminatedImproveRun,
+} from "../../../src/commands/improve/improve-result-file";
+import * as stateDbModule from "../../../src/core/state-db";
 import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // The buildImproveRunId and recordImproveRunResult tests run in-process;
@@ -218,6 +223,91 @@ describe("recordImproveRunResult", () => {
       expect(Math.abs(storedStart - past.getTime())).toBeLessThan(1000);
       // completed_at must be after started_at
       expect(new Date(rows[0]!.completed_at!).getTime()).toBeGreaterThan(storedStart);
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+});
+
+describe("BEGIN IMMEDIATE retry path (#948)", () => {
+  /**
+   * Wrap `fn` so the FIRST `BEGIN IMMEDIATE` issued by the real
+   * `withImmediateTransaction` call inside `fn` fails "database is locked" —
+   * the shared contention classifier (`isSqliteContentionError`) — and every
+   * later attempt runs for real against the real connection. Same technique
+   * as tests/integration/state-db/with-immediate-transaction.test.ts's
+   * fake-exec tests, applied via a spy on `withImmediateTransaction` (rather
+   * than a hand-built fake `Database`) since the real connection here is
+   * opened internally by `withStateDb`, not passed in from the test. Pins
+   * that `recordImproveRunResult`/`recordTerminatedImproveRun` go through the
+   * retrying helper — not a bare write that would surface the raw driver
+   * error as an exit-70 crash — by proving the row still gets written after
+   * one induced contention failure.
+   */
+  function withOneBeginImmediateFailure<T>(fn: () => T): T {
+    const real = stateDbModule.withImmediateTransaction;
+    let beginAttempts = 0;
+    const spy = spyOn(stateDbModule, "withImmediateTransaction").mockImplementation((db, txFn) => {
+      const originalExec = db.exec.bind(db);
+      db.exec = ((sql: string) => {
+        if (sql === "BEGIN IMMEDIATE" && beginAttempts === 0) {
+          beginAttempts += 1;
+          throw new Error("database is locked");
+        }
+        originalExec(sql);
+      }) as typeof db.exec;
+      try {
+        return real(db, txFn);
+      } finally {
+        db.exec = originalExec;
+      }
+    });
+    try {
+      const result = fn();
+      expect(beginAttempts).toBe(1); // the induced failure actually fired, and was retried
+      return result;
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  const baseResult: AkmImproveResult = {
+    schemaVersion: 2,
+    ok: true,
+    strategy: "default",
+    scope: { mode: "all" },
+    dryRun: false,
+    memorySummary: { eligible: 1, derived: 0 },
+    plannedRefs: [],
+  };
+
+  test("recordImproveRunResult: a transient BEGIN IMMEDIATE failure is retried, not surfaced — the row is recorded", () => {
+    const stash = makeStashDir();
+    const runId = "test-run-begin-immediate-retry";
+    const dataSb = sandboxXdgDataHome();
+    try {
+      withOneBeginImmediateFailure(() => recordImproveRunResult(stash, runId, baseResult));
+      const rows = readImproveRuns(dataSb.dir);
+      expect(rows.length).toBe(1);
+      expect(rows[0]!.id).toBe(runId);
+      expect(rows[0]!.ok).toBe(1);
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
+  test("recordTerminatedImproveRun: a transient BEGIN IMMEDIATE failure is retried, not surfaced — the row is recorded", () => {
+    const stash = makeStashDir();
+    const runId = "test-run-terminated-begin-immediate-retry";
+    const dataSb = sandboxXdgDataHome();
+    try {
+      withOneBeginImmediateFailure(() =>
+        recordTerminatedImproveRun(stash, runId, new Date().toISOString(), "SIGTERM", { strategy: "default" }),
+      );
+      const rows = readImproveRuns(dataSb.dir);
+      expect(rows.length).toBe(1);
+      expect(rows[0]!.id).toBe(runId);
+      expect(rows[0]!.ok).toBe(0);
     } finally {
       dataSb.cleanup();
     }

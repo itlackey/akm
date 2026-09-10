@@ -29,7 +29,7 @@ import type { AkmConfig, LlmProfileConfig } from "../../../src/core/config/confi
 import { ConfigError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getStateDbPath } from "../../../src/core/state-db";
-import { parseAgentProposalPayload } from "../../../src/integrations/agent/prompts";
+import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import { _setChatCompletionForTests } from "../../../src/llm/client";
 import { quietQualityGateConfig } from "../../_helpers/factories";
@@ -874,6 +874,35 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(completed?.metadata?.repairAttempts).toBe(0);
   });
 
+  test("does not repair a valid response that leaks the truncation marker (#952)", async () => {
+    const stash = makeStashDir();
+    let calls = 0;
+    const result = await akmReflect({
+      ref: "knowledge/leak-marker",
+      stashDir: stash,
+      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      // Deliberately tiny so the body-size ratio guard cannot fire (source
+      // body stays under REFLECT_SIZE_GUARD_MIN_BYTES) — isolates the
+      // truncation-marker rail from the size-ratio rail.
+      assetContent: "---\ndescription: Short doc under the size-guard floor\n---\n\nShort body.\n",
+      chat: async () => {
+        calls += 1;
+        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRewritten body.\n${REFLECT_TRUNCATION_MARKER}\nAKM_REFLECT_CONTENT_END`;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(calls).toBe(1);
+    expect(listProposals(stash)[0]?.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "reflect-truncation-leak",
+    });
+    const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
+    expect(completed?.metadata?.repairAttempts).toBe(0);
+    expect(completed?.metadata?.truncationMarkerLeaked).toBe(true);
+  });
+
   test("does not repair a valid response rejected by the quality gate", async () => {
     const stash = makeStashDir();
     let reflectCalls = 0;
@@ -905,6 +934,105 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(judgeCalls).toBe(1);
     const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
     expect(completed?.metadata?.repairAttempts).toBe(0);
+  });
+});
+
+// ── 2b. Context-aware content budget — LLM path only (#952) ────────────────
+
+describe("akmReflect — content budget is context-aware on the direct-LLM path", () => {
+  // A unique tail marker (not a repeated substring) so "did the prompt include
+  // the true end of the body" can be asserted unambiguously.
+  const TAIL_SENTINEL = "SENTINEL-TAIL-END-OF-DOCUMENT-952";
+  const bigBody = `${"Long detailed reference paragraph about the system under test. ".repeat(400)}\n\n${TAIL_SENTINEL}`; // > 12k chars
+  // The truncated-content fence: REFLECT_TRUNCATION_MARKER immediately closing
+  // the fenced content block. Distinguishes an ACTUALLY truncated content
+  // section from the output contract's own prose, which also quotes
+  // REFLECT_TRUNCATION_MARKER verbatim (to forbid echoing it) and would
+  // otherwise make a plain `.toContain(REFLECT_TRUNCATION_MARKER)` check
+  // vacuously true regardless of whether the asset content was capped.
+  const TRUNCATED_CONTENT_FENCE = `${REFLECT_TRUNCATION_MARKER}\n\n\`\`\``;
+
+  test("a large configured engines.<name>.contextLength sends the full asset instead of truncating at the flat 12k cap", async () => {
+    const stash = makeStashDir();
+    const config = reflectLlmConfig({
+      ...fakeLlmConnection(),
+      supportsJsonSchema: false,
+      // Comfortably large: even after halving the usable window to reserve
+      // room for the response (see the next test), this must still fit the
+      // asset body with margin to spare.
+      contextLength: 400_000,
+    });
+    let capturedPrompt = "";
+    const result = await akmReflect({
+      ref: "knowledge/large-asset",
+      stashDir: stash,
+      config,
+      assetContent: `---\ndescription: Large reference doc\n---\n\n${bigBody}`,
+      chat: async (_config, messages) => {
+        capturedPrompt = messages[0]?.content ?? "";
+        // A trivial edit so this isn't a no-op/cosmetic echo of the source.
+        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRevised opening line.\n\n${bigBody}\nAKM_REFLECT_CONTENT_END`;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(capturedPrompt).not.toContain(TRUNCATED_CONTENT_FENCE);
+    expect(capturedPrompt).toContain("Current asset content (verbatim):");
+    // The tail sentinel only survives in the prompt if the content was not sliced off.
+    expect(capturedPrompt).toContain(TAIL_SENTINEL);
+  });
+
+  test("the content budget reserves half the usable window for the response, so a contextLength whose FULL window would fit the asset still truncates", async () => {
+    const stash = makeStashDir();
+    // Chosen so that contextLength * 3 chars/token comfortably exceeds the
+    // asset body on its own (the un-halved, pre-#952-fix budget would have
+    // sent the whole thing) but HALF of that usable window does not — pinning
+    // that the reflect rewrite's own output gets a reserved half rather than
+    // the request consuming the entire context window on input alone.
+    const config = reflectLlmConfig({
+      ...fakeLlmConnection(),
+      supportsJsonSchema: false,
+      contextLength: 16_000,
+    });
+    let capturedPrompt = "";
+    const result = await akmReflect({
+      ref: "knowledge/large-asset-half-window",
+      stashDir: stash,
+      config,
+      assetContent: `---\ndescription: Large reference doc\n---\n\n${bigBody}`,
+      chat: async (_config, messages) => {
+        capturedPrompt = messages[0]?.content ?? "";
+        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRewritten.\nAKM_REFLECT_CONTENT_END`;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedPrompt).toContain(TRUNCATED_CONTENT_FENCE);
+    // The tail sentinel must be gone — it fell past the halved budget even
+    // though the full (unhalved) window would have had room for it.
+    expect(capturedPrompt).not.toContain(TAIL_SENTINEL);
+  });
+
+  test("an unconfigured contextLength still truncates around the flat 12k floor", async () => {
+    const stash = makeStashDir();
+    const config = reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false });
+    let capturedPrompt = "";
+    const result = await akmReflect({
+      ref: "knowledge/large-asset-default",
+      stashDir: stash,
+      config,
+      assetContent: `---\ndescription: Large reference doc\n---\n\n${bigBody}`,
+      chat: async (_config, messages) => {
+        capturedPrompt = messages[0]?.content ?? "";
+        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRewritten.\nAKM_REFLECT_CONTENT_END`;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedPrompt).toContain(TRUNCATED_CONTENT_FENCE);
+    // The tail sentinel must be gone — it fell past the (near-)12k cap.
+    expect(capturedPrompt).not.toContain(TAIL_SENTINEL);
   });
 });
 

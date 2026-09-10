@@ -16,7 +16,8 @@ import {
   planExecutionCascade,
   requireAuthorizedExecutionPlan,
 } from "../../src/integrations/agent/execution-cascade";
-import { mergeModelMapLayers, parseModelMapLayer } from "../../src/integrations/agent/model-map";
+import { executionEngineDefinitionsFromConfig } from "../../src/integrations/agent/execution-definitions";
+import { mergeModelMapLayers, parseModelMapLayer, resolveModelMapAlias } from "../../src/integrations/agent/model-map";
 
 const modelMap = mergeModelMapLayers(
   parseModelMapLayer(
@@ -641,3 +642,44 @@ describe("common execution cascade resolver", () => {
 function planLayers() {
   return { installation: layer("installation", {}), command: layer("command", { tools: [] }) };
 }
+
+// #946 acceptance: an `engine`-backed models.json column resolves to the
+// configured engine's own model, so `akm agent --engine local-fast --model
+// fast` hits the engine `local-fast` was configured with — not a hardcoded
+// per-platform literal. Combines `executionEngineDefinitionsFromConfig`
+// (config -> modelMapKey) with `mergeModelMapLayers`/`resolveModelMapAlias`
+// (models.json -> resolved model), the same two pieces the common cascade
+// already stitches together, without editing any existing case above.
+describe("engine-backed model-map alias resolution (#946)", () => {
+  test("akm agent --engine local-fast --model fast resolves the engine's own model", () => {
+    const config = {
+      configVersion: "0.9.0" as const,
+      semanticSearchMode: "off" as const,
+      engines: {
+        "local-fast": {
+          kind: "agent" as const,
+          platform: "opencode" as const,
+          model: "krang/qwen3.5-9b",
+        },
+      },
+    };
+    const definitions = executionEngineDefinitionsFromConfig(config);
+    expect(definitions["local-fast"]?.modelMapKey).toBe("opencode");
+
+    const map = mergeModelMapLayers(
+      parseModelMapLayer(
+        JSON.stringify({ version: 1, aliases: { fast: { opencode: { engine: "local-fast" } } } }),
+        "installed models.json",
+      ),
+      undefined,
+      config.engines,
+    );
+
+    const selection = resolveModelMapAlias("fast", definitions["local-fast"]?.modelMapKey ?? "", map);
+    expect(selection).toEqual({
+      input: "fast",
+      interpretation: "alias",
+      model: "krang/qwen3.5-9b",
+    });
+  });
+});

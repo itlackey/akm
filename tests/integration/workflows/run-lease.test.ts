@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { UsageError } from "../../../src/core/errors";
+import { TransientError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import {
@@ -29,7 +29,8 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfi
  *   - `workflow run` acquires the lease (random holder id, now+90s expiry)
  *     BEFORE any dispatch, renews it between steps, releases it in a finally.
  *   - A second engine invocation on a live-leased run refuses up front with
- *     a UsageError naming the holder + expiry — and dispatches nothing.
+ *     a TransientError (#948 addendum — exit 75, not exit 2) naming the
+ *     holder + expiry — and dispatches nothing.
  *   - An EXPIRED lease is claimable (crash recovery).
  *   - Manual `workflow complete` is refused while a live engine lease is held
  *     (the engine owns the spine while driving) and allowed after release or
@@ -889,8 +890,8 @@ describe("lease-acquire resilience against transient SQLite errors", () => {
         } catch (error) {
           caught = error;
         }
-        expect(caught).toBeInstanceOf(UsageError);
-        expect((caught as UsageError).code).toBe("RUN_LEASE_HELD");
+        expect(caught).toBeInstanceOf(TransientError);
+        expect((caught as TransientError).code).toBe("RUN_LEASE_HELD");
         expect((caught as Error).message).toMatch(/is already being driven by engine engine-A/);
         expect((caught as Error).message).toMatch(/run lease expires/);
       } finally {
@@ -917,8 +918,8 @@ describe("lease-acquire resilience against transient SQLite errors", () => {
         } catch (error) {
           caught = error;
         }
-        // The original driver error, untouched — not a UsageError, not RUN_LEASE_HELD.
-        expect(caught).not.toBeInstanceOf(UsageError);
+        // The original driver error, untouched — not a TransientError, not RUN_LEASE_HELD.
+        expect(caught).not.toBeInstanceOf(TransientError);
         expect((caught as Error).message).toBe("database disk image is malformed");
       } finally {
         restore();

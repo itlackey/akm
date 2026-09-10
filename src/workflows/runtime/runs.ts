@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
 import type {
@@ -348,6 +348,26 @@ export async function startWorkflowRun(
     // re-targeted with a `continue` directive. The agent harness + session id
     // are already resolved above (agentHarness/agentSessionId, from #501).
 
+    // #942: an active run of this ref may already exist in a DIFFERENT
+    // scope — the incident this issue reports (a scheduled task's cwd and a
+    // human's shell hash to different scope keys, so each believed it held
+    // no active run and each started one). The scope-local uniqueness guard
+    // stays scope-local (a documented, deliberate per-project partition —
+    // see storage-locations.md); this only warns, once, so the operator can
+    // resume or abandon the other run instead of silently accumulating a
+    // second one. `findActiveRunOutsideScope` excludes the caller's own
+    // scope IN SQL (never merely post-filtered) so the caller's own active
+    // run can never sort first under `LIMIT 1` and mask a genuinely different
+    // scope's run — the failure mode a same-scope-inclusive query plus a
+    // post-filter has with `--new`/`--force`.
+    const crossScopeActive = repo.findActiveRunOutsideScope(workflowRefs, scopeKey);
+    const crossScopeWarning = crossScopeActive
+      ? `Workflow ${asset.ref} already has an active run in another scope ` +
+        `(id ${crossScopeActive.id}, started ${crossScopeActive.created_at}, scope ${crossScopeActive.scope_key ?? "unknown"}); ` +
+        `starting a separate run here. Resume it from anywhere with "akm workflow run ${crossScopeActive.id}" ` +
+        `or free it with "akm workflow abandon ${crossScopeActive.id}".`
+      : undefined;
+
     repo.publishWorkflowRunV4({
       workflowRefs,
       ...(options?.force ? { force: true } : {}),
@@ -379,6 +399,7 @@ export async function startWorkflowRun(
     });
 
     const result = await getWorkflowStatus(runId);
+    if (crossScopeWarning) result.warnings = [...(result.warnings ?? []), crossScopeWarning];
     // #13: params are declared non-secret (they are copied verbatim into every
     // unit prompt and hashed into the unit identity, so they cannot be redacted
     // without breaking replay determinism). Surface a loud, best-effort warning
@@ -422,10 +443,22 @@ export async function listWorkflowRuns(input?: {
   activeOnly?: boolean;
   /** Include child workflow runs (P3b, B-N10). Default `false`. */
   includeChildren?: boolean;
+  /**
+   * Search every scope instead of only the caller's current one (#942,
+   * `akm workflow list/status --all-scopes`). Default `false`: byte-identical
+   * to pre-#942 behavior.
+   */
+  allScopes?: boolean;
 }): Promise<{
   runs: WorkflowRunSummary[];
+  /**
+   * The scope this call filtered on, or `null` when `allScopes` was passed
+   * (#942). Lets an empty `runs: []` be told apart from "nothing anywhere" —
+   * the operator confusion the underlying incident hit.
+   */
+  scopeKey: string | null;
 }> {
-  const scopeKey = getCurrentWorkflowScopeKey();
+  const scopeKey = input?.allScopes === true ? null : getCurrentWorkflowScopeKey();
   const activeOnly = input?.activeOnly === true;
   const includeChildren = input?.includeChildren === true;
   if (input?.workflowRef === undefined) {
@@ -437,6 +470,7 @@ export async function listWorkflowRuns(input?: {
           ...(includeChildren ? { includeChildren: true } : {}),
         })
         .map(toWorkflowRunSummary),
+      scopeKey,
     }));
   }
 
@@ -460,6 +494,7 @@ export async function listWorkflowRuns(input?: {
       if (exactRows.length === 0) throw error;
       return {
         runs: exactRows.filter((row) => !activeOnly || row.status === "active").map(toWorkflowRunSummary),
+        scopeKey,
       };
     }
     if (!(error instanceof NotFoundError)) throw error;
@@ -473,6 +508,7 @@ export async function listWorkflowRuns(input?: {
         ...(includeChildren ? { includeChildren: true } : {}),
       })
       .map(toWorkflowRunSummary),
+    scopeKey,
   }));
 }
 
@@ -843,7 +879,8 @@ async function resolveRunSpecifier(
     if (detached) {
       if (hasParameters) {
         throw new UsageError(
-          `Workflow parameter flags can only be set on a new run; ${specifier} is already active.`,
+          `Workflow parameter flags can only be set on a new run; ${specifier} is already active ` +
+            `(id ${detached.id}, scope ${scopeKey}).`,
           "INVALID_FLAG_VALUE",
           `Pass --new to start a separate run, or run "akm workflow abandon ${detached.id}" to free up ${specifier} first.`,
         );
@@ -859,7 +896,8 @@ async function resolveRunSpecifier(
   if (active) {
     if (hasParameters) {
       throw new UsageError(
-        `Workflow parameter flags can only be set on a new run; ${ref} is already active.`,
+        `Workflow parameter flags can only be set on a new run; ${ref} is already active ` +
+          `(id ${active.id}, scope ${scopeKey}).`,
         "INVALID_FLAG_VALUE",
         `Pass --new to start a separate run, or run "akm workflow abandon ${active.id}" to free up ${ref} first.`,
       );
@@ -1113,7 +1151,9 @@ function assertLeaseAllowsSpineAdvance(run: WorkflowRunRow, leaseHolder: string 
   if (!run.engine_lease_holder || !run.engine_lease_until) return;
   if (leaseHolder === run.engine_lease_holder) return;
   if (run.engine_lease_until < new Date().toISOString()) return; // expired ⇒ claimable, not live
-  throw new UsageError(
+  // #948 addendum: moved off UsageError (exit 75, not exit 2) — a held lease
+  // is ordinary contention, not a bad command line.
+  throw new TransientError(
     `Workflow run ${run.id} is being driven by engine ${run.engine_lease_holder} ` +
       `(run lease expires ${run.engine_lease_until}). The engine owns the step spine while it runs — ` +
       `wait for it to finish or for the lease to expire before advancing steps manually.`,

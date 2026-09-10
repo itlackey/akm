@@ -35,9 +35,19 @@ describe("not-found error classification", () => {
       "WORKFLOW_NOT_FOUND",
       "PROPOSAL_NOT_FOUND",
       "FILE_NOT_FOUND",
+      "IMPROVE_RUN_NOT_FOUND",
     ] as const) {
       expect(new NotFoundError("missing", code).kind).toBe("not-found");
     }
+  });
+
+  test("IMPROVE_RUN_NOT_FOUND hints at akm improve report, not raw sqlite3 (#944)", () => {
+    const err = new NotFoundError("akm improve report: no improve runs recorded yet.", "IMPROVE_RUN_NOT_FOUND");
+
+    expect(err.hint()).toContain("akm improve report --since 30d");
+    // #944 exists specifically to make querying state.db by hand unnecessary
+    // for this — the hint must not send operators back to raw sqlite3.
+    expect(err.hint()).not.toContain("sqlite3");
   });
 
   test("an explicit hint overrides the code's canned one", () => {

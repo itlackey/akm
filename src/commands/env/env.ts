@@ -51,7 +51,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { scanEnvKeyNames, writeFileAtomic } from "../../core/common";
-import { sensitiveMarkerPath } from "./marker-path";
+import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 
 export { scanEnvKeyNames };
 

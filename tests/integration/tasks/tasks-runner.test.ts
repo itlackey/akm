@@ -814,6 +814,64 @@ describe("runTask — command target", () => {
     expect(log).toContain("exit_code=143");
   });
 
+  test("a SIGTERM to the task runner itself terminates the whole child process group (#956)", async () => {
+    // The runner's own process previously had no way to end its detached,
+    // own-process-group child (spawned by runManagedSubprocess for the
+    // group-kill guarantee) when the RUNNER received a signal — only a
+    // timeout tied into that ladder. A launcher-forwarded SIGTERM (#956)
+    // or a supervisor signalling `akm task run` directly used to
+    // leave the child running as an orphan.
+    writeTask("signaled", shellTask("hang-forever"));
+
+    const signals: string[] = [];
+    let spawned = false;
+    const spawnFn: SpawnFn = () => {
+      spawned = true;
+      let resolveExit: (code: number) => void = () => {};
+      const exited = new Promise<number>((resolve) => {
+        resolveExit = resolve;
+      });
+      const proc: SpawnedSubprocess = {
+        exitCode: null,
+        exited,
+        stdout: emptyReadableStream(),
+        stderr: emptyReadableStream(),
+        stdin: null,
+        kill(signal?: number | string) {
+          signals.push(String(signal));
+          // Mirrors a real child's exit: stops scheduleKillLadder's SIGKILL
+          // follow-up timer (it no-ops once exitCode is set) rather than
+          // leaving a dangling real 5s timer behind this test.
+          proc.exitCode = 143;
+          resolveExit(143);
+        },
+      };
+      return proc;
+    };
+
+    const promise = runTask("signaled", { bundleDir, logDir, spawnFn });
+    for (let i = 0; i < 1000 && !spawned; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(spawned).toBe(true);
+
+    // Invoke ONLY runNativeTask's own listener directly, rather than
+    // `process.emit("SIGTERM")`: the test-isolation preload
+    // (tests/_preload.ts) also holds a real SIGTERM listener that calls
+    // `process.exit()` to guard against an orphaned/hung worker, and emit()
+    // would run every registered listener including that one — killing this
+    // test process instead of exercising runNativeTask's handler.
+    const ourListener = process.listeners("SIGTERM").at(-1) as (() => void) | undefined;
+    if (!ourListener) throw new Error("runNativeTask did not register a SIGTERM listener");
+    ourListener();
+
+    const result = await promise;
+
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(result.status).toBe("failed");
+    expect(result.detail?.exitCode).toBe(143);
+  });
+
   test("redacts a webhook URL from both the log file and logs.db rows", async () => {
     const webhookUrl = "https://discord.com/api/webhooks/123456789012345678/abcDEF-123_token";
     writeTask(
@@ -1236,6 +1294,54 @@ describe("runTask — prompt target", () => {
     const errorRows = logRows.filter((row) => row.level === "error");
     expect(errorRows.some((row) => row.line.includes("non_zero_exit"))).toBe(true);
     expect(errorRows.filter((row) => row.stream === "stderr").map((row) => row.line)).toContain("boom");
+  });
+
+  // #943: reproduces the issue's report verbatim — a command task authored
+  // with its own `timeout:` field whose dispatched agent times out. Static
+  // reading found every ok:false branch (including reason:"timeout" from
+  // sdk-runner.ts/spawn.ts) already unconditionally mapped to status:"failed"
+  // with detail.reason preserved; this pins that so the mapping can't regress
+  // silently, and reproduces the exact scenario (timeout: 50) rather than only
+  // the pre-existing non_zero_exit case above.
+  test("agent timeout surfaces as failed status with reason timeout", async () => {
+    writeTask("timed-out", promptTask("content", { engine: "opencode", timeout: 50 }));
+
+    process.env.AKM_CONFIG_DIR = configDir;
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: { opencode: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "opencode" },
+      }),
+    );
+
+    const fakeRunAgent: FakeRunAgent = async () => {
+      return {
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        durationMs: 60,
+        reason: "timeout",
+        error: 'agent CLI "opencode" timed out after 50ms',
+      };
+    };
+
+    const result = await runTask("timed-out", {
+      bundleDir,
+      logDir,
+      runAgentImpl: fakeRunAgent,
+      now: () => new Date("2025-01-01T00:00:00Z"),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.detail?.reason).toBe("timeout");
+    expect(exitCodeForStatus(result.status)).toBe(1);
+
+    const historyRows = readTaskHistory({ id: "timed-out" });
+    expect(historyRows[0]?.status).toBe("failed");
+    expect(historyRows[0]?.detail?.reason).toBe("timeout");
   });
 });
 

@@ -18,16 +18,63 @@ import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { assetPathForName } from "./asset/asset-placement";
+import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
-import { loadConfig } from "./config/config";
+import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
+import { sensitiveMarkerPath } from "./sensitive-marker-path";
 import { formatRefForMessage, type ResolvedWriteTarget, withWriteTargetMutation } from "./write-source";
 
+export { sensitiveMarkerPath } from "./sensitive-marker-path";
 export type { IndexSearchSource };
+
+/**
+ * Walk each stash's env files and return one entry per `.env` file, using the
+ * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
+ * `env/team/prod`, `env/team/.env` → `env/team/default`). Moved here from
+ * `commands/env/env-cli.ts` (#950) so `commands/health` can reuse it to name
+ * which env asset supplies a credential's variable — pure move, `akm env
+ * list`'s behaviour is unchanged. `listKeysFn` stays injected (rather than a
+ * static import of `commands/env/env.ts`) so this core module never depends
+ * upward on the commands layer. `config` defaults to the real `loadConfig()`
+ * (unchanged default for `akm env list`); `commands/health` passes its own
+ * injected/resolved config so a test-supplied `loadConfig` seam is honoured
+ * instead of this always re-reading the real config/sources.
+ */
+export function listEnvsRecursive(
+  listKeysFn: (envPath: string) => { keys: string[] },
+  config: AkmConfig = loadConfig(),
+): Array<{ ref: string; path: string; keys: string[] }> {
+  const result: Array<{ ref: string; path: string; keys: string[] }> = [];
+  for (const source of resolveSourceEntries(undefined, config)) {
+    const root = path.join(source.path, "env");
+    if (!fs.existsSync(root)) continue;
+
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
+        const canonical = deriveCanonicalAssetName("env", root, full);
+        if (!canonical) continue;
+        // Skip sensitive envs: a sibling .sensitive marker file suppresses listing.
+        const markerPath = sensitiveMarkerPath(full, "env");
+        if (fs.existsSync(markerPath)) continue;
+        const { keys } = listKeysFn(full);
+        result.push({ ref: makeEnvRef(canonical, source, config), path: full, keys });
+      }
+    };
+    walk(root);
+  }
+  return result;
+}
 
 /**
  * The `vault` asset type was removed in 0.9.0. The env/secret input path no
@@ -105,10 +152,17 @@ export function findEnvSource(origin: string | undefined, type: "env" | "secret"
   return named;
 }
 
-export function makeEnvRef(name: string, source?: IndexSearchSource): string {
+/**
+ * `config` defaults to the real `loadConfig()`, same as {@link displayDefaultBundle}.
+ * `listEnvsRecursive` threads its own (possibly injected) config through here so a
+ * caller-supplied config governs ref display the same way it governs which stashes
+ * get walked — otherwise this would silently fall back to reading the real config a
+ * second time even when the walk itself honoured an injected one.
+ */
+export function makeEnvRef(name: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
   // F4b output-spelling flip: `env/name` in the primary stash, `bundle//env/name`
   // for a slug-clean named source.
-  return displayRef({ type: "env", name, bundleId: source?.registryId }, displayDefaultBundle(source));
+  return displayRef({ type: "env", name, bundleId: source?.registryId }, displayDefaultBundle(source, config));
 }
 
 /**
@@ -158,8 +212,7 @@ export function makeSecretRef(name: string, source?: IndexSearchSource): string 
   return displayRef({ type: "secret", name, bundleId: source?.registryId }, displayDefaultBundle(source));
 }
 
-function displayDefaultBundle(source?: IndexSearchSource): string | undefined {
-  const config = loadConfig();
+function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = loadConfig()): string | undefined {
   if (config.defaultBundle || !source) return config.defaultBundle;
   const primary = resolveSourceEntries(undefined, config)[0];
   return primary && path.resolve(primary.path) === path.resolve(source.path) ? source.registryId : undefined;

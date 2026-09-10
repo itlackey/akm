@@ -232,3 +232,75 @@ describe("akm show --detail resolution (F6/R-021)", () => {
     expect(json.template).toBe("Run release {{version}}\n");
   });
 });
+
+describe("akm show fragment context flags", () => {
+  function seedFragmentGuide(): void {
+    const storage = useStorage();
+    writeSandboxConfig({ semanticSearchMode: "off" });
+    writeFixture(
+      path.join(storage.stashDir, "knowledge", "context.md"),
+      ["# Profile", "Yoga is at Serenity Yoga.", "", "# Details", "fragmentflagneedle proof"].join("\n"),
+    );
+  }
+
+  test("--context lead with --max-chars emits bounded indexed-safe metadata", async () => {
+    seedFragmentGuide();
+
+    const result = await runEntrypoint([
+      "show",
+      "knowledge/context#details",
+      "--context",
+      "lead",
+      "--max-chars",
+      "200",
+      "--format=json",
+    ]);
+
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(String(json.content).length).toBeLessThanOrEqual(200);
+    expect(json).toMatchObject({
+      ref: "knowledge/context",
+      parentRef: "knowledge/context",
+      fragmentOrdinal: 2,
+      fragmentCount: 2,
+      contextMode: "lead",
+      contextMaxChars: 200,
+      contextTruncated: false,
+    });
+    expect(json.selectedRef).toMatch(/^knowledge\/context#akm-fragment-/);
+    expect(String(json.content)).toEndWith("[Selected matching fragment]\n# Details\nfragmentflagneedle proof");
+  });
+
+  test("--max-tokens converts to the documented four-character budget", async () => {
+    seedFragmentGuide();
+
+    const result = await runEntrypoint([
+      "show",
+      "knowledge/context#details",
+      "--context=lead",
+      "--max-tokens=25",
+      "--format=json",
+    ]);
+
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(json.contextMaxChars).toBe(100);
+    expect(String(json.content).length).toBeLessThanOrEqual(100);
+  });
+
+  for (const args of [
+    ["--context=unknown"],
+    ["--max-chars=100"],
+    ["--context=lead", "--max-chars=100", "--max-tokens=25"],
+  ]) {
+    test(`rejects invalid context invocation ${args.join(" ")}`, async () => {
+      seedFragmentGuide();
+
+      const result = await runEntrypoint(["show", "knowledge/context#details", ...args, "--format=json"]);
+
+      expect(result.status).toBe(2);
+      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
+    });
+  }
+});

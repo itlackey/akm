@@ -113,7 +113,7 @@ export function prepareResolvedExecution(options: PrepareResolvedExecutionOption
     ...(options.invocationDefaults ? { invocationDefaults: options.invocationDefaults } : {}),
     ...(options.current ? { current: options.current } : {}),
     engines: executionEngineDefinitionsFromConfig(config),
-    modelMap: options.modelMap ?? loadModelMap().map,
+    modelMap: options.modelMap ?? loadModelMap({ engines: config.engines }).map,
     invocationKind: options.invocationKind,
     ...(options.authorizeTools ? { authorizeTools: options.authorizeTools } : {}),
   });

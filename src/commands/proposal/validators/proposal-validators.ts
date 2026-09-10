@@ -146,6 +146,31 @@ export const defaultProposalValidators: ProposalValidator[] = [
   ...defaultProposalQualityValidators,
 ];
 
+/**
+ * Structural-only subset used by {@link createProposal}'s mint-time
+ * canonical-structure gate (repository.ts, `hasCanonicalProposalValidator`).
+ * That gate exists to reject a lesson/task/workflow proposal whose body is
+ * not parseable as its type — it predates {@link defaultProposalQualityValidators}
+ * and was previously safe to run in full there because every quality
+ * validator was advisory (`advisory()` downgrades findings to `severity:
+ * "warn"`, which {@link runProposalValidators}'s `ok` never treats as
+ * failing). #952's `reflect-truncation-marker` validator is deliberately
+ * NOT advisory (it guards against data loss), so running the full
+ * {@link defaultProposalValidators} list at mint time would throw
+ * `invalid_canonical_structure` for any lesson/task/workflow reflect
+ * proposal whose body leaks the truncation marker — instead of letting
+ * `sanitizeReflectPayload` mint the proposal and defer it with
+ * `reflect-truncation-leak`, per the #952 design. Quality validators (prose
+ * shape, reflect size ratio, the truncation-marker guard) belong at
+ * `proposal accept` / drain-promotion time, which already calls
+ * {@link validateProposal} (the full list) via `preflightProposalPromotion`
+ * / `promoteProposalWithLease`.
+ */
+export const canonicalOnlyProposalValidators: ProposalValidator[] = [
+  genericProposalValidator,
+  canonicalProposalValidator,
+];
+
 export function runProposalValidators(
   proposal: Proposal,
   validators: ProposalValidator[] = defaultProposalValidators,

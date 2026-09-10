@@ -7,16 +7,21 @@ import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
-import { isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { akmImprove } from "./improve";
+import { probeEndpointOnce, probeLlmEndpoint } from "../../llm/client";
+import { getOutputMode } from "../../output/context";
+import { deliverRendered } from "../../output/html-render";
+import { akmImprove, resolveImproveReadSource } from "./improve";
+import { runImproveReportQuery } from "./improve-report";
 import {
   buildImproveRunId,
   recordImproveRunResult,
@@ -24,7 +29,14 @@ import {
   type TerminationReason,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import { resolveImprovePlan } from "./improve-strategies";
+import {
+  type EngineUnavailableProcessName,
+  type ResolvedImprovePlan,
+  type ResolvedImproveProcess,
+  resolveImprovePlan,
+} from "./improve-strategies";
+import { formatUsageReportTable } from "./improve-usage-report";
+import { renderReflectPromptPreview } from "./reflect";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -91,6 +103,171 @@ function rejectRetiredImproveTargetFlag(): void {
   );
 }
 
+/**
+ * `--require-engines` (#957): abort before any lock, log, or index side
+ * effect when the resolved plan already knows a process the active strategy
+ * would enable cannot run. Without this flag improve degrades gracefully —
+ * it skips the affected processes and reports them in `skippedProcesses` —
+ * which is right for an interactive run but wrong for a scheduled one that
+ * would rather fail loudly than burn its budget re-indexing and then skip
+ * everything. Names the unresolved credential reference per process (not
+ * just the process name) so an operator whose own shell passes config
+ * validation can see exactly what the scheduler's environment is missing.
+ */
+function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
+  if (plan.engineUnavailable.length === 0) return;
+  const lines = plan.engineUnavailable.map((item) => `  - ${item.process} (${item.configKey}): ${item.reason}`);
+  throw new ConfigError(
+    `--require-engines: ${plan.engineUnavailable.length} improve process${plan.engineUnavailable.length === 1 ? "" : "es"} cannot run because ${plan.engineUnavailable.length === 1 ? "its" : "their"} engine is unavailable:\n${lines.join("\n")}`,
+    "LLM_NOT_CONFIGURED",
+  );
+}
+
+/** One resolved LLM connection `--require-engines` needs to prove reachable. */
+interface RequiredEngineTarget {
+  process: EngineUnavailableProcessName;
+  engine: string;
+  connection: LlmConnectionConfig;
+}
+
+/**
+ * Every distinct `kind: "llm"` connection the active strategy's plan would
+ * actually dispatch against — the main per-process runners plus triage's own
+ * judgment engine, which is resolved separately (#957).
+ */
+function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngineTarget[] {
+  const targets: RequiredEngineTarget[] = [];
+  for (const [processName, process] of Object.entries(plan.processes) as [
+    EngineUnavailableProcessName,
+    ResolvedImproveProcess,
+  ][]) {
+    if (process.runner) {
+      targets.push({ process: processName, engine: process.runner.engine, connection: process.runner.connection });
+    }
+  }
+  if (plan.triageJudgment?.kind === "llm") {
+    targets.push({
+      process: "triage.judgment",
+      engine: plan.triageJudgment.engine,
+      connection: plan.triageJudgment.connection,
+    });
+  }
+  return targets;
+}
+
+/**
+ * `--require-engines` field re-test (#957): the static check above only
+ * proves an engine is configured and credentialed — it cannot see a dead
+ * endpoint. A field run against an unreachable engine sat silent for
+ * minutes instead of hitting the documented exit-78 path. Reuse the SAME
+ * bounded reachability probe `akm health`'s `default-llm-engine` /
+ * `configured-engines` checks already run (`probeLlmEndpoint`, a single
+ * `/models` GET bounded by its own default timeout) once per distinct
+ * endpoint (via the shared `probeEndpointOnce` memoization health/checks.ts
+ * also uses), so a dead engine is caught here instead of during dispatch.
+ */
+async function assertRequiredEnginesReachable(
+  plan: ResolvedImprovePlan,
+  probeReachable: typeof probeLlmEndpoint = probeLlmEndpoint,
+): Promise<void> {
+  const targets = collectRequiredEngineTargets(plan);
+  if (targets.length === 0) return;
+  const probesByEndpoint = new Map<string, ReturnType<typeof probeReachable>>();
+  const probed = await Promise.all(
+    targets.map(async (target) => ({
+      ...target,
+      reach: await probeEndpointOnce(target.connection, probesByEndpoint, probeReachable),
+    })),
+  );
+  const unreachable = probed.filter((item) => !item.reach.reachable);
+  if (unreachable.length === 0) return;
+  const lines = unreachable.map(
+    (item) =>
+      `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
+  );
+  throw new ConfigError(
+    `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine endpoint is not reachable:\n${lines.join("\n")}`,
+    "LLM_NOT_CONFIGURED",
+  );
+}
+
+/**
+ * `--show-prompt` (#952): render the composed reflect prompt for one asset ref
+ * and exit, before any lock, log, index write, or engine dispatch — the field
+ * had no cheap way to confirm the #952 prompt fix (unverified-feedback framing,
+ * no-truncation-marker instruction) without running a full improve cycle.
+ * Reuses `renderReflectPromptPreview` (reflect.ts), which stops before the
+ * dispatch lease reflect would otherwise acquire, so this never calls an engine.
+ */
+async function runShowPromptCli(
+  refArg: string,
+  parsedRef: AssetRef,
+  taskArg: string | undefined,
+  targetArg: string | undefined,
+  resolvedPlan: ResolvedImprovePlan,
+): Promise<void> {
+  const readSource = resolveImproveReadSource(resolvedPlan.config as AkmConfig, parsedRef, targetArg);
+  const preview = await renderReflectPromptPreview({
+    ref: refArg,
+    ...(taskArg ? { task: taskArg } : {}),
+    improveProfile: resolvedPlan.strategy.config,
+    config: resolvedPlan.config as AkmConfig,
+    stashDir: readSource.source.path,
+  });
+  const outputMode = getOutputMode();
+  if (outputMode.format === "text") {
+    deliverRendered(preview.prompt, outputMode.outputPath);
+    return;
+  }
+  output("improve", {
+    schemaVersion: 2,
+    ok: true,
+    ref: preview.ref,
+    engine: preview.engine,
+    engineKind: preview.engineKind,
+    prompt: preview.prompt,
+  });
+}
+
+/**
+ * `akm improve report` (#944): a scope value that dispatches to the per-run
+ * LLM usage/routing report instead of a real improve run — "report" is not,
+ * and will never be, a real asset type (`DEFAULT_ALLOWED_TYPES` in
+ * improve-strategies.ts), so this already matched zero assets before this
+ * flag existed, matching the precedent `rejectRetiredCanaryScope` set for
+ * intercepting a special scope word ahead of any lock/log/index side effect.
+ */
+function runImproveReportCli(args: { run?: string; since?: string }): void {
+  const runIdArg = getStringArg(args, "run");
+  const sinceArg = getStringArg(args, "since");
+  const result = runImproveReportQuery({ runId: runIdArg, since: sinceArg });
+  output("improve-report", { ok: true, ...result });
+}
+
+/**
+ * `--run`/`--since` only mean anything with the "report" scope, which
+ * intercepts before this point in the `run` handler below. citty is
+ * non-strict, so passing either with a real scope (or no scope at all) used
+ * to be silently ignored — the flag's value was read nowhere else, and the
+ * run proceeded as an ordinary improve run with no error, discarding the
+ * operator's intent. Reject explicitly instead, matching the precedent
+ * `rejectRetiredCanaryScope`/`rejectRetiredImproveTargetFlag` set for other
+ * flag misuse on this command.
+ */
+function rejectReportOnlyFlags(args: { run?: string; since?: string }): void {
+  const flag =
+    getStringArg(args, "run") !== undefined
+      ? "--run"
+      : getStringArg(args, "since") !== undefined
+        ? "--since"
+        : undefined;
+  if (flag === undefined) return;
+  throw new UsageError(
+    `\`${flag}\` only applies to \`akm improve report\`. Use \`akm improve report ${flag} <value>\` instead.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
@@ -109,6 +286,12 @@ export const improveCommand = defineCommand({
     },
     task: { type: "string", description: "Add extra guidance for this improvement pass" },
     "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
+    plan: {
+      type: "boolean",
+      description:
+        "Alias for --dry-run (#947). Sets the exact same internal flag; use it when previewing resolved process -> engine -> model routing (plan.processes) rather than checking what would write.",
+      default: false,
+    },
     bundle: { type: "string", description: "Override the write target for accepted proposals" },
     limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
     "timeout-ms": {
@@ -132,6 +315,28 @@ export const improveCommand = defineCommand({
         "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
       default: false,
     },
+    "require-engines": {
+      type: "boolean",
+      description:
+        "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe (the same probe akm health runs). Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
+      default: false,
+    },
+    "show-prompt": {
+      type: "boolean",
+      description:
+        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or engine dispatch (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
+      default: false,
+    },
+    run: {
+      type: "string",
+      description:
+        'Only with the "report" scope (`akm improve report --run <id>`): show the LLM usage/routing report for one specific improve_runs row instead of the most recent run. Mutually exclusive with --since.',
+    },
+    since: {
+      type: "string",
+      description:
+        'Only with the "report" scope (`akm improve report --since <window>`): aggregate the LLM usage/routing report over every real run started since <window> (a duration like "24h"/"7d", or an ISO timestamp) instead of showing one run. Mutually exclusive with --run.',
+    },
     strategy: {
       type: "string",
       description:
@@ -150,6 +355,13 @@ export const improveCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      // #944 — dispatch before any lock/log/index side effect, same
+      // interception point as rejectRetiredCanaryScope below.
+      if (getStringArg(args, "scope") === "report") {
+        runImproveReportCli(args);
+        return;
+      }
+      rejectReportOnlyFlags(args);
       rejectRetiredImproveTargetFlag();
       // D7 — `--format` used to be rejected here outright. It is a global flag on
       // a command that does emit an envelope through `output()` (always on
@@ -160,7 +372,11 @@ export const improveCommand = defineCommand({
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
-      const dryRun = args["dry-run"];
+      // #947 — `--plan` is a zero-logic discoverability alias for `--dry-run`;
+      // it must never fork the computation, only set the same flag. #952 —
+      // `--show-prompt` implies the same read-only posture (it never reaches
+      // akmImprove at all, but keeps writeTarget/resolvedPlan unset the same way).
+      const dryRun = args["dry-run"] || args.plan || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const requireFeedbackSignal = args["require-feedback-signal"];
@@ -177,7 +393,28 @@ export const improveCommand = defineCommand({
           : resolveWriteTarget(effectiveConfig, targetArg);
       // Resolve every enabled model-backed process before logging, signal
       // lifecycle setup, or any filesystem/database side effect.
-      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig);
+      // #800/#957 round 3 — `--dry-run`/`--plan` never dispatches, so the
+      // "no improve process can run" guard must not throw when every process
+      // is disabled purely by an unreachable credential; a live run keeps
+      // throwing (allowAllDisabled unset).
+      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
+      // #952 — same interception point as the `report` scope above: before any
+      // lock, log, or index side effect. Requires a single fully-qualified
+      // asset ref (not a type or whole-bundle scope).
+      if (args["show-prompt"]) {
+        if (!scopeArg || !scopeRef) {
+          throw new UsageError(
+            "`--show-prompt` requires a fully-qualified asset ref as the scope (e.g. `akm improve lessons/my-lesson --show-prompt`).",
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
+        return;
+      }
+      if (args["require-engines"]) {
+        assertRequiredEnginesAvailable(resolvedPlan);
+        await assertRequiredEnginesReachable(resolvedPlan);
+      }
       const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
       // Only set the keys the user actually passed (citty leaves the flag
@@ -305,8 +542,9 @@ export const improveCommand = defineCommand({
       // `improve_runs` table of state.db (migration 003) and emit NOTHING
       // on stdout. The verbose JSON would otherwise scroll earlier progress
       // logs out of the terminal buffer. The existing `[improve] ...`
-      // progress log lines on stderr remain the canonical console UX —
-      // do NOT add any new console output here.
+      // progress log lines on stderr remain the canonical console UX — the
+      // usage-report table below (#944) follows that same convention
+      // (stderr, `[improve]`-prefixed), it is not new stdout noise.
       //
       // Pre-0.8.0 wrote `<stash>/.akm/runs/<run-id>/improve-result.json`;
       // those files are no longer authored. Query recent runs with:
@@ -330,6 +568,14 @@ export const improveCommand = defineCommand({
         process.stderr.write(
           `warning: no writable bundle directory resolved; improve result not persisted to state.db (use --json-to-stdout to capture)\n`,
         );
+      }
+
+      // #944 — same table `akm improve report` renders, appended to every
+      // real (non-dry-run) run so an operator sees the routing/cost split
+      // without a separate command. Omitted when the run made no LLM calls
+      // and skipped no enabled process (nothing to report).
+      if (improveResult.usageReport) {
+        process.stderr.write(`${formatUsageReportTable(improveResult.usageReport)}\n`);
       }
 
       if (jsonToStdout) output("improve", improveResult);

@@ -1,4 +1,4 @@
 version: 4
-run: akm improve --strategy reflect-distill --skip-if-locked
+run: akm improve --strategy reflect-distill --skip-if-locked --require-engines
 description: Frequent learning pass (hourly at :40) — reflect, distill, memory inference, judged triage
 schedule: "40 * * * *"

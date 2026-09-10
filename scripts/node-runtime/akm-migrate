@@ -27,10 +27,43 @@ const bunEntry = fileURLToPath(new URL("./scripts/akm-migrate.js", import.meta.u
 const nodeEntry = fileURLToPath(new URL("./scripts/akm-migrate-node.js", import.meta.url));
 
 {
+  // #956: same shape as scripts/node-runtime/akm — the child names the
+  // launcher pid, and a `kill <launcher-pid>` forwards to the child instead
+  // of orphaning it.
+  const env = { ...process.env, AKM_LAUNCHER_PID: String(process.pid) };
   const command = process.versions.bun ? process.execPath : useBun ? "bun" : process.execPath;
   const entry = process.versions.bun || useBun ? bunEntry : nodeEntry;
   const result = await new Promise((resolve) => {
-    const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit" });
+    const child = spawn(command, [entry, ...process.argv.slice(2)], {
+      stdio: "inherit",
+      env,
+      // #956: own process group on POSIX so the launcher's forward below is
+      // the SOLE delivery path to the child instead of a redundant second
+      // copy landing on top of a group-wide broadcast the child already got
+      // directly — see the matching comment in scripts/node-runtime/akm.
+      detached: process.platform !== "win32",
+    });
+    let childExited = false;
+    child.once("exit", () => {
+      childExited = true;
+    });
+    const forwardSignal = (signal) => {
+      if (childExited) return;
+      try {
+        child.kill(signal);
+      } catch {
+        // Child exited in the race between the check above and here.
+      }
+    };
+    // `.once`, not `.on`: see the matching comment in
+    // scripts/node-runtime/akm — a persistent `.on` listener would still be
+    // registered when the `process.kill(process.pid, result.signal)`
+    // re-raise below runs, suppressing the OS default disposition and
+    // leaving this launcher exiting 0 instead of reflecting the child's
+    // signal.
+    for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+      process.once(signal, () => forwardSignal(signal));
+    }
     child.once("error", (error) => resolve({ error }));
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });

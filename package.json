@@ -1,6 +1,6 @@
 {
   "name": "akm-cli",
-  "version": "0.9.14",
+  "version": "0.9.15",
   "type": "module",
   "description": "akm (Agent Knowledge Manager) — a portable, local-first capability library for AI agents. Discover, load, share, and improve reusable skills, scripts, workflows, and knowledge across any shell-capable coding agent, including Claude Code, OpenCode, and Cursor.",
   "keywords": [

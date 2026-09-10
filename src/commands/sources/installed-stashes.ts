@@ -29,7 +29,7 @@ import { beginImmediateTransaction, getStateDbPath, openStateDatabase } from "..
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { akmIndex } from "../../indexer/indexer";
+import { akmIndex, runEmbeddingPass } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import {
   compareAndSwapLockfileSnapshot,
@@ -434,12 +434,21 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
 type UpdateIndexSummary = Pick<
   Awaited<ReturnType<typeof akmIndex>>,
   "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"
-> & { scanComplete?: boolean };
+> & { scanComplete?: boolean; verification?: Awaited<ReturnType<typeof akmIndex>>["verification"] };
 
-/** Read the current index generation without creating or hydrating anything. */
+/**
+ * Read the current index generation without creating or hydrating anything.
+ * This path never ran an embedding pass (#954, field-report follow-up), so it has no
+ * `verification` to report — {@link buildUpdateResponse} falls back to the
+ * two facts it can actually know (whether semantic search is configured on
+ * at all) rather than fabricating verification numbers (`entryCount: 0`,
+ * `ok: true`) for a run that never verified anything.
+ */
 function readCurrentIndexSummary(): UpdateIndexSummary {
   const db = openReadonlyExistingDatabase(getDbPath());
-  if (!db) return { mode: "incremental", totalEntries: 0, directoriesScanned: 0, directoriesSkipped: 0 };
+  if (!db) {
+    return { mode: "incremental", totalEntries: 0, directoriesScanned: 0, directoriesSkipped: 0 };
+  }
   try {
     return {
       mode: "incremental",
@@ -483,6 +492,13 @@ function buildUpdateResponse(
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
       ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
+      // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
+      // verified `semanticStatus`. When no pass ran this update (the
+      // no-op/nothing-configured fallback) the only two facts known without
+      // fabricating a verification are whether semantic search is off at all
+      // or, if not, that its state is simply unverified this run.
+      semanticStatus:
+        index.verification?.semanticStatus ?? (finalConfig.semanticSearchMode === "off" ? "disabled" : "pending"),
     },
   };
 }
@@ -585,7 +601,6 @@ interface UnifiedUpdateTransaction {
   deferred: {
     db: Database;
     stateSchema: string;
-    afterCommit?: () => void;
   };
 }
 
@@ -654,6 +669,45 @@ function closeUnifiedUpdateTransaction(transaction: UnifiedUpdateTransaction, co
         ? `[akm bundle update] committed, but closing its database handles failed: ${String(closeError)}`
         : `[akm bundle update] rolled back, but closing its database handles failed: ${String(closeError)}`,
     );
+  }
+}
+
+/**
+ * Run the embedding phase AFTER the coordinator's atomic commit, on its own
+ * fresh connection (#954). Before this, `akmUpdate` called
+ * `akmIndex()` for its embedding phase too, INSIDE this same unified
+ * `BEGIN IMMEDIATE` — so every per-batch commit the materializer opened
+ * nested as an unobservable SAVEPOINT, and a SIGKILL mid-run lost every
+ * embedding of the run rather than just the one in flight. The
+ * ambient-transaction drift guard (#954) now rejects that outright, so
+ * `akmIndex`'s own embedding phase is skipped for a deferred update
+ * transaction and this runs instead, once content/lock/index/state are
+ * already durably committed.
+ *
+ * A failing pass (provider down, timeout) does NOT fail the update: the
+ * bundle content and index are already committed successfully, exactly like
+ * a plain `akm index` whose embedding phase fails — only the reported
+ * `verification` reflects the shortfall (`semanticStatus: "blocked"`).
+ */
+async function runPostCommitEmbeddingPass(
+  index: Awaited<ReturnType<typeof akmIndex>>,
+): Promise<Awaited<ReturnType<typeof akmIndex>>> {
+  const config = loadConfig();
+  let db: Database | undefined;
+  try {
+    const embeddingDim = config.embedding?.dimension;
+    db = openIndexDatabase(getDbPath(), embeddingDim ? { embeddingDim } : undefined);
+    const { verification } = await runEmbeddingPass({ db, config, onProgress: () => {} });
+    return { ...index, verification };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`[akm bundle update] post-commit embedding pass failed: ${message}`);
+    return {
+      ...index,
+      verification: { ...index.verification, ok: false, semanticStatus: "blocked", message },
+    };
+  } finally {
+    if (db) closeDatabase(db);
   }
 }
 
@@ -987,13 +1041,8 @@ async function publishPreparedPlainUpdate(
         updateTransactionHook("before-commit", id, { db: transaction.db });
         commitUnifiedUpdateTransaction(transaction);
         committed = true;
-        try {
-          transaction.deferred.afterCommit?.();
-        } catch (error) {
-          warn(`[akm bundle update] committed, but semantic status refresh failed: ${String(error)}`);
-        }
         prepared.publication?.commit();
-        return index;
+        return await runPostCommitEmbeddingPass(index);
       } catch (error) {
         let recoveryError = transaction ? rollbackUnifiedUpdateTransaction(transaction) : undefined;
         try {
@@ -1356,11 +1405,6 @@ async function updateManagedInstall(
         updateTransactionHook("before-commit", managed.installId, { db: transaction.db });
         commitUnifiedUpdateTransaction(transaction);
         committed = true;
-        try {
-          transaction.deferred.afterCommit?.();
-        } catch (error) {
-          warn(`[akm bundle update] committed, but semantic status refresh failed: ${String(error)}`);
-        }
       } catch (error) {
         let recoveryError = transaction ? rollbackUnifiedUpdateTransaction(transaction) : undefined;
         let concurrentGeneration = false;
@@ -1404,6 +1448,7 @@ async function updateManagedInstall(
       }
 
       prepared.publication?.commit();
+      index = await runPostCommitEmbeddingPass(index);
 
       if (movedRoot) {
         const currentConfig = loadConfig();

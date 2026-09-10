@@ -12,6 +12,23 @@ import type { DetailLevel, ShapeMode } from "../context";
 
 export const NORMAL_DESCRIPTION_LIMIT = 250;
 
+const FRAGMENT_PROVENANCE_FIELDS = [
+  "selectedRef",
+  "parentRef",
+  "fragmentOrdinal",
+  "fragmentCount",
+  "startLine",
+  "endLine",
+  "previousRef",
+  "nextRef",
+  "fragmentChars",
+  "fragmentEstimatedTokens",
+  "parentChars",
+  "parentEstimatedTokens",
+];
+
+const FRAGMENT_CONTEXT_FIELDS = ["contextMode", "contextMaxChars", "contextTruncated"];
+
 export function shapeProposalProducerOutput(
   result: Record<string, unknown>,
   detail: DetailLevel,
@@ -318,7 +335,21 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
   // needing --detail full or --shape agent (REC-03).
-  if (detail === "brief") return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
+  if (detail === "brief") {
+    return pickFields(hit, [
+      "type",
+      "name",
+      "ref",
+      "action",
+      "estimatedTokens",
+      "keys",
+      "selectedRef",
+      "parentRef",
+      "fragmentOrdinal",
+      "fragmentCount",
+      "parentEstimatedTokens",
+    ]);
+  }
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
     // visible without forcing callers up to `--detail full`. Optional
@@ -338,6 +369,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
         "warnings",
         "quality",
         "matchStage",
+        ...FRAGMENT_PROVENANCE_FIELDS,
       ]),
       NORMAL_DESCRIPTION_LIMIT,
     );
@@ -366,6 +398,7 @@ export function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<str
     // hit (a strict-AND match is stronger signal than an OR-fallback
     // recovery match) without going to `--detail full`.
     "matchStage",
+    ...FRAGMENT_PROVENANCE_FIELDS,
   ]);
   if (picked.editable !== false) delete picked.editHint;
   return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
@@ -417,6 +450,8 @@ export function shapeShowOutput(
       "steps",
       "keys",
       "related",
+      ...FRAGMENT_PROVENANCE_FIELDS,
+      ...FRAGMENT_CONTEXT_FIELDS,
     ]);
     if (shaped.editable !== false) delete shaped.editHint;
     return shaped;
@@ -438,6 +473,8 @@ export function shapeShowOutput(
       "origin",
       "keys",
       "related",
+      ...FRAGMENT_PROVENANCE_FIELDS,
+      ...FRAGMENT_CONTEXT_FIELDS,
     ]);
   }
 
@@ -466,6 +503,8 @@ export function shapeShowOutput(
     "activeRun",
     "keys",
     "related",
+    ...FRAGMENT_PROVENANCE_FIELDS,
+    ...FRAGMENT_CONTEXT_FIELDS,
     // ref, path, and editable are always projected — at every --detail level,
     // not just --detail full — so JSON consumers can locate and edit the
     // asset without needing --detail full (QA #7 / D-14).

@@ -2,20 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import {
-  createLockPayload,
-  type LockOwnership,
-  probeLock,
-  reclaimStaleLock,
-  releaseLock,
-  tryAcquireLockSync,
-} from "../../core/file-lock";
+import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import { tryWithMaintenanceStartBarrier, withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
-import { describeInaccessiblePath } from "../../core/path-access";
+import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { warn } from "../../core/warn";
 
 export type ImproveLockAcquisition = { state: "acquired"; ownership: LockOwnership } | { state: "skipped" };
@@ -58,97 +50,40 @@ function tryAcquireImproveLockUnlocked(
   skipIfLocked: boolean | undefined,
   onRecovered: (event: Parameters<typeof appendEvent>[0]) => void,
 ): ImproveLockAcquisition {
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  const lockPayload = () => createLockPayload({ startedAt: new Date().toISOString() });
-  let ownership = tryAcquireLockSync(lockPath, lockPayload());
-  if (ownership) {
-    return { state: "acquired", ownership };
+  // Mechanics (PID-liveness-only acquire/probe/absent-race-retry/stale-reclaim)
+  // live in the shared `core/run-lock.ts` module (#956) — this wrapper only
+  // owns improve's own policy: what "held" means (skip vs throw) and the
+  // improve_lock_recovered audit event.
+  const result = tryAcquireRunLock(lockPath, {
+    label: "improve",
+    onReclaimed: (info) => {
+      onRecovered({
+        eventType: "improve_lock_recovered",
+        metadata: {
+          lockName: "improve",
+          stalePid: info.holderPid,
+          lockedAt: info.lockedAt,
+          recoveredAt: new Date().toISOString(),
+          lockAgeMs: info.ageMs,
+          reason: info.reason,
+        },
+      });
+    },
+  });
+  if (result.state === "acquired") {
+    return { state: "acquired", ownership: result.ownership };
   }
 
-  // No `staleAfterMs`: only a verifiably dead holder is ever reclaimed. A
-  // wedged-but-alive `akm improve` (SQLite WAL + busy_timeout + BEGIN
-  // IMMEDIATE already serialize concurrent writes to state.db at the
-  // correctness layer, so this lock only avoids duplicate LOGICAL work) must
-  // not have its lease silently taken away purely because a clock elapsed —
-  // that was the #872-shaped hazard here: a live holder passed the
-  // PID-liveness check forever, so only a multi-hour age window could ever
-  // free it, stranding every `akm improve --skip-if-locked` invocation for
-  // up to that long while reporting success.
-  const probe = probeLock(lockPath);
-
-  // Race: the holder released the lock between our failed `tryAcquireLockSync`
-  // and this probe, so the probe sees no file (`absent`). Retry acquisition once
-  // rather than falling through to the contended skip/throw below — otherwise we
-  // would warn/throw with a null PID for a lock that nobody actually holds.
-  // (Mirrors the absent/stale reclaim-and-retry in `acquireExtractSessionLock`.)
-  if (probe.state === "absent") {
-    ownership = tryAcquireLockSync(lockPath, lockPayload());
-    if (ownership) {
-      return { state: "acquired", ownership };
-    }
-    // Re-grabbed by another racer in the window — fall through and treat as held.
-  }
-
-  // A lock we cannot READ is a hard stop, never a reclaim candidate (#791): the
-  // holder may be alive and working, and we simply lack permission to see it.
-  // Stealing the lease here would let two improve runs mutate the same bundle.
-  if (probe.state === "inaccessible") {
-    throw new ConfigError(
-      `improve lock exists but is not readable: ${describeInaccessiblePath(lockPath, probe.code)}.`,
-      "DATA_DIR_UNREADABLE",
-    );
-  }
-
-  const rawContent = probe.state === "absent" ? undefined : probe.rawContent;
-  const lock = rawContent
-    ? (() => {
-        try {
-          return JSON.parse(rawContent) as { pid: number; startedAt: string };
-        } catch {
-          return null;
-        }
-      })()
-    : null;
-
-  if (probe.state === "stale") {
-    if (!reclaimStaleLock(lockPath, probe)) {
-      if (skipIfLocked) {
-        warn("[improve] lock changed ownership during stale recovery; skipping (--skip-if-locked)");
-        return { state: "skipped" };
-      }
-      throw new ConfigError(`akm improve is already running. Delete ${lockPath} to force.`, "INVALID_CONFIG_FILE");
-    }
-    onRecovered({
-      eventType: "improve_lock_recovered",
-      metadata: {
-        lockName: "improve",
-        stalePid: lock?.pid ?? null,
-        lockedAt: lock?.startedAt ?? null,
-        recoveredAt: new Date().toISOString(),
-        lockAgeMs: probe.ageMs ?? null,
-        reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
-      },
-    });
-    ownership = tryAcquireLockSync(lockPath, lockPayload());
-    if (ownership) {
-      return { state: "acquired", ownership };
-    }
-    if (skipIfLocked) {
-      warn("[improve] lock acquired by another run during stale recovery; skipping (--skip-if-locked)");
-      return { state: "skipped" };
-    }
-    throw new ConfigError(`akm improve is already running. Delete ${lockPath} to force.`, "INVALID_CONFIG_FILE");
-  }
-
+  const { startedAt } = result.holder;
+  const pid = formatLockHolderPid(result.holder);
   if (skipIfLocked) {
     warn(
-      `[improve] another improve run holds the lock (PID ${lock?.pid}, started ${lock?.startedAt}); skipping (--skip-if-locked)`,
+      `[improve] another improve run holds the lock (PID ${pid}, started ${startedAt}); skipping (--skip-if-locked)`,
     );
     return { state: "skipped" };
   }
-
   throw new ConfigError(
-    `akm improve is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${lockPath} to force.`,
+    `akm improve is already running (PID ${pid}, started ${startedAt}). Delete ${lockPath} to force.`,
     "INVALID_CONFIG_FILE",
   );
 }

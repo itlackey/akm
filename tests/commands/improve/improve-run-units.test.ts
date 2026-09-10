@@ -55,7 +55,7 @@ describe("buildDryRunResult — the P3 envelope", () => {
     const run = {
       selectedStrategy: { name: "default" },
       scope: { mode: "all" as const },
-      resolvedPlan: { processes: {}, triageJudgment: null, autonomyGated: [] },
+      resolvedPlan: { processes: {}, triageJudgment: null, autonomyGated: [], engineUnavailable: [] },
     } as unknown as Parameters<typeof buildDryRunResult>[0];
     const collected = {
       plannedRefs: [{ ref: "memories/a", reason: "scope-type" }] as ImproveEligibleRef[],
@@ -74,6 +74,7 @@ describe("buildDryRunResult — the P3 envelope", () => {
     expect("guidance" in result).toBe(false);
     expect("memoryCleanup" in result).toBe(false);
     expect("strategyFilteredRefs" in result).toBe(false);
+    expect("skippedProcesses" in result).toBe(false);
   });
 });
 

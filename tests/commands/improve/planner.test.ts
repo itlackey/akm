@@ -73,6 +73,7 @@ describe("selectEffectiveImproveRefs", () => {
       effectiveLimit: 1,
       replayBudget: 1,
       gates: [],
+      processes: [],
       consolidation: {
         configured: {},
         effective: { enabled: false, minPoolSize: 2, chunkSize: 2 },
@@ -101,6 +102,47 @@ describe("selectEffectiveImproveRefs", () => {
       additiveReplayAllowance: 1,
       totalCeiling: 2,
     });
+  });
+
+  test("passes the resolved process routing rows through unchanged (#947)", () => {
+    const processes = [
+      { process: "reflect" as const, enabled: true, engine: "default", model: "base", notices: [], eligibleRefs: 3 },
+      { process: "distill" as const, enabled: false, notices: [] },
+    ];
+    const plan = buildImproveExecutionPlan({
+      dryRun: true,
+      snapshot: { status: "ready", reason: "test snapshot" },
+      rawInScope: 0,
+      selectedRefs: [],
+      effectiveRefs: [],
+      distillOnlyRefs: new Set(),
+      configuredLimits: {},
+      replayBudget: 0,
+      gates: [],
+      processes,
+      consolidation: {
+        configured: {},
+        effective: { enabled: false, minPoolSize: 2, chunkSize: 2 },
+        poolSize: 0,
+        candidatePoolSize: 0,
+        gates: {
+          profile: { passed: false, reason: "disabled" },
+          minimumPool: { passed: false, reason: "disabled" },
+          delta: { passed: false, reason: "disabled" },
+        },
+        wouldRun: false,
+        reason: "disabled",
+        estimatedChunks: 0,
+      },
+      stageConfig: {
+        extract: { enabled: false, reason: "disabled" },
+        graphExtraction: { enabled: false, reason: "disabled" },
+        memoryInference: { enabled: false, reason: "disabled" },
+      },
+      triage: { enabled: false, configuredMode: "queue", mode: "queue", maxAcceptsPerRun: 0 },
+    });
+
+    expect(plan.processes).toEqual(processes);
   });
 });
 

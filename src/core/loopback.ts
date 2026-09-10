@@ -87,3 +87,21 @@ export function isLoopbackEndpoint(endpoint: string | undefined): boolean {
     return true;
   }
 }
+
+/**
+ * The lowest-common-denominator concurrency default for an LLM/embedding
+ * endpoint: 1 for a loopback endpoint (a local model server serves one
+ * inference at a time; concurrent requests thrash it — reload thrash, HTTP
+ * 500 "Model reloaded"), 2 for a remote one (enough to overlap request
+ * latency without hammering a rate-limited API). A leaf helper so both
+ * callers — the indexer's LLM enrichment pool (`getDefaultLlmConcurrency`,
+ * `src/indexer/indexer.ts`) and the embedding pool
+ * (`resolveEmbeddingConcurrency`, `src/llm/embedders/remote.ts`) — share one
+ * definition instead of mirroring it; `src/llm/embedders/remote.ts` cannot
+ * import `getDefaultLlmConcurrency` directly (`src/indexer/indexer.ts`
+ * already depends on this module transitively through
+ * materialize-embeddings.ts).
+ */
+export function defaultConcurrencyForEndpoint(endpoint: string | undefined): 1 | 2 {
+  return isLoopbackEndpoint(endpoint) ? 1 : 2;
+}

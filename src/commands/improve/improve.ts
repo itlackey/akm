@@ -34,7 +34,7 @@ import { akmIndex } from "../../indexer/indexer";
 import { collectPendingMemories } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { installLlmUsagePersistence } from "../../llm/usage-persist";
+import { installLlmUsagePersistence, LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import {
   isGitBackedStash,
   listGitChangedPaths,
@@ -44,6 +44,7 @@ import {
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
+import { summarizeLlmUsageCrossTab } from "../health/llm-usage";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
 import type { EligibilitySource } from "../proposal/proposal-types";
@@ -68,7 +69,14 @@ import type {
   ImprovePreparationResult,
   ImproveScope,
 } from "./improve-run-types";
-import { type ResolvedImprovePlan, resolveImprovePlan, resolveImproveStrategy } from "./improve-strategies";
+import {
+  projectResolvedProcessRouting,
+  type ResolvedImprovePlan,
+  resolveImprovePlan,
+  resolveImproveStrategy,
+  shouldSkipRef,
+} from "./improve-strategies";
+import { buildImproveUsageReport } from "./improve-usage-report";
 import { improveLockPath, releaseImproveLock, tryAcquireImproveLock } from "./locks";
 // The cycle loop / post-loop / maintenance stages live in ./loop-stages.
 import { runImproveLoopStage, runImprovePostLoopStage } from "./loop-stages";
@@ -127,6 +135,20 @@ export function renderSyncCommitMessage(
   };
   return template.replace(/\{(\w+)\}/g, (match, key: string) => tokens[key] ?? match);
 }
+
+/**
+ * How long the improve loop waits for its FIRST engine response (success or
+ * error — any terminal record proves the run is not silent) before printing
+ * one default-level line. The timer is armed once the triage/index prepass
+ * finishes and the loop is about to start dispatching engine requests — not
+ * at run start — so it measures engine latency, not prepass time. Field
+ * re-test (#957): an engine pointed at a dead endpoint produced zero output
+ * for minutes, so a genuine hang looked identical to a normal-but-slow run.
+ * A few seconds is short enough that an operator watching a scheduled run's
+ * live log sees something promptly, long enough that an ordinary fast
+ * response never prints it.
+ */
+export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
 
 export function armBudgetWatchdog(
   budgetMs: number,
@@ -208,6 +230,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     resolvedLockPath,
   } = setup;
   let clearBudgetTimer = (): void => {};
+  let clearFirstResponseHeartbeat = (): void => {};
+  // #957: set by the usage sink's onRecord callback the moment any engine
+  // call terminates (success or error), including one issued by the prepass
+  // itself — makes arming the heartbeat below a no-op when the run is
+  // already known not to be silent.
+  let firstEngineResponseSeen = false;
   let initialGitPaths = new Set<string>();
   const runJournal = createRunWriteJournal();
 
@@ -266,7 +294,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         return buildLockSkippedResult(selectedStrategy.name, scope, options.runId);
       }
       improveLockOwnership = acquisition.ownership;
-      disposeLlmUsageSink = installLlmUsagePersistence(() => eventsCtx);
+      disposeLlmUsageSink = installLlmUsagePersistence(
+        () => eventsCtx,
+        () => {
+          firstEngineResponseSeen = true;
+          clearFirstResponseHeartbeat();
+        },
+      );
       exitBackstop = releaseRunLock;
       process.on("exit", exitBackstop);
       initialGitPaths =
@@ -308,6 +342,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // If the live prepass fails, emit its summary and clear the owning sink
     // before any run teardown. The disposer is idempotent with the main finalizer.
     disposeLlmUsageSink();
+    clearFirstResponseHeartbeat();
     clearBudgetTimer();
     if (exitBackstop) {
       process.removeListener("exit", exitBackstop);
@@ -328,6 +363,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // are all in hand. See buildImproveRunContext for exactly which
     // already-resolved values back each field.
     const ctx = buildImproveRunContext(setup, eventsCtx);
+
+    // #957: arm the heartbeat here, immediately before the improve loop
+    // starts dispatching engine requests — not at run start, where its timer
+    // would measure the triage/index prepass instead of engine latency. A
+    // no-op when the prepass already produced a terminal LLM record (the
+    // onRecord callback above already saw it). Cleared the moment any call
+    // terminates (success or error) — never rearmed, so this prints at most
+    // once per run.
+    if (!firstEngineResponseSeen) {
+      const firstResponseTimer = setTimeout(() => {
+        warn("[improve] Still waiting for the first engine response...");
+      }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
+      firstResponseTimer.unref?.();
+      clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
+    }
 
     const seq = await runImproveStageSequence({
       run: setup,
@@ -388,6 +438,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // #576: clear the per-run LLM usage sink BEFORE closing `eventsDb` below, so
     // no late sink invocation can write through a closed handle.
     disposeLlmUsageSink();
+    // #957: never leave the first-response heartbeat timer pending past the run.
+    clearFirstResponseHeartbeat();
     // O-1 (#364): Clear the budget abort timer so it does not keep the event
     // loop alive after the run completes.
     clearBudgetTimer();
@@ -458,8 +510,13 @@ interface ImproveReadSource {
   source: { name: string; path: string };
 }
 
-/** Resolve a dry-run inspection source without adapting it into a write target. */
-function resolveImproveReadSource(
+/**
+ * Resolve a dry-run inspection source without adapting it into a write target.
+ * Exported so `improve-cli.ts`'s `--show-prompt` (#952) can resolve the same
+ * read-only bundle a plain `--dry-run` would, without duplicating this
+ * selector/target/fallback precedence.
+ */
+export function resolveImproveReadSource(
   config: AkmConfig,
   scopedRef: AssetRef | undefined,
   explicitTarget: string | undefined,
@@ -537,8 +594,12 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const configuredImproveProfile = resolveImproveStrategy(options.strategy, _earlyConfig).config;
   const resolvedPlan =
     options.resolvedPlan ??
+    // #800/#957 round 3 — same dry-run exemption as improve-cli.ts's own
+    // resolveImprovePlan call: a dry run never dispatches, so a strategy left
+    // fully disabled by an unreachable credential must not abort here either.
     resolveImprovePlan(options.strategy, _earlyConfig, {
       repairValidationFailures: options.repairValidationFailures,
+      allowAllDisabled: options.dryRun,
     });
   const selectedStrategy = resolvedPlan.strategy;
   const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
@@ -942,6 +1003,7 @@ export function buildDryRunResult(
         }
       : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
+    ...(run.resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: run.resolvedPlan.engineUnavailable } : {}),
     ...(preparation?.proactiveMaintenance ? { proactiveMaintenance: preparation.proactiveMaintenance } : {}),
   };
 }
@@ -976,6 +1038,19 @@ function buildResultExecutionPlan(
     removed: strategyFilteredRefs.length,
     reason: "all enabled per-ref processes refuse the asset type",
   };
+  // #947 — per-process resolved engine/model/notices, plus how many of this
+  // run's effective refs each ref-scoped process (reflect/distill/consolidate)
+  // would act on. Counts only (not a per-ref matrix) to bound result_json size.
+  const REF_SCOPED_PROCESSES = new Set(["reflect", "distill", "consolidate"]);
+  const processes = projectResolvedProcessRouting(resolvedPlan).map((row) => {
+    if (!REF_SCOPED_PROCESSES.has(row.process)) return row;
+    const eligibleRefs = preparation.loopRefs.filter(
+      (entry) =>
+        !shouldSkipRef(entry.ref, row.process as "reflect" | "distill" | "consolidate", resolvedPlan.strategy.config)
+          .skip,
+    ).length;
+    return { ...row, eligibleRefs };
+  });
   const proactive = preparation.planning.proactive
     ? {
         ...preparation.planning.proactive,
@@ -1016,6 +1091,7 @@ function buildResultExecutionPlan(
     effectiveLimit,
     replayBudget: preparation.planning.replayBudget,
     gates: [profileGate, ...preparation.planning.gates],
+    processes,
     ...(proactive ? { proactive } : {}),
     consolidation,
     stageConfig: {
@@ -1611,7 +1687,7 @@ function finalizeImproveResult(args: {
     triageDrain,
     eventsCtx,
   } = args;
-  const { selectedStrategy, scope, options, primaryStashDir, startMs } = args.run;
+  const { selectedStrategy, scope, options, primaryStashDir, startMs, resolvedPlan } = args.run;
   const {
     preparation,
     consolidation,
@@ -1634,6 +1710,22 @@ function finalizeImproveResult(args: {
   // the unbounded row list never reaches result_json. Reflect skip counters
   // below still read `finalActions` (reflect skips are not folded).
   const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
+  // #944 — this run's LLM call/token accounting, split by process x engine x
+  // model, plus which enabled processes made zero calls and why. `llm_usage`
+  // events carry no runId column, so bound the read to this run's own wall
+  // clock — the same per-run event-scoping technique `health/windows.ts`
+  // already uses for wall time. `until` is "now" (assembly happens at
+  // teardown, after every LLM call this run will make has already emitted
+  // its event).
+  const usageEvents = readEvents({ since: new Date(startMs).toISOString(), type: LLM_USAGE_EVENT }, eventsCtx).events;
+  const usageReport = buildImproveUsageReport({
+    resolvedPlan,
+    byProcessEngineModel: summarizeLlmUsageCrossTab(usageEvents),
+    strategyFilteredRefsCount: strategyFilteredRefs.length,
+    loopRefs: preparation.loopRefs,
+    persistedActions,
+    distillSkippedAggregate,
+  });
   const notices = collectImproveNotices({
     resolvedPlan: args.run.resolvedPlan,
     actions: finalActions,
@@ -1689,6 +1781,8 @@ function finalizeImproveResult(args: {
         }
       : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
+    ...(resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: resolvedPlan.engineUnavailable } : {}),
+    ...(usageReport ? { usageReport } : {}),
     actions: persistedActions,
     ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),
     ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),

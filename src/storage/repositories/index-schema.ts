@@ -15,6 +15,7 @@
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { Database } from "../database";
+import { ensureEmbeddingSalvageTable, salvageEmbeddingsBeforeDiscard } from "./embedding-salvage-repository";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
@@ -217,6 +218,13 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
   }
 
   db.transaction(() => {
+    // #955: copy embeddings about to be discarded wholesale into
+    // `embedding_salvage` (keyed by content hash + the fingerprint they were
+    // generated under) BEFORE dropping `embeddings`, in the same transaction
+    // as the drop, so the copy and the discard commit or roll back together.
+    // The next embedding pass hands salvaged vectors back to unchanged
+    // content instead of re-embedding the whole corpus after this bump.
+    salvageEmbeddingsBeforeDiscard(db);
     db.exec("DROP TABLE IF EXISTS graph_file_relations");
     db.exec("DROP TABLE IF EXISTS graph_file_entities");
     db.exec("DROP TABLE IF EXISTS graph_files");
@@ -233,6 +241,9 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
     db.exec("DROP TABLE IF EXISTS index_dir_state");
     db.exec("DROP TABLE IF EXISTS entries");
     db.exec("DELETE FROM index_meta");
+    // embedding_salvage is deliberately absent from the drop list above —
+    // it is the ONE piece of derived state a generation rebuild must not
+    // discard.
   })();
 
   if (vecResetPending) setMeta(db, "vecResetPending", "1");
@@ -246,6 +257,12 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
       value TEXT NOT NULL
     );
   `);
+
+  // #955: created before the generation-rebuild check below so a discard
+  // has somewhere to copy vectors to. Additive-only — it carries no bearing
+  // on the `entries` generation fingerprint (`hasCanonicalEntrySchema`), so
+  // adding it does not require a `CANONICAL_INDEX_DB_VERSION` bump.
+  ensureEmbeddingSalvageTable(db);
 
   rebuildIncompatibleIndexGeneration(db);
 

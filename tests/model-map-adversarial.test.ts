@@ -10,6 +10,7 @@ import { ConfigError, UsageError } from "../src/core/errors";
 import {
   copyDefaultModelMap,
   loadModelMap,
+  mergeModelMapLayers,
   parseModelMapLayer,
   readInstalledModelMapText,
 } from "../src/integrations/agent/model-map";
@@ -115,6 +116,57 @@ describe("models.json diagnostic secrecy", () => {
     const error = expectConfigError(() => parseModelMapLayer(sentinel, "user models.json"));
     expect(error.message).not.toContain(sentinel);
     expect(error.message).toMatch(/invalid JSON/i);
+  });
+});
+
+describe("models.json engine indirection (#946)", () => {
+  test("rejects model and engine set together in one profile", () => {
+    const error = expectConfigError(() =>
+      parseModelMapLayer(
+        JSON.stringify({ version: 1, aliases: { fast: { opencode: { model: "x", engine: "local-fast" } } } }),
+        "models.json",
+      ),
+    );
+    expect(error.message).toMatch(/model and engine cannot both be set/i);
+  });
+
+  test("rejects an engine reference that is not lowercase kebab-case", () => {
+    const error = expectConfigError(() =>
+      parseModelMapLayer(
+        JSON.stringify({ version: 1, aliases: { fast: { opencode: { engine: "Local Fast!" } } } }),
+        "models.json",
+      ),
+    );
+    expect(error.message).toMatch(/engine.*lowercase kebab-case/i);
+  });
+
+  test("rejects a profile with none of model, inference, or engine", () => {
+    const error = expectConfigError(() =>
+      parseModelMapLayer(JSON.stringify({ version: 1, aliases: { fast: { opencode: {} } } }), "models.json"),
+    );
+    expect(error.message).toMatch(/model, inference, and\/or engine/i);
+  });
+
+  test("names the missing engine when resolving against an unknown reference", () => {
+    const installed = parseModelMapLayer(
+      JSON.stringify({ version: 1, aliases: { fast: { opencode: { engine: "local-fast" } } } }),
+      "installed models.json",
+    );
+    const error = expectConfigError(() => mergeModelMapLayers(installed, undefined, {}));
+    expect(error.message).toMatch(/fast\.opencode\.engine/);
+    expect(error.message).toMatch(/unknown engine "local-fast"/);
+  });
+
+  test("names the referencing engine when it carries no usable model", () => {
+    const installed = parseModelMapLayer(
+      JSON.stringify({ version: 1, aliases: { fast: { opencode: { engine: "bare-agent" } } } }),
+      "installed models.json",
+    );
+    const engines = {
+      "bare-agent": { kind: "agent" as const, platform: "opencode" as const },
+    };
+    const error = expectConfigError(() => mergeModelMapLayers(installed, undefined, engines));
+    expect(error.message).toMatch(/engine "bare-agent" has no usable model/);
   });
 });
 

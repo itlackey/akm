@@ -104,6 +104,11 @@ export interface IndexRunContext {
   full: boolean;
   /** Whether the explicit post-index missing-file clean pass owns disappearance reporting. */
   clean: boolean;
+  /**
+   * Whether `akm index --reembed` was passed: force a full purge + re-embed
+   * of every entry, bypassing the fingerprint-rename canary entirely (#955).
+   */
+  reembed: boolean;
   /** Primary stash directory. */
   stashDir: string;
   /** Progress emitter (always defined; may be a no-op). */
@@ -122,6 +127,18 @@ export interface IndexRunContext {
   removedSources: RemovedIndexSource[];
   /** Whether every configured component produced a trustworthy source snapshot. */
   scanComplete: boolean;
+  /**
+   * Borrowed source-update coordinator transaction, when this run is `akm
+   * bundle update`'s deferred embedding phase. When set, the embedding phase
+   * is SKIPPED entirely (#954; the ambient-transaction drift guard would
+   * reject calling it here anyway) and finalize records semantic state as
+   * `"pending"`, never `"ready"` — the coordinator runs the shared
+   * `runEmbeddingPass` itself on its own connection AFTER its own commit.
+   */
+  deferredUpdateTransaction?: {
+    db: Database;
+    stateSchema: string;
+  };
 
   // ── Inter-phase result accumulation ─────────────────────────────────────────
   // These fields are written by phases and read by later phases or the

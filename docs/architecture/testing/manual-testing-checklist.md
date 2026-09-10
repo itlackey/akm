@@ -2330,9 +2330,15 @@ jq -s -e '
 - [ ] **[SERVICE]** Wrong envelope, wrong vector count/dimension, HTTP failure,
       slow response, cancellation, and connection refusal are bounded and do not
       invalidate the FTS index.
-- [ ] **[SERVICE]** Changing model/dimension invalidates old vectors and an
-      ordinary index regenerates them. Changing indexed text regenerates exactly
-      that asset's vector.
+- [ ] **[SERVICE]** Changing `embedding.dimension` invalidates old vectors and
+      an ordinary index regenerates them. Changing indexed text regenerates
+      exactly that asset's vector.
+- [ ] **[SERVICE]** Changing `embedding.model` to a string that still resolves
+      to a compatible model (same dimension, near-identical vectors on
+      re-embedding a sample) is verified and KEPT — no purge, the stored
+      vectors survive, and `akm index --format json` reports the same
+      `embeddingCount` as before. `akm index --reembed` bypasses this check
+      and forces a purge + rebuild regardless.
 - [ ] **[SERVICE REGRESSION]** A provider-returned vector dimension mismatch is
       rejected rather than stored as ready.
 

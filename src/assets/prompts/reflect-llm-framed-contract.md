@@ -9,3 +9,5 @@ AKM_REFLECT_CONTENT_END
 The first begin marker and final end marker delimit the body; marker lines between them are literal content. Put the complete markdown body between those outer markers. Quotes, Markdown fences, and backslashes inside the body are literal content; do not JSON-escape them. Emit the body only, without YAML frontmatter, because AKM preserves and merges the source frontmatter itself.
 
 The frontmatter patch must be a one-line JSON object with exactly `description` and `when_to_use`. Keep a field `null` when it should not change. Supply a non-empty string only when adding or correcting that field; AKM merges those values through its existing sanitizer.
+
+Never include the truncation marker (the literal text `{{TRUNCATION_MARKER}}`) or any other text from outside the fenced asset content shown to you, anywhere in the body.

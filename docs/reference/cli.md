@@ -117,6 +117,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm health` only) | — |
 | 70 | Internal / unclassified error | unexpected throw |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -195,7 +196,7 @@ The setup wizard configures AKM in two steps:
 
 **Step 1 — Small model connection** (for background processing)
 Configures the OpenAI-compatible endpoint and model used for `akm index`
-metadata enhancement, `akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
+metadata enhancement and `akm remember --enrich`. Supports Ollama,
 OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
 
 **Step 2 — Agent connection** (for agentic commands)
@@ -218,10 +219,12 @@ Build or refresh the search index.
 
 ```sh
 akm index            # Incremental (only changed directories)
-akm index --full     # Full rebuild
+akm index --full     # Full rebuild (reuses unchanged embeddings — see below)
 akm index --verbose  # Print phase progress to stderr
 akm index --clean    # Normal index + remove stale entries from the DB
 akm index --clean --dry-run # Report stale entries without deleting
+akm index --reembed  # Force re-embedding of every entry
+akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) if a run is already in progress
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -231,6 +234,18 @@ semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
 
+**Progress in non-verbose JSON mode (default output format, #954):** even
+without `--verbose`, phase-start messages and the embedding heartbeat
+(`Still generating embeddings: X/N stored, F failed; waiting on embedding
+provider.`) are now written to stderr, and a failed embedding batch logs at
+the default level instead of `--verbose`-only — a long-running index build
+against a slow or unresponsive provider is no longer silent until the whole
+run finishes. Text-mode output keeps its spinner instead (no stderr line
+growth); JSON stdout output is unaffected either way. The high-frequency
+per-batch `Embedded N/M entries.` line stays out of non-verbose stderr (it
+fires after every committed batch) — pass `--verbose` for that level of
+detail.
+
 **`--clean` flag:** After indexing completes, verifies every indexed entry's source
 file still exists on disk. Removes any entries whose file is missing (for local
 bundle sources only; remote entries are skipped). Returns a `clean` block in the
@@ -238,6 +253,55 @@ JSON result with `checked`, `removed`, `removedRefs` arrays, and `dryRun` flag.
 Use `--clean` to resolve the edge case where a deleted file in an unchanged
 directory lingers in the index across incremental runs. With `--dry-run`, reports
 which entries would be removed without modifying the database.
+
+**`--full` no longer re-embeds unchanged content (#955):** a full rebuild
+(and an index-generation bump on first open under a new binary) used to
+delete every embedding unconditionally, forcing a full re-embed of the
+whole corpus even when nothing changed. Vectors about to be discarded are
+now salvaged (keyed by a hash of their content plus the fingerprint they
+were generated under) and handed straight back to unchanged entries at the
+start of the next embedding pass, with zero provider calls for them — a
+progress line reports the split (`Reused N embeddings from the previous
+generation; embedding M new.`). Content that changed even by one byte, or
+a fingerprint that no longer matches, still goes through the provider
+normally. `--reembed` is the way to force a full re-embed regardless.
+
+**`--reembed` flag:** Forces a full purge and re-embed of every entry,
+independent of the embedding-model-rename compatibility check described
+below. Ordinary indexing already tells a config-only rename of
+`embedding.model` (e.g. a gateway that changes how it names the same model)
+apart from a genuine model change, and keeps the stored vectors when they
+are still compatible; `--reembed` skips that check and forces a rebuild
+regardless of what it would have decided.
+
+**`--skip-if-locked` flag:** Every explicit `akm index` run acquires an
+opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
+advisory, never the blocking lock #872 removed (see
+[Locks](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#locks)). A human-typed
+`akm index` with no flag is never gated by it: if another run already holds
+the lock, it warns and proceeds anyway, contending with the existing run. If
+that contention makes index.db genuinely busy (SQLite `database is locked`)
+long enough to exhaust the driver's retry window, the run now fails with
+exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
+driver error at exit 70 — the same retry-shortly contract as
+`STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
+The rebuild lock itself is registered through a brief internal barrier
+(`getMaintenanceBarrierPath()`) shared with every other akm lock/lease; two
+`akm index` runs launched close enough together to collide on that
+registration step retry briefly and then, if it is still busy, also exit 75
+(code `MAINTENANCE_BARRIER_BUSY`) rather than the config-error exit 78 a
+2026-09-10 field report found — a busy registration barrier is ordinary
+contention between two legitimate runs, never a broken config file.
+`--skip-if-locked` changes that only for the invocation that passes it: if
+the lock is already held by a live process, it skips gracefully (exit 0,
+`{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
+— `launcherPid` is the holder's launcher pid when known, `null` otherwise,
+#956) instead of contending. `akm index` and `akm curate` are both safe to call frequently —
+`curate` never blocks on a rebuild in progress ([read-path indexing stays
+non-blocking](#curate)) — but a hook, cron job, or scheduled task that
+invokes `akm index` directly should pass `--skip-if-locked` so it steps
+aside instead of piling up behind a longer rebuild (the shipped
+`index-refresh` task does this).
 
 `akm index` always rebuilds the search index and keeps metadata in the index.
 When a selected named LLM engine (`defaults.llmEngine` or an indexing-pass
@@ -261,6 +325,10 @@ Returns a JSON object with:
 | `version` | Current akm version |
 | `bundleDir` | Primary bundle directory — same resolution `akm bundle list` uses |
 | `defaultBundle` | Name of the primary bundle from config, or `null` when none is configured |
+| `dataDir` | Resolved data directory (`getDataDir()`) |
+| `configDir` | Resolved config directory (`getConfigDir()`) |
+| `cacheDir` | Resolved cache directory (`getCacheDir()`) |
+| `stateDir` | Resolved state directory (`getStateDir()`) |
 | `assetTypes` | List of recognized asset types |
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
@@ -276,6 +344,10 @@ Returns a JSON object with:
 - `"disabled"` — semantic search is turned off in config
 
 Use `akm info` to verify that semantic search is working after setup.
+
+Scripts that need akm's resolved paths (for example a health check that
+differs between a host install and a container) can read them with
+`akm info --format json | jq -r .dataDir` instead of hardcoding a path.
 
 ### health
 
@@ -298,14 +370,17 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
 default agent engine, and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
 to the `default-llm-engine` and every `configured-engines` LLM connection (and
-an SDK engine's LLM fallback), one probe per distinct endpoint.
+an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
+installed akm-cli version against the latest GitHub release (`cli-version`),
+and runs the scheduler's recorded akm binary with `--version` to check it
+against the running CLI (`scheduler-binary`).
 
 Primary result fields:
 
@@ -313,7 +388,7 @@ Primary result fields:
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
 | `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-migrations`, `task-log-backing`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime` and `session-extraction` (akmExtract pipeline health) |
+| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -333,9 +408,24 @@ holds a pending historical-destructive migration and something other than
 `default-llm-engine` and `configured-engines` probe reachability (not just
 configuration) for a `kind: "llm"` engine — an unreachable endpoint is a hard
 `fail` for `default-llm-engine` and a `warn` for any other engine. `--no-probe`
-skips this. `active-improve-strategy` names the resolved engine per process
+skips this. When a required credential is missing from the shell but an
+`env/` asset defines the same variable name, the warn names that asset's ref
+(never the variable name) and points at `akm env run <ref> -- ...`.
+`active-improve-strategy` names the resolved engine per process
 in its evidence and message, so a strategy-level `engine` pin that shadows
 `defaults.llmEngine` is visible without config archaeology.
+
+`cli-version` compares the installed akm-cli version against the latest
+GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
+upgrade command when a newer release exists. `--no-probe`, offline, or a
+rate-limited request all degrade it to `unknown`, never a false `warn`.
+
+`engine-last-used` checks, for every engine bound to an enabled process in
+the active improve strategy, whether it has a recorded `llm_usage` call in
+the last 30 days (independent of `--since`). It `warn`s naming the idle
+engine and its bound process, and stays `unknown` — not a noisy `warn` —
+until at least one improve run has been recorded (started) in that window,
+so a fresh install is quiet.
 
 The `session-extraction` advisory is derived from the `extract_sessions_seen`
 ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm
@@ -439,6 +529,12 @@ availability:
 - **`ref`** -- The asset handle to pass to `akm show` (for example
   `team//scripts/deploy.sh`); present at `brief`, `full`, and `agent` for local
   hits
+- **fragment provenance** -- when `ref` selects an indexed Markdown fragment,
+  `selectedRef` and `parentRef` distinguish the ranked evidence from its parent;
+  one-based `fragmentOrdinal`, `fragmentCount`, source-line bounds, neighbor
+  refs, and separate fragment/parent size estimates are available without
+  changing ranking. `estimatedTokens` describes the fragment for a
+  fragment-qualified hit; `parentEstimatedTokens` describes the whole asset.
 - **`name`** -- The asset's filename or identifier; present at all levels
 - **`origin`** -- The source bundle (e.g. `npm:@scope/pkg`), present only for
   managed source assets; surfaced at `full` only
@@ -482,9 +578,9 @@ ranking.
 
 ### curate
 
-Pick the assets worth loading for a task. Unlike `akm search`, curate reranks by
-intent, attaches a preview and run details per hit, adds related support refs,
-and summarizes the set — the usual starting point for an agent.
+Pick the assets worth loading for a task. Unlike `akm search`, curate attaches
+a preview and run details per hit, adds related support refs, and summarizes
+the set — the usual starting point for an agent.
 
 ```sh
 akm curate "plan a release"
@@ -515,6 +611,10 @@ only for read-only items. Their `followUp` remains `akm show <ref>` rather than
 being replaced by clone guidance.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
+`akm curate` is safe to call frequently, including from a hook that fires on
+every prompt: it only ever reads the index as it currently stands (the same
+non-blocking `ensureIndex()` path `search` uses) and never waits on or
+contends with a full `akm index` rebuild in progress.
 Use `--no-track-usage` when this inspection must not update local usage or
 ranking signals.
 
@@ -535,6 +635,7 @@ akm show commands/release
 akm show workflows/ship-release
 akm show knowledge/guide                 # the whole document
 akm show knowledge/guide#authentication  # just that section
+akm show '<search-result-ref>' --context lead --max-tokens 800
 akm show knowledge/guide#nope            # lists the available fragment slugs
 
 # Bundle .meta/ orientation docs — direct-read, not indexed:
@@ -547,6 +648,14 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 akm show memories/retro --filter user=alice
 akm show memories/retro --filter user=alice --filter agent=claude
 ```
+
+| Flag | Values | Default | Description |
+| --- | --- | --- | --- |
+| `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
+| `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
+| `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
+| `--filter` | `<key>=<value>` | _(none)_ | Repeatable scope filter (`user`, `agent`, `run`, `channel`). |
+| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage-event and ranking updates for this successful read. |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -575,8 +684,27 @@ reduced metadata-first view without `content`/`template`/`prompt`;
 `editable` is `false`, `editHint`; `--shape agent` strips non-action metadata
 (e.g. `origin`, `tags`) down to the action-relevant field set while still
 including `ref`/`path`/`editable`; `--shape summary`
-returns a compact view with only `type`, `name`, `ref`, `description`, `tags`,
-`parameters`, `workflowTitle`, `action`, `run`, `origin`, and `keys`.
+returns a compact view with `type`, `name`, `ref`, `description`, `tags`,
+`parameters`, `workflowTitle`, `action`, `run`, `origin`, and `keys`, plus the
+optional fragment metadata described below.
+
+Opaque fragment shows and `--context lead` keep `ref` as the canonical parent
+identity and add
+`selectedRef`, `parentRef`, one-based `fragmentOrdinal`, `fragmentCount`,
+`startLine`, `endLine`, optional `previousRef`/`nextRef`, and separate
+fragment/parent character and token estimates. Contextual shows also report
+`contextMode`, `contextMaxChars`, and `contextTruncated`. Heading aliases are
+canonicalized in contextual `selectedRef` to the resolved opaque indexed
+selector. Default exact shows through a friendly `#heading` retain their
+source-live body and do not attach indexed-safe provenance that could describe
+a different revision or projection.
+
+`--context lead` is opt-in and accepts only fragment-qualified indexed Markdown
+assets. Both the lead and selected content come from the same line-preserving,
+safe indexed revision used by fragment search, even when the source file changes
+between search and show. The selected block is labelled and kept last. When the
+budget is tight, AKM clips or omits lead content before clipping selected
+evidence; `contextTruncated` reports either case.
 
 Returns type-specific payloads:
 
@@ -618,6 +746,7 @@ akm workflow resume <run-id>
 akm workflow abandon <run-id>
 akm workflow list --active
 akm workflow list --children               # also list child workflow runs
+akm workflow list --all-scopes             # include runs started from a different working directory
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
 
@@ -630,8 +759,8 @@ Subcommands:
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` (requires `--from` or `--reset`) overwrites; `--print` prints the template that would be written instead of writing it |
 | `run <run-id\|ref>` | Stable canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
-| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs are excluded unless `--children` is passed |
+| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
@@ -662,6 +791,7 @@ akm workflow run workflows/ship-release --version 1.2.3
 akm workflow run workflows/review --files a.ts --files b.ts
 akm workflow run <run-id> --max-steps 3
 akm workflow run <run-id> --max-retries 2 --timeout 10m
+akm workflow run <run-id> --skip-if-locked   # for scheduled runs: skip (exit 0) instead of failing on contention
 ```
 
 Parameter flags must follow the target and exactly match keys declared in the
@@ -686,6 +816,7 @@ The old `--params <json>` bag is removed.
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
 | `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
 | `--new` | Start a fresh run even when one is already active for this ref, instead of resuming it. The existing active run is left untouched — it is never abandoned automatically. A workflow ref only: passing a run id with `--new` is a usage error (exit 2). Parameter flags are allowed together with `--new`, since it is starting a new run. |
+| `--skip-if-locked` | If another akm process already holds this run's engine lease (`RUN_LEASE_HELD`), or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
 **Resuming an active run is announced, not silent.** Passing a ref that
 already has an active run in the current scope resumes that run rather than
@@ -729,9 +860,10 @@ ancestor when present, otherwise the nearest git root, otherwise the bundle root
 when the cwd is inside it, otherwise the cwd itself. In practice this means:
 
 - `workflow run workflows/<name>` resumes the active run for the current project/worktree/directory (announced with `resumed: true`), or starts one when none is active. `--new` always starts a fresh run.
-- `workflow status workflows/<name>` resolves the most-recently-updated run in the current scope only.
-- `workflow list` shows runs for the current scope only.
-- Direct run-id commands like `workflow status <run-id>` still work even if the run was started from another directory.
+- `workflow status workflows/<name>` resolves the most-recently-updated run in the current scope only, unless `--all-scopes` is passed.
+- `workflow list` shows runs for the current scope only, unless `--all-scopes` is passed. Its envelope always carries a top-level `scopeKey` naming the scope that was searched (`null` under `--all-scopes`), so an empty `runs: []` is never indistinguishable from "nothing anywhere".
+- Direct run-id commands like `workflow status <run-id>`, `workflow resume <run-id>`, and `workflow abandon <run-id>` still work even if the run was started from another directory.
+- Starting a ref by name (`workflow run workflows/<name>`) never collides across scopes — each scope can hold its own active run of the same ref — but if an active run of that ref exists in a *different* scope, the started run's envelope carries a `warnings[]` entry naming that run's id, scope, and start time, with the `akm workflow run <id>` / `akm workflow abandon <id>` remedy, so a stray run in another scope does not go unnoticed (#942).
 
 #### workflow create
 
@@ -772,13 +904,16 @@ affect the in-flight run.
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status <run-id> --units    # also list per-unit rows from the run journal
+akm workflow status workflows/ship-release --all-scopes  # resolve across every scope, not just the current one
 ```
 
 Accepts a run id, a unique 8+ character run-id prefix, or a workflow ref.
 When given a workflow ref, resolves to the most-recently-updated run for that
-ref in the current working scope. `--units` adds per-unit rows (unit id,
-status, failure reason, and any result/error diagnostic text) from the run
-journal — diagnostics only; step evidence stays deterministic and is
+ref in the current working scope, unless `--all-scopes` is passed (only
+relevant when the target does not resolve to a run id; a run id is always
+scope-agnostic, `--all-scopes` or not, #942). `--units` adds per-unit rows
+(unit id, status, failure reason, and any result/error diagnostic text) from
+the run journal — diagnostics only; step evidence stays deterministic and is
 unaffected.
 
 #### workflow plan
@@ -1117,6 +1252,14 @@ not a discoverable, tab-completable flag). See STABILITY.md.
 Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
 full boot contract, JSON shapes, and exit codes.
+
+`akm upgrade` replaces the binary in place for its own install method, but a
+scheduler binding recorded by an earlier `akm task sync` under a *different*
+install method is not repointed automatically — the scheduler runs the
+binary path recorded at sync time, not whichever akm `upgrade` just
+installed. Run `akm task sync` after switching installers so scheduled runs
+pick up the new binary; see [`task sync`](#task) and `akm health`'s
+`scheduler-binary` advisory.
 
 ### clone
 
@@ -1565,27 +1708,34 @@ error (exit 2), the canonical bare-group behavior — name a subcommand.
 ```sh
 akm config list                     # List current config
 akm config get output.format        # Read one key
+akm config get output.format --show-source  # Read one key, with where it came from
 akm config set output.detail full   # Set one key
 akm config set output.detail full --silent  # Set without the post-write config dump on stdout
 akm config unset llm                # Remove an optional key
 akm config path                     # Print path to config file
 akm config path --all               # Print all config-related paths
+akm config diff other-host/config.json  # Effective-config differences, secrets redacted
 ```
 
 Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `get <key>` | Read one config key |
+| `get <key>` | Read one config key (the effective, post-`extends` value). `--show-source` wraps it as `{ value, source }`, where `source` is `local`, `extends:<ref>`, or `default`. |
 | `list` | List current configuration |
 | `set <key> <value>` | Set one config key; prints the resulting config with `ok: true` |
 | `unset <key>` | Unset an optional key, or a whole `embedding`/engine section; prints the resulting config with `ok: true` |
 | `path` | Show paths to config, bundle, cache, and index. `--all` prints every path; without it, just the config path. Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
+| `diff <path\|bundle//path>` | Compare this instance's effective config (its own `extends` already applied) against another config file or bundle-relative file (loaded through the same loader — its `extends` honoured too); prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
 
 `set` and `unset` accept `--silent` to suppress the post-write config dump
 entirely — nothing is printed on stdout, and the exit code is the status (the
 write still happens and errors still print) — use it from hooks and CI
 scripts.
+
+See [configuration.md](configuration.md)'s "Sharing configuration across
+installs" for the `extends` config key that `diff` and `get --show-source`
+work with.
 
 > **Removed in 0.9.0:** `akm config enable`/`akm config disable`. Use
 > `akm registry add|remove` to toggle a registry, the general mechanism.
@@ -1597,13 +1747,21 @@ See [configuration.md](configuration.md) for details.
 ### models
 
 Manage the installed and operator-owned model intent map. Bare `akm models`
-is a usage error; use the explicit copy operation when you want an editable
-full map.
+is a usage error; use `list` to inspect the effective table or `copy-defaults`
+when you want an editable full map.
 
 ```sh
+akm models list
 akm models copy-defaults
 akm models copy-defaults --overwrite
 ```
+
+`list` shows the fully resolved alias table — one row per (alias, column)
+pair with its `model`, optional `inference`, `source` (`default`: unchanged
+from the installed file; `user`: touched by the user overlay), and `via`
+(`literal`: a model string; `engine`: borrowed from a configured
+`engines.<name>` connection, in which case the row also names that `engine`).
+Read-only; it never writes `models.json`.
 
 `copy-defaults` validates the packaged version-1 `models.json`, then stages and
 syncs it beside the normal AKM configuration target. Creation uses an atomic
@@ -1614,7 +1772,8 @@ filesystems do not offer a conditional rename that locks the previously
 observed inode. Symlinks and other non-regular targets observed during checks
 are refused. See
 [Model-map files](configuration.md#model-map-files) for schema, overlay, and
-resolution semantics.
+resolution semantics — including the `engine` field (0.9.15) that lets a
+column borrow its model from a configured engine instead of a literal string.
 
 ### help
 
@@ -2068,8 +2227,13 @@ akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [-
 
 When `<agent-ref>` is provided, akm resolves the bundle agent's persona,
 `modelHint`, and requested `toolPolicy`. The `--model` flag wins over any model
-specified in the asset. The requested tool policy never grants access by
-itself: authorization runs before lowering, credentials, or provider dispatch.
+specified in the asset. An alias resolves per the selected `--engine`'s
+model-map column (see [Model-map files](configuration.md#model-map-files)),
+which — as of 0.9.15 — may itself be an `engine`-backed indirection, so
+`--engine local-fast --model fast` can resolve to `local-fast`'s own
+`engines.local-fast.model` instead of a hardcoded per-platform literal. The
+requested tool policy never grants access by itself: authorization runs before
+lowering, credentials, or provider dispatch.
 The current CLI has no built-in allow-all authorizer, so a nonempty request is
 rejected rather than silently weakened.
 Selecting a persona or model without `--prompt` or `--prompt-stdin` is also
@@ -2175,14 +2339,23 @@ akm improve memory
 akm improve skills/code-review
 akm improve workflows/release-checklist --task "reduce duplication"
 akm improve --skip-if-locked           # for high-frequency scheduled runs: skip (exit 0) if a run is already in progress
+akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
 akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
+akm improve --plan --strategy thorough # preview thorough's resolved engine/model routing; nothing is dispatched
+akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
+akm improve report                     # LLM usage/routing report for the most recent real run
+akm improve report --run <id>          # ...for one specific improve_runs id
+akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
 ```
 
 | Flag | Description |
 | --- | --- |
+| `--run <id>` | `report` scope only (#944): show the usage report for one specific `improve_runs` row instead of the most recent real run. Mutually exclusive with `--since`. Rejected with any other scope, or no scope. |
+| `--since <window>` | `report` scope only (#944): aggregate the usage report over every real (non-dry-run) run started since `<window>` (a duration like `24h`/`7d`, or an ISO timestamp) instead of one run. Mutually exclusive with `--run`. Rejected with any other scope, or no scope. |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
+| `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
 | `--bundle` | Select the proposal/write target; when the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Base cap for ordinary assets (highest utility first); configured replay slots are additive |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
@@ -2190,6 +2363,8 @@ akm improve --sync --no-push           # commit only, skip the push after it
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
+| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
+| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Commit (and optionally push) the git-backed primary bundle when the run finishes. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the end-of-run sync commit when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -2227,6 +2402,36 @@ Selection behavior defaults to recent feedback signals first, with a
 zero-feedback retrieval fallback for high-traffic refs. Use
 `--require-feedback-signal` to disable retrieval fallback for the run.
 
+When the active strategy enables a process (or the triage judgment engine)
+whose engine or credential cannot be resolved in this process's environment,
+the run does not silently do nothing for it: the process is skipped, and the
+result carries `skippedProcesses` — an array of `{process, configKey, reason}`
+entries (omitted entirely when nothing was skipped). When the process resolved
+a real engine whose credential just isn't reachable here (as opposed to never
+resolving an engine at all), the entry also carries the structurally resolved
+`engine`/`model`/`contextLength` it would have used — never the credential
+itself. `ok` and the exit code are unchanged either way, matching `extract`'s
+`skipReasons` contract: consumers that need to know branch on
+`skippedProcesses` (or pass `--require-engines` to abort instead of
+degrading). `reason` names which engine and which credential reference (an env
+var, `apiKeyFile` path, or `secret://` reference — never its value) is
+missing. A `--dry-run`/`--plan` preview never dispatches, so it never aborts
+on an unavailable credential either — even a strategy left with every process
+disabled this way still returns its plan, with the affected processes in
+`skippedProcesses`.
+
+`--timeout-ms` is a run-wide wall-clock budget: when it expires, the run
+cooperatively aborts any in-flight engine request (the same `AbortSignal`
+every LLM call already honors) instead of waiting out the engine's own,
+much longer, per-call timeout — the run then finishes and reports normally
+rather than hanging past its budget. SIGTERM/SIGINT/SIGHUP end a live run
+the same way, within a short bounded grace period, and the process exits
+with a stable per-signal code (`143`/`130`/`129`) rather than needing a
+`kill -9`. If a live run has waited more than a few seconds without any
+engine response at all, one default-level line ("Still waiting for the
+first engine response...") is printed so a scheduled run's log is never
+silently empty while an engine is slow or dead.
+
 For dry runs, `plannedRefs` is the effective post-limit work set, not every
 ref in the requested scope. The `plan` object preserves both views: raw scope
 size and per-gate removals, configured and effective caps, final ranked refs
@@ -2243,10 +2448,85 @@ not an atomic cross-store snapshot or a reservation. Live execution re-inspects
 mutable inputs, so a later run can differ after index, state, filesystem,
 clock, or session-log changes.
 
+`plan.processes` (#947) is the resolved process -> engine -> model routing
+table: one row per improve process (`reflect`, `distill`, `consolidate`,
+`memoryInference`, `graphExtraction`, `extract`, `validation`, `triage`,
+`proactiveMaintenance`), plus a `triage.judgment` row when the strategy
+configures a judgment engine. Each row carries `enabled`, the resolved
+`engine`/`model` (llm-backed processes only) and `engineKind`, this process's
+own lowering `notices`, and — for reflect/distill/consolidate only —
+`eligibleRefs`, the count of this run's `effectiveRefs` the process would act
+on (`shouldSkipRef`'s allowedTypes/process-disabled check; a count, not a
+per-ref matrix, to keep the envelope bounded). A row that could not resolve an
+engine or credential carries `unavailable: {configKey, reason}` — the same
+data behind `skippedProcesses` above, reshaped per process. When the process
+resolved a real engine whose credential just isn't reachable here, the row
+still carries that engine's `engine`/`model`/`engineKind` alongside
+`unavailable`, rather than omitting them the way a never-configured process
+does — so a preview can show what would have run. This table is
+resolved before any dispatch on every invocation (dry or live), so
+`akm improve --dry-run --strategy <name>` (or `--plan`) previews an ad-hoc
+strategy override without changing config first; `akm health`'s
+`active-improve-strategy` check performs the equivalent resolution but only
+for the configured default strategy (`defaults.improveStrategy`), and reports
+no model or per-process notices. Neither `--dry-run` nor `--plan` probes
+engine reachability over the network — pair with `akm health --probe` (or the
+default probe-on behavior) to check whether a named engine actually answers.
+
+`--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
+builds the exact prompt reflect would send for one asset — the same source
+resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
+proposal gathering `akm improve`'s live reflect step uses — and prints it
+without acquiring a dispatch lease, so it never calls an engine. Add
+`--format text` (the default JSON/yaml envelope escapes the prompt into one
+line, which defeats a by-eye read) to confirm by eye that recent feedback is
+framed as an unverified report to investigate (never a fact to insert
+verbatim) and that the response contract tells the model never to emit the
+truncation marker or any content from outside the shown asset.
+
 When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`. The deterministic search ranking also prefers
 `knowledge` over `memory` hits, including inferred `.derived` memories, when
 the evidence is otherwise comparable.
+
+#### improve report
+
+`akm improve report` (#944) answers "which engine did each LLM-backed process
+use this run, how much did it cost, and which enabled processes made zero
+calls (and why)" without hand-written SQLite against `state.db`. It is a
+`scope` value, not a subcommand — `report` is not, and will never be, a real
+asset type, so it is intercepted before any lock/log/index side effect (same
+precedent as the retired `canary` scope).
+
+Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
+field on the result (`result_json` in `improve_runs`, and in the
+`--json-to-stdout` / dry-run JSON): `{ byProcessEngineModel, noCalls }`.
+`byProcessEngineModel` is a cross-tab of this run's own `llm_usage` events
+(#576) — one row per distinct `(process, engine, model)` triple, each with
+`calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
+`reasoningTokens`, and `totalDurationMs`. `noCalls` lists every LLM-backed
+process (`reflect`, `distill`, `consolidate`, `memoryInference`,
+`graphExtraction`, `extract`, `validation` — not `triage`/`proactiveMaintenance`,
+which never make an attributable LLM call themselves) the active strategy
+enabled but that ended the run with zero calls, each with a `reason` drawn
+from the existing skip-reason vocabulary: `"engine_unavailable"` (also in
+`skippedProcesses`), `"autonomy_gated"`, `"strategy_filtered_all_passes"`, a
+reflect/distill dominant skip reason (e.g. `"no_new_signal"`, `"cooldown"`),
+or `"no_signal"` as the fallback — never a fabricated category. The field is
+omitted entirely when both would be empty. The same table is printed to
+stderr (`[improve] usage report ...`) after every real run, independent of
+`--json-to-stdout`.
+
+`akm improve report` reads that field back: with no flags, the most recent
+real run; `--run <id>`, one specific run; `--since <window>`, summed across
+every real run in the window (`byProcessEngineModel` rows merged by
+`(process, engine, model)`; `noCalls` lists a process only if it made zero
+calls across every included run). A run recorded before 0.9.15 has no
+persisted `usageReport` — the command recomputes `byProcessEngineModel` from
+that run's own `llm_usage` events instead of erroring, sets `noCalls` to `[]`
+(eligibility reasons are not reconstructable after the fact), and adds a
+`notes` entry saying so rather than fabricating precision the old row can't
+support.
 
 ### proposal
 
@@ -2532,13 +2812,14 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm task add` writes v4 —
 see the canonical [Tasks reference](tasks.md). The
-group is `add | run | explain | validate | sync | doctor | history | prune`
-— there is no `list` or `remove`; use `akm search --type task` /
-`akm show tasks/<id>` to inspect, and edit the file + `akm task sync` to
-change or remove a schedule.
+group is `add | run | explain | validate | list | sync | doctor | history | prune`
+— there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
+task, and edit the file + `akm task sync` to change or remove a schedule.
+`task list` is a delegating alias for `akm search --type task` — both
+spellings return the identical envelope.
 
 ```sh
-akm search --type task                      # List tasks (cross-bundle)
+akm task list                                # List tasks (cross-bundle) — alias for `search --type task`
 akm show tasks/<id>                          # Inspect one task
 akm task add <id> --schedule "@daily" \     # Register a new task and install it
   --command "akm improve --strategy default"
@@ -2562,6 +2843,13 @@ akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
 scheduler), `--force` (overwrite an existing task with the same id), and
 `--rebind` (explicitly permit scheduler creation from a local invocation that
 would otherwise be considered ineligible).
+
+`akm task list [<query>] [--limit <n>] [--from local|registry|all]` is a
+pure alias for `akm search --type task` with the query, `--limit`, and
+`--from` flags passed through — same envelope, same `results` alias, no
+second implementation. 0.9.0 removed `task list` as a redundant
+implementation of task listing (see the 0.9.0 CHANGELOG entry); this
+reintroduces only the spelling, not the logic.
 
 `akm task explain <ref> [input flags]` prints a task's declared `inputs:`,
 the values that would actually be supplied (with provenance), the resolved
@@ -2630,6 +2918,13 @@ result with `akm task doctor`. Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once
 before changing task files or scheduler state; non-interactive setup changes
 neither.
+
+Because the scheduler runs the exact binary path recorded at the last `task
+sync`, upgrading akm through a different installer than the one active at
+that sync (npm-global to a standalone download, or vice versa) leaves
+scheduled runs invoking the old, now-stale binary — `task sync` re-resolves
+the current path and repoints them. `akm health --probe`'s `scheduler-binary`
+advisory warns when the two diverge, naming both versions.
 
 Setup reconfiguration preserves existing scheduler runtime bindings. Changing
 the AKM storage path or installed runtime path therefore requires an explicit

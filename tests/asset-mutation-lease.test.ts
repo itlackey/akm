@@ -3,10 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { isProcessAlive } from "../src/core/common";
 import { getIndexWriterLockPath } from "../src/core/paths";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import {
+  _setAssetMutationLeaseSyncTimingForTests,
   acquireAssetMutationLease,
   probeAssetMutationLease,
   withAssetMutationLease,
+  withAssetMutationLeaseSync,
 } from "../src/indexer/index-writer-lock";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
@@ -170,5 +173,56 @@ describe("asset mutation lease", () => {
     releaseOuter();
     await Promise.all([outer, contender]);
     expect(contenderEntered).toBe(true);
+  });
+
+  describe("sync wait notices (#956)", () => {
+    afterEach(() => {
+      _setWarnSinkForTests(undefined);
+      _setAssetMutationLeaseSyncTimingForTests(undefined);
+    });
+
+    test("emits a periodic notice naming the holder's purpose, pid, and elapsed time", () => {
+      // A real, foreign, live pid (our parent process) so the loop actually
+      // waits instead of reclaiming a dead holder on the first attempt.
+      const lockPath = getIndexWriterLockPath();
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(
+        lockPath,
+        JSON.stringify({ purpose: "source-update", pid: process.ppid, startedAt: "2026-01-01T00:00:00.000Z" }),
+        "utf8",
+      );
+
+      // Shrink the cadence/bound so the test observes at least one notice
+      // without waiting the real 15s/10min.
+      _setAssetMutationLeaseSyncTimingForTests({ maxWaitMs: 150, waitNoticeIntervalMs: 20 });
+
+      const notices: string[] = [];
+      _setWarnSinkForTests((level, args) => {
+        if (level === "warn") notices.push(args.map(String).join(" "));
+      });
+
+      expect(() => withAssetMutationLeaseSync("waiter", () => {})).toThrow(
+        "timed out waiting for asset mutation lease for waiter",
+      );
+
+      expect(notices.length).toBeGreaterThan(0);
+      expect(
+        notices.some((n) =>
+          /^waiting for source-update \(pid \d+, started 2026-01-01T00:00:00\.000Z\) — \d+s$/.test(n),
+        ),
+      ).toBe(true);
+    });
+
+    test("emits no notice when the lease is free", () => {
+      _setAssetMutationLeaseSyncTimingForTests({ maxWaitMs: 5_000, waitNoticeIntervalMs: 15_000 });
+      const notices: string[] = [];
+      _setWarnSinkForTests((level, args) => {
+        if (level === "warn") notices.push(args.map(String).join(" "));
+      });
+
+      withAssetMutationLeaseSync("instant", () => {});
+
+      expect(notices).toEqual([]);
+    });
   });
 });

@@ -117,6 +117,10 @@ if (contextIndex !== -1) {
 if (contextValid) {
   process.env.AKM_LAUNCHER_NODE = process.execPath;
   process.env.AKM_LAUNCHER_PATH = fileURLToPath(import.meta.url);
+  // #956: lets the child (and its lock payloads) name the launcher pid
+  // alongside its own, and lets the child's parent-death watchdog tell a
+  // real launcher-managed run apart from a direct `bun src/cli.ts` run.
+  process.env.AKM_LAUNCHER_PID = String(process.pid);
 
   if (!process.versions.bun) {
     const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
@@ -145,7 +149,56 @@ if (contextValid) {
     const entry = useBun ? bunEntry : nodeEntry;
     const runtime = useBun ? "Bun" : "Node.js";
     const result = await new Promise((resolve) => {
-      const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit", env: process.env });
+      const child = spawn(command, [entry, ...process.argv.slice(2)], {
+        stdio: "inherit",
+        env: process.env,
+        // #956: give the child its OWN process group on POSIX (`setsid()` —
+        // does not touch its inherited stdio; see `spawnsOwnProcessGroup` in
+        // src/core/subprocess.ts for the Windows caveat that rules this out
+        // there). Without this, a spawned child shares the launcher's
+        // process group by default, so a signal delivered to that GROUP (a
+        // terminal's Ctrl-C, or `kill -SIGINT -<pgid>`) reaches the child
+        // directly AND the launcher, which then also forwards it — a real
+        // second signal lands microseconds after the first. The child's
+        // `process.once(signal, ...)` handler has already unregistered
+        // itself for its first (direct) copy, so the second falls through
+        // to the runtime's default disposition (immediate termination) and
+        // the child's graceful shutdown (lock release, in-flight abort)
+        // never runs. Detaching the child's process group makes the
+        // launcher's forward below the SOLE delivery path to the child, so
+        // it is always exactly one signal.
+        detached: process.platform !== "win32",
+      });
+      // A `kill <launcher-pid>` (a scheduler timeout, a supervisor, an
+      // operator) used to end only this wrapper, orphaning the bun child —
+      // it kept running (and holding locks) for as long as its own work took.
+      // Forward the same signal so the child dies with its parent. Never
+      // forward once the child has already exited: forwarding to a
+      // dead/replaced pid would be at best a no-op and at worst a signal to
+      // an unrelated process that reused the pid.
+      let childExited = false;
+      child.once("exit", () => {
+        childExited = true;
+      });
+      const forwardSignal = (signal) => {
+        if (childExited) return;
+        try {
+          child.kill(signal);
+        } catch {
+          // Child exited in the race between the check above and here.
+        }
+      };
+      // `.once`, not `.on`: Node/Bun suppress a signal's default
+      // (process-terminating) disposition for as long as ANY listener stays
+      // registered for it. A persistent `.on` listener would still be
+      // registered when the `process.kill(process.pid, result.signal)`
+      // re-raise below runs at shutdown, swallowing it and leaving this
+      // launcher exiting 0 instead of reflecting the child's signal. `.once`
+      // consumes only the externally-delivered signal that triggers the
+      // forward, so the re-raise correctly falls through to the OS default.
+      for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+        process.once(signal, () => forwardSignal(signal));
+      }
       child.once("error", (error) => resolve({ error }));
       child.once("exit", (code, signal) => resolve({ code, signal }));
     });

@@ -43,6 +43,17 @@ describe("decodeImproveResult", () => {
       { name: "limit", removed: 1, reason: "deferred" },
     ],
     effectiveRefs: [{ ref: "skills/a", lane: "proactive", reason: "scope-type" }],
+    processes: [
+      { process: "reflect", enabled: true, engine: "default", model: "base", engineKind: "llm", notices: [] },
+      { process: "distill", enabled: false, notices: [] },
+      { process: "consolidate", enabled: false, notices: [] },
+      { process: "memoryInference", enabled: false, notices: [] },
+      { process: "graphExtraction", enabled: false, notices: [] },
+      { process: "extract", enabled: false, notices: [] },
+      { process: "validation", enabled: false, notices: [] },
+      { process: "triage", enabled: false, notices: [] },
+      { process: "proactiveMaintenance", enabled: false, notices: [] },
+    ],
     proactive: {
       configured: { dueDays: 30, maxPerRun: 10 },
       effective: { dueDays: 30, maxPerRun: 10 },
@@ -295,6 +306,69 @@ describe("decodeImproveResult", () => {
       /memorySummary/,
     );
     expect(() => decodeImproveResult("not json")).toThrow(/not valid JSON/);
+  });
+
+  test("decodes skippedProcesses (#957) and still decodes old envelopes without it", () => {
+    const skippedProcesses = [
+      {
+        process: "reflect" as const,
+        configKey: "improve.strategies.default.processes.reflect.engine",
+        reason:
+          'requires a credential that is not available in this process\'s environment (engine "default": $LAB_API_KEY is not set in this environment)',
+      },
+    ];
+    const decoded = decodeImproveResult({
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      skippedProcesses,
+    });
+    expect(decoded.envelope.skippedProcesses).toEqual(skippedProcesses);
+
+    // Old envelopes (persisted before #957) have no skippedProcesses field at all.
+    const withoutIt = decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common });
+    expect(withoutIt.envelope.skippedProcesses).toBeUndefined();
+
+    expect(() =>
+      decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, skippedProcesses: {} }),
+    ).toThrow(/skippedProcesses/);
+  });
+
+  test("decodes usageReport (#944) and still decodes old envelopes without it", () => {
+    const usageReport = {
+      byProcessEngineModel: [
+        {
+          process: "reflect",
+          engine: "default",
+          model: "gpt",
+          calls: 3,
+          failures: 1,
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          reasoningTokens: 0,
+          totalDurationMs: 900,
+        },
+      ],
+      noCalls: [{ process: "consolidate", engine: "default", reason: "no_signal" }],
+    };
+    const decoded = decodeImproveResult({
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      usageReport,
+    });
+    expect(decoded.envelope.usageReport).toEqual(usageReport);
+
+    // Runs recorded before #944 have no usageReport field at all.
+    const withoutIt = decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common });
+    expect(withoutIt.envelope.usageReport).toBeUndefined();
+
+    // The exact-field gate only shallow-validates usageReport is an object;
+    // reject a wrong-typed value outright.
+    expect(() =>
+      decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, usageReport: "not an object" }),
+    ).toThrow(/usageReport/);
   });
 
   test("accepts deadUrlCoverage with exact non-negative integer fields, rejects malformed ones (#892)", () => {

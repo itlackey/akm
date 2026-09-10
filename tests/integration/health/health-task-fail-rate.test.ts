@@ -172,3 +172,59 @@ describe("task-fail-rate worst-single-task signal (item 6)", () => {
     expect(advisory.status).toBe("pass");
   });
 });
+
+/** Seed one failed `command`-kind (agent/LLM dispatch) row with a given detail.reason. */
+function seedCommandFailure(taskId: string, reason: string): void {
+  const db = openStateDatabase();
+  try {
+    const ts = new Date().toISOString();
+    upsertTaskHistory(db, {
+      task_id: taskId,
+      status: "failed",
+      started_at: ts,
+      completed_at: ts,
+      failed_at: ts,
+      log_path: null,
+      target_kind: "command",
+      target_ref: null,
+      metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 10, detail: { reason } }),
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// #943: `task-fail-rate`'s evidence now carries a `detail.reason` breakdown
+// for command-task (agent/LLM) failures, and the warn message names the
+// dominant reason (>= 50% of counted command-task failures) so an operator
+// sees "timeout-dominant" from data rather than log grep.
+describe("task-fail-rate agentFailureReasonCounts breakdown (#943)", () => {
+  test("evidence carries reason counts and the warn message names the dominant reason", async () => {
+    seedCommandFailure("timeout-1", "timeout");
+    seedCommandFailure("timeout-2", "timeout");
+    seedCommandFailure("timeout-3", "timeout");
+    seedCommandFailure("exit-1", "non_zero_exit");
+    // Pad with non-command completed rows so the aggregate rate (4/20 = 20%)
+    // crosses the warn threshold cleanly without any single task_id reaching
+    // the worst-task-fail-rate row-count floor.
+    seedTasks(0, 16);
+
+    const result = await akmHealth({ since: "7d" });
+    const advisory = findCheck(result.advisories, "task-fail-rate");
+    expect(advisory.status).toBe("warn");
+    expect(advisory.evidence?.agentFailureReasonCounts).toEqual({ timeout: 3, non_zero_exit: 1 });
+    expect(advisory.message).toContain("(timeout-dominant: 3/4 command-task failures)");
+  });
+
+  test("no dominant suffix when the warning is driven by non-command failures", async () => {
+    // 3 failed / 20 total = 15% — crosses the warn threshold, but none of the
+    // failures are command-kind, so there is nothing to be "dominant".
+    seedTasks(3, 17);
+
+    const result = await akmHealth({ since: "7d" });
+    const advisory = findCheck(result.advisories, "task-fail-rate");
+    expect(advisory.status).toBe("warn");
+    expect(advisory.evidence?.agentFailureReasonCounts).toEqual({});
+    expect(advisory.message).not.toContain("-dominant:");
+  });
+});

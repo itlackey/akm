@@ -113,6 +113,20 @@ export const DefaultsSchema = z
  */
 export const AkmConfigShape = {
   configVersion: z.literal(CURRENT_CONFIG_VERSION),
+  // #945 — fleet inheritance. A filesystem path (relative to the directory of
+  // the config file that declares it; `~` expands) or a `bundle//<path>` ref
+  // naming an already-synced local file to deep-merge underneath this config
+  // (local keys win) — the part after `//` is a plain file path relative to
+  // that bundle's content root, not an asset conceptId; it needs no asset
+  // type and is never indexed. No URL form: config load is synchronous and
+  // runs on every invocation, and akm deliberately does not fetch network
+  // resources at load time (see `registries`, never fetched until a
+  // registry-touching command runs) — a URL-backed shared config should be
+  // synced via `akm bundle add` (git/website) and referenced as
+  // `extends: bundle//<path>` once materialized locally. Resolved in
+  // `resolveExtendsChain` (./config.ts), not validated here (a bad ref
+  // surfaces as a `ConfigError` at load, naming the ref).
+  extends: nonEmptyString.optional(),
   engines: EnginesSchema.optional(),
   defaults: DefaultsSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),

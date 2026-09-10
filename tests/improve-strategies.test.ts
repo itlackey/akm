@@ -3,7 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { resolveImprovePlan, resolveImproveStrategy } from "../src/commands/improve/improve-strategies";
+import {
+  type ImproveProcessName,
+  projectResolvedProcessRouting,
+  resolveImprovePlan,
+  resolveImproveStrategy,
+} from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import { withEnvSync } from "./_helpers/sandbox";
@@ -353,6 +358,97 @@ describe("resolveImprovePlan", () => {
     }
   });
 
+  test("a resolved but uncredentialed process lands in engineUnavailable naming the engine, not the variable (#957)", () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: {
+        ready: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "ready-model" },
+        private: {
+          kind: "llm",
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "private-model",
+          apiKey: "$PRIVATE_957_TOKEN",
+        },
+      },
+      defaults: { llmEngine: "ready", improveStrategy: "credential-test" },
+      improve: {
+        strategies: {
+          "credential-test": { processes: { reflect: { enabled: true, engine: "private" } } },
+        },
+      },
+    };
+
+    const plan = resolveImprovePlan("credential-test", config, { env: {} });
+
+    expect(plan.processes.reflect.enabled).toBe(false);
+    expect(plan.processes.reflect.runner).toBeNull();
+    const unavailable = plan.engineUnavailable.find((item) => item.process === "reflect");
+    expect(unavailable).toBeDefined();
+    expect(unavailable?.configKey).toBe("improve.strategies.credential-test.processes.reflect.engine");
+    expect(unavailable?.reason).toContain('engine "private"');
+    expect(unavailable?.reason).toContain("$PRIVATE_957_TOKEN");
+    // #800/#957 round 3 — the structurally resolved engine/model still show up
+    // on the engineUnavailable entry even though `runner` stays null; no
+    // contextLength was configured on "private", so it stays unset.
+    expect(unavailable?.engine).toBe("private");
+    expect(unavailable?.model).toBe("private-model");
+    expect(unavailable?.contextLength).toBeUndefined();
+    // Other processes on the credentialed "ready" fallback still run.
+    expect(plan.processes.distill.enabled).toBe(true);
+    expect(plan.processes.distill.runner?.engine).toBe("ready");
+  });
+
+  test("throws the existing all-unavailable ConfigError when credential unavailability alone disables every process (#957)", () => {
+    expect(() =>
+      resolveImprovePlan(
+        "default",
+        {
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          engines: {
+            private: {
+              kind: "llm",
+              endpoint: "https://example.test/v1/chat/completions",
+              model: "private-model",
+              apiKey: "$PRIVATE_ALL_957_TOKEN",
+            },
+          },
+          defaults: { llmEngine: "private" },
+        } as AkmConfig,
+        { env: {} },
+      ),
+    ).toThrow("No improve process can run");
+  });
+
+  test("allowAllDisabled returns the plan instead of throwing when credential unavailability alone disables every process (#957 round 2)", () => {
+    const plan = resolveImprovePlan(
+      "default",
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        engines: {
+          private: {
+            kind: "llm",
+            endpoint: "https://example.test/v1/chat/completions",
+            model: "private-model",
+            apiKey: "$PRIVATE_ALL_957_ALLOW_TOKEN",
+          },
+        },
+        defaults: { llmEngine: "private" },
+      } as AkmConfig,
+      { env: {}, allowAllDisabled: true },
+    );
+
+    expect(Object.values(plan.processes).some((process) => process.enabled)).toBe(false);
+    const disabledNames = plan.engineUnavailable.map((item) => item.process).sort();
+    expect(disabledNames).toEqual(["consolidate", "distill", "graphExtraction", "reflect", "validation"]);
+    for (const item of plan.engineUnavailable) {
+      expect(item.reason).toContain('engine "private"');
+      expect(item.reason).toContain("PRIVATE_ALL_957_ALLOW_TOKEN");
+    }
+  });
+
   test("does not require a validation engine when repair is disabled", () => {
     const plan = resolveImprovePlan(
       "default",
@@ -387,5 +483,131 @@ describe("resolveImprovePlan", () => {
         },
       }),
     ).toThrow("cannot receive llm overrides");
+  });
+});
+
+describe("projectResolvedProcessRouting (#947)", () => {
+  const llm = { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "base" };
+
+  test("one row per IMPROVE_PROCESS_ENGINE_CAPABILITIES name, engine/model only for resolved llm processes", () => {
+    const plan = resolveImprovePlan("quick", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: { default: llm, validation: { ...llm, model: "repair" } },
+      defaults: { llmEngine: "default" },
+      improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "validation" } } } } },
+    });
+
+    const rows = projectResolvedProcessRouting(plan);
+    const expectedProcesses: ImproveProcessName[] = [
+      "reflect",
+      "distill",
+      "consolidate",
+      "memoryInference",
+      "graphExtraction",
+      "extract",
+      "validation",
+      "triage",
+      "proactiveMaintenance",
+    ];
+    expect(rows.map((row) => row.process).sort()).toEqual(expectedProcesses.sort());
+
+    const reflect = rows.find((row) => row.process === "reflect");
+    expect(reflect).toMatchObject({ enabled: true, engine: "default", model: "base", engineKind: "llm" });
+    expect(reflect?.notices).toEqual([]);
+
+    const validation = rows.find((row) => row.process === "validation");
+    expect(validation).toMatchObject({ enabled: true, engine: "validation", model: "repair" });
+
+    const distill = rows.find((row) => row.process === "distill");
+    expect(distill).toMatchObject({ enabled: false });
+    expect(distill?.engine).toBeUndefined();
+
+    // No credential-related unavailability and no triage.judgment configured.
+    expect(rows.every((row) => row.unavailable === undefined)).toBe(true);
+    expect(rows.some((row) => row.process === "triage.judgment")).toBe(false);
+  });
+
+  test("unresolved engines land in `unavailable` naming the configKey and reason", () => {
+    const plan = resolveImprovePlan("default", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: { "only-agent": { kind: "agent", platform: "claude", bin: "/bin/true" } },
+      defaults: { engine: "only-agent" },
+      experimental: { improveAutonomy: true },
+      improve: {
+        strategies: {
+          default: { processes: { proactiveMaintenance: { enabled: true } } },
+        },
+      },
+    } as AkmConfig);
+
+    const rows = projectResolvedProcessRouting(plan);
+    const reflect = rows.find((row) => row.process === "reflect");
+    expect(reflect?.enabled).toBe(false);
+    expect(reflect?.engine).toBeUndefined();
+    expect(reflect?.unavailable?.configKey).toBe("improve.strategies.default.processes.reflect.engine");
+    expect(reflect?.unavailable?.reason).toContain("Set defaults.llmEngine or improve.strategies.default.processes");
+  });
+
+  test("includes a triage.judgment row only when judgment is configured, with its own engineKind", () => {
+    const withoutJudgment = projectResolvedProcessRouting(
+      resolveImprovePlan("no-judgment", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { default: llm },
+        defaults: { llmEngine: "default" },
+        improve: { strategies: { "no-judgment": { processes: { triage: { enabled: true } } } } },
+      }),
+    );
+    expect(withoutJudgment.some((row) => row.process === "triage.judgment")).toBe(false);
+
+    const withJudgment = projectResolvedProcessRouting(
+      resolveImprovePlan("reflect-distill", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: {
+          default: llm,
+          reviewer: { kind: "agent", platform: "pi", model: "review" },
+        },
+        defaults: { llmEngine: "default" },
+        improve: {
+          strategies: {
+            "reflect-distill": { processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } } },
+          },
+        },
+      }),
+    );
+    const judgmentRow = withJudgment.find((row) => row.process === "triage.judgment");
+    expect(judgmentRow).toMatchObject({ enabled: true, engine: "reviewer", engineKind: "agent" });
+    expect(judgmentRow?.model).toBeUndefined();
+  });
+
+  test("a credential-unavailable process still reports its resolved engine/model, unlike an unconfigured one (#800/#957 round 3)", () => {
+    const plan = resolveImprovePlan(
+      "credential-test",
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        engines: {
+          private: {
+            kind: "llm",
+            endpoint: "https://example.test/v1/chat/completions",
+            model: "private-model",
+            apiKey: "$PRIVATE_ROUTING_957_TOKEN",
+          },
+        },
+        defaults: { llmEngine: "private" },
+        improve: {
+          strategies: { "credential-test": { processes: { reflect: { enabled: true } } } },
+        },
+      } as AkmConfig,
+      { env: {}, allowAllDisabled: true },
+    );
+
+    const rows = projectResolvedProcessRouting(plan);
+    const reflect = rows.find((row) => row.process === "reflect");
+    expect(reflect).toMatchObject({ enabled: false, engine: "private", model: "private-model", engineKind: "llm" });
+    expect(reflect?.unavailable?.reason).toContain("$PRIVATE_ROUTING_957_TOKEN");
   });
 });

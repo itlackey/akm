@@ -34,6 +34,7 @@ import {
 } from "../harnesses/opencode-sdk/sdk-runner";
 import {
   lookupApiKeyFileValue,
+  lookupApiKeySecretRefValue,
   lookupCredentialFromEnv,
   materializeLlmConnection,
   materializeLlmConnectionWithCredential,
@@ -183,11 +184,17 @@ export function acquireRunnerDispatchLease(
   });
   const primaryCredential =
     spec.kind === "llm"
-      ? resolveLlmCredentialValue(spec.engine, spec.credential, spec.apiKeyFile, credentialSource)
+      ? resolveLlmCredentialValue(spec.engine, spec.credential, spec.apiKeyFile, spec.apiKeySecretRef, credentialSource)
       : undefined;
   const fallbackCredential =
     spec.kind === "sdk"
-      ? resolveLlmCredentialValue(spec.engine, spec.fallbackCredential, spec.fallbackApiKeyFile, credentialSource)
+      ? resolveLlmCredentialValue(
+          spec.engine,
+          spec.fallbackCredential,
+          spec.fallbackApiKeyFile,
+          spec.fallbackApiKeySecretRef,
+          credentialSource,
+        )
       : undefined;
   const handle = Object.create(null) as object;
   Object.defineProperty(handle, "toJSON", {
@@ -280,6 +287,11 @@ export function collectDispatchSensitiveValues(
   // scrub set for the same reason the env-backed one is.
   if (spec.kind === "llm" && spec.apiKeyFile) add(lookupApiKeyFileValue(spec.apiKeyFile));
   if (spec.kind === "sdk" && spec.fallbackApiKeyFile) add(lookupApiKeyFileValue(spec.fallbackApiKeyFile));
+  // #953: a secret-store-backed credential is read at dispatch too — same
+  // best-effort scrub-set inclusion rationale.
+  if (spec.kind === "llm" && spec.apiKeySecretRef) add(lookupApiKeySecretRefValue(spec.apiKeySecretRef));
+  if (spec.kind === "sdk" && spec.fallbackApiKeySecretRef)
+    add(lookupApiKeySecretRefValue(spec.fallbackApiKeySecretRef));
   if (spec.kind !== "llm") {
     for (const value of Object.values(spec.profile.env ?? {})) add(value);
     for (const name of spec.profile.envPassthrough) {

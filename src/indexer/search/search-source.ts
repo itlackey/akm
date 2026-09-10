@@ -298,11 +298,24 @@ function isSuspiciousStashRoot(dir: string): boolean {
  */
 export async function ensureSourceCaches(
   config?: AkmConfig,
-  options?: { force?: boolean; materialize?: boolean; secrets?: import("../../sources/provider").SecretResolver },
+  options?: {
+    force?: boolean;
+    materialize?: boolean;
+    secrets?: import("../../sources/provider").SecretResolver;
+    /**
+     * One event per source about to sync (`Hydrating source i/n: <name>`),
+     * plus a 15s heartbeat while that source's sync is in flight (#954)
+     * — before this, a stalled clone/fetch here (this runs
+     * BEFORE `index.db` is even opened) had no progress output at all and
+     * looked identical to "no database open, nothing written".
+     */
+    onProgress?: (message: string) => void;
+  },
 ): Promise<void> {
   const cfg = config ?? loadConfig();
   const force = options?.force === true;
   const materialize = options?.materialize !== false;
+  const onProgress = options?.onProgress ?? (() => {});
   // Polymorphic refresh: walk every enabled source through its registered
   // provider and call `sync()`. Every cache-backed kind (git, website, npm)
   // refreshes the same way — a bad source warns and is skipped without
@@ -314,6 +327,12 @@ export async function ensureSourceCaches(
   // content ENDS UP; the lock's `localRoot` merely records the result. So this
   // path correctly uses the provider, not the shared `lockContentRootFor`
   // resolver that reads/writes use to agree on where content already IS.
+  //
+  // Two passes: first resolve which sources will actually sync (constructing
+  // each provider once, exactly as before), so the progress count ("i/n")
+  // reflects real syncs rather than every configured entry including managed/
+  // unsyncable ones; then sync them in order, reporting progress per source.
+  const toSync: import("../../sources/provider").SourceProvider[] = [];
   for (const entry of getSources(cfg)) {
     if (entry.enabled === false) continue;
     const lockedRoot = lockContentRootFor(entry.name, entry.type);
@@ -353,12 +372,26 @@ export async function ensureSourceCaches(
       continue;
     }
 
+    toSync.push(provider);
+  }
+
+  for (const [i, provider] of toSync.entries()) {
+    onProgress(`Hydrating source ${i + 1}/${toSync.length}: ${provider.name}`);
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     try {
-      await provider.sync({ force, secrets: options?.secrets, ensureWebsiteMirror });
+      heartbeat = setInterval(() => {
+        onProgress(`Still hydrating source ${i + 1}/${toSync.length}: ${provider.name}...`);
+      }, 15000);
+      // `toSync` only ever holds providers whose `.sync` passed the check
+      // above; the optional-chain here is just to satisfy the type (the
+      // narrowing does not survive the array round-trip).
+      await provider.sync?.({ force, secrets: options?.secrets, ensureWebsiteMirror });
     } catch (err) {
       warn(
         `Warning: failed to refresh ${provider.kind} source "${provider.name}": ${err instanceof Error ? err.message : String(err)}`,
       );
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
     }
   }
 }

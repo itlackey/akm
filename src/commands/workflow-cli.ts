@@ -13,7 +13,8 @@ import { getStringArg } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { NotFoundError, UsageError } from "../core/errors";
+import { NotFoundError, TransientError, type TransientErrorCode, UsageError } from "../core/errors";
+import { warn } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
 import { assertWorkflowMarkdownName, createWorkflowAsset, getWorkflowTemplate } from "../workflows/authoring/authoring";
 import type { WorkflowParameterFlag } from "../workflows/ir/params";
@@ -41,10 +42,17 @@ const workflowStatusCommand = defineJsonCommand({
         "diagnostic text). Diagnostics only — step evidence stays deterministic and is unaffected.",
       default: false,
     },
+    "all-scopes": {
+      type: "boolean",
+      description:
+        "When resolving a workflow ref (not a run id), search every scope instead of only the current one (#942).",
+      default: false,
+    },
   },
   async run({ args }) {
     const target = args.target;
     const includeUnits = args.units === true;
+    const allScopes = args["all-scopes"] === true;
     const resolvedRunId = await resolveWorkflowRunTarget(target);
     if (resolvedRunId !== undefined) {
       const result = await getWorkflowStatus(resolvedRunId, { includeUnits });
@@ -52,8 +60,9 @@ const workflowStatusCommand = defineJsonCommand({
       return;
     }
     let runs: Awaited<ReturnType<typeof listWorkflowRuns>>["runs"];
+    let scopeKey: Awaited<ReturnType<typeof listWorkflowRuns>>["scopeKey"];
     try {
-      ({ runs } = await listWorkflowRuns({ workflowRef: target }));
+      ({ runs, scopeKey } = await listWorkflowRuns({ workflowRef: target, allScopes }));
     } catch (error) {
       if (!target.includes(":") && !target.includes("/")) {
         throw new NotFoundError(`Workflow run "${target}" not found.`, "WORKFLOW_NOT_FOUND");
@@ -61,7 +70,21 @@ const workflowStatusCommand = defineJsonCommand({
       throw error;
     }
     const mostRecent = runs[0];
-    if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${target}`, "WORKFLOW_NOT_FOUND");
+    if (!mostRecent) {
+      // #942: name the scope actually searched and point at `--all-scopes`
+      // rather than a bare "not found" — the ref-fallthrough lookup is
+      // scope-local by default, so "no runs" here means "none in THIS
+      // scope", not "none anywhere". Already searching every scope (or no
+      // real scope was filtered on) has nothing more specific to suggest.
+      if (!allScopes && scopeKey !== null) {
+        throw new NotFoundError(
+          `No workflow runs found for ${target} in scope ${scopeKey}.`,
+          "WORKFLOW_NOT_FOUND",
+          `Run 'akm workflow status ${target} --all-scopes' to search every scope.`,
+        );
+      }
+      throw new NotFoundError(`No workflow runs found for ${target}`, "WORKFLOW_NOT_FOUND");
+    }
     const result = await getWorkflowStatus(mostRecent.id, { includeUnits });
     output("workflow-status", result);
   },
@@ -80,12 +103,21 @@ const workflowListCommand = defineJsonCommand({
       description: "Also include child workflow runs (hidden by default, P3b)",
       default: false,
     },
+    "all-scopes": {
+      type: "boolean",
+      description:
+        "Search every scope instead of only the current one (#942). The envelope's top-level `scopeKey` is " +
+        "`null` with this flag, otherwise the scope that was searched — so an empty `runs: []` is never " +
+        'indistinguishable from "nothing anywhere".',
+      default: false,
+    },
   },
   async run({ args }) {
     const result = await listWorkflowRuns({
       workflowRef: args.ref,
       activeOnly: args.active,
       includeChildren: args.children,
+      allScopes: args["all-scopes"],
     });
     output("workflow-list", result);
   },
@@ -162,6 +194,21 @@ const workflowCreateCommand = defineJsonCommand({
   },
 });
 
+/**
+ * `--skip-if-locked` (#948) eligibility: only these two named, retryable
+ * `TransientError` codes (#948 addendum — moved off UsageError, exit 75) turn
+ * a `workflow run` failure into a graceful skip — `RUN_LEASE_HELD` (another
+ * engine invocation is driving THIS run, `workflow-runs-repository.ts`'s
+ * single-driver lease) and `STATE_DB_CONTENDED` (an unrelated akm process is
+ * writing state.db right now, `core/state-db.ts`'s BEGIN IMMEDIATE retry
+ * exhaustion). Every other error — a bad flag, an unresolvable target —
+ * still fails loudly.
+ */
+const WORKFLOW_RUN_SKIP_REASONS: Partial<Record<TransientErrorCode, "lock-held" | "state-db-contended">> = {
+  RUN_LEASE_HELD: "lock-held",
+  STATE_DB_CONTENDED: "state-db-contended",
+};
+
 const workflowRunCommand = defineJsonCommand({
   meta: {
     name: "run",
@@ -180,6 +227,14 @@ const workflowRunCommand = defineJsonCommand({
         "(never abandons it). A workflow ref only — passing a run id with --new is a usage error.",
       default: false,
     },
+    "skip-if-locked": {
+      type: "boolean",
+      description:
+        "If another akm process already holds this run's engine lease, or state.db is busy with another " +
+        "writer, skip gracefully (exit 0) instead of failing (exit 75). Use for high-frequency scheduled runs " +
+        "so they don't pile up failures while a longer-running invocation is in progress.",
+      default: false,
+    },
   },
   async run({ args, rawArgs }) {
     const { runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
@@ -187,6 +242,7 @@ const workflowRunCommand = defineJsonCommand({
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
     const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
     const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout"));
+    const skipIfLocked = args["skip-if-locked"];
     const controller = new AbortController();
     let signalExitCode: number | undefined;
     const interrupt = (signal: "SIGINT" | "SIGTERM") => {
@@ -204,14 +260,30 @@ const workflowRunCommand = defineJsonCommand({
       reason: `Workflow run timed out after ${timeoutMs}ms.`,
     });
     try {
-      const result = await runWorkflowSteps({
-        target: args.target,
-        parameterFlags,
-        ...(maxSteps !== undefined ? { maxSteps } : {}),
-        ...(maxRetries !== undefined ? { maxRetries } : {}),
-        newRun: args.new,
-        signal: controller.signal,
-      });
+      let result: Awaited<ReturnType<typeof runWorkflowSteps>>;
+      try {
+        result = await runWorkflowSteps({
+          target: args.target,
+          parameterFlags,
+          ...(maxSteps !== undefined ? { maxSteps } : {}),
+          ...(maxRetries !== undefined ? { maxRetries } : {}),
+          newRun: args.new,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        // #948: `--skip-if-locked` extends improve's "another run already
+        // holds this" skip semantics to `workflow run`. Only these two named,
+        // retryable TransientError codes are eligible (#948 addendum — moved
+        // off UsageError) — a bad flag or malformed input still fails loudly
+        // even with the flag set.
+        if (skipIfLocked && err instanceof TransientError && WORKFLOW_RUN_SKIP_REASONS[err.code]) {
+          const reason = WORKFLOW_RUN_SKIP_REASONS[err.code];
+          warn(`[workflow] ${err.message} skipping (--skip-if-locked)`);
+          output("workflow-run", { ok: true, target: args.target, skipped: { reason, message: err.message } });
+          return;
+        }
+        throw err;
+      }
       // The abort is observed between steps, so a deadline landing in the run's
       // final bookkeeping fires on a run that then finishes. Reporting that as
       // timed out would send an operator to resume a run with nothing left to
@@ -246,7 +318,17 @@ const WORKFLOW_RUN_VALUE_FLAGS = new Set([
   "shape",
   "output",
 ]);
-const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set(["quiet", "verbose", "help", "no-quiet", "no-verbose", "new", "no-new"]);
+const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set([
+  "quiet",
+  "verbose",
+  "help",
+  "no-quiet",
+  "no-verbose",
+  "new",
+  "no-new",
+  "skip-if-locked",
+  "no-skip-if-locked",
+]);
 
 export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: string): WorkflowParameterFlag[] {
   const flags: WorkflowParameterFlag[] = [];

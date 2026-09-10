@@ -16,6 +16,7 @@ import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
 import { probeLlmEndpoint } from "../llm/client";
 import type { Database } from "../storage/database";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
+import { countImproveRunsSince } from "../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
@@ -24,14 +25,17 @@ import { collectImproveAdvisories } from "./health/advisories";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
+  probeActiveImproveStrategy,
   runHealthEngineProbes,
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
+import { engineLastUsedSince, readLastEngineUsage } from "./health/engine-usage";
 import {
   buildImproveSkipSummary,
   computeWallTimeStats,
+  countAgentFailureReasons,
   isAgentTaskHistoryRow,
   roundRate,
   summarizeImproveCompleted,
@@ -46,6 +50,7 @@ import {
   probeStateDbRoundTrip,
 } from "./health/metrics";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
+import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
 import { buildPerRunSummaries } from "./health/task-runs";
@@ -63,6 +68,7 @@ import {
   type WindowResult,
   type WindowSpec,
 } from "./health/types";
+import { collectVersionDriftAdvisory } from "./health/version-drift";
 import { buildWindowMetrics, computeDeltas, partitionLogBackedRows, resolveWindowCompare } from "./health/windows";
 
 export interface AkmHealthOptions {
@@ -163,6 +169,7 @@ interface TaskHistoryPhase {
   taskFailRate: number;
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
   agentFailureRate: number;
+  agentFailureReasonCounts: Record<string, number>;
 }
 
 /**
@@ -263,27 +270,34 @@ function gatherTaskHistoryPhase(
     taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
     agentFailureRate,
+    agentFailureReasonCounts: countAgentFailureReasons(agentFailures),
   };
 }
 
 interface EgressConfigPhase {
   egressConfigView: EgressConfigView | undefined;
+  /** #949: configured `kind: "llm"` engine names with `enableThinking: false`. */
+  thinkingOffEngines: string[];
 }
 
 /**
- * Config fields the surfaces advisory needs. Best-effort: an unloadable
- * config leaves the field undefined and the caller falls back to a generic
- * message.
+ * Config fields the surfaces advisory and (#949) the `thinking-control`
+ * check need. Best-effort: an unloadable config leaves both fields at their
+ * empty fallback and the callers degrade to their generic/unknown states.
  */
 function gatherEgressConfigPhase(): EgressConfigPhase {
   let egressConfigView: EgressConfigView | undefined;
+  let thinkingOffEngines: string[] = [];
   try {
     const config = loadConfig();
     egressConfigView = config as EgressConfigView;
+    thinkingOffEngines = Object.entries(config.engines ?? {})
+      .filter(([, engine]) => engine.kind === "llm" && engine.enableThinking === false)
+      .map(([name]) => name);
   } catch {
-    // fall through with undefined
+    // fall through with undefined/empty
   }
-  return { egressConfigView };
+  return { egressConfigView, thinkingOffEngines };
 }
 
 interface ImproveSummaryPhase {
@@ -611,6 +625,7 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
     metrics: {
       taskFailRate: 0,
       agentFailureRate: 0,
+      agentFailureReasonCounts: {},
       stuckActiveRuns: 0,
       logBackingRate: 0,
       // `null`, not 0: the round-trip probe did not run, which is not the same
@@ -695,10 +710,20 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     // Network probes overlap the local database phases below; awaited where consumed.
     const engineProbesPromise = runHealthEngineProbes({ probeReachable: options.probe ? probeLlmEndpoint : undefined });
     engineProbesPromise.catch(() => undefined);
+    // #950: same best-effort, --probe-gated discipline as engineProbesPromise
+    // above — started here, alongside it, and awaited later.
+    const versionDriftPromise = collectVersionDriftAdvisory(Boolean(options.probe), { cliVersion: pkgVersion });
+    versionDriftPromise.catch(() => undefined);
+    // #953: same --probe-gated, best-effort discipline as versionDriftPromise
+    // above.
+    const schedulerBinaryDriftPromise = collectSchedulerBinaryAdvisory(Boolean(options.probe), {
+      cliVersion: pkgVersion,
+    });
+    schedulerBinaryDriftPromise.catch(() => undefined);
     const taskHistory = gatherTaskHistoryPhase(db, logsDb, since, stateDbPath, now);
     const { tableNames, missingTables, probe } = taskHistory;
 
-    const { egressConfigView } = gatherEgressConfigPhase();
+    const { egressConfigView, thinkingOffEngines } = gatherEgressConfigPhase();
 
     const { improveSummary } = gatherImproveSummaryPhase(db, stateDbPath, since, now);
 
@@ -706,7 +731,24 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
 
+    // #950: computed once (no IO beyond config/env, same as gatherEgressConfigPhase)
+    // so `active-improve-strategy` and `engine-last-used` project the same
+    // process→engine map instead of each resolving the strategy independently.
+    const { check: activeImproveStrategy, processEngines: activeImproveStrategyEngines } = probeActiveImproveStrategy();
+
+    // #950: `engine-last-used` reads a fixed lookback window independent of
+    // `--since` (mirrors sessionExtractionLedger's independent window above).
+    const engineLastUsedSinceIso = engineLastUsedSince(now);
+    const engineLastUsed = readLastEngineUsage(stateDbPath, now);
+    const improveRunsInLookbackWindow = countImproveRunsSince(db, engineLastUsedSinceIso);
+
     const engineProbes = await engineProbesPromise;
+    const versionDrift = await versionDriftPromise;
+    const schedulerBinaryDrift = await schedulerBinaryDriftPromise;
+
+    // Read once, shared by the `thinking-control` check (#949) and the
+    // `metrics.llmUsage` report field below — same window, same aggregate.
+    const llmUsage = readLlmUsageAggregate(stateDbPath, since);
 
     // Run the ordered health-check registry. Each check projects the shared
     // context computed above into one HealthCheckResult; `channel` routes it to
@@ -726,10 +768,19 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,
       worstTaskFailRate: taskHistory.worstTaskFailRate,
+      agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtraction: improveSummary.sessionExtraction,
       sessionExtractionLedger,
       autoAccept: improveSummary.autoAccept,
       engineProbes,
+      thinkingOffEngines,
+      llmUsage,
+      versionDrift,
+      activeImproveStrategy,
+      activeImproveStrategyEngines,
+      engineLastUsed,
+      improveRunsInLookbackWindow,
+      schedulerBinaryDrift,
     };
     for (const check of HEALTH_CHECKS) {
       const result = check.run(checkContext);
@@ -740,10 +791,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     const metrics: HealthMetrics = {
       taskFailRate: roundRate(taskHistory.taskFailRate),
       agentFailureRate: roundRate(taskHistory.agentFailureRate),
+      agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       logBackingRate: roundRate(taskHistory.logBackingRate),
       probeRoundTripMs: probe.durationMs,
-      llmUsage: readLlmUsageAggregate(stateDbPath, since),
+      llmUsage,
     };
 
     const hardFailure = hardChecks.some((check) => check.status === "fail");

@@ -33,6 +33,8 @@ export type LockProbeResult =
   | {
       state: "held";
       holderPid: number;
+      /** The holder's launcher pid (#956), when its lock payload recorded one. */
+      launcherPid?: number;
       ageMs: number;
       rawContent: string;
       identity: LockFileIdentity;
@@ -41,6 +43,8 @@ export type LockProbeResult =
       state: "stale";
       reason: "pid_dead" | "unreadable" | "invalid_pid" | "age_exceeded";
       holderPid?: number;
+      /** The holder's launcher pid (#956), when its lock payload recorded one. */
+      launcherPid?: number;
       ageMs?: number;
       rawContent?: string;
       identity?: LockFileIdentity;
@@ -184,9 +188,36 @@ export function tryAcquireLockSync(lockPath: string, payload: string): LockOwner
   return withLockOperationMutex(lockPath, () => tryAcquireLockRaw(lockPath, payload));
 }
 
-/** Build a PID-bearing payload with a unique token for one acquisition attempt. */
+/**
+ * Best-effort launcher pid from `AKM_LAUNCHER_PID` (set by
+ * `scripts/node-runtime/akm`/`akm-migrate`, #956) — undefined when unset,
+ * empty, or not a positive integer (never trust an ambient env var blindly
+ * into a lock message). Also the gate the parent-death watchdog
+ * (`core/parent-watchdog.ts`) uses to stay inert outside a launcher-managed
+ * run.
+ */
+export function launcherPidFromEnv(): number | undefined {
+  const raw = process.env.AKM_LAUNCHER_PID;
+  if (!raw) return undefined;
+  const pid = Number.parseInt(raw, 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/**
+ * Build a PID-bearing payload with a unique token for one acquisition attempt.
+ * Adds `launcherPid` (#956) whenever this process is running under the
+ * published launcher, so a lock's holder can be identified by the pid every
+ * process listing and task log actually shows (the launcher's) as well as
+ * the pid that holds the lock (the bun/node child).
+ */
 export function createLockPayload(metadata: Record<string, unknown> = {}): string {
-  return JSON.stringify({ ...metadata, pid: process.pid, lockId: randomUUID() });
+  const launcherPid = launcherPidFromEnv();
+  return JSON.stringify({
+    ...metadata,
+    pid: process.pid,
+    ...(launcherPid !== undefined ? { launcherPid } : {}),
+    lockId: randomUUID(),
+  });
 }
 
 /**
@@ -216,17 +247,17 @@ export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeR
   const { rawContent, identity } = snapshot;
   const ageMs = Date.now() - identity.mtimeMs;
 
-  const holderPid = extractHolderPid(rawContent);
+  const { holderPid, launcherPid } = extractLockIdentity(rawContent);
   if (holderPid === undefined) {
     return { state: "stale", reason: "invalid_pid", ageMs, rawContent, identity };
   }
   if (!isProcessAlive(holderPid)) {
-    return { state: "stale", reason: "pid_dead", holderPid, ageMs, rawContent, identity };
+    return { state: "stale", reason: "pid_dead", holderPid, launcherPid, ageMs, rawContent, identity };
   }
   if (opts?.staleAfterMs !== undefined && ageMs > opts.staleAfterMs) {
-    return { state: "stale", reason: "age_exceeded", holderPid, ageMs, rawContent, identity };
+    return { state: "stale", reason: "age_exceeded", holderPid, launcherPid, ageMs, rawContent, identity };
   }
-  return { state: "held", holderPid, ageMs, rawContent, identity };
+  return { state: "held", holderPid, launcherPid, ageMs, rawContent, identity };
 }
 
 /**
@@ -317,23 +348,30 @@ export function releaseLock(ownership: LockOwnership): void {
 }
 
 /**
- * Extract a PID from a sentinel body. Accepts the two shapes used across
- * the codebase: a bare numeric string (config-io, vault, lockfile) and
- * a JSON object with a `pid` field (improve). Returns undefined when the
- * body is unparseable or yields a non-positive integer.
+ * Extract a holder pid, and (#956) a launcher pid when the payload recorded
+ * one, from a sentinel body. Accepts the two shapes used across the
+ * codebase: a bare numeric string (config-io, vault, lockfile — never
+ * carries a `launcherPid`) and a JSON object with `pid`/`launcherPid` fields
+ * (`createLockPayload`). `holderPid` is undefined when the body is
+ * unparseable or yields a non-positive integer; `launcherPid` is undefined
+ * whenever the payload has none, independent of whether `holderPid` parsed.
  */
-function extractHolderPid(content: string): number | undefined {
+function extractLockIdentity(content: string): { holderPid?: number; launcherPid?: number } {
   const trimmed = content.trim();
-  if (!trimmed) return undefined;
+  if (!trimmed) return {};
   if (trimmed.startsWith("{")) {
     try {
-      const parsed = JSON.parse(trimmed) as { pid?: unknown };
+      const parsed = JSON.parse(trimmed) as { pid?: unknown; launcherPid?: unknown };
       const pid = typeof parsed.pid === "number" ? parsed.pid : Number.NaN;
-      return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+      const rawLauncherPid = typeof parsed.launcherPid === "number" ? parsed.launcherPid : Number.NaN;
+      return {
+        holderPid: Number.isInteger(pid) && pid > 0 ? pid : undefined,
+        launcherPid: Number.isInteger(rawLauncherPid) && rawLauncherPid > 0 ? rawLauncherPid : undefined,
+      };
     } catch {
-      return undefined;
+      return {};
     }
   }
   const pid = Number.parseInt(trimmed, 10);
-  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  return { holderPid: Number.isInteger(pid) && pid > 0 ? pid : undefined };
 }

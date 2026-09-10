@@ -25,7 +25,11 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { extractSection, markdownFragmentSlugs } from "../../core/asset/markdown";
-import { fragmentForSelector } from "../../core/asset/markdown-fragments";
+import {
+  buildMarkdownLeadContext,
+  fragmentForSelector,
+  MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
+} from "../../core/asset/markdown-fragments";
 import { displayRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isWithin } from "../../core/common";
@@ -68,7 +72,7 @@ import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts
 import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
-import type { ShowDetailLevel, ShowResponse } from "../../sources/types";
+import type { FragmentContextMode, ShowDetailLevel, ShowResponse } from "../../sources/types";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
 import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
@@ -85,6 +89,10 @@ import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
 export async function akmShowUnified(input: {
   ref: string;
   detail?: ShowDetailLevel;
+  /** Opt-in indexed-safe presentation for a selected Markdown fragment. */
+  contextMode?: FragmentContextMode;
+  /** Hard character budget for contextual fragment presentation. */
+  maxContextChars?: number;
   /**
    * Optional scope filter. When supplied, the resolved asset's frontmatter
    * `scope_user`/`scope_agent`/`scope_run`/`scope_channel` keys must match
@@ -103,6 +111,7 @@ export async function akmShowUnified(input: {
   skipLogging?: boolean;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
+  validateFragmentContextRequest(input);
 
   // 0a. Stash `.meta/` convention: `[origin//]meta[:name]` direct-reads a
   //     human-authored orientation doc from the stash's `.meta/` directory.
@@ -198,6 +207,38 @@ function hasAnyScopeKey(scope: StashEntryScope): boolean {
   return Boolean(scope.user || scope.agent || scope.run || scope.channel);
 }
 
+function validateFragmentContextRequest(input: {
+  ref: string;
+  contextMode?: FragmentContextMode;
+  maxContextChars?: number;
+}): void {
+  const mode = input.contextMode ?? "exact";
+  if (mode !== "exact" && mode !== "lead") {
+    throw new UsageError(`Invalid --context value: "${String(mode)}". Expected exact or lead.`, "INVALID_FLAG_VALUE");
+  }
+  if (
+    input.maxContextChars !== undefined &&
+    (!Number.isSafeInteger(input.maxContextChars) || input.maxContextChars <= 0)
+  ) {
+    throw new UsageError("Fragment context budget must be a positive safe integer.", "INVALID_FLAG_VALUE");
+  }
+  if (mode !== "lead" && input.maxContextChars !== undefined) {
+    throw new UsageError("--max-chars and --max-tokens require --context lead.", "INVALID_FLAG_VALUE");
+  }
+  if (mode !== "lead") return;
+  if (parseMetaRef(input.ref)) {
+    throw new UsageError("--context lead requires an indexed Markdown asset fragment.", "INVALID_FLAG_VALUE");
+  }
+  const parsed = parseBundleRef(input.ref);
+  if (!parsed.fragment) {
+    throw new UsageError("--context lead requires a fragment-qualified ref.", "INVALID_FLAG_VALUE");
+  }
+  const type = typeNameFromConceptId(parsed.conceptId)?.type;
+  if (type === "env" || type === "secret") {
+    throw new UsageError(`--context lead is unavailable for sensitive ${type} assets.`, "INVALID_FLAG_VALUE");
+  }
+}
+
 /**
  * Read the asset file's frontmatter and verify its `scope_*` keys satisfy
  * every supplied filter. Throws a {@link NotFoundError} on mismatch so the
@@ -236,7 +277,10 @@ export async function showLocal(input: {
   ref: string;
   detail?: ShowDetailLevel;
   stashDir?: string;
+  contextMode?: FragmentContextMode;
+  maxContextChars?: number;
 }): Promise<ShowResponse> {
+  validateFragmentContextRequest(input);
   const parsed = parseBundleRef(input.ref);
   warnSensitiveFragmentUnsupported(parsed);
   const assetParts = typeNameFromConceptId(parsed.conceptId);
@@ -303,14 +347,20 @@ export async function showLocal(input: {
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);
   const presentedName = indexedEntry.name;
-  const indexedFragment = parsed.fragment?.startsWith("akm-fragment-")
-    ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!))
-    : undefined;
+  const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
+  // Friendly heading selectors retain the source-live exact response contract.
+  // Only resolve the indexed-safe revision when the selector itself is opaque,
+  // or when the caller explicitly opts into indexed-safe contextual output.
+  const indexedFragment =
+    parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
+      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!))
+      : undefined;
+  const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
   const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
   let response: ShowResponse;
   try {
     if (indexedRenderer === null) {
-      response = buildIndexedProjectionResponse(indexedEntry, assetPath, parsed.fragment, indexedFragment?.content);
+      response = buildIndexedProjectionResponse(indexedEntry, assetPath, parsed.fragment, indexedFragmentContent);
     } else {
       const match =
         typeof indexedRenderer === "string" ? indexedMatch(indexedEntry, indexedRenderer) : recognizeMatch(fileCtx);
@@ -339,7 +389,7 @@ export async function showLocal(input: {
             `Fragment "#${parsed.fragment}" was ignored: ${makeBundleRef(parsed.bundle, parsed.conceptId)} is not a Markdown document, so heading fragments do not apply. Showing the whole asset.`,
           );
         } else {
-          applyMarkdownFragment(response, fileCtx.content(), parsed.fragment, presentedName, indexedFragment?.content);
+          applyMarkdownFragment(response, fileCtx.content(), parsed.fragment, presentedName, indexedFragmentContent);
         }
       }
     }
@@ -358,6 +408,42 @@ export async function showLocal(input: {
     },
     config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined),
   );
+  if (parsed.fragment && indexedFragment) {
+    const selectedFragmentId = indexedFragment.fragments[indexedFragment.ordinal]!.fragmentId;
+    const selectedRef = `${canonicalRef}#${selectedFragmentId}`;
+    const parentEstimatedTokens =
+      typeof indexedEntry.document?.fileSize === "number"
+        ? Math.round(indexedEntry.document.fileSize / 4)
+        : Math.round(indexedFragment.parentChars / 4);
+    Object.assign(response, {
+      selectedRef,
+      parentRef: canonicalRef,
+      fragmentOrdinal: indexedFragment.ordinal + 1,
+      fragmentCount: indexedFragment.count,
+      startLine: indexedFragment.startLine,
+      endLine: indexedFragment.endLine,
+      ...(indexedFragment.previousFragmentId
+        ? { previousRef: `${canonicalRef}#${indexedFragment.previousFragmentId}` }
+        : {}),
+      ...(indexedFragment.nextFragmentId ? { nextRef: `${canonicalRef}#${indexedFragment.nextFragmentId}` } : {}),
+      fragmentChars: indexedFragment.fragmentChars,
+      fragmentEstimatedTokens: Math.round(indexedFragment.fragmentChars / 4),
+      parentChars: indexedFragment.parentChars,
+      parentEstimatedTokens,
+      contextMode: input.contextMode ?? "exact",
+      contextTruncated: false,
+    } satisfies Partial<ShowResponse>);
+
+    if (input.contextMode === "lead") {
+      const contextMaxChars = input.maxContextChars ?? MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS;
+      const contextual = buildMarkdownLeadContext(indexedFragment.fragments, indexedFragment.ordinal, contextMaxChars);
+      applyMarkdownResponsePayload(response, contextual.content);
+      response.contextMaxChars = contextMaxChars;
+      response.contextTruncated = contextual.truncated;
+    }
+  } else if (input.contextMode === "lead") {
+    throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
+  }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
   // 07 P1-D: provenance-aware toolPolicy CEILING. An agent's self-declared
   // `tools` frontmatter is honoured ONLY for the operator's own PRIMARY stash —
@@ -660,6 +746,12 @@ function applyMarkdownFragment(
   else response.content = section;
 }
 
+function applyMarkdownResponsePayload(response: ShowResponse, content: string): void {
+  if (response.template !== undefined) response.template = content;
+  else if (response.prompt !== undefined) response.prompt = content;
+  else response.content = content;
+}
+
 function requireMarkdownSection(
   content: string,
   fragment: string,
@@ -697,6 +789,7 @@ function buildBriefResponse(full: ShowResponse, assetPath?: string): ShowRespons
     ...(summary.origin !== undefined ? { origin: summary.origin } : {}),
     ...(full.editable !== undefined ? { editable: full.editable } : {}),
     ...(full.editHint ? { editHint: full.editHint } : {}),
+    ...fragmentResponseProjection(full),
   };
 }
 
@@ -735,7 +828,29 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     ...(full.origin !== undefined ? { origin: full.origin } : {}),
     ...(full.editable !== undefined ? { editable: full.editable } : {}),
     ...(full.editHint ? { editHint: full.editHint } : {}),
+    ...fragmentResponseProjection(full),
   };
 
   return summary;
+}
+
+function fragmentResponseProjection(full: ShowResponse): Partial<ShowResponse> {
+  if (!full.selectedRef) return {};
+  return {
+    selectedRef: full.selectedRef,
+    parentRef: full.parentRef,
+    fragmentOrdinal: full.fragmentOrdinal,
+    fragmentCount: full.fragmentCount,
+    startLine: full.startLine,
+    endLine: full.endLine,
+    previousRef: full.previousRef,
+    nextRef: full.nextRef,
+    fragmentChars: full.fragmentChars,
+    fragmentEstimatedTokens: full.fragmentEstimatedTokens,
+    parentChars: full.parentChars,
+    parentEstimatedTokens: full.parentEstimatedTokens,
+    contextMode: full.contextMode,
+    contextMaxChars: full.contextMaxChars,
+    contextTruncated: full.contextTruncated,
+  };
 }

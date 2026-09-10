@@ -67,6 +67,7 @@ const SELF_DIAGNOSED_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
     "proposal drain": ["profile"], // retired, points at --strategy
     search: ["source"], // renamed to --from
     curate: ["source"], // renamed to --from
+    "task list": ["source"], // renamed to --from (alias of `search --type task`, #951)
     remember: ["target"], // renamed to --bundle
     clone: ["target"], // renamed to --bundle
     improve: ["auto-accept", "target"], // retired in 0.9.0 / renamed to --bundle

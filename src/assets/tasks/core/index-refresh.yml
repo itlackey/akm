@@ -1,4 +1,4 @@
 version: 4
-run: akm index
+run: akm index --skip-if-locked
 description: Nightly incremental index refresh
 schedule: "0 4 * * *"

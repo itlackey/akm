@@ -8,7 +8,7 @@
 // its other lines untouched:
 //
 //     # akm:task <id> BEGIN
-//     [SCHED] /abs/akm task run <id> >> /home/.../tasks/logs/<id>.log 2>&1
+//     [SCHED] /abs/akm task run <id> > /home/.../tasks/logs/<id>.log 2>&1
 //     # akm:task <id> END
 //
 // The backend reads/writes the user's crontab via `crontab -l` and
@@ -128,9 +128,9 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
     name: "cron",
     install(task: SchedulerBinding, opts?: SchedulerInstallOptions, expected?: SchedulerMutationExpectation) {
       if (expected) assertSchedulerExpectationIdentity(expected, task);
-      // Create the log directory before writing the crontab line — cron
-      // appends with `>>` and the surrounding shell will fail the entire
-      // entry if the parent directory doesn't exist.
+      // Create the log directory before writing the crontab line — the
+      // redirect target's parent directory must exist or the surrounding
+      // shell will fail the entire entry.
       const cronLineParts = buildCronLineParts(
         task,
         [...(opts?.binding ?? akmArgv)],
@@ -379,14 +379,17 @@ function buildCronLineParts(
   const logPath = path.join(logDir, `${nativeId}.log`);
   const invocation = buildScheduledBindingInvocation(akmArgv, contextPath, task.invocation);
   const cmd = invocation.argv.map((part) => quoteForCron(part)).join(" ");
-  const directLine = `${cronExpr} ${cmd} >> ${quoteForCron(logPath)} 2>&1`;
+  // #951: truncate (not append) so this bootstrap safety-net file always
+  // holds exactly the latest run's raw output rather than growing forever.
+  // akm's own per-run log (src/tasks/run/task-log.ts) already keeps history.
+  const directLine = `${cronExpr} ${cmd} > ${quoteForCron(logPath)} 2>&1`;
   if (Buffer.byteLength(directLine, "utf8") <= PORTABLE_CRON_LINE_LIMIT) {
     return { line: directLine };
   }
   const content = cronWrapperScriptContent(invocation.argv);
   const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
   const wrapperPath = path.join(logDir, `${CRON_WRAPPER_PREFIX}${nativeId}-${contentHash}.sh`);
-  const line = `${cronExpr} sh ${quoteForCron(wrapperPath)} >> ${quoteForCron(logPath)} 2>&1`;
+  const line = `${cronExpr} sh ${quoteForCron(wrapperPath)} > ${quoteForCron(logPath)} 2>&1`;
   return { line, wrapper: { path: wrapperPath, content } };
 }
 
@@ -499,7 +502,11 @@ export function extractCronInvocation(body: string): ReturnType<typeof parseSche
   if (fields.length < 6) return undefined;
   let commandStart = 5;
   while (commandStart < fields.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(fields[commandStart]!)) commandStart += 1;
-  const redirectIndex = fields.indexOf(">>", commandStart);
+  // #951: newly-installed rows redirect with `>` (truncate); tolerate `>>`
+  // (append) too, since that's what every row written before this change —
+  // including ones a still-running older akm binary installs during a
+  // rolling upgrade — looks like on disk.
+  const redirectIndex = fields.findIndex((field, index) => index >= commandStart && (field === ">" || field === ">>"));
   if (redirectIndex === -1) return undefined;
   const tail = fields.slice(commandStart, redirectIndex);
   const parsed = parseScheduledBindingArgv(tail);

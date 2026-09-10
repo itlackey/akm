@@ -3,7 +3,10 @@
 AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 (normally `~/.config/akm/config.json` on Linux and macOS, or
 `%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
-directory. Project `.akm/config.json` files are not merged.
+directory. Project `.akm/config.json` files are not merged. A config file may
+optionally extend one other config via `extends` (see "Sharing configuration
+across installs" below) — this is a single, explicit, user-opted-in key, not
+automatic project-config discovery.
 
 ## Version 0.9
 
@@ -89,14 +92,21 @@ LLM endpoints must be complete `http://` or `https://` chat-completions URLs
 ending in `/chat/completions`, without userinfo, query, or fragment. API keys
 are symbolic only: `$VAR` or `${VAR}`. AKM resolves them only at dispatch.
 
-An LLM engine may set `reasoningEffort` to a non-empty provider-supported
-value such as `"none"`, `"low"`, or `"high"`. AKM sends it as the top-level
-OpenAI-compatible `reasoning_effort` parameter alongside the existing
-`enableThinking` control, because providers do not all honor the same thinking
-switch. `reasoning_effort` is AKM-owned and cannot be set through
-`extraParams`. If a response reports reasoning tokens despite
-`enableThinking: false`, AKM emits a runtime warning so an ineffective provider
-control is visible.
+An LLM engine may set `enableThinking: false` to turn thinking off and
+`reasoningEffort` to a value such as `"none"`, `"low"`, or `"high"`. AKM sends
+**both** wire forms — `chat_template_kwargs.enable_thinking` and top-level
+`enable_thinking` — whenever `enableThinking` resolves, from engine config
+or a calling process (improve's `consolidate`/`reflect` and the distill
+quality gate always request `enableThinking: false` for a machine-readable
+payload); `reasoningEffort` is always sent as top-level `reasoning_effort`
+when set. Backend support: llama.cpp direct honors both forms
+(`reasoning_effort` from build ≥ b10644); vLLM honors
+`chat_template_kwargs`; Bifrost drops `chat_template_kwargs` and passes
+`reasoning_effort` through, so also set `reasoningEffort: "none"` behind it; a
+strict hosted API may 400 on unrecognized keys. Both fields are AKM-owned, not
+settable via `extraParams`. A response with reasoning tokens despite
+`enableThinking: false` triggers a runtime warning and the `akm health`
+`thinking-control` advisory.
 
 An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
 Only `platform: "opencode-sdk"` may set `llmEngine`; it names
@@ -147,19 +157,54 @@ the same version-1 schema as the installed file:
 ```
 
 Each engine mapping is either a non-empty exact model string or a structured
-profile with the documented fields `model` and `inference`. A user profile may
-omit `model` when the installed layer already supplies it, as the partial
-Claude override above does. After overlay, every alias/engine entry must have a
-usable model. Unknown profile fields are rejected; JSON-safe fields inside
-`inference` are preserved for engine adapters to lower optimistically.
+profile with the documented fields `model`, `inference`, and `engine`. A user
+profile may omit `model` when the installed layer already supplies it, as the
+partial Claude override above does. After overlay, every alias/engine entry
+must have a usable model. Unknown profile fields are rejected; JSON-safe
+fields inside `inference` are preserved for engine adapters to lower
+optimistically.
+
+A profile's `engine` field (0.9.15, #946) borrows a column's `model` (and, for
+an `llm`-kind engine, its inference defaults) from a configured
+`engines.<name>` connection instead of hand-typing a literal model a second
+time:
+
+```json
+{
+  "version": 1,
+  "aliases": {
+    "fast": {
+      "opencode": { "engine": "local-fast" }
+    }
+  }
+}
+```
+
+With `engines.local-fast` configured (agent-kind or llm-kind), this column
+resolves to that engine's own `model` string. `model` and `engine` are
+mutually exclusive on the same profile — `engine` is an indirection for the
+model value, never an engine-selection override; which engine `akm agent`
+dispatches to is still decided entirely by `--engine`/`defaults.engine` (see
+[Engine selection](#engines)). The referenced engine's `model` must itself be
+literal, not another alias, and akm copies it verbatim: it does not translate
+between an engine's connection and an agent platform's own provider registry,
+so the value must already be meaningful for the column's platform (e.g. a
+`kind: "agent", platform: "opencode"` engine's `model` should already be a
+string opencode itself understands, such as `krang/qwen3.5-9b`). Run
+`akm models list` to see, for every alias/column, the resolved model and
+whether it came from the installed defaults, the user overlay, and a literal
+value or an `engine` reference.
 
 The user file overlays the installed file by alias, engine, and nested object
 field. Objects merge recursively. Arrays, scalars, and explicit `null` replace
-the lower value; omitted fields preserve it. Alias and engine keys are
-case-normalized, and case-colliding definitions are rejected. Unknown model
-inputs still pass through byte-for-byte as exact identifiers. Once a name is a
-known merged alias, selecting an engine with no mapping is an actionable
-configuration error rather than silently sending the alias as a model ID.
+the lower value; omitted fields preserve it. A layer setting a literal `model`
+clears any `engine` inherited from a farther layer, and vice versa — the
+nearer layer's choice of literal-vs-engine always wins outright rather than
+merging. Alias and engine keys are case-normalized, and case-colliding
+definitions are rejected. Unknown model inputs still pass through
+byte-for-byte as exact identifiers. Once a name is a known merged alias,
+selecting an engine with no mapping is an actionable configuration error
+rather than silently sending the alias as a model ID.
 
 The common execution cascade reads these files for current direct command and
 non-interactive agent calls, task source v4 runs, and improve/proposal/index
@@ -351,8 +396,108 @@ unless a remote `embedding` config is provided.
 `akm improve`'s memory-inference/consolidate passes when they call an
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
 reference, same rules as engine `apiKey`), `dimension`, `localModel`,
-`maxTokens`, `batchSize`, `chunkSize`, `contextLength`, and
-`ollamaOptions.num_ctx`.
+`maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
+`concurrency`, and `ollamaOptions.num_ctx`.
+
+The knobs that bound request/document size and rate, all optional (defaults
+apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
+
+| Key | Default | Bounds |
+| --- | --- | --- |
+| `embedding.maxInputTokens` | `512` | Per-DOCUMENT cap, applied before batching (#956). A document's embedded text is truncated to its head (unicode-safe) at this many estimated tokens instead of ever being skipped for size alone — a document is skipped only when its truncated head is empty. |
+| `embedding.maxTokens` | `6000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 11 documents by default. Lowered from 8000 to 6000 (#954): the 4-chars-per-token estimator undercounts dense technical text by 7-55%, so 8000 regularly overshot an 8192-token endpoint's real context window. |
+| `embedding.batchSize` | `100` | Per-REQUEST document-COUNT safety cap, independent of the token budget — guards against many tiny documents packing an oversized request. |
+| `embedding.contextLength` | unset | Ollama's `num_ctx` ONLY, forwarded verbatim as `options.num_ctx` on the native `/api/embed` request. Does **not** feed the request token budget above (#956) — the two used to share this one field, so setting it for the server's context window silently changed request batching too. |
+| `embedding.timeoutMs` | `120000` (120s) | Per-request wall timeout — see below. |
+| `embedding.concurrency` | `1` loopback / `2` remote | In-flight request window — see below. |
+
+**Which knob fixed the field's 8k-context overflow, worked examples.** A
+0.9.15-beta field report described documents estimated under the request
+budget that still tokenized to 8.5k-12.4k real tokens against an
+8192-token endpoint, because the 4-chars-per-token estimator undercounts
+dense technical text. Three knobs changed shape between beta and this
+release; only one of them makes that overflow structurally unreachable:
+
+- `embedding.maxInputTokens: 512` — per-DOCUMENT cap, applied before
+  batching. Example: a 6,000-character API reference page is truncated to
+  its first ~2,000 characters (512 estimated tokens) before it is ever
+  counted toward a request. This is the fix for the original overflow: no
+  single document can contribute more than 512 estimated tokens to a
+  request, no matter how `maxTokens` or `contextLength` are set.
+- `embedding.maxTokens: 6000` — per-REQUEST budget: how many already-capped
+  documents' estimated tokens fit in one HTTP request. Example: with the
+  default 512-token document cap, a request packs about 11 documents before
+  this budget is reached and the request is sent; if the run's first
+  request is still rejected for exceeding the endpoint's real context
+  window, akm shrinks this budget to three quarters of its value (floored
+  at twice `maxInputTokens`) for every later request in the same run. A
+  request-level budget alone cannot stop one oversized document from
+  overflowing a request — only the per-document cap above does that.
+- `embedding.contextLength: 8192` — Ollama's `num_ctx` only, forwarded
+  verbatim on a native `/api/embed` request. It has no effect on request or
+  document sizing, and no effect at all against a non-Ollama endpoint — see
+  below for why that used not to be true.
+
+A field config of `contextLength: 8192` + `maxTokens: 8000` (the exact
+0.9.15-beta values from the original report) produces no 400s on 0.9.15:
+`maxInputTokens` (512, new this release) caps every document before it is
+counted, so the original 8.5k-12.4k-token documents that overflowed the
+8192-token endpoint can never reach the request budget in the first place —
+independent of whatever `maxTokens` or `contextLength` are set to.
+
+`embedding.timeoutMs` (positive integer, default `120000` — 120s) is the
+budget for a request at the FULL token budget (`embedding.maxTokens`); a
+local model server on a large, token-budget-bounded batch legitimately takes
+longer than the prior fixed 30s cut off. A smaller request gets a
+proportionally smaller timeout —
+`clamp(timeoutMs × requestTokens / tokenBudget, 30000, timeoutMs)` — so a
+dead endpoint is still detected in seconds on the common case of small
+documents. Set `embedding.timeoutMs` lower to fail fast against a
+known-fast endpoint, or higher for a slow local server on large batches.
+
+`embedding.maxTokens` (or its default) is also a run-scoped adaptive
+starting point, not a hard ceiling (#954): on the FIRST rejection of an
+`akm index` run for exceeding the endpoint's context window, akm shrinks
+the request budget to three quarters of its current value — floored at
+twice `embedding.maxInputTokens` — for every request not yet sent, and
+prints one line naming the new value. This never changes the rejected
+request's own split-and-retry (below), never shrinks a second time in the
+same run, and never grows the budget back up. Users who set
+`embedding.maxTokens` explicitly are unaffected by the LOWERED DEFAULT
+above but still benefit from this same-run recovery if their own value
+turns out to be too high for the endpoint.
+
+A request TIMEOUT (not a rejection for exceeding the context window) never
+drops its batch immediately: field confirmation showed that once akm
+abandons a timed-out request, the endpoint (e.g. llama-server) keeps
+computing it anyway, so dropping it right away just grows the provider's
+queue while every following batch dies the same way. Instead akm backs off
+(5s, doubling, capped at 60s) and retries the same request once; a second
+timeout splits it in half and retries each half the same way, down to
+individual documents, and a single document that still times out is finally
+skipped (logged at the default `warn` level). After 3 consecutive failures
+at single-document size (timeout or network error), or 3 consecutive
+network errors at any size, the embedding phase stops dispatching further
+requests and reports failure — batches already committed are kept; rerun
+`akm index` once the endpoint is healthy.
+
+`akm index` keeps a small number of `/v1/embeddings` requests in flight at
+once (a remote endpoint only; the local transformer path is unaffected):
+`1` for a loopback endpoint (`localhost`, `127.0.0.0/8`, etc. — a local
+model server serves one inference at a time, and parallel requests thrash
+it) and `2` for a remote one, unless `embedding.concurrency` (positive
+integer, 1-16) overrides it. This default holds for the overwhelming
+majority of setups; set the override only for an endpoint that genuinely
+serves parallel requests — a local server started with a multi-slot flag
+(llama.cpp's `--parallel N`, vLLM) — not to "speed up" an ordinary
+single-slot model server, which the default already protects from
+reload-thrash. Request SIZE remains the first throughput lever regardless:
+`embedding.batchSize` (a document-count cap, default 100) together with
+`embedding.maxTokens` (an estimated token budget per request, default 6000
+— NOT `embedding.contextLength`, see the table above) control how many
+documents land in one request — with the default 512-token
+`embedding.maxInputTokens` document cap, that is about 11 documents,
+taking about the same wall time as a single one against a healthy endpoint.
 
 ## Search tuning
 
@@ -484,6 +629,94 @@ Arrays replace, `null` is only valid for nullable fields, and `config unset` is
 the only deletion operation. `configVersion` cannot be set or unset with the
 generic walker.
 
+`config get <key> --show-source` wraps the (redacted) value as
+`{ value, source }`, where `source` is `"local"` when the local file's own
+JSON sets the key, `"extends:<ref>"` for the nearest `extends` chain member
+that sets it, or `"default"` when neither does. It is opt-in — plain
+`config get` keeps its Stable, script-safe bare-value shape.
+
+### Sharing configuration across installs
+
+Five hosts running the same fleet often carry an identical `engines` map and
+`improve.strategies` block, differing only in credential delivery (`apiKey`
+vs `apiKeyFile`), bundle paths, and cron offsets. Hand-syncing that block
+across hosts drifts silently. `extends` fixes this: put the shared block in
+one file, and have each host's local config extend it.
+
+```jsonc
+// bundles/fleet/config/shared.json — versioned with the bundle, shared by every host
+{
+  "configVersion": "0.9.0",
+  "engines": {
+    "fast": { "kind": "llm", "endpoint": "https://api.example.test/v1/chat/completions", "model": "qwen3" }
+  },
+  "improve": { "strategies": { "nightly": { "engine": "fast" } } }
+}
+```
+
+```jsonc
+// ~/.config/akm/config.json — this host's local file, under 20 lines
+{
+  "configVersion": "0.9.0",
+  "extends": "fleet//config/shared.json",
+  "bundles": {
+    "fleet": { "git": "https://github.com/example/fleet-bundle.git" },
+    "stash": { "path": "~/akm-stash", "writable": true }
+  },
+  "defaultBundle": "stash",
+  "engines": { "fast": { "apiKeyFile": "/run/secrets/fast-api-key" } }
+}
+```
+
+`extends` accepts either form:
+
+- A filesystem path — relative paths resolve against the directory of the
+  config file that declares them; a leading `~` expands.
+- A `bundle//<path>` ref — a plain file path *relative to that bundle's
+  content root* (e.g. `config/shared.json`), resolved through the bundle's
+  configured `path`, not the search index — so it never needs `akm index` to
+  have run. This is not an asset ref: the path after `//` needs no asset type
+  (`scripts/`, `knowledge/`, …) and the shared file is never indexed; it can
+  live anywhere under the bundle. An empty, absolute, or content-root-escaping
+  path is rejected. Only a filesystem bundle (`bundles.<id>.path`) can host an
+  `extends` source; sync a `git`/`website` bundle with `akm bundle
+  add`/`akm sync` first so the file is materialized locally, then point
+  `extends` at it.
+
+There is no `extends: <url>` form: config load is synchronous and runs on
+every invocation, and akm deliberately does not fetch network resources at
+load time (the same reason `registries` is never fetched until a
+registry-touching command runs). A URL-backed shared config should be synced
+as a `git`/`website` bundle and referenced as `extends: bundle//<path>`
+once materialized, reusing the sync machinery akm already has instead of a
+second one inside config load.
+
+The base config runs through the exact same load pipeline as the local
+file — its own version shim, its own legacy-shape shim — so it can carry an
+older `configVersion` independently, and it may itself set `extends`
+(chained). Cycle detection (`ConfigError`, "extends cycle detected") stops A
+extends B extends A instead of recursing forever. Merge order is
+`DEFAULT_CONFIG` (outermost) → the resolved `extends` chain → the local
+file's own keys (local always wins) — the same `deepMergeConfig` "override
+wins" semantics `config set` already uses. A referenced file/bundle that does
+not already exist locally is a load-time `ConfigError` naming the ref — akm
+never fetches or syncs one on your behalf.
+
+`akm config diff <path|bundle//path>` compares this host's EFFECTIVE
+config (its own `extends` already applied) against another config file or
+bundle-relative file (loaded through the same loader, so ITS `extends` is
+honoured too), printing sorted `{ path, local, other }` rows for every leaf
+that differs. Both sides are redacted the same way `config get`/`list` are
+before comparison, so a differing secret never round-trips into the diff
+output. Cross-host comparison (`ssh host2 akm config diff ...` in a loop) is
+left to the operator; akm has no concept of a networked fleet to compare
+against directly.
+
+```sh
+akm config diff ~/other-host/config.json
+akm config diff fleet//config/shared.json
+```
+
 ## Environment
 
 | Variable | Purpose |
@@ -513,6 +746,32 @@ not itself a secret. Setting both `apiKey` and `apiKeyFile` on the same
 engine is rejected. A missing, unreadable, or empty file fails the call
 closed, naming the engine and path but never the file's content.
 
+`engines.<name>.apiKey` also accepts `secret://<name>`, a reference into
+AKM's own secret store (`akm secret set <name> --from-file <file>`), for a
+launch context where the credential's environment variable is deliberately
+not sourced into the process — a scheduled task's crontab preamble, or a
+container entrypoint that keeps the user's env out on purpose — and a
+file-backed credential is not an option. Like `apiKeyFile`, only the
+reference is kept in `config.json`; the store lookup happens at dispatch
+time, and an unresolved reference fails the call closed, naming the
+reference but never the value. `akm improve`, workflow LLM steps, and `akm
+health`'s engine probes all resolve `secret://` the same way direct LLM and
+embedding calls have since 0.9.13 (#917); resolution order for a single
+`apiKey` field is: an env reference (`$VAR`/`${VAR}`) first, then
+`apiKeyFile`, then `secret://<name>` — though in practice a config sets only
+one of the three per engine.
+
+`embedding.apiKey` accepts the same three forms and resolves `secret://` the
+same way, on every path that sends an embedding request: `akm index`
+(including its `bundle update` post-commit embedding pass and the targeted
+re-embed a write command like `akm remember` triggers), `akm improve`'s
+consolidate pass (memory dedup and similarity clustering), and the
+fingerprint-rename canary `akm index` runs when the embedding config
+changes. All of them build the
+provider request through the same `RemoteEmbedder`/`resolveSecret` boundary,
+so a `secret://` reference resolves identically regardless of which command
+triggered the request (#953).
+
 Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
 such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
 network filesystem for the data directory and falls back to `DELETE`.
@@ -524,3 +783,7 @@ network filesystem for the data directory and falls back to `DELETE`.
 configuration using `engines`, `defaults.engine`, `defaults.llmEngine`, and
 `improve.strategies`; AKM deliberately does not infer or rename ambiguous
 profile identities.
+
+`embedding.chunkSize` was never read by anything under `src/` (#954), so a
+config that still sets it is simply ignored — it still loads, unvalidated
+and without warning.

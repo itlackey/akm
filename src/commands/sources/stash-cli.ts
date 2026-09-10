@@ -44,6 +44,7 @@ import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
+import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import {
@@ -56,6 +57,9 @@ import {
   writeMarkdownAsset,
 } from "../read/knowledge";
 import { assembleInfo } from "./info";
+
+/** Matches the high-frequency per-committed-batch progress line (#954), excluded from non-verbose JSON-mode stderr. */
+const EMBEDDED_BATCH_PROGRESS_PATTERN = /^Embedded \d+\/\d+ entries\.$/;
 
 export const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
@@ -77,6 +81,17 @@ export const indexCommand = defineCommand({
       description: "When combined with --clean, report stale entries without deleting them.",
       default: false,
     },
+    reembed: {
+      type: "boolean",
+      description: "Force re-embedding of every entry, bypassing the embedding-model-rename compatibility check.",
+      default: false,
+    },
+    "skip-if-locked": {
+      type: "boolean",
+      description:
+        "If another `akm index` run already holds the rebuild lock, skip gracefully (exit 0) instead of contending with it. Use for scheduled/opportunistic index runs so they don't pile up against a longer run in progress.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -89,6 +104,27 @@ export const indexCommand = defineCommand({
         throw new UsageError(
           "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
         );
+      }
+      // #956: opt-in, non-blocking rebuild lock — never gates a human-typed
+      // `akm index` (it only warns and contends), but a scheduled/opportunistic
+      // caller can pass --skip-if-locked to step aside instead of piling up
+      // behind a run already in progress. Acquired before any other side
+      // effect (log file, spinner) so a skip does neither.
+      const lockAcquisition = tryAcquireIndexRebuildLock(args["skip-if-locked"]);
+      if (lockAcquisition.state === "skipped") {
+        output("index", {
+          ok: true,
+          skipped: {
+            reason: "lock-held",
+            pid: lockAcquisition.holder.pid,
+            // #956: the launcher pid (when known) alongside the pid that
+            // actually holds the lock — every process listing and task log
+            // shows the launcher pid, not the bun/node child's.
+            launcherPid: lockAcquisition.holder.launcherPid,
+            startedAt: lockAcquisition.holder.startedAt,
+          },
+        });
+        return;
       }
       const outputMode = getOutputMode();
       const controller = new AbortController();
@@ -118,6 +154,7 @@ export const indexCommand = defineCommand({
           full: args.full,
           clean: args.clean,
           dryRun: args["dry-run"],
+          reembed: args.reembed,
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
@@ -126,6 +163,16 @@ export const indexCommand = defineCommand({
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
               spin.start(`${progressPrefix}${message}`);
+            } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
+              // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
+              // total until the run finished (#954) — a stalled
+              // run looked identical to "nothing written". Phase-start
+              // messages and the embedding heartbeat now reach stderr here
+              // too; the high-frequency per-batch `Embedded N/M entries.`
+              // line (emitted after every committed batch)
+              // is deliberately excluded — that would be spam, not a
+              // heartbeat.
+              info(`[index:${phase}] ${progressPrefix}${message}`);
             }
           },
           signal: controller.signal,
@@ -143,6 +190,7 @@ export const indexCommand = defineCommand({
         clearLogFile();
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
+        if (lockAcquisition.state === "acquired") releaseIndexRebuildLock(lockAcquisition.ownership);
       }
     });
   },

@@ -27,6 +27,7 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
+import reflectFeedbackFraming from "../../assets/prompts/reflect-feedback-framing.md" with { type: "text" };
 import reflectLlmFramedContract from "../../assets/prompts/reflect-llm-framed-contract.md" with { type: "text" };
 import reflectLlmSchemaContract from "../../assets/prompts/reflect-llm-schema-contract.md" with { type: "text" };
 import reflectOutputRepair from "../../assets/prompts/reflect-output-repair.md" with { type: "text" };
@@ -89,6 +90,27 @@ function knownTypeList(): string {
 }
 
 /**
+ * Default cap (in characters) on the asset content injected into
+ * {@link buildReflectPrompt}, and the floor a caller-supplied
+ * {@link ReflectPromptInput.contentBudgetChars} is never allowed to go below.
+ * Exists to stay well under OS ARG_MAX when the prompt is passed as a CLI
+ * argument to opencode/claude — large assets (wiki snapshots, long runbooks)
+ * would otherwise trigger E2BIG on posix_spawn. Agent/SDK runners always use
+ * this flat value; the direct-LLM path can raise it per #952 (see the reflect
+ * dispatch site in `src/commands/improve/reflect.ts`).
+ */
+export const REFLECT_CONTENT_CAP = 12_000;
+
+/**
+ * Marker appended to truncated asset content when it exceeds the active
+ * content budget (#952). Exported so `sanitizeReflectPayload` can detect a
+ * model that echoed this notice back into its rewrite instead of proposing
+ * real content, and so the output contracts can reference the exact string
+ * to forbid.
+ */
+export const REFLECT_TRUNCATION_MARKER = "... [truncated — focus on the visible portion]";
+
+/**
  * Common envelope every prompt asks the agent to honour when NO draft file
  * path is available. The wrapper code uses `JSON.parse(stdout)` to extract
  * the payload — anything outside the JSON object will be treated as a parse
@@ -120,6 +142,7 @@ function fileWriteContract(draftFilePath: string): string {
     `Write the complete improved asset content to: ${draftFilePath}`,
     "Use your file-editing tools to create or overwrite that file.",
     "Do NOT output JSON to stdout. Do NOT print the file contents. Just write the file.",
+    `Never include the text "${REFLECT_TRUNCATION_MARKER}" or any other content from outside the provided asset content in the file you write.`,
     "When done, output a single line on stdout: DRAFT_WRITTEN confidence=<0.0-1.0>",
     "`confidence` is REQUIRED and must be your honest self-rated [0, 1] score for this proposal:",
     "  • 0.90+ — fixes a real defect or adds load-bearing missing content; reviewer would clearly accept.",
@@ -210,6 +233,15 @@ export interface ReflectPromptInput {
   priorDraft?: string;
   /** Direct-LLM response contract. Omitted for the existing agent/SDK contract. */
   outputMode?: ReflectLlmOutputMode;
+  /**
+   * Override for the asset-content character cap (#952). Undefined keeps
+   * today's flat {@link REFLECT_CONTENT_CAP} (12 000 chars) — the safe
+   * default for agent/SDK runners whose prompt travels through CLI argv.
+   * Direct-LLM callers may pass a larger, context-aware budget since their
+   * prompt never touches argv; see the reflect dispatch site for how it's
+   * computed.
+   */
+  contentBudgetChars?: number;
 }
 
 export type ReflectLlmOutputMode = "json_schema" | "framed_markdown";
@@ -223,10 +255,14 @@ export function reflectLlmResponseContract(mode: ReflectLlmOutputMode, targetSco
           ? "The response has exactly the required fields `content`, `confidence`, and `frontmatterPatch`; do not echo `ref` or arbitrary `frontmatter`."
           : "The response has exactly the required fields `ref`, `content`, `confidence`, and `frontmatterPatch`; `ref` must identify the selected asset.",
       )
+      .replaceAll("{{TRUNCATION_MARKER}}", REFLECT_TRUNCATION_MARKER)
       .trim();
   }
   const refLine = targetScoped ? "" : "AKM_REFLECT_REF: <selected asset ref>\n";
-  return reflectLlmFramedContract.replace("{{REF_LINE}}", refLine).trim();
+  return reflectLlmFramedContract
+    .replace("{{REF_LINE}}", refLine)
+    .replaceAll("{{TRUNCATION_MARKER}}", REFLECT_TRUNCATION_MARKER)
+    .trim();
 }
 
 export function buildReflectOutputRepairPrompt(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
@@ -299,6 +335,10 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
 
   // Change 3 & 4 — feedback moved before asset content; missing else branch added
   if (input.feedback && input.feedback.length > 0) {
+    // #952 — feedback lines are unverified reports, not verified facts. Without
+    // this caveat, models fabricated whole new sections asserting whatever a
+    // feedback line claimed (invented incident dates, ports, disk layouts).
+    sections.push(reflectFeedbackFraming.trim());
     sections.push("Recent feedback / signals:");
     for (const line of input.feedback) sections.push(`- ${line}`);
   } else if (!input.ref) {
@@ -349,21 +389,22 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   }
 
   if (input.assetContent?.trim()) {
-    // Cap at 12 000 chars to stay well under OS ARG_MAX when the prompt is
-    // passed as a CLI argument to opencode/claude. Large assets (wiki snapshots,
-    // long runbooks) would otherwise trigger E2BIG on posix_spawn.
-    const REFLECT_CONTENT_CAP = 12_000;
+    // Cap defaults to REFLECT_CONTENT_CAP (12 000 chars) to stay well under OS
+    // ARG_MAX when the prompt is passed as a CLI argument to opencode/claude
+    // — large assets (wiki snapshots, long runbooks) would otherwise trigger
+    // E2BIG on posix_spawn. Direct-LLM callers never touch argv, so they may
+    // pass a larger, context-aware `contentBudgetChars` (#952); it is never
+    // allowed below the flat floor, which the caller enforces before calling in.
+    const contentCap = input.contentBudgetChars ?? REFLECT_CONTENT_CAP;
     const body = input.assetContent.trimEnd();
-    const truncated = body.length > REFLECT_CONTENT_CAP;
+    const truncated = body.length > contentCap;
     sections.push(
       truncated
-        ? `Current asset content (first ${REFLECT_CONTENT_CAP} chars — full asset is ${body.length} chars):`
+        ? `Current asset content (first ${contentCap} chars — full asset is ${body.length} chars):`
         : "Current asset content (verbatim):",
     );
     sections.push("```");
-    sections.push(
-      truncated ? `${body.slice(0, REFLECT_CONTENT_CAP)}\n... [truncated — focus on the visible portion]` : body,
-    );
+    sections.push(truncated ? `${body.slice(0, contentCap)}\n${REFLECT_TRUNCATION_MARKER}` : body);
     sections.push("```");
   } else if (input.ref) {
     sections.push("(No existing content — propose a fresh asset that fits the ref.)");

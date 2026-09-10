@@ -17,7 +17,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { UsageError } from "../../core/errors";
+import { TransientError, UsageError } from "../../core/errors";
 import { withMaintenanceStartBarrierAsync } from "../../core/maintenance-barrier";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
@@ -369,16 +369,17 @@ function leaseExpiry(): string {
 }
 
 /**
- * Atomically claim the run lease or refuse with a UsageError naming the
- * current holder + expiry. The single-UPDATE claim in the repository is the
- * arbiter — two racing invocations cannot both win.
+ * Atomically claim the run lease or refuse with a TransientError naming the
+ * current holder + expiry (#948 addendum — moved off UsageError, exit 75).
+ * The single-UPDATE claim in the repository is the arbiter — two racing
+ * invocations cannot both win.
  */
 async function acquireRunLease(runId: string, holder: string): Promise<void> {
   await withMaintenanceStartBarrierAsync(() =>
     withWorkflowRunsRepo((repo) => {
       if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
       const row = repo.getRunById(runId);
-      throw new UsageError(
+      throw new TransientError(
         `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
           `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
           `wait for that invocation to finish or for the lease to expire.`,

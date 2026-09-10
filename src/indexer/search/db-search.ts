@@ -46,7 +46,12 @@ import {
   getEntryCount,
   getPositiveFeedbackCountsByIds,
 } from "../../storage/repositories/index-entries-repository";
-import { searchFts } from "../../storage/repositories/index-fts-repository";
+import {
+  getIndexedMarkdownFragment,
+  getIndexedMarkdownFragments,
+  type IndexedMarkdownFragment,
+  searchFts,
+} from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
@@ -621,6 +626,16 @@ async function searchDatabase(
   const rankMs = Date.now() - tRank0;
 
   const selected = beliefFiltered.slice(0, limit);
+  const fragmentSelections = selected.flatMap((ranked) =>
+    ranked.fragmentId && allowsFragmentRef(ranked.entry.type) && hasIndexedProvenance(ranked)
+      ? [{ entryId: ranked.id, itemRef: ranked.itemRef, fragmentId: ranked.fragmentId }]
+      : [],
+  );
+  const selectedFragments = getIndexedMarkdownFragments(db, fragmentSelections);
+  const selectedFragmentByEntryId = new Map<number, IndexedMarkdownFragment | undefined>();
+  fragmentSelections.forEach((selection, index) => {
+    selectedFragmentByEntryId.set(selection.entryId, selectedFragments[index]);
+  });
   const hits = await Promise.all(
     selected.map((ranked) => {
       const { entry, filePath, score, rankingMode, utilityBoosted } = ranked;
@@ -638,6 +653,7 @@ async function searchDatabase(
         rankingMode,
         lexicalMatch: ranked.lexicalMatch,
         fragmentId: ranked.fragmentId,
+        indexedFragment: ranked.fragmentId ? (selectedFragmentByEntryId.get(ranked.id) ?? null) : undefined,
         defaultStashDir: stashDir,
         allSourceDirs,
         sources,
@@ -1018,6 +1034,8 @@ export async function buildDbHit(input: {
   rankingMode: "hybrid" | "semantic" | "fts";
   lexicalMatch?: LexicalQueryExecution;
   fragmentId?: string;
+  /** Preloaded by the search batch; null means the indexed selector was absent. */
+  indexedFragment?: IndexedMarkdownFragment | null;
   defaultStashDir: string;
   allSourceDirs: string[];
   sources: SearchSource[];
@@ -1079,7 +1097,22 @@ export async function buildDbHit(input: {
   const ref = input.fragmentId && allowsFragmentRef(input.entry.type) ? `${parentRef}#${input.fragmentId}` : parentRef;
 
   const editable = isEditable(absolutePath, input.config, input.sources);
-  const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
+  const indexedFragment =
+    input.indexedFragment === undefined
+      ? input.fragmentId && input.db
+        ? getIndexedMarkdownFragment(input.db, input.itemRef, input.fragmentId)
+        : undefined
+      : (input.indexedFragment ?? undefined);
+  const selectedRef = input.fragmentId && ref !== parentRef ? `${parentRef}#${input.fragmentId}` : undefined;
+  const parentEstimatedTokens =
+    typeof input.entry.fileSize === "number"
+      ? Math.round(input.entry.fileSize / 4)
+      : indexedFragment
+        ? Math.round(indexedFragment.parentChars / 4)
+        : undefined;
+  const fragmentEstimatedTokens = indexedFragment ? Math.round(indexedFragment.fragmentChars / 4) : undefined;
+  const estimatedTokens =
+    selectedRef === ref && fragmentEstimatedTokens !== undefined ? fragmentEstimatedTokens : parentEstimatedTokens;
 
   const hit: SourceSearchHit = {
     type: input.entry.type,
@@ -1096,6 +1129,32 @@ export async function buildDbHit(input: {
     score,
     whyMatched,
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
+    ...(selectedRef
+      ? {
+          selectedRef,
+          parentRef,
+          ...(indexedFragment
+            ? {
+                fragmentOrdinal: indexedFragment.ordinal + 1,
+                fragmentCount: indexedFragment.count,
+                startLine: indexedFragment.startLine,
+                endLine: indexedFragment.endLine,
+                ...(indexedFragment.previousFragmentId
+                  ? { previousRef: `${parentRef}#${indexedFragment.previousFragmentId}` }
+                  : {}),
+                ...(indexedFragment.nextFragmentId
+                  ? { nextRef: `${parentRef}#${indexedFragment.nextFragmentId}` }
+                  : {}),
+                fragmentChars: indexedFragment.fragmentChars,
+                fragmentEstimatedTokens,
+                parentChars: indexedFragment.parentChars,
+                ...(parentEstimatedTokens !== undefined ? { parentEstimatedTokens } : {}),
+              }
+            : parentEstimatedTokens !== undefined
+              ? { parentEstimatedTokens }
+              : {}),
+        }
+      : {}),
     // Surface optional quality (v1 spec §4.2). Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),

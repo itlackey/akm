@@ -1,4 +1,4 @@
 version: 4
-run: akm improve --strategy consolidate --skip-if-locked
+run: akm improve --strategy consolidate --skip-if-locked --require-engines
 description: Consolidation-only pass (every 4h at :20)
 schedule: "20 */4 * * *"

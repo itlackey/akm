@@ -179,6 +179,18 @@ Local show flow (`src/commands/read/show.ts`):
 5. apply generic Markdown content/fragment presentation for OKF, or the owning
    adapter's progressively enhanced native presentation
 
+An opaque `#akm-fragment-...` selector resolves against the safe Markdown
+revision persisted in `entry_fragments`, so search and show remain consistent
+if the materialized file changes before it is reindexed. Bare fragment show is
+still exact. The opt-in `--context lead` projection assembles the first and
+selected fragments from that same indexed revision under a hard character
+budget, labels the selected match, and keeps it last. It never reconstructs
+neighbors from the current raw file. Fragment search plus opaque/contextual show
+JSON exposes the selected and parent refs, one-based ordinal/count and
+source-line bounds, neighbor refs, and separate fragment/parent size estimates;
+canonical `ref` remains the parent on show. A default exact friendly-heading
+show stays source-live and omits indexed provenance.
+
 There is **no provider or local-disk fallback** for asset refs. The file is
 read only after an indexed row resolves it.
 

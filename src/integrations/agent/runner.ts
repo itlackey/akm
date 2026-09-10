@@ -18,6 +18,8 @@ export type RunnerSpec =
       credential?: CredentialDescriptor;
       /** File-backed credential (#905), read lazily at dispatch. See engine-resolution.ts. */
       apiKeyFile?: string;
+      /** Secret-store-backed credential reference (#953), read lazily at dispatch. */
+      apiKeySecretRef?: string;
       timeoutMs?: number | null;
     }
   | { kind: "agent"; engine: string; profile: AgentProfile; timeoutMs?: number | null }
@@ -29,6 +31,8 @@ export type RunnerSpec =
       fallbackCredential?: CredentialDescriptor;
       /** File-backed fallback credential (#905), read lazily at dispatch. */
       fallbackApiKeyFile?: string;
+      /** Secret-store-backed fallback credential reference (#953), read lazily at dispatch. */
+      fallbackApiKeySecretRef?: string;
       fallbackTimeoutMs?: number | null;
       timeoutMs?: number | null;
     };
@@ -44,6 +48,7 @@ export function materializeLlmRunnerConnection(runner: Extract<RunnerSpec, { kin
     connection: runner.connection,
     ...(runner.credential ? { credential: runner.credential } : {}),
     ...(runner.apiKeyFile ? { apiKeyFile: runner.apiKeyFile } : {}),
+    ...(runner.apiKeySecretRef ? { apiKeySecretRef: runner.apiKeySecretRef } : {}),
     timeoutMs: runner.timeoutMs ?? null,
   });
 }
@@ -59,6 +64,7 @@ export function materializeLlmRunnerConnectionWithCredential(
       connection: runner.connection,
       ...(runner.credential ? { credential: runner.credential } : {}),
       ...(runner.apiKeyFile ? { apiKeyFile: runner.apiKeyFile } : {}),
+      ...(runner.apiKeySecretRef ? { apiKeySecretRef: runner.apiKeySecretRef } : {}),
       timeoutMs: runner.timeoutMs ?? null,
     },
     credentialValue,

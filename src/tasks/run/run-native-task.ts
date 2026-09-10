@@ -178,6 +178,24 @@ export async function runNativeTask(input: {
 
   let exitCode: number | null = null;
 
+  // #956: the task runner's OWN process (`akm task run`, launched by cron /
+  // launchd / schtasks, or forwarded a SIGTERM by the published launcher)
+  // had no way to end its detached, own-process-group
+  // child (spawned by `runManagedSubprocess` for the group-kill guarantee
+  // above) — a timeout or SIGTERM to the direct child would reap the whole
+  // group, but nothing tied THIS process's own termination to that same
+  // ladder, so a signal to the runner left its child running as an orphan.
+  // Aborting `runManagedSubprocess` here runs its normal SIGTERM→SIGKILL
+  // kill ladder against the child's process group.
+  const abortController = new AbortController();
+  const forwardTerminationSignal = (signal: NodeJS.Signals): void => {
+    abortController.abort(new Error(`task runner received ${signal}`));
+  };
+  const onSigterm = () => forwardTerminationSignal("SIGTERM");
+  const onSigint = () => forwardTerminationSignal("SIGINT");
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+
   try {
     // Re-resolve the authored root/cwd immediately before spawn so a
     // symlink, ancestor, bundle-root, or directory/file swap cannot redirect
@@ -192,7 +210,9 @@ export async function runNativeTask(input: {
     }
     // Managed spawn (src/core/subprocess.ts): process-GROUP kill so a timeout
     // reaps the whole command tree (no orphans), and a SIGTERM→SIGKILL ladder
-    // so a child that ignores SIGTERM can't wedge the run forever.
+    // so a child that ignores SIGTERM can't wedge the run forever. `signal`
+    // ties that same ladder to a termination signal received by this
+    // process itself (#956), not only to the timeout.
     const result = await runManagedSubprocess(cmd, {
       capture: true,
       cwd: task.cwd,
@@ -211,6 +231,7 @@ export async function runNativeTask(input: {
       // layer on top and break any resolved path containing a space.
       windowsVerbatimArguments: task.kind === "shell" && task.shell === "cmd",
       timeoutMs,
+      signal: abortController.signal,
       ...(input.spawnFn ? { spawnFn: input.spawnFn } : {}),
       ...(input.setTimeoutFn ? { setTimeoutFn: input.setTimeoutFn } : {}),
       ...(input.clearTimeoutFn ? { clearTimeoutFn: input.clearTimeoutFn } : {}),
@@ -254,6 +275,8 @@ export async function runNativeTask(input: {
     dbLines.push({ level: "error", line: `spawn_error=${msg}` });
     exitCode = 1;
   } finally {
+    process.off("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
     if (materialized) cleanupFrozenScript(materialized);
   }
 

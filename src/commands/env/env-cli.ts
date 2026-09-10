@@ -24,51 +24,18 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
 import { writeFileAtomic } from "../../core/common";
-import { loadConfig } from "../../core/config/config";
-import { makeEnvRef, resolveEnvPath, resolveEnvWriteTarget, withEnvSecretWrite } from "../../core/env-secret-ref";
+import {
+  listEnvsRecursive,
+  makeEnvRef,
+  resolveEnvPath,
+  resolveEnvWriteTarget,
+  sensitiveMarkerPath,
+  withEnvSecretWrite,
+} from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
-import { sensitiveMarkerPath } from "./marker-path";
-
-/**
- * Walk each stash's env files and return one entry per `.env` file, using the
- * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
- * `env/team/prod`, `env/team/.env` → `env/team/default`).
- */
-function listEnvsRecursive(
-  listKeysFn: (envPath: string) => { keys: string[] },
-): Array<{ ref: string; path: string; keys: string[] }> {
-  const result: Array<{ ref: string; path: string; keys: string[] }> = [];
-  for (const source of resolveSourceEntries(undefined, loadConfig())) {
-    const root = path.join(source.path, "env");
-    if (!fs.existsSync(root)) continue;
-
-    const walk = (dir: string): void => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
-        const canonical = deriveCanonicalAssetName("env", root, full);
-        if (!canonical) continue;
-        // Skip sensitive envs: a sibling .sensitive marker file suppresses listing.
-        const markerPath = sensitiveMarkerPath(full, "env");
-        if (fs.existsSync(markerPath)) continue;
-        const { keys } = listKeysFn(full);
-        result.push({ ref: makeEnvRef(canonical, source), path: full, keys });
-      }
-    };
-    walk(root);
-  }
-  return result;
-}
 
 const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all bundles with their key names (no values)" },

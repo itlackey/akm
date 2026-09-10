@@ -360,7 +360,7 @@ function snapshotRunnerSpec(
   if (kind === "llm") {
     assertKeys(
       cloned,
-      ["kind", "engine", "connection", "credential", "apiKeyFile", "timeoutMs"],
+      ["kind", "engine", "connection", "credential", "apiKeyFile", "apiKeySecretRef", "timeoutMs"],
       "execution runner material",
     );
     validateConnection(cloned.connection, "execution runner material.connection", !options.allowMissingLlmModel);
@@ -368,6 +368,9 @@ function snapshotRunnerSpec(
     // #905: a path, not the secret itself — as safe to freeze as `credential`'s
     // env-var name.
     validateOptionalString(cloned, "apiKeyFile", "execution runner material");
+    // #953: a `secret://<name>` reference, not the secret itself — same
+    // freeze-safety rationale as apiKeyFile above.
+    validateOptionalString(cloned, "apiKeySecretRef", "execution runner material");
   } else if (kind === "agent") {
     assertKeys(cloned, ["kind", "engine", "profile", "timeoutMs"], "execution runner material");
     validateProfile(cloned.profile, "execution runner material.profile");
@@ -381,6 +384,7 @@ function snapshotRunnerSpec(
         "fallbackConnection",
         "fallbackCredential",
         "fallbackApiKeyFile",
+        "fallbackApiKeySecretRef",
         "fallbackTimeoutMs",
         "timeoutMs",
       ],
@@ -398,6 +402,7 @@ function snapshotRunnerSpec(
       validateCredential(cloned.fallbackCredential, "execution runner material.fallbackCredential");
     }
     validateOptionalString(cloned, "fallbackApiKeyFile", "execution runner material");
+    validateOptionalString(cloned, "fallbackApiKeySecretRef", "execution runner material");
     if (own(cloned, "fallbackTimeoutMs")) {
       validateTimeout(cloned.fallbackTimeoutMs, "execution runner material.fallbackTimeoutMs");
     }

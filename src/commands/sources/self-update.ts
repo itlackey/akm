@@ -206,10 +206,13 @@ export function getAkmBinaryName(): string {
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
-export async function checkForUpdate(currentVersion: string): Promise<UpgradeCheckResponse> {
+export async function checkForUpdate(
+  currentVersion: string,
+  fetchOptions?: { timeout?: number; retries?: number },
+): Promise<UpgradeCheckResponse> {
   const installMethod = detectInstallMethod();
   const url = `https://api.github.com/repos/${REPO}/releases/latest`;
-  const response = await fetchWithRetry(url, { headers: githubHeaders() });
+  const response = await fetchWithRetry(url, { headers: githubHeaders() }, fetchOptions);
 
   if (!response.ok) {
     throw new Error(`Failed to check for updates: ${response.status} ${response.statusText}`);

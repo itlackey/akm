@@ -35,6 +35,7 @@ export {
   formatInfoPlain,
   formatInitPlain,
   formatListPlain,
+  formatModelsListPlain,
   formatRegistryAddPlain,
   formatRegistryListPlain,
   formatRegistryRemovePlain,

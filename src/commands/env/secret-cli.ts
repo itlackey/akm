@@ -41,6 +41,7 @@ import {
   makeSecretRef,
   resolveSecretPath,
   resolveSecretWriteTarget,
+  sensitiveMarkerPath,
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -49,7 +50,6 @@ import { warn } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
-import { sensitiveMarkerPath } from "./marker-path";
 
 function parseKeyListFlag(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;

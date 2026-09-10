@@ -267,3 +267,60 @@ describe("lock release on process.exit (SIGTERM-leak regression, #improve.lock)"
     expect(fs.existsSync(lock)).toBe(false);
   });
 });
+
+describe("probeLock: launcherPid (#956)", () => {
+  let dir: string;
+  let cleanup: Cleanup;
+  beforeEach(() => {
+    const r = sandboxXdgDataHome();
+    dir = r.dir;
+    cleanup = r.cleanup;
+  });
+  afterEach(() => cleanup());
+
+  test("a 'held' probe exposes the holder's launcherPid when the payload recorded one", () => {
+    const lock = path.join(dir, "index-rebuild.lock");
+    fs.writeFileSync(
+      lock,
+      JSON.stringify({ pid: process.pid, launcherPid: 4240, startedAt: new Date().toISOString() }),
+      "utf8",
+    );
+
+    const probe = probeLock(lock);
+    expect(probe.state).toBe("held");
+    if (probe.state === "held") {
+      expect(probe.holderPid).toBe(process.pid);
+      expect(probe.launcherPid).toBe(4240);
+    }
+  });
+
+  test("a 'held' probe has no launcherPid when the payload carries none (bare-pid or JSON without it)", () => {
+    const bareLock = path.join(dir, "bare.lock");
+    fs.writeFileSync(bareLock, String(process.pid), "utf8");
+    const bareProbe = probeLock(bareLock);
+    expect(bareProbe.state).toBe("held");
+    if (bareProbe.state === "held") expect(bareProbe.launcherPid).toBeUndefined();
+
+    const jsonLock = path.join(dir, "json-no-launcher.lock");
+    fs.writeFileSync(jsonLock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    const jsonProbe = probeLock(jsonLock);
+    expect(jsonProbe.state).toBe("held");
+    if (jsonProbe.state === "held") expect(jsonProbe.launcherPid).toBeUndefined();
+  });
+
+  test("a 'stale' probe (pid dead) still exposes the recorded launcherPid", () => {
+    const lock = path.join(dir, "stale.lock");
+    fs.writeFileSync(
+      lock,
+      JSON.stringify({ pid: 999_999, launcherPid: 4240, startedAt: new Date(0).toISOString() }),
+      "utf8",
+    );
+
+    const probe = probeLock(lock);
+    expect(probe.state).toBe("stale");
+    if (probe.state === "stale") {
+      expect(probe.reason).toBe("pid_dead");
+      expect(probe.launcherPid).toBe(4240);
+    }
+  });
+});

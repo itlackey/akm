@@ -55,7 +55,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { UsageError } from "../../core/errors";
+import { TransientError } from "../../core/errors";
 import { type WorkflowRunRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
@@ -146,7 +146,7 @@ function errorMessage(err: unknown): string {
 
 /** `acquireRunLease`'s exact refusal shape (run-workflow.ts) — matched by text, since this module cannot import that private helper. */
 function isLeaseBusyError(err: unknown): boolean {
-  return err instanceof UsageError && err.message.includes("is already being driven by engine");
+  return err instanceof TransientError && err.message.includes("is already being driven by engine");
 }
 
 /** §3.4's exact `child_workflow_failed` message. */

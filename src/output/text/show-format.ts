@@ -24,6 +24,10 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
   }
   if (r.origin !== undefined) lines.push(`# origin: ${String(r.origin)}`);
   if (r.action) lines.push(`# ${String(r.action)}`);
+  if (Array.isArray(r.keys)) {
+    const keys = (r.keys as unknown[]).map(String);
+    lines.push(keys.length > 0 ? `keys: ${keys.join(", ")}` : "(no keys)");
+  }
   if (r.description) lines.push(`description: ${String(r.description)}`);
   if (r.workflowTitle) lines.push(`workflowTitle: ${String(r.workflowTitle)}`);
   if (r.agent) lines.push(`agent: ${String(r.agent)}`);

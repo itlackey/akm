@@ -113,9 +113,9 @@ exact asset name:
 akm curate "deploy a Bun app"
 ```
 
-Unlike `akm search`, `akm curate` reranks by intent, attaches a preview and
-run details per hit, adds related support refs, and summarizes the set — it's
-the usual starting point for an agent.
+Unlike `akm search`, `akm curate` attaches a preview and run details per hit,
+adds related support refs, and summarizes the set — it's the usual starting
+point for an agent.
 
 **Success check:** the response includes a small shortlist; each entry
 carries a `ref` field and a direct follow-up command such as `akm show <ref>`
