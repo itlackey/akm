@@ -25,7 +25,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { drainEmbeddingQueue } from "../../../src/indexer/drain";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
-import type { EmbeddingBatchCommit, EmbeddingBatchSkip } from "../../../src/llm/embedders/remote";
+import type {
+  EmbeddingBatchCommit,
+  EmbeddingBatchSkip,
+  EmbeddingRequestPacking,
+} from "../../../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../../../src/llm/embedders/types";
 import type { Database } from "../../../src/storage/database";
 import { ensureFileAndUnitTextTables } from "../../../src/storage/repositories/files-repository";
@@ -280,5 +284,142 @@ describe("drainEmbeddingQueue (B4)", () => {
     const result = await drainEmbeddingQueue(db, baseConfig(), {});
     expect(calls).toBe(0);
     expect(result).toEqual({ pending: 0, embedded: 0, failed: 0, skipped: 0, identity: null });
+  });
+});
+
+/**
+ * B5: `RemoteEmbedder` takes its request window and slots from
+ * `probeProviderLimits` via `drain.ts`'s `resolveEmbeddingPacking`, not from
+ * the retired `embedding.maxTokens`/`batchSize`/`contextLength` config keys
+ * — these tests capture the `packing` argument `embedBatch()` mocks receive
+ * (their 6th, `EmbedBatchMock` above only declares 5 since no earlier test
+ * needed it) to pin exactly what drain.ts derives and threads through, for
+ * both an unprobed ("default") endpoint and a real probed one.
+ */
+type EmbedBatchMockWithPacking = (
+  texts: string[],
+  config?: AkmConfig["embedding"],
+  signal?: AbortSignal,
+  onSkip?: (skip: EmbeddingBatchSkip) => unknown,
+  onBatch?: EmbeddingBatchCommit,
+  packing?: EmbeddingRequestPacking,
+) => Promise<(EmbeddingVector | undefined)[]>;
+
+describe("drainEmbeddingQueue: packing sourced from probeProviderLimits, not config (B5)", () => {
+  test("an endpoint that answers neither /props nor /api/show gets the default window, unknown, no exact counter", async () => {
+    seedUnitTexts(db, ["h1"]);
+
+    let capturedPacking: EmbeddingRequestPacking | undefined;
+    const mock: EmbedBatchMockWithPacking = async (texts, _config, _signal, _onSkip, onBatch, packing) => {
+      capturedPacking = packing;
+      const vectors = texts.map((_t, i) => stableVec(i));
+      onBatch?.(
+        texts.map((_t, i) => i),
+        vectors,
+        "mock-model",
+      );
+      return vectors;
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: mock });
+
+    // baseConfig()'s localhost:1 fails fast (connection refused) — the same
+    // "default" outcome an OpenAI-compatible server or gateway gets.
+    await drainEmbeddingQueue(db, baseConfig(), {});
+
+    expect(capturedPacking?.tokenBudget).toBe(8_192);
+    expect(capturedPacking?.windowIsKnown).toBe(false);
+    expect(capturedPacking?.countTokens).toBeUndefined();
+    expect(capturedPacking?.ollamaNumCtx).toBeUndefined();
+  });
+
+  test("a real llama.cpp probe's window/slots reach packing.tokenBudget, windowIsKnown true, no ollamaNumCtx", async () => {
+    seedUnitTexts(db, ["h1"]);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/props") {
+          return new Response(JSON.stringify({ default_generation_settings: { n_ctx: 2048 }, total_slots: 3 }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // No /tokenize support — countTokens stays undefined.
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    try {
+      let capturedPacking: EmbeddingRequestPacking | undefined;
+      const mock: EmbedBatchMockWithPacking = async (texts, _config, _signal, _onSkip, onBatch, packing) => {
+        capturedPacking = packing;
+        const vectors = texts.map((_t, i) => stableVec(i));
+        onBatch?.(
+          texts.map((_t, i) => i),
+          vectors,
+          "mock-model",
+        );
+        return vectors;
+      };
+      overrideSeam(_setEmbedderForTests, { embedBatch: mock });
+
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        embedding: { endpoint: `http://localhost:${server.port}`, model: "mock-model" },
+      } as AkmConfig;
+      await drainEmbeddingQueue(db, config, {});
+
+      expect(capturedPacking?.tokenBudget).toBe(2_048);
+      expect(capturedPacking?.windowIsKnown).toBe(true);
+      expect(capturedPacking?.countTokens).toBeUndefined();
+      expect(capturedPacking?.ollamaNumCtx).toBeUndefined();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a real Ollama probe's window also sets packing.ollamaNumCtx", async () => {
+    seedUnitTexts(db, ["h1"]);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/props") return new Response(null, { status: 404 });
+        if (pathname === "/api/show") {
+          return new Response(JSON.stringify({ model_info: { "some-arch.context_length": 4096 } }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    try {
+      let capturedPacking: EmbeddingRequestPacking | undefined;
+      const mock: EmbedBatchMockWithPacking = async (texts, _config, _signal, _onSkip, onBatch, packing) => {
+        capturedPacking = packing;
+        const vectors = texts.map((_t, i) => stableVec(i));
+        onBatch?.(
+          texts.map((_t, i) => i),
+          vectors,
+          "mock-model",
+        );
+        return vectors;
+      };
+      overrideSeam(_setEmbedderForTests, { embedBatch: mock });
+
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        embedding: { endpoint: `http://localhost:${server.port}`, model: "mock-model" },
+      } as AkmConfig;
+      await drainEmbeddingQueue(db, config, {});
+
+      expect(capturedPacking?.tokenBudget).toBe(4_096);
+      expect(capturedPacking?.windowIsKnown).toBe(true);
+      expect(capturedPacking?.ollamaNumCtx).toBe(4_096);
+    } finally {
+      server.stop(true);
+    }
   });
 });

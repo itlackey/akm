@@ -211,22 +211,6 @@
           "type": "string",
           "minLength": 1
         },
-        "maxInputTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "maxTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "batchSize": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "contextLength": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
         "ollamaOptions": {
           "type": "object",
           "properties": {
@@ -1911,22 +1895,6 @@
               "type": "string",
               "minLength": 1
             },
-            "maxInputTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "maxTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "batchSize": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "contextLength": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
             "ollamaOptions": {
               "type": "object",
               "properties": {
@@ -3488,22 +3456,6 @@
         "localModel": {
           "type": "string",
           "minLength": 1
-        },
-        "maxInputTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "maxTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "batchSize": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "contextLength": {
-          "type": "integer",
-          "exclusiveMinimum": 0
         },
         "ollamaOptions": {
           "type": "object",
