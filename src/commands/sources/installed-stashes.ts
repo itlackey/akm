@@ -387,11 +387,15 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       config: {
         sourceCount: getSources(updatedConfig).length,
       },
+      // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+      // removed (#index-redesign W6) — this response's own `index` shape is
+      // unchanged, so bridge from the renamed source field;
+      // `directoriesSkipped` was already always 0.
       index: {
         mode: index.mode,
         totalEntries: index.totalEntries,
-        directoriesScanned: index.directoriesScanned,
-        directoriesSkipped: index.directoriesSkipped,
+        directoriesScanned: index.sourcesScanned,
+        directoriesSkipped: 0,
       },
     };
   }
@@ -420,21 +424,25 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
+    // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+    // removed (#index-redesign W6) — this response's own `index` shape is
+    // unchanged, so bridge from the renamed source field;
+    // `directoriesSkipped` was already always 0.
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
     },
   };
 }
 
 // ── akmUpdate helpers ────────────────────────────────────────────────────────
 
-type UpdateIndexSummary = Pick<
-  Awaited<ReturnType<typeof akmIndex>>,
-  "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"
-> & { scanComplete?: boolean; verification?: Awaited<ReturnType<typeof akmIndex>>["verification"] };
+type UpdateIndexSummary = Pick<Awaited<ReturnType<typeof akmIndex>>, "mode" | "totalEntries" | "sourcesScanned"> & {
+  scanComplete?: boolean;
+  verification?: Awaited<ReturnType<typeof akmIndex>>["verification"];
+};
 
 /**
  * Read the current index generation without creating or hydrating anything.
@@ -447,14 +455,13 @@ type UpdateIndexSummary = Pick<
 function readCurrentIndexSummary(): UpdateIndexSummary {
   const db = openReadonlyExistingDatabase(getDbPath());
   if (!db) {
-    return { mode: "incremental", totalEntries: 0, directoriesScanned: 0, directoriesSkipped: 0 };
+    return { mode: "incremental", totalEntries: 0, sourcesScanned: 0 };
   }
   try {
     return {
       mode: "incremental",
       totalEntries: getAllEntries(db).length,
-      directoriesScanned: 0,
-      directoriesSkipped: 0,
+      sourcesScanned: 0,
     };
   } finally {
     closeDatabase(db);
@@ -486,11 +493,15 @@ function buildUpdateResponse(
     config: {
       sourceCount: getSources(finalConfig).length,
     },
+    // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+    // removed (#index-redesign W6) — `UpdateResponse["index"]`'s own shape is
+    // unchanged, so bridge from the renamed source field;
+    // `directoriesSkipped` was already always 0.
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
       ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
       // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
       // verified `semanticStatus`. When no pass ran this update (the

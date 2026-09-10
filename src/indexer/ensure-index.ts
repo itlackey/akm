@@ -190,6 +190,11 @@ async function runInlineReindex(
   options: { signal?: AbortSignal; hydrateSources?: boolean } = {},
 ): Promise<boolean> {
   const { akmIndex } = await import("./indexer.js");
+  // The embedding drain on this implicit path is bounded (see
+  // `IndexOptions.implicit`, src/indexer/indexer.ts): a read command's
+  // inline bootstrap embeds one provider request's worth of units and
+  // leaves the rest of the durable queue to a later drain, so a first
+  // `search`/`show` against a fresh index never blocks on the whole corpus.
   await akmIndex({
     stashDir,
     implicit: true,

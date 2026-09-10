@@ -20,7 +20,13 @@ import { getEntryCount } from "../../storage/repositories/index-entries-reposito
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 
 export interface IndexStatusUnits {
-  /** Distinct unit hashes the current `entry_units` mapping references. */
+  /**
+   * Distinct unit hashes in `unit_texts` — the drain's own candidate set
+   * (`drainEmbeddingQueue`'s `selectAllUnitHashes`), not `entry_units`. The
+   * two diverge whenever an orphaned `unit_texts` row exists (a unit no
+   * entry references any more), so mirroring the drain's real candidate set
+   * here is what keeps this count truthful about the work a drain will do.
+   */
   total: number;
   /** Of those, hashes with a vector for the active embedding identity. */
   withVector: number;
@@ -57,13 +63,20 @@ function emptyStatus(indexPath: string): IndexStatusResponse {
 }
 
 function readUnitsStatus(db: Database, identity: string | null): IndexStatusUnits {
-  const total = (db.prepare("SELECT COUNT(DISTINCT unit_hash) AS n FROM entry_units").get() as { n: number }).n;
+  // Mirrors `drainEmbeddingQueue`'s own candidate set (`selectAllUnitHashes`,
+  // src/indexer/drain.ts) — `unit_texts`, not `entry_units` — so a stale/
+  // orphaned unit_texts row is counted here exactly as it will be by the
+  // next drain, instead of understating the backlog. (Reconcile prunes the
+  // hashes each write itself replaced, and sweeps the whole table at the end
+  // of a full run, so orphans are bounded — but "bounded" is not "none", and
+  // this count must match the drain either way.)
+  const total = (db.prepare("SELECT COUNT(DISTINCT unit_hash) AS n FROM unit_texts").get() as { n: number }).n;
   const withVector = identity
     ? (
         db
           .prepare(
-            "SELECT COUNT(DISTINCT eu.unit_hash) AS n FROM entry_units eu " +
-              "JOIN units u ON u.unit_hash = eu.unit_hash AND u.identity = ?",
+            "SELECT COUNT(DISTINCT ut.unit_hash) AS n FROM unit_texts ut " +
+              "JOIN units u ON u.unit_hash = ut.unit_hash AND u.identity = ?",
           )
           .get(identity) as { n: number }
       ).n

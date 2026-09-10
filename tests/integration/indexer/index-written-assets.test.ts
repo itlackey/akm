@@ -139,6 +139,66 @@ describe("indexWrittenAssets", () => {
     expect(idx.ftsCount).toBeGreaterThan(0);
   });
 
+  test("a write into a stash that is ALSO a configured named bundle uses the configured bundle id, not a path-derived slug of the raw path (#W1)", async () => {
+    // The working stash (AKM_BUNDLE_DIR) is ALSO configured as `bundles.myproj`
+    // — the exact "config-owned stash" shape the repro used: the bundle-id
+    // fallback must resolve the CONFIGURED id here, not slug the raw path
+    // into something else (e.g. "stash").
+    writeSandboxConfig({ semanticSearchMode: "off", bundles: { myproj: { path: stashDir, writable: true } } });
+    const filePath = writeMemory("myproj-note", "Notes proving the write lands under the configured bundle id.");
+
+    await indexWrittenAssets(stashDir, [filePath]);
+
+    const dbAfterWrite = openExistingDatabase(getDbPath());
+    let writeRef: string | undefined;
+    try {
+      writeRef = (
+        dbAfterWrite.prepare("SELECT item_ref FROM entries WHERE file_path = ?").get(filePath) as
+          | { item_ref: string }
+          | undefined
+      )?.item_ref;
+    } finally {
+      closeDatabase(dbAfterWrite);
+    }
+    expect(writeRef).toStartWith("myproj//");
+
+    // A subsequent full `akm index` reconciling the SAME file under its
+    // configured bundle id must converge on the identical row — not leave a
+    // stale duplicate under a path-derived slug the full index never touches
+    // (the W1 "undeletable row" failure mode).
+    await akmIndex({ stashDir });
+
+    const dbAfterFull = openExistingDatabase(getDbPath());
+    try {
+      const rows = dbAfterFull.prepare("SELECT item_ref FROM entries WHERE file_path = ?").all(filePath) as Array<{
+        item_ref: string;
+      }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.item_ref).toBe(writeRef);
+    } finally {
+      closeDatabase(dbAfterFull);
+    }
+  });
+
+  test("akmIndex's own IndexResponse envelope reports entriesUpserted/sourcesScanned truthfully, not generatedMetadata/directoriesScanned+Skipped (#W5/#W6)", async () => {
+    writeMemory("envelope-note", "Proves the response envelope's renamed fields.");
+
+    const result = await akmIndex({ stashDir });
+
+    // W5: renamed from `generatedMetadata` — same value as before (reconcile's
+    // own added+changed count), just no longer misnamed as LLM-generated
+    // metadata coverage (`metadata_enhance` is off by default in this suite's
+    // config, so a nonzero LLM-enrichment count would be a lie either way).
+    expect(result.entriesUpserted).toBeGreaterThan(0);
+    expect(result).not.toHaveProperty("generatedMetadata");
+    // W6: renamed from `directoriesScanned` (reconcile is a flat per-file
+    // stat walk, never a directory walk); `directoriesSkipped` — a hardcoded
+    // 0 with no real signal behind it — is dropped outright.
+    expect(result.sourcesScanned).toBeGreaterThan(0);
+    expect(result).not.toHaveProperty("directoriesScanned");
+    expect(result).not.toHaveProperty("directoriesSkipped");
+  });
+
   test("fail-open: absent index.db is a silent no-op (no DB created)", async () => {
     fs.rmSync(getDbPath());
     const filePath = writeMemory("orphan-note", "Body.");
