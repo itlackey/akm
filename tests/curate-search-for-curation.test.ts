@@ -49,7 +49,20 @@ describe("searchForCuration", () => {
       const refs = result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`));
       expect(refs).toContain("scripts/docker-clean.sh");
       expect(refs).toContain("commands/cleanup-audit");
-      expect(refs.indexOf("scripts/docker-clean.sh")).toBeLessThan(refs.indexOf("commands/cleanup-audit"));
+      // Search fix round 2 / item 2: the lexical tier ladder no longer
+      // early-exits at the first non-empty tier, so docker-clean.sh is now
+      // found directly by the base 3-token query too (previously it was
+      // fallback-only and reached the front only via the weak-lexical-base
+      // promotion path in `mergeCurateSearchResponses`). That function's own
+      // merge is deliberately base-order-preserving for a hit already in the
+      // base result (see its doc comment) — array position there is not a
+      // score order, only `curateSearchResults`'s downstream selector
+      // re-sorts by score — so assert relevance via score, which is what
+      // actually reaches `akm curate`'s output order.
+      const byRef = new Map(result.hits.map((hit) => [("ref" in hit ? hit.ref : `registry:${hit.id}`), hit]));
+      const dockerScore = byRef.get("scripts/docker-clean.sh")?.score ?? 0;
+      const auditScore = byRef.get("commands/cleanup-audit")?.score ?? 0;
+      expect(dockerScore).toBeGreaterThan(auditScore);
     });
   });
 

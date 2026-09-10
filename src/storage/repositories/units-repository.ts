@@ -25,7 +25,7 @@
 
 import { ConfigError } from "../../core/errors";
 import type { EmbeddingVector } from "../../llm/embedders/types";
-import type { Database } from "../database";
+import type { Database, SqlValue } from "../database";
 import type { DbVecResult } from "./index-entry-types";
 import { getMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
@@ -337,12 +337,68 @@ export function deleteEntryUnits(db: Database, entryIds: readonly number[]): voi
 const UNIT_SEARCH_OVERFETCH = 4;
 
 /**
+ * Which of a KNN candidate batch's unit hashes have an owning entry (via
+ * `entry_units` → `entries`) satisfying both a `typeFilter` and an
+ * `excludeTypes` predicate at once (index-redesign search-fix item 3).
+ *
+ * vec0 rejects a KNN query that also filters on an auxiliary column ("An
+ * illegal WHERE constraint was provided on a vec0 auxiliary column in a KNN
+ * query"), so the type predicate cannot be pushed INTO the `embedding MATCH`
+ * query itself. Solved instead by joining AROUND the KNN: run the KNN
+ * untyped (already over-fetching via {@link UNIT_SEARCH_OVERFETCH}), then
+ * filter the raw candidate hashes through `entry_units`/`entries` BEFORE the
+ * `k` cap below — the same "filter before the cap" fix as the lexical side
+ * (`runUnitsFtsQuery`, db-search.ts), so an eligible neighbor is never pushed
+ * out of the window by ineligible ones that rank closer.
+ */
+function eligibleUnitHashesByType(
+  db: Database,
+  hashes: readonly string[],
+  typeOpts: { typeFilter?: string[]; excludeTypes?: string[] },
+): Set<string> {
+  const eligible = new Set<string>();
+  const clauses: string[] = [];
+  const baseParams: SqlValue[] = [];
+  if (typeOpts.typeFilter?.length) {
+    clauses.push(`e.type IN (${typeOpts.typeFilter.map(() => "?").join(",")})`);
+    baseParams.push(...typeOpts.typeFilter);
+  }
+  if (typeOpts.excludeTypes?.length) {
+    clauses.push(`e.type NOT IN (${typeOpts.excludeTypes.map(() => "?").join(",")})`);
+    baseParams.push(...typeOpts.excludeTypes);
+  }
+  for (let offset = 0; offset < hashes.length; offset += SQLITE_CHUNK_SIZE) {
+    const chunk = hashes.slice(offset, offset + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT eu.unit_hash AS hash FROM entry_units eu JOIN entries e ON e.id = eu.entry_id
+         WHERE eu.unit_hash IN (${placeholders}) AND ${clauses.join(" AND ")}`,
+      )
+      .all(...chunk, ...baseParams) as Array<{ hash: string }>;
+    for (const row of rows) eligible.add(row.hash);
+  }
+  return eligible;
+}
+
+/**
  * KNN search over `units_vec` for the given `identity`, nearest first.
  * Throws a {@link ConfigError} when sqlite-vec is not loaded — there is no JS
  * fallback for units (docs/plans/index-fragment-vectors.md), so the caller is
  * expected to catch this and fall back to lexical search.
+ *
+ * `typeOpts`, when given, is applied to the raw KNN candidates BEFORE the `k`
+ * cap (see {@link eligibleUnitHashesByType} for how — vec0 cannot filter this
+ * inside the KNN query itself), the same fix `runUnitsFtsQuery` applies on
+ * the lexical side.
  */
-export function searchUnits(db: Database, query: EmbeddingVector, k: number, identity: string): UnitSearchHit[] {
+export function searchUnits(
+  db: Database,
+  query: EmbeddingVector,
+  k: number,
+  identity: string,
+  typeOpts?: { typeFilter?: string[]; excludeTypes?: string[] },
+): UnitSearchHit[] {
   if (!isVecAvailable(db)) {
     throw new ConfigError(
       "sqlite-vec is not loaded, so unit search cannot run its vec0 KNN query. Fall back to lexical search.",
@@ -363,8 +419,20 @@ export function searchUnits(db: Database, query: EmbeddingVector, k: number, ide
     distance: number;
   }>;
 
-  return rows
-    .filter((row) => row.identity === identity)
+  const identityFiltered = rows.filter((row) => row.identity === identity);
+  const hasTypeFilter = Boolean(typeOpts?.typeFilter?.length || typeOpts?.excludeTypes?.length);
+  const typed = hasTypeFilter
+    ? (() => {
+        const eligible = eligibleUnitHashesByType(
+          db,
+          [...new Set(identityFiltered.map((row) => row.hash))],
+          typeOpts!,
+        );
+        return identityFiltered.filter((row) => eligible.has(row.hash));
+      })()
+    : identityFiltered;
+
+  return typed
     .slice(0, k)
     .map(({ unitId, hash, distance }) => ({ unitId, hash, distance }));
 }

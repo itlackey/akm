@@ -179,14 +179,20 @@ describe("Fuzzy prefix fallback in searchUnitsLexical", () => {
       });
       seedUnitsForAllEntries(db);
 
-      // "deploy kube" — "deploy" matches exactly, "kube" needs prefix fallback.
-      // Should find "deploy-kubernetes" because "deploy" AND "kube*" matches.
+      // "deploy kube" — "deploy" matches exactly, "kube" needs prefix
+      // fallback: "deploy-kubernetes" wins the prefix tier ("deploy"
+      // "kube*"). Item 2 (search fix round 2) — the tier ladder is a
+      // priority order, not an early exit — so with capacity to spare
+      // (k=10) it also tops up with the relaxed tier, where "deploy-docker"
+      // legitimately matches on "deploy" alone; magnitude fusion
+      // (ranking.ts's fuseByEntry) is what makes surfacing it safe, since a
+      // relaxed match no longer competes on RANK with the stronger prefix
+      // hit the way it would have under reciprocal rank fusion.
       const results = searchEntries(db, "deploy kube", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
-      const names = results.map((r) => r.name);
-      expect(names).toContain("deploy-kubernetes");
-      // "deploy-docker" should NOT match since "kube*" doesn't match "docker"
-      expect(names).not.toContain("deploy-docker");
+      const byName = new Map(results.map((r) => [r.name, r]));
+      expect(byName.get("deploy-kubernetes")?.lexicalMatch).toBe("prefix");
+      expect(byName.get("deploy-docker")?.lexicalMatch).toBe("relaxed");
     } finally {
       closeDatabase(db);
     }

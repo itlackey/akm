@@ -343,7 +343,11 @@ export interface CuratePackResult {
  * matched section, not the whole entry `item.ref` now always addresses; see
  * index-redesign-contract.md B5f item 1), then greedily accumulate hits, in
  * the ranking order `curateSearchResults` already produced, until the next
- * hit would exceed `budgetTokens`.
+ * hit would exceed `budgetTokens`. Each packed item's `ref` is that SAME
+ * fetched ref (`item.selectedRef ?? item.ref`), mirroring
+ * `enrichCuratedStashHit`'s own `contentRef` convention — labelling a packed
+ * fragment with the bare entry ref would let a later `akm show <ref>` return
+ * a different, larger document than what was actually packed and budgeted.
  *
  * Registry hits are never packed — only `CuratedStashItem`s (locked
  * contract, AGENTS.md: registry results stay separate/opt-in).
@@ -358,9 +362,17 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   let used = 0;
 
   for (const item of stashItems) {
+    // item 4 — record the ref actually FETCHED (`contentRef`), mirroring
+    // `enrichCuratedStashHit`'s own convention: `item.ref` is now always the
+    // bare entry ref, but a body-only match's content came from the
+    // fragment-qualified `selectedRef`. Recording `item.ref` here labelled a
+    // packed fragment with the whole entry's ref, so a consumer that later
+    // ran `akm show <that ref>` got a different, larger document than what
+    // was actually packed and budgeted.
+    const contentRef = item.selectedRef ?? item.ref;
     let shown: ShowResponse | undefined;
     try {
-      shown = await akmShowUnified({ ref: item.selectedRef ?? item.ref, skipLogging: true });
+      shown = await akmShowUnified({ ref: contentRef, skipLogging: true });
     } catch {
       continue;
     }
@@ -368,7 +380,7 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
     const tokens = estimateTokenCount(content);
 
     if (used + tokens <= budgetTokens) {
-      packed.push({ ref: item.ref, tokens, content });
+      packed.push({ ref: contentRef, tokens, content });
       used += tokens;
       continue;
     }
@@ -377,7 +389,7 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
       const remaining = budgetTokens - used;
       if (remaining > 0) {
         const truncated = content.slice(0, remaining * 4);
-        packed.push({ ref: item.ref, tokens: estimateTokenCount(truncated), content: truncated });
+        packed.push({ ref: contentRef, tokens: estimateTokenCount(truncated), content: truncated });
         used += estimateTokenCount(truncated);
       }
     }

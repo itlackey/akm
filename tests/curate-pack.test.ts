@@ -186,7 +186,12 @@ describe("packCuratedHits", () => {
 
       const packed = await packCuratedHits(curateResponse([item], result.query), 10_000);
       expect(packed.items).toHaveLength(1);
-      expect(packed.items[0]?.ref).toBe("knowledge/fragment-curate");
+      // item 4 — the packed `ref` is the ref actually FETCHED (`selectedRef`,
+      // the fragment), not the bare entry ref: `packCuratedHits` fetches via
+      // `item.selectedRef ?? item.ref` but used to record `ref: item.ref`,
+      // so a consumer running `akm show <that ref>` got the whole entry —
+      // a different, larger document than what was packed and budgeted.
+      expect(packed.items[0]?.ref).toBe(item.selectedRef);
       expect(packed.items[0]?.content).toContain("NeedleCurateProof");
       // Fragment-scoped: the filler paragraph elsewhere in the same document
       // is NOT pulled in — proof this packed the matched section, not the
