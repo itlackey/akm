@@ -2343,7 +2343,7 @@ akm improve --require-engines          # for scheduled runs: abort (exit 78) ins
 akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
 akm improve --plan --strategy thorough # preview thorough's resolved engine/model routing; nothing is dispatched
-akm improve lessons/my-lesson --show-prompt # print the composed reflect prompt for one asset; no lock/index/engine call
+akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
@@ -2364,7 +2364,7 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
 | `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
-| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. JSON/yaml output carries the prompt as a `prompt` field alongside the resolved `engine`/`engineKind`; text output (the default) prints the prompt itself, unwrapped. |
+| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Commit (and optionally push) the git-backed primary bundle when the run finishes. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the end-of-run sync commit when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -2477,11 +2477,12 @@ default probe-on behavior) to check whether a named engine actually answers.
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
 proposal gathering `akm improve`'s live reflect step uses — and prints it
-without acquiring a dispatch lease, so it never calls an engine. Use it to
-confirm by eye that recent feedback is framed as an unverified report to
-investigate (never a fact to insert verbatim) and that the response contract
-tells the model never to emit the truncation marker or any content from
-outside the shown asset.
+without acquiring a dispatch lease, so it never calls an engine. Add
+`--format text` (the default JSON/yaml envelope escapes the prompt into one
+line, which defeats a by-eye read) to confirm by eye that recent feedback is
+framed as an unverified report to investigate (never a fact to insert
+verbatim) and that the response contract tells the model never to emit the
+truncation marker or any content from outside the shown asset.
 
 When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`. The deterministic search ranking also prefers
