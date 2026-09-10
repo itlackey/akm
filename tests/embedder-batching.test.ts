@@ -450,7 +450,7 @@ describe("RemoteEmbedder.embedBatch: run-scoped adaptive request budget after a 
     // token count and the new (three-quarters, 8000 -> 6000) budget.
     const budgetLines = committed.filter((c) => c.outcome === "budget-lowered");
     expect(budgetLines).toHaveLength(1);
-    expect(budgetLines[0]?.reason).toContain("request budget lowered to 6000 for the rest of this run");
+    expect(budgetLines[0]?.reason).toContain("request budget lowered to 6,000 for the rest of this run");
   });
 
   test("a second rejection after the shrink does not shrink the budget again", async () => {

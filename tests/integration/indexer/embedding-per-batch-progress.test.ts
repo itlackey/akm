@@ -255,6 +255,64 @@ describe("generateEmbeddingsForDb: per-batch progress and final outcome line (#9
     }
   }, 15_000);
 
+  test("a context-size rejection prints one 'budget lowered' notice, then the split retry's own settled lines (#954)", async () => {
+    const db = openIndexDatabase();
+    try {
+      seedEntries(db, 4);
+      let requestCount = 0;
+      server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          requestCount++;
+          const body = (await request.json()) as { input: string[] };
+          // Only the very first provider request of the run is rejected —
+          // every request after it (the split-and-retry's own halves)
+          // succeeds regardless of size, so this stays a deterministic,
+          // fast wiring test rather than reproducing the field's exact
+          // token-density math (that math is covered at the RemoteEmbedder
+          // level by tests/embedder-batching.test.ts).
+          if (requestCount === 1) {
+            return new Response(JSON.stringify({ error: { message: "context length exceeded" } }), {
+              status: 413,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0], index: i }));
+          return new Response(JSON.stringify({ data, model: "mock" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      });
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        embedding: { endpoint: `http://localhost:${server.port}`, model: "mock", dimension: 3 },
+      } as AkmConfig;
+
+      const messages: string[] = [];
+      const result = await generateEmbeddingsForDb(db, config, (e) => messages.push(e.message));
+      expect(result.success).toBe(true);
+
+      // Exactly one budget-lowered notice: three quarters of the default
+      // 6000-token budget (DEFAULT_TOKEN_BUDGET, #954), rounded.
+      const budgetLines = messages.filter((m) => m.includes("request budget lowered to"));
+      expect(budgetLines).toHaveLength(1);
+      expect(budgetLines[0]).toMatch(
+        /^\[embed\] batch 1\/1: 4 docs, [\d,]+ tokens → provider rejected [\d,]+ tokens as over its context; request budget lowered to 4,500 for the rest of this run$/,
+      );
+
+      // The split-and-retry's own two halves each settle normally, and
+      // every document still ends up stored — the notice above describes
+      // an in-flight rejection, not a final outcome.
+      const storedLines = messages.filter((m) => m.startsWith("[embed] batch ") && m.includes("stored"));
+      expect(storedLines).toHaveLength(2);
+      const finalLine = messages.find((m) => m.startsWith("Stored "));
+      expect(finalLine).toContain("Stored 4 embeddings");
+      expect(finalLine).toContain("0 oversized skipped, 0 timed out, 0 failed.");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   test("the final line reports oversized/timed-out/failed counts, and lists the first 20 oversized documents by default", async () => {
     const db = openIndexDatabase();
     try {

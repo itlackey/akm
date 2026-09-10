@@ -603,7 +603,7 @@ export class RemoteEmbedder implements Embedder {
       }
 
       warnVerbose(
-        `[embed] provider rejected a ${rejectedRequestTokens}-token request as over its context; request budget lowered to ${effectiveTokenBudget} for the rest of this run`,
+        `[embed] provider rejected a ${rejectedRequestTokens}-token request as over its context; request budget lowered to ${effectiveTokenBudget.toLocaleString()} for the rest of this run`,
       );
       commitBatch(
         rejectedIndices,
@@ -616,7 +616,7 @@ export class RemoteEmbedder implements Embedder {
           requestTokens: rejectedRequestTokens,
           elapsedMs: 0,
           outcome: "budget-lowered",
-          reason: `provider rejected ${rejectedRequestTokens.toLocaleString()} tokens as over its context; request budget lowered to ${effectiveTokenBudget} for the rest of this run`,
+          reason: `provider rejected ${rejectedRequestTokens.toLocaleString()} tokens as over its context; request budget lowered to ${effectiveTokenBudget.toLocaleString()} for the rest of this run`,
         },
       );
     };

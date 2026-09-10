@@ -669,6 +669,23 @@ export async function generateEmbeddingsForDb(
           }
           return;
         }
+        // #954: a "budget-lowered" event is the same kind of notice as
+        // "retrying" above — the run's first context-size rejection just
+        // shrank the request budget for everything not yet dispatched, but
+        // THIS rejected batch's own indices are still being split and
+        // retried by the embedder (their real stored/failed outcome lands in
+        // a later onBatch call). Nothing here has settled, so it must never
+        // touch storage, only report the notice — one line, at most once per
+        // run.
+        if (outcome?.outcome === "budget-lowered") {
+          if (reportPerBatchLine) {
+            onProgress({
+              phase: "embeddings",
+              message: `[embed] batch ${outcome.batchIndex}/${outcome.batchCount}: ${outcome.docCount} docs, ${outcome.requestTokens.toLocaleString()} tokens → ${outcome.reason}`,
+            });
+          }
+          return;
+        }
         if (model) observedModel = model;
         // A batch that delivered at least one real embedding proves the
         // provider is currently answering — reset both circuit-breaker
