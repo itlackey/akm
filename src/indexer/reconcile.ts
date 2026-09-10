@@ -145,6 +145,18 @@ interface FileResult {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
+ * Prefix of the per-root "done with this root" progress line
+ * (`"${RECONCILE_ROOT_PROGRESS_PREFIX}<path>": N files scanned."`), one per
+ * root reconciled. Exported so a caller juggling several `onProgress`
+ * sources (`stash-cli.ts`'s `akm index`) can recognize — and, outside
+ * `--verbose`, suppress — this specific high-frequency line by prefix rather
+ * than re-deriving its own copy of the pattern (#954), while still always
+ * showing the aggregate reconcile-totals line `akmIndex` emits separately
+ * after this whole walk finishes.
+ */
+export const RECONCILE_ROOT_PROGRESS_PREFIX = 'Reconciled "';
+
+/**
  * Stat-walk every root, hash files whose (size, mtime) moved or are new,
  * derive new blob hashes, delete gone paths. Idempotent.
  */
@@ -355,7 +367,7 @@ export async function reconcileRoots(
       );
     }
 
-    opts?.onProgress?.(`Reconciled "${root.path}": ${walked.files.length} files scanned.`);
+    opts?.onProgress?.(`${RECONCILE_ROOT_PROGRESS_PREFIX}${root.path}": ${walked.files.length} files scanned.`);
   }
 
   // Runs BEFORE `resolvePhysicalOverlaps` below, not after: enrichment writes
