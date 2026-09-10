@@ -62,11 +62,35 @@ becomes rare because writes are tiny.
 
 ## Search
 
-One query over `units`: lexical rank from `units_fts` (BM25), semantic rank from `units_vec`
-for the active identity, fused by reciprocal rank so no weight or threshold is tuned, grouped to
-entries by best unit, the matching unit returned with the hit. Type filters apply to entries as
-today. Ranking quality is measured on the existing `curate-golden` fixture before and after; the
-two named weights and `minScore` are deleted once it is equal or better.
+One query over `units`: lexical evidence from `units_fts` (BM25) and semantic evidence from
+`units_vec` for the active identity, grouped to entries by best unit, the matching unit
+returned with the hit. Type filters are applied in SQL, before the candidate cap, so a filtered
+type cannot be starved by a truncated pool.
+
+Fusion was going to be reciprocal rank, so that no weight or threshold needed tuning. That was
+measured against the `curate-golden` fixture and rejected. Rank-only fusion cannot tell a strong
+match from a weak one — a unit matching one common word earns nearly the credit of one matching
+every rare word, and a semantic-only hit ties a lexical hit — so with a weak or still-draining
+embedder, noise crowds out real matches. Measured means, against the pre-redesign path at 0.933:
+
+| configuration | mean | leapfrogs |
+| --- | ---: | ---: |
+| three-list reciprocal rank | 0.918 | 0 |
+| one lexical pool instead of the card/fragment split | 0.918 | 0 |
+| card list weighted 3x in the rank sum | 0.918 | 0 |
+| tier concatenation, still rank-only | 0.855 | 0 |
+| magnitude-scored lexical evidence, 0.7/0.3 split | 0.936 | 0 |
+
+The first three being identical per case is the finding: the card/fragment split and list
+weighting change nothing under rank-only fusion. What shipped keeps the calibrated BM25
+transform this repository already had (`stableFtsScore`, `src/core/lexical-score.ts`) and the
+proven 0.7/0.3 lexical/semantic split, now over units. `minScore` IS deleted — there is no
+floor. The exact/prefix/relaxed tier ladder became a priority order that tops up to the
+candidate budget rather than stopping at the first non-empty tier, because a unit is a card or
+one section and a conjunctive query is rarely satisfied by any single unit.
+
+One fixture case regressed (`residue-docker`, 1.000 to 0.816) and is recorded rather than tuned
+away; ten hand-labelled cases cannot justify fitting a constant.
 
 ## What stays
 

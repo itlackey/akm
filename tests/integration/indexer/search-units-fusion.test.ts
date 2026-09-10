@@ -22,11 +22,12 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
+import { stableFtsScore } from "../../../src/core/lexical-score";
 import { getDbPath } from "../../../src/core/paths";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import { searchUnitsLexical, searchUnitsLexicalPair } from "../../../src/indexer/search/db-search";
-import { fuseByEntry, RRF_K, type UnitLexicalHit } from "../../../src/indexer/search/ranking";
+import { applyRankingRules, fuseByEntry, type UnitLexicalHit } from "../../../src/indexer/search/ranking";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { ensureFileAndUnitTextTables } from "../../../src/storage/repositories/files-repository";
@@ -181,6 +182,127 @@ describe("searchUnitsLexical", () => {
       closeDatabase(db);
     }
   });
+
+  // Item 2 — the tier ladder is now a PRIORITY ORDER: it tops up from a
+  // later tier instead of stopping at the first non-empty one.
+  test("tops up from a later tier instead of stopping at the first non-empty one", () => {
+    const db = openSeededDb("lexical-tier-topup");
+    try {
+      // Exact tier: one unit matches every token ("zeta" AND "widget").
+      const exactEntryId = insertEntry(db, "zeta-widget-entry");
+      seedUnit(db, {
+        entryId: exactEntryId,
+        ordinal: 0,
+        fragmentId: null,
+        hash: "hExact",
+        kind: "card",
+        text: "zeta widget",
+      });
+      // Relaxed-only: shares just "widget", never "zeta" — no exact/prefix
+      // AND hit, only reachable via the relaxed OR recovery.
+      const relaxedEntryId = insertEntry(db, "widget-only-entry");
+      seedUnit(db, {
+        entryId: relaxedEntryId,
+        ordinal: 0,
+        fragmentId: null,
+        hash: "hRelaxed",
+        kind: "card",
+        text: "widget notes",
+      });
+
+      // Under the old early-exit ladder, the single exact hit alone would
+      // have been returned and "hRelaxed" would never be seen even with
+      // plenty of remaining capacity (k=10).
+      const hits = searchUnitsLexical(db, "zeta widget", 10);
+      const hashes = hits.map((h) => h.unitHash);
+      expect(hashes).toContain("hExact");
+      expect(hashes).toContain("hRelaxed");
+      const exactHit = hits.find((h) => h.unitHash === "hExact")!;
+      const relaxedHit = hits.find((h) => h.unitHash === "hRelaxed")!;
+      expect(exactHit.lexicalMatch).toBe("exact");
+      expect(relaxedHit.lexicalMatch).toBe("relaxed");
+      // The exact hit still ranks first — topping up never reorders what an
+      // earlier, stronger tier already found.
+      expect(exactHit.rank).toBeLessThan(relaxedHit.rank);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  // Item 2 — a genuine bm25 tie must not be split across the `k` cutoff when
+  // topping up from a later tier: the final ranking comparator's
+  // content-based tie-break depends on the exact score tie surviving into
+  // `fuseByEntry`'s output.
+  test("a tied group from a later tier is not split at the k cutoff — the whole tie survives even past k", () => {
+    const db = openSeededDb("lexical-tier-tie-boundary");
+    try {
+      // The exact tier's one AND hit — both tokens, but padded long enough
+      // (and both tokens diluted by the filler pool below) that it ranks
+      // BELOW the tied filler group within the RELAXED query specifically,
+      // so it never re-occupies a slot in that tier's own fetch.
+      const zw1 = insertEntry(db, "zeta-widget-one");
+      seedUnit(db, {
+        entryId: zw1,
+        ordinal: 0,
+        fragmentId: null,
+        hash: "hZw1",
+        kind: "card",
+        text: "zeta widget extra padding word here",
+      });
+
+      // A pool of units, each mentioning exactly one of the two query tokens
+      // once — tied with each other under the relaxed OR query.
+      const fillerHashes: string[] = [];
+      for (let i = 0; i < 40; i++) {
+        const id = insertEntry(db, `filler-${i}`);
+        const hash = `hFiller${i}`;
+        fillerHashes.push(hash);
+        seedUnit(db, {
+          entryId: id,
+          ordinal: 0,
+          fragmentId: null,
+          hash,
+          kind: "card",
+          text: i % 2 === 0 ? "zeta alone" : "widget alone",
+        });
+      }
+      // A few long, heavily-repeating units — not asserted on directly, but
+      // their length pulls the corpus's average document length up enough
+      // (BM25's length normalization) that the short exact-tier hit above
+      // ranks BELOW the tied filler pool within the relaxed query
+      // specifically, so it never re-occupies a slot in that tier's own
+      // fetch (verified empirically against the real bm25() output, not
+      // assumed).
+      for (let i = 0; i < 6; i++) {
+        const id = insertEntry(db, `long-padding-${i}`);
+        seedUnit(db, {
+          entryId: id,
+          ordinal: 0,
+          fragmentId: null,
+          hash: `hLongPadding${i}`,
+          kind: "card",
+          text: "widget ".repeat(20).trim(),
+        });
+      }
+
+      // k=5: the exact tier alone already contributes 1 hit, so a naive
+      // cutoff (1 exact + 4 of the tied filler hits) would silently drop
+      // the 5th tied unit the relaxed tier's own LIMIT=5 fetch found.
+      const hits = searchUnitsLexical(db, "zeta widget", 5);
+      const exactHit = hits.find((h) => h.unitHash === "hZw1")!;
+      expect(exactHit.lexicalMatch).toBe("exact");
+      const fillerHits = hits.filter((h) => fillerHashes.includes(h.unitHash));
+      // The relaxed tier's own LIMIT=5 fetch is entirely the tied filler
+      // group (the exact-tier hit ranks below all of them there) — every one
+      // of those 5 fetched, tied hits survives past the k=5 cutoff.
+      expect(fillerHits).toHaveLength(5);
+      expect(new Set(fillerHits.map((h) => h.rank)).size).toBe(1);
+      // The result legitimately exceeds k to keep the tie group whole.
+      expect(hits.length).toBeGreaterThan(5);
+    } finally {
+      closeDatabase(db);
+    }
+  });
 });
 
 // ── searchUnitsLexicalPair (index-redesign-contract.md B5f item 2) ─────────
@@ -252,8 +374,8 @@ describe("searchUnitsLexicalPair — kind-scoped lexical search (field emphasis 
     }
   });
 
-  test("the exact → prefix → relaxed fallback tier is shared: neither pool has a real match, so both fall back to relaxed together", () => {
-    const db = openSeededDb("pair-relaxed-shared");
+  test("neither pool has a real match, so both independently fall back to relaxed", () => {
+    const db = openSeededDb("pair-relaxed-independent");
     try {
       const entryId = insertEntry(db, "relaxed-fragment-only");
       // No card unit matches any query token at all; only a fragment does.
@@ -268,61 +390,72 @@ describe("searchUnitsLexicalPair — kind-scoped lexical search (field emphasis 
       });
 
       const { card, fragment } = searchUnitsLexicalPair(db, "alpha gamma", 10);
-      // Neither pool has an "alpha AND gamma" hit at any tier, so both
-      // legitimately escalate together to the relaxed OR tier.
+      // Neither pool has an "alpha AND gamma" hit at any tier, so each
+      // independently escalates on its own to the relaxed OR tier.
       expect(fragment.map((h) => h.unitHash)).toEqual(["hFrag"]);
       expect(fragment[0]!.lexicalMatch).toBe("relaxed");
+      // The card pool independently ran its own ladder too, found nothing at
+      // any tier (not even relaxed — "unrelated card" shares no token with
+      // the query), and stays empty on its own account.
       expect(card).toEqual([]);
     } finally {
       closeDatabase(db);
     }
   });
 
-  // Regression (#930-shaped): an independent per-kind ladder let the
-  // fragment pool escalate to a noisy relaxed OR match on one shared word
-  // even though the CARD pool already had a real "exact" AND-all-tokens hit
-  // for the whole query — something the old single combined pool's ONE
-  // ladder could never do, since it stopped at "exact" for everyone the
-  // moment any exact hit existed anywhere in the corpus.
-  test("an exact card hit stops the WHOLE query at the exact tier — the fragment pool does not independently escalate to relaxed", () => {
-    const db = openSeededDb("pair-relaxed-shared-tier");
+  // Item 2 (confirmed defect fixed) — sharing one fallback-tier decision
+  // across both pools meant an incidental exact hit in ONE pool locked the
+  // OTHER pool out of ever escalating to its own relaxed recovery, even when
+  // that pool's only candidate was the genuinely relevant one. Each pool now
+  // runs its own ladder independently (`searchUnitsLexicalScoped`'s own
+  // doc), and magnitude fusion (not rank) is what makes that safe: a
+  // relaxed-tier match now scores at `stableFtsScore`'s 0.3 floor instead of
+  // competing on rank against the exact-tier hit in the other pool.
+  test("a fragment pool's own exact hit does not block the card pool from independently escalating to relaxed", () => {
+    const db = openSeededDb("pair-independent-ladders");
     try {
-      const namedId = insertEntry(db, "operations-note");
+      // The fragment pool's exact AND hit for the whole phrase — a pasted
+      // "stack trace" quoting every query token, the shape of hit the brief
+      // names as the confirmed failure.
+      const logDumpId = insertEntry(db, "log-dump-entry");
       seedUnit(db, {
-        entryId: namedId,
+        entryId: logDumpId,
         ordinal: 0,
         fragmentId: null,
-        hash: "hNamedCard",
+        hash: "hLogCard",
         kind: "card",
-        text: "authored provenance marker for the release operator",
+        text: "unrelated log dump card",
       });
-      const unrelatedId = insertEntry(db, "filename-fallback-marker");
       seedUnit(db, {
-        entryId: unrelatedId,
-        ordinal: 0,
-        fragmentId: null,
-        hash: "hUnrelatedCard",
-        kind: "card",
-        text: "filename fallback marker",
-      });
-      // This fragment shares only the single word "marker" with the query —
-      // enough to win a RELAXED OR match, but the query already has a real
-      // exact AND hit (the named card above), so this must never be reached.
-      seedUnit(db, {
-        entryId: unrelatedId,
+        entryId: logDumpId,
         ordinal: 1,
         fragmentId: "f1",
-        hash: "hUnrelatedFrag",
+        hash: "hStackTrace",
         kind: "fragment",
-        text: "body text without the full phrase",
+        text: "widget catalog overview stack trace dump",
       });
 
-      const { card, fragment } = searchUnitsLexicalPair(db, "authored provenance marker", 10);
-      expect(card.map((h) => h.unitHash)).toEqual(["hNamedCard"]);
-      expect(card[0]!.lexicalMatch).toBe("exact");
-      // The fragment pool has no exact hit of its own, and must stay empty
-      // rather than independently escalating to a relaxed "marker" match.
-      expect(fragment).toEqual([]);
+      // The genuinely relevant entry: its card shares only ONE query token —
+      // no exact/prefix AND hit of its own, reachable only via relaxed.
+      const relevantId = insertEntry(db, "relevant-entry");
+      seedUnit(db, {
+        entryId: relevantId,
+        ordinal: 0,
+        fragmentId: null,
+        hash: "hRelevantCard",
+        kind: "card",
+        text: "widget notes",
+      });
+
+      const { card, fragment } = searchUnitsLexicalPair(db, "widget catalog overview", 10);
+      const stackHit = fragment.find((h) => h.unitHash === "hStackTrace");
+      expect(stackHit?.lexicalMatch).toBe("exact");
+
+      // Under the old shared-tier design this pool stayed empty forever,
+      // because the fragment pool's exact hit stopped the WHOLE query. Now
+      // it independently escalates and still surfaces the relevant entry.
+      const relevantHit = card.find((h) => h.unitHash === "hRelevantCard");
+      expect(relevantHit?.lexicalMatch).toBe("relaxed");
     } finally {
       closeDatabase(db);
     }
@@ -392,45 +525,34 @@ describe("searchUnits identity filtering", () => {
 // ── fuseByEntry ──────────────────────────────────────────────────────────────
 
 /**
- * `fuseByEntry` rescales its raw RRF sum by `1/(RRF_K+1)` — the maximum a
- * SINGLE list's rank-1 hit can contribute, regardless of how many lists are
- * fused (index-redesign B5f item 2: three now — card lexical, fragment
- * lexical, semantic — was two before) — before returning it, so
- * `ranking-contributors.ts`'s 0–1-calibrated boosts and the belief-state
- * ceiling see a comparable base instead of RRF's native ~0.008–0.033 range;
- * a single-list rank-1 hit normalizes to 1.0, a hit every list ranks #1
- * normalizes to (list count).0 — `RRF_MAX_SCORE`'s own doc in ranking.ts has
- * the full reasoning. Mirror that same rescale here rather than asserting
- * the pre-normalization raw sum.
+ * Cosine similarity from a `units_vec` L2 distance over normalized vectors —
+ * mirrors `ranking.ts`'s own private `semanticCosine` (and the retired
+ * `tryVecScores`' conversion it is pinned against): `1 - distance²/2`,
+ * clamped at 0.
  */
-function normalizedRrf(...ranks: number[]): number {
-  const raw = ranks.reduce((sum, rank) => sum + 1 / (RRF_K + rank), 0);
-  return raw / (1 / (RRF_K + 1));
+function cosine(distance: number): number {
+  return Math.max(0, 1 - (distance * distance) / 2);
 }
 
-describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical, fragment lexical, semantic)", () => {
-  test("RRF_K is the Cormack et al. 2009 constant", () => {
-    expect(RRF_K).toBe(60);
-  });
-
-  test("card-lexical-only hit: rankingMode 'fts', normalized score = 1.0 at rank 1", () => {
+describe("fuseByEntry — magnitude fusion over three lists (card lexical, fragment lexical, semantic)", () => {
+  test("card-lexical-only hit: rankingMode 'fts', score = stableFtsScore(bm25, 'parent')", () => {
     const db = openSeededDb("fuse-card-only");
     try {
       const entryId = insertEntry(db, "card-only");
       seedUnit(db, { entryId, ordinal: 0, fragmentId: null, hash: "hC", kind: "card", text: "card only text" });
 
-      const results = fuseByEntry(db, [{ unitHash: "hC", rank: 1, lexicalMatch: "exact" }], [], []);
+      const results = fuseByEntry(db, [{ unitHash: "hC", rank: 1, bm25: -50, lexicalMatch: "exact" }], [], []);
       expect(results).toHaveLength(1);
       expect(results[0]!.id).toBe(entryId);
       expect(results[0]!.rankingMode).toBe("fts");
-      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1), 10);
+      expect(results[0]!.score).toBeCloseTo(stableFtsScore(-50, "parent"), 10);
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hC", fragmentId: null, kind: "card" });
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("fragment-lexical-only hit: rankingMode 'fts', normalized score = 1.0 at rank 1 — same constant as a card-only hit", () => {
+  test("fragment-lexical-only hit: rankingMode 'fts', score = stableFtsScore(bm25, 'fragment') — same calibration as a card-only hit", () => {
     const db = openSeededDb("fuse-fragment-only");
     try {
       const entryId = insertEntry(db, "fragment-only");
@@ -443,11 +565,11 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
         text: "fragment only text",
       });
 
-      const results = fuseByEntry(db, [], [{ unitHash: "hF", rank: 1, lexicalMatch: "exact" }], []);
+      const results = fuseByEntry(db, [], [{ unitHash: "hF", rank: 1, bm25: -50, lexicalMatch: "exact" }], []);
       expect(results).toHaveLength(1);
       expect(results[0]!.id).toBe(entryId);
       expect(results[0]!.rankingMode).toBe("fts");
-      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1), 10);
+      expect(results[0]!.score).toBeCloseTo(stableFtsScore(-50, "fragment"), 10);
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hF", fragmentId: "sec1", kind: "fragment" });
       expect(results[0]!.fragmentId).toBe("sec1");
     } finally {
@@ -455,7 +577,7 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
     }
   });
 
-  test("semantic-only hit: rankingMode 'semantic', normalized score = 1.0 at rank 1", () => {
+  test("semantic-only hit: rankingMode 'semantic', score = cosine * 0.3 — never enough alone to outrank a real lexical floor", () => {
     const db = openSeededDb("fuse-semantic-only");
     try {
       const entryId = insertEntry(db, "sem-only");
@@ -473,7 +595,10 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
       expect(results).toHaveLength(1);
       expect(results[0]!.id).toBe(entryId);
       expect(results[0]!.rankingMode).toBe("semantic");
-      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1), 10);
+      expect(results[0]!.score).toBeCloseTo(cosine(0.05) * 0.3, 10);
+      // Semantic alone is capped at 0.3*1 = 0.3 — at most `stableFtsScore`'s
+      // own lexical floor, never above it.
+      expect(results[0]!.score).toBeLessThanOrEqual(0.3);
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hS", fragmentId: "sec1", kind: "fragment" });
       // Legacy `fragmentId` is also populated so downstream fragment-ref
       // resolution (buildDbHit's ref = `${parentRef}#${fragmentId}`) works.
@@ -483,32 +608,36 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
     }
   });
 
-  test("a card match and a fragment match on the SAME entry both contribute — no weight, just two lists' credit", () => {
+  test("a card match and a fragment match on the SAME entry: lexical evidence is the BEST of the two, not summed — but matchedUnit still prefers card by priority", () => {
     const db = openSeededDb("fuse-card-plus-fragment");
     try {
       const entryId = insertEntry(db, "card-and-fragment");
       seedUnit(db, { entryId, ordinal: 0, fragmentId: null, hash: "hCard", kind: "card", text: "card text" });
       seedUnit(db, { entryId, ordinal: 1, fragmentId: "sec1", hash: "hFrag", kind: "fragment", text: "fragment text" });
 
+      // The fragment's bm25 is the far stronger match (-500 vs -0.0001).
       const results = fuseByEntry(
         db,
-        [{ unitHash: "hCard", rank: 1, lexicalMatch: "exact" }],
-        [{ unitHash: "hFrag", rank: 1, lexicalMatch: "exact" }],
+        [{ unitHash: "hCard", rank: 1, bm25: -0.0001, lexicalMatch: "exact" }],
+        [{ unitHash: "hFrag", rank: 1, bm25: -500, lexicalMatch: "exact" }],
         [],
       );
       expect(results).toHaveLength(1);
-      // Both lists rank this entry's own units #1 — credit from both, summed,
-      // not diluted by competing against the other in one pool.
-      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1, 1), 10);
+      // Score is the MAX of the two magnitudes — the fragment's stronger
+      // evidence, not a sum of both (unlike the retired RRF fusion, which
+      // summed reciprocal-rank credit from every list a unit appeared in).
+      expect(results[0]!.score).toBeCloseTo(stableFtsScore(-500, "fragment"), 10);
       expect(results[0]!.rankingMode).toBe("fts");
-      // Card > fragment on a rank tie.
+      // matchedUnit is still card: a fixed evidence-strength priority
+      // (card, then fragment, then semantic), independent of which
+      // magnitude actually won the score.
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hCard", fragmentId: null, kind: "card" });
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("all three lists rank the same entry #1: score normalizes to 3.0 (pinning RRF_MAX_SCORE independent of list count)", () => {
+  test("all three present: lexical (max of card/fragment) * 0.7 + semantic * 0.3, hybrid, matchedUnit is card", () => {
     const db = openSeededDb("fuse-triple-match");
     try {
       const entryId = insertEntry(db, "triple-match");
@@ -517,44 +646,44 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
 
       const results = fuseByEntry(
         db,
-        [{ unitHash: "hCard", rank: 1, lexicalMatch: "exact" }],
-        [{ unitHash: "hFrag", rank: 1, lexicalMatch: "exact" }],
+        [{ unitHash: "hCard", rank: 1, bm25: -500, lexicalMatch: "exact" }],
+        [{ unitHash: "hFrag", rank: 1, bm25: -0.0001, lexicalMatch: "exact" }],
         [{ unitId: 1, hash: "hFrag", distance: 0.01 }],
       );
       expect(results).toHaveLength(1);
-      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1, 1, 1), 10);
-      expect(results[0]!.score).toBeCloseTo(3, 10);
+      const expected = stableFtsScore(-500, "parent") * 0.7 + cosine(0.01) * 0.3;
+      expect(results[0]!.score).toBeCloseTo(expected, 10);
       expect(results[0]!.rankingMode).toBe("hybrid");
-      // Card wins the 3-way tie.
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hCard", fragmentId: null, kind: "card" });
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("matchedUnit tie-break priority is card > fragment > semantic", () => {
+  test("matchedUnit priority is a fixed order — card > fragment > semantic — never a magnitude comparison across lists", () => {
     const db = openSeededDb("fuse-tie-priority");
     try {
       const entryId = insertEntry(db, "tie-entry");
       seedUnit(db, { entryId, ordinal: 0, fragmentId: null, hash: "hCard", kind: "card", text: "card text" });
       seedUnit(db, { entryId, ordinal: 1, fragmentId: "sec1", hash: "hFrag", kind: "fragment", text: "fragment text" });
 
-      // fragment vs semantic, both rank 1: fragment wins.
+      // fragment vs semantic: fragment wins even when semantic evidence is
+      // objectively stronger by magnitude.
       const fragVsSem = fuseByEntry(
         db,
         [],
-        [{ unitHash: "hFrag", rank: 1, lexicalMatch: "exact" }],
-        [{ unitId: 1, hash: "hFrag", distance: 0.01 }],
+        [{ unitHash: "hFrag", rank: 1, bm25: -0.0001, lexicalMatch: "relaxed" }],
+        [{ unitId: 1, hash: "hFrag", distance: 0.001 }],
       );
       expect(fragVsSem[0]!.matchedUnit?.unitHash).toBe("hFrag");
       expect(fragVsSem[0]!.matchedUnit?.kind).toBe("fragment");
 
-      // card vs semantic, both rank 1: card wins.
+      // card vs semantic: card wins likewise.
       const cardVsSem = fuseByEntry(
         db,
-        [{ unitHash: "hCard", rank: 1, lexicalMatch: "exact" }],
+        [{ unitHash: "hCard", rank: 1, bm25: -0.0001, lexicalMatch: "relaxed" }],
         [],
-        [{ unitId: 1, hash: "hFrag", distance: 0.01 }],
+        [{ unitId: 1, hash: "hFrag", distance: 0.001 }],
       );
       expect(cardVsSem[0]!.matchedUnit?.unitHash).toBe("hCard");
     } finally {
@@ -562,7 +691,7 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
     }
   });
 
-  test("both lexical lists hit different units of DIFFERENT entries: hybrid, grouping keeps the better-ranked unit", () => {
+  test("both lexical lists hit different units of DIFFERENT entries: hybrid grouping, matchedUnit priority overrides which list scored better", () => {
     const db = openSeededDb("fuse-hybrid-grouping");
     try {
       const entryA = insertEntry(db, "entry-a");
@@ -578,13 +707,12 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
       });
       seedUnit(db, { entryId: entryB, ordinal: 0, fragmentId: null, hash: "hB-card", kind: "card", text: "b card" });
 
-      // Card-lexical: B ranks 1st, A's card ranks 2nd.
+      // B's card is the far stronger bm25 match; A's card is barely negative.
       const cardLexical: UnitLexicalHit[] = [
-        { unitHash: "hB-card", rank: 1, lexicalMatch: "exact" },
-        { unitHash: "hA-card", rank: 2, lexicalMatch: "exact" },
+        { unitHash: "hB-card", rank: 1, bm25: -500, lexicalMatch: "exact" },
+        { unitHash: "hA-card", rank: 2, bm25: -0.0001, lexicalMatch: "relaxed" },
       ];
-      // Semantic: only A's fragment unit hits, so it is the sole (and thus
-      // best, entry-rank 1) semantic entry.
+      // Semantic: only A's fragment unit hits.
       const semantic: UnitSearchHit[] = [{ unitId: 1, hash: "hA-frag", distance: 0.02 }];
 
       const results = fuseByEntry(db, cardLexical, [], semantic);
@@ -592,16 +720,50 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
 
       const a = byId.get(entryA)!;
       expect(a.rankingMode).toBe("hybrid");
-      // A's card-lexical entry-rank is 2 (B took entry-rank 1); its semantic
-      // entry-rank is 1 (its only competitor in that list). Semantic ranked
-      // it strictly better, so matchedUnit reports the fragment unit.
-      expect(a.score).toBeCloseTo(normalizedRrf(2, 1), 10);
-      expect(a.matchedUnit).toEqual({ unitHash: "hA-frag", fragmentId: "sec1", kind: "fragment" });
+      expect(a.score).toBeCloseTo(stableFtsScore(-0.0001, "parent") * 0.7 + cosine(0.02) * 0.3, 10);
+      // A HAS a card hit, so matchedUnit reports the card unit by priority —
+      // even though the semantic side is, on its own, a much stronger
+      // signal for this entry than its own weak card match.
+      expect(a.matchedUnit).toEqual({ unitHash: "hA-card", fragmentId: null, kind: "card" });
 
       const b = byId.get(entryB)!;
       expect(b.rankingMode).toBe("fts");
-      expect(b.score).toBeCloseTo(normalizedRrf(1), 10);
+      expect(b.score).toBeCloseTo(stableFtsScore(-500, "parent"), 10);
       expect(b.matchedUnit).toEqual({ unitHash: "hB-card", fragmentId: null, kind: "card" });
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("magnitude, not rank, separates a strong lexical match from a weak one — the RRF defect this replaces", () => {
+    const db = openSeededDb("fuse-magnitude-separation");
+    try {
+      const strongId = insertEntry(db, "strong-match");
+      seedUnit(db, { entryId: strongId, ordinal: 0, fragmentId: null, hash: "hStrong", kind: "card", text: "strong" });
+      const weakId = insertEntry(db, "weak-match");
+      seedUnit(db, { entryId: weakId, ordinal: 0, fragmentId: null, hash: "hWeak", kind: "card", text: "weak" });
+
+      // Adjacent ranks (1 and 2) — under the retired RRF fusion these would
+      // have scored nearly identically (1/61 vs 1/62, normalized). Under
+      // magnitude fusion a strong bm25 and a barely-negative one land far
+      // apart: the weak hit sits near `stableFtsScore`'s 0.3 floor, the
+      // strong one well above it.
+      const results = fuseByEntry(
+        db,
+        [
+          { unitHash: "hStrong", rank: 1, bm25: -1, lexicalMatch: "exact" },
+          { unitHash: "hWeak", rank: 2, bm25: -1e-9, lexicalMatch: "relaxed" },
+        ],
+        [],
+        [],
+      );
+      const strong = results.find((r) => r.id === strongId)!;
+      const weak = results.find((r) => r.id === weakId)!;
+      expect(strong.score).toBeCloseTo(stableFtsScore(-1, "parent"), 10);
+      expect(weak.score).toBeCloseTo(stableFtsScore(-1e-9, "parent"), 10);
+      expect(weak.score).toBeLessThan(0.32);
+      expect(strong.score).toBeGreaterThan(0.65);
+      expect(strong.score - weak.score).toBeGreaterThan(0.4);
     } finally {
       closeDatabase(db);
     }
@@ -630,8 +792,8 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
       });
 
       const cardLexical: UnitLexicalHit[] = [
-        { unitHash: "hMem", rank: 1, lexicalMatch: "exact" },
-        { unitHash: "hSkill", rank: 2, lexicalMatch: "exact" },
+        { unitHash: "hMem", rank: 1, bm25: -5, lexicalMatch: "exact" },
+        { unitHash: "hSkill", rank: 2, bm25: -5, lexicalMatch: "exact" },
       ];
 
       const included = fuseByEntry(db, cardLexical, [], [], { typeFilter: ["memory"] });
@@ -651,6 +813,67 @@ describe("fuseByEntry — reciprocal rank fusion over three lists (card lexical,
     const db = openSeededDb("fuse-empty");
     try {
       expect(fuseByEntry(db, [], [], [])).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Belief-state ceiling invariant (item 1 confirmed defect) ───────────────
+
+describe("belief-state score ceiling invariant restored by magnitude fusion", () => {
+  // The redesign deleted the invariant the belief-state ceilings
+  // (ranking-contributors.ts) were calibrated against — "un-demoted keyword
+  // hits floor at a 0.3 base, so any un-demoted hit outranks a ceilinged
+  // one" — along with `normalizeFtsScores`. Under RRF a hit ranked deep in a
+  // large candidate pool could score far below any belief-state ceiling
+  // (confirmed: a deprecated entry could outrank 33 live matching entries at
+  // `--limit 200`). `stableFtsScore`'s own floor is 0.3 — strictly above the
+  // highest ceiling (deprecated, 0.28) — so magnitude fusion restores the
+  // invariant as a structural consequence, not a new rule. This constructs
+  // the case end to end (real bm25 evidence, real ranking contributors, the
+  // real ceiling) rather than assuming it.
+  test("a deprecated entry with a strong exact match never outranks many live, only-weakly-matching entries", () => {
+    const db = openSeededDb("belief-ceiling-invariant");
+    try {
+      const deprecatedId = insertEntry(db, "deprecated-entry");
+      db.prepare(
+        "UPDATE entries SET document_json = json_set(document_json, '$.beliefState', 'deprecated') WHERE id = ?",
+      ).run(deprecatedId);
+      seedUnit(db, {
+        entryId: deprecatedId,
+        ordinal: 0,
+        fragmentId: null,
+        hash: "hDeprecated",
+        kind: "card",
+        text: "widget widget widget widget widget widget widget widget widget widget",
+      });
+
+      const liveIds: number[] = [];
+      for (let i = 0; i < 40; i++) {
+        const id = insertEntry(db, `live-entry-${i}`);
+        liveIds.push(id);
+        seedUnit(db, {
+          entryId: id,
+          ordinal: 0,
+          fragmentId: null,
+          hash: `hLive${i}`,
+          kind: "card",
+          text: `entry number ${i} briefly references a widget once among a long run of unrelated padding text that is otherwise about nothing in particular here`,
+        });
+      }
+
+      const lexicalHits = searchUnitsLexical(db, "widget", 200);
+      const fused = fuseByEntry(db, lexicalHits, [], []);
+      applyRankingRules({ db, query: "widget", items: fused, graphContext: null });
+
+      const deprecated = fused.find((r) => r.id === deprecatedId)!;
+      const liveResults = fused.filter((r) => liveIds.includes(r.id));
+      expect(liveResults.length).toBe(40);
+      expect(deprecated.score).toBeCloseTo(0.28, 10);
+      for (const live of liveResults) {
+        expect(live.score).toBeGreaterThan(deprecated.score);
+      }
     } finally {
       closeDatabase(db);
     }

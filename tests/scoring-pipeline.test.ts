@@ -650,21 +650,22 @@ describe("Issue #940: relaxed non-name ceilings preserve body relevance", () => 
     expect(rank("relaxed")).toBeCloseTo(1.22);
   });
 
-  // index-redesign B5f item 2 updated this case's expected order. Before:
-  // one combined BM25 pool ranked distractor's single description coincidence
-  // against evidence's stronger body evidence directly, and evidence won; the
-  // ceiling's `preRelaxedCeilingScore` tie-break then had to preserve that
-  // single ordering. Now: card and fragment are two independent RRF lists,
-  // and distractor genuinely appears in BOTH (its card AND its fragment each
-  // match), while evidence appears in only one (its fragment) — reciprocal
-  // rank fusion is SUPPOSED to reward a candidate found by more than one
-  // retrieval list (the standard justification for RRF over a single ranker,
-  // per Cormack et al. 2009), so distractor's higher pre-ceiling score is the
-  // structurally correct outcome of "two lists, no weight" rather than a
-  // regression to weigh around. Both hits are still genuinely relevance-
-  // ordered (not collapsed to name/filename order — the pre-ceiling scores
-  // differ: ~1.98 vs ~1.0), which is what this describe block actually guards.
-  test("a candidate present in BOTH the card and fragment relaxed pools outranks one present in only one", async () => {
+  // Search fix round 2 / item 1 updated this case's expected order again.
+  // Under RRF (the interim design this comment used to describe): distractor
+  // appeared in BOTH the card and fragment relaxed lists (its description AND
+  // its body each independently earned relaxed credit), and reciprocal rank
+  // fusion summed that list-membership credit regardless of match strength,
+  // letting distractor outrank evidence's single, objectively denser match.
+  // That was measured against the curate-golden gate and lost to magnitude
+  // fusion (docs/plans/index-redesign.md's Search section): `fuseByEntry` now
+  // takes the BEST (`stableFtsScore`-calibrated) evidence per entry rather
+  // than summing which pools it appeared in, so evidence's fragment — which
+  // repeats three of the four query tokens twice each — wins outright over
+  // distractor's two weaker units (each matching only two of the four
+  // tokens). Both hits are still genuinely relevance-ordered (not collapsed
+  // to name/filename order), which is what this describe block actually
+  // guards.
+  test("the entry with the single denser match outranks one that merely appears in both pools", async () => {
     const stashDir = tmpStash();
     // Neither row contains all four query terms, so retrieval deliberately
     // falls back to relaxed OR.
@@ -680,11 +681,10 @@ describe("Issue #940: relaxed non-name ceilings preserve body relevance", () => 
     await withTestIndex(stashDir, async () => {
       const result = await akmSearch({ query: "alpha beta gamma delta", source: "local", skipLogging: true });
       const localHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
-      expect(localHits.map((hit) => hit.name)).toEqual(["distractor", "evidence"]);
+      expect(localHits.map((hit) => hit.name)).toEqual(["evidence", "distractor"]);
       expect(localHits.every((hit) => hit.matchStage === "relaxed")).toBe(true);
-      // Genuinely relevance-ordered, not tied/collapsed: the two-list credit
-      // gives distractor a real, larger pre-ceiling score.
-      expect(localHits[0]!.score).toBe(localHits[1]!.score);
+      // Genuinely relevance-ordered by magnitude, not tied/collapsed.
+      expect(localHits[0]!.score ?? 0).toBeGreaterThan(localHits[1]!.score ?? 0);
     });
   });
 

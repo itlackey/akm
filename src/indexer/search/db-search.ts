@@ -33,7 +33,7 @@ import type {
   SearchHitSize,
   SourceSearchHit,
 } from "../../sources/types";
-import type { Database } from "../../storage/database";
+import type { Database, SqlValue } from "../../storage/database";
 import {
   assertIndexPathReadable,
   closeDatabase,
@@ -54,6 +54,7 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
 import type { UnitSearchHit } from "../../storage/repositories/units-repository";
 import { searchUnits } from "../../storage/repositories/units-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
+import { deriveObservedEmbeddingIdentity } from "../embedding-identity";
 import { ensureIndex } from "../ensure-index";
 import { collectGraphRelatedHit, type GraphBoostContext, loadGraphBoostContext } from "../graph/graph-boost";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
@@ -562,11 +563,12 @@ async function searchDatabase(
     scopeKey,
   });
 
-  // The units path's RRF-fused score is normalized to the same [0, 1]-ish
-  // scale the ranking contributors and the belief-state ceiling are
-  // calibrated for (`RRF_MAX_SCORE` in ranking.ts) — no separate minScore
-  // floor is applied. A demoting belief state already caps a hit's score and
-  // ranks it last via `buildSearchResultComparator` rather than dropping it.
+  // The units path's magnitude-fused score (`fuseByEntry` in ranking.ts) is
+  // already the same [0, 1]-ish scale the ranking contributors and the
+  // belief-state ceiling are calibrated for (`stableFtsScore`'s floor/ceiling)
+  // — no separate minScore floor is applied. A demoting belief state already
+  // caps a hit's score and ranks it last via `buildSearchResultComparator`
+  // rather than dropping it.
   scored.sort(buildSearchResultComparator(query));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
@@ -641,8 +643,9 @@ async function searchDatabase(
 // Every write path (reconcile, and `indexWrittenAssets` for a just-written
 // asset) populates `unit_texts`/`units_fts`/`entry_units` atomically with the
 // `entries` row itself (B1's contract), so there is exactly one search path:
-// lexical `units_fts` fused with semantic `units_vec` by reciprocal rank.
-// There is no longer a coverage check to branch on — B5a's generation bump
+// lexical `units_fts` fused with semantic `units_vec` by evidence magnitude
+// (`ranking.ts`'s `fuseByEntry` — see its doc for why magnitude, not rank
+// fusion). There is no longer a coverage check to branch on — B5a's generation bump
 // (index-schema.ts) discards `entries` outright on an incompatible schema, so
 // a readable `entries` row always has its `entry_units` sibling.
 
@@ -663,12 +666,47 @@ function meanUnitsPerEntry(db: Database): number {
   return typeof mean === "number" && Number.isFinite(mean) && mean > 0 ? mean : 1;
 }
 
+/** #627/item 3 — entry-type predicates a units_fts row must satisfy, applied via `entry_units`/`entries`. */
+interface UnitTypeFilter {
+  typeFilter?: string[];
+  excludeTypes?: string[];
+}
+
+/**
+ * Build the `unit_hash IN (...)` clause that pushes a type predicate into the
+ * SQL BEFORE the candidate cap (item 3 — the confirmed defect: applying
+ * `typeFilter`/`excludeTypes` in JS after `fuseByEntry` filtered a pool that
+ * `LIMIT` already truncated could drop every eligible candidate). A unit is
+ * eligible if it has an owning entry (via `entry_units` → `entries`) that
+ * satisfies both predicates at once — the same entry, not independently
+ * matched rows — which is the correct reading for a unit hash shared by more
+ * than one entry (content-addressed reuse).
+ */
+function buildUnitTypeClause(typeOpts: UnitTypeFilter | undefined): { sql: string; params: SqlValue[] } | null {
+  if (!typeOpts?.typeFilter?.length && !typeOpts?.excludeTypes?.length) return null;
+  const clauses: string[] = [];
+  const params: SqlValue[] = [];
+  if (typeOpts.typeFilter?.length) {
+    clauses.push(`e.type IN (${typeOpts.typeFilter.map(() => "?").join(",")})`);
+    params.push(...typeOpts.typeFilter);
+  }
+  if (typeOpts.excludeTypes?.length) {
+    clauses.push(`e.type NOT IN (${typeOpts.excludeTypes.map(() => "?").join(",")})`);
+    params.push(...typeOpts.excludeTypes);
+  }
+  return {
+    sql: `unit_hash IN (SELECT eu.unit_hash FROM entry_units eu JOIN entries e ON e.id = eu.entry_id WHERE ${clauses.join(" AND ")})`,
+    params,
+  };
+}
+
 function runUnitsFtsQuery(
   db: Database,
   ftsQuery: string,
   lexicalMatch: LexicalQueryExecution,
   k: number,
   kind?: UnitKind,
+  typeOpts?: UnitTypeFilter,
 ): UnitLexicalHit[] {
   // `kind` filters via a subquery against `unit_texts` rather than joining
   // (and aliasing) `units_fts` directly — FTS5's `bm25()` auxiliary function
@@ -676,69 +714,107 @@ function runUnitsFtsQuery(
   // clause, so aliasing it would mean threading that alias through `bm25()`
   // too. The subquery keeps `units_fts` unaliased and lets the MATCH still
   // drive the query through FTS5's own index (`unit_texts_kind` then narrows
-  // it, see `files-repository.ts`).
+  // it, see `files-repository.ts`). The type predicate (item 3) is pushed in
+  // the same way, and — critically — BEFORE the `LIMIT`, so an ineligible
+  // unit never occupies a slot a genuinely eligible one needed.
+  const conditions = ["units_fts MATCH ?"];
+  const params: SqlValue[] = [ftsQuery];
+  if (kind) {
+    conditions.push("unit_hash IN (SELECT unit_hash FROM unit_texts WHERE kind = ?)");
+    params.push(kind);
+  }
+  const typeClause = buildUnitTypeClause(typeOpts);
+  if (typeClause) {
+    conditions.push(typeClause.sql);
+    params.push(...typeClause.params);
+  }
+  params.push(k);
+
   const rows = db
     .prepare(
-      kind
-        ? `
-      SELECT unit_hash AS unitHash, bm25(units_fts) AS score
-      FROM units_fts
-      WHERE units_fts MATCH ?
-        AND unit_hash IN (SELECT unit_hash FROM unit_texts WHERE kind = ?)
-      ORDER BY score ASC
-      LIMIT ?
-    `
-        : `
-      SELECT unit_hash AS unitHash, bm25(units_fts) AS score
-      FROM units_fts
-      WHERE units_fts MATCH ?
-      ORDER BY score ASC
-      LIMIT ?
-    `,
+      `SELECT unit_hash AS unitHash, bm25(units_fts) AS score
+       FROM units_fts
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY score ASC
+       LIMIT ?`,
     )
-    .all(...(kind ? [ftsQuery, kind, k] : [ftsQuery, k])) as Array<{ unitHash: string; score: number }>;
+    .all(...params) as Array<{ unitHash: string; score: number }>;
   // Competition ranking (ties share a rank) rather than strict sequential
   // position: SQLite gives no deterministic secondary order for an exact
-  // bm25 tie, and RRF fusion (ranking.ts's `fuseByEntry`) sums by RANK, not
-  // raw score — a strict `index + 1` would silently turn "these two units
-  // tied on relevance" into "this one wins", robbing the final ranking
-  // comparator's content-based tie-break (`canonicalContentTieKey`) of the
-  // exact score tie it needs to ever run.
+  // bm25 tie, and the final ranking comparator's content-based tie-break
+  // (`canonicalContentTieKey`) needs an exact score tie to survive to ever
+  // run — a strict `index + 1` would silently turn "these two units tied on
+  // relevance" into "this one wins".
   let rank = 0;
   let previousScore: number | undefined;
   return rows.map((row, index) => {
     if (previousScore === undefined || row.score !== previousScore) rank = index + 1;
     previousScore = row.score;
-    return { unitHash: row.unitHash, rank, lexicalMatch };
+    return { unitHash: row.unitHash, rank, bm25: row.score, lexicalMatch };
   });
 }
 
 /**
- * `units_fts` bm25 lexical search over unit text, ranked best-first (1-based),
+ * `units_fts` bm25 lexical search over unit text, ranked best-first,
  * optionally scoped to one unit `kind`. Mirrors `searchFts`'s own exact →
- * prefix → relaxed fallback (`index-fts-repository.ts`): a sentence-shaped
- * query whose terms never all land in one unit (the conjunctive
- * `exact`/`exactPrefix` queries) still needs the one-measured-relaxation OR
- * query to surface anything at all — without it, lexical search over units
- * silently returns nothing exactly where the legacy `entries_fts` path would
- * have found the relaxed pool. The fallback ladder runs independently within
- * the scoped kind, so a query with no card-unit match still falls back to a
- * relaxed card-unit search before giving up on that list.
+ * prefix → relaxed fallback (`index-fts-repository.ts`), but as a PRIORITY
+ * ORDER rather than an early exit (item 2): a unit is a card or one Markdown
+ * section, so a conjunctive query is rarely satisfied by any single unit —
+ * stopping at the first non-empty tier let one incidental hit (e.g. a pasted
+ * stack trace quoting every query token) suppress the far larger, more
+ * relevant relaxed pool. Instead, take the exact hits, then top up with
+ * prefix hits, then relaxed hits, until `k` is reached — each hit keeps the
+ * tier it came from in `lexicalMatch`. Magnitude fusion (`ranking.ts`'s
+ * `fuseByEntry`) is what makes topping up safe: a relaxed-tier junk match now
+ * scores at `stableFtsScore`'s 0.3 floor instead of near the top of a rank
+ * list.
+ *
+ * A genuine bm25 tie at the `k` boundary is never split across the cutoff:
+ * `addTier` finishes the whole tied group even if that pushes the result
+ * past `k`, because the final ranking comparator's content-based tie-break
+ * depends on that exact score tie surviving into `fuseByEntry`'s output.
+ * Ties are only tracked WITHIN one tier's own query — bm25 from different
+ * MATCH queries (exact vs. prefix vs. relaxed) is not comparable, so a
+ * later tier always starts its own fresh rank sequence, offset to continue
+ * numbering after the tiers already taken.
  */
-function searchUnitsLexicalScoped(db: Database, query: string, k: number, kind?: UnitKind): UnitLexicalHit[] {
+function searchUnitsLexicalScoped(
+  db: Database,
+  query: string,
+  k: number,
+  kind?: UnitKind,
+  typeOpts?: UnitTypeFilter,
+): UnitLexicalHit[] {
   if (k <= 0) return [];
   const plan = buildLexicalQueryPlan(query);
   if (!plan.exact) return [];
 
-  const exact = runUnitsFtsQuery(db, plan.exact, "exact", k, kind);
-  if (exact.length > 0) return exact;
+  const hits: UnitLexicalHit[] = [];
+  const seen = new Set<string>();
+  let rankOffset = 0;
 
-  if (plan.exactPrefix) {
-    const prefix = runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, kind);
-    if (prefix.length > 0) return prefix;
+  const addTier = (tierHits: readonly UnitLexicalHit[]): void => {
+    let lastRank: number | undefined;
+    for (const hit of tierHits) {
+      if (seen.has(hit.unitHash)) continue;
+      if (hits.length >= k && hit.rank !== lastRank) break;
+      seen.add(hit.unitHash);
+      hits.push({ ...hit, rank: hit.rank + rankOffset });
+      lastRank = hit.rank;
+    }
+    const tierMaxRank = tierHits[tierHits.length - 1]?.rank ?? 0;
+    rankOffset += tierMaxRank;
+  };
+
+  addTier(runUnitsFtsQuery(db, plan.exact, "exact", k, kind, typeOpts));
+  if (hits.length < k && plan.exactPrefix) {
+    addTier(runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, kind, typeOpts));
+  }
+  if (hits.length < k && plan.relaxed) {
+    addTier(runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, kind, typeOpts));
   }
 
-  return plan.relaxed ? runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, kind) : [];
+  return hits;
 }
 
 /**
@@ -755,8 +831,7 @@ export function searchUnitsLexical(db: Database, query: string, k: number): Unit
 
 /**
  * `units_fts` bm25 lexical search over BOTH kind-scoped pools (`"card"`,
- * `"fragment"`) at once, sharing ONE exact → prefix → relaxed fallback tier
- * decision across them (index-redesign-contract.md B5f item 2). Structural
+ * `"fragment"`) at once (index-redesign-contract.md B5f item 2). Structural
  * field emphasis: `"card"` units hold name/description/tags/hints and are
  * few (one per entry), so a name match ranks near the top of a SMALL pool
  * instead of racing every fragment's body text in one shared BM25 ranking —
@@ -764,44 +839,27 @@ export function searchUnitsLexical(db: Database, query: string, k: number): Unit
  * 5x, ...) bought through tuning, gotten here from the units' own structure
  * instead.
  *
- * The tier is picked ONCE for the query, not independently per kind: if
- * EITHER pool has an "exact" AND-all-tokens hit, BOTH pools stop there — a
- * pool with no hit at that tier stays empty rather than escalating on its
- * own. Two independent per-kind ladders regressed real cases: a query whose
- * CARD names an entry exactly (e.g. "authored-provenance-marker") has no
- * fragment carrying every token, so an independent fragment-side ladder fell
- * all the way to a relaxed OR match on one shared word ("marker") in an
- * unrelated entry's body — noise the old single combined pool never
- * produced, because its one ladder stopped at "exact" for the whole query
- * the instant the card hit existed. Sharing the tier decision restores that.
+ * Each pool runs its OWN exact → prefix → relaxed priority-order ladder
+ * (item 2 — `searchUnitsLexicalScoped`'s own doc), rather than sharing one
+ * tier decision as an earlier revision did: sharing let an incidental
+ * fragment-exact match (e.g. a pasted stack trace quoting every query token)
+ * lock the card pool out of ever escalating to its own relaxed recovery, so
+ * a well-named relevant entry disappeared behind an unrelated log dump.
+ * Magnitude fusion (`ranking.ts`'s `fuseByEntry`) is what makes independent
+ * ladders safe: a relaxed-tier junk match now scores at `stableFtsScore`'s
+ * 0.3 floor instead of competing on rank, so a stray fragment-side escalation
+ * can no longer crowd out a genuine card-side exact hit the way it would
+ * have under rank fusion.
  */
 export function searchUnitsLexicalPair(
   db: Database,
   query: string,
   k: number,
+  typeOpts?: UnitTypeFilter,
 ): { card: UnitLexicalHit[]; fragment: UnitLexicalHit[] } {
-  const plan = buildLexicalQueryPlan(query);
-  const empty = { card: [] as UnitLexicalHit[], fragment: [] as UnitLexicalHit[] };
-  if (!plan.exact) return empty;
-
-  const exact = {
-    card: runUnitsFtsQuery(db, plan.exact, "exact", k, "card"),
-    fragment: runUnitsFtsQuery(db, plan.exact, "exact", k, "fragment"),
-  };
-  if (exact.card.length > 0 || exact.fragment.length > 0) return exact;
-
-  if (plan.exactPrefix) {
-    const prefix = {
-      card: runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, "card"),
-      fragment: runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, "fragment"),
-    };
-    if (prefix.card.length > 0 || prefix.fragment.length > 0) return prefix;
-  }
-
-  if (!plan.relaxed) return empty;
   return {
-    card: runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, "card"),
-    fragment: runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, "fragment"),
+    card: searchUnitsLexicalScoped(db, query, k, "card", typeOpts),
+    fragment: searchUnitsLexicalScoped(db, query, k, "fragment", typeOpts),
   };
 }
 
@@ -826,6 +884,7 @@ async function tryUnitVecScores(
   query: string,
   k: number,
   config: AkmConfig,
+  typeOpts?: UnitTypeFilter,
 ): Promise<{ hits: UnitSearchHit[] | null; warning?: string }> {
   if (config.semanticSearchMode === "off") return { hits: null };
   const identity = getMeta(db, "embeddingIdentity");
@@ -833,7 +892,25 @@ async function tryUnitVecScores(
   try {
     const { embed } = await import("../../llm/embedder.js");
     const queryEmbedding = await embed(query, config.embedding);
-    return { hits: searchUnits(db, queryEmbedding, k, identity) };
+    // item 5 — a query embedded under a different identity than the index
+    // must not be trusted, even when it happens to come back the same width
+    // (768/1024/1536 are all common across otherwise-unrelated models): a
+    // width match alone is not a vector-space match. `deriveObservedEmbeddingIdentity`
+    // is the same derivation `drain.ts` uses to learn/verify the identity it
+    // is embedding units under; there is no server-reported model for a
+    // single query `embed()` call (only `embedBatch`'s `onBatch` threads that
+    // through from the provider's response), so this derives from the
+    // CURRENT config the same way drain does whenever the provider's
+    // response echoes the configured model — the case `embedding.model`/
+    // `embedding.endpoint` being edited since the last index actually
+    // exercises. A genuine width mismatch is already safe (sqlite-vec throws
+    // below); this catches the same-width, different-model case that would
+    // otherwise silently compare incompatible vector spaces.
+    const observedIdentity = deriveObservedEmbeddingIdentity(config.embedding, undefined, queryEmbedding.length);
+    if (observedIdentity !== identity) {
+      return { hits: null, warning: buildIdentityMismatchWarning(config) };
+    }
+    return { hits: searchUnits(db, queryEmbedding, k, identity, typeOpts) };
   } catch (error) {
     return { hits: null, warning: buildVectorFallbackWarning(config, error) };
   }
@@ -854,25 +931,29 @@ async function collectSearchSignals(
 }> {
   const startedAt = Date.now();
   const unitK = Math.max(1, Math.round(candidateLimit * meanUnitsPerEntry(db)));
-  const semanticPromise = tryUnitVecScores(db, query, unitK, config);
+  // item 3 — push the type predicate into the SQL of both the lexical and
+  // semantic candidate queries, not just into `fuseByEntry`'s post-grouping
+  // JS filter below: applying it only after each list was already cut to
+  // `unitK` by `LIMIT`/`k` let a whole type-excluded pool (e.g. 100 `session`
+  // cards exactly matching the query) crowd a genuinely-matching entry of a
+  // different type out of the candidate window entirely. `fuseByEntry`'s own
+  // filter stays as a cheap guard, not the mechanism.
+  const typeOpts: UnitTypeFilter = { typeFilter: typeFilter ? [typeFilter] : undefined, excludeTypes };
+  const semanticPromise = tryUnitVecScores(db, query, unitK, config, typeOpts);
   // index-redesign-contract.md B5f item 2 — two kind-scoped lexical lists,
   // not one mixed pool: a card (name/description/tags/hints) match ranks
   // within its own small pool instead of competing against every fragment's
   // body text on raw BM25, so field emphasis falls out of the units'
-  // structure rather than tuned per-column weights. `searchUnitsLexicalPair`
-  // shares one fallback tier across both pools — see its own doc for why an
-  // independent ladder per kind is wrong.
-  const { card: cardLexicalHits, fragment: fragmentLexicalHits } = searchUnitsLexicalPair(db, query, unitK);
+  // structure rather than tuned per-column weights. Each pool runs its own
+  // priority-order ladder — see `searchUnitsLexicalPair`'s own doc.
+  const { card: cardLexicalHits, fragment: fragmentLexicalHits } = searchUnitsLexicalPair(db, query, unitK, typeOpts);
   const semanticResult = await semanticPromise;
   const mode: SearchExecutionMode = semanticResult.warning
     ? "fts-fallback"
     : semanticResult.hits !== null
       ? "semantic"
       : "keyword";
-  const unitScored = fuseByEntry(db, cardLexicalHits, fragmentLexicalHits, semanticResult.hits ?? [], {
-    typeFilter: typeFilter ? [typeFilter] : undefined,
-    excludeTypes,
-  });
+  const unitScored = fuseByEntry(db, cardLexicalHits, fragmentLexicalHits, semanticResult.hits ?? [], typeOpts);
   return {
     embedMs: Date.now() - startedAt,
     mode,
@@ -888,8 +969,8 @@ async function collectSearchSignals(
  * see `src/commands/improve/collapse-detector.ts`). The `units_fts` card unit
  * carries name/description/tags/hints, so an entry-level lexical search is a
  * units query grouped by entry — the same grouping `collectSearchSignals`
- * uses, with an empty semantic list so the RRF fusion degenerates to a pure
- * lexical-rank ordering.
+ * uses, with an empty semantic list so `fuseByEntry`'s magnitude fusion
+ * degenerates to a pure lexical-bm25 ordering.
  */
 export function searchEntriesLexical(db: Database, query: string, k: number): RankedEntryInput[] {
   const unitK = Math.max(1, Math.round(k * meanUnitsPerEntry(db)));
@@ -1151,6 +1232,22 @@ function buildVectorFallbackWarning(config: AkmConfig, error: unknown): string {
       : "local embedding model";
   const unavailable = reason === "connection failed" ? `cannot reach ${target}` : `${target} is unavailable`;
   return `Vector search unavailable: ${unavailable} (${reason}) — falling back to keyword search.`;
+}
+
+/**
+ * item 5 — same shape as {@link buildVectorFallbackWarning}, for the case
+ * where embedding itself succeeded but the query was embedded under a
+ * different identity than the index (`embedding.model`/`embedding.endpoint`
+ * edited since the last index run).
+ */
+function buildIdentityMismatchWarning(config: AkmConfig): string {
+  const endpoint = safeEmbeddingEndpoint(config);
+  const target = endpoint
+    ? `embedding endpoint ${endpoint}`
+    : config.embedding?.endpoint
+      ? "configured embedding endpoint"
+      : "local embedding model";
+  return `Vector search unavailable: ${target} is embedding queries under a different identity than the index was built with (embedding.model/embedding.endpoint changed since the last index) — falling back to keyword search.`;
 }
 
 /**

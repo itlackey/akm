@@ -48,10 +48,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   accept each reconcile and drain exactly the paths/units they touched, in
   the same call as the write, with no lock probe and no background reindex
   spawn.
-- **Search fuses three ranked lists by reciprocal rank** — card-unit
-  lexical, fragment-unit lexical, and semantic — over `units`, replacing the old per-column BM25 weights and semantic-only
-  score floor — there is no longer a tuned weight or threshold to
-  calibrate.
+- **Search is one query over `units`**, scoring lexical evidence by BM25
+  magnitude through the calibrated transform the repository already had and
+  combining it with semantic distance on the proven 0.7/0.3 split. Reciprocal
+  rank fusion was tried first and measured worse than the path it replaced
+  (0.918 against 0.933 on the `curate-golden` fixture, unchanged by splitting
+  or weighting the lists), because a rank cannot tell a strong match from a
+  weak one; the shipped scoring measures 0.936 with no banned-above-required
+  hits. The semantic-only `minScore` floor is gone, type filters now apply in
+  SQL before the candidate cap, and the exact/prefix/relaxed ladder tops up to
+  the candidate budget instead of stopping at the first non-empty tier.
 - **`akm index --full`** no longer drops anything first: it forces every
   walked file to be re-parsed (skipping the unchanged-file shortcut) but
   updates each file's existing row in place, keeping its id, vectors, and
