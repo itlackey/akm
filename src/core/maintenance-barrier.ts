@@ -31,16 +31,18 @@ const MAINTENANCE_BARRIER_STALE_AFTER_MS = 5 * 60 * 1000;
 
 /**
  * The barrier normally holds for one lock-file write — sub-millisecond on
- * any real filesystem. Two akm processes racing to register a lock in the
- * very same instant (e.g. two `akm index` runs a scheduler launched back to
- * back) can still collide on it; retrying briefly resolves that ordinary
- * case instead of failing a legitimate concurrent invocation outright
+ * any real filesystem. Two akm processes racing to register a lock/lease/
+ * activity in the very same instant (e.g. two `akm index` runs a scheduler
+ * launched back to back, both opening canonical state.db) can still collide
+ * on it; retrying briefly resolves that ordinary case instead of failing a
+ * legitimate concurrent invocation outright
  * (field follow-up to #956, G1). Bounded short so a genuinely wedged holder
  * still surfaces the busy error promptly rather than making a losing
  * process hang — comfortably above the barrier's normal hold time, well
  * below a length that would make this feel like the blocking lock #872
- * removed. Never applies to the rebuild lock itself, which stays
- * non-blocking (#872).
+ * removed. Never applies to whatever lock/lease/activity is registered
+ * after the barrier releases — that thing's own held/skip/throw/wait
+ * policy belongs to its caller, not to the barrier (#872).
  */
 const MAINTENANCE_BARRIER_BUSY_RETRY_BOUND_MS = 1_500;
 

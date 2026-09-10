@@ -10,7 +10,8 @@
  * short maintenance-barrier registration `acquireMaintenanceBarrier` contends
  * on, or the index.db write contention `INDEX_DB_CONTENDED` (F1) reclassifies
  * — is exercised exactly as a real scheduler/hook double-launch would hit it,
- * unlike index-skip-if-locked.test.ts (plants the rebuild-lock file) or
+ * unlike index-skip-if-locked.test.ts (a single run, asserting only the
+ * deprecation warning/no-op behavior — no concurrency, no lock file) or
  * index-db-contention.test.ts (holds a second DB connection open). Neither
  * mechanism collides on every pair on a fast, unloaded machine (the barrier
  * is normally held sub-millisecond), so this repeats many small concurrent
