@@ -250,7 +250,12 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
 }
 
 export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
-  // Create meta table first so we can check version
+  // Create meta table first (outside the transaction below): it must
+  // survive even a rolled-back schema attempt, since
+  // "does not stamp a generation until every required DDL surface succeeds"
+  // (canonical-entry-schema.test.ts) opens index_meta on a failed partial
+  // schema and expects the table to exist with no version row, not to be
+  // missing entirely.
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,
@@ -258,6 +263,32 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     );
   `);
 
+  // First open of a brand-new index.db used to be racy: a concurrent second
+  // `ensureSchema` could see `entries` created but `index_meta.version` not
+  // yet stamped, which `rebuildIncompatibleIndexGeneration` reads as an old
+  // generation and drops `entries` from under the first process mid-run
+  // (exit 70, "no such table: entries"). Only THAT case needs a lock — an
+  // already-canonical database (the common case) takes the plain path below,
+  // unchanged from before: wrapping every open unconditionally was tried
+  // first and reintroduced a lock on ordinary index runs, turning a single
+  // `busy_timeout` wait under a held writer into one per retry attempt
+  // (timed out `index-db-contention.test.ts`). This read can never race a
+  // genuine in-progress rebuild — WAL readers only see committed state, and a
+  // rebuild only runs when the last-committed state was itself non-canonical.
+  if (isCanonicalIndexGeneration(db)) {
+    applySchemaBody(db, embeddingDim);
+    return;
+  }
+
+  // Not (yet) canonical — a fresh database or a genuine stale generation.
+  // `withImmediateTransaction(db, ..., "index")` makes a concurrent opener
+  // block on `BEGIN IMMEDIATE` until this commits, so it only ever observes
+  // fully-fresh or fully-canonical. A real generation mismatch still
+  // rebuilds, via the nested call joining this same transaction.
+  withImmediateTransaction(db, () => applySchemaBody(db, embeddingDim), "index");
+}
+
+function applySchemaBody(db: Database, embeddingDim: number | undefined): void {
   rebuildIncompatibleIndexGeneration(db);
 
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
