@@ -136,6 +136,17 @@ export function renderSyncCommitMessage(
   return template.replace(/\{(\w+)\}/g, (match, key: string) => tokens[key] ?? match);
 }
 
+/**
+ * How long a live run waits for its FIRST engine response (success or error —
+ * any terminal record proves the run is not silent) before printing one
+ * default-level line. Field re-test (#957): an engine pointed at a dead
+ * endpoint produced zero output for minutes, so a genuine hang looked
+ * identical to a normal-but-slow run. A few seconds is short enough that an
+ * operator watching a scheduled run's live log sees something promptly,
+ * long enough that an ordinary fast response never prints it.
+ */
+export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
+
 export function armBudgetWatchdog(
   budgetMs: number,
   controller: AbortController,
@@ -216,6 +227,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     resolvedLockPath,
   } = setup;
   let clearBudgetTimer = (): void => {};
+  let clearFirstResponseHeartbeat = (): void => {};
   let initialGitPaths = new Set<string>();
   const runJournal = createRunWriteJournal();
 
@@ -274,7 +286,20 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         return buildLockSkippedResult(selectedStrategy.name, scope, options.runId);
       }
       improveLockOwnership = acquisition.ownership;
-      disposeLlmUsageSink = installLlmUsagePersistence(() => eventsCtx);
+      disposeLlmUsageSink = installLlmUsagePersistence(
+        () => eventsCtx,
+        () => clearFirstResponseHeartbeat(),
+      );
+      // #957: one default-level line if the run's first engine response takes
+      // longer than a few seconds, so a dead/slow endpoint is never silent.
+      // Cleared by the sink's onRecord callback above the moment any call
+      // terminates (success or error) — never rearmed, so this prints at
+      // most once per run.
+      const firstResponseTimer = setTimeout(() => {
+        warn("[improve] Still waiting for the first engine response...");
+      }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
+      firstResponseTimer.unref?.();
+      clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
       exitBackstop = releaseRunLock;
       process.on("exit", exitBackstop);
       initialGitPaths =
@@ -316,6 +341,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // If the live prepass fails, emit its summary and clear the owning sink
     // before any run teardown. The disposer is idempotent with the main finalizer.
     disposeLlmUsageSink();
+    clearFirstResponseHeartbeat();
     clearBudgetTimer();
     if (exitBackstop) {
       process.removeListener("exit", exitBackstop);
@@ -396,6 +422,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // #576: clear the per-run LLM usage sink BEFORE closing `eventsDb` below, so
     // no late sink invocation can write through a closed handle.
     disposeLlmUsageSink();
+    // #957: never leave the first-response heartbeat timer pending past the run.
+    clearFirstResponseHeartbeat();
     // O-1 (#364): Clear the budget abort timer so it does not keep the event
     // loop alive after the run completes.
     clearBudgetTimer();
