@@ -396,8 +396,8 @@ unless a remote `embedding` config is provided.
 `akm improve`'s memory-inference/consolidate passes when they call an
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
 reference, same rules as engine `apiKey`), `dimension`, `localModel`,
-`maxInputTokens`, `maxTokens`, `batchSize`, `chunkSize`, `contextLength`,
-`timeoutMs`, `concurrency`, and `ollamaOptions.num_ctx`.
+`maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
+`concurrency`, and `ollamaOptions.num_ctx`.
 
 The knobs that bound request/document size and rate, all optional (defaults
 apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
@@ -749,3 +749,7 @@ network filesystem for the data directory and falls back to `DELETE`.
 configuration using `engines`, `defaults.engine`, `defaults.llmEngine`, and
 `improve.strategies`; AKM deliberately does not infer or rename ambiguous
 profile identities.
+
+`embedding.chunkSize` was never read by anything under `src/` (#954), so a
+config that still sets it is simply ignored — it still loads, unvalidated
+and without warning.
