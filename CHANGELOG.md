@@ -573,6 +573,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of reusing them. A plain `akm index` resume after an interruption
   now embeds only the entries still missing a vector, with no purge and no
   canary.
+- **The fingerprint-rename canary embeds the exact text the stored vector was
+  generated from (#955).** `sampleEmbeddedEntriesForCanary` handed the canary
+  the entry's raw `search_text`, while the main embedding pass caps it to
+  `embedding.maxInputTokens` before ever calling the provider — so for any
+  entry whose search text exceeded the cap, the canary's freshly re-embedded
+  vector came from a different input than the one that produced the stored
+  vector, and the median cosine similarity could fall below the compatibility
+  threshold for reasons unrelated to the model, triggering a needless full
+  purge and rebuild on a same-model rename. The canary now caps each sampled
+  entry's search text the same way, through the same `capEmbeddingText`
+  helper, before requesting its vector.
 
 ## [0.9.14] - 2026-09-04
 
