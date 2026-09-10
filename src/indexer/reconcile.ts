@@ -230,17 +230,25 @@ export async function reconcileRoots(
     // forever, since nothing else would ever re-examine it. Filtering
     // `storedByPath` down to paths that still have a live `entries` row
     // makes every other file look "new" to `classifyFile`, which reparses
-    // and reinserts it — self-healing the desync on the very next reconcile.
+    // and reinserts it — self-healing the desync on the very next reconcile;
+    // the orphaned `files` rows the filter drops are deleted below so they
+    // do not linger and inflate the stat cache forever.
     const entryPaths = new Set(
       (
         db.prepare("SELECT file_path FROM entries WHERE bundle_id = ?").all(root.bundleId) as { file_path: string }[]
       ).map((row) => row.file_path),
     );
-    const storedByPath = new Map(
-      getFileStatesByBundle(db, root.bundleId)
-        .filter((row) => entryPaths.has(row.path))
-        .map((row) => [row.path, row]),
-    );
+    const allFileStates = getFileStatesByBundle(db, root.bundleId);
+    const orphanedFileStates = allFileStates.filter((row) => !entryPaths.has(row.path));
+    if (orphanedFileStates.length > 0) {
+      withImmediateTransaction(db, () => {
+        deleteFileStates(
+          db,
+          orphanedFileStates.map((row) => row.path),
+        );
+      });
+    }
+    const storedByPath = new Map(allFileStates.filter((row) => entryPaths.has(row.path)).map((row) => [row.path, row]));
     const currentPaths = new Set(walked.files.map((file) => file.absPath));
 
     // A full-root walk can see both peer workflow formats (.md/.yml) for one

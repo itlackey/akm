@@ -267,6 +267,35 @@ describe("reconcileRoots", () => {
     }
   });
 
+  test("#339 desync: a files row whose entries row vanished is dropped, not left orphaned", async () => {
+    const dbPath = newDbPath();
+    const db = openDb(dbPath);
+    try {
+      const alpha = writeNote("memories/alpha.md", { body: "Alpha body for the desync test." });
+      await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+      expect(filesTable(db).some((f) => f.path === alpha)).toBe(true);
+
+      // Simulate the desync directly: something clears `entries` without
+      // touching `files` (a crash mid-rebuild, a hand operation), leaving a
+      // `files` row with no corresponding `entries` row.
+      db.prepare("DELETE FROM entries WHERE file_path = ?").run(alpha);
+
+      const counts = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+
+      // The orphaned `files` row is swept before Phase 1 runs, so
+      // `upsertOrInsert`'s existedBefore check (keyed on the `files` row, not
+      // `entries`) sees no prior row and reports a fresh add, not an update.
+      expect(counts.added).toBe(1);
+      expect(counts.changed).toBe(0);
+
+      const filesAfter = filesTable(db).filter((f) => f.path === alpha);
+      expect(filesAfter.length).toBe(1);
+      expect(entriesTable(db).some((e) => e.file_path === alpha)).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   test("rename: one row re-pointed (same entries.id), fragment unit hashes reused", async () => {
     const dbPath = newDbPath();
     const db = openDb(dbPath);
