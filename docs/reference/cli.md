@@ -363,15 +363,17 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes and the `cli-version` update check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
 default agent engine, and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
 to the `default-llm-engine` and every `configured-engines` LLM connection (and
-an SDK engine's LLM fallback), one probe per distinct endpoint, and checks the
-installed akm-cli version against the latest GitHub release (`cli-version`).
+an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
+installed akm-cli version against the latest GitHub release (`cli-version`),
+and runs the scheduler's recorded akm binary with `--version` to check it
+against the running CLI (`scheduler-binary`).
 
 Primary result fields:
 
