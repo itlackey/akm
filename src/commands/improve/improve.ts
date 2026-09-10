@@ -137,13 +137,16 @@ export function renderSyncCommitMessage(
 }
 
 /**
- * How long a live run waits for its FIRST engine response (success or error —
- * any terminal record proves the run is not silent) before printing one
- * default-level line. Field re-test (#957): an engine pointed at a dead
- * endpoint produced zero output for minutes, so a genuine hang looked
- * identical to a normal-but-slow run. A few seconds is short enough that an
- * operator watching a scheduled run's live log sees something promptly,
- * long enough that an ordinary fast response never prints it.
+ * How long the improve loop waits for its FIRST engine response (success or
+ * error — any terminal record proves the run is not silent) before printing
+ * one default-level line. The timer is armed once the triage/index prepass
+ * finishes and the loop is about to start dispatching engine requests — not
+ * at run start — so it measures engine latency, not prepass time. Field
+ * re-test (#957): an engine pointed at a dead endpoint produced zero output
+ * for minutes, so a genuine hang looked identical to a normal-but-slow run.
+ * A few seconds is short enough that an operator watching a scheduled run's
+ * live log sees something promptly, long enough that an ordinary fast
+ * response never prints it.
  */
 export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
 
@@ -228,6 +231,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   } = setup;
   let clearBudgetTimer = (): void => {};
   let clearFirstResponseHeartbeat = (): void => {};
+  // #957: set by the usage sink's onRecord callback the moment any engine
+  // call terminates (success or error), including one issued by the prepass
+  // itself — makes arming the heartbeat below a no-op when the run is
+  // already known not to be silent.
+  let firstEngineResponseSeen = false;
   let initialGitPaths = new Set<string>();
   const runJournal = createRunWriteJournal();
 
@@ -288,18 +296,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       improveLockOwnership = acquisition.ownership;
       disposeLlmUsageSink = installLlmUsagePersistence(
         () => eventsCtx,
-        () => clearFirstResponseHeartbeat(),
+        () => {
+          firstEngineResponseSeen = true;
+          clearFirstResponseHeartbeat();
+        },
       );
-      // #957: one default-level line if the run's first engine response takes
-      // longer than a few seconds, so a dead/slow endpoint is never silent.
-      // Cleared by the sink's onRecord callback above the moment any call
-      // terminates (success or error) — never rearmed, so this prints at
-      // most once per run.
-      const firstResponseTimer = setTimeout(() => {
-        warn("[improve] Still waiting for the first engine response...");
-      }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
-      firstResponseTimer.unref?.();
-      clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
       exitBackstop = releaseRunLock;
       process.on("exit", exitBackstop);
       initialGitPaths =
@@ -362,6 +363,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // are all in hand. See buildImproveRunContext for exactly which
     // already-resolved values back each field.
     const ctx = buildImproveRunContext(setup, eventsCtx);
+
+    // #957: arm the heartbeat here, immediately before the improve loop
+    // starts dispatching engine requests — not at run start, where its timer
+    // would measure the triage/index prepass instead of engine latency. A
+    // no-op when the prepass already produced a terminal LLM record (the
+    // onRecord callback above already saw it). Cleared the moment any call
+    // terminates (success or error) — never rearmed, so this prints at most
+    // once per run.
+    if (!firstEngineResponseSeen) {
+      const firstResponseTimer = setTimeout(() => {
+        warn("[improve] Still waiting for the first engine response...");
+      }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
+      firstResponseTimer.unref?.();
+      clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
+    }
 
     const seq = await runImproveStageSequence({
       run: setup,
