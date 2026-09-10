@@ -105,12 +105,24 @@ function configureHungEngine(port: number): void {
  * An `/embeddings` mock that sleeps before answering — makes the triage/index
  * prepass slow deterministically (with `semanticSearchMode: "auto"`) instead
  * of seeding a large stash. Responds with one placeholder vector per
- * requested input so `generateEmbeddingsForDb` accepts the batch.
+ * requested input so the embedding queue accepts the batch.
+ *
+ * The provider-limits probe (`probeProviderLimits`, added by the index
+ * redesign) asks the same endpoint for its real window and slot count
+ * BEFORE any embedding request: `GET /props` (llama.cpp) then
+ * `POST /api/show` (Ollama). Those must be answered — a 404 is what makes
+ * the probe fall back to its conservative default, the same way every other
+ * embedding mock in the suite handles them — because reading `request.json()`
+ * on the bodyless GET throws `SyntaxError: Unexpected end of JSON input`,
+ * which kills the mock mid-run and collapses the very timing this test
+ * measures.
  */
 function slowEmbeddingServer(delayMs: number) {
   return Bun.serve({
     port: 0,
     async fetch(request) {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === "/props" || pathname === "/api/show") return new Response(null, { status: 404 });
       const body = (await request.json()) as { input?: string[] };
       const count = body.input?.length ?? 1;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
