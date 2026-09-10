@@ -801,8 +801,8 @@ akm feedback
   → insertUsageEvent()       → usage_events (signal column)
   → appendEvent()            → events table in state.db (for improve/distill/reflect pipeline)
 
-akm index  (recomputeUtilityScores)
-  → reads source='user' usage_events aggregates per entry
+akm index
+  → recomputeUtilityScores() → reads source='user' usage_events aggregates per entry
        selectRate   = min(1, show_count / search_count)
        feedbackRate = (positive_count − negative_count) / total_feedback
        effectiveRate = max(selectRate, feedbackRate)

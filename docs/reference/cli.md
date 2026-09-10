@@ -218,13 +218,11 @@ and builds the search index.
 Build or refresh the search index.
 
 ```sh
-akm index            # Incremental (only changed directories)
-akm index --full     # Full rebuild (reuses unchanged embeddings — see below)
+akm index            # Reconcile: diff every configured root against the index, drain the embedding queue
+akm index --full     # Force every file to be re-derived, ignoring the unchanged-file shortcut, reconciling in place
 akm index --verbose  # Print phase progress to stderr
-akm index --clean    # Normal index + remove stale entries from the DB
-akm index --clean --dry-run # Report stale entries without deleting
-akm index --reembed  # Force re-embedding of every entry
-akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) if a run is already in progress
+akm index --reembed  # Drop the active embedding identity's vectors, then re-embed every unit from scratch
+akm index status     # Report file/entry/unit counts, active identity, and last-reconcile time — no writes
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -246,62 +244,49 @@ per-batch `Embedded N/M entries.` line stays out of non-verbose stderr (it
 fires after every committed batch) — pass `--verbose` for that level of
 detail.
 
-**`--clean` flag:** After indexing completes, verifies every indexed entry's source
-file still exists on disk. Removes any entries whose file is missing (for local
-bundle sources only; remote entries are skipped). Returns a `clean` block in the
-JSON result with `checked`, `removed`, `removedRefs` arrays, and `dryRun` flag.
-Use `--clean` to resolve the edge case where a deleted file in an unchanged
-directory lingers in the index across incremental runs. With `--dry-run`, reports
-which entries would be removed without modifying the database.
+**Reconcile, not a walk-and-rebuild pipeline:** `akm index` diffs every
+configured root's files against the index (stat cache: unchanged files are
+skipped without a re-parse), upserts what changed, removes what is genuinely
+gone, then drains the content-addressed embedding queue. Every write is a
+short, idempotent transaction — there is no rebuild lock, no writer lock on
+the index path, and no per-command background reindex spawn: two concurrent
+`akm index` runs simply converge on the same end state instead of
+contending. `akm index status` (no writes) reports file/entry/unit counts,
+the active embedding identity, and the last-reconcile time.
 
-**`--full` no longer re-embeds unchanged content (#955):** a full rebuild
-(and an index-generation bump on first open under a new binary) used to
-delete every embedding unconditionally, forcing a full re-embed of the
-whole corpus even when nothing changed. Vectors about to be discarded are
-now salvaged (keyed by a hash of their content plus the fingerprint they
-were generated under) and handed straight back to unchanged entries at the
-start of the next embedding pass, with zero provider calls for them — a
-progress line reports the split (`Reused N embeddings from the previous
-generation; embedding M new.`). Content that changed even by one byte, or
-a fingerprint that no longer matches, still goes through the provider
-normally. `--reembed` is the way to force a full re-embed regardless.
+**`--full`:** does NOT drop or wipe anything first. It reconciles with every
+walked file treated as needing re-derivation — the stat-hint "unchanged"
+shortcut is skipped, so every file is re-parsed — but each file's existing
+row (keyed by its stable `item_ref`) is updated in place, not deleted and
+reinserted: the row keeps its id, its embeddings, and its learned utility
+scores. Content-addressed units (`units`/`units_vec`, keyed by content hash,
+never by entry id) are never at risk from a reindex at all, `--full`
+included — there is nothing to re-embed for unchanged content. Gone-path
+detection (files genuinely removed) is unaffected by `--full`; a root whose
+walk could not be trusted this run (an unreachable path, a mid-walk stat
+failure) has its entire existing snapshot preserved rather than partially
+wiped over a transient scan failure.
 
-**`--reembed` flag:** Forces a full purge and re-embed of every entry,
-independent of the embedding-model-rename compatibility check described
-below. Ordinary indexing already tells a config-only rename of
-`embedding.model` (e.g. a gateway that changes how it names the same model)
-apart from a genuine model change, and keeps the stored vectors when they
-are still compatible; `--reembed` skips that check and forces a rebuild
-regardless of what it would have decided.
+**`--reembed`:** drops the active embedding identity's vectors, then the
+drain re-embeds every unit from scratch under that identity — independent of
+the embedding-model-rename compatibility check ordinary indexing already
+does (telling a config-only rename of `embedding.model` apart from a genuine
+model change, and keeping stored vectors when they are still compatible).
 
-**`--skip-if-locked` flag:** Every explicit `akm index` run acquires an
-opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
-advisory, never the blocking lock #872 removed (see
-[Locks](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#locks)). A human-typed
-`akm index` with no flag is never gated by it: if another run already holds
-the lock, it warns and proceeds anyway, contending with the existing run. If
-that contention makes index.db genuinely busy (SQLite `database is locked`)
-long enough to exhaust the driver's retry window, the run now fails with
-exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
-driver error at exit 70 — the same retry-shortly contract as
-`STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
-`--skip-if-locked` changes that only for the invocation that passes it: if
-the lock is already held by a live process, it skips gracefully (exit 0,
-`{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
-— `launcherPid` is the holder's launcher pid when known, `null` otherwise,
-#956) instead of contending. `akm index` and `akm curate` are both safe to call frequently —
-`curate` never blocks on a rebuild in progress ([read-path indexing stays
-non-blocking](#curate)) — but a hook, cron job, or scheduled task that
-invokes `akm index` directly should pass `--skip-if-locked` so it steps
-aside instead of piling up behind a longer rebuild (the shipped
-`index-refresh` task does this).
+**`--skip-if-locked`:** deprecated, no effect — index runs no longer take a
+rebuild lock, so there is nothing left to skip around. Passing it prints one
+deprecation warning; the run proceeds exactly as an ordinary `akm index`
+would. Kept only so an existing script or scheduled task does not fail on an
+unknown flag. If index.db is genuinely busy (a second connection holds a
+write transaction) long enough to exhaust the driver's own SQLite
+`busy_timeout`, the run fails with exit 75 (`TransientError`, code
+`INDEX_DB_CONTENDED`) instead of the raw driver error at exit 70 — the same
+retry-shortly contract as `STATE_DB_CONTENDED`, so a scheduler can branch on
+it instead of alerting.
 
-`akm index` always rebuilds the search index and keeps metadata in the index.
-When a selected named LLM engine (`defaults.llmEngine` or an indexing-pass
-override) is configured and the per-pass gate allows it, metadata
-enhancement runs during indexing. In text mode, the default CLI UI shows a
-spinner with processed-versus-total source counts; structured output modes
-(`json`, `yaml`, `jsonl`) stay clean and machine-readable.
+In text mode, the default CLI UI shows a spinner with processed-versus-total
+source counts; structured output modes (`json`, `yaml`, `jsonl`) stay clean
+and machine-readable.
 
 ### info
 
