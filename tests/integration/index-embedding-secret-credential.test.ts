@@ -17,9 +17,12 @@
  * that reaches `RemoteEmbedder`: an `extends`-inherited apiKey with adapter
  * detection persisting mid-run (#945); `akm bundle update`'s post-commit
  * embedding pass (`runPostCommitEmbeddingPass`, reached via `akmUpdate`);
- * the `remember` write path (`indexWrittenAssets`, which calls
- * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the
- * improve consolidate path as the known-good control.
+ * and the improve consolidate path as the known-good control. (The
+ * `remember` write path, `indexWrittenAssets`, used to reach
+ * `generateEmbeddingsForDb` directly and had its own variant here; per
+ * docs/plans/index-redesign-contract.md module B2 it now delegates
+ * embedding to module B4's `drainEmbeddingQueue`, which owns this
+ * credential-carrying guarantee from here on.)
  *
  * Every request the mock server sees is asserted to carry the resolved
  * `Authorization` header — none of the variants below reproduced a keyless
@@ -39,7 +42,6 @@ import { setSecret } from "../../src/commands/env/secret";
 import { akmUpdate } from "../../src/commands/sources/installed-stashes";
 import { resetConfigCache } from "../../src/core/config/config";
 import { getRegistryCacheDir } from "../../src/core/paths";
-import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
@@ -308,59 +310,13 @@ describe("akm bundle update: post-commit embedding pass carries the secret:// cr
   });
 });
 
-describe("akm remember write path: indexWrittenAssets carries the secret:// credential (#953)", () => {
-  let storage: IsolatedAkmStorage;
-  let server: ReturnType<typeof Bun.serve> | undefined;
-
-  beforeEach(() => {
-    storage = withIsolatedAkmStorage();
-    clearEmbeddingCache();
-  });
-  afterEach(() => {
-    server?.stop(true);
-    server = undefined;
-    storage.cleanup();
-    resetConfigCache();
-  });
-
-  test("generateEmbeddingsForDb, called at indexWrittenAssets's own fresh loadConfig(), sends Bearer <store value>", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("remember-store-secret-value"));
-
-    const capture = createAuthCapturingEmbeddingServer();
-    server = capture.server;
-
-    fs.writeFileSync(
-      path.join(storage.stashDir, "memories", "seed-memory.md"),
-      "---\ndescription: seed-memory\n---\n\nSeed memory so the index is non-empty before the write-path call.\n",
-      "utf8",
-    );
-
-    writeSandboxConfig({
-      semanticSearchMode: "auto",
-      bundles: { stash: { path: storage.stashDir, writable: true } },
-      defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
-    });
-    resetConfigCache();
-
-    // Establish the index via a normal full run first (already covered by the
-    // in-process akmIndex variant above) — the assertion below isolates the
-    // write path's OWN fresh `loadConfig()` call inside `indexWrittenAssets`,
-    // reached via `generateEmbeddingsForDb`, not this seed run.
-    await akmIndex({ stashDir: storage.stashDir, full: true });
-    capture.authHeaders.length = 0;
-
-    const filePath = path.join(storage.stashDir, "memories", "remembered-entry.md");
-    fs.writeFileSync(
-      filePath,
-      "---\ndescription: remembered-entry\n---\n\nA newly remembered entry to embed via the write path.\n",
-      "utf8",
-    );
-
-    expect(await indexWrittenAssets(storage.stashDir, [filePath])).toBe(true);
-    expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer remember-store-secret-value");
-  });
-});
+// The `remember` write path (`indexWrittenAssets`) used to reach
+// `generateEmbeddingsForDb` directly and had its own credential-carrying
+// suite here. docs/plans/index-redesign-contract.md (module B2) replaces
+// that with a thin call to module B4's `drainEmbeddingQueue`, which owns
+// talking to the embedder (including credential resolution) from here on;
+// this regression guard belongs in B4's own test suite once B4 lands for
+// real, not B2's.
 
 describe("known-good control: improve consolidate's embedding path (#953)", () => {
   let storage: IsolatedAkmStorage;
