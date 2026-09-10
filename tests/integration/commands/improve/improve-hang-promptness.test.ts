@@ -19,13 +19,24 @@
  *
  * Integration-scoped (ORG-03/06): spawns real child processes, opens a real
  * index.db, and touches the network.
+ *
+ * The two cases above spawn `bun src/cli.ts` directly, which never involves
+ * the published launcher (`scripts/node-runtime/akm`) — the layer the field
+ * actually ran under (`timeout 30 akm improve ...`), and whose own signal
+ * forwarding (see its #956 comments) was the thing in question. The two
+ * "through the launcher" cases below stage a real copy of that launcher next
+ * to a one-line `cli.js` shim that imports the repo's real entrypoint
+ * (mirroring the fixture in `tests/integration/launcher-signal-forwarding.test.ts`,
+ * but running the actual CLI instead of a fake), so the launcher's own
+ * `spawn(command, [entry, ...argv])` runs the real improve command under Bun.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { saveConfig } from "../../../../src/core/config/config";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 
@@ -78,6 +89,46 @@ function configureHungEngine(port: number): void {
     },
     defaults: { llmEngine: "hung" },
   });
+}
+
+/**
+ * Stages a real copy of the published launcher plus a one-line `cli.js`
+ * sibling that imports the repo's real entrypoint, so the launcher's own
+ * `spawn(command, [entry, ...argv])` (scripts/node-runtime/akm:148-152) runs
+ * the real CLI under Bun instead of the fake fixture used by
+ * launcher-signal-forwarding.test.ts. The shim writes its own pid to
+ * `pidFile` before importing, so the test can later confirm that pid — the
+ * launcher's actual spawned child, not a stand-in — is gone.
+ */
+function stageRealCliLauncher(root: string): { launcherPath: string; pidFile: string } {
+  const dist = path.join(root, "package", "dist");
+  const launcherPath = path.join(dist, "akm");
+  const pidFile = path.join(root, "child-pid.txt");
+  fs.mkdirSync(dist, { recursive: true });
+  fs.copyFileSync(path.join(repoRoot, "scripts/node-runtime/akm"), launcherPath);
+  const cliEntryUrl = pathToFileURL(path.join(repoRoot, "src/cli.ts")).href;
+  fs.writeFileSync(
+    path.join(dist, "cli.js"),
+    [
+      'import fs from "node:fs";',
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+      // cli.ts gates its startup block on `import.meta.main`, which is false
+      // once it is `import()`ed from here rather than run directly — opt in
+      // the same way dist/cli-node.mjs and scripts/akm-standalone.ts do.
+      'process.env.AKM_STANDALONE_ENTRY = "1";',
+      `await import(${JSON.stringify(cliEntryUrl)});`,
+    ].join("\n"),
+  );
+  return { launcherPath, pidFile };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("akm improve — real reflect dispatch against a dead endpoint (#957)", () => {
@@ -154,6 +205,101 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
     } finally {
       child?.kill("SIGKILL");
       server.stop(true);
+    }
+  }, 30_000);
+
+  test("launcher-mediated SIGTERM ends the real CLI child within the grace bound (#957)", async () => {
+    writeMemory("note-c");
+    const { server, requestCount } = hangingChatServer();
+    const sandbox = makeSandboxDir("akm-launcher-improve-sigterm-");
+    let launcherProc: ReturnType<typeof Bun.spawn> | undefined;
+    let childPid: number | undefined;
+    try {
+      configureHungEngine(server.port!);
+      const { launcherPath, pidFile } = stageRealCliLauncher(sandbox.dir);
+
+      launcherProc = Bun.spawn(["bun", launcherPath, "improve", "memories/note-c", "--strategy", "quick"], {
+        cwd: repoRoot,
+        env: { ...process.env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      await waitUntil(() => fs.existsSync(pidFile), 15_000, "the launcher's spawned child to record its pid");
+      childPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
+      await waitUntil(() => requestCount() > 0, 15_000, "the first chat-completion request to reach the mock server");
+
+      // Sent only to the launcher's own pid — no shared foreground process
+      // group here (mirrors launcher-signal-forwarding.test.ts), so nothing
+      // but the launcher's own forwarding code can move this to the child.
+      const signalledAt = Date.now();
+      launcherProc.kill("SIGTERM");
+      const code = await launcherProc.exited;
+      const elapsedMs = Date.now() - signalledAt;
+
+      // The launcher resolves its own exit only after its child's `exit`
+      // event fires (scripts/node-runtime/akm:180-204), so a real forwarded
+      // SIGTERM makes the launcher report the same 143 SIGNAL_TABLE code the
+      // direct-spawn case above sees, not a launcher-of-its-own signal.
+      expect(code).toBe(143);
+      // Same #956/#957 grace bound as the direct-spawn case, with slack for
+      // the extra launcher-to-child forwarding hop.
+      expect(elapsedMs).toBeLessThan(5_000);
+      // Proves the launcher's forward reached the real bun child, not just
+      // the launcher wrapper: the actual spawned pid is gone, not orphaned.
+      await waitUntil(
+        () => !isProcessAlive(childPid as number),
+        2_000,
+        "the launcher's spawned bun child to exit alongside it",
+      );
+    } finally {
+      launcherProc?.kill("SIGKILL");
+      if (childPid !== undefined && isProcessAlive(childPid)) process.kill(childPid, "SIGKILL");
+      server.stop(true);
+      sandbox.cleanup();
+    }
+  }, 30_000);
+
+  test("launcher-mediated --timeout-ms 2000 ends the real CLI child promptly (#957)", async () => {
+    writeMemory("note-d");
+    const { server, requestCount } = hangingChatServer();
+    const sandbox = makeSandboxDir("akm-launcher-improve-timeout-");
+    let launcherProc: ReturnType<typeof Bun.spawn> | undefined;
+    let childPid: number | undefined;
+    try {
+      configureHungEngine(server.port!);
+      const { launcherPath, pidFile } = stageRealCliLauncher(sandbox.dir);
+
+      const startedAt = Date.now();
+      launcherProc = Bun.spawn(
+        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "quick", "--timeout-ms", "2000"],
+        { cwd: repoRoot, env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
+      );
+
+      await waitUntil(() => fs.existsSync(pidFile), 15_000, "the launcher's spawned child to record its pid");
+      childPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
+      await waitUntil(() => requestCount() > 0, 15_000, "the first chat-completion request to reach the mock server");
+
+      const code = await launcherProc.exited;
+      const elapsedMs = Date.now() - startedAt;
+
+      // Budget exhaustion is a normal scheduled-task condition (armBudgetWatchdog),
+      // not an error, same as the direct-spawn case — the launcher reports
+      // the child's clean exit 0.
+      expect(code).toBe(0);
+      // 2000ms budget + the watchdog's hard-kill grace + the launcher hop,
+      // generously bounded well under the field's multi-minute hang.
+      expect(elapsedMs).toBeLessThan(15_000);
+      await waitUntil(
+        () => !isProcessAlive(childPid as number),
+        2_000,
+        "the launcher's spawned bun child to exit alongside it",
+      );
+    } finally {
+      launcherProc?.kill("SIGKILL");
+      if (childPid !== undefined && isProcessAlive(childPid)) process.kill(childPid, "SIGKILL");
+      server.stop(true);
+      sandbox.cleanup();
     }
   }, 30_000);
 });
