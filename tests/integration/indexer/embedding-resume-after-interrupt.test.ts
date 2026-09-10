@@ -19,9 +19,10 @@
  *    before they were reached — `--full` drops `entries`/`files` but never
  *    `units`/`units_vec` (rule 2, docs/plans/index-redesign.md), so the
  *    already-embedded ones were never at risk of the wipe and there is
- *    nothing to salvage FROM; #955's `embedding_salvage` table exists for the
- *    legacy entry-id-keyed `embeddings` table, which nothing writes to any
- *    more (index-redesign B5a retired its only caller).
+ *    nothing to salvage FROM; #955's `embedding_salvage` table (for the
+ *    legacy entry-id-keyed `embeddings` table) is itself retired
+ *    (index-redesign B5b) — content-addressed units need no salvage step at
+ *    all.
  *
  * Integration-scoped (ORG-03/06): drives `akmIndex` end-to-end against a
  * real index.db.
@@ -60,17 +61,12 @@ function stableVec(i: number): EmbeddingVector {
   return [1 + i, 2 + i, 3 + i];
 }
 
-function salvageRowCount(db: Database): number {
-  return (db.prepare("SELECT COUNT(*) AS c FROM embedding_salvage").get() as { c: number }).c;
-}
-
 /**
  * `units` rows with a stored vector — the content-addressed (index-redesign
- * A2) analogue of the pre-redesign `embeddings` table. That legacy,
- * entry-id-keyed table is only ever written by `materialize-embeddings.ts`,
- * which nothing calls any more (B5a retired its only caller), so it stays at
- * zero for the whole run; this reads the table `drainEmbeddingQueue` (B4)
- * actually writes.
+ * A2) analogue of the pre-redesign, entry-id-keyed `embeddings` table.
+ * `materialize-embeddings.ts`, the only writer of that legacy table, had no
+ * callers left and is deleted (index-redesign B5b); this reads the table
+ * `drainEmbeddingQueue` (B4) actually writes.
  */
 function getUnitVectorCount(db: Database): number {
   return (db.prepare("SELECT COUNT(*) AS c FROM units").get() as { c: number }).c;
@@ -218,20 +214,19 @@ describe("index resumability after an interrupted embedding phase (#956)", () =>
     expect(full.verification.ok).toBe(true);
 
     // `--full` drops `entries`/`files` but never `units`/`units_vec`
-    // (index-redesign B5a, docs/plans/index-redesign.md rule 2: vectors are
-    // content-addressed and never rebuilt) — the 3 already-embedded units
-    // from the interrupted pass are never at risk of the wipe in the first
-    // place, so there is nothing to salvage FROM (#955's `embedding_salvage`
-    // exists for the legacy entry-id-keyed `embeddings` table, which nothing
-    // writes to any more). Only the 2 units the interrupted pass never
-    // reached are still missing a vector, so only those go to the provider.
+    // (docs/plans/index-redesign.md rule 2: vectors are content-addressed
+    // and never rebuilt) — the 3 already-embedded units from the interrupted
+    // pass are never at risk of the wipe in the first place, so there is
+    // nothing to salvage FROM (#955's `embedding_salvage`, for the legacy
+    // entry-id-keyed `embeddings` table, is itself retired — index-redesign
+    // B5b). Only the 2 units the interrupted pass never reached are still
+    // missing a vector, so only those go to the provider.
     expect(calls).toBe(1);
     expect(lastTextCount).toBe(2);
 
     const db = openDb();
     try {
       expect(getUnitVectorCount(db)).toBe(5);
-      expect(salvageRowCount(db)).toBe(0);
     } finally {
       closeDatabase(db);
     }

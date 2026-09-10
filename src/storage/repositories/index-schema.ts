@@ -15,7 +15,6 @@
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { Database } from "../database";
-import { ensureEmbeddingSalvageTable, salvageEmbeddingsBeforeDiscard } from "./embedding-salvage-repository";
 import { ensureFileAndUnitTextTables } from "./files-repository";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
@@ -220,13 +219,6 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
   }
 
   db.transaction(() => {
-    // #955: copy embeddings about to be discarded wholesale into
-    // `embedding_salvage` (keyed by content hash + the fingerprint they were
-    // generated under) BEFORE dropping `embeddings`, in the same transaction
-    // as the drop, so the copy and the discard commit or roll back together.
-    // The next embedding pass hands salvaged vectors back to unchanged
-    // content instead of re-embedding the whole corpus after this bump.
-    salvageEmbeddingsBeforeDiscard(db);
     db.exec("DROP TABLE IF EXISTS graph_file_relations");
     db.exec("DROP TABLE IF EXISTS graph_file_entities");
     db.exec("DROP TABLE IF EXISTS graph_files");
@@ -243,9 +235,6 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
     db.exec("DROP TABLE IF EXISTS index_dir_state");
     db.exec("DROP TABLE IF EXISTS entries");
     db.exec("DELETE FROM index_meta");
-    // embedding_salvage is deliberately absent from the drop list above —
-    // it is the ONE piece of derived state a generation rebuild must not
-    // discard.
   })();
 
   if (vecResetPending) setMeta(db, "vecResetPending", "1");
@@ -260,12 +249,6 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     );
   `);
 
-  // #955: created before the generation-rebuild check below so a discard
-  // has somewhere to copy vectors to. Additive-only — it carries no bearing
-  // on the `entries` generation fingerprint (`hasCanonicalEntrySchema`), so
-  // adding it does not require a `CANONICAL_INDEX_DB_VERSION` bump.
-  ensureEmbeddingSalvageTable(db);
-
   rebuildIncompatibleIndexGeneration(db);
 
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
@@ -275,6 +258,14 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // second persisted representation and was never used by current execution.
   // index.db is derived state, so remove the obsolete table on every open.
   db.exec("DROP TABLE IF EXISTS workflow_documents");
+
+  // #955's embedding-salvage cache (`embedding-salvage-repository.ts`) is
+  // retired (index redesign, B5) — units are content-addressed, so a
+  // generation bump keeps whatever vectors are still keyed by an
+  // unchanged unit hash instead of needing a copy-aside step. Drop the
+  // table on every open so an install upgrading past this release does not
+  // carry the now-unreferenced rows forever.
+  db.exec("DROP TABLE IF EXISTS embedding_salvage");
 
   // BLOB-based embedding storage (always available, no sqlite-vec needed)
   db.exec(`

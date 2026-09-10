@@ -47,8 +47,8 @@ function makeDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) =>
 /**
  * `getEmbeddingCount` (index-vec-repository.ts) reads the legacy entry-keyed
  * `embeddings`/`entries_vec` pair — dead tables under the units pipeline
- * (nothing writes to them any more; materialize-embeddings.ts, their only
- * writer, is never called by `akmIndex`/`runEmbeddingPass` since B5). The
+ * (nothing writes to them any more; `materialize-embeddings.ts`, their only
+ * writer, had no callers left and is deleted — index-redesign B5b). The
  * durable count now lives in `units` (index-redesign B2/B3), one row per
  * embedded unit, content-addressed by (hash, identity).
  */

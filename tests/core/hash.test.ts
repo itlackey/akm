@@ -3,18 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #955: `hashEmbeddableText` is the ONE hash function embedding-salvage
- * writes (at a discard) and reuse lookups (at the next embedding pass) must
- * agree on — a stable, deterministic sha256 keyed on the exact search_text
- * bytes, so a single-byte content change never falsely reuses a stale
- * vector. Pure/in-memory, no database — belongs under tests/, not
- * tests/integration/.
+ * `hashEmbeddableText` is the ONE hash function every writer of and lookup
+ * against provider-bound text must agree on — a stable, deterministic sha256
+ * over the exact bytes sent, so a single-byte content change is never
+ * confused with unchanged text. Used by `src/indexer/units/unit.ts` (unit
+ * identity) — originally lived in the now-deleted `embedding-salvage-
+ * repository.ts` (#955), moved here (index-redesign, B5) so a pure
+ * text-processing module is not coupled to a storage repository just to
+ * reuse it; this file moved with it (was
+ * tests/embedding-salvage-hash.test.ts). Pure/in-memory, no database —
+ * belongs under tests/, not tests/integration/.
  */
 
 import { describe, expect, test } from "bun:test";
-import { hashEmbeddableText } from "../src/storage/repositories/embedding-salvage-repository";
+import { hashEmbeddableText } from "../../src/core/hash";
 
-describe("hashEmbeddableText (#955)", () => {
+describe("hashEmbeddableText", () => {
   test("is deterministic: the same text always hashes the same way", () => {
     const a = hashEmbeddableText("alpha bravo charlie");
     const b = hashEmbeddableText("alpha bravo charlie");
