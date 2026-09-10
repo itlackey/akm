@@ -157,7 +157,20 @@ export type TransientErrorCode =
   // another akm process is writing state.db right now, not a genuine
   // corruption/unrelated failure. The original driver error survives as
   // `cause`.
-  | "STATE_DB_CONTENDED";
+  | "STATE_DB_CONTENDED"
+  // Field follow-up to #956 (dev-team field review 2026-09-10): a
+  // concurrent `akm index` (or any other writer touching index.db — source
+  // add/update, the implicit per-command background reindex) can make a
+  // rebuild's write hit the same contention-shaped SQLite condition
+  // `isSqliteContentionError` already classifies for state.db, but index.db
+  // writes had no reclassification boundary of their own — the raw driver
+  // error ("database is locked") escaped `akmIndex` as exit 70
+  // (internal/unclassified) instead of this "retry shortly" contract.
+  // Thrown from `akmIndex`'s outer catch (src/indexer/indexer.ts), the one
+  // function every caller goes through, for a contention-shaped error
+  // escaping the walk, index, or embedding phase. The original driver error
+  // survives as `cause`.
+  | "INDEX_DB_CONTENDED";
 
 /** Stable, machine-readable codes for NotFoundError. */
 export type NotFoundErrorCode =
@@ -275,6 +288,8 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
     "Wait for the named engine invocation to finish or for the lease to expire, then retry. `akm workflow status <id>` shows the current lease.",
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
+  INDEX_DB_CONTENDED:
+    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
 };
 
 /** Default hint for each NotFoundError code. */
