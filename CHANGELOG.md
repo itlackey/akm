@@ -279,6 +279,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it differs from the running CLI, pointing at `akm task sync` as the
   remedy. `unknown` when not probed, no task is installed, or the recorded
   binary cannot be executed.
+- **`akm improve <ref> --show-prompt` prints the composed reflect prompt for
+  one asset and exits (#952).** A beta.3 field round confirmed the #952 prompt
+  fix by reading source, but no live `akm improve` completed across three
+  attempts, leaving no cheap way to see the prompt in practice. `--show-prompt`
+  reuses every read-only step `akm improve`'s live reflect step already
+  performs (source resolution, runner selection, feedback/schema-hint/
+  related-lesson/rejected-proposal gathering) and stops before the dispatch
+  lease reflect would otherwise acquire — no lock, index write, or engine call,
+  same as `--dry-run`. Requires a fully-qualified asset ref as the scope; JSON/
+  yaml output carries the prompt as a `prompt` field, text output prints it
+  directly so the #952 framing (feedback shown as an unverified report, and
+  the instruction never to emit the truncation marker or out-of-asset content)
+  can be checked by eye.
 
 ### Changed
 
