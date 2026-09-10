@@ -16,6 +16,7 @@ import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { Database } from "../database";
 import { ensureEmbeddingSalvageTable, salvageEmbeddingsBeforeDiscard } from "./embedding-salvage-repository";
+import { ensureFileAndUnitTextTables } from "./files-repository";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
@@ -435,6 +436,12 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // change) removes rows. ensureUnitTables is idempotent, so this runs on
   // every ensureSchema call, not just the first.
   ensureUnitTables(db, effectiveDim);
+
+  // files / unit_texts / units_fts (docs/plans/index-redesign-contract.md, B1):
+  // the reconcile engine's stat cache and content-addressed unit text store.
+  // Created if missing; reconcile.ts and pruneOrphanUnitTexts own all row-level
+  // writes and deletes, never this ensure path.
+  ensureFileAndUnitTextTables(db);
 
   // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
   // no longer created here.
