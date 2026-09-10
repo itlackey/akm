@@ -190,6 +190,20 @@ async function runInlineReindex(
   options: { signal?: AbortSignal; hydrateSources?: boolean } = {},
 ): Promise<boolean> {
   const { akmIndex } = await import("./indexer.js");
+  // KNOWN GAP (index-redesign write-path fixes, item W3): this implicit
+  // background bootstrap (the first `search`/`show` against a fresh or
+  // unservable index) calls the SAME `akmIndex()` an explicit `akm index`
+  // does, with no bound on its embedding drain — on a large corpus with
+  // semantic search enabled, one read blocks until the ENTIRE corpus is
+  // embedded, with no `onProgress` wired to make that wait observable even
+  // under `--verbose`. The fix is a small, additive `IndexOptions` field
+  // (e.g. a drain `limit`) threaded into `akmIndexReal`'s `drainEmbeddingQueue`
+  // calls (`src/indexer/indexer.ts`) so an implicit run embeds only a first
+  // slice and leaves the rest to the queue — mirroring the write path's
+  // `onlyHashes`-scoped drain (`index-written-assets.ts`). That file is
+  // out of this module's edit scope (reserved for the field renames in
+  // W5/W6 only), so this call stays unbounded here; wiring the bound
+  // through once that scope opens is a two-line change on both ends.
   await akmIndex({
     stashDir,
     implicit: true,

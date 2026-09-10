@@ -124,11 +124,10 @@ function makeIndexResult(): IndexResponse {
   return {
     stashDir: DEFAULT_STASH_DIR,
     totalEntries: 3,
-    generatedMetadata: 0,
+    entriesUpserted: 0,
     indexPath: path.join(DEFAULT_STASH_DIR, "index.db"),
     mode: "full",
-    directoriesScanned: 1,
-    directoriesSkipped: 0,
+    sourcesScanned: 1,
     scanComplete: true,
     verification: {
       ok: true,

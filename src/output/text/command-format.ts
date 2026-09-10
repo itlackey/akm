@@ -429,7 +429,7 @@ export function formatInitPlain(r: Record<string, unknown>): string {
 
 export function formatIndexPlain(r: Record<string, unknown>): string {
   const indexResult = r as Partial<IndexResponse>;
-  let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+  let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.sourcesScanned ?? 0} source${indexResult.sourcesScanned === 1 ? "" : "s"} (mode: ${indexResult.mode ?? "unknown"})`;
   const warnings = indexResult.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     out += `\nWarnings (${warnings.length}):`;

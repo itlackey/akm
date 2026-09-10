@@ -225,9 +225,9 @@ akm index --reembed  # Drop the active embedding identity's vectors, then re-emb
 akm index status     # Report file/entry/unit counts, active identity, and last-reconcile time — no writes
 ```
 
-Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
-`directoriesSkipped`, `verification`, optional `warnings`, and `timing`
-breakdown in milliseconds. Use `--verbose` to print the indexing mode,
+Returns stats: `totalEntries`, `entriesUpserted`, `sourcesScanned`,
+`verification`, optional `warnings`, and `timing` breakdown in milliseconds.
+Use `--verbose` to print the indexing mode,
 semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.

@@ -121,8 +121,13 @@ async function addLocalSource(
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+      // removed (#index-redesign W6: reconcile is a flat per-file stat walk,
+      // never a directory walk) — this response's own `directoriesScanned`/
+      // `directoriesSkipped` shape is unchanged, so bridge from the renamed
+      // source field; `directoriesSkipped` was already always 0.
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
       ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
@@ -194,8 +199,13 @@ async function addWebsiteSource(
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+      // removed (#index-redesign W6: reconcile is a flat per-file stat walk,
+      // never a directory walk) — this response's own `directoriesScanned`/
+      // `directoriesSkipped` shape is unchanged, so bridge from the renamed
+      // source field; `directoriesSkipped` was already always 0.
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
       ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
@@ -291,8 +301,13 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+      // removed (#index-redesign W6: reconcile is a flat per-file stat walk,
+      // never a directory walk) — this response's own `directoriesScanned`/
+      // `directoriesSkipped` shape is unchanged, so bridge from the renamed
+      // source field; `directoriesSkipped` was already always 0.
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
       ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };

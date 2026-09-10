@@ -1174,6 +1174,51 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
   });
 
+  test("accept warns and succeeds when the index cannot be updated, rather than failing the whole command (#W2)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    fs.writeFileSync(path.join(stash, "memories", "index-seed.md"), "Index seed.\n", "utf8");
+    await akmIndex({ stashDir: stash });
+
+    const created = createProposal(stash, {
+      ref: "lessons/warn-not-fatal-index",
+      source: "distill",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: index update failure must warn, not fail accept\nwhen_to_use: Verifying W2\n---\n\nBody.\n",
+      },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    // index.db present but unreadable AS A DATABASE (#791's own repro shape)
+    // — indexWrittenAssets's documented contract: a `false` return means "the
+    // write stands, but tell the operator the index needs a manual `akm
+    // index`", not a fatal accept failure. The WAL/SHM sidecars from the real
+    // `akmIndex` run above must go too — SQLite recovers a corrupted main
+    // file straight from an intact `-wal`, which would silently heal this
+    // instead of reproducing the fault.
+    const dbPath = getDbPath();
+    for (const candidate of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) fs.rmSync(candidate, { force: true });
+    fs.writeFileSync(dbPath, "not a sqlite database");
+
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    let acceptResult: Awaited<ReturnType<typeof akmProposalAccept>>;
+    try {
+      acceptResult = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+
+    expect(acceptResult.ok).toBe(true);
+    expect(fs.existsSync(acceptResult.assetPath)).toBe(true);
+    expect(getProposal(stash, created.id).status).toBe("accepted");
+    expect(warnings.some((line) => line.includes("index update failed"))).toBe(true);
+  });
+
   test("revert reindexes the restored asset immediately", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);

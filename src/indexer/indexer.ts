@@ -80,14 +80,25 @@ import type { IndexVerification } from "./walk/index-context";
 export interface IndexResponse {
   stashDir: string;
   totalEntries: number;
-  /** Entries reconcile added or changed this run (`reconcile.added + reconcile.changed`). */
-  generatedMetadata: number;
+  /**
+   * Entries reconcile added or changed this run (`reconcile.added +
+   * reconcile.changed`) — NOT a count of LLM-generated metadata (the
+   * `metadata_enhance` feature gate can be, and by default is, closed for
+   * the whole run while this is still nonzero). Renamed from the misleading
+   * `generatedMetadata` (#index-redesign W5): that name implied LLM
+   * enrichment coverage/cost, which this value has never measured.
+   */
+  entriesUpserted: number;
   indexPath: string;
   mode: "full" | "incremental";
-  /** Configured roots reconcile.ts attempted this run. */
-  directoriesScanned: number;
-  /** Configured roots skipped (no adapter resolved for their bundle). */
-  directoriesSkipped: number;
+  /**
+   * Configured source roots reconcile.ts attempted this run. Renamed from
+   * `directoriesScanned` (#index-redesign W6): reconcile is a flat per-file
+   * stat walk with no directory granularity, so "directories" never applied
+   * — this counts sources (bundle roots), which is what was actually being
+   * counted all along.
+   */
+  sourcesScanned: number;
   /** False when any root's walk could not be trusted (see `ReconcileCounts.complete`). */
   scanComplete: boolean;
   warnings?: string[];
@@ -857,11 +868,10 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     return {
       stashDir,
       totalEntries,
-      generatedMetadata: reconcileCounts.added + reconcileCounts.changed,
+      entriesUpserted: reconcileCounts.added + reconcileCounts.changed,
       indexPath: dbPath,
       mode: full ? "full" : "incremental",
-      directoriesScanned: owners.length,
-      directoriesSkipped: 0,
+      sourcesScanned: owners.length,
       scanComplete: reconcileCounts.complete,
       ...(reconcileCounts.warnings.length > 0 ? { warnings: reconcileCounts.warnings } : {}),
       ...(Object.keys(persistedAdapters).length > 0 ? { configUpdated: { detectedAdapters: persistedAdapters } } : {}),
