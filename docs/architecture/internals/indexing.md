@@ -159,39 +159,57 @@ refs from a name or source path. `item_ref` is the sole upsert conflict key;
 admit incomplete identity rows or retain an entry-key/path lookup fallback.
 This preserves bundle identity when multiple sources contain the same concept.
 
-## LLM Enrichment Pass
+## LLM Enrichment Pass (on reconcile)
 
-When metadata enhancement is enabled, the enrichment pass runs after the
-filesystem-derived entries are upserted. Enhanced entries are written back
-through the same canonical entry/FTS mutation. Key properties:
+`akm index` is now `reconcileRoots` (`src/indexer/reconcile.ts`) followed by
+`drainEmbeddingQueue` — see docs/plans/index-redesign.md for the full
+reconcile design. Metadata enrichment (`src/indexer/enrich.ts`,
+index-redesign B5e) is folded into that reconcile step, not a separate phase:
+after `reconcileRoots` has upserted every added or changed file for a run —
+every per-file transaction already committed, since a provider call must
+never run inside one — it hands the batch of "generated"-quality, not-yet-
+complete entries (`isEnrichmentComplete`) to `enrichReconciledEntries`, gated
+on `index.metadataEnhance.enabled` (checked per call, inside `enhanceMetadata`)
+and an engine resolving for the `enrichment` pass
+(`resolveIndexPassExecution("enrichment", config)` — `index.enrichment.engine`
+or `defaults.llmEngine`). A resulting `quality: "enriched"` entry and its
+re-derived units are written back through the same `upsertEntry` +
+`deriveUnits`/`replaceEntryUnits` machinery `reconcileRoots` itself uses, in
+one more short transaction, before drain embeds the enriched text.
 
-**Concurrency** — directories are enriched in parallel using a bounded
-concurrency pool (`concurrentMap` from `src/core/concurrent.ts`). The pool
-width defaults to 2 for remote LLM endpoints and 1 for local model servers
-(localhost endpoints — one loaded model at a time), auto-derived by
-`getDefaultLlmConcurrency` (`src/indexer/indexer.ts`). `engines.<name>.concurrency`
-is a valid schema field, but it is **not honored** on this path — the engine
-resolver used here (`resolveLlmEngineUse`) never copies `concurrency` into the
-resolved connection, so setting it in config.json has no effect on indexing
-concurrency. Individual entry failures within a directory are isolated; the
-pool continues with remaining work.
+**Content-addressed cache** — `llm_enrichment_cache` is consulted with
+`asset_ref = body_hash = ` the file's `blob_hash` (`entries.content_hash`),
+so a cache hit means "this exact byte content has already been enriched"
+regardless of which entry (or how many identically-named-but-different
+entries) currently carries it, and survives a rename untouched. `akm index
+--full` re-parses every file (`reconcileRoots`'s `forceReparse`), so an
+unchanged file becomes a candidate again on every `--full` run — but its
+blob hash is unchanged, so this is a cache hit with no new provider call,
+falling out of content-addressing with no special-cased branch.
 
-**`quality: "enriched"` caching** — after a successful LLM enrichment call,
-the entry's `quality` field is set to `"enriched"` and written back to the
-index. On subsequent `akm index` runs, entries already marked `"enriched"`
-are skipped unless the caller explicitly requests re-enrichment.
+**Fail-soft** — a provider error or a closed `metadata_enhance` feature gate
+(`enhanceMetadata`'s `EnhanceMetadataOutcome`) writes no cache row and never
+sets `quality: "enriched"`, so a transient outage can never poison an entry
+into a permanent enrichment skip; only a genuine `ConfigError` (a required
+symbolic credential that resolved to nothing) escapes fail-soft handling and
+aborts the run.
 
-**Enrichment deadline** — the pass runs under an `AbortSignal.timeout()`
-deadline sized as a per-entry timeout (default 10 minutes; `engines.<name>.timeoutMs`,
-or an `index.enrichment.timeoutMs` / `index.defaults.timeoutMs` override,
-takes precedence) multiplied by the number of entries being enriched. Once the
-deadline fires, no new enrichment calls are started; entries that were not
-reached are left at `quality: "generated"` and will be picked up on the next
-eligible run.
+**Concurrency** — candidates are enriched through a bounded pool
+(`concurrentMap` from `src/core/concurrent.ts`). The pool width defaults to
+2 for remote LLM endpoints and 1 for local model servers (localhost
+endpoints — one loaded model at a time), auto-derived by
+`getDefaultLlmConcurrency` (`src/indexer/indexer.ts`; `enrich.ts` mirrors the
+same classifier directly to avoid an import cycle back into `indexer.ts`).
+`engines.<name>.concurrency` is a valid schema field, but it is **not
+honored** on this path — the engine resolver used here never copies
+`concurrency` into the resolved connection, so setting it in config.json has
+no effect on indexing concurrency. Individual candidate failures are
+isolated; the pool continues with remaining work.
 
-**Eligibility** — only entries with `quality: "generated"` are enriched by
-default. Entries with `quality: "curated"` or `quality: "enriched"` are
-skipped unless the caller explicitly requests re-enrichment.
+**Eligibility** — only entries with `quality: "generated"` and missing
+`description`/`tags`/`searchHints` are enriched (`isEnrichmentComplete`).
+Entries with `quality: "curated"`, `"manual"`, `"proposed"`, or already
+`"enriched"` this run are never candidates.
 
 ## Embedding Phase
 
