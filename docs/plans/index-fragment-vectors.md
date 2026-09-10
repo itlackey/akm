@@ -1,157 +1,119 @@
-# Fragment vectors, lean
+# The semantic index, redesigned
 
-A design for akm's semantic index that answers four questions with one change: why embed a
-truncated document when the fragments already exist; why truncate at all; why so many knobs;
-and how to make the index cheaper to keep up to date. It is written to be built in days by one
-engineer, on top of code that already exists, with its costs stated rather than modelled away.
+## The flaw
 
-## What changes
+Embeddings are derived data stored inside a cache that akm wipes: `akm index --full`
+(`src/indexer/indexer.ts:1818`) and every index-generation bump
+(`src/storage/repositories/index-schema.ts:212,237`) drop `entries_vec` and `embeddings` and
+re-walk. Each vector is keyed by an entry id that a rebuild reassigns, produced from a text the
+config shapes (the entry's search text cut at 512 estimated tokens), and governed by a fingerprint
+string built from the config (`deriveSemanticProviderFingerprint`: `remote:<model>|<dimension>`)
+rather than from what the provider actually returned.
 
-akm already cuts every markdown body into fragments of at most 1,600 characters and indexes each
-one lexically (`entry_fragments_fts`, one row per fragment). Today the semantic side ignores them:
-it embeds one vector per entry from the entry's search text, cut at 512 estimated tokens, so two
-thirds of the corpus never reaches the vector index.
+Everything the owner called sloppy exists to survive that arrangement:
 
-After this change the unit of embedding is the fragment. Every fragment gets one vector. The entry
-vector is the mean of its fragment vectors, computed locally. Nothing is truncated, nothing
-unchanged is ever re-sent, and vectors are stored as 8-bit integers so the index and every search
-stay about the size they are today.
-
-## Data model
-
-| Table | Role | Change |
+| Mechanism | Why it exists | Size |
 | --- | --- | --- |
-| `entry_fragments_fts` | one row per fragment: `entry_id`, `fragment_id`, `fragment_ordinal`, `content` | unchanged; it is the source of the units |
-| `fragment_vec` (new, vec0) | `fragment_id INTEGER PRIMARY KEY, embedding int8[dim]` | the search index |
-| `fragment_embeddings` (new) | `fragment_id, entry_id, content_hash, fingerprint` | maps vectors to entries; carries the hash that skips re-embedding |
-| `entries_vec` | one int8 centroid per entry | kept for callers that rank entries; type changes from `float[dim]` to `int8[dim]` |
-| `embedding_salvage` | `content_hash → embedding` | unchanged shape; stores the same int8 bytes that go into `fragment_vec` |
-| `embeddings` (float BLOB per entry) | today's second copy of the entry vector | dropped |
+| `embedding_salvage` table and repository | rescue vectors before the cache is dropped, match them back by content hash afterwards | 209 lines + tests |
+| the rename canary (`runEmbeddingCanary`, `decideEmbeddingCompatibility`, 8 samples, 0.999 median cosine) | the config fingerprint changes on a rename or endpoint move while the model did not; guess whether stored vectors are still valid | ~200 lines in `materialize-embeddings.ts` |
+| `--reembed`, "Re-embedding N entries because …", the fingerprint purge | operator overrides for when the guess is wrong | plumbing through the same file |
+| resume-after-interrupt, the ambient-transaction drift guard, per-batch commit accounting | a killed run must not restart from zero inside a cache that is rebuilt whole | ~150 lines |
+| `maxInputTokens` and `capEmbeddingText`, `maxTokens` and the adaptive shrink, `batchSize`, `contextLength` | the unit is a whole entry, so its size has to be capped and packed by guesswork | four config keys, ~300 lines |
 
-The unit text is the fragment's content prefixed by a short header: the entry's name and the
-heading path the fragment sits under. The header costs a few tokens per fragment and is what lets
-a fragment match a query that names the document, not only the passage.
+Six files, about 2,900 lines, and the three failures the field hit were all seams between them:
+restart from zero on interruption, a full re-embed of identical vectors in five scopes after a
+rename, and documents overflowing an 8k window under a 512-cap that did not yet exist.
 
-A fragment that exceeds the provider's real window is split at the last line boundary before the
-bound into ordinal sub-units that share the fragment's hash family; the published fragment is never
-re-cut. The bound is the provider's window measured in real tokens, from `/tokenize` where the
-endpoint has one, otherwise from a chars-per-token ratio calibrated on a sample at first run.
+## The design, in four rules
 
-## Search
+**1. The unit of embedding is the fragment.** akm already cuts every markdown body into fragments
+of at most 1,600 characters and indexes each one lexically (`index-fts-repository.ts:76`,
+`entry_fragments_fts`, one row per fragment). Those fragments become the embedding units, each
+prefixed with one header line: the entry's name and the heading path above the fragment. An
+entry without markdown content (env, session, secrets, foreign adapters) gets one unit from its
+structured fields, which is the part of today's search text that comes first anyway
+(`buildSearchText`: name, description, tags, hints). No cap: a unit larger than the provider's
+window is split at a line boundary into ordinal sub-units. Nothing is truncated.
 
-The KNN runs over `fragment_vec`, k set to the requested result count times the observed mean
-fragments per entry, then groups by entry. An entry's semantic score is the best cosine among its
-fragments (with the mean of its top two as the pre-registered alternative if long documents crowd
-out short ones on the existing `curate-golden` fixture). The fused ranking, `0.7 × lexical + 0.3 ×
-semantic` per entry, is unchanged. Results can point at the matching fragment, which today's index
-cannot do.
+**2. Vectors are content-addressed and never rebuilt.** One table, `units`, keyed by
+`(unit_hash, identity)`: `unit_hash` is the hash of the unit text, `identity` is what the
+provider returned, model id and vector width, the same value the code already derives as
+`deriveObservedEmbeddingIdentity` and stores as `embeddingIdentity`. The vec0 table that serves
+search is this table, with `unit_hash` and `identity` as its auxiliary columns, so there is one
+copy of every vector. The lifecycle rule is the whole design: `--full` and generation bumps
+regenerate the mapping (entry → fragment → unit hash), which is cheap and derived; they never
+touch `units`. Indexing is a set difference: hashes in the mapping minus hashes in `units` for
+the current identity. Only that difference is sent. A killed run resumes by computing the
+difference again. A rename or endpoint move that returns the same identity costs nothing. A real
+model change starts a new identity, and an identity no mapping references any more is dropped.
 
-## Why int8, and what it costs
+**3. The limits are the provider's.** Window and slot count are read from the provider
+(`/props` on llama.cpp, `/api/show` on Ollama); token counts are exact where the provider has
+`/tokenize`, otherwise a chars-per-token ratio calibrated on a sample at first run. Requests are
+packed to the window; in-flight requests equal the slots. One named constant remains for a
+provider that reports nothing, 8,192 tokens, the most common embedding window, with the existing
+same-run shrink as its corrective. `maxInputTokens`, `maxTokens`, `batchSize` and
+`contextLength` are removed. `concurrency` and `timeoutMs` stay optional and derived when unset,
+because a gateway such as Bifrost, which the field runs through, reports neither slots nor
+window.
 
-**Why.** A fragment index has about four times as many vectors as an entry index (4.0 fragments per
-entry on the field corpus, 96 thousand rows). In float32 at the field's 1,024 dimensions that is
-395 MB, four times today's 98.5 MB entry table, and every search scans it. sqlite-vec has no
-approximate index; a search reads every row. Storing int8 divides both numbers by four: 99 MB on
-disk and 99 MB scanned per search, the same as today. The vendored sqlite-vec (0.1.9) supports
-`int8[N]` columns natively, with `vec_int8` and `vec_quantize_int8` in the binary, so there is no
-second table, no float re-rank pass, and no new dependency.
+**4. Search reads fragments.** The KNN runs over `units` for the current identity and groups
+hits to entries by the best fragment; the lexical side already ranks fragments. The fusion
+(`0.7 × lexical + 0.3 × semantic`) is unchanged here; re-deriving those weights is a separate,
+measured change. A result can name the fragment that matched, which today's index cannot.
 
-**What it costs.**
+## What this deletes
 
-- *Precision.* Rounding each component to 256 levels moves cosine scores slightly. On
-  normalised embeddings of this size the published effect is a fraction of a point to about two
-  points of recall at ten; the number for akm is measured on `curate-golden` before shipping, and
-  if it exceeds one point the design falls back to float32 at four times the storage. That fallback
-  is a decision made once from the measurement, not a runtime option.
-- *A scale factor.* Unit-norm vectors have small components, so mapping the range −1..1 onto
-  −128..127 (what `vec_quantize_int8` does) would waste most of the levels. akm quantises in
-  JavaScript with one global scale per model: 127 divided by the largest component magnitude seen in
-  the first batch, with a fixed 25 percent headroom to absorb later outliers, which are clipped.
-  The scale is stored in `index_meta` and becomes part of the embedding fingerprint, so a model
-  change re-derives it and re-embeds, exactly as a model change does today. L2 and cosine distances
-  on a globally scaled int8 vector rank the same way as on the floats.
-- *No exact floats anywhere.* Salvage keeps the int8 bytes, not floats. A re-quantisation is
-  therefore impossible without re-embedding; it is never needed as long as the scale is pinned to
-  the fingerprint. The entry centroid is computed from int8 fragment vectors and is slightly noisier
-  than a float mean; centroids only serve entry-to-entry ranking, where that is acceptable.
-- *One more embedder-shaped detail.* Quantisation runs after the provider returns floats, in the
-  batch commit that already exists; about twenty lines.
+The salvage table and repository; the canary, its two thresholds and the fingerprint purge;
+`--reembed` as anything but "drop this identity"; the resume special-casing and rebuild-reason
+plumbing; `capEmbeddingText`, `DEFAULT_MAX_INPUT_TOKENS`, the adaptive shrink as a primary
+mechanism; four config keys and their schema, docs and tests. The batching, retry, back-off,
+circuit breaker and per-batch commit stay: they are the correct way to talk to a provider and
+they work. Estimate: about 1,200 of the 2,900 lines go and about 400 come in.
 
-## Cost of the change
+## What it costs, plainly
 
-- *First pass.* Every fragment once. On the fitted field corpus that is about 21 M real tokens
-  plus about five percent of headers: roughly 165 minutes on the slow embedder at 2,100 tokens per
-  second, 75 on the fast chain, and a quarter of that with four slots. This is paid once per model.
-  The real figure comes from one query on the field index (below); the fit is a placeholder.
-- *Steady state.* Only fragments whose content hash changed. On 182 real edits to long documents
-  in this repository, 94 percent of fragment vectors survived an edit unchanged.
-- *Storage.* About today's size for the vector index at any dimension, plus the small
-  `fragment_embeddings` table (under 10 MB).
-- *Search.* About today's bytes per search, four times the rows, one KNN instead of one.
-
-## Knobs
-
-Removed, with the derived rule that replaces each:
-
-| Key | Replaced by |
-| --- | --- |
-| `embedding.maxInputTokens` | the unit bound is the provider's real window; oversized units are split, never cut |
-| `embedding.maxTokens` | requests are packed to the measured window minus the header margin; the same-run adaptive shrink from 0.9.15 stays as the corrective when a provider reports nothing |
-| `embedding.batchSize` | nothing; once every unit is bounded, a document count guards nothing |
-| `embedding.contextLength` | the measured window; sent as Ollama `num_ctx` when the provider is Ollama |
-
-Kept, optional, derived when unset: `embedding.concurrency` (from llama.cpp `total_slots` or Ollama
-`num_parallel`, else 1) and `embedding.timeoutMs` (from observed latency per token with a floor).
-They survive because a gateway such as Bifrost reports neither slots nor window, and the field runs
-through one; without the concurrency key a four-slot server behind a gateway would run at one slot.
-One named constant remains for a provider that reports no window at all: 8,192 tokens, the most
-common embedding window, with the adaptive shrink correcting it within the first run.
-
-Net: four keys removed, none added, two kept and made optional.
+- **One pass over every fragment, once per model.** On the field corpus that is roughly 21 M
+  tokens: one to three hours on one slot at the two measured rates, a quarter of that on four.
+  The two queries at the end give the real number. It is paid once; unchanged text is never sent
+  again, and on 182 real edits to long documents in this repository 94 percent of fragments were
+  unchanged after an edit.
+- **Storage is float32 and about four times today's vector bytes.** 96 thousand fragments at
+  the field's 1,024 dimensions is 395 MB in one copy; at 384 dimensions, 150 MB. No quantization:
+  it was a patch on this growth, not part of the design, and it can be added later as an
+  orthogonal switch if a bundle ever needs it.
+- **A search scans every unit vector.** sqlite-vec has no approximate index. 395 MB per query at
+  1,024 dimensions is on the order of 50 to 150 ms on a laptop, against about 10 ms today. If that
+  matters, the lexical candidates can bound the KNN (`rowid IN (…)`) at the cost of vector-only
+  recall; that is a later, measured decision, not part of this design.
+- **Ranking risk.** A long document has many fragments and therefore many chances to score
+  high. Grouping by best fragment is the simplest rule; the existing `curate-golden` fixture
+  decides whether the mean of the top two is needed.
+- **About ten days** for one engineer: the table and identity rule, units and headers and the
+  real-token split, the diff-driven loop on the existing batching code, search grouping, the
+  provider probe and knob removal, tests and docs.
 
 ## Migration
 
-Additive. New tables are created on first run; `entries_vec` is rebuilt as int8 when its schema is
-first found to be float. The first `akm index` after upgrade embeds every fragment; while it runs,
-entries that already have fragment vectors rank through them and the rest rank through their old
-entry vector, so search never goes dark. No index-generation bump is required. Reverting is
-dropping two tables.
-
-## Effort
-
-About nine days for one engineer, using the batching, retry, circuit breaker, per-batch commit,
-salvage, canary, and lock code that already exists:
-
-| Work | Days |
-| --- | --- |
-| tables, int8 quantisation, scale in the fingerprint | 1.5 |
-| fragment units, headers, real-token split, hash reuse through salvage | 2 |
-| embed loop on fragments, centroid per entry | 1 |
-| search over fragments, grouping, fixture measurement | 1.5 |
-| provider probe, tokenizer, knob removal and schema | 2 |
-| tests, docs, migration note | 1 |
-
-## What this deliberately does not do
-
-No summaries or representation tiers. No work ledger or utility ordering. No two-phase rollout, no
-new evaluation harness beyond the fixture that exists, no external benchmark. If the one-time pass
-is unacceptable on the owner's hardware, the honest alternative is to keep today's one vector per
-entry and only improve what goes into it; this design does not pretend otherwise.
+Additive. On the first `akm index` after upgrade the mapping is regenerated and every unit is
+missing from `units`, so that run is the one-time pass; entries whose units have vectors rank
+through them, the rest through lexical search until the pass completes. `entries_vec`,
+`embeddings` and `embedding_salvage` are dropped once every entry has unit vectors. No
+generation bump is required. Reverting is dropping one table.
 
 ## Measure first
 
 ```sql
 SELECT COUNT(*) AS entries,
-       SUM(length(search_text)) / 4                    AS corpus_rho4_tokens,
-       SUM(MIN(length(search_text), 2048)) / 4         AS baseline_rho4_tokens,
-       SUM(length(search_text) > 2048)                 AS entries_truncated_today
+       SUM(length(search_text)) / 4            AS corpus_rho4_tokens,
+       SUM(length(search_text) > 2048)         AS entries_truncated_today
 FROM entries;
 
-SELECT COUNT(*) AS fragments,
+SELECT COUNT(*)                 AS fragments,
        COUNT(DISTINCT entry_id) AS entries_with_fragments,
        SUM(length(content)) / 4 AS fragment_rho4_tokens
 FROM entry_fragments_fts;
 ```
 
-The first query is the one-time cost; the second is the vector count and the storage. Both run in
-seconds on the field `index.db` and replace every fitted number above.
+The second query is the vector count, the storage and the one-time cost; the first says how much
+of the corpus today's index never sees. Both run in seconds on the field `index.db`.
