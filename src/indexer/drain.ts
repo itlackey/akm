@@ -11,7 +11,19 @@
  * docs/plans/index-fragment-vectors.md, "Indexing is a set difference"). When
  * no identity is known yet (a fresh index, or one whose prior identity was
  * dropped), every candidate hash is pending; the identity is learned from
- * whichever provider response lands first and adopted from then on.
+ * whichever provider response lands first and adopted from then on. Every
+ * committed batch re-derives the identity actually observed and adopts it
+ * the moment it differs from what is currently active — a model swap
+ * (`embedding.model` changed, or the gateway now serving a different model)
+ * is caught as soon as the provider reports it, rather than mixing a new
+ * model's vectors into an old identity's rows (docs/plans/index-redesign.md,
+ * rule 1: identity is content-addressed on what the provider actually
+ * returned). Units already embedded under an identity this call abandons
+ * simply become "missing" again under the new one and drain on a later call
+ * (rule 4: embedding is a queue, always resumable from the same set
+ * difference). A drain also does nothing when sqlite-vec is unavailable:
+ * `upsertUnitVectors` cannot persist a vector without it, so the whole
+ * pending set is reported `skipped` without ever calling the provider.
  *
  * Reuses `embedBatch` / `RemoteEmbedder` (src/llm/embedder.ts,
  * src/llm/embedders/remote.ts) for the batching, retry, back-off and
@@ -46,6 +58,7 @@ import type { EmbeddingVector } from "../llm/embedders/types";
 import type { Database } from "../storage/database";
 import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "../storage/repositories/index-sql";
+import { isVecAvailable } from "../storage/repositories/index-vec-repository";
 import { dropOtherIdentities, listMissingHashes, upsertUnitVectors } from "../storage/repositories/units-repository";
 import { deriveObservedEmbeddingIdentity } from "./embedding-identity";
 
@@ -56,7 +69,7 @@ export interface DrainCounts {
   embedded: number;
   /** Unit hashes the provider could not embed (context-window, timeout, or a genuine transport failure). */
   failed: number;
-  /** Unit hashes attempted but neither embedded nor reported failed — never dispatched because the circuit breaker tripped. */
+  /** Unit hashes attempted but neither embedded nor reported failed — never dispatched, because the circuit breaker tripped or because sqlite-vec is unavailable (then every pending hash). */
   skipped: number;
   /** The active identity after this call, or `null` if none has ever been learned. */
   identity: string | null;
@@ -209,6 +222,16 @@ export async function drainEmbeddingQueue(
     return counts;
   };
 
+  // upsertUnitVectors is a no-op without sqlite-vec (units-repository.ts), so
+  // embedding the pending set here would just throw every vector away and
+  // leave it "missing" again for the next call — pure wasted provider
+  // traffic. `warnIfVecMissing` (indexer.ts) already told the operator once;
+  // this is silent. `pending` is computed above so the done line and `akm
+  // index status` stay truthful even though nothing was attempted.
+  if (!isVecAvailable(db)) {
+    return emitDone({ pending, embedded: 0, failed: 0, skipped: pending, identity });
+  }
+
   if (pending === 0) {
     return emitDone({ pending: 0, embedded: 0, failed: 0, skipped: 0, identity });
   }
@@ -265,18 +288,23 @@ export async function drainEmbeddingQueue(
     for (let k = 0; k < indices.length; k++) {
       const embedding = embeddings[k];
       if (!embedding) continue;
-      if (identity === null) {
-        // Identity learned from whichever response lands first (concurrent
-        // dispatch aside, onBatch calls run one at a time — JS is
-        // single-threaded — so this fires exactly once per drain call).
-        const learned = deriveObservedEmbeddingIdentity(config.embedding, model, embedding.length);
-        if (learned) {
-          identity = learned;
-          setMeta(db, "embeddingIdentity", identity);
-          // Stage 1's cleanup for any stale identity left behind by an
-          // earlier run — a no-op when nothing else is stored.
-          dropOtherIdentities(db, identity, embedding.length);
-        }
+      // Re-derived on every committed batch (concurrent dispatch aside,
+      // onBatch calls run one at a time — JS is single-threaded — so within
+      // one drain call this only differs from `identity` on the very first
+      // batch, or the batch where the provider's response actually changes),
+      // not just when `identity` is still null: a model swap — config
+      // `embedding.model` changed, or the gateway now serving a different
+      // model — must be caught the moment the provider reports it, not
+      // silently mixed into the old identity's rows. Adopting it drops
+      // whatever was stored under the identity being left behind (at the
+      // newly observed width); units embedded under that old identity that
+      // are not part of THIS call simply become "missing" again under the
+      // new one and drain on a later call.
+      const learned = deriveObservedEmbeddingIdentity(config.embedding, model, embedding.length);
+      if (learned && learned !== identity) {
+        identity = learned;
+        setMeta(db, "embeddingIdentity", identity);
+        dropOtherIdentities(db, identity, embedding.length);
       }
       const currentIdentity = identity;
       if (currentIdentity === null) continue;

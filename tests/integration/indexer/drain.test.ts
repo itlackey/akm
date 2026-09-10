@@ -22,6 +22,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { drainEmbeddingQueue } from "../../../src/indexer/drain";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
@@ -32,9 +35,12 @@ import type {
 } from "../../../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../../../src/llm/embedders/types";
 import type { Database } from "../../../src/storage/database";
+import { openDatabase } from "../../../src/storage/database";
 import { ensureFileAndUnitTextTables } from "../../../src/storage/repositories/files-repository";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { ensureSchema } from "../../../src/storage/repositories/index-schema";
+import { isVecAvailable } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
@@ -110,6 +116,54 @@ describe("drainEmbeddingQueue (B4)", () => {
     expect(result).toEqual({ pending: 3, embedded: 3, failed: 0, skipped: 0, identity: "remote:mock-model|3" });
     expect(getMeta(db, "embeddingIdentity")).toBe("remote:mock-model|3");
     expect(unitRowCount(db)).toBe(3);
+  });
+
+  test("a later drain that observes a different model adopts the new identity and drops the old one's rows (R1)", async () => {
+    seedUnitTexts(db, ["h1", "h2", "h3"]);
+
+    const modelAMock: EmbedBatchMock = async (texts, _config, _signal, _onSkip, onBatch) => {
+      const vectors = texts.map((_t, i) => stableVec(i));
+      onBatch?.(
+        texts.map((_t, i) => i),
+        vectors,
+        "model-a",
+      );
+      return vectors;
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: modelAMock });
+
+    const first = await drainEmbeddingQueue(db, baseConfig(), {});
+    expect(first.identity).toBe("remote:model-a|3");
+    expect(getMeta(db, "embeddingIdentity")).toBe("remote:model-a|3");
+
+    // Units added after the first drain (new content, still pending) — same
+    // width, but this time the provider reports a different model: a config
+    // change, or the gateway now serving a different model behind the same
+    // endpoint.
+    seedUnitTexts(db, ["h4", "h5"]);
+    const modelBMock: EmbedBatchMock = async (texts, _config, _signal, _onSkip, onBatch) => {
+      const vectors = texts.map((_t, i) => stableVec(i + 10));
+      onBatch?.(
+        texts.map((_t, i) => i),
+        vectors,
+        "model-b",
+      );
+      return vectors;
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: modelBMock });
+
+    const second = await drainEmbeddingQueue(db, baseConfig(), {});
+
+    expect(second.identity).toBe("remote:model-b|3");
+    expect(getMeta(db, "embeddingIdentity")).toBe("remote:model-b|3");
+    const staleRows = db.prepare("SELECT COUNT(*) AS c FROM units WHERE identity = ?").get("remote:model-a|3") as {
+      c: number;
+    };
+    expect(staleRows.c).toBe(0);
+    const newRows = db.prepare("SELECT COUNT(*) AS c FROM units WHERE identity = ?").get("remote:model-b|3") as {
+      c: number;
+    };
+    expect(newRows.c).toBe(2);
   });
 
   test("resume after a simulated kill mid-drain embeds only what is still missing", async () => {
@@ -284,6 +338,39 @@ describe("drainEmbeddingQueue (B4)", () => {
     const result = await drainEmbeddingQueue(db, baseConfig(), {});
     expect(calls).toBe(0);
     expect(result).toEqual({ pending: 0, embedded: 0, failed: 0, skipped: 0, identity: null });
+  });
+});
+
+describe("drainEmbeddingQueue: sqlite-vec unavailable (R2)", () => {
+  test("skips the provider entirely and reports the whole pending set skipped", async () => {
+    // A real db `openDatabase` + `ensureSchema` pair with `loadVecExtension`
+    // deliberately NOT called — `isVecAvailable` stays false, the same
+    // technique tests/storage/units-repository.test.ts uses to stand in for
+    // a build without the native sqlite-vec extension, here kept real (not
+    // `{} as Database`) because drain.ts's own hash-set-difference queries
+    // need a working database before it ever reaches the vec check.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-drain-novec-"));
+    const noVecDb = openDatabase(path.join(dir, "index.db"));
+    try {
+      ensureSchema(noVecDb, TEST_DIM);
+      expect(isVecAvailable(noVecDb)).toBe(false);
+      seedUnitTexts(noVecDb, ["h1", "h2"]);
+
+      let calls = 0;
+      const mock: EmbedBatchMock = async (texts) => {
+        calls++;
+        return texts.map(() => undefined);
+      };
+      overrideSeam(_setEmbedderForTests, { embedBatch: mock });
+
+      const result = await drainEmbeddingQueue(noVecDb, baseConfig(), {});
+
+      expect(calls).toBe(0);
+      expect(result).toEqual({ pending: 2, embedded: 0, failed: 0, skipped: 2, identity: null });
+    } finally {
+      noVecDb.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
