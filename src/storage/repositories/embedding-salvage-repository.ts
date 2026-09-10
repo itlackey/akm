@@ -25,7 +25,7 @@
  * archive.
  */
 
-import { createHash } from "node:crypto";
+import { hashEmbeddableText } from "../../core/hash";
 import type { EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
 import { blobToEmbedding } from "./embeddings-repository";
@@ -49,9 +49,7 @@ export function ensureEmbeddingSalvageTable(db: Database): void {
 }
 
 /** The one hash function salvage writes and reuse lookups must agree on. */
-export function hashEmbeddableText(searchText: string): string {
-  return createHash("sha256").update(searchText, "utf8").digest("hex");
-}
+export { hashEmbeddableText };
 
 function tableExists(db: Database, name: string): boolean {
   return db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
