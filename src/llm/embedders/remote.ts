@@ -87,7 +87,7 @@ export function capEmbeddingText(text: string, maxTokens: number): { text: strin
 /**
  * Default per-request timeout when `embedding.timeoutMs` is unset (#954).
  * The prior fixed 30s cut off exactly the field-report case: a
- * local model server on an 8000-token (`DEFAULT_TOKEN_BUDGET`) batch
+ * local model server on a full-budget (`DEFAULT_TOKEN_BUDGET`) batch
  * legitimately takes longer than that, and the timeout fired mid-response
  * with no retry — every batch it hit was silently dropped for the rest of
  * an hours-long run. 120s comfortably covers a slow local batch while still
