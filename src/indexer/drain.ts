@@ -21,18 +21,26 @@
  * provider's own window/slot limits (`probeProviderLimits`,
  * src/llm/embedders/provider-limits.ts) rather than a generic config default.
  *
- * Does not touch `materialize-embeddings.ts` (the entry-scoped embedder this
- * replaces) beyond sharing `deriveObservedEmbeddingIdentity` — B5 deletes it.
+ * The entry-scoped embedder this replaces (`materialize-embeddings.ts`) is
+ * deleted; the one piece of it still shared is `deriveObservedEmbeddingIdentity`.
+ * `emitCredentialDiagnostic` ports that file's `#953` credential diagnostic
+ * (endpoint/model/credential-source line before the first provider request)
+ * forward to this queue.
  */
 
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
+import { getConfigPath } from "../core/paths";
+import { isVerbose } from "../core/warn";
 import { embedBatch } from "../llm/embedder";
 import { probeProviderLimits } from "../llm/embedders/provider-limits";
-import type {
-  EmbeddingBatchCommit,
-  EmbeddingBatchSkip,
-  EmbeddingRequestPacking,
-  EmbeddingSkipHandler,
+import {
+  describeEmbeddingCredential,
+  type EmbeddingBatchCommit,
+  type EmbeddingBatchSkip,
+  type EmbeddingRequestPacking,
+  type EmbeddingSkipHandler,
+  hasRemoteEndpoint,
+  normalizeEmbeddingEndpoint,
 } from "../llm/embedders/remote";
 import type { EmbeddingVector } from "../llm/embedders/types";
 import type { Database } from "../storage/database";
@@ -139,6 +147,29 @@ async function resolveEmbeddingPacking(
   };
 }
 
+/**
+ * #953 field gap, ported from the deleted `materialize-embeddings.ts`
+ * (`git show fc711fd6^:src/indexer/materialize-embeddings.ts`): a keyless
+ * request against a remote embedding endpoint could not be reproduced in the
+ * lab — every `RemoteEmbedder` path already resolves `secret://` through one
+ * boundary, so a keyless request can only mean `embedding.apiKey` was absent
+ * from the config THIS run loaded. The actionable outcome is a
+ * self-diagnosing run, not a fix: one default-level line, emitted once
+ * before the first provider request this call makes, naming the endpoint,
+ * model, and credential SOURCE (never the value) so a field run can compare
+ * it against what the gateway actually saw. A local (non-remote) endpoint,
+ * or a call with nothing pending, has nothing to diagnose and stays silent.
+ */
+function emitCredentialDiagnostic(config: AkmConfig, onProgress: ((line: string) => void) | undefined): void {
+  if (!onProgress || !hasRemoteEndpoint(config.embedding ?? {})) return;
+  const endpoint = normalizeEmbeddingEndpoint(config.embedding?.endpoint ?? "");
+  const credential = describeEmbeddingCredential(config.embedding?.apiKey);
+  const configFileSuffix = isVerbose() ? `; config: ${getConfigPath()}` : "";
+  onProgress(
+    `[embed] endpoint ${endpoint}, model ${config.embedding?.model ?? "unknown"}; credential: ${credential}${configFileSuffix}`,
+  );
+}
+
 function formatDoneLine(counts: DrainCounts): string {
   return (
     `[drain] done: ${counts.pending} pending, ${counts.embedded} embedded, ${counts.failed} failed, ` +
@@ -183,6 +214,8 @@ export async function drainEmbeddingQueue(
   if (texts.length === 0) {
     return emitDone({ pending, embedded: 0, failed: 0, skipped: 0, identity });
   }
+
+  emitCredentialDiagnostic(config, opts.onProgress);
 
   const { embeddingConfig, packing } = await resolveEmbeddingPacking(config, opts.signal);
 
