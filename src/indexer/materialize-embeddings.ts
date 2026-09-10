@@ -52,6 +52,7 @@ import {
   setVecFastPathReady,
   upsertEmbedding,
 } from "../storage/repositories/index-vec-repository";
+import { deriveObservedEmbeddingIdentity } from "./embedding-identity";
 
 /** Identifies the embedding provider+model+dimension a stored vector was generated with. */
 export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectionConfig): string {
@@ -194,31 +195,6 @@ function medianOf(values: readonly number[]): number {
   return sorted.length % 2 === 0
     ? ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
     : (sorted[mid] as number);
-}
-
-/**
- * Identity of the embedding vectors actually observed on a run — as opposed
- * to {@link deriveSemanticProviderFingerprint}'s CONFIG-derived string. Keys
- * on what the server (or local model) actually reported plus the observed
- * vector width, so a gateway/transport change that keeps returning the same
- * underlying model can be told apart from a genuine model change without
- * relying on the operator's config string (#955).
- * Returns undefined when nothing was actually observed this call (no vector
- * to measure yet).
- */
-function deriveObservedEmbeddingIdentity(
-  embedding: EmbeddingConnectionConfig | undefined,
-  observedModel: string | undefined,
-  observedVectorLen: number | undefined,
-): string | undefined {
-  if (isDeterministicEmbedEnabled()) {
-    return `deterministic:${DETERMINISTIC_EMBED_MODEL_ID}`;
-  }
-  if (observedVectorLen === undefined) return undefined;
-  if (embedding?.endpoint) {
-    return `remote:${observedModel ?? embedding.model ?? "unknown"}|${observedVectorLen}`;
-  }
-  return `local:${embedding?.localModel ?? DEFAULT_LOCAL_MODEL}|${observedVectorLen}`;
 }
 
 type CanaryDecision =
