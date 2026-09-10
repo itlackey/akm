@@ -250,7 +250,11 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
 }
 
 export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
-  // Create meta table first so we can check version
+  // Create meta table first so we can check version. Left OUTSIDE the
+  // transaction below on purpose: it is `CREATE TABLE IF NOT EXISTS`
+  // (idempotent, side-effect-free on a database that already has it) and
+  // touches neither `entries` nor the generation stamp, so it carries none of
+  // the race this function closes — see the transaction's own comment.
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,
@@ -258,164 +262,218 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     );
   `);
 
-  rebuildIncompatibleIndexGeneration(db);
-
-  db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
-
-  // Workflow source is compiled directly into source IR at each command
-  // boundary. The former workflow_documents cache duplicated that IR in a
-  // second persisted representation and was never used by current execution.
-  // index.db is derived state, so remove the obsolete table on every open.
-  db.exec("DROP TABLE IF EXISTS workflow_documents");
-
-  // #955's embedding-salvage cache (`embedding-salvage-repository.ts`) is
-  // retired (index redesign, B5) — units are content-addressed, so a
-  // generation bump keeps whatever vectors are still keyed by an
-  // unchanged unit hash instead of needing a copy-aside step. Drop the
-  // table on every open so an install upgrading past this release does not
-  // carry the now-unreferenced rows forever.
-  db.exec("DROP TABLE IF EXISTS embedding_salvage");
-
-  // The legacy per-entry vector tables (`embeddings`, a plain BLOB table, and
-  // `entries_vec`, its vec0 mirror) are retired (index redesign, B5h) —
-  // vectors live only in the content-addressed `units`/`units_vec` store
-  // now. Drop both unconditionally on every open, not gated on a generation
-  // bump: a v24 index built before this change may still carry them, and v24
-  // tolerates either shape. `embeddings` is a plain table, always safe to
-  // drop; `entries_vec` is a vec0 virtual table that can only be dropped
-  // while the extension is loaded, so a drop that cannot run yet is deferred
-  // the same way a generation rebuild used to defer it — a `vecResetPending`
-  // marker, finished the first later open where sqlite-vec is available.
-  db.exec("DROP TABLE IF EXISTS embeddings");
-  if (isVecAvailable(db)) {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
-    if (getMeta(db, "vecResetPending") === "1") setMeta(db, "vecResetPending", "0");
-  } else if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'").get()) {
-    setMeta(db, "vecResetPending", "1");
-  }
-
-  // usage_events lives in state.db. utility_scores remains a regenerable
-  // index.db cache.
-
-  // Utility scores table (aggregated per-entry utility metrics)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS utility_scores (
-      entry_id     INTEGER PRIMARY KEY,
-      utility      REAL NOT NULL DEFAULT 0,
-      show_count   INTEGER NOT NULL DEFAULT 0,
-      search_count INTEGER NOT NULL DEFAULT 0,
-      select_rate  REAL NOT NULL DEFAULT 0,
-      last_used_at TEXT,
-      updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Per-project scoped utility scores — tracks usage per (entry, cwd-anchor)
-  // so assets useful in project A don't pollute rankings in project B.
-  // The global utility_scores table is preserved as a fallback / cold-start aid.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS utility_scores_scoped (
-      entry_id     INTEGER NOT NULL,
-      scope_key    TEXT NOT NULL,
-      utility      REAL NOT NULL DEFAULT 0,
-      last_used_at INTEGER NOT NULL,
-      PRIMARY KEY (entry_id, scope_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_utility_scores_scoped_entry_id
-      ON utility_scores_scoped(entry_id);
-  `);
-
-  // LLM enrichment result cache. Stores a SHA-256 body hash and the JSON
-  // result for each asset so that subsequent `akm index --enrich` runs can
-  // skip the LLM call when the body hasn't changed. The cache is keyed by
-  // a stable asset_ref string (e.g. the absolute file path for graph/memory
-  // passes, or `itemRef:passId` for the metadata-enhance pass).
-  // Entries are cleaned up when assets are removed or --re-enrich is used.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
-      asset_ref     TEXT NOT NULL,
-      cache_variant TEXT NOT NULL,
-      body_hash     TEXT NOT NULL,
-      result_json   TEXT NOT NULL,
-      updated_at    INTEGER NOT NULL,
-      PRIMARY KEY (asset_ref, cache_variant)
-    );
-
-     CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
-       ON llm_enrichment_cache(updated_at);
-  `);
-
-  // Graph extraction tables — schema v4 ((stash_root, file_path, body_hash) PK).
+  // Everything from the generation check through stamping `index_meta.version`
+  // runs as ONE atomic unit (field follow-up, same shape as the index-write
+  // and state.db-bootstrap fixes this release already shipped:
+  // "initialisation that is not atomic under concurrency").
   //
-  // graph_files is self-keyed on (stash_root, file_path, body_hash) and is NO
-  // LONGER tied to entries.id. This is the #624-P1 win: deleting and
-  // re-inserting an entries row during a reindex no longer cascade-wipes the
-  // extracted graph — as long as the file's body_hash is unchanged, the graph
-  // data survives. body_hash is part of the PK so a content change yields a
-  // distinct key; a UNIQUE index on (stash_root, file_path) still enforces
-  // exactly one graph_files row per path (delete-then-insert on a hash change).
+  // Without this, a brand-new database went through roughly 20 separate
+  // autocommit statements between `CREATE TABLE entries` (near the top) and
+  // `setMeta(db, "version", ...)` (the very last statement) with no lock held
+  // across them. `rebuildIncompatibleIndexGeneration` treats "entries exists
+  // but index_meta.version is unset" as an old, incompatible generation and
+  // drops `entries` to rebuild it — correct for a REAL stale index, but on a
+  // concurrent FIRST open of a fresh index.db, a second process's `ensureSchema`
+  // could open its own connection, observe exactly that transient
+  // half-initialized state (entries created by the first process, version not
+  // yet stamped), and drop `entries` out from under the first process, which
+  // had already moved on to write/query it later in the same run — surfacing
+  // as `{"ok":false,"error":"no such table: entries"}`, exit 70
+  // (field follow-up: reproduced by racing two real `akm index` CLI processes
+  // against a sandbox with no pre-existing index.db; traced to
+  // `reconcileRoots`'s `SELECT ... FROM entries` throwing after the table it
+  // had itself created was dropped mid-run by the other process's rebuild).
   //
-  // graph_file_entities and graph_file_relations carry (stash_root, file_path,
-  // body_hash) and declare a composite FK -> graph_files ON DELETE CASCADE so
-  // child rows are removed when a graph_files row is replaced.
+  // `withImmediateTransaction(db, fn, "index")` (the same mechanism the
+  // state.db bootstrap fix uses) makes the whole sequence indivisible: a
+  // concurrent opener's own `BEGIN IMMEDIATE` blocks behind `busy_timeout`
+  // until this transaction commits or rolls back, so it observes either the
+  // fully-fresh state (no entries, no version — skip the rebuild, same as
+  // today) or the fully-canonical one (entries present, version stamped —
+  // also skip the rebuild) and NEVER the in-between. If every retry is still
+  // contention-shaped it surfaces as `INDEX_DB_CONTENDED` (exit 75, the
+  // documented retry-shortly contract) instead of exit 70.
   //
-  ensureGraphTables(db);
-
-  // Effective embedding vector width for `units_vec` (docs/plans/index-fragment-vectors.md).
+  // A genuine generation mismatch (a real older index.db) still rebuilds
+  // exactly as before: `rebuildIncompatibleIndexGeneration`'s own
+  // `withImmediateTransaction(db, ..., "index")` call now simply joins this
+  // outer transaction (the re-entrancy guard in `withImmediateTransaction`
+  // — `if (db.inTransaction) return fn();`), so its DROP sequence is
+  // unchanged and still runs before `entries` is recreated below.
   //
-  // Dimension contract:
-  //   - When `embeddingDim` is `undefined`, the caller did NOT request a
-  //     specific dim. Do not touch `index_meta.embeddingDim` — fall back to
-  //     the stored dim (or the static default). Without this guard,
-  //     registry-side and other dim-unaware `openDatabase()` callers would
-  //     silently overwrite the dim-aware improve/index value and oscillate
-  //     the stored dim.
-  //   - When `embeddingDim` is a number, the caller explicitly asked for
-  //     that dim; it is stamped into `index_meta.embeddingDim`.
-  //
-  // A genuine dimension change (a real model swap) is NOT handled here: it
-  // surfaces as a different observed embedding identity
-  // (`deriveObservedEmbeddingIdentity` folds the observed vector width into
-  // the identity string), and `dropOtherIdentities` — called from the
-  // embedding loop when the active identity changes — recreates `units_vec`
-  // at the new width then. `units_vec` itself is never dropped or purged
-  // here; ensureUnitTables only creates it if missing, at whatever width is
-  // effective the first time that happens.
-  const dimExplicit = embeddingDim !== undefined;
-  const requestedDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
-  const effectiveDim = Number.isInteger(requestedDim) && requestedDim > 0 ? requestedDim : EMBEDDING_DIM;
-  if (effectiveDim !== requestedDim) {
-    warn(`Invalid embedding dimension ${requestedDim} — falling back to the default (${EMBEDDING_DIM}).`);
-  }
-  if (dimExplicit) {
-    setMeta(db, "embeddingDim", String(effectiveDim));
-  }
+  // Every statement in this block is ordinary DDL/DML the driver already runs
+  // inside a transaction elsewhere in this codebase — including a vec0
+  // `CREATE VIRTUAL TABLE` (`ensureUnitTables`/`createUnitsVecTable`, verified
+  // to work inside `BEGIN IMMEDIATE`) and vec0 `DROP TABLE` (already done
+  // inside a transaction by `rebuildIncompatibleIndexGeneration`, above). The
+  // one genuinely transaction-incompatible step, arming the sqlite-vec
+  // extension (`loadVecExtension`), already runs before `ensureSchema` is
+  // ever called (`index-connection.ts`'s `init` callback) and is untouched
+  // here.
+  withImmediateTransaction(
+    db,
+    () => {
+      rebuildIncompatibleIndexGeneration(db);
 
-  // units / units_vec / entry_units (docs/plans/index-fragment-vectors.md):
-  // created if missing, and NEVER dropped by the generation rebuild above or
-  // by any purge — only dropOtherIdentities (called from the embedding loop
-  // on a real identity change) removes rows. ensureUnitTables is idempotent,
-  // so this runs on every ensureSchema call, not just the first.
-  ensureUnitTables(db, effectiveDim);
+      db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
 
-  // files / unit_texts / units_fts (docs/plans/index-redesign-contract.md, B1):
-  // the reconcile engine's stat cache and content-addressed unit text store.
-  // Created if missing; reconcile.ts and pruneOrphanUnitTexts own all row-level
-  // writes and deletes, never this ensure path.
-  ensureFileAndUnitTextTables(db);
+      // Workflow source is compiled directly into source IR at each command
+      // boundary. The former workflow_documents cache duplicated that IR in a
+      // second persisted representation and was never used by current execution.
+      // index.db is derived state, so remove the obsolete table on every open.
+      db.exec("DROP TABLE IF EXISTS workflow_documents");
 
-  // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
-  // no longer created here.
+      // #955's embedding-salvage cache (`embedding-salvage-repository.ts`) is
+      // retired (index redesign, B5) — units are content-addressed, so a
+      // generation bump keeps whatever vectors are still keyed by an
+      // unchanged unit hash instead of needing a copy-aside step. Drop the
+      // table on every open so an install upgrading past this release does not
+      // carry the now-unreferenced rows forever.
+      db.exec("DROP TABLE IF EXISTS embedding_salvage");
 
-  // Registry index cache table — caches remote registry index documents so
-  // `akm search` does not hit the network on every invocation.
-  db.exec(REGISTRY_INDEX_CACHE_DDL);
+      // The legacy per-entry vector tables (`embeddings`, a plain BLOB table, and
+      // `entries_vec`, its vec0 mirror) are retired (index redesign, B5h) —
+      // vectors live only in the content-addressed `units`/`units_vec` store
+      // now. Drop both unconditionally on every open, not gated on a generation
+      // bump: a v24 index built before this change may still carry them, and v24
+      // tolerates either shape. `embeddings` is a plain table, always safe to
+      // drop; `entries_vec` is a vec0 virtual table that can only be dropped
+      // while the extension is loaded, so a drop that cannot run yet is deferred
+      // the same way a generation rebuild used to defer it — a `vecResetPending`
+      // marker, finished the first later open where sqlite-vec is available.
+      db.exec("DROP TABLE IF EXISTS embeddings");
+      if (isVecAvailable(db)) {
+        db.exec("DROP TABLE IF EXISTS entries_vec");
+        if (getMeta(db, "vecResetPending") === "1") setMeta(db, "vecResetPending", "0");
+      } else if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'").get()) {
+        setMeta(db, "vecResetPending", "1");
+      }
 
-  // Write the generation stamp only after every required DDL surface exists.
-  // A crash before this point leaves an unversioned generation that the next
-  // writable open safely rebuilds instead of admitting a partial v23 index.
-  setMeta(db, "version", String(DB_VERSION));
+      // usage_events lives in state.db. utility_scores remains a regenerable
+      // index.db cache.
+
+      // Utility scores table (aggregated per-entry utility metrics)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS utility_scores (
+          entry_id     INTEGER PRIMARY KEY,
+          utility      REAL NOT NULL DEFAULT 0,
+          show_count   INTEGER NOT NULL DEFAULT 0,
+          search_count INTEGER NOT NULL DEFAULT 0,
+          select_rate  REAL NOT NULL DEFAULT 0,
+          last_used_at TEXT,
+          updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
+        );
+      `);
+
+      // Per-project scoped utility scores — tracks usage per (entry, cwd-anchor)
+      // so assets useful in project A don't pollute rankings in project B.
+      // The global utility_scores table is preserved as a fallback / cold-start aid.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS utility_scores_scoped (
+          entry_id     INTEGER NOT NULL,
+          scope_key    TEXT NOT NULL,
+          utility      REAL NOT NULL DEFAULT 0,
+          last_used_at INTEGER NOT NULL,
+          PRIMARY KEY (entry_id, scope_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_utility_scores_scoped_entry_id
+          ON utility_scores_scoped(entry_id);
+      `);
+
+      // LLM enrichment result cache. Stores a SHA-256 body hash and the JSON
+      // result for each asset so that subsequent `akm index --enrich` runs can
+      // skip the LLM call when the body hasn't changed. The cache is keyed by
+      // a stable asset_ref string (e.g. the absolute file path for graph/memory
+      // passes, or `itemRef:passId` for the metadata-enhance pass).
+      // Entries are cleaned up when assets are removed or --re-enrich is used.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
+          asset_ref     TEXT NOT NULL,
+          cache_variant TEXT NOT NULL,
+          body_hash     TEXT NOT NULL,
+          result_json   TEXT NOT NULL,
+          updated_at    INTEGER NOT NULL,
+          PRIMARY KEY (asset_ref, cache_variant)
+        );
+
+         CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
+           ON llm_enrichment_cache(updated_at);
+      `);
+
+      // Graph extraction tables — schema v4 ((stash_root, file_path, body_hash) PK).
+      //
+      // graph_files is self-keyed on (stash_root, file_path, body_hash) and is NO
+      // LONGER tied to entries.id. This is the #624-P1 win: deleting and
+      // re-inserting an entries row during a reindex no longer cascade-wipes the
+      // extracted graph — as long as the file's body_hash is unchanged, the graph
+      // data survives. body_hash is part of the PK so a content change yields a
+      // distinct key; a UNIQUE index on (stash_root, file_path) still enforces
+      // exactly one graph_files row per path (delete-then-insert on a hash change).
+      //
+      // graph_file_entities and graph_file_relations carry (stash_root, file_path,
+      // body_hash) and declare a composite FK -> graph_files ON DELETE CASCADE so
+      // child rows are removed when a graph_files row is replaced.
+      //
+      ensureGraphTables(db);
+
+      // Effective embedding vector width for `units_vec` (docs/plans/index-fragment-vectors.md).
+      //
+      // Dimension contract:
+      //   - When `embeddingDim` is `undefined`, the caller did NOT request a
+      //     specific dim. Do not touch `index_meta.embeddingDim` — fall back to
+      //     the stored dim (or the static default). Without this guard,
+      //     registry-side and other dim-unaware `openDatabase()` callers would
+      //     silently overwrite the dim-aware improve/index value and oscillate
+      //     the stored dim.
+      //   - When `embeddingDim` is a number, the caller explicitly asked for
+      //     that dim; it is stamped into `index_meta.embeddingDim`.
+      //
+      // A genuine dimension change (a real model swap) is NOT handled here: it
+      // surfaces as a different observed embedding identity
+      // (`deriveObservedEmbeddingIdentity` folds the observed vector width into
+      // the identity string), and `dropOtherIdentities` — called from the
+      // embedding loop when the active identity changes — recreates `units_vec`
+      // at the new width then. `units_vec` itself is never dropped or purged
+      // here; ensureUnitTables only creates it if missing, at whatever width is
+      // effective the first time that happens.
+      const dimExplicit = embeddingDim !== undefined;
+      const requestedDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
+      const effectiveDim = Number.isInteger(requestedDim) && requestedDim > 0 ? requestedDim : EMBEDDING_DIM;
+      if (effectiveDim !== requestedDim) {
+        warn(`Invalid embedding dimension ${requestedDim} — falling back to the default (${EMBEDDING_DIM}).`);
+      }
+      if (dimExplicit) {
+        setMeta(db, "embeddingDim", String(effectiveDim));
+      }
+
+      // units / units_vec / entry_units (docs/plans/index-fragment-vectors.md):
+      // created if missing, and NEVER dropped by the generation rebuild above or
+      // by any purge — only dropOtherIdentities (called from the embedding loop
+      // on a real identity change) removes rows. ensureUnitTables is idempotent,
+      // so this runs on every ensureSchema call, not just the first.
+      ensureUnitTables(db, effectiveDim);
+
+      // files / unit_texts / units_fts (docs/plans/index-redesign-contract.md, B1):
+      // the reconcile engine's stat cache and content-addressed unit text store.
+      // Created if missing; reconcile.ts and pruneOrphanUnitTexts own all row-level
+      // writes and deletes, never this ensure path.
+      ensureFileAndUnitTextTables(db);
+
+      // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
+      // no longer created here.
+
+      // Registry index cache table — caches remote registry index documents so
+      // `akm search` does not hit the network on every invocation.
+      db.exec(REGISTRY_INDEX_CACHE_DDL);
+
+      // Write the generation stamp only after every required DDL surface exists.
+      // A crash before this point leaves an unversioned generation that the next
+      // writable open safely rebuilds instead of admitting a partial v23 index.
+      setMeta(db, "version", String(DB_VERSION));
+    },
+    "index",
+  );
 }
 
 /**
