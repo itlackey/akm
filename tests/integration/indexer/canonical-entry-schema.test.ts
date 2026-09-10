@@ -18,8 +18,9 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
 import { relinkUsageEvents, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
+import { DB_VERSION, EMBEDDING_DIM, ensureSchema } from "../../../src/storage/repositories/index-schema";
 import { isVecAvailable, loadVecExtension } from "../../../src/storage/repositories/index-vec-repository";
+import { ensureUnitTables, upsertUnitVectors } from "../../../src/storage/repositories/units-repository";
 
 const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
@@ -250,6 +251,104 @@ describe("canonical derived-index entry schema", () => {
         expect(
           current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string },
         ).toEqual({ value: String(DB_VERSION) });
+      } finally {
+        closeDatabase(current);
+      }
+
+      expect(entryColumns(dbPath)).toEqual(CURRENT_ENTRY_COLUMNS);
+    });
+  });
+
+  // Regression for the FOREIGN KEY crash a real pre-redesign (v23) index hit
+  // on its first open by this binary: `embeddings` carries a non-cascading
+  // `FOREIGN KEY (id) REFERENCES entries(id)`, so `DROP TABLE entries` inside
+  // the generation rebuild fails under `foreign_keys=ON` unless `embeddings`
+  // (and its vec0 mirror `entries_vec`) is dropped first. Deliberately does
+  // NOT use `withTempIndex` + an already-v24-shaped db stamped down — every
+  // other generation test in this file starts from a database `ensureSchema`
+  // already produced (or a hand-rolled `entries` shape with no vector
+  // tables at all), which is exactly why this shipped undetected: this test
+  // instead hand-builds the actual legacy shape (entries + embeddings with
+  // its real FK + entries_vec, at least one live row in each) via a raw,
+  // unmanaged `openDatabase` — the same fixture technique the tests around
+  // it use, just with the vector tables a real v23 index still carries — and
+  // only then opens it through the real `openIndexDatabase` path, which is
+  // what applies `foreign_keys=ON` (index-schema.ts alone, via a bare
+  // `ensureSchema` call, never would).
+  test("a v23 index with the legacy embeddings/entries_vec tables upgrades without a foreign-key crash", () => {
+    withTempIndex((dbPath) => {
+      const legacy = openDatabase(dbPath);
+      loadVecExtension(legacy);
+      const vecAvailable = isVecAvailable(legacy);
+      try {
+        legacy.exec(`
+          CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO index_meta (key, value) VALUES ('version', '${DB_VERSION - 1}');
+          ${CANONICAL_ENTRIES_DDL}
+          ${CANONICAL_ENTRY_INDEXES_DDL}
+          CREATE TABLE embeddings (
+            id        INTEGER PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            FOREIGN KEY (id) REFERENCES entries(id)
+          );
+        `);
+        legacy
+          .prepare(
+            `INSERT INTO entries
+               (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type,
+                file_path, content_hash, document_json, search_text, derived_from)
+             VALUES (1, 'stash//memories/legacy', 'stash', 'stash', 'memories/legacy',
+                     'akm', 'memory', '/tmp/legacy.md', NULL,
+                     '{"type":"memory","name":"legacy"}', 'legacy', NULL)`,
+          )
+          .run();
+        // The live row an upgrading owner's index always has: this is what
+        // used to be missing from every generation-rebuild fixture, and
+        // without it `DROP TABLE entries` has nothing to conflict with.
+        legacy.prepare("INSERT INTO embeddings (id, embedding) VALUES (1, ?)").run(Buffer.alloc(EMBEDDING_DIM * 4));
+
+        if (vecAvailable) {
+          legacy.exec(`
+            CREATE VIRTUAL TABLE entries_vec USING vec0(
+              id        INTEGER PRIMARY KEY,
+              embedding FLOAT[${EMBEDDING_DIM}]
+            );
+          `);
+          legacy
+            .prepare("INSERT INTO entries_vec (id, embedding) VALUES (1, ?)")
+            .run(Buffer.from(new Float32Array(EMBEDDING_DIM).fill(0.1).buffer));
+
+          // A real v23 index also already has the content-addressed units
+          // store (it shipped alongside the legacy tables during their
+          // retirement window) — the rebuild must leave it completely alone.
+          ensureUnitTables(legacy, EMBEDDING_DIM);
+          const { inserted } = upsertUnitVectors(legacy, [
+            { hash: "unit-hash-must-survive", identity: "local:test|384", vector: new Array(EMBEDDING_DIM).fill(0.2) },
+          ]);
+          expect(inserted).toBe(1);
+        }
+      } finally {
+        legacy.close();
+      }
+
+      // The real production open path: applies `foreign_keys = ON`, then
+      // runs `ensureSchema` — the exact sequence `akm index` hits on a real
+      // pre-redesign data dir.
+      const current = openIndexDatabase(dbPath);
+      try {
+        expect(
+          current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string },
+        ).toEqual({ value: String(DB_VERSION) });
+        expect(current.prepare("SELECT name FROM sqlite_master WHERE name = 'embeddings'").get()).toBeNull();
+        expect(current.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_vec'").get()).toBeNull();
+
+        if (vecAvailable) {
+          expect(current.prepare("SELECT COUNT(*) AS count FROM units").get()).toEqual({ count: 1 });
+          expect(current.prepare("SELECT COUNT(*) AS count FROM units_vec").get()).toEqual({ count: 1 });
+          expect(
+            current.prepare("SELECT unit_hash FROM units WHERE unit_hash = 'unit-hash-must-survive'").get(),
+          ).toEqual({ unit_hash: "unit-hash-must-survive" });
+        }
       } finally {
         closeDatabase(current);
       }
