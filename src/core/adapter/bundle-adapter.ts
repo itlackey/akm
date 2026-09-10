@@ -81,6 +81,23 @@ export interface AdapterReadCandidate {
   path: string;
   /** Canonical concept identity this authored path may own. */
   conceptId: string;
+  /**
+   * Declared preference rank within ONE closed-form duality list — e.g. the
+   * `[primary, derived-twin]` or `[.env, default.env]` lists
+   * `assetPathCandidatesForName` (`core/asset/asset-placement.ts`) returns
+   * for a single physical placement root. Lower wins. Candidates that share
+   * a priority (including every candidate that omits it, which compares as
+   * if it were the same fixed rank) are NOT a declared preference between
+   * each other — `resolveAdapterConceptOwner` treats co-equal priority as
+   * genuine ambiguity, same as before this field existed. Candidates from a
+   * DIFFERENT placement root (e.g. the akm adapter's canonical vs loose
+   * fallback) must reuse the same rank numbers rather than continuing a
+   * running count across roots, so that same-rank candidates from different
+   * roots still collide instead of silently picking whichever root happened
+   * to be listed first — only rank differences WITHIN one root's own list
+   * are a real, adapter-declared preference.
+   */
+  priority?: number;
 }
 
 export interface BundleAdapter {

@@ -28,6 +28,8 @@ export interface AdapterConceptOwner {
   conceptId: string;
   adapterId: string;
   workflowSource?: WorkflowSourceFile;
+  /** Carried from the originating {@link AdapterReadCandidate.priority}. */
+  priority?: number;
 }
 
 export abstract class AdapterConceptOwnershipError extends UsageError {}
@@ -127,7 +129,7 @@ function inspectCandidate(
   } catch {
     return undefined;
   }
-  return { path: authoredPath, realPath, conceptId: candidate.conceptId, adapterId };
+  return { path: authoredPath, realPath, conceptId: candidate.conceptId, adapterId, priority: candidate.priority };
 }
 
 function claimsWithoutContent(adapter: BundleAdapter, component: BundleComponent, owner: AdapterConceptOwner): boolean {
@@ -228,22 +230,35 @@ export function resolveAdapterConceptOwner(
     if (ownersByIdentity.has(identity)) continue;
     if (claimsWithoutContent(adapter, component, candidate)) ownersByIdentity.set(identity, candidate);
   }
+  // Rank ascending by declared priority first (undefined — no declared rank —
+  // compares as 0, so candidates that never opted in keep tying with each
+  // other exactly as before this field existed), then by path within a rank
+  // for deterministic tie-break output.
   const owners = [...ownersByIdentity.values()]
     .filter((owner) => owner.conceptId === resolutionConceptId)
-    .sort((left, right) => compareCodePoints(left.path, right.path));
+    .sort((left, right) => (left.priority ?? 0) - (right.priority ?? 0) || compareCodePoints(left.path, right.path));
   if (owners.length > 1) {
+    // Only owners tied on the BEST (lowest) priority present are competing —
+    // a lower-priority owner is shadowed by a higher-priority one that
+    // exists, per the adapter's own declared candidate order (#882), not a
+    // collision with it. Only a genuine tie at that best priority — e.g. the
+    // memory `.md`/`.derived.md` pair resolves here with no throw, while
+    // case-only filesystem siblings (same declared rank) still collide.
+    const bestPriority = owners[0]!.priority ?? 0;
+    const tied = owners.filter((owner) => (owner.priority ?? 0) === bestPriority);
+    if (tied.length === 1) return tied[0];
     if (options?.mode !== "read") {
       throw new AdapterConceptCollisionError(
         adapterId,
         resolutionConceptId,
-        owners.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")),
+        tied.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")),
       );
     }
-    const [winner, ...losers] = owners;
+    const [winner, ...losers] = tied;
     warnOnce(
       `adapter-concept-collision:${adapterId}:${resolutionConceptId}`,
       `Adapter "${adapterId}" has multiple physical owners for "${resolutionConceptId}": ` +
-        `${owners.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")).join(", ")}. ` +
+        `${tied.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")).join(", ")}. ` +
         `Reading "${path.relative(sourcePath, winner!.path).replaceAll("\\", "/")}" and ignoring ` +
         `${losers.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")).join(", ")}.`,
     );
