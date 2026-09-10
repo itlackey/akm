@@ -46,6 +46,7 @@ import {
   getEntryCount,
   getPositiveFeedbackCountsByIds,
 } from "../../storage/repositories/index-entries-repository";
+import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
 import {
   getIndexedMarkdownFragment,
   getIndexedMarkdownFragments,
@@ -54,6 +55,8 @@ import {
 } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
+import type { UnitVecHit } from "../../storage/repositories/units-repository";
+import { searchUnits } from "../../storage/repositories/units-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { ensureIndex } from "../ensure-index";
 import { collectGraphRelatedHit, type GraphBoostContext, loadGraphBoostContext } from "../graph/graph-boost";
@@ -65,9 +68,16 @@ import {
   parseRefPrefixQuery,
   parseRetiredTypePrefixQuery,
 } from "./fts-query";
-import { applyRankingRules, combineSearchScores, lexicalNameMatchTier, normalizeFtsScores } from "./ranking";
+import {
+  applyRankingRules,
+  combineSearchScores,
+  fuseByEntry,
+  lexicalNameMatchTier,
+  normalizeFtsScores,
+  type UnitLexicalHit,
+} from "./ranking";
 import { typeBoostFor } from "./ranking-contributors";
-import type { RankedEntryInput } from "./ranking-types";
+import type { MatchedUnit, RankedEntryInput } from "./ranking-types";
 import { attachSearchHitAttribution, copySearchHitAttribution, getSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -481,7 +491,7 @@ async function searchDatabase(
   // Start the async embedding request without awaiting, then run FTS
   // synchronously while the HTTP/local embedding request is in-flight.
   const typeFilter = searchType === "any" ? undefined : searchType;
-  const { ftsResults, embeddingScores, embedMs, mode, semanticWarning } = await collectSearchSignals(
+  const { ftsResults, embeddingScores, embedMs, mode, semanticWarning, unitScored } = await collectSearchSignals(
     db,
     query,
     limit * 3,
@@ -492,32 +502,40 @@ async function searchDatabase(
 
   const tRank0 = Date.now();
 
-  // ── Score normalization ──────────────────────────────────────────────
-  // Stable bounded BM25 transform + cosine similarity with weighted addition
-  // (FTS 0.7, vector 0.3). The lexical transform is per-row, so widening the
-  // candidate set cannot alter a pre-existing row's base score.
-  const ftsScoreMap = normalizeFtsScores(ftsResults);
+  // index-redesign-contract.md B3: once units_fts has rows, `collectSearchSignals`
+  // already returns the fused RankedEntryInput[] via `fuseByEntry` — skip the
+  // old entries_fts/entries_vec combine step entirely rather than running both.
+  let scored: Array<RankedEntryInput & IndexedProvenance>;
+  if (unitScored) {
+    scored = unitScored.filter(hasIndexedProvenance);
+  } else {
+    // ── Score normalization ──────────────────────────────────────────────
+    // Stable bounded BM25 transform + cosine similarity with weighted addition
+    // (FTS 0.7, vector 0.3). The lexical transform is per-row, so widening the
+    // candidate set cannot alter a pre-existing row's base score.
+    const ftsScoreMap = normalizeFtsScores(ftsResults);
 
-  // Build embedding score map (cosine similarities already 0-1)
-  const embedScoreMap = new Map<number, number>();
-  if (embeddingScores) {
-    for (const [id, cosine] of embeddingScores) {
-      embedScoreMap.set(id, cosine);
+    // Build embedding score map (cosine similarities already 0-1)
+    const embedScoreMap = new Map<number, number>();
+    if (embeddingScores) {
+      for (const [id, cosine] of embeddingScores) {
+        embedScoreMap.set(id, cosine);
+      }
     }
-  }
 
-  // ── Combine FTS + vector scores ──────────────────────────────────────
-  const scored = combineSearchScores({
-    ftsScoreMap,
-    embedScoreMap,
-    getEntryById: (id) => getEntryById(db, id) ?? undefined,
-    typeFilter,
-    // #627 — also exclude default-hidden types from the vector-only branch so a
-    // session asset that is a top-k vector neighbor (but not an FTS match) does
-    // not leak into default ('any') results. defaultExcludes is already []
-    // unless this is the untyped path without includeExcludedTypes.
-    excludeTypes: defaultExcludes,
-  }).filter(hasIndexedProvenance);
+    // ── Combine FTS + vector scores ──────────────────────────────────────
+    scored = combineSearchScores({
+      ftsScoreMap,
+      embedScoreMap,
+      getEntryById: (id) => getEntryById(db, id) ?? undefined,
+      typeFilter,
+      // #627 — also exclude default-hidden types from the vector-only branch so a
+      // session asset that is a top-k vector neighbor (but not an FTS match) does
+      // not leak into default ('any') results. defaultExcludes is already []
+      // unless this is the untyped path without includeExcludedTypes.
+      excludeTypes: defaultExcludes,
+    }).filter(hasIndexedProvenance);
+  }
 
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
@@ -596,9 +614,17 @@ async function searchDatabase(
   // item (`preCeilingScore`): the belief ceilings can sit below this floor
   // (archived 0.15 < 0.2), and a demotion must rank the hit last, not
   // silently remove a result that would otherwise have listed.
+  //
+  // index-redesign-contract.md B3 lists `search.minScore` among what belongs
+  // to "the old path" (entries_fts + searchVec + FTS_WEIGHT/VEC_WEIGHT),
+  // left for B5 to delete alongside it. It is calibrated for that path's
+  // 0-1 cosine/BM25-derived scores; a fused RRF score (`Σ 1/(RRF_K+rank)`,
+  // at most ~0.03) is a different, much smaller scale that floor was never
+  // set against, so the units path skips it entirely rather than dropping
+  // nearly every semantic-only unit hit.
   const minScore = config.search?.minScore ?? 0.2;
   const preFilter =
-    minScore > 0
+    !unitScored && minScore > 0
       ? scored.filter((item) => item.rankingMode !== "semantic" || (item.preCeilingScore ?? item.score) >= minScore)
       : scored;
 
@@ -653,6 +679,7 @@ async function searchDatabase(
         rankingMode,
         lexicalMatch: ranked.lexicalMatch,
         fragmentId: ranked.fragmentId,
+        matchedUnit: ranked.matchedUnit,
         indexedFragment: ranked.fragmentId ? (selectedFragmentByEntryId.get(ranked.id) ?? null) : undefined,
         defaultStashDir: stashDir,
         allSourceDirs,
@@ -677,7 +704,18 @@ async function collectSearchSignals(
   typeFilter: string | undefined,
   excludeTypes: string[],
   config: AkmConfig,
-) {
+): Promise<{
+  ftsResults: DbSearchResult[];
+  embeddingScores: Map<number, number> | null;
+  embedMs: number;
+  mode: SearchExecutionMode;
+  semanticWarning?: string;
+  /** Set only on the units search path (index-redesign-contract.md B3). */
+  unitScored?: RankedEntryInput[];
+}> {
+  if (hasUnitsFtsRows(db)) {
+    return collectUnitSearchSignals(db, query, candidateLimit, typeFilter, excludeTypes, config);
+  }
   const startedAt = Date.now();
   const embeddingPromise = tryVecScores(db, query, candidateLimit, config);
   const ftsResults = searchFts(db, query, candidateLimit, typeFilter, excludeTypes);
@@ -693,6 +731,133 @@ async function collectSearchSignals(
     embedMs: Date.now() - startedAt,
     mode,
     semanticWarning: embeddingResult.warning,
+  };
+}
+
+// ── Units search (index-redesign-contract.md B3) ────────────────────────────
+
+/**
+ * Whether `units_fts` exists and has at least one row — the switch B3 wires
+ * between the old path (`entries_fts` + `searchVec`, fused by
+ * `combineSearchScores`) and the new one (`searchUnitsLexical` + stage-1's
+ * `searchUnits`, fused by `fuseByEntry`). `units_fts` is created and
+ * populated together with `entry_units` by the same reconcile pass (B1), so
+ * a positive result here implies `entry_units` is also usable. A missing
+ * table (an index.db from before this design, or a fresh one before the
+ * first reconcile) is the ordinary "not yet migrated" case, not an error.
+ */
+function hasUnitsFtsRows(db: Database): boolean {
+  try {
+    return db.prepare("SELECT 1 FROM units_fts LIMIT 1").get() !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `units_fts`/`units_vec` are keyed by UNIT, not by entry, and one entry can
+ * own several units (its structured-fields card plus one per Markdown
+ * fragment). Retrieving only `candidateLimit` units therefore yields fewer
+ * than `candidateLimit` distinct entries once grouped — this scales the
+ * requested `k` by the corpus's observed mean so entry-level recall stays
+ * comparable to the old per-entry candidate pool. 1 is the floor for a
+ * corpus with no `entry_units` rows yet (nothing to divide by).
+ */
+function meanUnitsPerEntry(db: Database): number {
+  const row = db
+    .prepare("SELECT AVG(cnt) AS mean FROM (SELECT COUNT(*) AS cnt FROM entry_units GROUP BY entry_id)")
+    .get() as { mean: number | null } | undefined;
+  const mean = row?.mean;
+  return typeof mean === "number" && Number.isFinite(mean) && mean > 0 ? mean : 1;
+}
+
+/** `units_fts` bm25 lexical search over unit text, ranked best-first (1-based). */
+export function searchUnitsLexical(db: Database, query: string, k: number): UnitLexicalHit[] {
+  if (k <= 0) return [];
+  const plan = buildLexicalQueryPlan(query);
+  if (!plan.exact) return [];
+  const rows = db
+    .prepare(`
+      SELECT unit_hash AS unitHash, bm25(units_fts) AS score
+      FROM units_fts
+      WHERE units_fts MATCH ?
+      ORDER BY score ASC
+      LIMIT ?
+    `)
+    .all(plan.exact, k) as Array<{ unitHash: string; score: number }>;
+  return rows.map((row, index) => ({ unitHash: row.unitHash, rank: index + 1 }));
+}
+
+/** Count of `units` rows for the active identity — the units-path analogue of `getEmbeddingCount`. */
+function getUnitVectorCount(db: Database, identity: string): number {
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS cnt FROM units WHERE identity = ?").get(identity) as
+      | { cnt: number }
+      | undefined;
+    return row?.cnt ?? 0;
+  } catch {
+    // The design doc's migration story has units_fts populated (lexical
+    // ready) before the first embedding drain completes (`units` empty or
+    // absent) — an expected transient state, not a fault. Lexical-only
+    // results are the correct behavior until the drain catches up.
+    return 0;
+  }
+}
+
+async function tryUnitVecScores(
+  db: Database,
+  query: string,
+  k: number,
+  config: AkmConfig,
+): Promise<{ hits: UnitVecHit[] | null; warning?: string }> {
+  if (config.semanticSearchMode === "off") return { hits: null };
+  const identity = getMeta(db, "embeddingIdentity");
+  if (!identity || getUnitVectorCount(db, identity) === 0) return { hits: null };
+  try {
+    const { embed } = await import("../../llm/embedder.js");
+    const queryEmbedding = await embed(query, config.embedding);
+    return { hits: searchUnits(db, queryEmbedding, k, identity) };
+  } catch (error) {
+    return { hits: null, warning: buildVectorFallbackWarning(config, error) };
+  }
+}
+
+async function collectUnitSearchSignals(
+  db: Database,
+  query: string,
+  candidateLimit: number,
+  typeFilter: string | undefined,
+  excludeTypes: string[],
+  config: AkmConfig,
+): Promise<{
+  ftsResults: DbSearchResult[];
+  embeddingScores: Map<number, number> | null;
+  embedMs: number;
+  mode: SearchExecutionMode;
+  semanticWarning?: string;
+  unitScored: RankedEntryInput[];
+}> {
+  const startedAt = Date.now();
+  const unitK = Math.max(1, Math.round(candidateLimit * meanUnitsPerEntry(db)));
+  const semanticPromise = tryUnitVecScores(db, query, unitK, config);
+  const lexicalHits = searchUnitsLexical(db, query, unitK);
+  const semanticResult = await semanticPromise;
+  const mode: SearchExecutionMode = semanticResult.warning
+    ? "fts-fallback"
+    : semanticResult.hits !== null
+      ? "semantic"
+      : "keyword";
+  const unitScored = fuseByEntry(db, lexicalHits, semanticResult.hits ?? [], {
+    typeFilter: typeFilter ? [typeFilter] : undefined,
+    excludeTypes,
+  });
+  return {
+    ftsResults: [],
+    embeddingScores: null,
+    embedMs: Date.now() - startedAt,
+    mode,
+    semanticWarning: semanticResult.warning,
+    unitScored,
   };
 }
 
@@ -1034,6 +1199,8 @@ export async function buildDbHit(input: {
   rankingMode: "hybrid" | "semantic" | "fts";
   lexicalMatch?: LexicalQueryExecution;
   fragmentId?: string;
+  /** index-redesign-contract.md B3 — set only when this hit came from the units search path. */
+  matchedUnit?: MatchedUnit;
   /** Preloaded by the search batch; null means the indexed selector was absent. */
   indexedFragment?: IndexedMarkdownFragment | null;
   defaultStashDir: string;
@@ -1165,6 +1332,7 @@ export async function buildDbHit(input: {
     // hit. Omitted when the hit has no FTS component (pure-semantic hybrid
     // contribution).
     ...(input.lexicalMatch ? { matchStage: input.lexicalMatch } : {}),
+    ...(input.matchedUnit ? { matchedUnit: input.matchedUnit } : {}),
   };
 
   attachDbHitAttribution(hit, input);

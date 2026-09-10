@@ -100,6 +100,17 @@ export interface SourceSearchHit extends FragmentProvenance {
     entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
     relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
   };
+  /**
+   * index-redesign-contract.md B3 — which unit (of possibly several per
+   * entry) the units search path matched on. Present only when the hit came
+   * from the units search path (`units_fts` has rows); absent for every hit
+   * from the pre-B3 entries_fts + entries_vec path.
+   */
+  matchedUnit?: {
+    unitHash: string;
+    fragmentId: string | null;
+    kind: "card" | "fragment";
+  };
 }
 
 export interface RegistrySearchResultHit {
