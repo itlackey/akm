@@ -7,15 +7,15 @@
  * storage layer. This isolates the one genuinely risky area (schema
  * evolution) from the CRUD/FTS/vector queries.
  *
- * The meta accessors, embedding purge, and vec-availability probe that
- * `ensureSchema` leans on live in the sibling `index-meta-repository` /
- * `index-vec-repository` modules.
+ * The meta accessors and vec-availability probe that `ensureSchema` leans on
+ * live in the sibling `index-meta-repository` / `index-vec-repository`
+ * modules.
  */
 
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { Database } from "../database";
-import { ensureEmbeddingSalvageTable, salvageEmbeddingsBeforeDiscard } from "./embedding-salvage-repository";
+import { ensureFileAndUnitTextTables } from "./files-repository";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
@@ -23,7 +23,8 @@ import {
   isCanonicalIndexGeneration,
 } from "./index-entry-schema";
 import { getMeta, setMeta } from "./index-meta-repository";
-import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
+import { isVecAvailable } from "./index-vec-repository";
+import { ensureUnitTables } from "./units-repository";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -181,8 +182,10 @@ function ensureGraphTables(db: Database): void {
 /**
  * Cross the incompatible entry-schema boundary by discarding the derived index
  * generation. No row conversion or dual-schema compatibility is attempted:
- * the next index run rebuilds entries, FTS, embeddings, utility aggregates,
- * graph extraction, and enrichment caches from current sources/state.
+ * the next index run rebuilds entries, FTS, utility aggregates, graph
+ * extraction, and enrichment caches from current sources/state. Vectors are
+ * content-addressed (`units`/`units_vec`) and are never part of this
+ * discard — see `ensureUnitTables`.
  */
 function rebuildIncompatibleIndexGeneration(db: Database): void {
   const version = getMeta(db, "version");
@@ -203,28 +206,24 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
 
   warn(
     `Index database generation ${classification.storedVersion ?? "unknown"} is older than this akm's generation ` +
-      `${CANONICAL_INDEX_DB_VERSION} — rebuilding the derived index (entries, FTS, embeddings, graph tables, ` +
-      "utility scores, and the LLM enrichment cache). This re-walks and re-indexes every source on the next run.",
+      `${CANONICAL_INDEX_DB_VERSION} — rebuilding the derived index (entries, FTS, graph tables, utility scores, ` +
+      "and the LLM enrichment cache). This re-walks and re-indexes every source on the next run.",
   );
 
-  let vecResetPending = false;
-  try {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
-  } catch {
-    // A vec0 table cannot be dropped while sqlite-vec is unavailable. It does
-    // not reference entries, so leave a marker and drop it on the first later
-    // open where the extension is available.
-    vecResetPending = true;
-  }
-
+  // A pre-redesign (v23 or older) index can still carry the legacy
+  // `embeddings` table, declared `FOREIGN KEY (id) REFERENCES entries(id)`
+  // with no cascade. Under `foreign_keys=ON`, `DROP TABLE entries` below
+  // fails with "FOREIGN KEY constraint failed" unless `embeddings` (and its
+  // vec0 mirror `entries_vec`, dropped alongside it for symmetry) is gone
+  // first — so both must be dropped here, inside this transaction, BEFORE
+  // `entries`. `ensureSchema` also drops them unconditionally on every open
+  // (it is what cleans up a v24 index built before the tables were retired,
+  // and clears `entries_vec` when sqlite-vec was unavailable here), but it
+  // runs AFTER this rebuild, so it cannot be the only place the drop
+  // happens. Vectors themselves live only in the content-addressed
+  // `units`/`units_vec` store, which a generation rebuild never drops
+  // (ensureUnitTables' contract).
   db.transaction(() => {
-    // #955: copy embeddings about to be discarded wholesale into
-    // `embedding_salvage` (keyed by content hash + the fingerprint they were
-    // generated under) BEFORE dropping `embeddings`, in the same transaction
-    // as the drop, so the copy and the discard commit or roll back together.
-    // The next embedding pass hands salvaged vectors back to unchanged
-    // content instead of re-embedding the whole corpus after this bump.
-    salvageEmbeddingsBeforeDiscard(db);
     db.exec("DROP TABLE IF EXISTS graph_file_relations");
     db.exec("DROP TABLE IF EXISTS graph_file_entities");
     db.exec("DROP TABLE IF EXISTS graph_files");
@@ -235,18 +234,14 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
     db.exec("DROP TABLE IF EXISTS entry_fragments");
     db.exec("DROP TABLE IF EXISTS entries_fts");
     db.exec("DROP TABLE IF EXISTS embeddings");
+    if (isVecAvailable(db)) db.exec("DROP TABLE IF EXISTS entries_vec");
     db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
     db.exec("DROP TABLE IF EXISTS utility_scores");
     db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
     db.exec("DROP TABLE IF EXISTS index_dir_state");
     db.exec("DROP TABLE IF EXISTS entries");
     db.exec("DELETE FROM index_meta");
-    // embedding_salvage is deliberately absent from the drop list above —
-    // it is the ONE piece of derived state a generation rebuild must not
-    // discard.
   })();
-
-  if (vecResetPending) setMeta(db, "vecResetPending", "1");
 }
 
 export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
@@ -258,12 +253,6 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     );
   `);
 
-  // #955: created before the generation-rebuild check below so a discard
-  // has somewhere to copy vectors to. Additive-only — it carries no bearing
-  // on the `entries` generation fingerprint (`hasCanonicalEntrySchema`), so
-  // adding it does not require a `CANONICAL_INDEX_DB_VERSION` bump.
-  ensureEmbeddingSalvageTable(db);
-
   rebuildIncompatibleIndexGeneration(db);
 
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
@@ -274,14 +263,31 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // index.db is derived state, so remove the obsolete table on every open.
   db.exec("DROP TABLE IF EXISTS workflow_documents");
 
-  // BLOB-based embedding storage (always available, no sqlite-vec needed)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS embeddings (
-      id        INTEGER PRIMARY KEY,
-      embedding BLOB NOT NULL,
-      FOREIGN KEY (id) REFERENCES entries(id)
-    );
-  `);
+  // #955's embedding-salvage cache (`embedding-salvage-repository.ts`) is
+  // retired (index redesign, B5) — units are content-addressed, so a
+  // generation bump keeps whatever vectors are still keyed by an
+  // unchanged unit hash instead of needing a copy-aside step. Drop the
+  // table on every open so an install upgrading past this release does not
+  // carry the now-unreferenced rows forever.
+  db.exec("DROP TABLE IF EXISTS embedding_salvage");
+
+  // The legacy per-entry vector tables (`embeddings`, a plain BLOB table, and
+  // `entries_vec`, its vec0 mirror) are retired (index redesign, B5h) —
+  // vectors live only in the content-addressed `units`/`units_vec` store
+  // now. Drop both unconditionally on every open, not gated on a generation
+  // bump: a v24 index built before this change may still carry them, and v24
+  // tolerates either shape. `embeddings` is a plain table, always safe to
+  // drop; `entries_vec` is a vec0 virtual table that can only be dropped
+  // while the extension is loaded, so a drop that cannot run yet is deferred
+  // the same way a generation rebuild used to defer it — a `vecResetPending`
+  // marker, finished the first later open where sqlite-vec is available.
+  db.exec("DROP TABLE IF EXISTS embeddings");
+  if (isVecAvailable(db)) {
+    db.exec("DROP TABLE IF EXISTS entries_vec");
+    if (getMeta(db, "vecResetPending") === "1") setMeta(db, "vecResetPending", "0");
+  } else if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'").get()) {
+    setMeta(db, "vecResetPending", "1");
+  }
 
   // usage_events lives in state.db. utility_scores remains a regenerable
   // index.db cache.
@@ -314,18 +320,6 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     CREATE INDEX IF NOT EXISTS idx_utility_scores_scoped_entry_id
       ON utility_scores_scoped(entry_id);
   `);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS index_dir_state (
-      dir_path          TEXT PRIMARY KEY,
-      file_set_hash     TEXT NOT NULL,
-      file_mtime_max_ms REAL NOT NULL,
-      reason            TEXT NOT NULL,
-      updated_at        TEXT NOT NULL,
-      row_count         INTEGER
-    );
-  `);
-  ensureIndexDirStateRowCountColumn(db);
 
   // LLM enrichment result cache. Stores a SHA-256 body hash and the JSON
   // result for each asset so that subsequent `akm index --enrich` runs can
@@ -363,69 +357,48 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   //
   ensureGraphTables(db);
 
-  // If a generation rebuild could not drop a vec0 table while the extension
-  // was unavailable, finish that reset as soon as vec0 can be loaded again.
-  if (isVecAvailable(db) && getMeta(db, "vecResetPending") === "1") {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
-    setMeta(db, "vecResetPending", "0");
-  }
-
-  // sqlite-vec table
+  // Effective embedding vector width for `units_vec` (docs/plans/index-fragment-vectors.md).
   //
   // Dimension contract:
   //   - When `embeddingDim` is `undefined`, the caller did NOT request a
-  //     specific dim. Do not touch `index_meta.embeddingDim` and do not run
-  //     the dim-change wipe — fall back to the stored dim (or the static
-  //     default) only when we have to materialise the vec table for the
-  //     first time. Without this guard, registry-side and other dim-unaware
-  //     `openDatabase()` callers would silently overwrite the dim-aware
-  //     improve/index value and oscillate the stored dim.
+  //     specific dim. Do not touch `index_meta.embeddingDim` — fall back to
+  //     the stored dim (or the static default). Without this guard,
+  //     registry-side and other dim-unaware `openDatabase()` callers would
+  //     silently overwrite the dim-aware improve/index value and oscillate
+  //     the stored dim.
   //   - When `embeddingDim` is a number, the caller explicitly asked for
-  //     that dim and owns the dim-change/backup/wipe semantics.
+  //     that dim; it is stamped into `index_meta.embeddingDim`.
+  //
+  // A genuine dimension change (a real model swap) is NOT handled here: it
+  // surfaces as a different observed embedding identity
+  // (`deriveObservedEmbeddingIdentity` folds the observed vector width into
+  // the identity string), and `dropOtherIdentities` — called from the
+  // embedding loop when the active identity changes — recreates `units_vec`
+  // at the new width then. `units_vec` itself is never dropped or purged
+  // here; ensureUnitTables only creates it if missing, at whatever width is
+  // effective the first time that happens.
   const dimExplicit = embeddingDim !== undefined;
   const requestedDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
   const effectiveDim = Number.isInteger(requestedDim) && requestedDim > 0 ? requestedDim : EMBEDDING_DIM;
   if (effectiveDim !== requestedDim) {
     warn(`Invalid embedding dimension ${requestedDim} — falling back to the default (${EMBEDDING_DIM}).`);
   }
-  if (isVecAvailable(db)) {
-    // Check if stored embedding dimension differs from configured one
-    if (dimExplicit) {
-      const storedDim = getMeta(db, "embeddingDim");
-      if (storedDim && storedDim !== String(effectiveDim)) {
-        // Stored vectors are incompatible with the new dimension. Drop the vec
-        // table so the block below recreates it at the new width; the BLOB rows
-        // go too. Regenerable from markdown — re-embedded by the next index.
-        purgeEmbeddings(db, { dropVecTable: true });
-      }
-    }
-
-    const vecExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries_vec'").get();
-    if (!vecExists) {
-      db.exec(`
-        CREATE VIRTUAL TABLE entries_vec USING vec0(
-          id       INTEGER PRIMARY KEY,
-          embedding FLOAT[${effectiveDim}]
-        );
-      `);
-    }
-    if (dimExplicit) {
-      setMeta(db, "embeddingDim", String(effectiveDim));
-    }
-  } else {
-    // Also purge BLOB embeddings on dimension change (JS fallback path).
-    // When sqlite-vec is unavailable, entries_vec doesn't exist but the BLOB
-    // embeddings table still stores vectors. If the configured dimension
-    // changes, those stored BLOBs become silently incompatible.
-    if (dimExplicit) {
-      const storedDim = getMeta(db, "embeddingDim");
-      if (storedDim && storedDim !== String(effectiveDim)) {
-        // JS-fallback path: no vec table, just clear the stale BLOB vectors.
-        purgeEmbeddings(db);
-      }
-      setMeta(db, "embeddingDim", String(effectiveDim));
-    }
+  if (dimExplicit) {
+    setMeta(db, "embeddingDim", String(effectiveDim));
   }
+
+  // units / units_vec / entry_units (docs/plans/index-fragment-vectors.md):
+  // created if missing, and NEVER dropped by the generation rebuild above or
+  // by any purge — only dropOtherIdentities (called from the embedding loop
+  // on a real identity change) removes rows. ensureUnitTables is idempotent,
+  // so this runs on every ensureSchema call, not just the first.
+  ensureUnitTables(db, effectiveDim);
+
+  // files / unit_texts / units_fts (docs/plans/index-redesign-contract.md, B1):
+  // the reconcile engine's stat cache and content-addressed unit text store.
+  // Created if missing; reconcile.ts and pruneOrphanUnitTexts own all row-level
+  // writes and deletes, never this ensure path.
+  ensureFileAndUnitTextTables(db);
 
   // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
   // no longer created here.
@@ -446,18 +419,4 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
 function tableExists(db: Database, name: string): boolean {
   const row = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1").get(name);
   return row !== undefined && row !== null;
-}
-
-/**
- * #900: `row_count` was added after the table's first release, so a database
- * created before it needs an `ALTER TABLE` (`CREATE TABLE IF NOT EXISTS` only
- * shapes a fresh table). Idempotent. Pre-existing rows keep NULL until their
- * directory is next drained; index.db is a regenerable cache, so nothing is
- * backfilled.
- */
-function ensureIndexDirStateRowCountColumn(db: Database): void {
-  const columns = db.prepare("PRAGMA table_info(index_dir_state)").all() as Array<{ name: string }>;
-  if (!columns.some((column) => column.name === "row_count")) {
-    db.exec("ALTER TABLE index_dir_state ADD COLUMN row_count INTEGER");
-  }
 }

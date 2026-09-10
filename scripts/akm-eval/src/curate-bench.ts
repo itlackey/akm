@@ -33,6 +33,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CURRENT_CONFIG_VERSION } from "../../../src/core/config/schema/primitives";
 import {
   type CurateCaseMetrics,
   type CurateJudgment,
@@ -152,7 +153,16 @@ function benchOne(cmdStr: string, fixture: string, judgments: JudgmentsFile): {
     for (const d of [home, data, path.join(config, "akm")]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(
       path.join(config, "akm", "config.json"),
-      JSON.stringify({ semanticSearchMode: "auto", sources: [{ type: "filesystem", path: stash }], registries: [] }, null, 2),
+      JSON.stringify(
+        {
+          configVersion: CURRENT_CONFIG_VERSION,
+          semanticSearchMode: "auto",
+          sources: [{ type: "filesystem", path: stash }],
+          registries: [],
+        },
+        null,
+        2,
+      ),
     );
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
@@ -165,7 +175,11 @@ function benchOne(cmdStr: string, fixture: string, judgments: JudgmentsFile): {
       XDG_CACHE_HOME: path.join(home, ".cache"),
       XDG_DATA_HOME: path.join(home, ".local", "share"),
     };
-    const idx = spawnSync(cmd[0], [...cmd.slice(1), "index", "--dir", stash], { encoding: "utf8", env });
+    // `akm index` has no `--dir` flag; it resolves the stash root via
+    // `resolveStashDir()`, which honors the `AKM_BUNDLE_DIR` override already
+    // set in `env` above (same sandbox convention as the rest of akm-eval —
+    // see `scripts/akm-eval/src/sources/sandbox.ts`).
+    const idx = spawnSync(cmd[0], [...cmd.slice(1), "index"], { encoding: "utf8", env });
     if (idx.status !== 0) {
       throw new Error(`akm index failed (exit ${idx.status}): ${(idx.stderr ?? "").trim()}`);
     }

@@ -6,19 +6,18 @@
  * Per-directory document drain — akm 0.9.0 Chunk 5, milestone F4a M-core-2 (the
  * engine swap). Replaces the live indexer's per-dir flat-walk matcher-pass
  * `IndexDocument` stream with the `akm` adapter's `recognize` `IndexDocument`
- * stream, reconstructing the durable `IndexDocument` via {@link
- * indexDocumentToStashEntry} (proven lossless by the shadow-parity gate).
+ * stream, reconstructing the durable `IndexDocument` via {@link parseFileDocument}
+ * (proven lossless by the shadow-parity gate).
  *
- * Two behaviors the adapter fold does NOT carry, restored here at the drain
- * layer (spec §14.2 "drain the full document stream"):
+ * One directory-scoped behavior the per-file parse does NOT carry, restored
+ * here at the drain layer (spec §14.2 "drain the full document stream"):
  *
- *  - **Broken-workflow drop (item 3).** The live path dropped a broken workflow
- *    via the renderer contributor's throw → metadata-pass skip-with-warning; the
- *    `akm` adapter's synchronous `foldRecognizedMetadata` SWALLOWS the parse
- *    error, so a broken workflow would otherwise silently index. We run the
- *    shared source-IR compiler on drained workflow docs and DROP
- *    the entry with the same `Skipped workflow …` warning
- *    ({@link buildMetadataSkipWarning}), so the workflow-skip summary counts it.
+ *  - **Peer-workflow-format ownership arbitration.** A full directory drain
+ *    may contain both peer workflow formats for one canonical ref; resolving
+ *    which one owns the ref requires seeing every file in the directory at
+ *    once, so it stays here rather than in the single-file
+ *    {@link parseFileDocument} (index-redesign B1 also calls that function to
+ *    parse one already-known-changed file, with no peer files in view).
  *
  * `doc.hash` (= sha256 of the file content) is surfaced per recognized file so
  * the persist layer can populate the `content_hash` column (item 2). It is keyed
@@ -35,13 +34,9 @@ import type { BundleComponent, IndexDocument } from "../../core/adapter/types";
 import { compareCodePoints } from "../../core/common";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../../workflows/source-files";
-import { compileWorkflowSource } from "../../workflows/source-ir/compile";
-import { buildMetadataSkipWarning, type StashFile } from "../passes/metadata";
+import type { StashFile } from "../passes/metadata";
 import { buildFileContext, type FileContext } from "../walk/file-context";
-import { indexDocumentToStashEntry } from "./doc-to-entry";
-
-/** The markdown-workflow renderer name the `akm` adapter carries on `documentJson.renderer`. */
-const WORKFLOW_MD_RENDERER = "workflow-md";
+import { parseFileDocument } from "./parse-file";
 
 export interface DrainedDir {
   /** The reconstructed durable entries, broken workflows already dropped. */
@@ -129,25 +124,24 @@ export function drainDirDocuments(
       }
     }
 
-    const doc = adapter.recognize(component, file);
-    if (doc === null) continue;
-    if (!doc.conceptId) {
-      warnings.push(`Skipped ${file.absPath}: adapter "${adapter.id}" returned no conceptId.`);
+    // The recognize → conceptId check → workflow-validity fold is the SAME
+    // per-file parse the reconcile engine uses for a single changed file
+    // (index-redesign B1) — extracted to `parse-file.ts` so the two never
+    // drift apart.
+    const outcome = parseFileDocument(adapter, component, file);
+    if (outcome.parsed === null) {
+      if (outcome.warning !== null) {
+        warnings.push(outcome.warning);
+        if (outcome.isWorkflowDrop && workflowName !== undefined) {
+          invalidWorkflowOwnerNames.add(canonicalizeWorkflowName(workflowName));
+        }
+      }
       continue;
     }
 
-    const entry = indexDocumentToStashEntry(doc);
-    // Workflow docs: drop-with-warning if broken; otherwise cache a lossless
-    // runtime projection when the current executor can represent the source.
-    const dropWarning = handleWorkflowDoc(doc, file, component.root);
-    if (dropWarning !== null) {
-      warnings.push(dropWarning);
-      if (workflowName !== undefined) invalidWorkflowOwnerNames.add(canonicalizeWorkflowName(workflowName));
-      continue;
-    }
-
-    if (doc.hash !== undefined) hashByFile.set(file.absPath, doc.hash);
-    conceptIdByFile.set(file.absPath, doc.conceptId);
+    const { entry, hash, conceptId } = outcome.parsed;
+    if (hash !== undefined) hashByFile.set(file.absPath, hash);
+    conceptIdByFile.set(file.absPath, conceptId);
     entries.push(entry);
   }
 
@@ -174,45 +168,4 @@ export function recognizeStashEntries(stashRoot: string, files: string[]): Stash
   return drained.warnings.length > 0
     ? { entries: drained.entries, warnings: drained.warnings }
     : { entries: drained.entries };
-}
-
-/**
- * If `doc` is a workflow, compile it through source IR: return a
- * `Skipped workflow …` drop warning when it is broken, or return `null` when
- * it compiles. Non-workflow docs return `null` immediately.
- */
-function handleWorkflowDoc(doc: IndexDocument, file: FileContext, workspaceRoot: string): string | null {
-  if (
-    doc.type !== "workflow" ||
-    (doc.adapterId !== "akm" && doc.adapterId !== "akm-workflow") ||
-    (docRenderer(doc) !== WORKFLOW_MD_RENDERER && doc.adapterId !== "akm-workflow")
-  ) {
-    return null;
-  }
-
-  const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot });
-  if (!result.ok) return workflowDropWarning(file, result.errors);
-  return null;
-}
-
-/** The winning renderer name the `akm` adapter carries on `documentJson.renderer`, or `undefined`. */
-function docRenderer(doc: IndexDocument): string | undefined {
-  const dj = doc.documentJson;
-  if (dj !== null && typeof dj === "object" && "renderer" in dj) {
-    const renderer = (dj as { renderer?: unknown }).renderer;
-    return typeof renderer === "string" ? renderer : undefined;
-  }
-  return undefined;
-}
-
-/**
- * Build the `Skipped workflow <path>:\n…` warning byte-for-byte the way the live
- * pipeline did: the workflow parser's `path:line — message` summary wrapped in
- * the `Workflow has errors:` prefix (the string `loadDocument`/`loadProgram`
- * threw), then {@link buildMetadataSkipWarning}'s workflow branch. `startsWith
- * "Skipped workflow "` so `isWorkflowSkipWarning` counts it for the summary.
- */
-function workflowDropWarning(file: FileContext, errors: ReadonlyArray<{ line: number; message: string }>): string {
-  const summary = errors.map((e) => `${file.relPath}:${e.line} — ${e.message}`).join("\n");
-  return buildMetadataSkipWarning(file.absPath, "workflow", `Workflow has errors:\n${summary}`);
 }

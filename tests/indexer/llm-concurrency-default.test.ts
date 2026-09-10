@@ -6,6 +6,17 @@
  * Pins the LLM-enrichment concurrency defaults (owner ruling 2026-07-21):
  * 2 for remote endpoints, 1 for local model servers and unset endpoints,
  * with an explicit `llm.concurrency` overriding both.
+ *
+ * index-redesign B5e: restored after the reconcile rewrite (`cec41361`)
+ * dropped `akm index`'s call to the metadata-enrichment pass — and
+ * `getDefaultLlmConcurrency` along with it — without deleting this pin.
+ * `getDefaultLlmConcurrency` is restored verbatim in `src/indexer/indexer.ts`;
+ * `src/indexer/enrich.ts` (the pass's new home, wired into `reconcileRoots`)
+ * mirrors this exact logic directly against the shared classifier
+ * (`defaultConcurrencyForEndpoint`, `core/loopback.ts`) rather than importing
+ * this wrapper, to avoid an indexer.ts → enrich.ts → indexer.ts cycle — see
+ * `enrich.ts`'s `resolveEnrichmentConcurrency` for the mirrored copy this
+ * test transitively pins too.
  */
 
 import { describe, expect, test } from "bun:test";

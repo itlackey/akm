@@ -30,10 +30,15 @@
  */
 
 import path from "node:path";
-import { defineCommand } from "citty";
 import * as p from "../../cli/clack";
 import { getParsedInvocation } from "../../cli/invocation";
-import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
+import {
+  defineGroupCommand,
+  defineJsonCommand,
+  GLOBAL_OUTPUT_ARGS,
+  output,
+  parseAllFlagValues,
+} from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
@@ -42,10 +47,11 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
-import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
+import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
+import { DRAIN_BATCH_PROGRESS_PREFIX } from "../../indexer/drain";
 import { akmIndex } from "../../indexer/indexer";
+import { RECONCILE_ROOT_PROGRESS_PREFIX } from "../../indexer/reconcile";
 import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import {
   inferAssetName,
@@ -56,13 +62,47 @@ import {
   resolveXrefsForWrite,
   writeMarkdownAsset,
 } from "../read/knowledge";
+import { assembleIndexStatus } from "./index-status";
 import { assembleInfo } from "./info";
 
-/** Matches the high-frequency per-committed-batch progress line (#954), excluded from non-verbose JSON-mode stderr. */
-const EMBEDDED_BATCH_PROGRESS_PATTERN = /^Embedded \d+\/\d+ entries\.$/;
+/**
+ * The two high-frequency, one-line-per-unit-of-work progress lines (#954) —
+ * drain's per-batch commit line and reconcile's per-root "done" line —
+ * excluded from non-verbose, non-text (JSON/yaml/etc) stderr. Matched by the
+ * exact prefix each producer exports, not a re-derived regex, so the two
+ * never drift apart (index-redesign B5g): this used to be a regex tuned to
+ * the deleted per-entry pipeline's `Embedded N/M entries.` line, which never
+ * matched either replacement line, so every progress line reached stderr
+ * regardless of `--verbose`.
+ */
+function isDetailProgressLine(message: string): boolean {
+  return message.startsWith(DRAIN_BATCH_PROGRESS_PREFIX) || message.startsWith(RECONCILE_ROOT_PROGRESS_PREFIX);
+}
 
-export const indexCommand = defineCommand({
-  meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
+export const indexStatusCommand = defineJsonCommand({
+  meta: {
+    name: "status",
+    description: "Show index.db's current state: files, entries, unit coverage, and the last reconcile time.",
+  },
+  run() {
+    output("index-status", assembleIndexStatus());
+  },
+});
+
+/**
+ * `akm index` = reconcile + drain (docs/plans/index-redesign.md). Still a raw
+ * group command (not `defineJsonCommand`) because its default body owns a
+ * spinner, an AbortController, and SIGINT/SIGTERM handlers in a try/finally;
+ * `defineGroupCommand` gives it `status` as a real subcommand while keeping
+ * that default body as plain `akm index`'s behavior (S-057 canonical
+ * bare-group rule does not apply here — a bare `akm index` has always run the
+ * indexer, and that stays).
+ */
+export const indexCommand = defineGroupCommand({
+  meta: {
+    name: "index",
+    description: "Reconcile the search index and drain the embedding queue (--full forces a full re-derivation)",
+  },
   args: {
     // R-051: `index` is a raw `defineCommand` (not `defineJsonCommand`), so it
     // does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
@@ -70,129 +110,106 @@ export const indexCommand = defineCommand({
     // extra positional for a stray value to fall into), so this is purely a
     // `--help` visibility / consistency fix, not a behavior change.
     ...GLOBAL_OUTPUT_ARGS,
-    full: { type: "boolean", description: "Force full reindex", default: false },
-    clean: {
+    full: {
       type: "boolean",
-      description: "After indexing, remove any entries whose source file no longer exists on disk.",
-      default: false,
-    },
-    "dry-run": {
-      type: "boolean",
-      description: "When combined with --clean, report stale entries without deleting them.",
+      description:
+        "Force every file to be re-derived (ignore the unchanged-file shortcut), reconciling in place — " +
+        "existing rows keep their id/embeddings/utility scores; nothing is dropped first.",
       default: false,
     },
     reembed: {
       type: "boolean",
-      description: "Force re-embedding of every entry, bypassing the embedding-model-rename compatibility check.",
+      description: "Drop the active embedding identity's vectors, then re-embed every unit from scratch.",
       default: false,
     },
     "skip-if-locked": {
       type: "boolean",
       description:
-        "If another `akm index` run already holds the rebuild lock, skip gracefully (exit 0) instead of contending with it. Use for scheduled/opportunistic index runs so they don't pile up against a longer run in progress.",
+        "Deprecated, no effect. Index runs no longer take a rebuild lock (docs/plans/index-redesign.md) — " +
+        "every write is a short, idempotent, content-addressed transaction, so two concurrent index runs " +
+        "converge instead of contending. Kept only so existing scripts do not fail on an unknown flag.",
       default: false,
     },
   },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      if (getHyphenatedBoolean(args, "enrich") || getParsedInvocation().getFlagValue("--enrich") !== undefined) {
-        throw new UsageError(
-          "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
-        );
-      }
-      if (getHyphenatedBoolean(args, "re-enrich") || getParsedInvocation().getFlagValue("--re-enrich") !== undefined) {
-        throw new UsageError(
-          "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
-        );
-      }
-      // #956: opt-in, non-blocking rebuild lock — never gates a human-typed
-      // `akm index` (it only warns and contends), but a scheduled/opportunistic
-      // caller can pass --skip-if-locked to step aside instead of piling up
-      // behind a run already in progress. Acquired before any other side
-      // effect (log file, spinner) so a skip does neither.
-      const lockAcquisition = tryAcquireIndexRebuildLock(args["skip-if-locked"]);
-      if (lockAcquisition.state === "skipped") {
-        output("index", {
-          ok: true,
-          skipped: {
-            reason: "lock-held",
-            pid: lockAcquisition.holder.pid,
-            // #956: the launcher pid (when known) alongside the pid that
-            // actually holds the lock — every process listing and task log
-            // shows the launcher pid, not the bun/node child's.
-            launcherPid: lockAcquisition.holder.launcherPid,
-            startedAt: lockAcquisition.holder.startedAt,
-          },
-        });
-        return;
-      }
-      const outputMode = getOutputMode();
-      const controller = new AbortController();
-      const abort = (): void => controller.abort(new Error("index interrupted"));
-      process.once("SIGINT", abort);
-      process.once("SIGTERM", abort);
-      const indexLogFile = path.join(
-        getCacheDir(),
-        "logs",
-        "index",
-        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+  subCommands: { status: indexStatusCommand },
+  async defaultRun({ args }) {
+    if (getHyphenatedBoolean(args, "enrich") || getParsedInvocation().getFlagValue("--enrich") !== undefined) {
+      throw new UsageError(
+        "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
       );
-      setLogFile(indexLogFile);
-      const verbose = isVerbose();
-      const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
+    }
+    if (getHyphenatedBoolean(args, "re-enrich") || getParsedInvocation().getFlagValue("--re-enrich") !== undefined) {
+      throw new UsageError(
+        "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
+      );
+    }
+    if (args["skip-if-locked"]) {
+      warn("[index] --skip-if-locked is deprecated and has no effect — index runs no longer take a rebuild lock.");
+    }
+    const outputMode = getOutputMode();
+    const controller = new AbortController();
+    const abort = (): void => controller.abort(new Error("index interrupted"));
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
+    const indexLogFile = path.join(
+      getCacheDir(),
+      "logs",
+      "index",
+      `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+    );
+    setLogFile(indexLogFile);
+    const verbose = isVerbose();
+    const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
+    if (spin) {
+      spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
+    }
+    let latestMessage = "";
+    // Resolve the stash dir once at the `akm index` command boundary and
+    // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
+    // no longer reads the ambient `resolveStashDir()`.
+    const stashDir = resolveStashDir();
+    try {
+      const result = await akmIndex({
+        stashDir,
+        full: args.full,
+        reembed: args.reembed,
+        onProgress: ({ phase, message, processed, total }) => {
+          latestMessage = message;
+          const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
+          if (verbose) {
+            info(`[index:${phase}] ${progressPrefix}${message}`);
+          } else if (spin) {
+            spin.stop(`${progressPrefix}${message}`);
+            spin.start(`${progressPrefix}${message}`);
+          } else if (!isDetailProgressLine(message)) {
+            // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
+            // total until the run finished (#954) — a stalled
+            // run looked identical to "nothing written". Phase-start
+            // messages, the credential diagnostic, and the reconcile/drain
+            // totals now reach stderr here too; the high-frequency
+            // per-root `Reconciled "…"` and per-batch `[drain] batch N: …`
+            // lines are deliberately excluded — that would be spam, not a
+            // heartbeat. `--verbose` (the `if` branch above) still gets
+            // every one of them.
+            info(`[index:${phase}] ${progressPrefix}${message}`);
+          }
+        },
+        signal: controller.signal,
+      });
       if (spin) {
-        spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
+        spin.stop(`Indexed ${result.totalEntries} assets.`);
       }
-      let latestMessage = "";
-      // Resolve the stash dir once at the `akm index` command boundary and
-      // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
-      // no longer reads the ambient `resolveStashDir()`.
-      const stashDir = resolveStashDir();
-      try {
-        const result = await akmIndex({
-          stashDir,
-          full: args.full,
-          clean: args.clean,
-          dryRun: args["dry-run"],
-          reembed: args.reembed,
-          onProgress: ({ phase, message, processed, total }) => {
-            latestMessage = message;
-            const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (verbose) {
-              info(`[index:${phase}] ${progressPrefix}${message}`);
-            } else if (spin) {
-              spin.stop(`${progressPrefix}${message}`);
-              spin.start(`${progressPrefix}${message}`);
-            } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
-              // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
-              // total until the run finished (#954) — a stalled
-              // run looked identical to "nothing written". Phase-start
-              // messages and the embedding heartbeat now reach stderr here
-              // too; the high-frequency per-batch `Embedded N/M entries.`
-              // line (emitted after every committed batch)
-              // is deliberately excluded — that would be spam, not a
-              // heartbeat.
-              info(`[index:${phase}] ${progressPrefix}${message}`);
-            }
-          },
-          signal: controller.signal,
-        });
-        if (spin) {
-          spin.stop(`Indexed ${result.totalEntries} assets.`);
-        }
-        output("index", result);
-      } catch (error) {
-        if (spin) {
-          spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
-        }
-        throw error;
-      } finally {
-        clearLogFile();
-        process.off("SIGINT", abort);
-        process.off("SIGTERM", abort);
-        if (lockAcquisition.state === "acquired") releaseIndexRebuildLock(lockAcquisition.ownership);
+      output("index", result);
+    } catch (error) {
+      if (spin) {
+        spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
       }
-    });
+      throw error;
+    } finally {
+      clearLogFile();
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    }
   },
 });
 

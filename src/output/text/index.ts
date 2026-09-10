@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { formatIndexPlain } from "./helpers";
+import { formatIndexPlain, formatIndexStatusPlain } from "./helpers";
 import type { TextFormatterEntry } from "./registry";
 
-export const indexFormatters: TextFormatterEntry[] = [{ command: "index", handler: (r) => formatIndexPlain(r) }];
+export const indexFormatters: TextFormatterEntry[] = [
+  { command: "index", handler: (r) => formatIndexPlain(r) },
+  { command: "index-status", handler: (r) => formatIndexStatusPlain(r) },
+];

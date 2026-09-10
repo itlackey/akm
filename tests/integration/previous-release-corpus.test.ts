@@ -61,12 +61,10 @@
  *     `uses:`/`with:`, `timeout:`, optional `schedule:`) — static files
  *     proving akm doesn't tighten its schema in a way that breaks a real
  *     consumer.
- *   - a v22 derived index carrying a LIVE embedding (#955, `index-v22-with-
- *     embedding.sql`) — the v22->v23 generation rebuild
- *     (`rebuildIncompatibleIndexGeneration`, `index-schema.ts`) salvages the
- *     vector into `embedding_salvage` before dropping `embeddings`, and the
- *     next embedding pass (`generateEmbeddingsForDb`) hands it straight back
- *     to the re-walked entry with zero provider calls.
+ *   - a v23 derived index (`index-v23.sql`, `entries_fts` +
+ *     `entry_fragments_fts` present) — index-redesign B5c's v23->v24
+ *     generation rebuild discards both (lexical search is `units_fts` now)
+ *     and re-derives from scratch on the next index run.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates the `--scheduler-context` marker
@@ -90,12 +88,9 @@ import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCach
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { resetQuiet, setQuiet } from "../../src/core/warn";
-import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
-import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
-import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
@@ -114,7 +109,6 @@ import {
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
-import { overrideSeam } from "../_helpers/seams";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-release-corpus");
 
@@ -123,7 +117,7 @@ function readFixture(name: string): string {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("v22 parent-only index is rebuilt as v23 fragment-capable derived state", () => {
+  test("v22 parent-only index is rebuilt as current (v24) units-only derived state", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -133,9 +127,11 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(
-          upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get(),
-        ).toBeDefined();
+        // v24 (index-redesign B5c) dropped entries_fts/entry_fragments_fts —
+        // lexical search is units_fts now.
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get()).toBeDefined();
         // index.db is regenerable: no v22 parent row survives to be queried
         // under a mixed schema; the following index walk re-populates both.
         expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 0 });
@@ -147,67 +143,23 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     }
   });
 
-  test("#955: a v22 embedding survives the v23 generation bump via salvage and is reused with zero provider calls", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-embedding-"));
+  test("v23 index (entries_fts + entry_fragments_fts) is rebuilt as current (v24) units-only derived state", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v23-index-"));
     try {
       const dbPath = path.join(root, "index.db");
       const legacy = new Database(dbPath);
-      legacy.exec(readFixture("index-v22-with-embedding.sql"));
+      legacy.exec(readFixture("index-v23.sql"));
       legacy.close();
-
-      // Opening under the current binary rebuilds entries/embeddings/FTS
-      // (index.db is regenerable) but the embedding_salvage table is exempt
-      // from the drop list — the vector salvaged just before `embeddings`
-      // was dropped survives the rebuild.
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 1 });
-
-        // The next index run re-walks the stash and re-inserts the SAME
-        // (unchanged) content — same search_text, new id.
-        upgraded
-          .prepare(
-            `INSERT INTO entries
-               (item_ref, bundle_id, component_id, concept_id, adapter_id, type,
-                file_path, content_hash, document_json, search_text, derived_from)
-             VALUES (?, 'stash', 'stash', 'knowledge/v22-embedded', 'akm', 'knowledge',
-                     '/fixture/v22-embedded.md', NULL, ?, ?, NULL)`,
-          )
-          .run(
-            "stash//knowledge/v22-embedded",
-            JSON.stringify({ name: "v22-embedded", type: "knowledge" }),
-            "v22-embedded prior release parent row with an embedding whole body evidence",
-          );
-
-        // A throwing embedder proves the vector came back from salvage, not
-        // a provider call — `rebuildIncompatibleIndexGeneration` clears
-        // `embeddingFingerprint` along with the rest of `index_meta`, so this
-        // relies only on the fingerprint the config below derives matching
-        // what the fixture salvaged under ("local:test-model").
-        overrideSeam(_setEmbedderForTests, {
-          embedBatch: async () => {
-            throw new Error("the provider must never be called — the vector should come back from salvage");
-          },
-        });
-        const messages: string[] = [];
-        const result = await generateEmbeddingsForDb(
-          upgraded,
-          { semanticSearchMode: "auto", embedding: { localModel: "test-model" } },
-          (event) => messages.push(event.message),
-        );
-
-        expect(result.success).toBe(true);
-        expect(messages.some((m) => m.includes("Reused 1 embedding"))).toBe(true);
-        expect(getEmbeddingCount(upgraded)).toBe(1);
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 0 });
-        const row = upgraded.prepare("SELECT embedding FROM embeddings LIMIT 1").get() as
-          | { embedding: Buffer }
-          | undefined;
-        if (!row) throw new Error("expected an embedding row");
-        const vec = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, 3);
-        expect(Array.from(vec)).toEqual([1, 2, 3]);
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get()).toBeDefined();
+        // index.db is regenerable: no v23 parent row survives to be queried
+        // under a mixed schema; the next index walk re-populates entries and
+        // units from scratch.
+        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 0 });
       } finally {
         closeDatabase(upgraded);
       }

@@ -27,9 +27,8 @@ import { buildSearchText } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions, RelinkUsageEventsOptions } from "./index-entry-types";
-import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
+import { deleteFragmentSource, replaceFragmentSource } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
-import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
 
 // ── Entry operations ────────────────────────────────────────────────────────
 
@@ -37,9 +36,12 @@ import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
  * Insert or update one canonical entry and all synchronously derived search
  * state. Returns the stable row id.
  *
- * The entries row, FTS projection, and stale-vector invalidation commit as one
- * SQLite transaction. Callers therefore cannot publish an entry and forget a
- * second FTS maintenance step.
+ * The entries row and its safe-Markdown fragment source commit as one SQLite
+ * transaction. Callers therefore cannot publish an entry and forget the
+ * fragment-source write. (Unit derivation — `unit_texts`/`units_fts`/
+ * `entry_units` — is the caller's job, driven by reconcile: a changed
+ * `search_text` needs no explicit vector invalidation here, since a new
+ * document simply derives new content-addressed unit hashes.)
  */
 export function upsertEntry(
   db: Database,
@@ -60,7 +62,6 @@ export function upsertEntry(
   // `content_hash` is optional on the LLM-enrichment re-upsert; a missing hash
   // preserves the scan writer's current value.
   const apply = (): number => {
-    const previous = stmts.findByItemRef.get(provenance.itemRef) as ExistingUpsertRow | undefined;
     const result = stmts.upsert.get(
       provenance.itemRef,
       provenance.bundleId,
@@ -76,11 +77,9 @@ export function upsertEntry(
     ) as { id: number } | undefined;
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
-    if (previous?.id === result.id && previous.search_text !== searchText) deleteEntryVectors(db, result.id);
-    replaceFtsEntry(
+    replaceFragmentSource(
       db,
       result.id,
-      entry,
       hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : undefined,
     );
     return result.id;
@@ -94,12 +93,6 @@ export function upsertEntry(
 
 interface UpsertStmts {
   upsert: ReturnType<Database["prepare"]>;
-  findByItemRef: ReturnType<Database["prepare"]>;
-}
-
-interface ExistingUpsertRow {
-  id: number;
-  search_text: string;
 }
 
 const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
@@ -134,7 +127,6 @@ function getUpsertStmts(db: Database): UpsertStmts {
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
     `),
-    findByItemRef: db.prepare("SELECT id, search_text FROM entries WHERE item_ref = ?"),
   };
   upsertStmtsByDb.set(db, stmts);
   return stmts;
@@ -213,16 +205,18 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
 /**
  * Re-key an entries row in place for the opt-in source-maintenance script.
  *
- * The row id is preserved on purpose — `utility_scores`,
- * `utility_scores_scoped`, and `embeddings` are keyed by `entry_id`, so an
- * UPDATE (rather than a delete + insert under the new `item_ref`) is what
- * keeps the asset's accumulated usage-ranking history attached across a
- * rename. (`asset_salience` / `asset_outcome` live in state.db keyed by
- * `asset_ref` TEXT and are re-keyed separately by `akm mv` — see
- * the state rekey helper.) `document_json.name` (and `filename`, when
- * present) is patched and `search_text` rebuilt so search reflects the new
- * name. Its FTS projection and stale vector are updated in the same
- * transaction as the canonical identity.
+ * The row id is preserved on purpose — `utility_scores` and
+ * `utility_scores_scoped` are keyed by `entry_id`, so an UPDATE (rather than
+ * a delete + insert under the new `item_ref`) is what keeps the asset's
+ * accumulated usage-ranking history attached across a rename.
+ * (`asset_salience` / `asset_outcome` live in state.db keyed by `asset_ref`
+ * TEXT and are re-keyed separately by `akm mv` — see the state rekey
+ * helper.) `document_json.name` (and `filename`, when present) is patched
+ * and `search_text` rebuilt so search reflects the new name. Its
+ * safe-Markdown fragment source is updated in the same transaction as the
+ * canonical identity; the new `search_text` needs no explicit vector
+ * invalidation — content-addressed units simply derive new hashes on the
+ * next reconcile.
  *
  * Bundle-qualified `usage_events.entry_ref` rows for the old conceptId are
  * rewritten to the new item ref. Without this, events keep the old
@@ -236,10 +230,8 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * A stale row already occupying the new item ref (the caller has verified no
  * FILE exists at the target, so such a row can only be a leftover for a
  * deleted file) is evicted first — through {@link deleteRelatedRows}, so its
- * child rows (embeddings, entries_vec, utility scores, usage events) go with
- * it. A bare `DELETE FROM entries` would trip the non-CASCADE `embeddings`
- * FK under `PRAGMA foreign_keys = ON` and roll back the whole re-key.
- * The moved row keeps its id.
+ * child rows (utility scores, usage events) go with it. The moved row keeps
+ * its id.
  *
  * Returns the surviving row id, or `null` when no row matches the old item ref
  * (nothing indexed under the old name — the caller falls open and the next
@@ -295,11 +287,9 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       | undefined
       | null;
     if (stale && stale.id !== row.id) {
-      // Full child-row cleanup (embeddings, entries_vec, utility scores,
-      // usage events, FTS + dirty marks) BEFORE the entries delete: the
-      // `embeddings` FK is non-CASCADE and `foreign_keys = ON`, so a bare
-      // entries delete would throw and roll back the entire re-key; and
-      // without it the FK-less child rows would orphan permanently.
+      // Full child-row cleanup (utility scores, usage events, fragment
+      // source) BEFORE the entries delete — the FK-less child rows would
+      // otherwise orphan permanently.
       deleteRelatedRows(db, [{ id: stale.id }]);
       db.prepare("DELETE FROM entries WHERE id = ?").run(stale.id);
     }
@@ -309,15 +299,13 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     if (opts.newDerivedFrom !== undefined) {
       db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
     }
-    if (row.search_text !== searchText) deleteEntryVectors(db, row.id);
     if (document)
-      replaceFtsEntry(
+      replaceFragmentSource(
         db,
         row.id,
-        document,
         hasMarkdownFragmentContent(document) ? (getMarkdownFragmentContent(document) ?? null) : undefined,
       );
-    else deleteFtsEntries(db, [row.id]);
+    else deleteFragmentSource(db, [row.id]);
   })();
 
   // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
@@ -491,7 +479,7 @@ export function deleteAllEntries(db: Database, options: { cleanupUsageEvents?: b
  *
  * Replaces the old per-dir `deleteEntriesByDir` + full re-insert: the caller
  * upserts the current file set first (ON CONFLICT preserving `entries.id`, so
- * embeddings / utility / usage stay attached to unchanged rows), then calls this
+ * utility / usage stay attached to unchanged rows), then calls this
  * to prune only the departed rows. The net row-state for the directory is identical
  * to delete-then-reinsert; the win is that unchanged rows keep their id.
  *
@@ -518,26 +506,18 @@ function deleteRelatedRows(
 ): void {
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
-  const vecAvail = isVecAvailable(db);
 
-  // FTS is part of the canonical mutation boundary, not a caller-maintained
-  // dirty queue. Delete it before the parent row inside this transaction.
-  deleteFtsEntries(db, numericIds);
+  // The safe-Markdown fragment source is part of the canonical mutation
+  // boundary, not a caller-maintained dirty queue. Delete it before the
+  // parent row inside this transaction (redundant with entry_fragments' own
+  // ON DELETE CASCADE, but explicit here alongside the other child-row
+  // cleanup this function owns).
+  deleteFragmentSource(db, numericIds);
 
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    bestEffort(
-      () => db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk),
-      "delete embeddings for entries",
-    );
-    if (vecAvail) {
-      bestEffort(
-        () => db.prepare(`DELETE FROM entries_vec WHERE id IN (${placeholders})`).run(...chunk),
-        "delete entries_vec for entries",
-      );
-    }
     // Clean up utility scores before deleting entries
     bestEffort(
       () => db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk),
@@ -608,10 +588,9 @@ export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
 
 /**
  * Delete entries by their primary key IDs, along with all related rows
- * (embeddings, entries_vec, entries_fts, utility scores, usage_events).
+ * (entry_fragments, entry_units, utility scores, usage_events).
  *
- * Used by explicit `--clean` reconciliation before embeddings and final
- * verification to remove stale entries whose source files no longer exist.
+ * Used by `reconcile.ts` to remove entries whose source files are gone.
  */
 export function deleteEntriesByIds(db: Database, ids: number[]): void {
   if (ids.length === 0) return;

@@ -239,7 +239,10 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
     // The demotion must NOT hide convention facts from users who ask for them
     // by name: the exact-name boost (+2.0) dominates the category demotion.
     const hits = await searchHits(["search", "backlinks", "--format=json", "--limit", "25"]);
-    const idx = hits.findIndex((h) => h.ref === "facts/conventions/backlinks");
+    // `ref.startsWith`, not `===`: `ref` is always the bare entry now
+    // (index-redesign-contract.md B5f item 1), but keep the tolerant match —
+    // a bare ref still satisfies `startsWith` trivially.
+    const idx = hits.findIndex((h) => h.ref.startsWith("facts/conventions/backlinks"));
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(idx).toBeLessThan(3);
   });

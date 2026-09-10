@@ -544,6 +544,36 @@ describe("embedding config", () => {
     expect(loadConfig().embedding?.chunkSize).toBe(-3);
     expect(Object.keys(EmbeddingConnectionConfigSchema.shape)).not.toContain("chunkSize");
   });
+
+  test("ignores the retired `embedding.maxInputTokens`/`maxTokens`/`batchSize`/`contextLength` keys, unvalidated, with no error and no warning (index-redesign, B5)", () => {
+    // RemoteEmbedder now packs requests against the provider's own probed
+    // window (`probeProviderLimits`, threaded in by `drain.ts` as
+    // `EmbeddingRequestPacking`) instead of these four config knobs — same
+    // rationale and same test shape as the `chunkSize` retirement above:
+    // `embedding` stays `.passthrough()`, so a config that still sets any of
+    // them — valid or not — is simply carried through unread, never rejected
+    // and never warned about. -3 is chosen for each because it fails the old
+    // `positiveInt` (int + positive) validation, making this the
+    // distinguishing case: it threw on the unchanged schema and loads clean
+    // once retired.
+    writeCurrentConfig({
+      embedding: { maxInputTokens: -3, maxTokens: -3, batchSize: -3, contextLength: -3 },
+    });
+    const warnings = captureWarnings(() => {
+      expect(() => loadConfig()).not.toThrow();
+    });
+    expect(warnings).toEqual([]);
+    const embedding = loadConfig().embedding as Record<string, unknown> | undefined;
+    expect(embedding?.maxInputTokens).toBe(-3);
+    expect(embedding?.maxTokens).toBe(-3);
+    expect(embedding?.batchSize).toBe(-3);
+    expect(embedding?.contextLength).toBe(-3);
+    const shapeKeys = Object.keys(EmbeddingConnectionConfigSchema.shape);
+    expect(shapeKeys).not.toContain("maxInputTokens");
+    expect(shapeKeys).not.toContain("maxTokens");
+    expect(shapeKeys).not.toContain("batchSize");
+    expect(shapeKeys).not.toContain("contextLength");
+  });
 });
 
 // ── LLM engine config ───────────────────────────────────────────────────────
@@ -771,7 +801,6 @@ describe("search config", () => {
   test("loads search.graphBoost values", () => {
     writeCurrentConfig({
       search: {
-        minScore: 0.15,
         graphBoost: {
           directBoostPerEntity: 0.2,
           directBoostCap: 0.6,
@@ -785,7 +814,6 @@ describe("search config", () => {
     });
 
     expect(loadConfig().search).toEqual({
-      minScore: 0.15,
       graphBoost: {
         directBoostPerEntity: 0.2,
         directBoostCap: 0.6,

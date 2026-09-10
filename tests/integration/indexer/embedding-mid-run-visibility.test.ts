@@ -16,12 +16,56 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
+import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../../src/storage/repositories/index-connection";
-import { getEmbeddingCount } from "../../../src/storage/repositories/index-vec-repository";
-import { writeMarkdownFiles } from "../../_helpers/markdown-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+
+/**
+ * Each entry's inflated `description` is sized (chars ≈ tokens × 4, the
+ * same `estimateTokenCount` ratio the packer plans against) so its
+ * structured-fields "card" unit alone estimates to `PER_UNIT_TOKENS` — no
+ * markdown body, so no second fragment unit (index-redesign A1) muddies the
+ * per-batch count.
+ */
+const PER_UNIT_TOKENS = 1_800;
+
+/**
+ * Write `fileCount` frontmatter-only entries whose single unit each
+ * estimates to `PER_UNIT_TOKENS` tokens. The index redesign (B5) retired
+ * `embedding.batchSize`, so forcing several small provider round trips
+ * spread over the run (this test's whole premise — a poller must catch
+ * multiple distinct mid-run commits) now comes from the GREEDY packer's own
+ * token-budget math against the default (unprobed, 8192-token) window
+ * instead of a config override: 4 docs at 1,800 tokens (7,200) fit one
+ * request; a 5th (9,000) never does, so 44 entries land in 11 batches of 4 —
+ * the same shape `batchSize: 4` used to force directly.
+ */
+function writeSizedMemoryFiles(rootDir: string, fileCount: number, marker: string): void {
+  fs.mkdirSync(path.join(rootDir, "knowledge"), { recursive: true });
+  for (let i = 0; i < fileCount; i++) {
+    fs.writeFileSync(
+      path.join(rootDir, "knowledge", `entry-${i}.md`),
+      `---\ndescription: ${marker}-${i}-${"x".repeat(PER_UNIT_TOKENS * 4)}\n---\n`,
+    );
+  }
+}
+
+/**
+ * `units` rows with a stored vector — the content-addressed (index-redesign
+ * A2) analogue of the pre-redesign, entry-id-keyed `embeddings` table
+ * `getEmbeddingCount` used to read. `materialize-embeddings.ts`, the only
+ * writer of that legacy table, had no callers left and was deleted
+ * (index-redesign B5b); the `embeddings` table itself (and `getEmbeddingCount`)
+ * followed once every reader had moved off it (B5h).
+ */
+function getUnitVectorCount(db: Database): number {
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM units").get() as { cnt: number };
+  return row.cnt;
+}
 
 describe("akm index: mid-run embedding visibility (#954, field-report follow-up)", () => {
   let storage: IsolatedAkmStorage;
@@ -38,11 +82,19 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
 
   test("a separate read-only connection observes the embeddings count strictly increasing while the server is still receiving requests", async () => {
     const entryCount = 44;
-    writeMarkdownFiles(storage.stashDir, entryCount, "mid-run");
+    writeSizedMemoryFiles(storage.stashDir, entryCount, "mid-run");
 
     server = Bun.serve({
       port: 0,
       async fetch(request) {
+        const { pathname } = new URL(request.url);
+        // `probeProviderLimits` (index-redesign B1's reconcile.ts, probed
+        // once per run before any parsing) tries llama.cpp's `GET /props`
+        // and, failing that, Ollama's `POST /api/show`, before any real
+        // embedding request — neither carries an `{ input }` body.
+        if (pathname === "/props" || pathname === "/api/show") {
+          return new Response(null, { status: 404 });
+        }
         const body = (await request.json()) as { input: string[] };
         await new Promise((resolve) => setTimeout(resolve, 150));
         const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0, 0], index: i }));
@@ -58,7 +110,6 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
         endpoint: `http://localhost:${server.port}`,
         model: "mock-embed",
         dimension: 4,
-        batchSize: 4,
       },
     });
 
@@ -69,7 +120,7 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
         const reader = openReadonlyExistingDatabase(getDbPath());
         if (reader) {
           try {
-            samples.push(getEmbeddingCount(reader));
+            samples.push(getUnitVectorCount(reader));
           } finally {
             closeDatabase(reader);
           }
@@ -97,7 +148,9 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
     expect(finalDb).not.toBeNull();
     if (finalDb) {
       try {
-        expect(getEmbeddingCount(finalDb)).toBe(entryCount);
+        // Frontmatter-only entries (writeSizedMemoryFiles): one
+        // structured-fields "card" unit per entry, no body-fragment unit.
+        expect(getUnitVectorCount(finalDb)).toBe(entryCount);
       } finally {
         closeDatabase(finalDb);
       }

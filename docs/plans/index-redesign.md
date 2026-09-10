@@ -48,7 +48,8 @@ no full rebuild, no phase pipeline, no background reindex spawned per command.
 row in `units_vec` for the active identity. Any process drains some of it in provider-bounded
 batches, each batch committed on its own; a killed run loses one batch and the next run computes
 the same query. `akm index` is reconcile plus drain; the scheduler drains; a write path drains the
-few units it just created. Limits (window, slots, exact token counts) come from the provider.
+few units it just created. Limits (window, slots, a chars-per-token ratio calibrated on the
+provider's own tokenizer where it has one) come from the provider.
 The four sizing keys go; `concurrency` and `timeoutMs` stay optional for gateways that report
 nothing.
 

@@ -119,7 +119,7 @@ export function getUtilityScoresByIds(
  * Insert or update a utility score for an entry.
  */
 export function upsertUtilityScore(db: Database, entryId: number, data: UtilityScoreData): boolean {
-  // Pre-flight FK guard (mirrors `upsertEmbedding`): when an entry is
+  // Pre-flight FK guard: when an entry is
   // deleted between when its id is aggregated from usage_events and when
   // this INSERT runs, the FK constraint fails and rolls back the entire
   // finalize transaction. A cheap SELECT here turns the race into a

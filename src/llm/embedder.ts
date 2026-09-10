@@ -32,7 +32,7 @@ import {
   isTransformersAvailable as isTransformersAvailableReal,
   LocalEmbedder,
 } from "./embedders/local";
-import type { EmbeddingBatchCommit, EmbeddingSkipHandler } from "./embedders/remote";
+import type { EmbeddingBatchCommit, EmbeddingRequestPacking, EmbeddingSkipHandler } from "./embedders/remote";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
@@ -40,7 +40,12 @@ import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 export { clearEmbeddingCache } from "./embedders/cache";
 export { _setTransformersLoaderForTests, DEFAULT_LOCAL_MODEL } from "./embedders/local";
-export type { EmbeddingBatchCommit, EmbeddingBatchSkip, EmbeddingSkipHandler } from "./embedders/remote";
+export type {
+  EmbeddingBatchCommit,
+  EmbeddingBatchSkip,
+  EmbeddingRequestPacking,
+  EmbeddingSkipHandler,
+} from "./embedders/remote";
 export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 // ── Test seam ────────────────────────────────────────────────────────────────
@@ -172,6 +177,13 @@ async function embedOnce(
  * `onBatch`, when given, fires once per provider/local batch as it completes
  * (#954) so a caller can commit each batch's rows durably as they land
  * rather than buffering the whole call — see `EmbeddingBatchCommit`.
+ *
+ * `packing`, when given, threads a remote request's window/exact-token-
+ * counter/Ollama `num_ctx` in from the provider's own probed limits
+ * (`probeProviderLimits`, `src/llm/embedders/provider-limits.ts`) instead of
+ * the retired `embedding.maxTokens`/`batchSize`/`contextLength` config keys
+ * (index redesign, B5) — see `EmbeddingRequestPacking`. Only the remote
+ * branch below consumes it; local/deterministic embedding ignores it.
  */
 export async function embedBatch(
   texts: string[],
@@ -179,9 +191,10 @@ export async function embedBatch(
   signal?: AbortSignal,
   onSkip?: EmbeddingSkipHandler,
   onBatch?: EmbeddingBatchCommit,
+  packing?: EmbeddingRequestPacking,
 ): Promise<(EmbeddingVector | undefined)[]> {
   if (embedderOverrides?.embedBatch) {
-    return embedderOverrides.embedBatch(texts, embeddingConfig, signal, onSkip, onBatch);
+    return embedderOverrides.embedBatch(texts, embeddingConfig, signal, onSkip, onBatch, packing);
   }
 
   if (texts.length === 0) return [];
@@ -200,7 +213,7 @@ export async function embedBatch(
   }
 
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
-    return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal, onSkip, onBatch);
+    return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal, onSkip, onBatch, packing);
   }
 
   // Local transformer: use the batched path (chunks of 32 via LocalEmbedder).

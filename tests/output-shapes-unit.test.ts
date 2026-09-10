@@ -173,7 +173,9 @@ describe("shapeSearchHit — local stash hits", () => {
   test("fragment provenance survives brief, normal, and agent projections", () => {
     const fragmentHit = {
       ...fullHit,
-      ref: "knowledge/guide#akm-fragment-3-abc",
+      // index-redesign-contract.md B5f item 1 — `ref` is always the bare
+      // entry now; `selectedRef` carries the fragment-qualified selector.
+      ref: "knowledge/guide",
       selectedRef: "knowledge/guide#akm-fragment-3-abc",
       parentRef: "knowledge/guide",
       fragmentOrdinal: 3,

@@ -2,14 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { stableFtsScore } from "../../core/lexical-score";
 import type { Database } from "../../storage/database";
-import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
+import { getEntryById } from "../../storage/repositories/index-entries-repository";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
+import type { UnitSearchHit } from "../../storage/repositories/units-repository";
+import { groupUnitHitsByEntry } from "../../storage/repositories/units-repository";
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { IndexDocument } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
-import { buildLexicalQueryPlan } from "./fts-query";
+import { buildLexicalQueryPlan, type LexicalQueryExecution } from "./fts-query";
 import { lexicalNameTokens, structuralNameTokenMatch } from "./name-match";
 import {
   applyBeliefStateScoreCeiling,
@@ -18,7 +19,7 @@ import {
   defaultRankingContributors,
   defaultUtilityRankingContributors,
 } from "./ranking-contributors";
-import type { RankedEntryInput } from "./ranking-types";
+import type { MatchedUnit, RankedEntryInput } from "./ranking-types";
 
 export interface RankEntriesOptions {
   db: Database;
@@ -70,106 +71,265 @@ export interface RankEntriesOptions {
   salienceRankScores?: Map<number, number> | null;
 }
 
-/**
- * Lower bounds keep a lexical hit competitive with a vector-only neighbour;
- * the upper bound deliberately leaves room for the ranking contributors that
- * run after retrieval (notably the bounded graph boost).  This is a
- * calibration for the one search pipeline, not a claim that BM25 is
- * comparable across different queries or FTS tables.
- */
+// ── Units search fusion (index-redesign-contract.md B3) ────────────────────
 
-/**
- * Convert FTS5's negative BM25 value into the lexical contribution used by
- * this pipeline.  The transform is fixed and monotone: it depends only on a
- * row's own BM25 value, so appending weaker candidates cannot rewrite an
- * existing row's score. FTS5 commonly emits relevance near 1e-6 for broad
- * queries, so first put relevance on a log scale around that observed value.
- * The shape constant intentionally makes the curve approach its ceiling
- * slowly: rare-term scores retain separation instead of all reading as 0.8.
- *
- * FTS5 produces finite non-positive values in normal operation.  Keeping the
- * defensive cases here finite makes this boundary safe if a driver or fixture
- * hands us an invalid value: `-Infinity` is the strongest possible match,
- * while NaN, +Infinity, and positive scores contribute no lexical evidence.
- */
-export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
-  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
-
-  for (const result of results) {
-    ftsScoreMap.set(result.id, { score: result.lexicalScore ?? stableFtsScore(result.bm25Score), result });
-  }
-
-  return ftsScoreMap;
+/** One unit-level lexical hit from `searchUnitsLexical` (`db-search.ts`), 1-based rank. */
+export interface UnitLexicalHit {
+  unitHash: string;
+  rank: number;
+  /** Which tier of the exact → prefix → relaxed fallback produced this hit — every hit in one call shares it. */
+  lexicalMatch: LexicalQueryExecution;
 }
 
-export function combineSearchScores(options: {
-  ftsScoreMap: Map<number, { score: number; result: DbSearchResult }>;
-  embedScoreMap: Map<number, number>;
-  getEntryById: (id: number) =>
-    | {
-        entry: IndexDocument;
-        filePath: string;
-        itemRef?: string | null;
-        bundleId?: string | null;
-        conceptId?: string | null;
-      }
-    | undefined;
-  typeFilter?: string;
-  /**
-   * #627 — types excluded from the default (untyped 'any') path. The FTS and
-   * enumerate paths apply this at the SQL layer, but vector-only neighbors are
-   * re-added here straight from `embedScoreMap` (filtered only by `typeFilter`,
-   * which is `undefined` on the 'any' path). Without this filter a `session`
-   * asset that is a top-k vector neighbor but NOT an FTS match would leak into
-   * default results whenever an embedding provider is configured (the default
-   * `semanticSearchMode: 'auto'` production config). Empty list = no exclusion.
-   */
-  excludeTypes?: string[];
-}): RankedEntryInput[] {
-  const FTS_WEIGHT = 0.7;
-  const VEC_WEIGHT = 0.3;
-  const excludeTypeSet = options.excludeTypes && options.excludeTypes.length > 0 ? new Set(options.excludeTypes) : null;
-  const scored: RankedEntryInput[] = [];
-  const seenIds = new Set<number>();
+/**
+ * Reciprocal Rank Fusion constant (Cormack, Clarke & Buettcher, SIGIR 2009,
+ * "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning
+ * Methods"). It damps how much a #1 rank in one list dominates the fused
+ * score relative to lower ranks, so a document ranked highly by only one of
+ * the lists still competes with one ranked moderately by several. Nothing
+ * else about the fusion is tuned — nor is this constant, per the paper's own
+ * finding that results were insensitive to its exact value. `fuseByEntry`
+ * fuses three lists (card lexical, fragment lexical, semantic — B5f item 2);
+ * this same constant governs all three, unchanged by that count (see
+ * `RRF_MAX_SCORE` below for why the list count doesn't enter the formula).
+ */
+export const RRF_K = 60;
 
-  for (const [id, { score: ftsScore, result }] of options.ftsScoreMap) {
-    seenIds.add(id);
-    const embedScore = options.embedScoreMap.get(id);
-    const combinedScore = embedScore !== undefined ? ftsScore * FTS_WEIGHT + embedScore * VEC_WEIGHT : ftsScore;
-    scored.push({
-      id,
-      entry: result.entry,
-      filePath: result.filePath,
-      score: combinedScore,
-      rankingMode: embedScore !== undefined ? "hybrid" : "fts",
-      lexicalMatch: result.lexicalMatch,
-      itemRef: result.itemRef,
-      bundleId: result.bundleId,
-      conceptId: result.conceptId,
-      fragmentId: result.fragmentId,
-    });
+/**
+ * The maximum score a SINGLE list's best-ranked hit can contribute:
+ * `1/(RRF_K + 1)`, independent of how many lists `fuseByEntry` fuses (three,
+ * as of B5f item 2: card lexical, fragment lexical, semantic — was two
+ * before). `ranking-contributors.ts`'s pipeline (graph/project/utility
+ * boosts, the belief-state ceiling) is calibrated for a 0–1 fused score;
+ * RRF's native range is ~0.008–0.033 at `RRF_K = 60`, which would flatten
+ * every contributor's effect and make the belief-state ceiling a no-op.
+ * Dividing every fused score by this constant before contributors ever see
+ * it rescales a single list's rank-1 hit to 1.0 and a hit that ranks #1 in
+ * every list it appears in to (list count).0 — the SAME "not a hard clamp"
+ * territory contributor boosts already push a fused score into today
+ * (`displaySearchScore`'s final monotone projection is what brings the
+ * public score back into [0,1), per CLAUDE.md's locked contract). A
+ * lexical-only exact-name match is not artificially reduced by requiring
+ * agreement from lists it never had the chance to earn — semantic search can
+ * be off entirely, or a match can be fragment-only (`ranking-regression.test.ts`'s
+ * "Score preservation (not RRF-flattened)" describe block, lexical-only
+ * throughout, still expects a clearly-exact top hit's public score above
+ * 0.9). Normalising by the N-list sum instead (dividing by `N/(RRF_K+1)`)
+ * was tried at N=2 and reverted: it reduces every single-list score before
+ * contributors ever see it, and no contributor boost bridges that gap back
+ * to what an unambiguous single-list match deserves — the same reasoning
+ * holds, more strongly, at N=3, so the divisor stays anchored to ONE list's
+ * max regardless of how many lists are in play (pinned by
+ * `search-units-fusion.test.ts`'s three-list fusion cases).
+ */
+const RRF_MAX_SCORE = 1 / (RRF_K + 1);
+
+interface EntryUnitWinner {
+  /** 1-based position of this entry once its own list is sorted best-first. */
+  rank: number;
+  unitHash: string;
+  fragmentId: string | null;
+  lexicalMatch: LexicalQueryExecution;
+}
+
+/**
+ * `unit_texts.kind` is redundant with `fragmentId` nullity by construction
+ * (A1's `deriveUnits`: ordinal 0 is always the one structured-fields "card"
+ * unit; every fragment-derived unit carries a non-null `fragmentId`), so
+ * `matchedUnit.kind` is derived here instead of a second table read.
+ */
+function unitKindFromFragmentId(fragmentId: string | null): MatchedUnit["kind"] {
+  return fragmentId === null ? "card" : "fragment";
+}
+
+/** Group lexical unit hits to entries via `entry_units`, keeping the best-ranked unit per entry. */
+function groupLexicalHitsByEntry(db: Database, hits: readonly UnitLexicalHit[]): Map<number, EntryUnitWinner> {
+  const best = new Map<number, EntryUnitWinner>();
+  if (hits.length === 0) return best;
+
+  const hashes = [...new Set(hits.map((hit) => hit.unitHash))];
+  const placeholders = hashes.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT entry_id AS entryId, fragment_id AS fragmentId, unit_hash AS unitHash FROM entry_units WHERE unit_hash IN (${placeholders})`,
+    )
+    .all(...hashes) as Array<{ entryId: number; fragmentId: string | null; unitHash: string }>;
+
+  const ownersByHash = new Map<string, Array<{ entryId: number; fragmentId: string | null }>>();
+  for (const row of rows) {
+    const owners = ownersByHash.get(row.unitHash) ?? [];
+    owners.push({ entryId: row.entryId, fragmentId: row.fragmentId });
+    ownersByHash.set(row.unitHash, owners);
   }
 
-  for (const [id, cosine] of options.embedScoreMap) {
-    if (seenIds.has(id)) continue;
-    const found = options.getEntryById(id);
+  for (const hit of hits) {
+    for (const owner of ownersByHash.get(hit.unitHash) ?? []) {
+      const existing = best.get(owner.entryId);
+      if (!existing || hit.rank < existing.rank) {
+        best.set(owner.entryId, {
+          rank: hit.rank,
+          unitHash: hit.unitHash,
+          fragmentId: owner.fragmentId,
+          lexicalMatch: hit.lexicalMatch,
+        });
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Re-rank a per-entry "best unit" map (already the winner within its own
+ * list) best-first, 1-based — competition ranking, so two entries `compare`
+ * calls exactly equal (0) share a rank instead of one arbitrarily winning by
+ * sort-stability/iteration order. Without this, a genuine tie collapses the
+ * moment it is re-ranked here, and RRF fusion (which sums by this rank) never
+ * sees the tie it needs to hand off to the final ranking comparator's
+ * content-based tie-break (`canonicalContentTieKey`, db-search.ts).
+ */
+function rankEntryWinners<V>(
+  winners: Map<number, V>,
+  compare: (a: V, b: V) => number,
+): Map<number, { rank: number; value: V }> {
+  const ranked = new Map<number, { rank: number; value: V }>();
+  const ordered = [...winners.entries()].sort((a, b) => compare(a[1], b[1]));
+  let rank = 0;
+  let previous: V | undefined;
+  ordered.forEach(([entryId, value], index) => {
+    if (previous === undefined || compare(previous, value) !== 0) rank = index + 1;
+    previous = value;
+    ranked.set(entryId, { rank, value });
+  });
+  return ranked;
+}
+
+type LexicalEntryRank = { rank: number; value: EntryUnitWinner };
+type SemanticEntryRank = { rank: number; value: { distance: number; fragmentId: string | null; hash: string } };
+
+/**
+ * Pick which list's unit is reported as `matchedUnit`/`fragmentId`: whichever
+ * ranked the entry best (lowest rank number) across however many of the
+ * (up to three) lists it appears in; a rank tie prefers card lexical evidence
+ * over fragment lexical evidence over a vector neighbor — the closer the
+ * evidence is to exact-term name/description matter, the more directly it
+ * reads into `whyMatched`. At least one of the three is defined for every
+ * `entryId` this is called with — it comes from the union of all three
+ * ranked maps' keys.
+ */
+function pickFusionWinner(
+  cardHit: LexicalEntryRank | undefined,
+  fragmentHit: LexicalEntryRank | undefined,
+  semanticHit: SemanticEntryRank | undefined,
+): { unitHash: string; fragmentId: string | null } {
+  const candidates: Array<{ priority: number; rank: number; unitHash: string; fragmentId: string | null }> = [];
+  if (cardHit) {
+    candidates.push({
+      priority: 0,
+      rank: cardHit.rank,
+      unitHash: cardHit.value.unitHash,
+      fragmentId: cardHit.value.fragmentId,
+    });
+  }
+  if (fragmentHit) {
+    candidates.push({
+      priority: 1,
+      rank: fragmentHit.rank,
+      unitHash: fragmentHit.value.unitHash,
+      fragmentId: fragmentHit.value.fragmentId,
+    });
+  }
+  if (semanticHit) {
+    candidates.push({
+      priority: 2,
+      rank: semanticHit.rank,
+      unitHash: semanticHit.value.hash,
+      fragmentId: semanticHit.value.fragmentId,
+    });
+  }
+  candidates.sort((a, b) => a.rank - b.rank || a.priority - b.priority);
+  const winner = candidates[0]!;
+  return { unitHash: winner.unitHash, fragmentId: winner.fragmentId };
+}
+
+/**
+ * Fuse the card-lexical, fragment-lexical (both `units_fts`) and semantic
+ * (`units_vec`) unit-level result lists into one ranked entry list
+ * (index-redesign-contract.md B3, restructured for field emphasis by B5f
+ * item 2). Splitting lexical into two kind-scoped lists — rather than one
+ * pool mixing card and fragment units — is what replaces the old per-column
+ * BM25 weights (name 10x, description 5x, tags 3x, hints 2x, content 1x): a
+ * card (name/description/tags/hints) match now ranks within its own small
+ * pool instead of racing every fragment's body text on raw BM25, so a
+ * name/description match contributes a top rank in its own list structurally,
+ * with no weight tuned.
+ *
+ * Each list is first grouped to entries via `entry_units`, keeping that
+ * list's own best (lowest lexical rank / lowest vector distance) unit per
+ * entry — `groupUnitHitsByEntry` from the stage-1 unit store does this for
+ * the semantic side; `groupLexicalHitsByEntry` mirrors it for each lexical
+ * side. That grouping produces three entry-level rankings (best entry
+ * first), which are then combined by reciprocal rank:
+ * `score = Σ 1/(RRF_K + rank)` over whichever of the three lists an entry
+ * appears in — an entry whose card AND a fragment both match gets credit
+ * from both, on top of any semantic credit; nothing here is a weight, only
+ * which pool a unit's rank was earned in. `matchedUnit` reports the unit
+ * belonging to whichever list ranked the entry best (see `pickFusionWinner`).
+ */
+export function fuseByEntry(
+  db: Database,
+  cardLexical: readonly UnitLexicalHit[],
+  fragmentLexical: readonly UnitLexicalHit[],
+  semantic: readonly UnitSearchHit[],
+  opts: { typeFilter?: string[]; excludeTypes?: string[] } = {},
+): RankedEntryInput[] {
+  const cardByEntry = groupLexicalHitsByEntry(db, cardLexical);
+  const fragmentByEntry = groupLexicalHitsByEntry(db, fragmentLexical);
+  const semanticByEntry = groupUnitHitsByEntry(db, semantic);
+
+  const cardRanked = rankEntryWinners(cardByEntry, (a, b) => a.rank - b.rank);
+  const fragmentRanked = rankEntryWinners(fragmentByEntry, (a, b) => a.rank - b.rank);
+  const semanticRanked = rankEntryWinners(semanticByEntry, (a, b) => a.distance - b.distance);
+
+  const includeTypes = opts.typeFilter && opts.typeFilter.length > 0 ? new Set(opts.typeFilter) : null;
+  const excludeTypes = opts.excludeTypes && opts.excludeTypes.length > 0 ? new Set(opts.excludeTypes) : null;
+
+  const entryIds = new Set<number>([...cardRanked.keys(), ...fragmentRanked.keys(), ...semanticRanked.keys()]);
+  const results: RankedEntryInput[] = [];
+
+  for (const entryId of entryIds) {
+    const cardHit = cardRanked.get(entryId);
+    const fragmentHit = fragmentRanked.get(entryId);
+    const semanticHit = semanticRanked.get(entryId);
+    let score = 0;
+    if (cardHit) score += 1 / (RRF_K + cardHit.rank);
+    if (fragmentHit) score += 1 / (RRF_K + fragmentHit.rank);
+    if (semanticHit) score += 1 / (RRF_K + semanticHit.rank);
+    score /= RRF_MAX_SCORE;
+
+    const { unitHash, fragmentId } = pickFusionWinner(cardHit, fragmentHit, semanticHit);
+    const lexicalHit = cardHit ?? fragmentHit;
+
+    const found = getEntryById(db, entryId);
     if (!found) continue;
-    if (options.typeFilter && found.entry.type !== options.typeFilter) continue;
-    // #627 — drop vector-only neighbors whose type is excluded on the default path.
-    if (excludeTypeSet?.has(found.entry.type)) continue;
-    scored.push({
-      id,
+    if (includeTypes && !includeTypes.has(found.entry.type)) continue;
+    if (excludeTypes?.has(found.entry.type)) continue;
+
+    results.push({
+      id: entryId,
       entry: found.entry,
       filePath: found.filePath,
-      score: cosine * VEC_WEIGHT,
-      rankingMode: "semantic",
+      score,
+      rankingMode: lexicalHit && semanticHit ? "hybrid" : lexicalHit ? "fts" : "semantic",
       itemRef: found.itemRef,
       bundleId: found.bundleId,
       conceptId: found.conceptId,
+      ...(lexicalHit ? { lexicalMatch: lexicalHit.value.lexicalMatch } : {}),
+      ...(fragmentId ? { fragmentId } : {}),
+      matchedUnit: { unitHash, fragmentId, kind: unitKindFromFragmentId(fragmentId) },
     });
   }
 
-  return scored;
+  return results;
 }
 
 export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput[] {

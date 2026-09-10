@@ -30,8 +30,8 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import type { EmbeddingVector } from "../../src/llm/embedders/types";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
+import type { Database } from "../../src/storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
-import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { seedLockEntries } from "../_helpers/lockfile";
 import { writeMarkdownFiles } from "../_helpers/markdown-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -42,6 +42,18 @@ function makeDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) =>
     resolve = r;
   });
   return { promise, resolve };
+}
+
+/**
+ * `getEmbeddingCount` (index-vec-repository.ts) reads the legacy entry-keyed
+ * `embeddings`/`entries_vec` pair — dead tables under the units pipeline
+ * (nothing writes to them any more; `materialize-embeddings.ts`, their only
+ * writer, had no callers left and is deleted — index-redesign B5b). The
+ * durable count now lives in `units` (index-redesign B2/B3), one row per
+ * embedded unit, content-addressed by (hash, identity).
+ */
+function unitVectorCount(db: Database): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM units").get() as { n: number }).n;
 }
 
 describe("akm bundle update: post-commit embedding pass durability (#954)", () => {
@@ -61,6 +73,13 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
     writeMarkdownFiles(contentDir, fileCount, "seed");
     saveConfig({
       semanticSearchMode: "auto",
+      // units_vec is created once, up front, at this configured width
+      // (index-redesign B2/B3 — unlike the legacy per-entry vec table it is
+      // not lazily sized off the first real vector) — an explicit width
+      // matching the mocked embedder's 4-element test vectors below, so a
+      // real insert is not silently dimension-mismatched against whatever
+      // the local-model default (384) would otherwise imply.
+      embedding: { dimension: 4 },
       bundles: {
         [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } },
       },
@@ -103,6 +122,11 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
   test("a batch committed after the coordinator's commit is visible to a second connection mid-run", async () => {
     const id = "durability-probe";
     const fileCount = 4;
+    // writeMarkdownFiles' fixture body (a description plus one body
+    // paragraph) derives 2 units per entry under the units pipeline — a
+    // "card" unit for the structured frontmatter fields, plus one fragment
+    // unit for the body paragraph (index-redesign B2/B3, A1's deriveUnits).
+    const totalUnits = fileCount * 2;
     configureManagedBundle(id, fileCount);
     await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });
 
@@ -138,7 +162,7 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
       if (!reader) throw new Error("expected an existing index for the mid-run durability check");
       let countMidway: number;
       try {
-        countMidway = getEmbeddingCount(reader);
+        countMidway = unitVectorCount(reader);
       } finally {
         closeDatabase(reader);
       }
@@ -146,17 +170,18 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
       // on a separate connection, not a SAVEPOINT invisible outside a
       // still-open coordinator transaction.
       expect(countMidway).toBeGreaterThan(0);
-      expect(countMidway).toBeLessThan(fileCount);
+      expect(countMidway).toBeLessThan(totalUnits);
 
       releaseSecondBatch.resolve();
       const result = await updatePromise;
 
-      expect(result.index.semanticStatus).toBeDefined();
-      expect(["ready-vec", "ready-js"]).toContain(result.index.semanticStatus as string);
+      // "ready-js" (the JS-cosine fallback for a BLOB-vector table) is
+      // retired (index redesign, B5) — units_vec is a vec0-only store.
+      expect(result.index.semanticStatus).toBe("ready-vec");
       const finalReader = openReadonlyExistingDatabase(getDbPath());
       if (!finalReader) throw new Error("expected an existing index after the update completed");
       try {
-        expect(getEmbeddingCount(finalReader)).toBe(fileCount);
+        expect(unitVectorCount(finalReader)).toBe(totalUnits);
       } finally {
         closeDatabase(finalReader);
       }

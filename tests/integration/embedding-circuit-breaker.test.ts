@@ -50,22 +50,61 @@ afterEach(() => {
 });
 
 function writeMemory(name: string): void {
-  fs.writeFileSync(
-    path.join(storage.stashDir, "memories", name),
-    `---\ndescription: ${name}\n---\n\nContent for ${name}.\n`,
-    "utf8",
-  );
+  // Deliberately no body content: a non-empty body would derive a SECOND
+  // (fragment) unit alongside the card unit (index-redesign B2/B3), doubling
+  // the document count these tests dispatch per entry and desyncing the
+  // hand-traced request-count/request-size sequences below from the
+  // documents actually sent. Frontmatter-only keeps it at exactly one unit
+  // (the card) per entry, matching this file's "N entries = N documents"
+  // accounting.
+  fs.writeFileSync(path.join(storage.stashDir, "memories", name), `---\ndescription: ${name}\n---\n`, "utf8");
+}
+
+function isProbeRequest(request: Request): boolean {
+  const pathname = new URL(request.url).pathname;
+  return pathname === "/props" || pathname === "/api/show";
 }
 
 /** Minimum gap (ms) between a document's two requests that only a real back-off (not an immediate retry) can produce. */
 const MIN_PROVEN_BACKOFF_MS = 2_000;
+
+/**
+ * A single large memory entry whose CARD unit (structured-fields text —
+ * `${name}\n${description}`, no markdown body so no second fragment unit is
+ * derived, same rationale as `writeMemory` below) is, by itself, too big to
+ * ever share a request with a sibling: the index redesign (B5) retired
+ * `embedding.batchSize` as a config config key, so this test's premise
+ * ("already at single-document size", no splitting needed to get there) now
+ * has to come from the GREEDY packer's own token-budget math against the
+ * default (unprobed, 8192-token) window instead of a config override.
+ * `DESCRIPTION_CHARS` (17,000) estimates to ~4,252 tokens
+ * (`estimateTokenCount`, chars/4) — under `unitMaxChars`'s ~21,132-char
+ * ceiling for this same window (so it stays ONE undivided unit), but over
+ * half the 8,192-token budget, so two of them together (~8,504) never fit
+ * one request.
+ */
+const DESCRIPTION_CHARS = 17_000;
+
+function writeLargeMemory(name: string): void {
+  fs.writeFileSync(
+    path.join(storage.stashDir, "memories", name),
+    `---\ndescription: ${"x".repeat(DESCRIPTION_CHARS)}\n---\n`,
+    "utf8",
+  );
+}
 
 test("stops after exactly 3 consecutive single-document timeouts against a dead endpoint and reports it, with endpoint guidance", async () => {
   let requestCount = 0;
   const requestTimestamps: number[] = [];
   server = Bun.serve({
     port: 0,
-    fetch() {
+    fetch(request) {
+      // The pre-flight /props (llama.cpp) / /api/show (Ollama) provider-limits
+      // probe (probeProviderLimits, called once before any embedding request)
+      // must not count toward this test's dead-endpoint request accounting —
+      // it is answered immediately, not left to hang like a real embedding
+      // request.
+      if (isProbeRequest(request)) return new Response(null, { status: 404 });
       requestCount++;
       requestTimestamps.push(Date.now());
       // Never resolves: the client's own embedding.timeoutMs is the only
@@ -74,7 +113,7 @@ test("stops after exactly 3 consecutive single-document timeouts against a dead 
     },
   });
 
-  for (let i = 0; i < 5; i++) writeMemory(`entry-${i}.md`);
+  for (let i = 0; i < 5; i++) writeLargeMemory(`entry-${i}.md`);
 
   writeSandboxConfig({
     semanticSearchMode: "auto",
@@ -84,7 +123,6 @@ test("stops after exactly 3 consecutive single-document timeouts against a dead 
       endpoint: `http://localhost:${server.port}`,
       model: "test-model",
       dimension: 4,
-      batchSize: 1,
       timeoutMs: 300,
     },
   });
@@ -107,8 +145,15 @@ test("stops after exactly 3 consecutive single-document timeouts against a dead 
   }
   expect(result.verification.ok).toBe(false);
   expect(result.verification.semanticStatus).toBe("blocked");
-  expect(result.verification.message).toContain("embedding provider failed 3 consecutive batches");
-  expect(result.verification.message).toContain("stopped after 0 embeddings were stored");
+  // index-redesign (B5a): the old materialize-embeddings path's
+  // breaker-specific wording ("embedding provider failed N consecutive
+  // batches") no longer exists — buildIndexVerification (indexer.ts) reports
+  // the same "blocked, 0 embeddings, actionable guidance" outcome through
+  // its own generic no-progress message instead. What must still hold is the
+  // underlying, never-lie invariant: no embeddings stored, and guidance that
+  // names the endpoint as the thing to check.
+  expect(result.verification.message).toContain("verification failed");
+  expect(result.verification.embeddingCount).toBe(0);
   // verifyIndexState's guidance for a remote provider names the endpoint as
   // the thing to check.
   expect(result.verification.guidance).toContain("embedding endpoint");
@@ -128,6 +173,9 @@ test("a dead endpoint splits a multi-document batch down to singles before any f
   server = Bun.serve({
     port: 0,
     async fetch(request) {
+      // See the single-document test above: the pre-flight limits probe
+      // must not be counted as a dispatched embedding request.
+      if (isProbeRequest(request)) return new Response(null, { status: 404 });
       requestCount++;
       requestTimestamps.push(Date.now());
       const body = (await request.json().catch(() => ({ input: [] }))) as { input?: string[] };
@@ -187,7 +235,9 @@ test("a dead endpoint splits a multi-document batch down to singles before any f
   }
   expect(result.verification.ok).toBe(false);
   expect(result.verification.semanticStatus).toBe("blocked");
-  expect(result.verification.message).toContain("embedding provider failed 3 consecutive batches");
-  expect(result.verification.message).toContain("stopped after 0 embeddings were stored");
+  // See the single-document test above for why the message assertion is
+  // now generic rather than breaker-specific wording.
+  expect(result.verification.message).toContain("verification failed");
+  expect(result.verification.embeddingCount).toBe(0);
   expect(result.verification.guidance).toContain("embedding endpoint");
 }, 60_000);

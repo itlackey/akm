@@ -7,6 +7,11 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.9.16](0.9.16.md) — the index redesign: `akm index` is now
+  reconcile-then-drain over one content-addressed text table and one vector
+  table, index generation v23-to-v24, five retired config keys, `--enrich`/
+  `--re-enrich`/`--clean`/`--dry-run` removed, `--skip-if-locked` now a
+  no-op, and the new `akm index status`
 - [0.9.15](0.9.15.md) — exit-code 75 for lease/state.db contention,
   `--require-engines` scheduled task templates, `--no-probe` cli-version
   skip, thinking-control wire forms, embedding re-embed safety and

@@ -14,7 +14,18 @@
 
 // v23 adds an isolated fragment FTS population. v22 is the last shipped
 // generation and is intentionally rebuilt rather than migrated in place.
-export const CANONICAL_INDEX_DB_VERSION = 23;
+//
+// v23→v24 (index-redesign B5c): `entries_fts` and `entry_fragments_fts` are
+// dropped from the canonical shape. Lexical search runs entirely over
+// `units_fts` now (index-redesign-contract.md B1/B3) — the card unit already
+// carries name/description/tags/hints, so an entry-level lexical query is a
+// units query grouped by entry, and a fragment-level lexical query is the
+// same `units_fts` table filtered to fragment-kind units. `entry_fragments`
+// (the safe-rendered Markdown source, NOT an FTS index) stays: it is what a
+// matched fragment hit's display metadata is projected from, and what `akm
+// show <ref>#<fragmentId>` resolves an opaque fragment selector through —
+// both are consumers independent of which table search itself queries.
+export const CANONICAL_INDEX_DB_VERSION = 24;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
@@ -37,29 +48,13 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_file_path ON entries(file_path);
   CREATE INDEX IF NOT EXISTS idx_entries_derived_from ON entries(derived_from);
 
-  -- Keep parent metadata and body fragments in separate FTS populations.
-  -- Combining them changes parent-document IDF and conjunction semantics.
-  CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-    entry_id UNINDEXED,
-    name,
-    description,
-    tags,
-    hints,
-    content,
-    tokenize='porter unicode61'
-  );
-
+  -- The safe-rendered Markdown source a matched fragment hit's display
+  -- metadata is projected from (index-fts-repository.ts's
+  -- getIndexedMarkdownFragment(s)) and that akm show's opaque fragment
+  -- selectors resolve through. Not a search index — units_fts is.
   CREATE TABLE IF NOT EXISTS entry_fragments (
     entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
     safe_markdown TEXT NOT NULL
-  );
-
-  CREATE VIRTUAL TABLE IF NOT EXISTS entry_fragments_fts USING fts5(
-    entry_id UNINDEXED,
-    fragment_id UNINDEXED,
-    fragment_ordinal UNINDEXED,
-    content,
-    tokenize='porter unicode61'
   );
 `;
 
@@ -100,18 +95,16 @@ interface EntrySchemaFingerprint {
 }
 
 /**
- * The logical FTS surfaces that belong to this derived generation.
- *
- * SQLite records an FTS5 virtual table itself and its implementation-owned
- * shadow tables in sqlite_master with type `table`.  Only the named logical
- * roots below are part of AKM's contract: exact virtual-table DDL proves the
- * FTS module, columns, UNINDEXED flags, and tokenizer.  Shadow-table layout is
- * deliberately not fingerprinted because it is SQLite's internal detail.
+ * The logical non-`entries` search-adjacent surface that belongs to this
+ * derived generation: `entry_fragments`, the plain table holding the
+ * safe-rendered Markdown source a fragment hit's display metadata and `akm
+ * show`'s opaque-selector resolution read from. `entries_fts` and
+ * `entry_fragments_fts` (FTS5 virtual tables) were dropped in v24
+ * (index-redesign B5c) — lexical search is `units_fts` now, fingerprinted by
+ * `files-repository.ts`'s own schema ensure, not here.
  */
 interface SearchSurfaceFingerprint {
-  entriesFtsSql: string | null;
   fragmentSourceSql: string | null;
-  fragmentsFtsSql: string | null;
 }
 
 /** Minimal read-only statement surface shared by bun:sqlite and AKM's runtime-neutral handle. */
@@ -274,12 +267,8 @@ const CANONICAL_ENTRY_SCHEMA_FINGERPRINT: EntrySchemaFingerprint = {
     },
   ],
   searchSurfaces: {
-    entriesFtsSql:
-      "CREATE VIRTUAL TABLE entries_fts USING fts5( entry_id UNINDEXED, name, description, tags, hints, content, tokenize='porter unicode61' )",
     fragmentSourceSql:
       "CREATE TABLE entry_fragments ( entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE, safe_markdown TEXT NOT NULL )",
-    fragmentsFtsSql:
-      "CREATE VIRTUAL TABLE entry_fragments_fts USING fts5( entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content, tokenize='porter unicode61' )",
   },
 };
 
@@ -375,9 +364,7 @@ export function readEntrySchemaFingerprint(db: EntrySchemaInspectionDatabase): E
     columns,
     indexes,
     searchSurfaces: {
-      entriesFtsSql: readNamedTableSql(db, "entries_fts"),
       fragmentSourceSql: readNamedTableSql(db, "entry_fragments"),
-      fragmentsFtsSql: readNamedTableSql(db, "entry_fragments_fts"),
     },
   };
 }

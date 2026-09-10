@@ -135,11 +135,11 @@ function makeIndexResult(): IndexResponse {
       message: "semantic search verified",
       semanticSearchEnabled: true,
       semanticSearchMode: "auto",
-      semanticStatus: "ready-js",
+      semanticStatus: "ready-vec",
       embeddingProvider: "local",
       entryCount: 3,
       embeddingCount: 3,
-      vecAvailable: false,
+      vecAvailable: true,
     },
   };
 }
@@ -478,7 +478,8 @@ describe("runSetupWizard", () => {
     installSetupSeams();
     // Break the REAL vec probe: point TMPDIR at a nonexistent directory so
     // its mkdtempSync(os.tmpdir(), ...) throws ENOENT and the catch path
-    // (warn + JS fallback) runs — no db-module mock needed.
+    // (warn that semantic search stays unavailable) runs — no db-module mock
+    // needed.
     const priorTmpdir = process.env.TMPDIR;
     process.env.TMPDIR = path.join(storage.stashDir, "no-such-tmpdir");
 
@@ -494,7 +495,7 @@ describe("runSetupWizard", () => {
     }
 
     expect(readSavedConfig().semanticSearchMode).toBe("auto");
-    expect(promptState.logs.some((entry) => entry.includes("Semantic search will use the JS fallback"))).toBe(true);
+    expect(promptState.logs.some((entry) => entry.includes("Semantic search will stay unavailable"))).toBe(true);
   });
 
   test("keeps semantic search enabled when asset preparation is skipped", async () => {

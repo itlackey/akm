@@ -11,9 +11,9 @@ import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
+
 import { setMeta } from "../../src/storage/repositories/index-meta-repository";
-import { searchVec, upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
+import { searchUnits, upsertUnitVectors } from "../../src/storage/repositories/units-repository";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -22,6 +22,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
 } from "../_helpers/sandbox";
+import { seedUnitsForAllEntries } from "../_helpers/seed-units";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ describe("assembleInfo", () => {
       "test skill",
       infoEntryProvenance("skill", "test-skill"),
     );
-    rebuildFts(db);
+    seedUnitsForAllEntries(db);
     setMeta(db, "builtAt", "2026-03-17T00:00:00Z");
     closeDatabase(db);
 
@@ -182,7 +183,7 @@ describe("assembleInfo", () => {
       "test doc",
       infoEntryProvenance("knowledge", "test-doc"),
     );
-    rebuildFts(db);
+    seedUnitsForAllEntries(db);
     closeDatabase(db);
 
     const info = assembleInfo({ dbPath });
@@ -273,9 +274,13 @@ describe("assembleInfo", () => {
       "embed skill",
       infoEntryProvenance("skill", "embed-skill"),
     );
-    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    seedUnitsForAllEntries(db);
+    const cardUnit = db
+      .prepare("SELECT unit_hash FROM entry_units WHERE entry_id = ? AND fragment_id IS NULL")
+      .get(id) as { unit_hash: string };
+    upsertUnitVectors(db, [{ hash: cardUnit.unit_hash, identity: "test-identity", vector: [1, 0, 0, 0] }]);
+    setMeta(db, "embeddingIdentity", "test-identity");
     setMeta(db, "hasEmbeddings", "1");
-    rebuildFts(db);
     closeDatabase(db);
 
     const info = assembleInfo({ dbPath });
@@ -284,7 +289,7 @@ describe("assembleInfo", () => {
 
     db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
-      expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
+      expect(searchUnits(db, [1, 0, 0, 0], 10, "test-identity")).toHaveLength(1);
     } finally {
       closeDatabase(db);
     }

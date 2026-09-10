@@ -4,6 +4,102 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **`akm index status`.** A cheap, read-only snapshot of `index.db`'s
+  current state — files tracked, entries, distinct units, how many have a
+  vector for the active embedding identity (and therefore the embedding
+  queue's remaining depth), the active identity itself, and the last
+  reconcile/build times — with no writes. Mirrors `akm info`'s
+  absent/inaccessible handling: a missing index reads as the ordinary
+  first-run state, an unreadable one is reported, never silently presented
+  as empty.
+- **A credential diagnostic on the embedding queue.** Before the first
+  provider request `akm index`'s drain makes, one default-level line names
+  the embedding endpoint, model, and the credential's SOURCE (never the
+  resolved value) whenever a remote endpoint is configured — so a field run
+  can compare it against what the gateway actually saw (#953).
+
+### Changed
+
+- **`akm index` is redesigned end to end
+  (`docs/plans/index-redesign.md`).** The old walk/clean/embed/finalize
+  phase pipeline, per-directory fingerprint cache, and duplicated storage
+  (entry text held three times, every vector held twice plus a salvage
+  copy) are replaced by two steps: reconcile, then drain. Reconcile
+  (`src/indexer/reconcile.ts`) stat-walks every configured root against a
+  `files` cache, hashing and re-parsing only what actually changed, and
+  derives content-addressed units — one "card" unit per entry
+  (name/description/tags/hints) and one "fragment" unit per Markdown
+  section — into a single text table (`unit_texts`/`units_fts`). Drain
+  (`src/indexer/drain.ts`) treats embedding as a queue, not a phase: the
+  pending set is exactly the unit hashes with no vector under the active
+  embedding identity, packed against the provider's own probed context
+  window and slot count, written into a single vector table
+  (`units`/`units_vec`) keyed by `(unit_hash, identity)`. An unchanged file
+  or unit is never re-derived or re-embedded again — not on a rename, not
+  on `akm index --full`, not on a future generation bump — because
+  everything is keyed by content hash and observed provider identity, never
+  by a row id or a config string.
+- **Every write path indexes what it just wrote, inline.** `remember`,
+  `import`, extract's session-asset capture, `source clone`, and proposal
+  accept each reconcile and drain exactly the paths/units they touched, in
+  the same call as the write, with no lock probe and no background reindex
+  spawn.
+- **Search fuses three ranked lists by reciprocal rank** — card-unit
+  lexical, fragment-unit lexical, and semantic — over `units`, replacing the old per-column BM25 weights and semantic-only
+  score floor — there is no longer a tuned weight or threshold to
+  calibrate.
+- **`akm index --full`** no longer drops anything first: it forces every
+  walked file to be re-parsed (skipping the unchanged-file shortcut) but
+  updates each file's existing row in place, keeping its id, vectors, and
+  learned utility scores. **`akm index --reembed`** now means "drop the
+  active embedding identity's vectors, then re-embed every unit from
+  scratch."
+- **`akm index --skip-if-locked` is deprecated and does nothing.** Index
+  runs no longer take a rebuild lock — every write is a short, idempotent,
+  content-addressed transaction, so two concurrent runs converge instead of
+  contending. Passing the flag prints one deprecation warning; kept only so
+  an existing script does not fail on an unknown flag.
+- **The derived `index.db` generation changes from v23 to v24.** The first
+  read (or explicit `akm index`) after upgrade re-derives `entries` and
+  every unit from files, and embeds the full corpus once against the
+  configured provider, since the new unit vector store does not carry
+  forward the superseded per-entry vector tables. See the [0.9.16 migration
+  note](docs/migration/release-notes/0.9.16.md) for the cost, stated
+  plainly.
+
+### Removed
+
+- **The index phase pipeline, directory-fingerprint staleness cache, the
+  index rebuild lock, and the index-path use of the maintenance barrier** —
+  roughly 4,800 lines across the files that implemented the old index core,
+  replaced by the reconcile/drain design above (`docs/plans/index-redesign.md`).
+- **`entries_fts`, `entry_fragments_fts`, the legacy per-entry `embeddings`
+  materializer (`materialize-embeddings.ts`), and `embedding_salvage`** —
+  superseded by the single `unit_texts`/`units_fts` and `units`/`units_vec`
+  tables, which never need a salvage-before-discard step because they are
+  content-addressed and never wholesale-discarded.
+- **`akm index --enrich`, `--re-enrich`, `--clean`, and `--dry-run`.**
+  Plain `akm index` now always performs metadata enrichment when an engine
+  is configured, and every run already removes stale entries as part of
+  reconcile — the work these flags used to separately opt into. All four
+  now fail with a `UsageError` naming the replacement, instead of silently
+  doing nothing or being silently accepted.
+- **Config keys `embedding.maxInputTokens`, `embedding.maxTokens`,
+  `embedding.batchSize`, `embedding.contextLength`, and
+  `search.minScore`.** Embedding request packing is sourced from the
+  provider's own probed limits (unchanged from 0.9.15 packing, applied to
+  units instead of whole entries); the fused reciprocal-rank score has no
+  comparable 0–1 threshold to tune. A config that still sets any of them
+  loads without error and is simply ignored.
+- **The `"ready-js"` semantic-search status.** Named a pure-JS
+  cosine-similarity fallback for when `sqlite-vec` was unavailable; the new
+  unit vector store has no BLOB-table fallback to fall back to, so nothing
+  produces that value any more.
+
 ## [0.9.15] - 2026-09-10
 
 ### Added

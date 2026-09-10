@@ -193,21 +193,31 @@ describe("resolveEmbeddingConcurrency", () => {
   });
 });
 
-describe("RemoteEmbedder.embedBatch: contextLength no longer affects the request token budget (#956)", () => {
-  test("a batch is split by config.maxTokens, not config.contextLength", async () => {
+describe("RemoteEmbedder.embedBatch: request window/slots come from packing, not config (index redesign, B5)", () => {
+  test("the retired embedding.maxTokens/batchSize/contextLength config keys have zero effect — packing.tokenBudget governs the request budget instead", async () => {
     const requestSizes: number[] = [];
     await withMockedFetch(
       async () => {
-        // contextLength set very low (would force single-document batches if
-        // it still fed the token budget) and maxTokens left unset, so the
-        // DEFAULT_TOKEN_BUDGET (6000 tokens, #954) is what actually governs
-        // batching. Five short documents easily fit one 6000-token request.
+        // All three retired keys set to values that WOULD have forced
+        // single-document batches under the old config-driven design
+        // (maxTokens/batchSize: 1) — proof they are now genuinely inert
+        // passthrough fields, not merely decoupled from each other.
+        // `packing.tokenBudget` set generously large is what actually lets
+        // all 5 short documents land in one request.
         const embedder = new RemoteEmbedder({
           endpoint: "http://localhost:1/v1",
           model: "test-model",
+          maxTokens: 1,
+          batchSize: 1,
           contextLength: 8,
-        });
-        const results = await embedder.embedBatch(["a", "bb", "ccc", "dddd", "eeeee"]);
+        } as EmbeddingConnectionConfig);
+        const results = await embedder.embedBatch(
+          ["a", "bb", "ccc", "dddd", "eeeee"],
+          undefined,
+          undefined,
+          undefined,
+          { tokenBudget: 6000 },
+        );
         expect(results.every((r) => r !== undefined)).toBe(true);
       },
       async (_url, init) => {
@@ -217,26 +227,20 @@ describe("RemoteEmbedder.embedBatch: contextLength no longer affects the request
         return jsonResponse({ data });
       },
     );
-    // All 5 documents in a single request — proof contextLength: 8 did NOT
-    // shrink the token budget down to single-document batches.
+    // All 5 documents in a single request — the retired keys did NOT shrink
+    // the token budget down to single-document batches.
     expect(requestSizes).toEqual([5]);
   });
 
-  test("config.maxTokens still governs the budget as before, even alongside a large contextLength", async () => {
+  test("packing.tokenBudget alone governs the oversized-document skip", async () => {
     const requestSizes: number[] = [];
     await withMockedFetch(
       async () => {
-        // contextLength set huge so it would rescue this document from the
-        // oversized path if it still fed the token budget at all — proof
-        // maxTokens alone decides this, unaffected by contextLength either way.
-        const embedder = new RemoteEmbedder({
-          endpoint: "http://localhost:1/v1",
-          model: "test-model",
-          maxTokens: 10,
-          contextLength: 1_000_000,
-        });
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         const skips: Array<{ reason: string }> = [];
-        const results = await embedder.embedBatch(["x".repeat(200)], undefined, (skip) => skips.push(skip));
+        const results = await embedder.embedBatch(["x".repeat(200)], undefined, (skip) => skips.push(skip), undefined, {
+          tokenBudget: 10,
+        });
         expect(results).toEqual([undefined]);
         expect(skips[0]?.reason).toBe("context-window-exceeded");
       },
@@ -250,15 +254,18 @@ describe("RemoteEmbedder.embedBatch: contextLength no longer affects the request
     expect(requestSizes).toEqual([]);
   });
 
-  test("contextLength still reaches Ollama's num_ctx (unchanged — #956 only touches the token budget)", async () => {
+  test("Ollama's num_ctx now comes from packing.ollamaNumCtx (the probed window), not a config key", async () => {
     let sentOptions: unknown;
     await withMockedFetch(
       async () => {
         const embedder = new RemoteEmbedder({
           endpoint: "http://localhost:11434/api/embed",
           model: "test-model",
-          contextLength: 4096,
         });
+        // embed() (the single-text path drain.ts never calls) has no packing
+        // parameter at all, so num_ctx is only ever sent via the explicit
+        // `ollamaOptions` escape hatch on this path — proving contextLength
+        // (retired) truly no longer feeds it.
         await embedder.embed("hello");
       },
       async (_url, init) => {
@@ -267,7 +274,152 @@ describe("RemoteEmbedder.embedBatch: contextLength no longer affects the request
         return jsonResponse({ data: [{ embedding: [1, 0] }] });
       },
     );
-    expect(sentOptions).toEqual({ num_ctx: 4096 });
+    expect(sentOptions).toBeUndefined();
+  });
+
+  test("embedBatch sends Ollama's num_ctx from packing.ollamaNumCtx", async () => {
+    const requests: Array<{ options?: unknown }> = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({
+          endpoint: "http://localhost:11434/api/embed",
+          model: "test-model",
+        });
+        await embedder.embedBatch(["hello"], undefined, undefined, undefined, { ollamaNumCtx: 4096 });
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { options?: unknown };
+        requests.push({ options: body.options });
+        return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
+      },
+    );
+    expect(requests).toEqual([{ options: { num_ctx: 4096 } }]);
+  });
+
+  test("an explicit embedding.ollamaOptions still wins over packing.ollamaNumCtx", async () => {
+    const requests: Array<{ options?: unknown }> = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({
+          endpoint: "http://localhost:11434/api/embed",
+          model: "test-model",
+          ollamaOptions: { num_ctx: 2048 },
+        });
+        await embedder.embedBatch(["hello"], undefined, undefined, undefined, { ollamaNumCtx: 4096 });
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { options?: unknown };
+        requests.push({ options: body.options });
+        return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
+      },
+    );
+    expect(requests).toEqual([{ options: { num_ctx: 2048 } }]);
+  });
+});
+
+describe("RemoteEmbedder.embedBatch: packing.charsPerToken governs the token estimate (index redesign, B5/R4)", () => {
+  /** Runs the same 12 identical-length texts through embedBatch at a given `charsPerToken` and returns each request's document count in dispatch order. */
+  async function requestSizesAt(charsPerToken: number): Promise<number[]> {
+    const texts = Array.from({ length: 12 }, () => "x".repeat(40));
+    const requestSizes: number[] = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
+        const results = await embedder.embedBatch(texts, undefined, undefined, undefined, {
+          tokenBudget: 100,
+          charsPerToken,
+        });
+        expect(results.every((r) => r !== undefined)).toBe(true);
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { input: string[] };
+        requestSizes.push(body.input.length);
+        const data = body.input.map((_t, i) => ({ embedding: [1, 0], index: i }));
+        return jsonResponse({ data });
+      },
+    );
+    return requestSizes;
+  }
+
+  test("a charsPerToken of 2 packs about half as many docs per batch as 4, for the same texts and budget", async () => {
+    // 40-char texts: charsPerToken 4 → 10 tokens/doc → 10 docs fit a
+    // 100-token budget; charsPerToken 2 → 20 tokens/doc → only 5 fit.
+    const sizesAt4 = await requestSizesAt(4);
+    const sizesAt2 = await requestSizesAt(2);
+    expect(sizesAt4[0]).toBe(10);
+    expect(sizesAt2[0]).toBe(5);
+  });
+
+  test("omitting charsPerToken falls back to the 4-chars-per-token estimate", async () => {
+    const requestSizes: number[] = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
+        const texts = Array.from({ length: 12 }, () => "x".repeat(40));
+        await embedder.embedBatch(texts, undefined, undefined, undefined, { tokenBudget: 100 });
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { input: string[] };
+        requestSizes.push(body.input.length);
+        const data = body.input.map((_t, i) => ({ embedding: [1, 0], index: i }));
+        return jsonResponse({ data });
+      },
+    );
+    expect(requestSizes[0]).toBe(10);
+  });
+});
+
+describe("RemoteEmbedder.embedBatch: adaptive shrink gated by packing.windowIsKnown (index redesign, B5)", () => {
+  test("windowIsKnown unset (a provider that reported nothing) still gets the same-run shrink corrective", async () => {
+    const texts = Array.from({ length: 4 }, (_, i) => "x".repeat(3000) + i); // ~750 tokens/text estimated
+    const committed: Array<{ outcome?: string }> = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
+        await embedder.embedBatch(
+          texts,
+          undefined,
+          undefined,
+          (_indices, _embeddings, _model, outcome) => committed.push({ outcome: outcome?.outcome }),
+          { tokenBudget: 3000 }, // windowIsKnown omitted — the "default" case
+        );
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { input: string[] };
+        if (body.input.length > 1) {
+          return jsonResponse({ error: { message: "exceed_context_size_error" } }, 413);
+        }
+        return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
+      },
+    );
+    expect(committed.some((c) => c.outcome === "budget-lowered")).toBe(true);
+  });
+
+  test("windowIsKnown true (a probed, authoritative window) never shrinks the run-wide budget on a rejection", async () => {
+    const texts = Array.from({ length: 4 }, (_, i) => "x".repeat(3000) + i);
+    const committed: Array<{ outcome?: string }> = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
+        await embedder.embedBatch(
+          texts,
+          undefined,
+          undefined,
+          (_indices, _embeddings, _model, outcome) => committed.push({ outcome: outcome?.outcome }),
+          { tokenBudget: 3000, windowIsKnown: true },
+        );
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { input: string[] };
+        if (body.input.length > 1) {
+          return jsonResponse({ error: { message: "exceed_context_size_error" } }, 413);
+        }
+        return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
+      },
+    );
+    // Split-and-retry still recovers every document — only the RUN-WIDE
+    // budget-lowered corrective is suppressed.
+    expect(committed.some((c) => c.outcome === "budget-lowered")).toBe(false);
   });
 });
 
@@ -397,21 +549,20 @@ describe("RemoteEmbedder.embedBatch: run-scoped adaptive request budget after a 
 
     const results = await withMockedFetch(
       async () => {
-        // maxTokens set explicitly to the OLD default (8000) — reproducing a
-        // field config that has not adopted the new 6000 default — proves
-        // the adaptive shrink rescues the run regardless of the starting
-        // budget, not just the new default's own headroom.
-        const embedder = new RemoteEmbedder({
-          endpoint: "http://localhost:1/v1",
-          model: "test-model",
-          maxTokens: 8000,
-        });
+        // packing.tokenBudget set explicitly to the OLD default (8000) —
+        // reproducing a provider probe whose window is not the new 6000
+        // default — proves the adaptive shrink rescues the run regardless
+        // of the starting budget, not just the new default's own headroom.
+        // windowIsKnown omitted (the "default"/unknown-window case) so the
+        // shrink corrective is armed at all.
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         return embedder.embedBatch(
           texts,
           undefined,
           (skip) => skips.push(skip),
           (indices, embeddings, _model, outcome) =>
             committed.push({ indices, embeddings, outcome: outcome?.outcome, reason: outcome?.reason }),
+          { tokenBudget: 8000 },
         );
       },
       async (_url, init) => {
@@ -468,17 +619,14 @@ describe("RemoteEmbedder.embedBatch: run-scoped adaptive request budget after a 
 
     await withMockedFetch(
       async () => {
-        const embedder = new RemoteEmbedder({
-          endpoint: "http://localhost:1/v1",
-          model: "test-model",
-          maxTokens: 5000,
-        });
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         await embedder.embedBatch(
           texts,
           undefined,
           (skip) => skips.push(skip),
           (_indices, _embeddings, _model, outcome) =>
             committed.push({ outcome: outcome?.outcome, reason: outcome?.reason }),
+          { tokenBudget: 5000 },
         );
       },
       async () => {
@@ -511,12 +659,8 @@ describe("RemoteEmbedder.embedBatch: bounded concurrency (default 1 loopback / 2
     const texts = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"];
     const results = await withMockedFetch(
       async () => {
-        const embedder = new RemoteEmbedder({
-          endpoint: "https://embed.example.com/v1",
-          model: "test-model",
-          batchSize: 1,
-        });
-        return embedder.embedBatch(texts);
+        const embedder = new RemoteEmbedder({ endpoint: "https://embed.example.com/v1", model: "test-model" });
+        return embedder.embedBatch(texts, undefined, undefined, undefined, { maxCount: 1 });
       },
       async (_url, init) => {
         inFlight++;
@@ -545,12 +689,8 @@ describe("RemoteEmbedder.embedBatch: bounded concurrency (default 1 loopback / 2
     let maxInFlight = 0;
     await withMockedFetch(
       async () => {
-        const embedder = new RemoteEmbedder({
-          endpoint: "http://localhost:1/v1",
-          model: "test-model",
-          batchSize: 1,
-        });
-        return embedder.embedBatch(["a", "b", "c", "d"]);
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
+        return embedder.embedBatch(["a", "b", "c", "d"], undefined, undefined, undefined, { maxCount: 1 });
       },
       async (_url, init) => {
         inFlight++;
@@ -582,13 +722,14 @@ describe("RemoteEmbedder.embedBatch: onBatch commit callback", () => {
   test("fires once per provider batch (including an oversized pre-flight skip), not once for the whole call", async () => {
     await withMockedFetch(
       async () => {
-        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model", maxTokens: 10 });
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         const committed: Array<{ indices: number[]; embeddings: (EmbeddingVector | undefined)[] }> = [];
         const results = await embedder.embedBatch(
           ["small", "x".repeat(200) /* oversized */],
           undefined,
           undefined,
           (indices, embeddings) => committed.push({ indices, embeddings }),
+          { tokenBudget: 10 },
         );
         expect(results[0]).toBeDefined();
         expect(results[1]).toBeUndefined();
@@ -605,7 +746,7 @@ describe("RemoteEmbedder.embedBatch: onBatch commit callback", () => {
     // Regression for a round-1 review finding: onBatch used to be invoked
     // from inside the same try/catch that classifies requestBatch's own
     // provider/network failures, so a persistence failure inside the
-    // caller's onBatch (e.g. materialize-embeddings.ts's db.transaction()
+    // caller's onBatch (e.g. drain.ts's own db.transaction()
     // throwing on a real competing-process SQLITE_BUSY lock) was
     // misclassified as a fabricated "batch-request-failed" skip and then
     // silently absorbed by concurrentMap's per-item catch — no error ever
@@ -634,18 +775,16 @@ describe("RemoteEmbedder.embedBatch: onBatch commit callback", () => {
   });
 
   test("every provider batch commits, not just the last one", async () => {
-    const config: EmbeddingConnectionConfig = {
-      endpoint: "http://localhost:1/v1",
-      model: "test-model",
-      batchSize: 2,
-    };
+    const config: EmbeddingConnectionConfig = { endpoint: "http://localhost:1/v1", model: "test-model" };
     await withMockedFetch(
       async () => {
         const embedder = new RemoteEmbedder(config);
         const committed: number[][] = [];
-        await embedder.embedBatch(["a", "b", "c", "d"], undefined, undefined, (indices) => committed.push(indices));
+        await embedder.embedBatch(["a", "b", "c", "d"], undefined, undefined, (indices) => committed.push(indices), {
+          maxCount: 2,
+        });
         expect(committed.flatMap((i) => i).sort()).toEqual([0, 1, 2, 3]);
-        expect(committed.length).toBe(2); // batchSize 2 → two provider batches
+        expect(committed.length).toBe(2); // packing.maxCount 2 → two provider batches
       },
       async (_url, init) => {
         const body = JSON.parse(init?.body as string) as { input: string[] };
@@ -667,16 +806,18 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
         // in flight — a completely deterministic way to prove the pool never
         // claims a next batch once dispatch has stopped, with no reliance on
         // fetch resolution order under concurrency 2.
-        const embedder = new RemoteEmbedder({
-          endpoint: "http://localhost:1/v1",
-          model: "test-model",
-          batchSize: 1,
-        });
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         await expect(
-          embedder.embedBatch(["a", "b", "c", "d"], undefined, undefined, () => {
-            onBatchCalls++;
-            throw persistError;
-          }),
+          embedder.embedBatch(
+            ["a", "b", "c", "d"],
+            undefined,
+            undefined,
+            () => {
+              onBatchCalls++;
+              throw persistError;
+            },
+            { maxCount: 1 },
+          ),
         ).rejects.toThrow(/simulated persistence failure/);
       },
       async () => {
@@ -684,7 +825,7 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
         return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
       },
     );
-    // 4 texts, batchSize 1 => 4 possible provider batches queued. Only the
+    // 4 texts, packing.maxCount 1 => 4 possible provider batches queued. Only the
     // very first is ever requested; the pool must not claim (and therefore
     // never dispatches HTTP requests for) batches 2-4 once onBatch fails.
     expect(requestCount).toBe(1);
@@ -733,10 +874,14 @@ describe("RemoteEmbedder.embedBatch: surfaces the response model id (#955)", () 
   test("an oversized pre-flight skip commits with no model (no request was ever made)", async () => {
     await withMockedFetch(
       async () => {
-        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model", maxTokens: 1 });
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         const models: (string | undefined)[] = [];
-        await embedder.embedBatch(["x".repeat(200)], undefined, undefined, (_indices, _embeddings, model) =>
-          models.push(model),
+        await embedder.embedBatch(
+          ["x".repeat(200)],
+          undefined,
+          undefined,
+          (_indices, _embeddings, model) => models.push(model),
+          { tokenBudget: 1 },
         );
         expect(models).toEqual([undefined]);
       },

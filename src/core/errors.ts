@@ -62,7 +62,12 @@ export type ConfigErrorCode =
   // A `secret://<name>` apiKey reference did not resolve to a stored value —
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
-  | "SECRET_REFERENCE_UNRESOLVED";
+  | "SECRET_REFERENCE_UNRESOLVED"
+  // units-repository's searchUnits: sqlite-vec is not loaded, so the units_vec
+  // KNN query cannot run. There is no JS-cosine fallback for units — the
+  // caller is expected to catch this and fall back to lexical search instead
+  // (docs/plans/index-fragment-vectors.md).
+  | "EMBEDDING_VEC_UNAVAILABLE";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
@@ -220,6 +225,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   EXECUTION_NOT_AUTHORIZED: "Change the selected tools or update the machine/user execution policy, then retry.",
   SECRET_REFERENCE_UNRESOLVED:
     "Check the secret exists (`akm secret list`) and the name after `secret://` matches, or run `akm secret set <name> <value>` to store it.",
+  EMBEDDING_VEC_UNAVAILABLE:
+    "Install sqlite-vec for unit-level semantic search, or rely on lexical search until it is available.",
 };
 
 // Code-review finding: COMPOSITION_INVALID covers several unrelated causes
@@ -301,9 +308,10 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
   INDEX_DB_CONTENDED:
-    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+    "Another akm process is writing index.db right now. Wait a few seconds and retry — index runs take no rebuild " +
+    "lock, so this clears quickly; a scheduled run left alone will simply run again next time.",
   MAINTENANCE_BARRIER_BUSY:
-    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled index/improve/workflow runs.",
+    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled improve/workflow runs.",
 };
 
 /** Default hint for each NotFoundError code. */

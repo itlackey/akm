@@ -18,7 +18,9 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
 import { relinkUsageEvents, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
+import { DB_VERSION, EMBEDDING_DIM, ensureSchema } from "../../../src/storage/repositories/index-schema";
+import { isVecAvailable, loadVecExtension } from "../../../src/storage/repositories/index-vec-repository";
+import { ensureUnitTables, upsertUnitVectors } from "../../../src/storage/repositories/units-repository";
 
 const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
@@ -74,31 +76,12 @@ const CANONICAL_ENTRY_INDEXES_DDL = `
   CREATE INDEX idx_entries_derived_from ON entries(derived_from);
 `;
 
-const CANONICAL_PARENT_FTS_DDL = `
-  CREATE VIRTUAL TABLE entries_fts USING fts5(
-    entry_id UNINDEXED,
-    name,
-    description,
-    tags,
-    hints,
-    content,
-    tokenize='porter unicode61'
-  );
-`;
-
-const CANONICAL_FRAGMENT_SURFACES_DDL = `
-  CREATE TABLE entry_fragments (
-    entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-    safe_markdown TEXT NOT NULL
-  );
-  CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
-    entry_id UNINDEXED,
-    fragment_id UNINDEXED,
-    fragment_ordinal UNINDEXED,
-    content,
-    tokenize='porter unicode61'
-  );
-`;
+// index-redesign B5c: v24 drops entries_fts (parent FTS5) and
+// entry_fragments_fts (fragment FTS5) from the canonical shape — units_fts
+// (files-repository.ts's own ensure, not fingerprinted here) is the one
+// lexical search surface now. entry_fragments (the safe-Markdown source,
+// not an FTS index) is the sole remaining search-adjacent surface this
+// module's fingerprint still pins — see the partial-schema variants below.
 
 function withTempIndex(run: (dbPath: string) => void): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-current-index-schema-"));
@@ -209,11 +192,21 @@ describe("canonical derived-index entry schema", () => {
   test("does not stamp a generation until every required DDL surface succeeds", () => {
     withTempIndex((dbPath) => {
       const partial = openDatabase(dbPath);
+      loadVecExtension(partial);
       try {
-        // This fails at a later required DDL surface. Before the v23 ordering
-        // fix, the version was already stamped just after entries creation.
-        partial.exec("CREATE VIEW index_dir_state AS SELECT 1 AS placeholder");
-        expect(() => ensureSchema(partial, undefined)).toThrow(/Cannot add a column to a view/);
+        // This fails at a later required DDL surface (the units_vec vec0
+        // virtual table, which — unlike every `CREATE TABLE IF NOT EXISTS`
+        // around it — has no `IF NOT EXISTS` guard and so cannot silently
+        // coexist with a same-named view). index-redesign (B5) removed the
+        // previous trigger for this test (`index_dir_state`'s
+        // `ALTER TABLE ... ADD COLUMN`, the only unguarded DDL statement
+        // `ensureSchema` used to run) along with the table itself; B5h then
+        // removed `entries_vec` (this test's trigger up to that point) along
+        // with the rest of the legacy per-entry vector tables — `units_vec`
+        // is the surviving unguarded DDL surface this invariant now exercises.
+        if (!isVecAvailable(partial)) return;
+        partial.exec("CREATE VIEW units_vec AS SELECT 1 AS placeholder");
+        expect(() => ensureSchema(partial, undefined)).toThrow(/units_vec already exists/);
       } finally {
         partial.close();
       }
@@ -258,6 +251,104 @@ describe("canonical derived-index entry schema", () => {
         expect(
           current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string },
         ).toEqual({ value: String(DB_VERSION) });
+      } finally {
+        closeDatabase(current);
+      }
+
+      expect(entryColumns(dbPath)).toEqual(CURRENT_ENTRY_COLUMNS);
+    });
+  });
+
+  // Regression for the FOREIGN KEY crash a real pre-redesign (v23) index hit
+  // on its first open by this binary: `embeddings` carries a non-cascading
+  // `FOREIGN KEY (id) REFERENCES entries(id)`, so `DROP TABLE entries` inside
+  // the generation rebuild fails under `foreign_keys=ON` unless `embeddings`
+  // (and its vec0 mirror `entries_vec`) is dropped first. Deliberately does
+  // NOT use `withTempIndex` + an already-v24-shaped db stamped down — every
+  // other generation test in this file starts from a database `ensureSchema`
+  // already produced (or a hand-rolled `entries` shape with no vector
+  // tables at all), which is exactly why this shipped undetected: this test
+  // instead hand-builds the actual legacy shape (entries + embeddings with
+  // its real FK + entries_vec, at least one live row in each) via a raw,
+  // unmanaged `openDatabase` — the same fixture technique the tests around
+  // it use, just with the vector tables a real v23 index still carries — and
+  // only then opens it through the real `openIndexDatabase` path, which is
+  // what applies `foreign_keys=ON` (index-schema.ts alone, via a bare
+  // `ensureSchema` call, never would).
+  test("a v23 index with the legacy embeddings/entries_vec tables upgrades without a foreign-key crash", () => {
+    withTempIndex((dbPath) => {
+      const legacy = openDatabase(dbPath);
+      loadVecExtension(legacy);
+      const vecAvailable = isVecAvailable(legacy);
+      try {
+        legacy.exec(`
+          CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO index_meta (key, value) VALUES ('version', '${DB_VERSION - 1}');
+          ${CANONICAL_ENTRIES_DDL}
+          ${CANONICAL_ENTRY_INDEXES_DDL}
+          CREATE TABLE embeddings (
+            id        INTEGER PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            FOREIGN KEY (id) REFERENCES entries(id)
+          );
+        `);
+        legacy
+          .prepare(
+            `INSERT INTO entries
+               (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type,
+                file_path, content_hash, document_json, search_text, derived_from)
+             VALUES (1, 'stash//memories/legacy', 'stash', 'stash', 'memories/legacy',
+                     'akm', 'memory', '/tmp/legacy.md', NULL,
+                     '{"type":"memory","name":"legacy"}', 'legacy', NULL)`,
+          )
+          .run();
+        // The live row an upgrading owner's index always has: this is what
+        // used to be missing from every generation-rebuild fixture, and
+        // without it `DROP TABLE entries` has nothing to conflict with.
+        legacy.prepare("INSERT INTO embeddings (id, embedding) VALUES (1, ?)").run(Buffer.alloc(EMBEDDING_DIM * 4));
+
+        if (vecAvailable) {
+          legacy.exec(`
+            CREATE VIRTUAL TABLE entries_vec USING vec0(
+              id        INTEGER PRIMARY KEY,
+              embedding FLOAT[${EMBEDDING_DIM}]
+            );
+          `);
+          legacy
+            .prepare("INSERT INTO entries_vec (id, embedding) VALUES (1, ?)")
+            .run(Buffer.from(new Float32Array(EMBEDDING_DIM).fill(0.1).buffer));
+
+          // A real v23 index also already has the content-addressed units
+          // store (it shipped alongside the legacy tables during their
+          // retirement window) — the rebuild must leave it completely alone.
+          ensureUnitTables(legacy, EMBEDDING_DIM);
+          const { inserted } = upsertUnitVectors(legacy, [
+            { hash: "unit-hash-must-survive", identity: "local:test|384", vector: new Array(EMBEDDING_DIM).fill(0.2) },
+          ]);
+          expect(inserted).toBe(1);
+        }
+      } finally {
+        legacy.close();
+      }
+
+      // The real production open path: applies `foreign_keys = ON`, then
+      // runs `ensureSchema` — the exact sequence `akm index` hits on a real
+      // pre-redesign data dir.
+      const current = openIndexDatabase(dbPath);
+      try {
+        expect(
+          current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string },
+        ).toEqual({ value: String(DB_VERSION) });
+        expect(current.prepare("SELECT name FROM sqlite_master WHERE name = 'embeddings'").get()).toBeNull();
+        expect(current.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_vec'").get()).toBeNull();
+
+        if (vecAvailable) {
+          expect(current.prepare("SELECT COUNT(*) AS count FROM units").get()).toEqual({ count: 1 });
+          expect(current.prepare("SELECT COUNT(*) AS count FROM units_vec").get()).toEqual({ count: 1 });
+          expect(
+            current.prepare("SELECT unit_hash FROM units WHERE unit_hash = 'unit-hash-must-survive'").get(),
+          ).toEqual({ unit_hash: "unit-hash-must-survive" });
+        }
       } finally {
         closeDatabase(current);
       }
@@ -321,7 +412,7 @@ describe("canonical derived-index entry schema", () => {
       const current = openIndexDatabase(dbPath);
       try {
         expect(current.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
-        expect(current.prepare("SELECT COUNT(*) AS count FROM entries_fts").get()).toEqual({ count: 0 });
+        expect(current.prepare("SELECT COUNT(*) AS count FROM units_fts").get()).toEqual({ count: 0 });
         expect(
           current.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'entries_fts_dirty'").get(),
         ).toBeNull();
@@ -358,59 +449,27 @@ describe("canonical derived-index entry schema", () => {
     });
   });
 
-  test("a stamped v23 generation missing or impersonating required FTS surfaces is rejected for reads and rebuilt", () => {
+  test("a stamped v24 generation missing or impersonating its fragment-source surface is rejected for reads and rebuilt", () => {
     const partialSearchSurfaceSchemas = [
       {
-        name: "missing parent FTS",
-        ddl: CANONICAL_FRAGMENT_SURFACES_DDL,
-      },
-      {
-        name: "ordinary table impersonating parent FTS",
-        ddl: `
-          CREATE TABLE entries_fts (
-            entry_id INTEGER,
-            name TEXT,
-            description TEXT,
-            tags TEXT,
-            hints TEXT,
-            content TEXT
-          );
-          ${CANONICAL_FRAGMENT_SURFACES_DDL}
-        `,
-      },
-      {
-        name: "missing fragment tables",
-        ddl: CANONICAL_PARENT_FTS_DDL,
+        name: "missing fragment source",
+        ddl: "",
       },
       {
         name: "fragment source missing its safe Markdown projection",
         ddl: `
-          ${CANONICAL_PARENT_FTS_DDL}
           CREATE TABLE entry_fragments (
             entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE
-          );
-          CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
-            entry_id UNINDEXED,
-            fragment_id UNINDEXED,
-            fragment_ordinal UNINDEXED,
-            content,
-            tokenize='porter unicode61'
           );
         `,
       },
       {
-        name: "ordinary table impersonating fragment FTS",
+        name: "ordinary table impersonating fragment source with the wrong shape",
         ddl: `
-          ${CANONICAL_PARENT_FTS_DDL}
           CREATE TABLE entry_fragments (
-            entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-            safe_markdown TEXT NOT NULL
-          );
-          CREATE TABLE entry_fragments_fts (
             entry_id INTEGER,
             fragment_id TEXT,
-            fragment_ordinal INTEGER,
-            content TEXT
+            safe_markdown TEXT
           );
         `,
       },
@@ -430,12 +489,8 @@ describe("canonical derived-index entry schema", () => {
           expect(rebuilt.prepare("SELECT sql FROM sqlite_master WHERE name = 'entry_fragments'").get()).toEqual({
             sql: expect.stringContaining("entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE"),
           });
-          expect(rebuilt.prepare("SELECT sql FROM sqlite_master WHERE name = 'entry_fragments_fts'").get()).toEqual({
-            sql: expect.stringContaining("CREATE VIRTUAL TABLE entry_fragments_fts USING fts5"),
-          });
-          expect(rebuilt.prepare("SELECT sql FROM sqlite_master WHERE name = 'entries_fts'").get()).toEqual({
-            sql: expect.stringContaining("CREATE VIRTUAL TABLE entries_fts USING fts5"),
-          });
+          expect(rebuilt.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get()).toBeNull();
+          expect(rebuilt.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get()).toBeDefined();
         } finally {
           closeDatabase(rebuilt);
         }

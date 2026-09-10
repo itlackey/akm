@@ -21,17 +21,19 @@ import type { Embedder, EmbeddingVector } from "./types";
 
 /**
  * Upper bound on the number of documents in one HTTP request, independent of
- * the token budget below. Overridable via `config.batchSize`. Purely a
- * safety cap (very many tiny documents could otherwise pack one request) —
- * the token budget is what actually keeps a request inside the endpoint's
- * context window and inside the timeout (#874).
+ * the token budget below. Overridable via `packing.maxCount` (index
+ * redesign, B5 — the retired `embedding.batchSize` config key's replacement,
+ * sourced by `drain.ts` from the provider's own probed limits rather than
+ * config). Purely a safety cap (very many tiny documents could otherwise
+ * pack one request) — the token budget is what actually keeps a request
+ * inside the endpoint's context window and inside the timeout (#874).
  */
 export const DEFAULT_REMOTE_BATCH_SIZE = 100;
 
 /**
- * Conservative default token budget per HTTP request when the config gives
- * no better number (`maxTokens` — see #956 for why `contextLength`
- * no longer feeds this). #874's measurements:
+ * Conservative default token budget per HTTP request when no better number
+ * is known (`packing.tokenBudget`, sourced from `probeProviderLimits` —
+ * see {@link EmbeddingRequestPacking}). #874's measurements:
  * a batch of 100 small docs (~400 KB, ~100K tokens) took 14.8s against a
  * healthy local endpoint — half the 30s request timeout — and a single
  * 128 KB (~24K token) document alone was rejected by the endpoint as
@@ -50,38 +52,6 @@ export const DEFAULT_TOKEN_BUDGET = 6000;
 /** Cheap token estimator: 4 chars ≈ 1 token. Used in verbose logging and error messages. */
 export function estimateTokenCount(text: string): number {
   return Math.round(text.length / 4);
-}
-
-/**
- * Default per-document embedding cap (`embedding.maxInputTokens`, #956)
- * — the materializer truncates a document's embedded text to
- * this cap (head only) instead of skipping it outright, so one oversized
- * entry can no longer fail a whole batch. Fragments are not embedded at all
- * (only the entry's own search text is), so this is the only lever on how
- * much of a large document contributes to its vector.
- */
-export const DEFAULT_MAX_INPUT_TOKENS = 512;
-
-/**
- * Truncate `text` to at most `maxTokens` (estimated via
- * {@link estimateTokenCount}, the same 4-chars≈1-token rule the batching
- * budget uses), keeping only its head. The cut never splits a UTF-16
- * surrogate pair. Text already at or under the cap is returned unchanged
- * (`truncated: false`) — including empty text, which is never itself
- * "truncated".
- */
-export function capEmbeddingText(text: string, maxTokens: number): { text: string; truncated: boolean } {
-  if (estimateTokenCount(text) <= maxTokens) return { text, truncated: false };
-  const charBudget = Math.max(0, maxTokens * 4);
-  let cut = Math.min(charBudget, text.length);
-  if (cut > 0 && cut < text.length) {
-    const code = text.charCodeAt(cut);
-    // A low surrogate (0xDC00-0xDFFF) at the cut point means its high
-    // surrogate is the character just before it — back off one position so
-    // the pair stays together rather than yielding a lone surrogate.
-    if (code >= 0xdc00 && code <= 0xdfff) cut -= 1;
-  }
-  return { text: text.slice(0, cut), truncated: true };
 }
 
 /**
@@ -168,7 +138,7 @@ export type EmbeddingSkipReason = "context-window-exceeded" | "batch-request-fai
  * Only meaningful when `reason === "batch-request-failed"` (#954):
  * whether the failed request timed out or failed some
  * other way (network error, malformed response, a non-timeout HTTP
- * failure). The materializer's circuit breaker treats a run of network
+ * failure). The caller's circuit breaker (`drain.ts`) treats a run of network
  * errors as fatal at ANY request size, but only trusts a run of timeouts
  * once retries have already narrowed them down to single documents — a
  * multi-document timeout might still succeed once split smaller, so it is
@@ -185,8 +155,8 @@ export interface EmbeddingBatchSkip {
    * True on the FIRST skip event of a failed provider batch (#954). One
    * failing request skips every document it covered — one `onSkip` call per
    * document, all sharing this batch's outcome and `reason`/`message` — so a
-   * caller implementing a consecutive-failure policy (the circuit breaker,
-   * `src/indexer/materialize-embeddings.ts`) must count BATCHES, not
+   * caller implementing a consecutive-failure policy (the circuit breaker in
+   * `src/indexer/drain.ts`) must count BATCHES, not
    * documents: a 100-document batch failing once must not look like 100
    * consecutive failures.
    */
@@ -200,7 +170,7 @@ export interface EmbeddingBatchSkip {
 /**
  * Report one skipped document. Return the literal value `false` to stop
  * `RemoteEmbedder` from dispatching any FURTHER provider batch (#954)
- * — used by the materializer's circuit breaker after too many
+ * — used by the caller's circuit breaker (`drain.ts`) after too many
  * consecutive transport failures. Any other return value (including
  * `undefined`/`void`, and deliberately typed `unknown` rather than
  * `boolean | void` so an ordinary `(skip) => skips.push(skip)` callback
@@ -216,7 +186,7 @@ export type EmbeddingSkipHandler = (skip: EmbeddingBatchSkip) => unknown;
  * `[embed] batch 3/1483: 16 docs, 5,900 tokens → 16 stored (0.8 s)`. Only
  * `RemoteEmbedder.embedBatch` produces this (token-bounded batching against
  * an HTTP provider is the thing being reported on); local/deterministic
- * embedding never populates it, and the materializer prints the line only
+ * embedding never populates it, and the caller (`drain.ts`) prints the line only
  * when it is present.
  */
 export interface EmbeddingBatchOutcome {
@@ -330,9 +300,10 @@ export function isContextExceededResponse(status: number, body: string): boolean
  * either direction, bounded 1-16 at the config schema — added after field
  * evidence that a multi-slot local server (llama.cpp `--parallel N`, vLLM)
  * genuinely serves parallel requests and was left idle by the fixed default.
- * Request SIZE remains the first throughput lever regardless:
- * `embedding.batchSize` (document cap) and `embedding.maxTokens` (request
- * token budget — see #956; `contextLength` no longer feeds it)
+ * Request SIZE remains the first throughput lever regardless: the packed
+ * request's document count and token budget (`EmbeddingRequestPacking`,
+ * sourced from `probeProviderLimits` — the retired `embedding.batchSize`/
+ * `maxTokens`/`contextLength` config keys' replacement, index redesign B5)
  * reach a larger batch per request, which is where most of the win is for a
  * single-slot server — a 32-input batch takes about the same wall time as
  * one input against a healthy endpoint.
@@ -350,15 +321,27 @@ interface TextBatch {
 }
 
 /**
- * Group `texts` into request-sized batches bounded by BOTH an estimated
- * token budget and a document-count cap, so one large document does not
- * silently blow the batch past the endpoint's context window (#874).
+ * Group `texts` into request-sized batches bounded by BOTH a token budget and
+ * a document-count cap, so one large document does not silently blow the
+ * batch past the endpoint's context window (#874).
  *
- * A single document whose own estimate exceeds `tokenBudget` can never fit
- * any batch — it is reported as its own oversized "batch" so the caller can
- * skip it without ever making an HTTP request for it.
+ * `tokenCounts[i]`, when given, is the count to use for `texts[i]` instead of
+ * {@link estimateTokenCount}'s fixed 4-chars≈1-token guess — `embedBatch`
+ * passes the calibrated `charsPerToken` estimate for every text
+ * (`EmbeddingRequestPacking.charsPerToken`, sourced from the provider's own
+ * probed limits). Omitted (or shorter than `texts`, e.g. a caller with no
+ * packing at all) falls back to the estimate for the texts it does not cover.
+ *
+ * A single document whose own count exceeds `tokenBudget` can never fit any
+ * batch — it is reported as its own oversized "batch" so the caller can skip
+ * it without ever making an HTTP request for it.
  */
-export function buildTokenBoundedBatches(texts: readonly string[], tokenBudget: number, maxCount: number): TextBatch[] {
+export function buildTokenBoundedBatches(
+  texts: readonly string[],
+  tokenBudget: number,
+  maxCount: number,
+  tokenCounts?: readonly number[],
+): TextBatch[] {
   const batches: TextBatch[] = [];
   let current: number[] = [];
   let currentTokens = 0;
@@ -372,7 +355,7 @@ export function buildTokenBoundedBatches(texts: readonly string[], tokenBudget: 
   };
 
   for (let i = 0; i < texts.length; i++) {
-    const tokens = estimateTokenCount(texts[i] as string);
+    const tokens = tokenCounts?.[i] ?? estimateTokenCount(texts[i] as string);
     if (tokens > tokenBudget) {
       flush();
       batches.push({ indices: [i], oversized: true });
@@ -393,17 +376,50 @@ export function buildTokenBoundedBatches(texts: readonly string[], tokenBudget: 
  * context-size rejection of an `embedBatch` run (#954, field report on
  * beta.1): one 25% cut absorbs the estimator's measured undercount without
  * repeatedly re-shrinking mid-run — see the "shrink at most once" rule on
- * {@link RemoteEmbedder.embedBatch}.
+ * {@link RemoteEmbedder.embedBatch}. Only fires at all when the run's window
+ * is not already authoritative (`packing.windowIsKnown` false) — see
+ * {@link EmbeddingRequestPacking}.
  */
 const ADAPTIVE_BUDGET_SHRINK_FACTOR = 0.75;
 
 /**
- * Floor on the adaptive-budget shrink above, as a multiple of
- * `maxInputTokens` (#954): a request budget below twice the per-document cap
- * could no longer batch more than one document per request, defeating the
- * point of batching at all.
+ * Floor on the adaptive-budget shrink above (#954, revised by the index
+ * redesign's B5 — the retired `embedding.maxInputTokens` per-document cap no
+ * longer bounds a single document's size, so the floor is a fixed token
+ * count rather than a multiple of that cap): a request budget below this
+ * could no longer batch more than a couple of average-sized units per
+ * request, defeating the point of batching at all.
  */
-const ADAPTIVE_BUDGET_FLOOR_MULTIPLIER = 2;
+const ADAPTIVE_BUDGET_FLOOR_TOKENS = 1024;
+
+/**
+ * Per-request packing/window info for one `embedBatch` call, sourced from
+ * the provider's OWN limits (`probeProviderLimits`,
+ * `src/llm/embedders/provider-limits.ts`) rather than the retired
+ * `embedding.maxTokens`/`batchSize`/`contextLength`/`maxInputTokens` config
+ * keys (docs/plans/index-redesign-contract.md, B5). `drain.ts` is the one
+ * production caller that probes and passes this; every field is optional and
+ * falls back to the old static defaults for a caller that has not (a bare
+ * `embed()`/`embedBatch()` call, most tests).
+ */
+export interface EmbeddingRequestPacking {
+  /** Per-request token budget (`ProviderLimits.windowTokens`); {@link DEFAULT_TOKEN_BUDGET} when omitted. */
+  tokenBudget?: number;
+  /** Per-request document-count safety cap; {@link DEFAULT_REMOTE_BATCH_SIZE} when omitted. */
+  maxCount?: number;
+  /** Calibrated chars-per-token ratio (`ProviderLimits.charsPerToken`), used in place of {@link estimateTokenCount}'s fixed 4-chars-per-token guess when planning batches. */
+  charsPerToken?: number;
+  /**
+   * True once `tokenBudget` is itself an observed value
+   * (`ProviderLimits.source` `"llama.cpp"`/`"ollama"`), not the generic
+   * 8192-token default a provider that reports nothing gets. An
+   * authoritative window does not need the same-run adaptive shrink
+   * corrective below — see {@link RemoteEmbedder.embedBatch}'s doc comment.
+   */
+  windowIsKnown?: boolean;
+  /** Ollama's native `num_ctx`, sent only when the provider is Ollama (`ProviderLimits.source === "ollama"`). */
+  ollamaNumCtx?: number;
+}
 
 export class RemoteEmbedder implements Embedder {
   private readonly endpoint: string;
@@ -526,45 +542,54 @@ export class RemoteEmbedder implements Embedder {
    * on a small batch rather than always waiting out the full configured
    * `embedding.timeoutMs`.
    *
-   * Run-scoped adaptive budget (#954, field report on beta.1): the FIRST
-   * context-size rejection of the run shrinks the effective request budget
-   * by {@link ADAPTIVE_BUDGET_SHRINK_FACTOR} (floored at
-   * {@link ADAPTIVE_BUDGET_FLOOR_MULTIPLIER} times `maxInputTokens`) for
-   * every batch not yet dispatched — the still-planned tail of `texts` is
-   * re-batched with `buildTokenBoundedBatches` at the smaller budget, and a
-   * `budget-lowered` `onBatch` event reports it once. This never touches the
-   * split-and-retry of the rejected batch itself (above), and never fires a
-   * second time in the same run even if a later batch is also rejected — a
-   * static configured budget that is simply too big for the endpoint should
-   * self-correct once, not ratchet down forever.
+   * Run-scoped adaptive budget (#954, field report on beta.1; gated by
+   * `packing.windowIsKnown` per the index redesign's B5): on the FIRST
+   * context-size rejection of the run, when the request window is NOT
+   * already an observed provider value (`packing.windowIsKnown` false/unset
+   * — the generic {@link DEFAULT_TOKEN_BUDGET}/8192-token default, or a
+   * caller with no packing at all), this shrinks the effective request
+   * budget by {@link ADAPTIVE_BUDGET_SHRINK_FACTOR} (floored at
+   * {@link ADAPTIVE_BUDGET_FLOOR_TOKENS}) for every batch not yet
+   * dispatched — the still-planned tail of `texts` is re-batched with
+   * `buildTokenBoundedBatches` at the smaller budget, and a
+   * `budget-lowered` `onBatch` event reports it once. A KNOWN window
+   * (llama.cpp/Ollama, probed via `probeProviderLimits`) is already
+   * authoritative, so a rejection against it is unexpected — split-and-retry
+   * (above) still recovers that one batch, but the run-wide budget is left
+   * alone rather than second-guessing a real number. This never touches the
+   * split-and-retry of the rejected batch itself, and never fires a second
+   * time in the same run even if a later batch is also rejected — a budget
+   * that is simply too big for the endpoint should self-correct once, not
+   * ratchet down forever.
    */
   async embedBatch(
     texts: string[],
     signal?: AbortSignal,
     onSkip?: EmbeddingSkipHandler,
     onBatch?: EmbeddingBatchCommit,
+    packing?: EmbeddingRequestPacking,
   ): Promise<(EmbeddingVector | undefined)[]> {
     if (texts.length === 0) return [];
     const results: (EmbeddingVector | undefined)[] = new Array(texts.length).fill(undefined);
     const headers = this.buildHeaders();
-    const ollamaOpts = resolveOllamaOptions(this.config);
+    const ollamaOpts = resolveOllamaOptions(this.config, packing?.ollamaNumCtx);
 
-    // #956: `contextLength` is Ollama's `num_ctx` ONLY (see
-    // resolveOllamaOptions below) — it used to double as this client-side
-    // request budget too, so a config author setting it for one purpose
-    // silently changed the other. `maxTokens` is the sole knob for the
-    // request budget now; unset falls back to DEFAULT_TOKEN_BUDGET.
-    //
-    // `effectiveTokenBudget` (#954) starts at the configured/default value
-    // and MAY shrink once, on the run's first context-size rejection — see
-    // `maybeShrinkBudget` below. `textBatches` is mutated in place (spliced)
-    // by that shrink rather than reassigned, so the in-flight
+    // Per-text counts from the calibrated chars-per-token ratio
+    // (`packing.charsPerToken`, sourced from the provider's own probed
+    // limits) rather than a per-text HTTP tokenize call — synchronous, so
+    // planning a corpus of any size costs no requests at all.
+    const tokenCounts = texts.map((text) => Math.ceil(text.length / (packing?.charsPerToken ?? 4)));
+
+    // `effectiveTokenBudget` (#954) starts at the probed/configured/default
+    // value and MAY shrink once, on the run's first context-size rejection —
+    // see `maybeShrinkBudget` below. `textBatches` is mutated in place
+    // (spliced) by that shrink rather than reassigned, so the in-flight
     // `concurrentMap` pool below (which reads this same array by reference)
     // picks up the re-planned tail without restarting.
-    let effectiveTokenBudget = this.config.maxTokens ?? DEFAULT_TOKEN_BUDGET;
-    const maxCount = this.config.batchSize ?? DEFAULT_REMOTE_BATCH_SIZE;
-    const maxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
-    const textBatches = buildTokenBoundedBatches(texts, effectiveTokenBudget, maxCount);
+    let effectiveTokenBudget = packing?.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+    const maxCount = packing?.maxCount ?? DEFAULT_REMOTE_BATCH_SIZE;
+    const windowIsKnown = packing?.windowIsKnown ?? false;
+    const textBatches = buildTokenBoundedBatches(texts, effectiveTokenBudget, maxCount, tokenCounts);
     const configuredTimeoutMs = resolveEmbeddingTimeoutMs(this.config);
     // How many of `textBatches` concurrentMap has already claimed (its own
     // `nextIndex`, mirrored here so a budget shrink knows where the
@@ -573,14 +598,18 @@ export class RemoteEmbedder implements Embedder {
     // order, so the highest `batchIndex` seen so far IS the claimed count.
     let dispatchedBatchCount = 0;
     // Set once the run's first context-size rejection has shrunk the budget
-    // (#954) — guards `maybeShrinkBudget` so it never fires twice.
-    let budgetShrunk = false;
+    // (#954) — guards `maybeShrinkBudget` so it never fires twice. Also true
+    // (so the shrink never fires at all) when the window is already known —
+    // see the method's doc comment.
+    let budgetShrunk = windowIsKnown;
 
     // On the FIRST context-size rejection of this `embedBatch` call, shrink
     // `effectiveTokenBudget` and re-plan every batch `concurrentMap` has not
     // yet claimed from the smaller budget. Never touches `rejectedIndices`
     // itself — the caller's own split-and-retry handles that batch — and is
-    // a no-op after the first call (`budgetShrunk`).
+    // a no-op after the first call (`budgetShrunk`) or when the window is
+    // already known (`windowIsKnown`, folded into `budgetShrunk`'s initial
+    // value above).
     const maybeShrinkBudget = (
       rejectedIndices: number[],
       rejectedBatchIndex: number,
@@ -588,17 +617,22 @@ export class RemoteEmbedder implements Embedder {
     ): void => {
       if (budgetShrunk) return;
       budgetShrunk = true;
-      const floor = ADAPTIVE_BUDGET_FLOOR_MULTIPLIER * maxInputTokens;
-      effectiveTokenBudget = Math.max(Math.round(effectiveTokenBudget * ADAPTIVE_BUDGET_SHRINK_FACTOR), floor);
+      effectiveTokenBudget = Math.max(
+        Math.round(effectiveTokenBudget * ADAPTIVE_BUDGET_SHRINK_FACTOR),
+        ADAPTIVE_BUDGET_FLOOR_TOKENS,
+      );
 
       const notYetDispatched = textBatches.slice(dispatchedBatchCount);
       const remainingIndices = notYetDispatched.flatMap((batch) => batch.indices);
       if (remainingIndices.length > 0) {
         const remainingTexts = remainingIndices.map((i) => texts[i] as string);
-        const replanned = buildTokenBoundedBatches(remainingTexts, effectiveTokenBudget, maxCount).map((batch) => ({
-          indices: batch.indices.map((localIndex) => remainingIndices[localIndex] as number),
-          oversized: batch.oversized,
-        }));
+        const remainingCounts = remainingIndices.map((i) => tokenCounts[i] as number);
+        const replanned = buildTokenBoundedBatches(remainingTexts, effectiveTokenBudget, maxCount, remainingCounts).map(
+          (batch) => ({
+            indices: batch.indices.map((localIndex) => remainingIndices[localIndex] as number),
+            oversized: batch.oversized,
+          }),
+        );
         textBatches.splice(dispatchedBatchCount, textBatches.length - dispatchedBatchCount, ...replanned);
       }
 
@@ -622,7 +656,7 @@ export class RemoteEmbedder implements Embedder {
     };
 
     // Stops the pool from claiming any FURTHER provider batch once the
-    // caller's onBatch has failed once (the materializer's transaction
+    // caller's onBatch has failed once (the caller's transaction
     // failed, so a subsequent commit would just fail again) — dispatching
     // real HTTP requests whose results can never be persisted is pure waste.
     // Deliberately a SEPARATE controller from the caller's own `signal`,
@@ -645,7 +679,7 @@ export class RemoteEmbedder implements Embedder {
     }
 
     // First error thrown BY the caller's onBatch callback (e.g. a real
-    // competing-process SQLITE_BUSY from the materializer's db.transaction())
+    // competing-process SQLITE_BUSY from the caller's own db.transaction())
     // rather than by requestBatch itself. Captured here instead of being left
     // to reach requestAndCommit's try/catch below, which exists solely to
     // classify requestBatch's own provider/network failures — a persistence
@@ -709,7 +743,7 @@ export class RemoteEmbedder implements Embedder {
       if (dispatchAbort.signal.aborted) return;
 
       const batch = indices.map((i) => texts[i] as string);
-      const requestTokens = batch.reduce((sum, text) => sum + estimateTokenCount(text), 0);
+      const requestTokens = indices.reduce((sum, i) => sum + (tokenCounts[i] as number), 0);
       const requestTimeoutMs = scaleEmbeddingTimeoutMs(configuredTimeoutMs, requestTokens, effectiveTokenBudget);
       const requestStart = Date.now();
       let batchEmbeddings: (EmbeddingVector | undefined)[];
@@ -759,8 +793,8 @@ export class RemoteEmbedder implements Embedder {
           // verbose line above — a run silently waiting out a multi-minute
           // back-off looked identical to a hang otherwise. Nothing has
           // failed or succeeded yet, so there is nothing to persist:
-          // `embeddings` are all `undefined` and the materializer's onBatch
-          // must not touch storage for this event.
+          // `embeddings` are all `undefined` and the caller's onBatch must
+          // not touch storage for this event.
           commitBatch(
             indices,
             indices.map(() => undefined),
@@ -802,13 +836,12 @@ export class RemoteEmbedder implements Embedder {
         // Default-level visibility for a failed batch (not verbose-only) is
         // still guaranteed here — just not via warn(). The `commitBatch` call
         // below carries `outcome: "failed"` and this `message` as `reason`
-        // through `onBatch`, and materialize-embeddings.ts's per-batch line
+        // through `onBatch`, and the caller's (`drain.ts`) per-batch line
         // (also default-level) prints it from there. A warn() call here used
         // to print the identical event a second time on stderr — the same
-        // class of double-print bug fixed for the truncation/re-embed-reason
-        // lines in materialize-embeddings.ts (#954, field-report follow-up).
-        // Per-entry batch-mapping detail stays verbose-only
-        // (materialize-embeddings.ts).
+        // class of double-print bug this once guarded against in the retired
+        // materialize-embeddings.ts (#954, field-report follow-up).
+        // Per-entry batch-mapping detail stays verbose-only (the caller).
         let stopRequested = false;
         for (const [k, idx] of indices.entries()) {
           if (
@@ -853,7 +886,7 @@ export class RemoteEmbedder implements Embedder {
       dispatchedBatchCount = batchIndex;
       if (textBatch.oversized) {
         const idx = textBatch.indices[0] as number;
-        const estTokens = estimateTokenCount(texts[idx] as string);
+        const estTokens = tokenCounts[idx] as number;
         onSkip?.({
           index: idx,
           reason: "context-window-exceeded",
@@ -1065,12 +1098,15 @@ function embeddingEndpointPathHint(endpoint: string): string {
  * OpenAI-compatible endpoints ignore unknown request fields, so passing them to
  * other providers is harmless but has no effect.
  */
-function resolveOllamaOptions(config: EmbeddingConnectionConfig): { num_ctx?: number } | undefined {
+function resolveOllamaOptions(
+  config: EmbeddingConnectionConfig,
+  ollamaNumCtx?: number,
+): { num_ctx?: number } | undefined {
   if (config.ollamaOptions && Object.keys(config.ollamaOptions).length > 0) {
     return config.ollamaOptions;
   }
-  if (config.contextLength) {
-    return { num_ctx: config.contextLength };
+  if (ollamaNumCtx) {
+    return { num_ctx: ollamaNumCtx };
   }
   return undefined;
 }

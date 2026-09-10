@@ -38,6 +38,12 @@ export interface SourceSearchHit extends FragmentProvenance {
   type: string;
   name: string;
   path: string;
+  /**
+   * index-redesign-contract.md B5f item 1 — always the entry ref, never
+   * `${entryRef}#${fragmentId}`, even when the best-matching evidence
+   * (`matchedUnit`) is a Markdown fragment. A consumer that wants the
+   * fragment-qualified ref reads `selectedRef` (`FragmentProvenance`) instead.
+   */
   ref: string;
   origin?: string | null;
   /** Env-only: key names surfaced in search results (no values). */
@@ -54,9 +60,10 @@ export interface SourceSearchHit extends FragmentProvenance {
   whyMatched?: string[];
   run?: string;
   /**
-   * Approximate tokens for the content addressed by `ref`: selected-fragment
-   * size for fragment refs, otherwise parent file size. See
-   * `parentEstimatedTokens` when a fragment hit also needs whole-file cost.
+   * Approximate tokens for the content addressed by `ref` — always the whole
+   * entry's size now that `ref` never carries a fragment selector (see `ref`'s
+   * own doc). A fragment hit's OWN size is `fragmentEstimatedTokens`
+   * (`FragmentProvenance`), reached via `selectedRef`.
    */
   estimatedTokens?: number;
   /**
@@ -99,6 +106,17 @@ export interface SourceSearchHit extends FragmentProvenance {
   graph?: {
     entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
     relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+  };
+  /**
+   * index-redesign-contract.md B3 — which unit (of possibly several per
+   * entry) the units search path matched on. Absent only for a browse-path
+   * hit (a deterministic listing, not a relevance match — see
+   * `enumerateEntries` in `db-search.ts`).
+   */
+  matchedUnit?: {
+    unitHash: string;
+    fragmentId: string | null;
+    kind: "card" | "fragment";
   };
 }
 
@@ -563,8 +581,13 @@ export interface InfoResponse {
   searchModes: string[];
   semanticSearch: {
     mode: "off" | "auto";
-    /** Read live from the index at call time — never a cached verdict. */
-    status: "disabled" | "pending" | "ready-js" | "ready-vec";
+    /**
+     * Read live from the index at call time — never a cached verdict.
+     * "ready-js" (a JS-computed cosine-similarity fallback for when the
+     * sqlite-vec extension is unavailable) is retired (index redesign, B5):
+     * the units vector store has no BLOB fallback to fall back to.
+     */
+    status: "disabled" | "pending" | "ready-vec";
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;

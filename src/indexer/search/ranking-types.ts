@@ -16,6 +16,22 @@
 import type { IndexDocument } from "../passes/metadata";
 import type { LexicalQueryExecution } from "./fts-query";
 
+/**
+ * `unit_texts.kind` (index-redesign-contract.md B1): `"card"` is the one
+ * structured-fields unit every entry has (ordinal 0); `"fragment"` is a
+ * Markdown-fragment-derived unit. Duplicated here rather than imported from
+ * the storage layer because B3 derives it from `fragmentId` nullity alone
+ * (see `fuseByEntry` in `ranking.ts`) and never reads `unit_texts` itself.
+ */
+export type UnitKind = "card" | "fragment";
+
+/** Which unit (of possibly several per entry) a units-search hit matched on. */
+export interface MatchedUnit {
+  unitHash: string;
+  fragmentId: string | null;
+  kind: UnitKind;
+}
+
 export interface RankedEntryInput {
   id: number;
   entry: IndexDocument;
@@ -33,11 +49,11 @@ export interface RankedEntryInput {
   utilityBoosted?: boolean;
   /**
    * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
-   * ceiling clamped this item: the score BEFORE the clamp. The semantic-only
-   * `minScore` floor in db-search checks this instead of the clamped score,
-   * so a ceiling that sits below the floor (e.g. archived 0.15 < default
-   * minScore 0.2) demotes the hit to last place instead of silently DROPPING
-   * a result that would otherwise have listed.
+   * ceiling clamped this item: the score BEFORE the clamp. The final ranking
+   * comparator (`db-search.ts`) checks this instead of the clamped score for
+   * its tie-break ordering, so a demoted hit still sorts among its peers by
+   * the relevance it would have had without the demotion, rather than
+   * collapsing every ceilinged item to the same clamped value.
    */
   preCeilingScore?: number;
   /**
@@ -47,4 +63,12 @@ export interface RankedEntryInput {
    * compound-demoted relaxed set does not fall back to filename order.
    */
   preRelaxedCeilingScore?: number;
+  /**
+   * Set by `fuseByEntry` (index-redesign-contract.md B3): the specific unit —
+   * of possibly several the entry has — whose reciprocal-rank score won the
+   * entry its grouping. Absent only for a browse-path hit (a deterministic
+   * listing, not a relevance match — see `enumerateEntries` in
+   * `db-search.ts`).
+   */
+  matchedUnit?: MatchedUnit;
 }
