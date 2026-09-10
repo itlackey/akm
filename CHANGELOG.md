@@ -250,8 +250,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `embedding.contextLength` is Ollama's `num_ctx` only now — it used to also
   silently set the per-request token budget (`embedding.maxTokens`), so
   setting it for the server's context window changed request batching too.
-  The request budget is `embedding.maxTokens` (default 8000), so a request
-  carries about 16 documents alongside the new per-document cap by default.
+  The request budget is `embedding.maxTokens` (default 6000, see #954
+  below), so a request carries about 11 documents alongside the new
+  per-document cap by default.
 - **`akm index` reports where its embedding credential came from, before the
   first provider request (#953).** A field report suspected a gateway was
   receiving unauthenticated embedding requests despite `embedding.apiKey`
