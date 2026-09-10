@@ -25,11 +25,22 @@ import type { Database } from "../database";
 
 const vecStatus = new WeakMap<Database, boolean>();
 
+let forceVecUnavailableForTests = false;
+
+/** TEST-ONLY. Force `loadVecExtension` to record unavailable without touching the package; pass false to restore. */
+export function _setVecUnavailableForTests(unavailable: boolean): void {
+  forceVecUnavailableForTests = unavailable;
+}
+
 /**
  * Attempt to load the sqlite-vec extension into `db`, recording availability.
  * Exported so the connection lifecycle can arm it at open time.
  */
 export function loadVecExtension(db: Database): void {
+  if (forceVecUnavailableForTests) {
+    vecStatus.set(db, false);
+    return;
+  }
   try {
     const esmRequire = createRequire(import.meta.url);
     const sqliteVec = esmRequire("sqlite-vec");
