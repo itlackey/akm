@@ -8,6 +8,7 @@ import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import type { LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
@@ -16,6 +17,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
+import { probeLlmEndpoint } from "../../llm/client";
 import { akmImprove } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
@@ -25,7 +27,12 @@ import {
   type TerminationReason,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
+import {
+  type EngineUnavailableProcessName,
+  type ResolvedImprovePlan,
+  type ResolvedImproveProcess,
+  resolveImprovePlan,
+} from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
@@ -109,6 +116,78 @@ function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
   const lines = plan.engineUnavailable.map((item) => `  - ${item.process} (${item.configKey}): ${item.reason}`);
   throw new ConfigError(
     `--require-engines: ${plan.engineUnavailable.length} improve process${plan.engineUnavailable.length === 1 ? "" : "es"} cannot run because ${plan.engineUnavailable.length === 1 ? "its" : "their"} engine is unavailable:\n${lines.join("\n")}`,
+    "LLM_NOT_CONFIGURED",
+  );
+}
+
+/** One resolved LLM connection `--require-engines` needs to prove reachable. */
+interface RequiredEngineTarget {
+  process: EngineUnavailableProcessName;
+  engine: string;
+  connection: LlmConnectionConfig;
+}
+
+/**
+ * Every distinct `kind: "llm"` connection the active strategy's plan would
+ * actually dispatch against — the main per-process runners plus triage's own
+ * judgment engine, which is resolved separately (#957).
+ */
+function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngineTarget[] {
+  const targets: RequiredEngineTarget[] = [];
+  for (const [processName, process] of Object.entries(plan.processes) as [
+    EngineUnavailableProcessName,
+    ResolvedImproveProcess,
+  ][]) {
+    if (process.runner) {
+      targets.push({ process: processName, engine: process.runner.engine, connection: process.runner.connection });
+    }
+  }
+  if (plan.triageJudgment?.kind === "llm") {
+    targets.push({
+      process: "triage.judgment",
+      engine: plan.triageJudgment.engine,
+      connection: plan.triageJudgment.connection,
+    });
+  }
+  return targets;
+}
+
+/**
+ * `--require-engines` field re-test (#957): the static check above only
+ * proves an engine is configured and credentialed — it cannot see a dead
+ * endpoint. A field run against an unreachable engine sat silent for
+ * minutes instead of hitting the documented exit-78 path. Reuse the SAME
+ * bounded reachability probe `akm health`'s `default-llm-engine` /
+ * `configured-engines` checks already run (`probeLlmEndpoint`, a single
+ * `/models` GET bounded by its own default timeout) once per distinct
+ * endpoint, so a dead engine is caught here instead of during dispatch.
+ */
+async function assertRequiredEnginesReachable(
+  plan: ResolvedImprovePlan,
+  probeReachable: typeof probeLlmEndpoint = probeLlmEndpoint,
+): Promise<void> {
+  const targets = collectRequiredEngineTargets(plan);
+  if (targets.length === 0) return;
+  const probesByEndpoint = new Map<string, ReturnType<typeof probeReachable>>();
+  const probed = await Promise.all(
+    targets.map(async (target) => {
+      const endpointKey = target.connection.endpoint.replace(/\/+$/, "");
+      let pending = probesByEndpoint.get(endpointKey);
+      if (!pending) {
+        pending = probeReachable(target.connection);
+        probesByEndpoint.set(endpointKey, pending);
+      }
+      return { ...target, reach: await pending };
+    }),
+  );
+  const unreachable = probed.filter((item) => !item.reach.reachable);
+  if (unreachable.length === 0) return;
+  const lines = unreachable.map(
+    (item) =>
+      `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
+  );
+  throw new ConfigError(
+    `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine endpoint is not reachable:\n${lines.join("\n")}`,
     "LLM_NOT_CONFIGURED",
   );
 }
@@ -202,7 +281,7 @@ export const improveCommand = defineCommand({
     "require-engines": {
       type: "boolean",
       description:
-        "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment. Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
+        "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe (the same probe akm health runs). Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
       default: false,
     },
     run: {
@@ -274,7 +353,10 @@ export const improveCommand = defineCommand({
       // is disabled purely by an unreachable credential; a live run keeps
       // throwing (allowAllDisabled unset).
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
-      if (args["require-engines"]) assertRequiredEnginesAvailable(resolvedPlan);
+      if (args["require-engines"]) {
+        assertRequiredEnginesAvailable(resolvedPlan);
+        await assertRequiredEnginesReachable(resolvedPlan);
+      }
       const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
       // Only set the keys the user actually passed (citty leaves the flag
