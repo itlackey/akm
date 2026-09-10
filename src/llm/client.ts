@@ -647,3 +647,26 @@ export async function probeLlmEndpoint(
     return { reachable: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+/**
+ * Endpoint-keyed probe memoization (#957): every caller that probes several
+ * engine connections in one pass (`akm health`'s engine checks, `akm
+ * improve --require-engines`) shares one in-flight probe per distinct
+ * endpoint (trailing slashes normalized) instead of firing a duplicate probe
+ * when two engines point at the same server. `cache` must be scoped to one
+ * invocation and never shared across calls — a stale "reachable" surviving
+ * past the run that produced it is the failure mode this exists to avoid.
+ */
+export function probeEndpointOnce<T>(
+  connection: LlmConnectionConfig,
+  cache: Map<string, Promise<T>>,
+  probe: (connection: LlmConnectionConfig) => Promise<T>,
+): Promise<T> {
+  const key = connection.endpoint.replace(/\/+$/, "");
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = probe(connection);
+    cache.set(key, pending);
+  }
+  return pending;
+}

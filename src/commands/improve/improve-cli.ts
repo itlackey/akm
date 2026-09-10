@@ -17,7 +17,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { probeLlmEndpoint } from "../../llm/client";
+import { probeEndpointOnce, probeLlmEndpoint } from "../../llm/client";
 import { akmImprove } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
@@ -160,7 +160,8 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
  * bounded reachability probe `akm health`'s `default-llm-engine` /
  * `configured-engines` checks already run (`probeLlmEndpoint`, a single
  * `/models` GET bounded by its own default timeout) once per distinct
- * endpoint, so a dead engine is caught here instead of during dispatch.
+ * endpoint (via the shared `probeEndpointOnce` memoization health/checks.ts
+ * also uses), so a dead engine is caught here instead of during dispatch.
  */
 async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
@@ -170,15 +171,10 @@ async function assertRequiredEnginesReachable(
   if (targets.length === 0) return;
   const probesByEndpoint = new Map<string, ReturnType<typeof probeReachable>>();
   const probed = await Promise.all(
-    targets.map(async (target) => {
-      const endpointKey = target.connection.endpoint.replace(/\/+$/, "");
-      let pending = probesByEndpoint.get(endpointKey);
-      if (!pending) {
-        pending = probeReachable(target.connection);
-        probesByEndpoint.set(endpointKey, pending);
-      }
-      return { ...target, reach: await pending };
-    }),
+    targets.map(async (target) => ({
+      ...target,
+      reach: await probeEndpointOnce(target.connection, probesByEndpoint, probeReachable),
+    })),
   );
   const unreachable = probed.filter((item) => !item.reach.reachable);
   if (unreachable.length === 0) return;
