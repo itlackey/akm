@@ -75,6 +75,7 @@ import type { EntryProvenance } from "../storage/repositories/index-entry-types"
 import { replaceFtsEntry } from "../storage/repositories/index-fts-repository";
 import { replaceEntryUnits } from "../storage/repositories/units-repository";
 import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../workflows/source-files";
+import { enrichReconciledEntries, type MetadataEnrichmentCandidate } from "./enrich";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import {
   getMarkdownFragmentContent,
@@ -84,9 +85,9 @@ import {
   setMarkdownFragmentContent,
 } from "./passes/metadata";
 import { parseFileDocument } from "./scan/parse-file";
-import { buildSearchFields, buildSearchText } from "./search/search-fields";
+import { buildSearchText } from "./search/search-fields";
 import { resolveSourceEntries } from "./search/search-source";
-import { deriveUnits, type UnitSource } from "./units/unit";
+import { deriveUnits, toUnitSource } from "./units/unit";
 import { buildFileContext, type FileContext } from "./walk/file-context";
 import { type WalkStashFlatOptions, walkStashFlatWithStatus } from "./walk/walker";
 
@@ -129,6 +130,16 @@ interface RootContext {
 interface FileResult {
   outcome: "added" | "changed";
   unitsAdded: number;
+  /**
+   * The row id, written entry, and provenance `applyChange` just committed —
+   * carried out so `reconcileRoots` can offer this file as a
+   * {@link MetadataEnrichmentCandidate} (B5e) without a redundant re-query.
+   * `reconcilePaths` (the write-time path) ignores these fields; it never
+   * runs enrichment (see `enrich.ts`'s module doc for why).
+   */
+  entryId: number;
+  entry: IndexDocument;
+  provenance: EntryProvenance;
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -157,6 +168,11 @@ export async function reconcileRoots(
   const counts = emptyCounts();
   const config = loadConfig();
   const maxChars = unitMaxChars(await probeProviderLimits(config.embedding ?? {}, { signal: opts?.signal }));
+  // Collected across every root, then handed to `enrichReconciledEntries`
+  // ONCE after this whole walk (and `resolvePhysicalOverlaps`) settles — see
+  // `enrich.ts`'s module doc for why this runs only on the full-root path and
+  // only after every per-file transaction below has already committed.
+  const enrichmentCandidates: MetadataEnrichmentCandidate[] = [];
 
   for (const root of roots) {
     throwIfAborted(opts?.signal);
@@ -298,7 +314,15 @@ export async function reconcileRoots(
             .get(deriveItemRefForChange(ctx, change), candidate.path) != null
         : false;
       const renameSource = candidate && !itemRefAlreadyClaimed ? bucket?.shift() : undefined;
-      applyOutcome(counts, applyChange(db, ctx, change, maxChars, renameSource, false));
+      const result = applyChange(db, ctx, change, maxChars, renameSource, false);
+      applyOutcome(counts, result);
+      enrichmentCandidates.push({
+        entryId: result.entryId,
+        blobHash: change.hash,
+        entry: result.entry,
+        filePath: change.file.absPath,
+        provenance: result.provenance,
+      });
     }
 
     // Phase 4: whatever gone rows no rename claimed are genuinely gone —
@@ -333,6 +357,20 @@ export async function reconcileRoots(
 
     opts?.onProgress?.(`Reconciled "${root.path}": ${walked.files.length} files scanned.`);
   }
+
+  // Runs BEFORE `resolvePhysicalOverlaps` below, not after: enrichment writes
+  // through `upsertEntry`, keyed by `item_ref` (INSERT ... ON CONFLICT), so
+  // applying it to a candidate whose row `resolvePhysicalOverlaps` is about to
+  // delete as a physical-overlap LOSER would silently re-INSERT that exact
+  // row — resurrecting the very row the overlap resolution just removed.
+  // Running first means a wasted enrichment call on a loser is simply deleted
+  // moments later (entry_units cascades with its `entries` row; any orphaned
+  // `unit_texts`/`units_fts` rows are swept by `pruneOrphanUnitTexts` below
+  // regardless of ordering) — never a resurrection.
+  await enrichReconciledEntries(db, config, enrichmentCandidates, maxChars, {
+    signal: opts?.signal,
+    onProgress: opts?.onProgress,
+  });
 
   // Two configured bundle roots can physically overlap (a bundle added inside
   // another bundle's root, or one adapter's `includeAllDirectories` reaching a
@@ -801,7 +839,13 @@ function applyChange(
       units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
     );
 
-    return { outcome: written.outcome, unitsAdded: inserted } satisfies FileResult;
+    return {
+      outcome: written.outcome,
+      unitsAdded: inserted,
+      entryId: written.entryId,
+      entry: entryWithSize,
+      provenance,
+    } satisfies FileResult;
   });
 }
 
@@ -1001,41 +1045,6 @@ function deleteFileAndEntryByPath(db: Database, filePath: string): boolean {
     if (hadFileRow) deleteFileStates(db, [filePath]);
     return entryIds.length > 0 || hadFileRow;
   });
-}
-
-/**
- * `UnitSource` from the freshly parsed entry — `buildSearchFields` for the
- * structured fields, the entry's own carried markdown for fragments.
- *
- * `hasMarkdownFragmentContent`/`getMarkdownFragmentContent` is the `akm`
- * adapter's own line-structure-preserving fragment projection
- * (`applyPreContributorFields`, gated `.md`-only and excluding sensitive
- * types), set during `recognize` and present ONLY for that adapter. Every
- * other adapter (`okf`, ...) never calls it, so `hasMarkdownFragmentContent`
- * is always false for their entries — falling straight to `null` here would
- * leave their body content in `entries_fts`'s single per-entry `content`
- * column (`buildSearchFields`, unconditional) but in NO unit at all, an
- * asymmetry that would silently blank a whole adapter's fragment search once
- * unit coverage is complete (index-redesign-contract.md B3). `entry.content`
- * — the same field already surfaced through search hits and `show`, so
- * already that adapter's own public-safe projection — is the fallback
- * fragment source for exactly this case.
- */
-function toUnitSource(entryId: number, entry: IndexDocument): UnitSource {
-  const fields = buildSearchFields(entry);
-  const safeMarkdown = hasMarkdownFragmentContent(entry)
-    ? (getMarkdownFragmentContent(entry) ?? null)
-    : typeof entry.content === "string" && entry.content.trim()
-      ? entry.content
-      : null;
-  return {
-    entryId,
-    name: fields.name,
-    description: fields.description,
-    tags: fields.tags,
-    hints: fields.hints,
-    safeMarkdown,
-  };
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
