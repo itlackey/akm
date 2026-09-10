@@ -423,39 +423,36 @@ remote endpoint (`src/llm/embedders/remote.ts`):
 | `embedding.timeoutMs` | `120000` (120s) | Per-request wall timeout — see below. |
 | `embedding.concurrency` | `1` loopback / `2` remote, or the provider's own probed slot count | In-flight request window — see below. |
 
-**Which knob fixed the field's 8k-context overflow, worked examples.** A
-0.9.15-beta field report described documents estimated under the request
-budget that still tokenized to 8.5k-12.4k real tokens against an
-8192-token endpoint, because the 4-chars-per-token estimator undercounts
-dense technical text. Three knobs changed shape between beta and this
-release; only one of them makes that overflow structurally unreachable:
+**What used to fix the field's 8k-context overflow.** A 0.9.15-beta field
+report described documents estimated under the request budget that still
+tokenized to 8.5k-12.4k real tokens against an 8192-token endpoint, because
+the 4-chars-per-token estimator undercounts dense technical text.
+0.9.15-beta answered it with three of the four now-retired keys; none of
+them does anything in this release (see [Retired
+Configuration](#retired-configuration)), but the shape of the old fix is
+worth knowing because the probed-window replacement above closes the same
+gap structurally instead of by convention:
 
-- `embedding.maxInputTokens: 512` — per-DOCUMENT cap, applied before
-  batching. Example: a 6,000-character API reference page is truncated to
-  its first ~2,000 characters (512 estimated tokens) before it is ever
-  counted toward a request. This is the fix for the original overflow: no
-  single document can contribute more than 512 estimated tokens to a
-  request, no matter how `maxTokens` or `contextLength` are set.
-- `embedding.maxTokens: 6000` — per-REQUEST budget: how many already-capped
-  documents' estimated tokens fit in one HTTP request. Example: with the
-  default 512-token document cap, a request packs about 11 documents before
-  this budget is reached and the request is sent; if the run's first
-  request is still rejected for exceeding the endpoint's real context
-  window, akm shrinks this budget to three quarters of its value (floored
-  at twice `maxInputTokens`) for every later request in the same run. A
-  request-level budget alone cannot stop one oversized document from
-  overflowing a request — only the per-document cap above does that.
-- `embedding.contextLength: 8192` — Ollama's `num_ctx` only, forwarded
-  verbatim on a native `/api/embed` request. It has no effect on request or
-  document sizing, and no effect at all against a non-Ollama endpoint — see
-  below for why that used not to be true.
+- `embedding.maxInputTokens: 512` used to be a per-DOCUMENT cap, applied
+  before batching. This was the actual fix for the original overflow: no
+  single document could contribute more than 512 estimated tokens to a
+  request, no matter how `maxTokens` or `contextLength` were set.
+- `embedding.maxTokens: 6000` used to be the per-REQUEST budget: how many
+  already-capped documents' estimated tokens fit in one HTTP request. A
+  request-level budget alone could not stop one oversized document from
+  overflowing a request — only the per-document cap above did that.
+- `embedding.contextLength: 8192` fed only Ollama's `num_ctx`, forwarded
+  verbatim on a native `/api/embed` request. It never bounded request or
+  document sizing, and had no effect at all against a non-Ollama endpoint.
 
-A field config of `contextLength: 8192` + `maxTokens: 8000` (the exact
-0.9.15-beta values from the original report) produces no 400s on 0.9.15:
-`maxInputTokens` (512, new this release) caps every document before it is
-counted, so the original 8.5k-12.4k-token documents that overflowed the
-8192-token endpoint can never reach the request budget in the first place —
-independent of whatever `maxTokens` or `contextLength` are set to.
+None of the three is read any more. A field config still carrying
+`contextLength: 8192` + `maxTokens: 8000` (the exact 0.9.15-beta values
+from the original report) loads on this release without error and without
+effect — the same "ignored, unvalidated, no warning" handling every retired
+key gets (see below) — because `akm index` now probes the endpoint's real
+context window itself and packs every request against that instead of
+against a configured estimate, so the original overflow is unreachable
+regardless of what either retired key is set to.
 
 `embedding.timeoutMs` (positive integer, default `120000` — 120s) is the
 budget for a request at the FULL (probed) token budget; a local model
