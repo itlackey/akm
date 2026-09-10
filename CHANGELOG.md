@@ -562,18 +562,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of reusing them. A plain `akm index` resume after an interruption
   now embeds only the entries still missing a vector, with no purge and no
   canary.
-- **A concurrent `akm index` without `--skip-if-locked` now fails with a
-  retryable-shortly exit code instead of a raw driver error (#956 field
-  follow-up).** Contention with another writer touching index.db (a second
-  `akm index`, a source add/update's embedding pass, the per-command
-  background reindex) used to exhaust the SQLite driver's retry window and
-  surface as `{"ok":false,"error":"database is locked"}` at exit 70
-  (internal/unclassified). It is now reclassified into a `TransientError`
-  with a dedicated `INDEX_DB_CONTENDED` code (exit 75), naming the rebuild
-  lock's live holder pid when known, mirroring `STATE_DB_CONTENDED`'s
-  precedent (#948) for state.db; the original driver text survives as
-  `cause`. `--skip-if-locked` is unaffected — it already skips gracefully
-  before ever attempting the write.
 
 ## [0.9.14] - 2026-09-04
 
