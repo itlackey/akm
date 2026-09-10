@@ -396,42 +396,49 @@ unless a remote `embedding` config is provided.
 `akm improve`'s memory-inference/consolidate passes when they call an
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
 reference, same rules as engine `apiKey`), `dimension`, `localModel`,
-`maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
-`concurrency`, and `ollamaOptions.num_ctx`.
+`timeoutMs`, `concurrency`, and `ollamaOptions.num_ctx`.
 
-The knobs that bound request/document size and rate, all optional (defaults
-apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
+Request PACKING — how many documents land in one HTTP request, and the
+token budget that bounds it — is no longer config at all. `akm index`
+probes the embedding endpoint itself (llama.cpp's `GET /props`, Ollama's
+`POST /api/show`) for its real context window and in-flight slot count
+before packing any request, and uses the provider's own tokenizer
+(llama.cpp's `/tokenize`) for exact counts where it offers one; an endpoint
+that answers neither probe (an OpenAI-compatible server, a gateway) gets a
+conservative built-in default. This replaced four retired keys —
+`maxInputTokens`, `maxTokens`, `batchSize`, `contextLength` — see
+[Retired Configuration](#retired-configuration).
+
+The knobs that remain, both optional (defaults apply when unset), for a
+remote endpoint (`src/llm/embedders/remote.ts`):
 
 | Key | Default | Bounds |
 | --- | --- | --- |
-| `embedding.maxInputTokens` | `512` | Per-DOCUMENT cap, applied before batching (#956). A document's embedded text is truncated to its head (unicode-safe) at this many estimated tokens instead of ever being skipped for size alone — a document is skipped only when its truncated head is empty. |
-| `embedding.maxTokens` | `6000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 11 documents by default. Lowered from 8000 to 6000 (#954): the 4-chars-per-token estimator undercounts dense technical text by 7-55%, so 8000 regularly overshot an 8192-token endpoint's real context window. |
-| `embedding.batchSize` | `100` | Per-REQUEST document-COUNT safety cap, independent of the token budget — guards against many tiny documents packing an oversized request. |
-| `embedding.contextLength` | unset | Ollama's `num_ctx` ONLY, forwarded verbatim as `options.num_ctx` on the native `/api/embed` request. Does **not** feed the request token budget above (#956) — the two used to share this one field, so setting it for the server's context window silently changed request batching too. |
 | `embedding.timeoutMs` | `120000` (120s) | Per-request wall timeout — see below. |
-| `embedding.concurrency` | `1` loopback / `2` remote | In-flight request window — see below. |
+| `embedding.concurrency` | `1` loopback / `2` remote, or the provider's own probed slot count | In-flight request window — see below. |
 
 `embedding.timeoutMs` (positive integer, default `120000` — 120s) is the
-budget for a request at the FULL token budget (`embedding.maxTokens`); a
-local model server on a large, token-budget-bounded batch legitimately takes
-longer than the prior fixed 30s cut off. A smaller request gets a
-proportionally smaller timeout —
+budget for a request at the FULL (probed) token budget; a local model
+server on a large, token-budget-bounded batch legitimately takes longer
+than the prior fixed 30s cut off. A smaller request gets a proportionally
+smaller timeout —
 `clamp(timeoutMs × requestTokens / tokenBudget, 30000, timeoutMs)` — so a
 dead endpoint is still detected in seconds on the common case of small
 documents. Set `embedding.timeoutMs` lower to fail fast against a
 known-fast endpoint, or higher for a slow local server on large batches.
 
-`embedding.maxTokens` (or its default) is also a run-scoped adaptive
-starting point, not a hard ceiling (#954): on the FIRST rejection of an
-`akm index` run for exceeding the endpoint's context window, akm shrinks
-the request budget to three quarters of its current value — floored at
-twice `embedding.maxInputTokens` — for every request not yet sent, and
-prints one line naming the new value. This never changes the rejected
-request's own split-and-retry (below), never shrinks a second time in the
-same run, and never grows the budget back up. Users who set
-`embedding.maxTokens` explicitly are unaffected by the LOWERED DEFAULT
-above but still benefit from this same-run recovery if their own value
-turns out to be too high for the endpoint.
+The probed token budget is also a run-scoped adaptive starting point, not a
+hard ceiling, but ONLY when the endpoint did not report a real window of
+its own (an OpenAI-compatible server or gateway, the conservative built-in
+default): on the FIRST rejection of an `akm index` run for exceeding the
+endpoint's context window, akm shrinks the request budget to three quarters
+of its current value for every request not yet sent, and prints one line
+naming the new value. A window akm actually probed from the endpoint
+(llama.cpp, Ollama) is treated as authoritative and is never second-guessed
+this way — a rejection against it still recovers via the same
+split-and-retry every rejection gets (below), just without lowering the
+budget for the rest of the run. This never fires a second time in the same
+run either way.
 
 A request TIMEOUT (not a rejection for exceeding the context window) never
 drops its batch immediately: field confirmation showed that once akm
@@ -451,19 +458,17 @@ requests and reports failure — batches already committed are kept; rerun
 once (a remote endpoint only; the local transformer path is unaffected):
 `1` for a loopback endpoint (`localhost`, `127.0.0.0/8`, etc. — a local
 model server serves one inference at a time, and parallel requests thrash
-it) and `2` for a remote one, unless `embedding.concurrency` (positive
-integer, 1-16) overrides it. This default holds for the overwhelming
-majority of setups; set the override only for an endpoint that genuinely
-serves parallel requests — a local server started with a multi-slot flag
-(llama.cpp's `--parallel N`, vLLM) — not to "speed up" an ordinary
-single-slot model server, which the default already protects from
+it) and `2` for a remote one, unless the provider's own probed slot count
+(llama.cpp's `total_slots`) or `embedding.concurrency` (positive integer,
+1-16, checked first) overrides it. This default holds for the overwhelming
+majority of setups; set an explicit override only for an endpoint that
+genuinely serves parallel requests — a local server started with a
+multi-slot flag (llama.cpp's `--parallel N`, vLLM) — not to "speed up" an
+ordinary single-slot model server, which the default already protects from
 reload-thrash. Request SIZE remains the first throughput lever regardless:
-`embedding.batchSize` (a document-count cap, default 100) together with
-`embedding.maxTokens` (an estimated token budget per request, default 6000
-— NOT `embedding.contextLength`, see the table above) control how many
-documents land in one request — with the default 512-token
-`embedding.maxInputTokens` document cap, that is about 11 documents,
-taking about the same wall time as a single one against a healthy endpoint.
+the probed token budget and document-count cap described above control how
+many documents land in one request, taking about the same wall time as a
+single one against a healthy endpoint.
 
 ## Search tuning
 
@@ -753,3 +758,13 @@ profile identities.
 `embedding.chunkSize` was never read by anything under `src/` (#954), so a
 config that still sets it is simply ignored — it still loads, unvalidated
 and without warning.
+
+`embedding.maxInputTokens`, `embedding.maxTokens`, `embedding.batchSize`,
+and `embedding.contextLength` are retired (index redesign): `akm index`
+packs requests against the embedding provider's own probed context window
+and slot count instead (see [Semantic search](#semantic-search)). A config
+that still sets any of them is simply ignored — it still loads, unvalidated
+and without warning, the same as `embedding.chunkSize` above.
+`embedding.contextLength` specifically fed Ollama's `num_ctx`; that request
+field is now sent automatically from the same probe, or set explicitly via
+`embedding.ollamaOptions.num_ctx`.
