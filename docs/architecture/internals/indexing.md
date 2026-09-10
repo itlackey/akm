@@ -343,7 +343,11 @@ any run smaller than 500 entries), and the heartbeat (every 15s while
 waiting on the provider) names both the live stored AND failed counts:
 `Still generating embeddings: X/N stored, F failed; waiting on embedding
 provider.` The final line reports throughput: `Stored N embeddings in Xs
-(Y.Y entries/s, ~Z tokens/s).` A failed provider batch itself logs at the
+(Y.Y entries/s, ~Z tokens/s).` `Z` sums the estimate of the capped text
+`embedBatch` actually transmitted for each stored entry, not the entry's
+raw pre-cap search text (#954) — otherwise every entry over
+`embedding.maxInputTokens` inflated the reported rate. A failed provider
+batch itself logs at the
 default `warn` level, not `--verbose`-only, naming the batch size and
 reason — a silently grinding, hours-long run against a dead provider with
 one aggregate warning at the very end was the field report's own symptom.

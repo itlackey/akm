@@ -544,6 +544,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   physical batch size", which the existing context-size pattern
   (`exceed_context_size_error`, "context size", …) did not match, so the
   whole batch was dropped instead of being split and retried like a 413.
+- **The end-of-run throughput line now sums the capped text actually sent to
+  the embedding provider (#954).** `storedTokens` accumulated
+  `estimateTokenCount(entry.searchText)` — the entry's pre-cap search text —
+  while the request `embedBatch` received held the text `capEmbeddingText`
+  had already truncated to `embedding.maxInputTokens`, so the reported
+  `tokens/s` figure overstated throughput for every entry over the cap. The
+  final line now sums the estimate of the capped text the batching loop
+  already built, matching what the provider was actually asked to embed.
 - **A `kill <launcher-pid>` no longer orphans the running `akm` process
   (#956).** The published launcher (`scripts/node-runtime/akm`/
   `akm-migrate`) now forwards SIGTERM/SIGINT/SIGHUP to its bun/node child
