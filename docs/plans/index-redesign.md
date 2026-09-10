@@ -1,0 +1,125 @@
+# The index, redesigned
+
+Supersedes the embedding-only redesign in `index-fragment-vectors.md`, which kept the index
+itself: a cache rebuilt by walking every bundle, guarded by three lock mechanisms, holding the
+same text in two lexical tables and a vector table it wipes, searched through tuned weights.
+That structure is the flaw. This document replaces it.
+
+## What the index is today
+
+`akm index` runs a pipeline of phases (source cache, walk, clean, embed, finalize;
+`src/indexer/indexer.ts`, 2,900 lines) over every installed bundle. Change detection is a
+per-directory fingerprint of basenames, sizes and mtimes that decides whether to re-walk a
+directory; a re-walk re-derives everything in it. The result is 18 tables in `index.db`, among
+them the same text three times (`entries.search_text`, `entries_fts`, `entry_fragments` plus
+`entry_fragments_fts`) and each vector twice (`embeddings`, `entries_vec`) with a third copy
+rescued into `embedding_salvage` before rebuilds. Because any command may spawn a background
+reindex and the scheduler runs its own, three locks serialize writers (rebuild lock, writer lock,
+maintenance barrier), and the field's last three reports were all lock and rebuild seams:
+exit 70, exit 78, orphaned children, restart from zero, a full re-embed after a rename.
+
+## Five rules
+
+**1. Everything is content-addressed.** A file's bytes hash to `blob_hash`. Every derived thing
+is keyed by the hash of what it was derived from: parsed document and units by `blob_hash`,
+vectors by `(unit_hash, identity)`, where identity is what the provider returned (model id and
+width). An unchanged file never re-derives anything. A moved or renamed file re-points one row.
+A generation bump re-derives only what its schema touched; it never re-embeds, because vectors are
+keyed by content and model, not by a row id or a config string.
+
+**2. One text table, one vector table.** `units` holds every piece of text the index ranks: the
+card unit of each entry (name, description, tags, hints) and one unit per markdown fragment
+(header line plus fragment), each with `unit_hash`, `entry_ref`, `ordinal`, `kind`, `text`.
+`units_fts` is FTS5 over that text; `units_vec` is vec0 over the same rows with `unit_hash` and
+`identity` as auxiliary columns. `entries` keeps only what other commands need: ref, `blob_hash`,
+provenance, the parsed document. `entries_fts`, `entry_fragments`, `entry_fragments_fts`,
+`embeddings`, `entries_vec` and `embedding_salvage` are gone.
+
+**3. Index at write time; reconcile for everything else.** Every akm path that writes an asset
+(`remember`, `bundle update`, source sync, improve's writes) indexes what it wrote, inline, in the
+same transaction as the file write. External edits are caught by `reconcile`: stat every file
+against a `files` table of `(path, size, mtime, blob_hash)`, hash only the files whose stat
+changed, derive only hashes not yet derived, delete what is gone. A stat walk of 24 thousand
+files takes well under a second, so reconcile runs at the start of any command that reads the
+index when the tree fingerprint moved, and on the schedule. It is idempotent and small. There is
+no full rebuild, no phase pipeline, no background reindex spawned per command.
+
+**4. Embedding is a queue, not a phase.** The work is a query: unit hashes in `units` with no
+row in `units_vec` for the active identity. Any process drains some of it in provider-bounded
+batches, each batch committed on its own; a killed run loses one batch and the next run computes
+the same query. `akm index` is reconcile plus drain; the scheduler drains; a write path drains the
+few units it just created. Limits (window, slots, exact token counts) come from the provider.
+The four sizing keys go; `concurrency` and `timeoutMs` stay optional for gateways that report
+nothing.
+
+**5. No index locks.** Every index write is an idempotent, content-addressed insert or a
+re-point, in a short immediate transaction under WAL with SQLite's own busy timeout. Two processes
+doing the same reconcile converge on the same rows instead of fighting. The rebuild lock, the
+index writer lock, the maintenance barrier on index paths and `--skip-if-locked` go with the
+rebuild they protected. Genuine `SQLITE_BUSY` after the timeout stays a transient error; it
+becomes rare because writes are tiny.
+
+## Search
+
+One query over `units`: lexical rank from `units_fts` (BM25), semantic rank from `units_vec`
+for the active identity, fused by reciprocal rank so no weight or threshold is tuned, grouped to
+entries by best unit, the matching unit returned with the hit. Type filters apply to entries as
+today. Ranking quality is measured on the existing `curate-golden` fixture before and after; the
+two named weights and `minScore` are deleted once it is equal or better.
+
+## What stays
+
+`entries` (narrowed), `index_meta`, the graph tables, `utility_scores`, `llm_enrichment_cache`
+and `registry_index_cache`; each re-keyed to `blob_hash` or `entry_ref` where it is keyed to a
+row id today. The provider batching, retry, back-off, circuit breaker and per-batch commit code:
+it is the right way to talk to a provider.
+
+## What goes
+
+The phase pipeline and directory fingerprints (`indexer.ts`, `passes/dir-staleness.ts`); the
+rebuild lock, writer lock, index maintenance-barrier paths and their exit-code special cases; the
+salvage table and repository; the canary, the fingerprint purge and `--reembed`; the per-document
+cap, the adaptive budget as a primary mechanism, `batchSize`, `contextLength`; the duplicated FTS
+tables and their repository; the fusion weights and `minScore`. Roughly 4,800 lines across the
+files that implement today's index core, replaced by an estimated 1,500.
+
+## Cost, plainly
+
+- **Derivation is CPU and fast**: hashing and parsing 24 thousand files once, then only what
+  changes.
+- **Embedding is paid once per model**: every unit once, roughly 21 M tokens on the field corpus
+  (the query at the end gives the real number), one to three hours on one slot at the measured
+  rates, a quarter on four. Never again for unchanged text, across rebuilds, renames, upgrades.
+- **Storage**: unit text once (about 85 MB at 21 M tokens) plus its FTS index, against today's
+  text held three times; vectors once in float32, 395 MB at the field's 1,024 dimensions for
+  about 96 thousand units, against today's 98 MB held twice plus salvage.
+- **Search scans every unit vector**: tens to low hundreds of milliseconds at 1,024 dimensions.
+  Bounding the KNN by lexical candidates is the lever if it matters; it is measured, not assumed.
+- **Migration**: a new index generation. The first run builds `files`, `entries` and `units`
+  from scratch (minutes of CPU) and starts draining vectors; search works lexically from the
+  first minute and semantically as the queue drains. The old `index.db` layout is dropped.
+- **Risk**: every consumer of `entries` (list, show, curate, improve, graph, related) is
+  exercised by the existing integration suite; the narrowed table keeps the columns they read.
+
+## Build
+
+Six parallel modules against one contract, one integrator, one gate:
+
+| Module | Delivers |
+| --- | --- |
+| files and reconcile | `files` table, stat walk, hash-on-change, derive-on-new-hash, delete-on-gone |
+| units and stores | `units`, `units_fts`, `units_vec`; card and fragment units with headers and the real-token split |
+| write-time indexing | the write paths index what they wrote, inline |
+| drain | the embedding queue on the existing batching code, provider limits probed |
+| search | one query, reciprocal-rank fusion, grouping, the matched unit in the hit |
+| removal and migration | delete the machinery above, new generation, `akm index status`, docs |
+
+The units, store and provider-limits modules already in progress are the first three rows'
+foundations and carry over unchanged in role.
+
+## Measure first
+
+```sql
+SELECT COUNT(*) AS entries, SUM(length(search_text)) / 4 AS corpus_rho4_tokens FROM entries;
+SELECT COUNT(*) AS fragments, SUM(length(content)) / 4 AS fragment_rho4_tokens FROM entry_fragments_fts;
+```
