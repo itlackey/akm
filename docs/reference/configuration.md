@@ -471,7 +471,6 @@ taking about the same wall time as a single one against a healthy endpoint.
 
 | Key | Purpose |
 | --- | --- |
-| `search.minScore` | Drop results below this score |
 | `search.defaultExcludeTypes` | Asset types excluded from results by default |
 
 ### Graph boost search tuning
@@ -753,3 +752,11 @@ profile identities.
 `embedding.chunkSize` was never read by anything under `src/` (#954), so a
 config that still sets it is simply ignored — it still loads, unvalidated
 and without warning.
+
+`search.minScore` was never read by anything under `src/` as of 0.9
+(index-redesign B5c), so a config that still sets it is simply ignored — it
+still loads, unvalidated and without warning. It used to tune a
+semantic-only floor over the old entries_fts + entries_vec search path,
+calibrated for that path's 0-1 cosine/BM25 scores. The single search path is
+`units_fts` + `units_vec` fused by reciprocal rank, normalized to the same
+scale the ranking contributors expect — no separate floor is applied.

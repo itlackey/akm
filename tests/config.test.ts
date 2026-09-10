@@ -771,7 +771,6 @@ describe("search config", () => {
   test("loads search.graphBoost values", () => {
     writeCurrentConfig({
       search: {
-        minScore: 0.15,
         graphBoost: {
           directBoostPerEntity: 0.2,
           directBoostCap: 0.6,
@@ -785,7 +784,6 @@ describe("search config", () => {
     });
 
     expect(loadConfig().search).toEqual({
-      minScore: 0.15,
       graphBoost: {
         directBoostPerEntity: 0.2,
         directBoostCap: 0.6,
