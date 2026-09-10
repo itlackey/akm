@@ -16,6 +16,7 @@ import { defaultConcurrencyForEndpoint } from "../core/loopback";
 import { getDbPath } from "../core/paths";
 import { isSqliteContentionError, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
+import { DEFAULT_REMOTE_BATCH_SIZE } from "../llm/embedders/remote";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
  * M-4 / #395 — Index Consistency Architecture Decision Record
@@ -63,7 +64,6 @@ import { isVecAvailable } from "../storage/repositories/index-vec-repository";
 import { dropOtherIdentities, unitCoverage } from "../storage/repositories/units-repository";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { deleteStoredGraph } from "./db/graph-db";
-import { DEFAULT_REMOTE_BATCH_SIZE } from "../llm/embedders/remote";
 import { type DrainCounts, drainEmbeddingQueue } from "./drain";
 import { deriveInstallations } from "./installations";
 import {
