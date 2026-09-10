@@ -3,11 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Regression: runFtsQuery must propagate a genuine query failure (e.g. a
- * corrupt/missing `entries_fts` table) instead of swallowing it and returning
+ * Regression: `runUnitsFtsQuery` must propagate a genuine query failure (e.g.
+ * a corrupt/missing `units_fts` table) instead of swallowing it and returning
  * `[]` — a silent `[]` here is indistinguishable from "no matches" to
  * `db-search.ts` and its callers, which is exactly the false "no results"
  * answer a corrupt or locked index must never produce.
+ *
+ * index-redesign B5c: adapted from the old `entries_fts`/`searchFts` version
+ * of this regression — the property (a real SQL error propagates rather than
+ * being swallowed) is unchanged, only the table under test moved to
+ * `units_fts`/`searchUnitsLexical`.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -15,11 +20,12 @@ import os from "node:os";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
+import { searchUnitsLexical } from "../../../src/indexer/search/db-search";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { rebuildFts, searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
+import { seedUnitsForAllEntries } from "../../_helpers/seed-units";
 
 const createdTmpDirs: string[] = [];
 
@@ -57,20 +63,20 @@ function insertEntry(db: Database, key: string, entry: IndexDocument, searchText
   return upsertEntry(db, `/test/dir/${key}.ts`, entry, searchText, provenance);
 }
 
-describe("runFtsQuery error handling", () => {
+describe("runUnitsFtsQuery error handling", () => {
   test("propagates a query error instead of silently returning []", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
       insertEntry(db, "deploy", { name: "deploy", type: "script", description: "deploy things" }, "deploy");
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // Sanity: query works before we break the schema.
-      expect(searchFts(db, "deploy", 10).length).toBe(1);
+      expect(searchUnitsLexical(db, "deploy", 10).length).toBe(1);
 
-      // Break the FTS virtual table so the MATCH query throws inside runFtsQuery.
-      db.exec("DROP TABLE entries_fts");
+      // Break the FTS virtual table so the MATCH query throws inside runUnitsFtsQuery.
+      db.exec("DROP TABLE units_fts");
 
-      expect(() => searchFts(db, "deploy", 10)).toThrow(/entries_fts/);
+      expect(() => searchUnitsLexical(db, "deploy", 10)).toThrow(/units_fts/);
     } finally {
       closeDatabase(db);
     }

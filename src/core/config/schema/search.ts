@@ -28,7 +28,6 @@ const SearchGraphBoostSchema = z
 
 export const SearchConfigSchema = z
   .object({
-    minScore: nonNegativeNumber.optional(),
     defaultExcludeTypes: z.array(nonEmptyString).optional(),
     graphBoost: SearchGraphBoostSchema.optional(),
   })

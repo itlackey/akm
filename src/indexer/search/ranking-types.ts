@@ -49,11 +49,11 @@ export interface RankedEntryInput {
   utilityBoosted?: boolean;
   /**
    * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
-   * ceiling clamped this item: the score BEFORE the clamp. The semantic-only
-   * `minScore` floor in db-search checks this instead of the clamped score,
-   * so a ceiling that sits below the floor (e.g. archived 0.15 < default
-   * minScore 0.2) demotes the hit to last place instead of silently DROPPING
-   * a result that would otherwise have listed.
+   * ceiling clamped this item: the score BEFORE the clamp. The final ranking
+   * comparator (`db-search.ts`) checks this instead of the clamped score for
+   * its tie-break ordering, so a demoted hit still sorts among its peers by
+   * the relevance it would have had without the demotion, rather than
+   * collapsing every ceilinged item to the same clamped value.
    */
   preCeilingScore?: number;
   /**
@@ -64,10 +64,11 @@ export interface RankedEntryInput {
    */
   preRelaxedCeilingScore?: number;
   /**
-   * Set by `fuseByEntry` (index-redesign-contract.md B3) when this hit came
-   * from the units search path: the specific unit — of possibly several the
-   * entry has — whose reciprocal-rank score won the entry its grouping.
-   * Absent on every hit from the pre-B3 entries_fts + entries_vec path.
+   * Set by `fuseByEntry` (index-redesign-contract.md B3): the specific unit —
+   * of possibly several the entry has — whose reciprocal-rank score won the
+   * entry its grouping. Absent only for a browse-path hit (a deterministic
+   * listing, not a relevance match — see `enumerateEntries` in
+   * `db-search.ts`).
    */
   matchedUnit?: MatchedUnit;
 }

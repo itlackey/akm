@@ -39,6 +39,7 @@ import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
+import { searchEntriesLexical } from "../../indexer/search/db-search";
 import type { Database as IndexDatabase, Database as StateDatabase } from "../../storage/database";
 import {
   type CanaryQueryRow,
@@ -54,7 +55,6 @@ import {
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
-import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./anti-collapse";
 import { getAllRankScores } from "./salience";
 
@@ -246,7 +246,7 @@ export function normHash(text: string): string {
  * Returns the 0-based rank of the first hit, or -1.
  */
 function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
-  const results = searchFts(indexDb, canary.query, k);
+  const results = searchEntriesLexical(indexDb, canary.query, k);
   const anchorConceptId = canaryConceptId(canary.anchor_ref);
   for (let i = 0; i < Math.min(results.length, k); i++) {
     const r = results[i]!;

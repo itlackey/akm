@@ -546,10 +546,6 @@
     "search": {
       "type": "object",
       "properties": {
-        "minScore": {
-          "type": "number",
-          "minimum": 0
-        },
         "defaultExcludeTypes": {
           "type": "array",
           "items": {
@@ -2246,10 +2242,6 @@
         "search": {
           "type": "object",
           "properties": {
-            "minScore": {
-              "type": "number",
-              "minimum": 0
-            },
             "defaultExcludeTypes": {
               "type": "array",
               "items": {

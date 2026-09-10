@@ -67,6 +67,10 @@
  *     vector into `embedding_salvage` before dropping `embeddings`, and the
  *     next embedding pass (`generateEmbeddingsForDb`) hands it straight back
  *     to the re-walked entry with zero provider calls.
+ *   - a v23 derived index (`index-v23.sql`, `entries_fts` +
+ *     `entry_fragments_fts` present) — index-redesign B5c's v23->v24
+ *     generation rebuild discards both (lexical search is `units_fts` now)
+ *     and re-derives from scratch on the next index run.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates the `--scheduler-context` marker
@@ -123,7 +127,7 @@ function readFixture(name: string): string {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("v22 parent-only index is rebuilt as v23 fragment-capable derived state", () => {
+  test("v22 parent-only index is rebuilt as current (v24) units-only derived state", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -133,11 +137,38 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(
-          upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get(),
-        ).toBeDefined();
+        // v24 (index-redesign B5c) dropped entries_fts/entry_fragments_fts —
+        // lexical search is units_fts now.
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get()).toBeDefined();
         // index.db is regenerable: no v22 parent row survives to be queried
         // under a mixed schema; the following index walk re-populates both.
+        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 0 });
+      } finally {
+        closeDatabase(upgraded);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("v23 index (entries_fts + entry_fragments_fts) is rebuilt as current (v24) units-only derived state", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v23-index-"));
+    try {
+      const dbPath = path.join(root, "index.db");
+      const legacy = new Database(dbPath);
+      legacy.exec(readFixture("index-v23.sql"));
+      legacy.close();
+      const upgraded = openIndexDatabase(dbPath);
+      try {
+        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get()).toBeNull();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get()).toBeDefined();
+        // index.db is regenerable: no v23 parent row survives to be queried
+        // under a mixed schema; the next index walk re-populates entries and
+        // units from scratch.
         expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 0 });
       } finally {
         closeDatabase(upgraded);

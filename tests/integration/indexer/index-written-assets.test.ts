@@ -78,7 +78,7 @@ function queryIndex(ftsTerm?: string): { entryNames: string[]; ftsCount: number 
       (r) => (JSON.parse(r.document_json) as { name: string }).name,
     );
     const ftsCount = ftsTerm
-      ? (db.prepare("SELECT COUNT(*) AS c FROM entries_fts WHERE entries_fts MATCH ?").get(ftsTerm) as { c: number }).c
+      ? (db.prepare("SELECT COUNT(*) AS c FROM units_fts WHERE units_fts MATCH ?").get(ftsTerm) as { c: number }).c
       : 0;
     return { entryNames, ftsCount };
   } finally {

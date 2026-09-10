@@ -2,10 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { stableFtsScore } from "../../core/lexical-score";
 import type { Database } from "../../storage/database";
 import { getEntryById } from "../../storage/repositories/index-entries-repository";
-import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import type { UnitSearchHit } from "../../storage/repositories/units-repository";
 import { groupUnitHitsByEntry } from "../../storage/repositories/units-repository";
@@ -71,108 +69,6 @@ export interface RankEntriesOptions {
    * barrier, up to 5s, before the SQLite `busy_timeout` even applied).
    */
   salienceRankScores?: Map<number, number> | null;
-}
-
-/**
- * Lower bounds keep a lexical hit competitive with a vector-only neighbour;
- * the upper bound deliberately leaves room for the ranking contributors that
- * run after retrieval (notably the bounded graph boost).  This is a
- * calibration for the one search pipeline, not a claim that BM25 is
- * comparable across different queries or FTS tables.
- */
-
-/**
- * Convert FTS5's negative BM25 value into the lexical contribution used by
- * this pipeline.  The transform is fixed and monotone: it depends only on a
- * row's own BM25 value, so appending weaker candidates cannot rewrite an
- * existing row's score. FTS5 commonly emits relevance near 1e-6 for broad
- * queries, so first put relevance on a log scale around that observed value.
- * The shape constant intentionally makes the curve approach its ceiling
- * slowly: rare-term scores retain separation instead of all reading as 0.8.
- *
- * FTS5 produces finite non-positive values in normal operation.  Keeping the
- * defensive cases here finite makes this boundary safe if a driver or fixture
- * hands us an invalid value: `-Infinity` is the strongest possible match,
- * while NaN, +Infinity, and positive scores contribute no lexical evidence.
- */
-export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
-  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
-
-  for (const result of results) {
-    ftsScoreMap.set(result.id, { score: result.lexicalScore ?? stableFtsScore(result.bm25Score), result });
-  }
-
-  return ftsScoreMap;
-}
-
-export function combineSearchScores(options: {
-  ftsScoreMap: Map<number, { score: number; result: DbSearchResult }>;
-  embedScoreMap: Map<number, number>;
-  getEntryById: (id: number) =>
-    | {
-        entry: IndexDocument;
-        filePath: string;
-        itemRef?: string | null;
-        bundleId?: string | null;
-        conceptId?: string | null;
-      }
-    | undefined;
-  typeFilter?: string;
-  /**
-   * #627 — types excluded from the default (untyped 'any') path. The FTS and
-   * enumerate paths apply this at the SQL layer, but vector-only neighbors are
-   * re-added here straight from `embedScoreMap` (filtered only by `typeFilter`,
-   * which is `undefined` on the 'any' path). Without this filter a `session`
-   * asset that is a top-k vector neighbor but NOT an FTS match would leak into
-   * default results whenever an embedding provider is configured (the default
-   * `semanticSearchMode: 'auto'` production config). Empty list = no exclusion.
-   */
-  excludeTypes?: string[];
-}): RankedEntryInput[] {
-  const FTS_WEIGHT = 0.7;
-  const VEC_WEIGHT = 0.3;
-  const excludeTypeSet = options.excludeTypes && options.excludeTypes.length > 0 ? new Set(options.excludeTypes) : null;
-  const scored: RankedEntryInput[] = [];
-  const seenIds = new Set<number>();
-
-  for (const [id, { score: ftsScore, result }] of options.ftsScoreMap) {
-    seenIds.add(id);
-    const embedScore = options.embedScoreMap.get(id);
-    const combinedScore = embedScore !== undefined ? ftsScore * FTS_WEIGHT + embedScore * VEC_WEIGHT : ftsScore;
-    scored.push({
-      id,
-      entry: result.entry,
-      filePath: result.filePath,
-      score: combinedScore,
-      rankingMode: embedScore !== undefined ? "hybrid" : "fts",
-      lexicalMatch: result.lexicalMatch,
-      itemRef: result.itemRef,
-      bundleId: result.bundleId,
-      conceptId: result.conceptId,
-      fragmentId: result.fragmentId,
-    });
-  }
-
-  for (const [id, cosine] of options.embedScoreMap) {
-    if (seenIds.has(id)) continue;
-    const found = options.getEntryById(id);
-    if (!found) continue;
-    if (options.typeFilter && found.entry.type !== options.typeFilter) continue;
-    // #627 — drop vector-only neighbors whose type is excluded on the default path.
-    if (excludeTypeSet?.has(found.entry.type)) continue;
-    scored.push({
-      id,
-      entry: found.entry,
-      filePath: found.filePath,
-      score: cosine * VEC_WEIGHT,
-      rankingMode: "semantic",
-      itemRef: found.itemRef,
-      bundleId: found.bundleId,
-      conceptId: found.conceptId,
-    });
-  }
-
-  return scored;
 }
 
 // ── Units search fusion (index-redesign-contract.md B3) ────────────────────

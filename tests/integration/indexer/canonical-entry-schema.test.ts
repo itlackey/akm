@@ -75,31 +75,12 @@ const CANONICAL_ENTRY_INDEXES_DDL = `
   CREATE INDEX idx_entries_derived_from ON entries(derived_from);
 `;
 
-const CANONICAL_PARENT_FTS_DDL = `
-  CREATE VIRTUAL TABLE entries_fts USING fts5(
-    entry_id UNINDEXED,
-    name,
-    description,
-    tags,
-    hints,
-    content,
-    tokenize='porter unicode61'
-  );
-`;
-
-const CANONICAL_FRAGMENT_SURFACES_DDL = `
-  CREATE TABLE entry_fragments (
-    entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-    safe_markdown TEXT NOT NULL
-  );
-  CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
-    entry_id UNINDEXED,
-    fragment_id UNINDEXED,
-    fragment_ordinal UNINDEXED,
-    content,
-    tokenize='porter unicode61'
-  );
-`;
+// index-redesign B5c: v24 drops entries_fts (parent FTS5) and
+// entry_fragments_fts (fragment FTS5) from the canonical shape — units_fts
+// (files-repository.ts's own ensure, not fingerprinted here) is the one
+// lexical search surface now. entry_fragments (the safe-Markdown source,
+// not an FTS index) is the sole remaining search-adjacent surface this
+// module's fingerprint still pins — see the partial-schema variants below.
 
 function withTempIndex(run: (dbPath: string) => void): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-current-index-schema-"));
@@ -331,7 +312,7 @@ describe("canonical derived-index entry schema", () => {
       const current = openIndexDatabase(dbPath);
       try {
         expect(current.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
-        expect(current.prepare("SELECT COUNT(*) AS count FROM entries_fts").get()).toEqual({ count: 0 });
+        expect(current.prepare("SELECT COUNT(*) AS count FROM units_fts").get()).toEqual({ count: 0 });
         expect(
           current.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'entries_fts_dirty'").get(),
         ).toBeNull();
@@ -368,59 +349,27 @@ describe("canonical derived-index entry schema", () => {
     });
   });
 
-  test("a stamped v23 generation missing or impersonating required FTS surfaces is rejected for reads and rebuilt", () => {
+  test("a stamped v24 generation missing or impersonating its fragment-source surface is rejected for reads and rebuilt", () => {
     const partialSearchSurfaceSchemas = [
       {
-        name: "missing parent FTS",
-        ddl: CANONICAL_FRAGMENT_SURFACES_DDL,
-      },
-      {
-        name: "ordinary table impersonating parent FTS",
-        ddl: `
-          CREATE TABLE entries_fts (
-            entry_id INTEGER,
-            name TEXT,
-            description TEXT,
-            tags TEXT,
-            hints TEXT,
-            content TEXT
-          );
-          ${CANONICAL_FRAGMENT_SURFACES_DDL}
-        `,
-      },
-      {
-        name: "missing fragment tables",
-        ddl: CANONICAL_PARENT_FTS_DDL,
+        name: "missing fragment source",
+        ddl: "",
       },
       {
         name: "fragment source missing its safe Markdown projection",
         ddl: `
-          ${CANONICAL_PARENT_FTS_DDL}
           CREATE TABLE entry_fragments (
             entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE
-          );
-          CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
-            entry_id UNINDEXED,
-            fragment_id UNINDEXED,
-            fragment_ordinal UNINDEXED,
-            content,
-            tokenize='porter unicode61'
           );
         `,
       },
       {
-        name: "ordinary table impersonating fragment FTS",
+        name: "ordinary table impersonating fragment source with the wrong shape",
         ddl: `
-          ${CANONICAL_PARENT_FTS_DDL}
           CREATE TABLE entry_fragments (
-            entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-            safe_markdown TEXT NOT NULL
-          );
-          CREATE TABLE entry_fragments_fts (
             entry_id INTEGER,
             fragment_id TEXT,
-            fragment_ordinal INTEGER,
-            content TEXT
+            safe_markdown TEXT
           );
         `,
       },
@@ -440,12 +389,8 @@ describe("canonical derived-index entry schema", () => {
           expect(rebuilt.prepare("SELECT sql FROM sqlite_master WHERE name = 'entry_fragments'").get()).toEqual({
             sql: expect.stringContaining("entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE"),
           });
-          expect(rebuilt.prepare("SELECT sql FROM sqlite_master WHERE name = 'entry_fragments_fts'").get()).toEqual({
-            sql: expect.stringContaining("CREATE VIRTUAL TABLE entry_fragments_fts USING fts5"),
-          });
-          expect(rebuilt.prepare("SELECT sql FROM sqlite_master WHERE name = 'entries_fts'").get()).toEqual({
-            sql: expect.stringContaining("CREATE VIRTUAL TABLE entries_fts USING fts5"),
-          });
+          expect(rebuilt.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get()).toBeNull();
+          expect(rebuilt.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get()).toBeDefined();
         } finally {
           closeDatabase(rebuilt);
         }

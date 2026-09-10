@@ -72,7 +72,7 @@ import {
 } from "../storage/repositories/files-repository";
 import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
-import { replaceFtsEntry } from "../storage/repositories/index-fts-repository";
+import { replaceFragmentSource } from "../storage/repositories/index-fts-repository";
 import { replaceEntryUnits } from "../storage/repositories/units-repository";
 import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../workflows/source-files";
 import { enrichReconciledEntries, type MetadataEnrichmentCandidate } from "./enrich";
@@ -905,7 +905,7 @@ function repointOrInsert(
   return { entryId: oldRow.id, outcome: "changed" };
 }
 
-/** UPDATE one `entries` row in place — same id, new path/identity/content — and refresh its FTS projection. */
+/** UPDATE one `entries` row in place — same id, new path/identity/content — and refresh its safe-fragment source. */
 function repointEntry(
   db: Database,
   entryId: number,
@@ -935,10 +935,9 @@ function repointEntry(
     derivedFrom,
     entryId,
   );
-  replaceFtsEntry(
+  replaceFragmentSource(
     db,
     entryId,
-    entry,
     hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : undefined,
   );
 }

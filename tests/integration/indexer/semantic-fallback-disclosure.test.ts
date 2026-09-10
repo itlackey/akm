@@ -21,11 +21,12 @@ import { searchLocal } from "../../../src/indexer/search/db-search";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
+
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
-import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
+import { upsertUnitVectors } from "../../../src/storage/repositories/units-repository";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
+import { seedUnitsForAllEntries } from "../../_helpers/seed-units";
 
 test("query-embedding failure preserves FTS results and returns one sanitized fts-fallback disclosure", async () => {
   const storage = withIsolatedAkmStorage();
@@ -55,8 +56,17 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
           "deploy-guide",
         ),
       );
-      upsertEmbedding(db, entryId, [1, 0, 0, 0]);
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
+      // A units_vec row (not the legacy `embeddings` BLOB table, which the
+      // units search path never reads) is what makes `tryUnitVecScores` call
+      // the mocked `embed()` below instead of short-circuiting on "nothing
+      // embedded yet" — the card unit (ordinal 0, fragment_id NULL) is this
+      // entry's only unit.
+      const cardUnit = db
+        .prepare("SELECT unit_hash FROM entry_units WHERE entry_id = ? AND fragment_id IS NULL")
+        .get(entryId) as { unit_hash: string };
+      upsertUnitVectors(db, [{ hash: cardUnit.unit_hash, identity: "test-identity", vector: [1, 0, 0, 0] }]);
+      setMeta(db, "embeddingIdentity", "test-identity");
       setMeta(db, "hasEmbeddings", "1");
       setMeta(db, "stashDir", storage.stashDir);
     } finally {

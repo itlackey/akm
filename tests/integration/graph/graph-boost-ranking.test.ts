@@ -54,7 +54,7 @@ import {
   openIndexDatabase,
 } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
+
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
@@ -64,6 +64,7 @@ import {
   sandboxXdgDataHome,
   sandboxXdgStateHome,
 } from "../../_helpers/sandbox";
+import { seedUnitsForAllEntries } from "../../_helpers/seed-units";
 
 // ── Environment isolation ───────────────────────────────────────────────────
 //
@@ -253,7 +254,7 @@ function buildFixture(): void {
       );
       upsertEntry(db, e.filePath, e.entry, searchText, provenance);
     }
-    rebuildFts(db);
+    seedUnitsForAllEntries(db);
     setMeta(db, "stashDir", stashDir);
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "stashDirs", JSON.stringify([stashDir]));
@@ -330,7 +331,6 @@ function configWithGraphBoost(graphBoost: NonNullable<NonNullable<AkmConfig["sea
 }
 
 function saveTestConfig(search?: {
-  minScore?: number;
   graphBoost?: {
     directBoostPerEntity?: number;
     directBoostCap?: number;
