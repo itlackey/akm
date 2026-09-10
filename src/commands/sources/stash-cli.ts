@@ -49,7 +49,9 @@ import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
+import { DRAIN_BATCH_PROGRESS_PREFIX } from "../../indexer/drain";
 import { akmIndex } from "../../indexer/indexer";
+import { RECONCILE_ROOT_PROGRESS_PREFIX } from "../../indexer/reconcile";
 import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import {
   inferAssetName,
@@ -63,8 +65,19 @@ import {
 import { assembleIndexStatus } from "./index-status";
 import { assembleInfo } from "./info";
 
-/** Matches the high-frequency per-committed-batch progress line (#954), excluded from non-verbose JSON-mode stderr. */
-const EMBEDDED_BATCH_PROGRESS_PATTERN = /^Embedded \d+\/\d+ entries\.$/;
+/**
+ * The two high-frequency, one-line-per-unit-of-work progress lines (#954) —
+ * drain's per-batch commit line and reconcile's per-root "done" line —
+ * excluded from non-verbose, non-text (JSON/yaml/etc) stderr. Matched by the
+ * exact prefix each producer exports, not a re-derived regex, so the two
+ * never drift apart (index-redesign B5g): this used to be a regex tuned to
+ * the deleted per-entry pipeline's `Embedded N/M entries.` line, which never
+ * matched either replacement line, so every progress line reached stderr
+ * regardless of `--verbose`.
+ */
+function isDetailProgressLine(message: string): boolean {
+  return message.startsWith(DRAIN_BATCH_PROGRESS_PREFIX) || message.startsWith(RECONCILE_ROOT_PROGRESS_PREFIX);
+}
 
 export const indexStatusCommand = defineJsonCommand({
   meta: {
@@ -168,15 +181,16 @@ export const indexCommand = defineGroupCommand({
           } else if (spin) {
             spin.stop(`${progressPrefix}${message}`);
             spin.start(`${progressPrefix}${message}`);
-          } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
+          } else if (!isDetailProgressLine(message)) {
             // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
             // total until the run finished (#954) — a stalled
             // run looked identical to "nothing written". Phase-start
-            // messages and the embedding heartbeat now reach stderr here
-            // too; the high-frequency per-batch `Embedded N/M entries.`
-            // line (emitted after every committed batch)
-            // is deliberately excluded — that would be spam, not a
-            // heartbeat.
+            // messages, the credential diagnostic, and the reconcile/drain
+            // totals now reach stderr here too; the high-frequency
+            // per-root `Reconciled "…"` and per-batch `[drain] batch N: …`
+            // lines are deliberately excluded — that would be spam, not a
+            // heartbeat. `--verbose` (the `if` branch above) still gets
+            // every one of them.
             info(`[index:${phase}] ${progressPrefix}${message}`);
           }
         },

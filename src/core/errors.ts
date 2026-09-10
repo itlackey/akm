@@ -296,7 +296,8 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
   INDEX_DB_CONTENDED:
-    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+    "Another akm process is writing index.db right now. Wait a few seconds and retry — index runs take no rebuild " +
+    "lock, so this clears quickly; a scheduled run left alone will simply run again next time.",
 };
 
 /** Default hint for each NotFoundError code. */

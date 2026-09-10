@@ -86,6 +86,16 @@ export interface DrainOptions {
  */
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 
+/**
+ * Prefix of the per-committed-batch progress line (`"${DRAIN_BATCH_PROGRESS_PREFIX}N: …"`,
+ * emitted once per provider batch this call commits). Exported so a caller
+ * juggling several `onProgress` sources (`stash-cli.ts`'s `akm index`) can
+ * recognize — and, outside `--verbose`, suppress — this specific
+ * high-frequency line by prefix rather than re-deriving its own copy of the
+ * pattern (#954).
+ */
+export const DRAIN_BATCH_PROGRESS_PREFIX = "[drain] batch ";
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("drain interrupted");
@@ -296,7 +306,7 @@ export async function drainEmbeddingQueue(
       const docCount = outcome?.docCount ?? indices.length;
       const label =
         outcome && outcome.outcome !== "stored" ? `failed: ${outcome.reason ?? "unknown"}` : `${rows.length} stored`;
-      opts.onProgress(`[drain] batch ${batchNumber}: ${docCount} docs → ${label}`);
+      opts.onProgress(`${DRAIN_BATCH_PROGRESS_PREFIX}${batchNumber}: ${docCount} docs → ${label}`);
     }
   };
 
