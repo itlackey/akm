@@ -24,6 +24,7 @@
  */
 
 import { ConfigError } from "../../core/errors";
+import { withImmediateTransaction } from "../../core/state-db";
 import type { EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
 import type { DbVecResult } from "./index-entry-types";
@@ -179,25 +180,37 @@ export function upsertUnitVectors(db: Database, rows: readonly UnitVectorRow[]):
   const insertVec = db.prepare("INSERT INTO units_vec (unit_id, embedding, unit_hash, identity) VALUES (?, ?, ?, ?)");
   const deleteUnit = db.prepare("DELETE FROM units WHERE unit_id = ?");
 
-  const writeOne = db.transaction((row: UnitVectorRow) => {
-    const result = insertUnit.run(row.hash, row.identity);
-    const freshlyInserted = Number(result.changes) > 0;
-    const unitRow = selectUnitId.get(row.hash, row.identity) as { unit_id: number } | undefined;
-    if (!unitRow) return false;
-    // DELETE-then-INSERT (not INSERT OR REPLACE) — the established pattern
-    // for writing a fixed-rowid row into a vec0 table on this driver.
-    deleteVec.run(unitRow.unit_id);
-    try {
-      insertVec.run(unitRow.unit_id, float32Buffer(row.vector), row.hash, row.identity);
-    } catch (err) {
-      // Undo the vector-less `units` row this call would otherwise leave
-      // behind — whether it was just created above or already existed (its
-      // prior vector, if any, is already gone via deleteVec either way).
-      deleteUnit.run(unitRow.unit_id);
-      throw err;
-    }
-    return freshlyInserted;
-  });
+  // Each row gets its OWN `BEGIN IMMEDIATE` transaction (not a shared bare
+  // `db.transaction()`), for two reasons: a bare deferred transaction whose
+  // body reads (selectUnitId) before it writes fails instantly with
+  // SQLITE_BUSY under a competing writer instead of honouring
+  // `busy_timeout` (docs/plans/index-redesign.md rule 5), and this call
+  // must still commit PER ROW even once immediate — a malformed vector must
+  // not roll back the rest of a provider batch (see the docstring above).
+  const writeOne = (row: UnitVectorRow): boolean =>
+    withImmediateTransaction(
+      db,
+      () => {
+        const result = insertUnit.run(row.hash, row.identity);
+        const freshlyInserted = Number(result.changes) > 0;
+        const unitRow = selectUnitId.get(row.hash, row.identity) as { unit_id: number } | undefined;
+        if (!unitRow) return false;
+        // DELETE-then-INSERT (not INSERT OR REPLACE) — the established pattern
+        // for writing a fixed-rowid row into a vec0 table on this driver.
+        deleteVec.run(unitRow.unit_id);
+        try {
+          insertVec.run(unitRow.unit_id, float32Buffer(row.vector), row.hash, row.identity);
+        } catch (err) {
+          // Undo the vector-less `units` row this call would otherwise leave
+          // behind — whether it was just created above or already existed (its
+          // prior vector, if any, is already gone via deleteVec either way).
+          deleteUnit.run(unitRow.unit_id);
+          throw err;
+        }
+        return freshlyInserted;
+      },
+      "index",
+    );
 
   let inserted = 0;
   let failed = 0;
@@ -286,23 +299,26 @@ export function dropOtherIdentities(db: Database, keep: string, dim: number): { 
   const staleCount = (db.prepare("SELECT COUNT(*) AS n FROM units WHERE identity != ?").get(keep) as { n: number }).n;
   if (staleCount === 0 && !widthChanged) return { removed: 0 };
 
-  const run = db.transaction(() => {
-    if (widthChanged) {
-      db.exec("DROP TABLE IF EXISTS units_vec");
-      createUnitsVecTable(db, dim);
-    } else {
-      const staleIds = (
-        db.prepare("SELECT unit_id FROM units WHERE identity != ?").all(keep) as { unit_id: number }[]
-      ).map((row) => row.unit_id);
-      for (let offset = 0; offset < staleIds.length; offset += SQLITE_CHUNK_SIZE) {
-        const chunk = staleIds.slice(offset, offset + SQLITE_CHUNK_SIZE);
-        const placeholders = chunk.map(() => "?").join(",");
-        db.prepare(`DELETE FROM units_vec WHERE unit_id IN (${placeholders})`).run(...chunk);
+  withImmediateTransaction(
+    db,
+    () => {
+      if (widthChanged) {
+        db.exec("DROP TABLE IF EXISTS units_vec");
+        createUnitsVecTable(db, dim);
+      } else {
+        const staleIds = (
+          db.prepare("SELECT unit_id FROM units WHERE identity != ?").all(keep) as { unit_id: number }[]
+        ).map((row) => row.unit_id);
+        for (let offset = 0; offset < staleIds.length; offset += SQLITE_CHUNK_SIZE) {
+          const chunk = staleIds.slice(offset, offset + SQLITE_CHUNK_SIZE);
+          const placeholders = chunk.map(() => "?").join(",");
+          db.prepare(`DELETE FROM units_vec WHERE unit_id IN (${placeholders})`).run(...chunk);
+        }
       }
-    }
-    db.prepare("DELETE FROM units WHERE identity != ?").run(keep);
-  });
-  run();
+      db.prepare("DELETE FROM units WHERE identity != ?").run(keep);
+    },
+    "index",
+  );
 
   return { removed: staleCount };
 }
@@ -311,15 +327,22 @@ export function dropOtherIdentities(db: Database, keep: string, dim: number): { 
 
 /** Replace every `entry_units` row for `entryId` with `units` (delete-then-insert). */
 export function replaceEntryUnits(db: Database, entryId: number, units: readonly EntryUnitRef[]): void {
-  db.transaction(() => {
-    db.prepare("DELETE FROM entry_units WHERE entry_id = ?").run(entryId);
-    const insert = db.prepare(
-      "INSERT INTO entry_units (entry_id, ordinal, fragment_id, unit_hash) VALUES (?, ?, ?, ?)",
-    );
-    for (const unit of units) {
-      insert.run(entryId, unit.ordinal, unit.fragmentId, unit.hash);
-    }
-  })();
+  // `applyChange` (indexer/reconcile.ts) normally already holds an outer
+  // `withImmediateTransaction` when it calls this — the join-if-open guard
+  // means this runs inside that transaction rather than opening its own.
+  withImmediateTransaction(
+    db,
+    () => {
+      db.prepare("DELETE FROM entry_units WHERE entry_id = ?").run(entryId);
+      const insert = db.prepare(
+        "INSERT INTO entry_units (entry_id, ordinal, fragment_id, unit_hash) VALUES (?, ?, ?, ?)",
+      );
+      for (const unit of units) {
+        insert.run(entryId, unit.ordinal, unit.fragmentId, unit.hash);
+      }
+    },
+    "index",
+  );
 }
 
 /** Remove every `entry_units` row for the given entries (e.g. entries deleted outside a cascade). */

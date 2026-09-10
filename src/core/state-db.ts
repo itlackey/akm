@@ -745,29 +745,52 @@ function sleepSyncMs(ms: number): void {
  * owns the matching COMMIT/ROLLBACK.
  */
 /**
- * Reclassify an exhausted-retry BEGIN failure that is still contention-shaped
- * (#948) into a `TransientError("STATE_DB_CONTENDED")`, mirroring the
- * RUN_LEASE_HELD precedent (`WorkflowRunsRepository.acquireEngineLease`): the
- * driver text is accurate but unhelpful (`{"ok":false,"error":"database is
- * locked"}`, exit 70/INTERNAL) — this instead reads as a retryable-shortly
- * signal (exit 75, sysexits EX_TEMPFAIL — #948 addendum) with the original
- * error preserved as `cause` for `--verbose`/debugging. A genuinely unrelated
- * error (not contention-shaped) is rethrown exactly as raised, never
- * reclassified.
+ * Which physical database an exhausted-retry BEGIN failure is reported
+ * against (field follow-up to #956). Every existing caller of
+ * {@link beginImmediateTransaction} / {@link withImmediateTransaction} passed
+ * no such thing before this database-identity-carrying error existed, so
+ * `"state"` — today's only behaviour — stays the default; callers that open
+ * index.db pass `"index"` explicitly to get `INDEX_DB_CONTENDED` instead of a
+ * state.db message describing the wrong database.
  */
-function throwBeginFailure(err: unknown): never {
+export type ImmediateTransactionDbKind = "state" | "index";
+
+/**
+ * Reclassify an exhausted-retry BEGIN failure that is still contention-shaped
+ * (#948) into a `TransientError`, mirroring the RUN_LEASE_HELD precedent
+ * (`WorkflowRunsRepository.acquireEngineLease`): the driver text is accurate
+ * but unhelpful (`{"ok":false,"error":"database is locked"}`, exit
+ * 70/INTERNAL) — this instead reads as a retryable-shortly signal (exit 75,
+ * sysexits EX_TEMPFAIL — #948 addendum) with the original error preserved as
+ * `cause` for `--verbose`/debugging. A genuinely unrelated error (not
+ * contention-shaped) is rethrown exactly as raised, never reclassified.
+ *
+ * `dbKind` (field follow-up to #956) picks the reported identity: `"state"`
+ * (default, unchanged text) yields `STATE_DB_CONTENDED`; `"index"` yields
+ * `INDEX_DB_CONTENDED` with index.db's own message, mirroring
+ * `reclassifyIndexDbContention`'s text (`src/indexer/indexer.ts`) so a caller
+ * that reaches this helper directly and one that only reclassifies a raw
+ * driver error report the same thing.
+ */
+function throwBeginFailure(err: unknown, dbKind: ImmediateTransactionDbKind): never {
   if (isSqliteContentionError(err)) {
-    const contended = new TransientError(
-      "akm's state database is busy (another akm process is writing it); retry shortly.",
-      "STATE_DB_CONTENDED",
-    );
+    const contended =
+      dbKind === "index"
+        ? new TransientError(
+            "akm's index database is busy (another akm process is writing it); retry shortly.",
+            "INDEX_DB_CONTENDED",
+          )
+        : new TransientError(
+            "akm's state database is busy (another akm process is writing it); retry shortly.",
+            "STATE_DB_CONTENDED",
+          );
     contended.cause = err;
     throw contended;
   }
   throw err;
 }
 
-export function beginImmediateTransaction(db: Database): void {
+export function beginImmediateTransaction(db: Database, dbKind: ImmediateTransactionDbKind = "state"): void {
   if (db.inTransaction) {
     throw new Error("beginImmediateTransaction requires a connection with no active transaction");
   }
@@ -792,13 +815,17 @@ export function beginImmediateTransaction(db: Database): void {
         sleepSyncMs(2 ** (attempt - 1));
         continue;
       }
-      throwBeginFailure(err);
+      throwBeginFailure(err, dbKind);
     }
   }
-  throwBeginFailure(lastBeginErr);
+  throwBeginFailure(lastBeginErr, dbKind);
 }
 
-export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
+export function withImmediateTransaction<T>(
+  db: Database,
+  fn: () => T,
+  dbKind: ImmediateTransactionDbKind = "state",
+): T {
   // Re-entrancy guard (issue #686): if a transaction is already open on this
   // connection (e.g. a nested withImmediateTransaction call inside an outer
   // frame's fn), join it — run fn directly with no BEGIN/COMMIT/ROLLBACK of
@@ -809,7 +836,7 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
   if (db.inTransaction) {
     return fn();
   }
-  beginImmediateTransaction(db);
+  beginImmediateTransaction(db, dbKind);
   try {
     const result = fn();
     if (!db.inTransaction) {
