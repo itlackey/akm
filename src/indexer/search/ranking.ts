@@ -4,8 +4,11 @@
 
 import { stableFtsScore } from "../../core/lexical-score";
 import type { Database } from "../../storage/database";
+import { getEntryById } from "../../storage/repositories/index-entries-repository";
 import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
+import type { UnitSearchHit } from "../../storage/repositories/units-repository";
+import { groupUnitHitsByEntry } from "../../storage/repositories/units-repository";
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { IndexDocument } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
@@ -18,7 +21,7 @@ import {
   defaultRankingContributors,
   defaultUtilityRankingContributors,
 } from "./ranking-contributors";
-import type { RankedEntryInput } from "./ranking-types";
+import type { MatchedUnit, RankedEntryInput } from "./ranking-types";
 
 export interface RankEntriesOptions {
   db: Database;
@@ -170,6 +173,171 @@ export function combineSearchScores(options: {
   }
 
   return scored;
+}
+
+// ── Units search fusion (index-redesign-contract.md B3) ────────────────────
+
+/** One unit-level lexical hit from `searchUnitsLexical` (`db-search.ts`), 1-based rank. */
+export interface UnitLexicalHit {
+  unitHash: string;
+  rank: number;
+}
+
+/**
+ * Reciprocal Rank Fusion constant (Cormack, Clarke & Buettcher, SIGIR 2009,
+ * "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning
+ * Methods"). It damps how much a #1 rank in one list dominates the fused
+ * score relative to lower ranks, so a document ranked highly by only one of
+ * the two retrievers still competes with one ranked moderately by both.
+ * Nothing else about the fusion is tuned — nor is this constant, per the
+ * paper's own finding that results were insensitive to its exact value.
+ */
+export const RRF_K = 60;
+
+interface EntryUnitWinner {
+  /** 1-based position of this entry once its own list is sorted best-first. */
+  rank: number;
+  unitHash: string;
+  fragmentId: string | null;
+}
+
+/**
+ * `unit_texts.kind` is redundant with `fragmentId` nullity by construction
+ * (A1's `deriveUnits`: ordinal 0 is always the one structured-fields "card"
+ * unit; every fragment-derived unit carries a non-null `fragmentId`), so
+ * `matchedUnit.kind` is derived here instead of a second table read.
+ */
+function unitKindFromFragmentId(fragmentId: string | null): MatchedUnit["kind"] {
+  return fragmentId === null ? "card" : "fragment";
+}
+
+/** Group lexical unit hits to entries via `entry_units`, keeping the best-ranked unit per entry. */
+function groupLexicalHitsByEntry(db: Database, hits: readonly UnitLexicalHit[]): Map<number, EntryUnitWinner> {
+  const best = new Map<number, EntryUnitWinner>();
+  if (hits.length === 0) return best;
+
+  const hashes = [...new Set(hits.map((hit) => hit.unitHash))];
+  const placeholders = hashes.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT entry_id AS entryId, fragment_id AS fragmentId, unit_hash AS unitHash FROM entry_units WHERE unit_hash IN (${placeholders})`,
+    )
+    .all(...hashes) as Array<{ entryId: number; fragmentId: string | null; unitHash: string }>;
+
+  const ownersByHash = new Map<string, Array<{ entryId: number; fragmentId: string | null }>>();
+  for (const row of rows) {
+    const owners = ownersByHash.get(row.unitHash) ?? [];
+    owners.push({ entryId: row.entryId, fragmentId: row.fragmentId });
+    ownersByHash.set(row.unitHash, owners);
+  }
+
+  for (const hit of hits) {
+    for (const owner of ownersByHash.get(hit.unitHash) ?? []) {
+      const existing = best.get(owner.entryId);
+      if (!existing || hit.rank < existing.rank) {
+        best.set(owner.entryId, { rank: hit.rank, unitHash: hit.unitHash, fragmentId: owner.fragmentId });
+      }
+    }
+  }
+  return best;
+}
+
+/** Re-rank a per-entry "best unit" map (already the winner within its own list) best-first, 1-based. */
+function rankEntryWinners<V>(
+  winners: Map<number, V>,
+  compare: (a: V, b: V) => number,
+): Map<number, { rank: number; value: V }> {
+  const ranked = new Map<number, { rank: number; value: V }>();
+  const ordered = [...winners.entries()].sort((a, b) => compare(a[1], b[1]));
+  ordered.forEach(([entryId, value], index) => {
+    ranked.set(entryId, { rank: index + 1, value });
+  });
+  return ranked;
+}
+
+type LexicalEntryRank = { rank: number; value: EntryUnitWinner };
+type SemanticEntryRank = { rank: number; value: { distance: number; fragmentId: string | null; hash: string } };
+
+/**
+ * Pick which side's unit is reported as `matchedUnit`/`fragmentId`: whichever
+ * ranked the entry better; a tie favors the lexical side (exact-term
+ * evidence reads more directly into `whyMatched` than a vector neighbor).
+ * At least one of the two is defined for every `entryId` this is called
+ * with — it comes from the union of both ranked maps' keys.
+ */
+function pickFusionWinner(
+  lexicalHit: LexicalEntryRank | undefined,
+  semanticHit: SemanticEntryRank | undefined,
+): { unitHash: string; fragmentId: string | null } {
+  if (lexicalHit && (!semanticHit || lexicalHit.rank <= semanticHit.rank)) {
+    return { unitHash: lexicalHit.value.unitHash, fragmentId: lexicalHit.value.fragmentId };
+  }
+  const semantic = semanticHit as SemanticEntryRank;
+  return { unitHash: semantic.value.hash, fragmentId: semantic.value.fragmentId };
+}
+
+/**
+ * Fuse the lexical (`units_fts`) and semantic (`units_vec`) unit-level result
+ * lists into one ranked entry list (index-redesign-contract.md B3).
+ *
+ * Each list is first grouped to entries via `entry_units`, keeping that
+ * list's own best (lowest lexical rank / lowest vector distance) unit per
+ * entry — `groupUnitHitsByEntry` from the stage-1 unit store does this for
+ * the semantic side; `groupLexicalHitsByEntry` mirrors it for the lexical
+ * side. That grouping produces two entry-level rankings (best entry first),
+ * which are then combined by reciprocal rank: `score = Σ 1/(RRF_K + rank)`
+ * over whichever of the two lists an entry appears in. `matchedUnit` reports
+ * the unit belonging to whichever side ranked the entry higher (ties favor
+ * the lexical side, since it is exact-term evidence and therefore more
+ * directly explainable in `whyMatched`).
+ */
+export function fuseByEntry(
+  db: Database,
+  lexical: readonly UnitLexicalHit[],
+  semantic: readonly UnitSearchHit[],
+  opts: { typeFilter?: string[]; excludeTypes?: string[] } = {},
+): RankedEntryInput[] {
+  const lexicalByEntry = groupLexicalHitsByEntry(db, lexical);
+  const semanticByEntry = groupUnitHitsByEntry(db, semantic);
+
+  const lexicalRanked = rankEntryWinners(lexicalByEntry, (a, b) => a.rank - b.rank);
+  const semanticRanked = rankEntryWinners(semanticByEntry, (a, b) => a.distance - b.distance);
+
+  const includeTypes = opts.typeFilter && opts.typeFilter.length > 0 ? new Set(opts.typeFilter) : null;
+  const excludeTypes = opts.excludeTypes && opts.excludeTypes.length > 0 ? new Set(opts.excludeTypes) : null;
+
+  const entryIds = new Set<number>([...lexicalRanked.keys(), ...semanticRanked.keys()]);
+  const results: RankedEntryInput[] = [];
+
+  for (const entryId of entryIds) {
+    const lexicalHit = lexicalRanked.get(entryId);
+    const semanticHit = semanticRanked.get(entryId);
+    let score = 0;
+    if (lexicalHit) score += 1 / (RRF_K + lexicalHit.rank);
+    if (semanticHit) score += 1 / (RRF_K + semanticHit.rank);
+
+    const { unitHash, fragmentId } = pickFusionWinner(lexicalHit, semanticHit);
+
+    const found = getEntryById(db, entryId);
+    if (!found) continue;
+    if (includeTypes && !includeTypes.has(found.entry.type)) continue;
+    if (excludeTypes?.has(found.entry.type)) continue;
+
+    results.push({
+      id: entryId,
+      entry: found.entry,
+      filePath: found.filePath,
+      score,
+      rankingMode: lexicalHit && semanticHit ? "hybrid" : lexicalHit ? "fts" : "semantic",
+      itemRef: found.itemRef,
+      bundleId: found.bundleId,
+      conceptId: found.conceptId,
+      ...(fragmentId ? { fragmentId } : {}),
+      matchedUnit: { unitHash, fragmentId, kind: unitKindFromFragmentId(fragmentId) },
+    });
+  }
+
+  return results;
 }
 
 export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput[] {

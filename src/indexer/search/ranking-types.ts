@@ -16,6 +16,22 @@
 import type { IndexDocument } from "../passes/metadata";
 import type { LexicalQueryExecution } from "./fts-query";
 
+/**
+ * `unit_texts.kind` (index-redesign-contract.md B1): `"card"` is the one
+ * structured-fields unit every entry has (ordinal 0); `"fragment"` is a
+ * Markdown-fragment-derived unit. Duplicated here rather than imported from
+ * the storage layer because B3 derives it from `fragmentId` nullity alone
+ * (see `fuseByEntry` in `ranking.ts`) and never reads `unit_texts` itself.
+ */
+export type UnitKind = "card" | "fragment";
+
+/** Which unit (of possibly several per entry) a units-search hit matched on. */
+export interface MatchedUnit {
+  unitHash: string;
+  fragmentId: string | null;
+  kind: UnitKind;
+}
+
 export interface RankedEntryInput {
   id: number;
   entry: IndexDocument;
@@ -47,4 +63,11 @@ export interface RankedEntryInput {
    * compound-demoted relaxed set does not fall back to filename order.
    */
   preRelaxedCeilingScore?: number;
+  /**
+   * Set by `fuseByEntry` (index-redesign-contract.md B3) when this hit came
+   * from the units search path: the specific unit — of possibly several the
+   * entry has — whose reciprocal-rank score won the entry its grouping.
+   * Absent on every hit from the pre-B3 entries_fts + entries_vec path.
+   */
+  matchedUnit?: MatchedUnit;
 }
