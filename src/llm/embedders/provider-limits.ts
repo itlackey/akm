@@ -7,16 +7,21 @@
  * slot count — read from the endpoint itself rather than guessed from
  * config (docs/plans/index-fragment-vectors.md, rule 3: "The limits are the
  * provider's"). Two shapes are recognised: llama.cpp's `GET /props`
- * (window, slots), with `/tokenize` when present giving exact token
- * counts; and Ollama's `POST /api/show` (window only — `num_parallel` is
- * not exposed, so slots is always 1 unless `config.concurrency` overrides
- * it). Any other endpoint (an OpenAI-compatible server, a gateway such as
- * Bifrost) reports neither, so a conservative default stands in.
+ * (window, slots), with `/tokenize` when present used internally to
+ * calibrate `charsPerToken`; and Ollama's `POST /api/show` (window only —
+ * `num_parallel` is not exposed, so slots is always 1 unless
+ * `config.concurrency` overrides it). Any other endpoint (an
+ * OpenAI-compatible server, a gateway such as Bifrost) reports neither, so a
+ * conservative default stands in.
  *
  * `probeProviderLimits` never throws: a probe that fails for any reason
  * (unreachable endpoint, malformed response, a provider that reports
  * nothing recognisable) resolves to the same `source: "default"` shape a
- * misconfigured or exotic endpoint would get.
+ * misconfigured or exotic endpoint would get. The result is memoised per
+ * process (keyed by endpoint/model/concurrency/timeoutMs, see the
+ * module-level cache below), since `reconcileRoots`, `reconcilePaths` and
+ * `drainEmbeddingQueue` each call it and a probe is otherwise several HTTP
+ * requests every caller would repeat.
  *
  * Wired into the embedding loop by `src/indexer/drain.ts`, which threads the
  * result in as `RemoteEmbedder.embedBatch`'s `packing` option
@@ -35,13 +40,14 @@ export interface ProviderLimits {
   /** Requests the server can hold in flight. */
   slots: number;
   source: "llama.cpp" | "ollama" | "default";
-  /** Exact token count via the provider's own tokenizer, when it exposes one (llama.cpp's `/tokenize`). */
-  countTokens?: (text: string) => Promise<number>;
   /**
    * Chars-per-token ratio used to turn `windowTokens` into a character
-   * bound ({@link unitMaxChars}). Calibrated against this provider/model
-   * when `countTokens` exists (see {@link calibrateCharsPerToken}); the
-   * fixed {@link CHARS_PER_TOKEN_TAIL} fallback otherwise.
+   * bound ({@link unitMaxChars}) and, downstream, into `RemoteEmbedder`'s
+   * per-request token estimate. Calibrated against this provider/model via
+   * its own tokenizer when it exposes one (llama.cpp's `/tokenize` — see
+   * {@link calibrateCharsPerToken}); the fixed {@link CHARS_PER_TOKEN_TAIL}
+   * fallback otherwise. The tokenizer itself is never part of this returned
+   * shape — it is used once, internally, to compute this ratio.
    */
   charsPerToken: number;
 }
@@ -73,20 +79,12 @@ export const CHARS_PER_TOKEN_TAIL = 2.6;
 export const UNIT_HEADER_MARGIN_TOKENS = 64;
 
 /**
- * Number of synthetic texts `probeProviderLimits` tokenizes to calibrate
- * `charsPerToken` (see {@link calibrateCharsPerToken}) when the provider
- * exposes `/tokenize`, per this contract's calibration sample size. The
- * real per-entry unit corpus does not exist yet at probe time — probing
- * runs once, before A1's `deriveUnits` has produced anything — so
- * calibration spans a fixed set of representative text shapes instead.
- */
-const CALIBRATION_SAMPLE_COUNT = 64;
-
-/**
  * Percentile (of chars-per-token ratios, sorted ascending) calibration
  * reports: the single densest sampled text, i.e. the smallest
  * chars-per-token ratio — the same conservative, worst-case-density intent
- * the {@link CHARS_PER_TOKEN_TAIL} fallback encodes as a fixed p99.
+ * the {@link CHARS_PER_TOKEN_TAIL} fallback encodes as a fixed p99. Over
+ * {@link CALIBRATION_SHAPES}' eight samples this percentile always resolves
+ * to index 0 — it is simply the minimum ratio observed.
  */
 const CALIBRATION_PERCENTILE = 0.01;
 
@@ -95,10 +93,10 @@ const TOKENIZE_PRESENCE_PROBE_TEXT = "ping";
 
 /**
  * Representative text shapes to calibrate a provider's chars-per-token
- * ratio against. Mirrors the mix real markdown fragments produce — prose,
- * code, a table, a list, a link, non-Latin text (which tokenizes at a very
- * different ratio than English prose), SQL, and dense technical prose —
- * cycled to reach {@link CALIBRATION_SAMPLE_COUNT} samples.
+ * ratio against, tokenized once each (eight requests total): mirrors the
+ * mix real markdown fragments produce — prose, code, a table, a list, a
+ * link, non-Latin text (which tokenizes at a very different ratio than
+ * English prose), SQL, and dense technical prose.
  */
 const CALIBRATION_SHAPES: readonly string[] = [
   "This is a short sentence describing typical prose content used to calibrate the tokenizer.",
@@ -111,18 +109,6 @@ const CALIBRATION_SHAPES: readonly string[] = [
   "A longer paragraph mixing punctuation, numbers (like 42 and 3.14), and technical terms such as `tokenizer`, `embedding`, and `context window`.",
 ];
 
-/** Build the {@link CALIBRATION_SAMPLE_COUNT}-text calibration corpus by cycling {@link CALIBRATION_SHAPES}. */
-function buildCalibrationCorpus(): string[] {
-  const corpus: string[] = [];
-  for (let i = 0; i < CALIBRATION_SAMPLE_COUNT; i++) {
-    const shape = CALIBRATION_SHAPES[i % CALIBRATION_SHAPES.length] as string;
-    // Vary repeated shapes slightly so they do not all collapse to the exact
-    // same chars-per-token ratio once the corpus wraps past CALIBRATION_SHAPES.length.
-    corpus.push(i < CALIBRATION_SHAPES.length ? shape : `${shape} (sample ${i})`);
-  }
-  return corpus;
-}
-
 /** Index into a `length`-element array, sorted ascending, at `percentile` (0-1). Clamped so a tiny array still yields a valid index. */
 function percentileIndex(length: number, percentile: number): number {
   if (length <= 1) return 0;
@@ -130,15 +116,17 @@ function percentileIndex(length: number, percentile: number): number {
 }
 
 /**
- * Calibrate `charsPerToken` against a real provider/model by tokenizing the
- * built-in calibration corpus and taking the {@link CALIBRATION_PERCENTILE}
- * (densest-text) chars-per-token ratio across it. A sample whose tokenize
- * call fails is skipped rather than aborting the whole calibration; only a
- * total wipeout (every sample failed) falls back to {@link CHARS_PER_TOKEN_TAIL}.
+ * Calibrate `charsPerToken` against a real provider/model by tokenizing
+ * {@link CALIBRATION_SHAPES} once each and taking the
+ * {@link CALIBRATION_PERCENTILE} (densest-text) chars-per-token ratio across
+ * them — with eight samples that percentile is simply the minimum ratio
+ * observed. A sample whose tokenize call fails is skipped rather than
+ * aborting the whole calibration; only a total wipeout (every sample
+ * failed) falls back to {@link CHARS_PER_TOKEN_TAIL}.
  */
 async function calibrateCharsPerToken(countTokens: (text: string) => Promise<number>): Promise<number> {
   const ratios: number[] = [];
-  for (const text of buildCalibrationCorpus()) {
+  for (const text of CALIBRATION_SHAPES) {
     try {
       const tokens = await countTokens(text);
       if (tokens > 0) ratios.push(text.length / tokens);
@@ -236,7 +224,7 @@ async function probeLlamaCpp(
   const countTokens = await probeLlamaCppCountTokens(origin, fetchImpl, timeoutMs, signal).catch(() => undefined);
   const charsPerToken = countTokens ? await calibrateCharsPerToken(countTokens) : CHARS_PER_TOKEN_TAIL;
 
-  return { windowTokens, slots, source: "llama.cpp", countTokens, charsPerToken };
+  return { windowTokens, slots, source: "llama.cpp", charsPerToken };
 }
 
 /** Ollama does not expose `num_parallel` (its in-flight slot count) via any API route, so the probe always reports 1 slot unless `config.concurrency` overrides it. */
@@ -307,16 +295,7 @@ function defaultLimits(config: EmbeddingConnectionConfig): ProviderLimits {
   };
 }
 
-/**
- * Probe the configured embedding endpoint for its OWN window/slot limits.
- * Tries llama.cpp's `GET /props` first, then Ollama's `POST /api/show`; an
- * endpoint that answers neither (an OpenAI-compatible server, a gateway) —
- * or a config with no remote `endpoint` at all (a local-only embedder) —
- * gets the conservative default. Never throws: any probe failure (a
- * network error, a malformed response, an unparseable endpoint) resolves
- * to the same default shape rather than rejecting.
- */
-export async function probeProviderLimits(
+async function probeProviderLimitsUncached(
   config: EmbeddingConnectionConfig,
   opts?: { signal?: AbortSignal; fetch?: typeof fetch },
 ): Promise<ProviderLimits> {
@@ -334,6 +313,57 @@ export async function probeProviderLimits(
   if (ollama) return ollama;
 
   return defaultLimits(config);
+}
+
+/**
+ * Per-process memoisation of {@link probeProviderLimits}, keyed by the parts
+ * of `config` that change what gets probed (`endpoint`, `model`,
+ * `concurrency`, `timeoutMs`) — `reconcileRoots`, `reconcilePaths` and
+ * `drainEmbeddingQueue` each probe once per call, so a single `akm index` or
+ * `akm remember` otherwise repeated the same handful of HTTP requests two or
+ * three times over. The cached PROMISE is stored (not just its resolved
+ * value), so concurrent callers before the first probe settles share the one
+ * in-flight request set rather than each starting their own. A probe that
+ * falls back to `source: "default"` (network error, malformed response) is
+ * cached too: a process is one CLI run, and a flapping endpoint is the
+ * drain's own retry/back-off's problem, not this cache's.
+ */
+const providerLimitsCache = new Map<string, Promise<ProviderLimits>>();
+
+/** TEST-ONLY: clear the per-process probe cache so each test starts from a clean slate. */
+export function _resetProviderLimitsCacheForTests(): void {
+  providerLimitsCache.clear();
+}
+
+/**
+ * Probe the configured embedding endpoint for its OWN window/slot limits.
+ * Tries llama.cpp's `GET /props` first, then Ollama's `POST /api/show`; an
+ * endpoint that answers neither (an OpenAI-compatible server, a gateway) —
+ * or a config with no remote `endpoint` at all (a local-only embedder) —
+ * gets the conservative default. Never throws: any probe failure (a
+ * network error, a malformed response, an unparseable endpoint) resolves
+ * to the same default shape rather than rejecting.
+ *
+ * Memoised per process — see {@link providerLimitsCache} — so every caller
+ * with the same effective config (`endpoint`/`model`/`concurrency`/
+ * `timeoutMs`) shares one probe's HTTP requests instead of repeating them.
+ */
+export async function probeProviderLimits(
+  config: EmbeddingConnectionConfig,
+  opts?: { signal?: AbortSignal; fetch?: typeof fetch },
+): Promise<ProviderLimits> {
+  const cacheKey = JSON.stringify({
+    endpoint: config.endpoint,
+    model: config.model,
+    concurrency: config.concurrency,
+    timeoutMs: config.timeoutMs,
+  });
+  const cached = providerLimitsCache.get(cacheKey);
+  if (cached) return cached;
+
+  const probe = probeProviderLimitsUncached(config, opts);
+  providerLimitsCache.set(cacheKey, probe);
+  return probe;
 }
 
 /**

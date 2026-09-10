@@ -129,16 +129,16 @@ function fetchUnitTexts(db: Database, hashes: readonly string[]): Map<string, st
  * `contextLength` config keys): `concurrency` (in-flight requests) defaults
  * to the provider's OWN observed slot count when `embedding.concurrency`
  * itself leaves it unset (`probeProviderLimits` already applies that same
- * override to `slots`). The request TOKEN WINDOW, exact tokenizer, and
+ * override to `slots`). The request TOKEN WINDOW, chars-per-token ratio, and
  * Ollama `num_ctx` are no longer config fields at all — they are threaded
  * into `RemoteEmbedder.embedBatch` as `packing`, sourced straight from the
- * same probe: `windowTokens` for the per-request budget,
- * `countTokens` for exact packing where the provider offers one (llama.cpp's
- * `/tokenize`), and `windowTokens` again for Ollama's `num_ctx` when
- * `source === "ollama"`. `windowIsKnown` (`source !== "default"`) gates
- * `RemoteEmbedder`'s same-run adaptive shrink: a provider that reports
- * nothing about its own context size still gets that corrective, but a
- * probed, authoritative window does not need it second-guessed.
+ * same probe: `windowTokens` for the per-request budget, `charsPerToken` for
+ * the calibrated per-text token estimate, and `windowTokens` again for
+ * Ollama's `num_ctx` when `source === "ollama"`. `windowIsKnown`
+ * (`source !== "default"`) gates `RemoteEmbedder`'s same-run adaptive
+ * shrink: a provider that reports nothing about its own context size still
+ * gets that corrective, but a probed, authoritative window does not need it
+ * second-guessed.
  */
 async function resolveEmbeddingPacking(
   config: AkmConfig,
@@ -150,7 +150,7 @@ async function resolveEmbeddingPacking(
     embeddingConfig: { ...base, concurrency: base.concurrency ?? limits.slots },
     packing: {
       tokenBudget: limits.windowTokens,
-      countTokens: limits.countTokens,
+      charsPerToken: limits.charsPerToken,
       windowIsKnown: limits.source !== "default",
       ollamaNumCtx: limits.source === "ollama" ? limits.windowTokens : undefined,
     },

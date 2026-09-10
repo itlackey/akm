@@ -9,10 +9,11 @@
  * (AGENTS.md) — no real socket is opened, so this is a pure unit test.
  */
 
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../../../src/core/config/config";
 import { HEALTH_PROBE_TIMEOUT_MS } from "../../../src/llm/client";
 import {
+  _resetProviderLimitsCacheForTests,
   CHARS_PER_TOKEN_TAIL,
   DEFAULT_WINDOW_TOKENS,
   probeProviderLimits,
@@ -20,6 +21,10 @@ import {
   unitMaxChars,
 } from "../../../src/llm/embedders/provider-limits";
 import { withMockedFetch } from "../../_helpers/sandbox";
+
+beforeEach(() => {
+  _resetProviderLimitsCacheForTests();
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -34,7 +39,7 @@ function baseConfig(overrides: Partial<EmbeddingConnectionConfig> = {}): Embeddi
 }
 
 describe("probeProviderLimits: llama.cpp shape", () => {
-  test("reads window/slots from /props and wires countTokens when /tokenize is present", async () => {
+  test("reads window/slots from /props and calibrates charsPerToken when /tokenize is present", async () => {
     const tokenizeCalls: string[] = [];
     const limits = await withMockedFetch(
       () => probeProviderLimits(baseConfig()),
@@ -54,37 +59,11 @@ describe("probeProviderLimits: llama.cpp shape", () => {
     expect(limits.source).toBe("llama.cpp");
     expect(limits.windowTokens).toBe(4096);
     expect(limits.slots).toBe(4);
-    expect(typeof limits.countTokens).toBe("function");
-    // The presence check plus the calibration corpus (64 samples).
-    expect(tokenizeCalls.length).toBe(65);
+    // The presence check plus one tokenize call per CALIBRATION_SHAPES entry (8).
+    expect(tokenizeCalls.length).toBe(9);
   });
 
-  test("countTokens returned by the probe calls /tokenize and returns the token count", async () => {
-    // `countTokens` closes over the fetch implementation resolved at probe
-    // time, so it is exercised (and still bound to the SAME mock) below,
-    // still inside this one `withMockedFetch` scope rather than a second one.
-    let limits: Awaited<ReturnType<typeof probeProviderLimits>> | undefined;
-    let count: number | undefined;
-    await withMockedFetch(
-      async () => {
-        limits = await probeProviderLimits(baseConfig());
-        count = await limits.countTokens?.("some text to count");
-      },
-      async (url) => {
-        if (url.endsWith("/props")) {
-          return jsonResponse({ default_generation_settings: { n_ctx: 2048 }, total_slots: 1 });
-        }
-        if (url.endsWith("/tokenize")) {
-          return jsonResponse({ tokens: [1, 2, 3] });
-        }
-        throw new Error(`unexpected url: ${url}`);
-      },
-    );
-    expect(limits?.countTokens).toBeDefined();
-    expect(count).toBe(3);
-  });
-
-  test("calibrates charsPerToken as the 1st-percentile (densest) ratio across the calibration corpus", async () => {
+  test("calibrates charsPerToken as the 1st-percentile (densest) ratio across the calibration shapes", async () => {
     const observedRatios: number[] = [];
     let tokenizeCallIndex = 0;
     const limits = await withMockedFetch(
@@ -108,7 +87,8 @@ describe("probeProviderLimits: llama.cpp shape", () => {
       },
     );
 
-    expect(observedRatios.length).toBe(64);
+    // One tokenize call per CALIBRATION_SHAPES entry (8), the presence check excluded.
+    expect(observedRatios.length).toBe(8);
     const expectedRatio = Math.min(...observedRatios);
     expect(limits.charsPerToken).toBeCloseTo(expectedRatio, 6);
   });
@@ -127,7 +107,6 @@ describe("probeProviderLimits: llama.cpp shape", () => {
       },
     );
     expect(limits.source).toBe("llama.cpp");
-    expect(limits.countTokens).toBeUndefined();
     expect(limits.charsPerToken).toBe(CHARS_PER_TOKEN_TAIL);
   });
 
@@ -168,7 +147,6 @@ describe("probeProviderLimits: Ollama shape", () => {
     expect(limits.source).toBe("ollama");
     expect(limits.windowTokens).toBe(2048);
     expect(limits.slots).toBe(1);
-    expect(limits.countTokens).toBeUndefined();
     expect(limits.charsPerToken).toBe(CHARS_PER_TOKEN_TAIL);
   });
 
@@ -269,6 +247,33 @@ describe("probeProviderLimits: timeout reuse (#914)", () => {
     for (const call of timeoutSpy.mock.calls) {
       expect(call[0]).toBe(42);
     }
+  });
+});
+
+describe("probeProviderLimits: per-process memoisation (R3)", () => {
+  test("two calls with the same config make one set of HTTP requests", async () => {
+    let fetchCalls = 0;
+    const { first, second } = await withMockedFetch(
+      async () => {
+        const firstLimits = await probeProviderLimits(baseConfig());
+        const secondLimits = await probeProviderLimits(baseConfig());
+        return { first: firstLimits, second: secondLimits };
+      },
+      async (url) => {
+        fetchCalls++;
+        if (url.endsWith("/props")) {
+          return jsonResponse({ default_generation_settings: { n_ctx: 4096 }, total_slots: 2 });
+        }
+        if (url.endsWith("/tokenize")) {
+          return jsonResponse({ tokens: [1, 2, 3] });
+        }
+        throw new Error(`unexpected url: ${url}`);
+      },
+    );
+    // /props once, plus the /tokenize presence check and 8 calibration
+    // samples once each — NOT doubled for the second call.
+    expect(fetchCalls).toBe(10);
+    expect(second).toEqual(first);
   });
 });
 

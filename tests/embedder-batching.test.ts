@@ -317,26 +317,17 @@ describe("RemoteEmbedder.embedBatch: request window/slots come from packing, not
   });
 });
 
-describe("RemoteEmbedder.embedBatch: exact-count packing via packing.countTokens (index redesign, B5)", () => {
-  test("packs against the exact provider count, not the char/4 estimate, when countTokens is given", async () => {
-    // Each text is 40 chars (estimateTokenCount = 10), but the fake provider
-    // tokenizer reports 34 tokens/text — dense enough that 3 together (102)
-    // would overflow a 100-token budget under the EXACT count, while the
-    // ESTIMATE (10/text) would happily fit all 5 in one request. Packing by
-    // the exact count is what forces 2 requests instead of 1.
-    const texts = Array.from({ length: 5 }, (_, i) => "x".repeat(39) + i);
+describe("RemoteEmbedder.embedBatch: packing.charsPerToken governs the token estimate (index redesign, B5/R4)", () => {
+  /** Runs the same 12 identical-length texts through embedBatch at a given `charsPerToken` and returns each request's document count in dispatch order. */
+  async function requestSizesAt(charsPerToken: number): Promise<number[]> {
+    const texts = Array.from({ length: 12 }, () => "x".repeat(40));
     const requestSizes: number[] = [];
-    const countCalls: string[] = [];
-    const countTokens = async (text: string): Promise<number> => {
-      countCalls.push(text);
-      return 34;
-    };
     await withMockedFetch(
       async () => {
         const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
         const results = await embedder.embedBatch(texts, undefined, undefined, undefined, {
           tokenBudget: 100,
-          countTokens,
+          charsPerToken,
         });
         expect(results.every((r) => r !== undefined)).toBe(true);
       },
@@ -347,33 +338,34 @@ describe("RemoteEmbedder.embedBatch: exact-count packing via packing.countTokens
         return jsonResponse({ data });
       },
     );
-    expect(countCalls).toHaveLength(5);
-    // 34*2=68 <= 100 but 34*3=102 > 100, so batches of 2: [2,2,1].
-    expect(requestSizes).toEqual([2, 2, 1]);
+    return requestSizes;
+  }
+
+  test("a charsPerToken of 2 packs about half as many docs per batch as 4, for the same texts and budget", async () => {
+    // 40-char texts: charsPerToken 4 → 10 tokens/doc → 10 docs fit a
+    // 100-token budget; charsPerToken 2 → 20 tokens/doc → only 5 fit.
+    const sizesAt4 = await requestSizesAt(4);
+    const sizesAt2 = await requestSizesAt(2);
+    expect(sizesAt4[0]).toBe(10);
+    expect(sizesAt2[0]).toBe(5);
   });
 
-  test("a countTokens failure for one text falls back to the estimate for just that text", async () => {
-    const texts = ["short", "short"];
-    const countTokens = async (text: string): Promise<number> => {
-      if (text === texts[0]) throw new Error("tokenizer hiccup");
-      return 5;
-    };
-    let requestSize: number | undefined;
-    const results = await withMockedFetch(
+  test("omitting charsPerToken falls back to the 4-chars-per-token estimate", async () => {
+    const requestSizes: number[] = [];
+    await withMockedFetch(
       async () => {
         const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
-        return embedder.embedBatch(texts, undefined, undefined, undefined, { tokenBudget: 6000, countTokens });
+        const texts = Array.from({ length: 12 }, () => "x".repeat(40));
+        await embedder.embedBatch(texts, undefined, undefined, undefined, { tokenBudget: 100 });
       },
       async (_url, init) => {
         const body = JSON.parse(init?.body as string) as { input: string[] };
-        requestSize = body.input.length;
+        requestSizes.push(body.input.length);
         const data = body.input.map((_t, i) => ({ embedding: [1, 0], index: i }));
         return jsonResponse({ data });
       },
     );
-    // The tokenizer failure never surfaces as a skip — both texts still embed.
-    expect(results.every((r) => r !== undefined)).toBe(true);
-    expect(requestSize).toBe(2);
+    expect(requestSizes[0]).toBe(10);
   });
 });
 
