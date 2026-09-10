@@ -574,8 +574,13 @@ export interface InfoResponse {
   searchModes: string[];
   semanticSearch: {
     mode: "off" | "auto";
-    /** Read live from the index at call time — never a cached verdict. */
-    status: "disabled" | "pending" | "ready-js" | "ready-vec";
+    /**
+     * Read live from the index at call time — never a cached verdict.
+     * "ready-js" (a JS-computed cosine-similarity fallback for when the
+     * sqlite-vec extension is unavailable) is retired (index redesign, B5):
+     * the units vector store has no BLOB fallback to fall back to.
+     */
+    status: "disabled" | "pending" | "ready-vec";
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;

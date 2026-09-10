@@ -18,10 +18,11 @@
  * nothing recognisable) resolves to the same `source: "default"` shape a
  * misconfigured or exotic endpoint would get.
  *
- * This module is purely additive at this stage: nothing here is wired into
- * the embedding loop yet, and no `embedding.*` config key is touched or
- * removed — that wiring (and removing `maxInputTokens`/`maxTokens`/
- * `batchSize`/`contextLength`) is stage 2.
+ * Wired into the embedding loop by `src/indexer/drain.ts`, which threads the
+ * result in as `RemoteEmbedder.embedBatch`'s `packing` option
+ * (`EmbeddingRequestPacking`, `src/llm/embedders/remote.ts`) — the
+ * `embedding.maxInputTokens`/`maxTokens`/`batchSize`/`contextLength` config
+ * keys this replaced are retired (docs/plans/index-redesign-contract.md, B5).
  */
 
 import type { EmbeddingConnectionConfig } from "../../core/config/config";

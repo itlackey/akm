@@ -16,21 +16,51 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../../src/storage/repositories/index-connection";
-import { writeMarkdownFiles } from "../../_helpers/markdown-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 /**
+ * Each entry's inflated `description` is sized (chars ≈ tokens × 4, the
+ * same `estimateTokenCount` ratio the packer plans against) so its
+ * structured-fields "card" unit alone estimates to `PER_UNIT_TOKENS` — no
+ * markdown body, so no second fragment unit (index-redesign A1) muddies the
+ * per-batch count.
+ */
+const PER_UNIT_TOKENS = 1_800;
+
+/**
+ * Write `fileCount` frontmatter-only entries whose single unit each
+ * estimates to `PER_UNIT_TOKENS` tokens. The index redesign (B5) retired
+ * `embedding.batchSize`, so forcing several small provider round trips
+ * spread over the run (this test's whole premise — a poller must catch
+ * multiple distinct mid-run commits) now comes from the GREEDY packer's own
+ * token-budget math against the default (unprobed, 8192-token) window
+ * instead of a config override: 4 docs at 1,800 tokens (7,200) fit one
+ * request; a 5th (9,000) never does, so 44 entries land in 11 batches of 4 —
+ * the same shape `batchSize: 4` used to force directly.
+ */
+function writeSizedMemoryFiles(rootDir: string, fileCount: number, marker: string): void {
+  fs.mkdirSync(path.join(rootDir, "knowledge"), { recursive: true });
+  for (let i = 0; i < fileCount; i++) {
+    fs.writeFileSync(
+      path.join(rootDir, "knowledge", `entry-${i}.md`),
+      `---\ndescription: ${marker}-${i}-${"x".repeat(PER_UNIT_TOKENS * 4)}\n---\n`,
+    );
+  }
+}
+
+/**
  * `units` rows with a stored vector — the content-addressed (index-redesign
- * A2) analogue of the pre-redesign `embeddings` table `getEmbeddingCount`
- * used to read. That legacy, entry-id-keyed table is only ever written by
- * `materialize-embeddings.ts`, which nothing calls any more (index-redesign
- * B5a retired its only caller, the deleted walk/derive pipeline) — it stays
- * dead weight rather than deleted (out of scope here, B5b/B5c), but reading
- * it would just see zero for the whole run.
+ * A2) analogue of the pre-redesign, entry-id-keyed `embeddings` table
+ * `getEmbeddingCount` used to read. `materialize-embeddings.ts`, the only
+ * writer of that legacy table, had no callers left and is deleted
+ * (index-redesign B5b) — the `embeddings` table itself is out of scope here
+ * (B5c), but reading it would just see zero for the whole run either way.
  */
 function getUnitVectorCount(db: Database): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM units").get() as { cnt: number };
@@ -52,7 +82,7 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
 
   test("a separate read-only connection observes the embeddings count strictly increasing while the server is still receiving requests", async () => {
     const entryCount = 44;
-    writeMarkdownFiles(storage.stashDir, entryCount, "mid-run");
+    writeSizedMemoryFiles(storage.stashDir, entryCount, "mid-run");
 
     server = Bun.serve({
       port: 0,
@@ -80,7 +110,6 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
         endpoint: `http://localhost:${server.port}`,
         model: "mock-embed",
         dimension: 4,
-        batchSize: 4,
       },
     });
 
@@ -119,10 +148,9 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
     expect(finalDb).not.toBeNull();
     if (finalDb) {
       try {
-        // Each entry here is one short, heading-less paragraph: a
-        // structured-fields "card" unit plus one body-fragment unit
-        // (index-redesign A1) — 2 units per entry.
-        expect(getUnitVectorCount(finalDb)).toBe(entryCount * 2);
+        // Frontmatter-only entries (writeSizedMemoryFiles): one
+        // structured-fields "card" unit per entry, no body-fragment unit.
+        expect(getUnitVectorCount(finalDb)).toBe(entryCount);
       } finally {
         closeDatabase(finalDb);
       }

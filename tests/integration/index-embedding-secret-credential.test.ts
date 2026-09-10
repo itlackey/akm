@@ -12,7 +12,7 @@
  * `LAB_API_KEY` deliberately absent from the environment reportedly sent
  * every embedding request with NO Authorization header at all — silently,
  * not as a resolution error. This suite reproduces the standalone `akm
- * index` materializer path in-process AND as a real CLI child process
+ * index` embedding path (`drain.ts`) in-process AND as a real CLI child process
  * (since the field failure was specifically the CLI), plus every other path
  * that reaches `RemoteEmbedder`: an `extends`-inherited apiKey with adapter
  * detection persisting mid-run (#945); `akm bundle update`'s post-commit

@@ -138,8 +138,9 @@ export async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
         "  • qwen3-embedding-0.6b  — fast and lightweight (ollama pull qwen3-embedding-0.6b)",
         "  • qwen3-embedding-4b    — higher quality (ollama pull qwen3-embedding-4b)",
         "",
-        "For long documents (wiki pages, large files), set context length to avoid 400 errors:",
-        "  akm config set embedding.contextLength 8192",
+        "akm index probes Ollama for this model's own context window and sends it as",
+        "num_ctx automatically — no config needed. To override, set",
+        "embedding.ollamaOptions.num_ctx explicitly.",
       ].join("\n"),
       "Embedding tips",
     );

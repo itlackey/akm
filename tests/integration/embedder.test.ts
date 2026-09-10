@@ -421,13 +421,15 @@ describe("RemoteEmbedder.embedBatch skip-and-report (#874)", () => {
       },
     });
     try {
-      const embedder = new RemoteEmbedder({
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        maxTokens: 10,
-      });
+      const embedder = new RemoteEmbedder({ endpoint: `http://localhost:${server.port}`, model: "test-model" });
       const skips: Array<{ index: number; reason: string; message: string }> = [];
-      const results = await embedder.embedBatch(["small", "x".repeat(200)], undefined, (skip) => skips.push(skip));
+      const results = await embedder.embedBatch(
+        ["small", "x".repeat(200)],
+        undefined,
+        (skip) => skips.push(skip),
+        undefined,
+        { tokenBudget: 10 },
+      );
 
       expect(results[0]).toBeDefined();
       expect(results[1]).toBeUndefined();
@@ -457,15 +459,13 @@ describe("RemoteEmbedder.embedBatch skip-and-report (#874)", () => {
       },
     });
     try {
-      const embedder = new RemoteEmbedder({
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        maxTokens: 20,
-        batchSize: 1,
-      });
+      const embedder = new RemoteEmbedder({ endpoint: `http://localhost:${server.port}`, model: "test-model" });
       const texts = ["ok-1", "FAIL-this-one", "ok-2", "x".repeat(400) /* oversized */, "ok-3"];
       const skips: Array<{ index: number; reason: string }> = [];
-      const results = await embedder.embedBatch(texts, undefined, (skip) => skips.push(skip));
+      const results = await embedder.embedBatch(texts, undefined, (skip) => skips.push(skip), undefined, {
+        tokenBudget: 20,
+        maxCount: 1,
+      });
 
       expect(results[0]).toBeDefined();
       expect(results[1]).toBeUndefined();
@@ -836,13 +836,9 @@ describe("RemoteEmbedder.embedBatch against a real server: bounded concurrency (
       },
     });
     try {
-      const embedder = new RemoteEmbedder({
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        batchSize: 1,
-      });
+      const embedder = new RemoteEmbedder({ endpoint: `http://localhost:${server.port}`, model: "test-model" });
       const texts = Array.from({ length: 4 }, (_, i) => `doc-${i}`);
-      await embedder.embedBatch(texts);
+      await embedder.embedBatch(texts, undefined, undefined, undefined, { maxCount: 1 });
       expect(maxInFlight).toBe(1);
     } finally {
       server.stop(true);

@@ -28,7 +28,12 @@
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
 import { embedBatch } from "../llm/embedder";
 import { probeProviderLimits } from "../llm/embedders/provider-limits";
-import type { EmbeddingBatchCommit, EmbeddingBatchSkip, EmbeddingSkipHandler } from "../llm/embedders/remote";
+import type {
+  EmbeddingBatchCommit,
+  EmbeddingBatchSkip,
+  EmbeddingRequestPacking,
+  EmbeddingSkipHandler,
+} from "../llm/embedders/remote";
 import type { EmbeddingVector } from "../llm/embedders/types";
 import type { Database } from "../storage/database";
 import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
@@ -101,26 +106,36 @@ function fetchUnitTexts(db: Database, hashes: readonly string[]): Map<string, st
 }
 
 /**
- * Effective embedding config for this drain: `maxTokens` (the client-side
- * per-request token budget `RemoteEmbedder` packs batches against) and
- * `concurrency` (in-flight requests) default to the provider's OWN observed
- * window/slot limits instead of the generic config defaults, when the
- * config itself leaves them unset — an explicit `embedding.maxTokens` /
- * `embedding.concurrency` still wins (`probeProviderLimits` already applies
- * that same override to `slots`). `RemoteEmbedder`'s existing context-size
- * split-and-shrink absorbs the gap between the provider's real token count
- * and the char/4 estimate batching plans against.
+ * Effective embedding config and request packing for this drain (index
+ * redesign, B5 — replaces the retired `embedding.maxTokens`/`batchSize`/
+ * `contextLength` config keys): `concurrency` (in-flight requests) defaults
+ * to the provider's OWN observed slot count when `embedding.concurrency`
+ * itself leaves it unset (`probeProviderLimits` already applies that same
+ * override to `slots`). The request TOKEN WINDOW, exact tokenizer, and
+ * Ollama `num_ctx` are no longer config fields at all — they are threaded
+ * into `RemoteEmbedder.embedBatch` as `packing`, sourced straight from the
+ * same probe: `windowTokens` for the per-request budget,
+ * `countTokens` for exact packing where the provider offers one (llama.cpp's
+ * `/tokenize`), and `windowTokens` again for Ollama's `num_ctx` when
+ * `source === "ollama"`. `windowIsKnown` (`source !== "default"`) gates
+ * `RemoteEmbedder`'s same-run adaptive shrink: a provider that reports
+ * nothing about its own context size still gets that corrective, but a
+ * probed, authoritative window does not need it second-guessed.
  */
-async function packEmbeddingConfig(
+async function resolveEmbeddingPacking(
   config: AkmConfig,
   signal: AbortSignal | undefined,
-): Promise<EmbeddingConnectionConfig> {
+): Promise<{ embeddingConfig: EmbeddingConnectionConfig; packing: EmbeddingRequestPacking }> {
   const base = config.embedding ?? {};
   const limits = await probeProviderLimits(base, { signal });
   return {
-    ...base,
-    maxTokens: base.maxTokens ?? limits.windowTokens,
-    concurrency: base.concurrency ?? limits.slots,
+    embeddingConfig: { ...base, concurrency: base.concurrency ?? limits.slots },
+    packing: {
+      tokenBudget: limits.windowTokens,
+      countTokens: limits.countTokens,
+      windowIsKnown: limits.source !== "default",
+      ollamaNumCtx: limits.source === "ollama" ? limits.windowTokens : undefined,
+    },
   };
 }
 
@@ -169,7 +184,7 @@ export async function drainEmbeddingQueue(
     return emitDone({ pending, embedded: 0, failed: 0, skipped: 0, identity });
   }
 
-  const embeddingConfig = await packEmbeddingConfig(config, opts.signal);
+  const { embeddingConfig, packing } = await resolveEmbeddingPacking(config, opts.signal);
 
   let embedded = 0;
   let failed = 0;
@@ -252,7 +267,7 @@ export async function drainEmbeddingQueue(
     }
   };
 
-  await embedBatch(texts, embeddingConfig, opts.signal, onSkip, onBatch);
+  await embedBatch(texts, embeddingConfig, opts.signal, onSkip, onBatch, packing);
   throwIfAborted(opts.signal);
 
   const attempted = texts.length;
