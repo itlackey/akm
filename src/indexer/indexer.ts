@@ -63,6 +63,7 @@ import { isVecAvailable } from "../storage/repositories/index-vec-repository";
 import { dropOtherIdentities, unitCoverage } from "../storage/repositories/units-repository";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { deleteStoredGraph } from "./db/graph-db";
+import { DEFAULT_REMOTE_BATCH_SIZE } from "../llm/embedders/remote";
 import { type DrainCounts, drainEmbeddingQueue } from "./drain";
 import { deriveInstallations } from "./installations";
 import {
@@ -208,9 +209,31 @@ interface IndexOptions {
    * its JSON error envelope, so an extra human-readable line there makes the
    * envelope unparseable for callers doing `JSON.parse(stderr)` — and would
    * also leak past `--quiet`, which a read command is entitled to honor.
+   *
+   * It DOES bound one thing besides disclosure: the embedding drain. An
+   * implicit run is a read command's inline bootstrap, so it embeds at most
+   * {@link IMPLICIT_DRAIN_UNIT_LIMIT} units and leaves the rest of the queue
+   * to a later drain (an explicit `akm index`, the scheduler, or the next
+   * read). Without that bound the FIRST `akm search` against a fresh index
+   * blocked until the entire corpus was embedded — hours on a large corpus —
+   * with nothing on stderr to show why, since an implicit run deliberately
+   * stays silent. Rule 4 (docs/plans/index-redesign.md) is what makes this
+   * safe: the queue is durable and any process drains some of it, so a
+   * bounded slice per read still converges while every read stays fast, and
+   * the index is lexically searchable from the first one.
    */
   implicit?: boolean;
 }
+
+/**
+ * How many units an IMPLICIT (read-path bootstrap) run embeds before leaving
+ * the rest of the queue to a later drain — one provider request's worth,
+ * reusing `DEFAULT_REMOTE_BATCH_SIZE` (the per-request document cap in
+ * `src/llm/embedders/remote.ts`) rather than a number picked here, so the
+ * bound means something concrete: a first read waits on roughly one round
+ * trip to the provider, not on the corpus.
+ */
+const IMPLICIT_DRAIN_UNIT_LIMIT = DEFAULT_REMOTE_BATCH_SIZE;
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -799,6 +822,10 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         drainCounts = await drainEmbeddingQueue(db, config, {
           signal,
           onProgress: (line) => onProgress({ phase: "embeddings", message: line }),
+          // An implicit (read-path) run takes a bounded slice — see
+          // `IndexOptions.implicit`. An explicit `akm index` drains the
+          // whole queue, as it always has.
+          ...(options.implicit === true ? { limit: IMPLICIT_DRAIN_UNIT_LIMIT } : {}),
         });
       } catch (drainError) {
         // Best-effort, same contract as the write-path drain

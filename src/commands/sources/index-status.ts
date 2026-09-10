@@ -23,9 +23,9 @@ export interface IndexStatusUnits {
   /**
    * Distinct unit hashes in `unit_texts` — the drain's own candidate set
    * (`drainEmbeddingQueue`'s `selectAllUnitHashes`), not `entry_units`. The
-   * two diverge whenever orphaned `unit_texts` rows exist (a unit no entry
-   * references any more), so mirroring the drain's real candidate set here
-   * is what keeps this count truthful about the work a drain will do.
+   * two diverge whenever an orphaned `unit_texts` row exists (a unit no
+   * entry references any more), so mirroring the drain's real candidate set
+   * here is what keeps this count truthful about the work a drain will do.
    */
   total: number;
   /** Of those, hashes with a vector for the active embedding identity. */
@@ -65,9 +65,11 @@ function emptyStatus(indexPath: string): IndexStatusResponse {
 function readUnitsStatus(db: Database, identity: string | null): IndexStatusUnits {
   // Mirrors `drainEmbeddingQueue`'s own candidate set (`selectAllUnitHashes`,
   // src/indexer/drain.ts) — `unit_texts`, not `entry_units` — so a stale/
-  // orphaned unit_texts row (reconcile never prunes those) is counted here
-  // exactly as it will be by the next drain, instead of understating the
-  // backlog.
+  // orphaned unit_texts row is counted here exactly as it will be by the
+  // next drain, instead of understating the backlog. (Reconcile prunes the
+  // hashes each write itself replaced, and sweeps the whole table at the end
+  // of a full run, so orphans are bounded — but "bounded" is not "none", and
+  // this count must match the drain either way.)
   const total = (db.prepare("SELECT COUNT(DISTINCT unit_hash) AS n FROM unit_texts").get() as { n: number }).n;
   const withVector = identity
     ? (
