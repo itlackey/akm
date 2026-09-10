@@ -32,7 +32,7 @@ import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
@@ -1842,6 +1842,126 @@ async function resolveReflectSource(
 }
 
 /**
+ * #952 — the flat REFLECT_CONTENT_CAP (12 000 chars) exists only to avoid
+ * E2BIG when the prompt travels through CLI argv (agent/SDK runners). The
+ * direct-LLM HTTP path never touches argv, so it can use the resolved
+ * engine's own context window instead. The reserve for "the rest of the
+ * prompt" is measured directly (not guessed): build the same prompt with
+ * the content cap forced to zero and use its length as the overhead, so
+ * feedback/standards/schema-hints/prior-draft size is accounted for
+ * exactly, per this call. A reflect rewrite returns a body roughly the
+ * size of the input, so the budget only spends HALF of the usable window
+ * on input content and reserves the other half for the model's own
+ * output — otherwise a full-context request leaves no room for a
+ * response. Never drops below the flat floor.
+ *
+ * Shared by the real dispatch path ({@link runReflectRefineIterations}) and
+ * `renderReflectPromptPreview`'s `--show-prompt` preview, so the preview
+ * renders the exact prompt reflect would actually send for LLM runners
+ * instead of always the flat-cap prompt.
+ */
+function computeReflectContentBudgetChars(promptInput: ReflectPromptInput, runnerSpec: RunnerSpec): number | undefined {
+  return runnerIsLlm(runnerSpec) && promptInput.assetContent?.trim()
+    ? Math.max(
+        REFLECT_CONTENT_CAP,
+        Math.floor(
+          ((runnerSpec.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN -
+            buildReflectPrompt({ ...promptInput, contentBudgetChars: 0 }).prompt.length) /
+            2,
+        ),
+      )
+    : undefined;
+}
+
+interface ReflectPromptSources {
+  feedback: string[];
+  schemaHints: string[];
+  relatedLessons: RelatedLesson[];
+  rejectedProposals: RejectedProposalContext[];
+  standardsContext: string;
+}
+
+/**
+ * #952 — gather every read-only prompt-input source {@link buildReflectPromptInput}
+ * folds into a `ReflectPromptInput`: recent feedback, schema/lint hints, related
+ * lessons, previously-rejected proposals, and stash standards context.
+ *
+ * Shared by the real dispatch path (`akmReflect`'s step 4, via
+ * {@link runReflectRefineIterations}) and `renderReflectPromptPreview`'s
+ * `--show-prompt` preview, so both gather from exactly one definition instead
+ * of two copies that can drift out of agreement.
+ */
+async function gatherReflectPromptSources(
+  options: AkmReflectOptions,
+  stash: string,
+  parsedRef: AssetRef | undefined,
+  assetContent: string | undefined,
+  assetCtx: RunContext,
+): Promise<ReflectPromptSources> {
+  const feedback = readRecentFeedback(
+    options.ref ? (options.itemRef ?? durableImproveRef(options.ref)) : undefined,
+    options.eventsCtx,
+  );
+  const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
+  const relatedLessons =
+    options.ref && parsedRef ? await readRelatedLessons(assetCtx, stash, options.ref, parsedRef, options.itemRef) : [];
+  // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
+  // reproducing proposals that have already been reviewed and refused.
+  const rejectedProposals = readRejectedProposals(stash, options.ref, options.ctx);
+  // Standards "rulebook" for this target — stash convention/meta facts; empty
+  // when none fire.
+  const standardsContext = resolveStandardsContext(options.ref, stash);
+  return { feedback, schemaHints, relatedLessons, rejectedProposals, standardsContext };
+}
+
+/**
+ * #952 — assemble the `ReflectPromptInput` object literal reflect actually
+ * sends, from gathered sources plus the per-call values (draft path, prior
+ * draft). Shared by the real dispatch path ({@link runReflectRefineIterations})
+ * and `renderReflectPromptPreview`'s `--show-prompt` preview — including
+ * `avoidPatterns`, which the preview previously omitted even though a live
+ * improve loop passes it (recent-error context, O-5 / #378).
+ */
+function buildReflectPromptInput(args: {
+  options: AkmReflectOptions;
+  parsedRef: AssetRef | undefined;
+  assetContent: string | undefined;
+  sources: ReflectPromptSources;
+  runnerSpec: RunnerSpec;
+  draftFilePath: string | undefined;
+  priorDraft: string | undefined;
+}): ReflectPromptInput {
+  const { options, parsedRef, assetContent, sources, runnerSpec, draftFilePath, priorDraft } = args;
+  const { feedback, schemaHints, relatedLessons, rejectedProposals, standardsContext } = sources;
+  const outputMode: ReflectLlmOutputMode | undefined = runnerIsLlm(runnerSpec)
+    ? wantsJsonSchemaOutput(runnerSpec.connection)
+      ? "json_schema"
+      : "framed_markdown"
+    : undefined;
+  return {
+    ...(options.ref ? { ref: options.ref } : {}),
+    ...(parsedRef?.type ? { type: parsedRef.type } : {}),
+    ...(parsedRef?.name ? { name: parsedRef.name } : {}),
+    ...(assetContent !== undefined ? { assetContent } : {}),
+    ...(feedback.length > 0 ? { feedback } : {}),
+    ...(schemaHints.length > 0 ? { schemaHints } : {}),
+    ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
+    ...(options.task ? { task: options.task } : {}),
+    ...(standardsContext.trim() ? { standardsContext } : {}),
+    ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
+    ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
+    // R-1: inject prior draft as self-critique target on iterations > 0
+    ...(priorDraft !== undefined ? { priorDraft } : {}),
+    // Issue A (#reflect-pipeline file-write contract): when the runner can
+    // touch the filesystem, instruct the agent to write the proposal body
+    // to a tmp file instead of inlining it in JSON. Avoids parse failures
+    // on long bodies (e.g. knowledge/systems/KOKORO_USAGE_GUIDE 8.4KB).
+    ...(draftFilePath ? { draftFilePath } : {}),
+    ...(outputMode ? { outputMode } : {}),
+  };
+}
+
+/**
  * Run the agent with the optional Self-Refine loop (R-1 / #372): up to
  * `maxRefineIters` invocations, each injecting the prior draft as self-critique
  * context and exiting early on a no-op refinement. Synthesizes per-iteration
@@ -1852,42 +1972,20 @@ async function runReflectRefineIterations(args: {
   options: AkmReflectOptions;
   parsedRef: AssetRef | undefined;
   assetContent: string | undefined;
-  feedback: ReturnType<typeof readRecentFeedback>;
-  schemaHints: ReturnType<typeof buildSchemaHints>;
-  relatedLessons: Awaited<ReturnType<typeof readRelatedLessons>>;
-  rejectedProposals: ReturnType<typeof readRejectedProposals>;
-  standardsContext: string;
+  sources: ReflectPromptSources;
   runnerSpec: RunnerSpec;
   lease: LoweredExecutionDispatchLease;
   agentEnv: Record<string, string>;
   draftPathsToCleanup: string[];
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }): Promise<{ result: AgentRunResult; lastDraftPath: string | undefined }> {
-  const {
-    options,
-    parsedRef,
-    assetContent,
-    feedback,
-    schemaHints,
-    relatedLessons,
-    rejectedProposals,
-    standardsContext,
-    runnerSpec,
-    lease,
-    agentEnv,
-    draftPathsToCleanup,
-    onNotices,
-  } = args;
+  const { options, parsedRef, assetContent, sources, runnerSpec, lease, agentEnv, draftPathsToCleanup, onNotices } =
+    args;
   const maxRefineIters = Math.max(1, options.maxRefineIters ?? 1);
   // Determine whether this dispatch can honour the file-write contract.
   // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
   // LLM HTTP runner does NOT.
   const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
-  const outputMode: ReflectLlmOutputMode | undefined = runnerIsLlm(runnerSpec)
-    ? wantsJsonSchemaOutput(runnerSpec.connection)
-      ? "json_schema"
-      : "framed_markdown"
-    : undefined;
   // Initialized to a sentinel; always overwritten in the first loop iteration
   // (maxRefineIters is clamped to >= 1 above).
   let result = {} as AgentRunResult;
@@ -1904,50 +2002,16 @@ async function runReflectRefineIterations(args: {
       lastDraftPath = iterDraftPath;
     }
 
-    const promptInput: ReflectPromptInput = {
-      ...(options.ref ? { ref: options.ref } : {}),
-      ...(parsedRef?.type ? { type: parsedRef.type } : {}),
-      ...(parsedRef?.name ? { name: parsedRef.name } : {}),
-      ...(assetContent !== undefined ? { assetContent } : {}),
-      ...(feedback.length > 0 ? { feedback } : {}),
-      ...(schemaHints.length > 0 ? { schemaHints } : {}),
-      ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
-      ...(options.task ? { task: options.task } : {}),
-      ...(standardsContext.trim() ? { standardsContext } : {}),
-      ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
-      ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
-      // R-1: inject prior draft as self-critique target on iterations > 0
-      ...(priorDraft !== undefined ? { priorDraft } : {}),
-      // Issue A (#reflect-pipeline file-write contract): when the runner can
-      // touch the filesystem, instruct the agent to write the proposal body
-      // to a tmp file instead of inlining it in JSON. Avoids parse failures
-      // on long bodies (e.g. knowledge/systems/KOKORO_USAGE_GUIDE 8.4KB).
-      ...(iterDraftPath ? { draftFilePath: iterDraftPath } : {}),
-      ...(outputMode ? { outputMode } : {}),
-    };
-    // #952 — the flat REFLECT_CONTENT_CAP (12 000 chars) exists only to avoid
-    // E2BIG when the prompt travels through CLI argv (agent/SDK runners). The
-    // direct-LLM HTTP path never touches argv, so it can use the resolved
-    // engine's own context window instead. The reserve for "the rest of the
-    // prompt" is measured directly (not guessed): build the same prompt with
-    // the content cap forced to zero and use its length as the overhead, so
-    // feedback/standards/schema-hints/prior-draft size is accounted for
-    // exactly, per this call. A reflect rewrite returns a body roughly the
-    // size of the input, so the budget only spends HALF of the usable window
-    // on input content and reserves the other half for the model's own
-    // output — otherwise a full-context request leaves no room for a
-    // response. Never drops below the flat floor.
-    const contentBudgetChars =
-      runnerIsLlm(runnerSpec) && assetContent?.trim()
-        ? Math.max(
-            REFLECT_CONTENT_CAP,
-            Math.floor(
-              ((runnerSpec.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN -
-                buildReflectPrompt({ ...promptInput, contentBudgetChars: 0 }).prompt.length) /
-                2,
-            ),
-          )
-        : undefined;
+    const promptInput = buildReflectPromptInput({
+      options,
+      parsedRef,
+      assetContent,
+      sources,
+      runnerSpec,
+      draftFilePath: iterDraftPath,
+      priorDraft,
+    });
+    const contentBudgetChars = computeReflectContentBudgetChars(promptInput, runnerSpec);
     const { prompt } = buildReflectPrompt({
       ...promptInput,
       ...(contentBudgetChars !== undefined ? { contentBudgetChars } : {}),
@@ -1965,10 +2029,10 @@ async function runReflectRefineIterations(args: {
         ...(options.signal ? { signal: options.signal } : {}),
         priorDraft,
         iteration: iter,
-        ...(outputMode === "json_schema"
+        ...(promptInput.outputMode === "json_schema"
           ? { responseSchema: options.ref ? REFLECT_JSON_SCHEMA : REFLECT_UNSCOPED_JSON_SCHEMA }
           : {}),
-        outputMode: outputMode ?? "framed_markdown",
+        outputMode: promptInput.outputMode ?? "framed_markdown",
         ...(options.ref ? { targetRef: options.ref } : {}),
         allowRepair: repairAttempts === 0,
         ...(options.chat ? { chat: options.chat } : {}),
@@ -2178,6 +2242,74 @@ function validateReflectPayloadRef(args: {
   }
 }
 
+/**
+ * #952 — render the composed reflect prompt for exactly one asset with no
+ * engine dispatch. Reuses every read-only step `akmReflect` performs before
+ * {@link buildReflectPrompt} (source resolution, runner resolution, feedback /
+ * schema-hint / related-lesson / rejected-proposal gathering) and stops right
+ * there: no dispatch lease is acquired, no request is sent, and — because the
+ * `emitReflectFailed` callback passed to {@link resolveReflectSource} here is
+ * a no-op — no `reflect_invoked`/`reflect_completed` event is appended either.
+ *
+ * `akm improve <ref> --show-prompt` (`improve-cli.ts`) is the CLI surface: a
+ * field operator uses it to see the exact prompt reflect would send, in
+ * seconds, without running a full improve cycle or needing a reachable
+ * engine.
+ */
+export async function renderReflectPromptPreview(
+  options: AkmReflectOptions,
+): Promise<{ ref: string; prompt: string; engine: string; engineKind: RunnerSpec["kind"] }> {
+  if (!options.ref) {
+    throw new UsageError("renderReflectPromptPreview requires options.ref.", "INVALID_FLAG_VALUE");
+  }
+  const ref = options.ref;
+  const stash = resolveRunStashDir(options.stashDir);
+
+  const sourceResolved = await resolveReflectSource(options, stash, () => {
+    // No event emitted: this is a read-only preview, not a real invocation.
+  });
+  if ("failure" in sourceResolved) {
+    const { failure } = sourceResolved;
+    throw new UsageError(
+      (!failure.ok && failure.error) || `Reflect cannot preview ref "${ref}".`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const { assetContent, parsedRef } = sourceResolved;
+
+  const { runnerSpec, engineName } = resolveReflectRunner(options);
+  const ctx = buildReflectRunContext({ options, stash, config: options.config ?? loadConfig(), runnerSpec });
+  const assetCtx = ctx.withFreshAssetMemo();
+
+  const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent, assetCtx);
+
+  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
+  // Same tmp-path synthesis a real dispatch would use (Issue A) — never
+  // written to, since this preview never runs the agent.
+  const draftFilePath = canRunnerWriteFile ? synthesizeReflectDraftPath(ref) : undefined;
+
+  const previewPromptInput = buildReflectPromptInput({
+    options,
+    parsedRef,
+    assetContent,
+    sources,
+    runnerSpec,
+    draftFilePath,
+    priorDraft: undefined,
+  });
+  // #952 — mirror the real dispatch path's context-aware content budget (see
+  // computeReflectContentBudgetChars) so the preview shows the exact prompt
+  // reflect would send: an LLM engine with a large context window gets the
+  // full asset with no truncation marker, not the flat 12 000-char cap.
+  const contentBudgetChars = computeReflectContentBudgetChars(previewPromptInput, runnerSpec);
+  const { prompt } = buildReflectPrompt({
+    ...previewPromptInput,
+    ...(contentBudgetChars !== undefined ? { contentBudgetChars } : {}),
+  });
+
+  return { ref, prompt, engine: engineName, engineKind: runnerSpec.kind };
+}
+
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
   const stash = resolveRunStashDir(options.stashDir);
 
@@ -2237,21 +2369,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
     // proposals. These are stable across refinement iterations; only the
     // `priorDraft` field changes per-iteration (R-1 / #372).
-    const feedback = readRecentFeedback(
-      options.ref ? (options.itemRef ?? durableImproveRef(options.ref)) : undefined,
-      options.eventsCtx,
-    );
-    const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
-    const relatedLessons =
-      options.ref && parsedRef
-        ? await readRelatedLessons(assetCtx, stash, options.ref, parsedRef, options.itemRef)
-        : [];
-    // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
-    // reproducing proposals that have already been reviewed and refused.
-    const rejectedProposals = readRejectedProposals(stash, options.ref, options.ctx);
-    // Standards "rulebook" for this target — stash convention/meta facts; empty
-    // when none fire.
-    const standardsContext = resolveStandardsContext(options.ref, stash);
+    const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent, assetCtx);
 
     // 5. Spawn the agent — with the optional Self-Refine loop (R-1 / #372),
     // extracted to {@link runReflectRefineIterations}.
@@ -2274,11 +2392,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         options,
         parsedRef,
         assetContent,
-        feedback,
-        schemaHints,
-        relatedLessons,
-        rejectedProposals,
-        standardsContext,
+        sources,
         runnerSpec,
         lease: generationLease,
         agentEnv,
@@ -2365,7 +2479,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       qualityGateSkippedNoJudge,
       qualityJudgeRunner,
       qualityJudgeLease,
-      feedback,
+      feedback: sources.feedback,
       stash,
       emitReflectFailed,
       onNotices: collectExecutionNotices,

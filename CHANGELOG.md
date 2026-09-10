@@ -250,8 +250,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `embedding.contextLength` is Ollama's `num_ctx` only now — it used to also
   silently set the per-request token budget (`embedding.maxTokens`), so
   setting it for the server's context window changed request batching too.
-  The request budget is `embedding.maxTokens` (default 8000), so a request
-  carries about 16 documents alongside the new per-document cap by default.
+  The request budget is `embedding.maxTokens` (default 6000, see #954
+  below), so a request carries about 11 documents alongside the new
+  per-document cap by default.
 - **`akm index` reports where its embedding credential came from, before the
   first provider request (#953).** A field report suspected a gateway was
   receiving unauthenticated embedding requests despite `embedding.apiKey`
@@ -279,6 +280,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it differs from the running CLI, pointing at `akm task sync` as the
   remedy. `unknown` when not probed, no task is installed, or the recorded
   binary cannot be executed.
+- **`akm improve <ref> --show-prompt` prints the composed reflect prompt for
+  one asset and exits (#952).** A beta.3 field round confirmed the #952 prompt
+  fix by reading source, but no live `akm improve` completed across three
+  attempts, leaving no cheap way to see the prompt in practice. `--show-prompt`
+  reuses every read-only step `akm improve`'s live reflect step already
+  performs (source resolution, runner selection, feedback/schema-hint/
+  related-lesson/rejected-proposal gathering) and stops before the dispatch
+  lease reflect would otherwise acquire — no lock, index write, or engine call,
+  same as `--dry-run`. Requires a fully-qualified asset ref as the scope; JSON/
+  yaml output carries the prompt as a `prompt` field, text output prints it
+  directly so the #952 framing (feedback shown as an unverified report, and
+  the instruction never to emit the truncation marker or out-of-asset content)
+  can be checked by eye.
 
 ### Changed
 
@@ -610,6 +624,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   precedent (#948) for state.db; the original driver text survives as
   `cause`. `--skip-if-locked` is unaffected — it already skips gracefully
   before ever attempting the write.
+- **A concurrent plain `akm index` (no `--skip-if-locked`) could still exit
+  78 instead of 75, a 2026-09-10 field re-test found (#956).** Two `akm
+  index` runs colliding on the short internal barrier that registers the
+  opt-in rebuild lock (shared with every other akm lock/lease) threw
+  `ConfigError("INVALID_CONFIG_FILE")` — a config-error exit that tells a
+  supervisor to stop retrying, when this is ordinary contention between two
+  legitimate runs. The barrier is meant to be held only milliseconds, so it
+  now retries briefly (a bounded, jittered backoff) before giving up, letting
+  an ordinary collision succeed instead of erroring at all; if it is still
+  busy after that, it raises `TransientError` with a dedicated
+  `MAINTENANCE_BARRIER_BUSY` code (exit 75) instead of the config error. The
+  rebuild lock itself is unaffected and still never blocks (#872).
 - **The fingerprint-rename canary embeds the exact text the stored vector was
   generated from (#955).** `sampleEmbeddedEntriesForCanary` handed the canary
   the entry's raw `search_text`, while the main embedding pass caps it to
@@ -621,6 +647,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   purge and rebuild on a same-model rename. The canary now caps each sampled
   entry's search text the same way, through the same `capEmbeddingText`
   helper, before requesting its vector.
+- **`akm improve --require-engines` now probes reachability instead of only
+  checking config/credentials, and a dead engine can no longer hang a run
+  past its timeout or a signal (#957).** Field, beta.3: engines pointed at a
+  dead endpoint, then `akm improve --require-engines` ran ~4 minutes with
+  zero output, ignoring an external `timeout 30` (SIGTERM) and akm's own
+  `--timeout-ms` — the documented exit-78 "required engines unavailable"
+  path could never be observed, because `--require-engines` only checked
+  that an engine was configured and credentialed, never whether it actually
+  answered. It now also runs the same bounded reachability probe `akm
+  health`'s `default-llm-engine`/`configured-engines` checks already use
+  (one `/models` request per distinct endpoint), before any lock, log, or
+  index side effect, and aborts at exit 78 naming the unreachable engine and
+  endpoint. Separately, a live run now prints one default-level line if it
+  has waited more than a few seconds on its first engine response, so a
+  scheduled run's log is never silently empty while an engine is slow or
+  dead — `--timeout-ms` and an engine's own configured timeout already
+  aborted the in-flight request correctly (confirmed by this investigation,
+  not changed), and SIGTERM/SIGINT already ended the process within its
+  documented grace period.
+- **`akm improve --show-prompt` now includes `avoidPatterns` when a live
+  improve loop has set them (#952).** The preview built its own second copy
+  of reflect's prompt-source gathering and `ReflectPromptInput` assembly,
+  which had already drifted from the real dispatch path: it never read
+  `avoidPatterns` (recent-error context from earlier assets in the same
+  run), so the preview was not always the prompt a live iteration would
+  actually send. Both the preview and the real dispatch path (`akmReflect`,
+  `runReflectRefineIterations`) now gather sources and assemble the prompt
+  input through the same two shared helpers, so this cannot drift again.
 
 ## [0.9.14] - 2026-09-04
 

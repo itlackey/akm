@@ -45,6 +45,31 @@ describe("current improvement CLI documentation contract", () => {
     expect(section).toContain("plan.processes");
   });
 
+  test("improve registers --show-prompt and documents it as a lock/index/engine-free prompt preview (#952)", () => {
+    const args = improveCommand.args as Record<string, { type?: string; default?: unknown }>;
+    expect(args["show-prompt"]).toMatchObject({ type: "boolean", default: false });
+
+    const section = extractSection(cli, "### improve");
+    expect(section).toContain("--show-prompt");
+  });
+
+  test("improve documents --show-prompt's actual default output format, not text-by-default (#952)", () => {
+    const section = extractSection(cli, "### improve");
+    // The global default format is JSON (src/cli.ts sets format default to
+    // "json"), so --show-prompt without --format prints an escaped JSON
+    // envelope, not the unwrapped prompt. The docs must say so, and the
+    // copyable example must show the flag that actually prints it unwrapped.
+    expect(section).toContain("akm improve lessons/my-lesson --show-prompt --format text");
+    expect(section).not.toMatch(/text output \(the default\)/);
+    const showPromptRow = section.split("\n").find((line) => line.includes("| `--show-prompt` |"));
+    expect(showPromptRow).toBeDefined();
+    expect(showPromptRow).toContain("--format text");
+    expect(showPromptRow).toContain("default output format is JSON");
+
+    const cheapestWayParagraph = section.slice(section.indexOf("is the cheapest way to exercise reflect alone"));
+    expect(cheapestWayParagraph).toContain("--format text");
+  });
+
   test("improve registers --run/--since and documents the report scope + usageReport field (#944)", () => {
     const args = improveCommand.args as Record<string, { type?: string }>;
     expect(args.run).toMatchObject({ type: "string" });

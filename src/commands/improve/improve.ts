@@ -136,6 +136,20 @@ export function renderSyncCommitMessage(
   return template.replace(/\{(\w+)\}/g, (match, key: string) => tokens[key] ?? match);
 }
 
+/**
+ * How long the improve loop waits for its FIRST engine response (success or
+ * error — any terminal record proves the run is not silent) before printing
+ * one default-level line. The timer is armed once the triage/index prepass
+ * finishes and the loop is about to start dispatching engine requests — not
+ * at run start — so it measures engine latency, not prepass time. Field
+ * re-test (#957): an engine pointed at a dead endpoint produced zero output
+ * for minutes, so a genuine hang looked identical to a normal-but-slow run.
+ * A few seconds is short enough that an operator watching a scheduled run's
+ * live log sees something promptly, long enough that an ordinary fast
+ * response never prints it.
+ */
+export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
+
 export function armBudgetWatchdog(
   budgetMs: number,
   controller: AbortController,
@@ -216,6 +230,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     resolvedLockPath,
   } = setup;
   let clearBudgetTimer = (): void => {};
+  let clearFirstResponseHeartbeat = (): void => {};
+  // #957: set by the usage sink's onRecord callback the moment any engine
+  // call terminates (success or error), including one issued by the prepass
+  // itself — makes arming the heartbeat below a no-op when the run is
+  // already known not to be silent.
+  let firstEngineResponseSeen = false;
   let initialGitPaths = new Set<string>();
   const runJournal = createRunWriteJournal();
 
@@ -274,7 +294,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         return buildLockSkippedResult(selectedStrategy.name, scope, options.runId);
       }
       improveLockOwnership = acquisition.ownership;
-      disposeLlmUsageSink = installLlmUsagePersistence(() => eventsCtx);
+      disposeLlmUsageSink = installLlmUsagePersistence(
+        () => eventsCtx,
+        () => {
+          firstEngineResponseSeen = true;
+          clearFirstResponseHeartbeat();
+        },
+      );
       exitBackstop = releaseRunLock;
       process.on("exit", exitBackstop);
       initialGitPaths =
@@ -316,6 +342,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // If the live prepass fails, emit its summary and clear the owning sink
     // before any run teardown. The disposer is idempotent with the main finalizer.
     disposeLlmUsageSink();
+    clearFirstResponseHeartbeat();
     clearBudgetTimer();
     if (exitBackstop) {
       process.removeListener("exit", exitBackstop);
@@ -336,6 +363,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // are all in hand. See buildImproveRunContext for exactly which
     // already-resolved values back each field.
     const ctx = buildImproveRunContext(setup, eventsCtx);
+
+    // #957: arm the heartbeat here, immediately before the improve loop
+    // starts dispatching engine requests — not at run start, where its timer
+    // would measure the triage/index prepass instead of engine latency. A
+    // no-op when the prepass already produced a terminal LLM record (the
+    // onRecord callback above already saw it). Cleared the moment any call
+    // terminates (success or error) — never rearmed, so this prints at most
+    // once per run.
+    if (!firstEngineResponseSeen) {
+      const firstResponseTimer = setTimeout(() => {
+        warn("[improve] Still waiting for the first engine response...");
+      }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
+      firstResponseTimer.unref?.();
+      clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
+    }
 
     const seq = await runImproveStageSequence({
       run: setup,
@@ -396,6 +438,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // #576: clear the per-run LLM usage sink BEFORE closing `eventsDb` below, so
     // no late sink invocation can write through a closed handle.
     disposeLlmUsageSink();
+    // #957: never leave the first-response heartbeat timer pending past the run.
+    clearFirstResponseHeartbeat();
     // O-1 (#364): Clear the budget abort timer so it does not keep the event
     // loop alive after the run completes.
     clearBudgetTimer();
@@ -466,8 +510,13 @@ interface ImproveReadSource {
   source: { name: string; path: string };
 }
 
-/** Resolve a dry-run inspection source without adapting it into a write target. */
-function resolveImproveReadSource(
+/**
+ * Resolve a dry-run inspection source without adapting it into a write target.
+ * Exported so `improve-cli.ts`'s `--show-prompt` (#952) can resolve the same
+ * read-only bundle a plain `--dry-run` would, without duplicating this
+ * selector/target/fallback precedence.
+ */
+export function resolveImproveReadSource(
   config: AkmConfig,
   scopedRef: AssetRef | undefined,
   explicitTarget: string | undefined,

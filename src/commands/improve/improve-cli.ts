@@ -7,7 +7,8 @@ import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
-import { isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
@@ -16,7 +17,10 @@ import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { akmImprove } from "./improve";
+import { probeEndpointOnce, probeLlmEndpoint } from "../../llm/client";
+import { getOutputMode } from "../../output/context";
+import { deliverRendered } from "../../output/html-render";
+import { akmImprove, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
   buildImproveRunId,
@@ -25,8 +29,14 @@ import {
   type TerminationReason,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
+import {
+  type EngineUnavailableProcessName,
+  type ResolvedImprovePlan,
+  type ResolvedImproveProcess,
+  resolveImprovePlan,
+} from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
+import { renderReflectPromptPreview } from "./reflect";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -111,6 +121,112 @@ function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
     `--require-engines: ${plan.engineUnavailable.length} improve process${plan.engineUnavailable.length === 1 ? "" : "es"} cannot run because ${plan.engineUnavailable.length === 1 ? "its" : "their"} engine is unavailable:\n${lines.join("\n")}`,
     "LLM_NOT_CONFIGURED",
   );
+}
+
+/** One resolved LLM connection `--require-engines` needs to prove reachable. */
+interface RequiredEngineTarget {
+  process: EngineUnavailableProcessName;
+  engine: string;
+  connection: LlmConnectionConfig;
+}
+
+/**
+ * Every distinct `kind: "llm"` connection the active strategy's plan would
+ * actually dispatch against — the main per-process runners plus triage's own
+ * judgment engine, which is resolved separately (#957).
+ */
+function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngineTarget[] {
+  const targets: RequiredEngineTarget[] = [];
+  for (const [processName, process] of Object.entries(plan.processes) as [
+    EngineUnavailableProcessName,
+    ResolvedImproveProcess,
+  ][]) {
+    if (process.runner) {
+      targets.push({ process: processName, engine: process.runner.engine, connection: process.runner.connection });
+    }
+  }
+  if (plan.triageJudgment?.kind === "llm") {
+    targets.push({
+      process: "triage.judgment",
+      engine: plan.triageJudgment.engine,
+      connection: plan.triageJudgment.connection,
+    });
+  }
+  return targets;
+}
+
+/**
+ * `--require-engines` field re-test (#957): the static check above only
+ * proves an engine is configured and credentialed — it cannot see a dead
+ * endpoint. A field run against an unreachable engine sat silent for
+ * minutes instead of hitting the documented exit-78 path. Reuse the SAME
+ * bounded reachability probe `akm health`'s `default-llm-engine` /
+ * `configured-engines` checks already run (`probeLlmEndpoint`, a single
+ * `/models` GET bounded by its own default timeout) once per distinct
+ * endpoint (via the shared `probeEndpointOnce` memoization health/checks.ts
+ * also uses), so a dead engine is caught here instead of during dispatch.
+ */
+async function assertRequiredEnginesReachable(
+  plan: ResolvedImprovePlan,
+  probeReachable: typeof probeLlmEndpoint = probeLlmEndpoint,
+): Promise<void> {
+  const targets = collectRequiredEngineTargets(plan);
+  if (targets.length === 0) return;
+  const probesByEndpoint = new Map<string, ReturnType<typeof probeReachable>>();
+  const probed = await Promise.all(
+    targets.map(async (target) => ({
+      ...target,
+      reach: await probeEndpointOnce(target.connection, probesByEndpoint, probeReachable),
+    })),
+  );
+  const unreachable = probed.filter((item) => !item.reach.reachable);
+  if (unreachable.length === 0) return;
+  const lines = unreachable.map(
+    (item) =>
+      `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
+  );
+  throw new ConfigError(
+    `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine endpoint is not reachable:\n${lines.join("\n")}`,
+    "LLM_NOT_CONFIGURED",
+  );
+}
+
+/**
+ * `--show-prompt` (#952): render the composed reflect prompt for one asset ref
+ * and exit, before any lock, log, index write, or engine dispatch — the field
+ * had no cheap way to confirm the #952 prompt fix (unverified-feedback framing,
+ * no-truncation-marker instruction) without running a full improve cycle.
+ * Reuses `renderReflectPromptPreview` (reflect.ts), which stops before the
+ * dispatch lease reflect would otherwise acquire, so this never calls an engine.
+ */
+async function runShowPromptCli(
+  refArg: string,
+  parsedRef: AssetRef,
+  taskArg: string | undefined,
+  targetArg: string | undefined,
+  resolvedPlan: ResolvedImprovePlan,
+): Promise<void> {
+  const readSource = resolveImproveReadSource(resolvedPlan.config as AkmConfig, parsedRef, targetArg);
+  const preview = await renderReflectPromptPreview({
+    ref: refArg,
+    ...(taskArg ? { task: taskArg } : {}),
+    improveProfile: resolvedPlan.strategy.config,
+    config: resolvedPlan.config as AkmConfig,
+    stashDir: readSource.source.path,
+  });
+  const outputMode = getOutputMode();
+  if (outputMode.format === "text") {
+    deliverRendered(preview.prompt, outputMode.outputPath);
+    return;
+  }
+  output("improve", {
+    schemaVersion: 2,
+    ok: true,
+    ref: preview.ref,
+    engine: preview.engine,
+    engineKind: preview.engineKind,
+    prompt: preview.prompt,
+  });
 }
 
 /**
@@ -202,7 +318,13 @@ export const improveCommand = defineCommand({
     "require-engines": {
       type: "boolean",
       description:
-        "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment. Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
+        "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe (the same probe akm health runs). Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
+      default: false,
+    },
+    "show-prompt": {
+      type: "boolean",
+      description:
+        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or engine dispatch (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
       default: false,
     },
     run: {
@@ -251,8 +373,10 @@ export const improveCommand = defineCommand({
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
       // #947 — `--plan` is a zero-logic discoverability alias for `--dry-run`;
-      // it must never fork the computation, only set the same flag.
-      const dryRun = args["dry-run"] || args.plan;
+      // it must never fork the computation, only set the same flag. #952 —
+      // `--show-prompt` implies the same read-only posture (it never reaches
+      // akmImprove at all, but keeps writeTarget/resolvedPlan unset the same way).
+      const dryRun = args["dry-run"] || args.plan || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const requireFeedbackSignal = args["require-feedback-signal"];
@@ -274,7 +398,23 @@ export const improveCommand = defineCommand({
       // is disabled purely by an unreachable credential; a live run keeps
       // throwing (allowAllDisabled unset).
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
-      if (args["require-engines"]) assertRequiredEnginesAvailable(resolvedPlan);
+      // #952 — same interception point as the `report` scope above: before any
+      // lock, log, or index side effect. Requires a single fully-qualified
+      // asset ref (not a type or whole-bundle scope).
+      if (args["show-prompt"]) {
+        if (!scopeArg || !scopeRef) {
+          throw new UsageError(
+            "`--show-prompt` requires a fully-qualified asset ref as the scope (e.g. `akm improve lessons/my-lesson --show-prompt`).",
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
+        return;
+      }
+      if (args["require-engines"]) {
+        assertRequiredEnginesAvailable(resolvedPlan);
+        await assertRequiredEnginesReachable(resolvedPlan);
+      }
       const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
       // Only set the keys the user actually passed (citty leaves the flag

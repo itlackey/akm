@@ -28,6 +28,7 @@ import {
   userModelMapPath,
 } from "../../integrations/agent/model-map";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
 import { listKeys } from "../env/env";
 import { type ImproveProcessName, resolveImprovePlan } from "../improve/improve-strategies";
@@ -214,13 +215,7 @@ function probeConnectionReachable(
   cache: ReachabilityCache,
 ): Promise<ReachabilityResult | undefined> {
   if (!deps.probeReachable) return Promise.resolve(undefined);
-  const key = connection.endpoint.replace(/\/+$/, "");
-  let pending = cache.get(key);
-  if (!pending) {
-    pending = deps.probeReachable(connection);
-    cache.set(key, pending);
-  }
-  return pending;
+  return probeEndpointOnce(connection, cache, deps.probeReachable);
 }
 
 function reachabilityEvidence(reach: ReachabilityResult | undefined): Record<string, unknown> {

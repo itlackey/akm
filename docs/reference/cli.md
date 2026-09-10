@@ -285,6 +285,13 @@ long enough to exhaust the driver's retry window, the run now fails with
 exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
 driver error at exit 70 — the same retry-shortly contract as
 `STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
+The rebuild lock itself is registered through a brief internal barrier
+(`getMaintenanceBarrierPath()`) shared with every other akm lock/lease; two
+`akm index` runs launched close enough together to collide on that
+registration step retry briefly and then, if it is still busy, also exit 75
+(code `MAINTENANCE_BARRIER_BUSY`) rather than the config-error exit 78 a
+2026-09-10 field report found — a busy registration barrier is ordinary
+contention between two legitimate runs, never a broken config file.
 `--skip-if-locked` changes that only for the invocation that passes it: if
 the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
@@ -2336,6 +2343,7 @@ akm improve --require-engines          # for scheduled runs: abort (exit 78) ins
 akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
 akm improve --plan --strategy thorough # preview thorough's resolved engine/model routing; nothing is dispatched
+akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
@@ -2355,7 +2363,8 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
+| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
+| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Commit (and optionally push) the git-backed primary bundle when the run finishes. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the end-of-run sync commit when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -2411,6 +2420,18 @@ on an unavailable credential either — even a strategy left with every process
 disabled this way still returns its plan, with the affected processes in
 `skippedProcesses`.
 
+`--timeout-ms` is a run-wide wall-clock budget: when it expires, the run
+cooperatively aborts any in-flight engine request (the same `AbortSignal`
+every LLM call already honors) instead of waiting out the engine's own,
+much longer, per-call timeout — the run then finishes and reports normally
+rather than hanging past its budget. SIGTERM/SIGINT/SIGHUP end a live run
+the same way, within a short bounded grace period, and the process exits
+with a stable per-signal code (`143`/`130`/`129`) rather than needing a
+`kill -9`. If a live run has waited more than a few seconds without any
+engine response at all, one default-level line ("Still waiting for the
+first engine response...") is printed so a scheduled run's log is never
+silently empty while an engine is slow or dead.
+
 For dry runs, `plannedRefs` is the effective post-limit work set, not every
 ref in the requested scope. The `plan` object preserves both views: raw scope
 size and per-gate removals, configured and effective caps, final ranked refs
@@ -2451,6 +2472,17 @@ for the configured default strategy (`defaults.improveStrategy`), and reports
 no model or per-process notices. Neither `--dry-run` nor `--plan` probes
 engine reachability over the network — pair with `akm health --probe` (or the
 default probe-on behavior) to check whether a named engine actually answers.
+
+`--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
+builds the exact prompt reflect would send for one asset — the same source
+resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
+proposal gathering `akm improve`'s live reflect step uses — and prints it
+without acquiring a dispatch lease, so it never calls an engine. Add
+`--format text` (the default JSON/yaml envelope escapes the prompt into one
+line, which defeats a by-eye read) to confirm by eye that recent feedback is
+framed as an unverified report to investigate (never a fact to insert
+verbatim) and that the response contract tells the model never to emit the
+truncation marker or any content from outside the shown asset.
 
 When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`. The deterministic search ranking also prefers
