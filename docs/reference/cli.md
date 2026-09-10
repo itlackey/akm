@@ -285,6 +285,13 @@ long enough to exhaust the driver's retry window, the run now fails with
 exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
 driver error at exit 70 — the same retry-shortly contract as
 `STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
+The rebuild lock itself is registered through a brief internal barrier
+(`getMaintenanceBarrierPath()`) shared with every other akm lock/lease; two
+`akm index` runs launched close enough together to collide on that
+registration step retry briefly and then, if it is still busy, also exit 75
+(code `MAINTENANCE_BARRIER_BUSY`) rather than the config-error exit 78 a
+2026-09-10 field report found — a busy registration barrier is ordinary
+contention between two legitimate runs, never a broken config file.
 `--skip-if-locked` changes that only for the invocation that passes it: if
 the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`

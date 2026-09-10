@@ -610,6 +610,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   precedent (#948) for state.db; the original driver text survives as
   `cause`. `--skip-if-locked` is unaffected — it already skips gracefully
   before ever attempting the write.
+- **A concurrent plain `akm index` (no `--skip-if-locked`) could still exit
+  78 instead of 75, a 2026-09-10 field re-test found (#956).** Two `akm
+  index` runs colliding on the short internal barrier that registers the
+  opt-in rebuild lock (shared with every other akm lock/lease) threw
+  `ConfigError("INVALID_CONFIG_FILE")` — a config-error exit that tells a
+  supervisor to stop retrying, when this is ordinary contention between two
+  legitimate runs. The barrier is meant to be held only milliseconds, so it
+  now retries briefly (a bounded, jittered backoff) before giving up, letting
+  an ordinary collision succeed instead of erroring at all; if it is still
+  busy after that, it raises `TransientError` with a dedicated
+  `MAINTENANCE_BARRIER_BUSY` code (exit 75) instead of the config error. The
+  rebuild lock itself is unaffected and still never blocks (#872).
 - **The fingerprint-rename canary embeds the exact text the stored vector was
   generated from (#955).** `sampleEmbeddedEntriesForCanary` handed the canary
   the entry's raw `search_text`, while the main embedding pass caps it to

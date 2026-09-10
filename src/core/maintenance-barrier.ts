@@ -7,7 +7,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { sleepSync } from "../runtime";
-import { ConfigError } from "./errors";
+import { backoffDelay } from "./common";
+import { ConfigError, TransientError } from "./errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
 import { getMaintenanceBarrierPath } from "./paths";
 
@@ -29,6 +30,29 @@ const heldBarrierContext = new AsyncLocalStorage<{ active: boolean }>();
 const MAINTENANCE_BARRIER_STALE_AFTER_MS = 5 * 60 * 1000;
 
 /**
+ * The barrier normally holds for one lock-file write — sub-millisecond on
+ * any real filesystem. Two akm processes racing to register a lock in the
+ * very same instant (e.g. two `akm index` runs a scheduler launched back to
+ * back) can still collide on it; retrying briefly resolves that ordinary
+ * case instead of failing a legitimate concurrent invocation outright
+ * (field follow-up to #956, G1). Bounded short so a genuinely wedged holder
+ * still surfaces the busy error promptly rather than making a losing
+ * process hang — comfortably above the barrier's normal hold time, well
+ * below a length that would make this feel like the blocking lock #872
+ * removed. Never applies to the rebuild lock itself, which stays
+ * non-blocking (#872).
+ */
+const MAINTENANCE_BARRIER_BUSY_RETRY_BOUND_MS = 1_500;
+
+let busyRetryBoundMsForTests: number | undefined;
+
+/** Test-only override for {@link MAINTENANCE_BARRIER_BUSY_RETRY_BOUND_MS}, so a unit test can exercise the
+ * exhausted-retry throw without a real ~1.5s wait. Restored via tests/_helpers/seams.ts's resetAllSeams(). */
+export function _setMaintenanceBarrierBusyRetryBoundMsForTests(ms: number | undefined): void {
+  busyRetryBoundMsForTests = ms;
+}
+
+/**
  * Serialize the short critical section that creates each long-lived AKM lock,
  * lease, or state activity. The operation keeps its own ownership record; this
  * barrier is released immediately after acquisition.
@@ -48,12 +72,19 @@ export function tryAcquireMaintenanceBarrier(): (() => void) | undefined {
 }
 
 export function acquireMaintenanceBarrier(): () => void {
-  const release = tryAcquireMaintenanceBarrier();
-  if (release) return release;
-  throw new ConfigError(
-    `AKM maintenance is in progress (barrier ${getMaintenanceBarrierPath()}); retry after it completes. ` +
+  const boundMs = busyRetryBoundMsForTests ?? MAINTENANCE_BARRIER_BUSY_RETRY_BOUND_MS;
+  const deadline = Date.now() + boundMs;
+  for (let attempt = 0; ; attempt += 1) {
+    const release = tryAcquireMaintenanceBarrier();
+    if (release) return release;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    sleepSync(Math.min(backoffDelay(attempt), remainingMs));
+  }
+  throw new TransientError(
+    `AKM maintenance is in progress (barrier ${getMaintenanceBarrierPath()}); retry shortly. ` +
       `A sentinel older than ${MAINTENANCE_BARRIER_STALE_AFTER_MS / 60_000} minute(s) is reclaimed automatically on the next attempt.`,
-    "INVALID_CONFIG_FILE",
+    "MAINTENANCE_BARRIER_BUSY",
   );
 }
 
