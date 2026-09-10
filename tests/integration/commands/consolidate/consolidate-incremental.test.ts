@@ -7,7 +7,8 @@ import { getDbPath } from "../../../../src/core/paths";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
-import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
+import { setMeta } from "../../../../src/storage/repositories/index-meta-repository";
+import { replaceEntryUnits, upsertUnitVectors } from "../../../../src/storage/repositories/units-repository";
 import { type Cleanup, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
 // NOTE: the first `describe` block exercises the two pre-DB branches of
@@ -22,8 +23,11 @@ import { type Cleanup, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 // therefore sandboxes XDG_DATA_HOME (via the sandbox helper, not raw
 // process.env) so the test never touches real user data and the lint-tests
 // isolation guard stays happy. We build a genuine sqlite index with hand-
-// crafted unit-vector embeddings so the real searchVec → getNeighborsByEntryId
-// path resolves deterministic neighbours offline (no embedding server needed).
+// crafted card-unit vectors (index-redesign-contract.md B5f item 4: real
+// production writes `units_vec`, not the legacy `embeddings`/`entries_vec`
+// tables nothing indexes into any more) so the real searchUnits →
+// getNeighborsByEntryId path resolves deterministic neighbours offline (no
+// embedding server needed).
 
 // Minimal MemoryEntry shape used by narrowToIncrementalCandidates. Only `name`
 // and `filePath` are read by the function under test; the rest satisfy the type.
@@ -131,10 +135,18 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     return { name, filePath, description: "", tags: [] as string[], stashDir: tmpDir };
   }
 
-  // Insert an indexed memory entry + its embedding into the real index DB so
-  // findEntryIdByRef("memory:NAME") and getNeighborsByEntryId() resolve it.
-  // The dim-4 unit vectors are crafted so cosine similarity (the JS fallback in
-  // searchBlobVec, and sqlite-vec when present) ranks neighbours deterministically.
+  const DIM = 4;
+  // Fixed test identity — `getNeighborsByEntryId` looks up
+  // `index_meta.embeddingIdentity` to know which `units_vec` rows are live,
+  // exactly like the real drain does once it has learned one from a
+  // provider response.
+  const IDENTITY = "test:deterministic|4";
+
+  // Insert an indexed memory entry + its card-unit vector into the real
+  // index DB so findEntryIdByRef("memory:NAME") and getNeighborsByEntryId()
+  // resolve it. The dim-4 unit vectors are crafted so cosine similarity (the
+  // JS fallback in searchBlobVec, and sqlite-vec when present) ranks
+  // neighbours deterministically.
   function indexMemory(db: ReturnType<typeof openIndexDatabase>, name: string, embedding: number[]): number {
     const entry: IndexDocument = { type: "memory", name, description: `desc for ${name}` };
     // Chunk-8: production resolves entries by their D-R2 item_ref
@@ -147,21 +159,24 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
       conceptId: `memories/${name}`,
       itemRef: `stash//memories/${name}`,
     });
-    upsertEmbedding(db, id, embedding);
+    // Content-addressed by construction elsewhere; a fixed per-name hash is
+    // enough here since this suite never re-derives real unit text.
+    const hash = `card-hash-${name}`;
+    replaceEntryUnits(db, id, [{ ordinal: 0, fragmentId: null, hash }]);
+    upsertUnitVectors(db, [{ hash, identity: IDENTITY, vector: embedding }]);
     return id;
   }
 
-  const DIM = 4;
-
-  // narrowToIncrementalCandidates keeps EVERY top-k neighbour of a changed
-  // memory (k = NEIGHBORS_PER_CHANGED = 5, queried as k+1 = 6 including self).
-  // There is no distance threshold, so to prove B and D are excluded we must
-  // index enough closer-to-A "padding" entries to push B and D past rank 6.
-  // The padding entries are NOT passed in the loaded pool, so they are ignored
-  // by the byName.has() guard — they only consume top-k slots. We craft
-  // embeddings on the unit circle in the (x, y) plane by angle: smaller angle
-  // to A = higher cosine = closer. C sits just past the padding; B/D sit well
-  // beyond rank 6.
+  // narrowToIncrementalCandidates keeps EVERY top-k OTHER neighbour of a
+  // changed memory (k = the default `neighborsPerChanged` = 5;
+  // `getNeighborsByEntryId` already excludes the queried entry itself, so no
+  // "+1 for self" is needed here). There is no distance threshold, so to
+  // prove B and D are excluded we must index enough closer-to-A "padding"
+  // entries to push B and D past the top 5. The padding entries are NOT
+  // passed in the loaded pool, so they are ignored by the byName.has() guard
+  // — they only consume top-k slots. We craft embeddings on the unit circle
+  // in the (x, y) plane by angle: smaller angle to A = higher cosine =
+  // closer. C sits just past the padding; B/D sit well beyond the top 5.
   function vecAtAngle(deg: number): number[] {
     const r = (deg * Math.PI) / 180;
     return [Math.cos(r), Math.sin(r), 0, 0];
@@ -176,11 +191,13 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     const c = makeMemory("gamma", sinceEpoch - 1000);
     const d = makeMemory("delta", sinceEpoch - 1000);
 
-    // Angles from A's direction (0°): C at 5° is among A's nearest. Five padding
-    // entries at 1°..4.5° are even closer, filling 5 of the 6 top-k slots
-    // alongside A itself — so C lands at rank 6 (kept), while B (90°) and
-    // D (180°) are ranks 7+ and excluded.
+    // Angles from A's direction (0°): C at 5° is among A's nearest OTHER
+    // neighbours. Four padding entries at 1°..4° are even closer, filling 4
+    // of the 5 requested slots — so C is the 5th (kept), while B (90°) and
+    // D (180°) are 6th+ and excluded. `getNeighborsByEntryId` excludes A's
+    // own card itself, so no slot is spent confirming A is close to A.
     const db = openIndexDatabase(getDbPath(), { embeddingDim: DIM });
+    setMeta(db, "embeddingIdentity", IDENTITY);
     try {
       indexMemory(db, "alpha", vecAtAngle(0));
       indexMemory(db, "gamma", vecAtAngle(5)); // C — in pool, kept neighbour
@@ -221,6 +238,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     // in `memories`, so the byName.has() guard drops them. beta (90°) is far
     // enough that it lands past rank 6 → excluded too. Net: only alpha kept.
     const db = openIndexDatabase(getDbPath(), { embeddingDim: DIM });
+    setMeta(db, "embeddingIdentity", IDENTITY);
     try {
       indexMemory(db, "alpha", vecAtAngle(0));
       indexMemory(db, "ghost", vecAtAngle(5)); // nearest to alpha, not in pool
