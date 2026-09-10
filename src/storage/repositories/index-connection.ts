@@ -25,7 +25,7 @@ import { SQLITE_BUSY_TIMEOUT_MS } from "../sqlite-pragmas";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../sqlite-read-snapshot";
 import { CANONICAL_INDEX_DB_VERSION, classifyIndexGeneration, isCanonicalIndexGeneration } from "./index-entry-schema";
 import { ensureSchema } from "./index-schema";
-import { loadVecExtension, warnIfVecMissing } from "./index-vec-repository";
+import { loadVecExtension } from "./index-vec-repository";
 
 /**
  * Whether `error` is SQLite reporting on-disk corruption (`SQLITE_CORRUPT`,
@@ -63,9 +63,6 @@ export function openIndexDatabase(
       // ensureSchema from touching `index_meta.embeddingDim` at all.
       const resolvedDim = options?.embeddingDim ?? resolveConfiguredEmbeddingDim();
       ensureSchema(db, resolvedDim);
-
-      // Warn once at init if using JS fallback with many entries
-      warnIfVecMissing(db, { once: true });
     },
   };
   try {

@@ -184,9 +184,8 @@ export function upsertUnitVectors(db: Database, rows: readonly UnitVectorRow[]):
     const freshlyInserted = Number(result.changes) > 0;
     const unitRow = selectUnitId.get(row.hash, row.identity) as { unit_id: number } | undefined;
     if (!unitRow) return false;
-    // DELETE-then-INSERT (not INSERT OR REPLACE) mirrors upsertEmbedding's
-    // vec0 mirror in index-vec-repository.ts — the established pattern for
-    // writing a fixed-rowid row into a vec0 table on this driver.
+    // DELETE-then-INSERT (not INSERT OR REPLACE) — the established pattern
+    // for writing a fixed-rowid row into a vec0 table on this driver.
     deleteVec.run(unitRow.unit_id);
     try {
       insertVec.run(unitRow.unit_id, float32Buffer(row.vector), row.hash, row.identity);
@@ -433,9 +432,9 @@ function float32BufferToVector(buf: Buffer): EmbeddingVector {
  * units (`entry_units` ordinal 0) under the active embedding identity —
  * index-redesign-contract.md B5f item 4's replacement for the legacy
  * `embeddings`/`entries_vec`-backed `getNeighborsByEntryId`
- * (`index-vec-repository.ts`), which nothing has written since the units
- * path became the only index (those tables are deleted in a later step, not
- * this one — this function simply stops reading them).
+ * (`index-vec-repository.ts`), which nothing wrote to since the units path
+ * became the only index. Those tables themselves — and everything that only
+ * ever read or wrote them — were deleted in B5h.
  *
  * No re-embedding, no network: reads the entry's own already-indexed card
  * vector and reuses {@link searchUnits}'s KNN, then groups the raw unit hits

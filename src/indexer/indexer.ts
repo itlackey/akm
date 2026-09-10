@@ -59,7 +59,7 @@ import {
 import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
 import { EMBEDDING_DIM } from "../storage/repositories/index-schema";
 import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
-import { isVecAvailable, warnIfVecMissing } from "../storage/repositories/index-vec-repository";
+import { isVecAvailable } from "../storage/repositories/index-vec-repository";
 import { dropOtherIdentities, unitCoverage } from "../storage/repositories/units-repository";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { deleteStoredGraph } from "./db/graph-db";
@@ -814,8 +814,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       setMeta(db, "sourceOwners", JSON.stringify(owners));
       setMeta(db, "lastReconcileAt", builtAt);
     }
-
-    if (!deferred && config.semanticSearchMode !== "off") warnIfVecMissing(db);
 
     const verification = deferred
       ? {
