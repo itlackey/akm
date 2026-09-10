@@ -230,6 +230,63 @@ describe("#561 session indexing — round-trip", () => {
     }
   });
 
+  test("the session asset lands under the configured bundle id, not a path-derived slug of the raw stash dir — a subsequent full akmIndex converges on the same row (#W1)", async () => {
+    // configFor's stash IS ALSO `bundles.stash` (this suite's own setup) —
+    // the exact "config-owned stash" shape the W1 repro used: extract's
+    // write-path bundle-id fallback must resolve the CONFIGURED id ("stash"),
+    // not slug the raw sandbox temp dir path into something else.
+    //
+    // Seed a bootstrapped, non-empty index first — indexWrittenAssets skips
+    // an empty index on purpose (bootstrap belongs to the first read or an
+    // explicit `akm index`), so the write path under test never runs without
+    // this.
+    fs.writeFileSync(
+      path.join(stashDir, "memories", "seed.md"),
+      "---\ndescription: seed\n---\n\n# seed\n\nSeed.\n",
+      "utf8",
+    );
+    await akmIndex({ stashDir, full: true });
+
+    const now = Date.now();
+    const result = await akmExtract({
+      type: "claude",
+      stashDir,
+      config: configFor(stashDir, true),
+      harnesses: [makeHarness([makeSession(now)])],
+      chat: async () => JSON.stringify({ candidates: [] }),
+      generateSessionSummary: fakeSummaryGenerator,
+      skipTracking: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(sessionAssetPath())).toBe(true);
+
+    const dbAfterWrite = openIndexDatabase();
+    let writeRef: string | undefined;
+    try {
+      const rows = getAllEntries(dbAfterWrite).filter((e) => e.entry.type === "session");
+      expect(rows).toHaveLength(1);
+      writeRef = rows[0]?.itemRef;
+    } finally {
+      dbAfterWrite.close();
+    }
+    expect(writeRef).toStartWith("stash//");
+
+    // A subsequent full `akm index` reconciling the SAME file under its
+    // configured bundle id must converge on the identical row — not leave a
+    // stale duplicate under a path-derived slug the full index never touches
+    // (the W1 "undeletable row" failure mode).
+    await akmIndex({ stashDir, full: true });
+
+    const dbAfterFull = openIndexDatabase();
+    try {
+      const rows = getAllEntries(dbAfterFull).filter((e) => e.entry.type === "session");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.itemRef).toBe(writeRef);
+    } finally {
+      dbAfterFull.close();
+    }
+  });
+
   test("log_path + access frontmatter survive an index rebuild", async () => {
     const now = Date.now();
     await akmExtract({

@@ -37,6 +37,7 @@ import { SQLITE_CHUNK_SIZE } from "../storage/repositories/index-sql";
 import { drainEmbeddingQueue } from "./drain";
 import { deriveInstallations } from "./installations";
 import { reconcilePaths } from "./reconcile";
+import { resolveSourceEntries } from "./search/search-source";
 
 /**
  * Busy-timeout (ms) for write-path index upserts. Every index write in the
@@ -73,6 +74,29 @@ function unitHashesForFiles(db: Database, files: readonly string[]): string[] {
     for (const row of rows) hashes.add(row.unitHash);
   }
   return [...hashes];
+}
+
+/**
+ * The bundle id a fresh write into `stashDir` should be recorded under, when
+ * the caller did not already know it (`options.bundleId`).
+ *
+ * `stashDir` is matched against the CONFIGURED sources first, the way every
+ * other write-path caller resolves its bundle id (`knowledge.ts`'s demoted-file
+ * loop: `resolveSourceEntries` + `deriveInstallations`, matched by resolved
+ * root). A stash that is ALSO a configured bundle (`akm bundle add <dir>
+ * --name x`) must produce that bundle's id here, not a fresh slug of the raw
+ * path — a mismatch leaves an undeletable duplicate row once a full `akm
+ * index` reconciles the same path under its real, configured id (issue found
+ * integrating write-path W1). Only a stash that is genuinely unconfigured (an
+ * ad hoc write target) falls back to deriving an id from the raw path alone,
+ * the way a fresh install would.
+ */
+function resolveWrittenAssetBundleId(stashDir: string): string | undefined {
+  const resolvedStashDir = path.resolve(stashDir);
+  const sourceEntries = resolveSourceEntries();
+  const index = sourceEntries.findIndex((entry) => path.resolve(entry.path) === resolvedStashDir);
+  if (index !== -1) return deriveInstallations(sourceEntries)[index]?.id;
+  return deriveInstallations([{ path: stashDir, writable: true }])[0]?.id;
 }
 
 /**
@@ -133,10 +157,10 @@ export async function indexWrittenAssets(
       });
       if (files.length === 0) return true;
 
-      // Same derivation the full-index writer uses: an explicit bundleId wins
-      // outright (it IS the resulting installation id); otherwise derive one
-      // from the stash path the same way a fresh install would.
-      const bundleId = options.bundleId ?? deriveInstallations([{ path: stashDir, writable: true }])[0]?.id;
+      // An explicit bundleId wins outright (it IS the resulting installation
+      // id); otherwise resolve it config-aware, matching a configured source
+      // before ever falling back to deriving one from the raw path.
+      const bundleId = options.bundleId ?? resolveWrittenAssetBundleId(stashDir);
       if (!bundleId) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
 
       const db = openExistingDatabase(dbPath);

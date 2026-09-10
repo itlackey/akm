@@ -238,8 +238,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
         stashDir,
         mode: "incremental",
         totalEntries: 0,
-        directoriesScanned: 0,
-        directoriesSkipped: 0,
+        sourcesScanned: 0,
       } as never;
     });
 
@@ -428,8 +427,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
         stashDir,
         mode: "incremental",
         totalEntries: 0,
-        directoriesScanned: 0,
-        directoriesSkipped: 0,
+        sourcesScanned: 0,
       } as never;
     });
 
@@ -520,8 +518,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
         stashDir,
         mode: "incremental",
         totalEntries: 0,
-        directoriesScanned: 0,
-        directoriesSkipped: 0,
+        sourcesScanned: 0,
       } as never;
     });
 

@@ -18,8 +18,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleIndexStatus } from "../../../../src/commands/sources/index-status";
 import { resetConfigCache } from "../../../../src/core/config/config";
+import { getDbPath } from "../../../../src/core/paths";
 import { resetQuiet, setQuiet } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../../_helpers/sandbox";
 
@@ -119,6 +121,40 @@ describe("assembleIndexStatus", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("units.total mirrors the drain's real candidate set (unit_texts), understating nothing when orphaned rows exist", async () => {
+    writeMemory("orphan-base.md", "Body content for the orphan-base entry.");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+    });
+    resetConfigCache();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const before = assembleIndexStatus();
+    expect(before.units.total).toBeGreaterThan(0);
+    expect(before.units.pending).toBe(before.units.total);
+
+    // Seed a `unit_texts` row reachable from no `entry_units` mapping — the
+    // orphan shape reconcile currently leaves behind on every write-path edit
+    // (reconcile never prunes unit_texts) and exactly the candidate set
+    // `drainEmbeddingQueue`'s `selectAllUnitHashes` reads from. `units.total`
+    // must count it too, or `akm index status` understates the real backlog.
+    const db = openExistingDatabase(getDbPath());
+    try {
+      db.prepare("INSERT INTO unit_texts (unit_hash, kind, text) VALUES (?, 'card', ?)").run(
+        "e".repeat(64),
+        "orphaned unit text no entry references any more",
+      );
+    } finally {
+      closeDatabase(db);
+    }
+
+    const after = assembleIndexStatus();
+    expect(after.units.total).toBe(before.units.total + 1);
+    expect(after.units.pending).toBe(after.units.total);
   });
 
   test("an unreadable (corrupt) index database reports unreadable, not an empty index (#791)", () => {
