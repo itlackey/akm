@@ -716,7 +716,8 @@ export async function generateEmbeddingsForDb(
         }
         db.transaction(() => {
           for (let k = 0; k < indices.length; k++) {
-            const entry = pendingEntries[indices[k] as number];
+            const index = indices[k] as number;
+            const entry = pendingEntries[index];
             if (!entry) continue;
             const embedding = batchEmbeddings[k];
             if (!embedding) {
@@ -727,7 +728,12 @@ export async function generateEmbeddingsForDb(
             const result = upsertEmbedding(db, entry.id, embedding);
             if (result.stored) {
               storedCount++;
-              storedTokens += estimateTokenCount(entry.searchText);
+              // #954 (field-F4 F4b): sum the estimate of the text actually
+              // sent — `texts[index]` is the capped string `embedBatch` was
+              // handed, parallel to `pendingEntries` by construction above —
+              // not `entry.searchText`, which is the pre-cap original and
+              // overstates throughput for every entry over the cap.
+              storedTokens += estimateTokenCount(texts[index] ?? entry.searchText);
             } else {
               skippedCount++;
             }
