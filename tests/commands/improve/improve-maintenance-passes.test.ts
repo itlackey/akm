@@ -15,6 +15,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import {
   type IndexDbCell,
   type MaintenanceCtx,
@@ -26,7 +28,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../src/storage/database";
-import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
@@ -286,5 +288,32 @@ describe("runRetentionPurgePass", () => {
 
     // Empty sandboxed DBs: all purges succeed with zero rows removed.
     expect(out.warnings).toEqual([]);
+  });
+
+  // #951: per-run flat log files under getTaskLogDir() are a separate purge
+  // target from task_logs (logs.db rows) — same retention window, own
+  // try/catch, own event type (task_log_files_purged).
+  test("purges per-run log files under getTaskLogDir() past the retention window", async () => {
+    const stash = freshStash();
+    const cacheSb = sandboxXdgCacheHome();
+    disposers.push(cacheSb);
+    const { getTaskLogDir } = await import("../../../src/core/paths");
+
+    const logDir = getTaskLogDir();
+    const taskDir = path.join(logDir, "daily-improve");
+    fs.mkdirSync(taskDir, { recursive: true });
+    const oldFile = path.join(taskDir, "old.log");
+    fs.writeFileSync(oldFile, "stale run");
+    const oldMtime = new Date(Date.now() - 200 * 86_400_000);
+    fs.utimesSync(oldFile, oldMtime, oldMtime);
+    const newFile = path.join(taskDir, "new.log");
+    fs.writeFileSync(newFile, "recent run");
+
+    const ctx = makeCtx(stash); // default config → 90d window
+    const out = runRetentionPurgePass(ctx);
+
+    expect(out.warnings).toEqual([]);
+    expect(fs.existsSync(oldFile)).toBe(false);
+    expect(fs.existsSync(newFile)).toBe(true);
   });
 });

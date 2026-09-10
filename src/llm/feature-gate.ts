@@ -44,7 +44,8 @@ export type LlmFeatureKey =
   | "session_extraction"
   | "reflect_proposal"
   | "remember_enrich"
-  | "schema_repair";
+  | "schema_repair"
+  | "curate_rerank";
 
 /**
  * For each feature key, return the effective enabled state by reading the
@@ -54,6 +55,10 @@ const FEATURE_LOCATION: Partial<Record<LlmFeatureKey, (cfg: AkmConfig) => boolea
   memory_inference: (cfg) => cfg.index?.memory?.enabled ?? true,
   graph_extraction: (cfg) => cfg.index?.graph?.enabled ?? true,
   metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
+  // #951: a real implementation of the dead `curate_rerank` key removed in
+  // 0.8.0. Off by default — it requires a `search.curateRerank.endpoint` a
+  // caller must explicitly configure.
+  curate_rerank: (cfg) => Boolean(cfg.search?.curateRerank?.enabled),
   // Always on at the LLM-wrapper level. Enablement is decided ONCE at the
   // extract entry point (`akmExtract`): the `extract.enabled` process toggle
   // gates extract as a STAGE of `akm improve` (the active improve strategy, per
