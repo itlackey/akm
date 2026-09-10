@@ -171,15 +171,20 @@ describe("OKF first-class conformance", () => {
     // The query only matches this entry's body ("Fragment body." lives under
     // "## Details and Usage", not in name/description/tags/hints), so the
     // units search path's per-unit ranking (index-redesign-contract.md B3)
-    // correctly picks that fragment unit as the entry's best-scoring match and
-    // anchors the ref to it — a real capability gain over the pre-B5 index,
-    // which had no unit coverage for non-`akm` adapters at all (`okf` never
-    // calls `setMarkdownFragmentContent`, so its content only ever reached
-    // `entries_fts`'s single per-entry column, never a fragment). The anchor
-    // is a genuinely resolvable ref, the same `akm-fragment-<n>-<hash>` id
-    // `showLocal({ ref: "...#details-and-usage" })` below reaches by its
-    // heading-slug alias (`splitMarkdownFragments`, `core/asset/markdown-fragments.ts`).
-    expect(hit && "ref" in hit ? hit.ref : undefined).toMatch(/^adversarial\/\/unknown#akm-fragment-\d+-[0-9a-f]+$/);
+    // correctly picks that fragment unit as the entry's best-scoring match — a
+    // real capability gain over the pre-B5 index, which had no unit coverage
+    // for non-`akm` adapters at all (`okf` never calls
+    // `setMarkdownFragmentContent`, so its content only ever reached
+    // `entries_fts`'s single per-entry column, never a fragment). The hit's
+    // primary `ref` stays the bare entry (index-redesign-contract.md B5f item
+    // 1); `selectedRef` carries the genuinely resolvable anchor, the same
+    // `akm-fragment-<n>-<hash>` id `showLocal({ ref: "...#details-and-usage" })`
+    // below reaches by its heading-slug alias (`splitMarkdownFragments`,
+    // `core/asset/markdown-fragments.ts`).
+    expect(hit && "ref" in hit ? hit.ref : undefined).toBe("adversarial//unknown");
+    expect(hit && "selectedRef" in hit ? hit.selectedRef : undefined).toMatch(
+      /^adversarial\/\/unknown#akm-fragment-\d+-[0-9a-f]+$/,
+    );
 
     const fragment = await showLocal({ ref: "adversarial//unknown#details-and-usage" });
     expect(fragment.content).toContain("## Details and Usage");
@@ -677,14 +682,30 @@ describe("OKF first-class conformance", () => {
     const refsByPath = new Map(
       search.hits.flatMap((hit) => ("path" in hit && "ref" in hit ? [[hit.path, hit.ref] as const] : [])),
     );
-    // As above: "Primary identity marker." is body content, not part of the
+    const selectedRefsByPath = new Map(
+      search.hits.flatMap((hit) =>
+        "path" in hit && "selectedRef" in hit ? [[hit.path, hit.selectedRef] as const] : [],
+      ),
+    );
+    // Bundle qualification round-trips through the hit's primary ref, which is
+    // always the bare entry now (index-redesign-contract.md B5f item 1). As
+    // above: "Primary identity marker." is body content, not part of the
     // name/description, so the winning unit is the (sole, heading-less) body
-    // fragment and the ref anchors to it — see the comment on the "Fragment
-    // body" search assertion earlier in this file for why this is a real
-    // capability gain, not a regression.
-    expect(refsByPath.get(path.join(storage.stashDir, "shared.md"))).toMatch(/^shared#akm-fragment-\d+-[0-9a-f]+$/);
-    expect(refsByPath.get(path.join(localRoot, "shared.md"))).toMatch(/^local\/\/shared#akm-fragment-\d+-[0-9a-f]+$/);
-    expect(refsByPath.get(path.join(stashRoot, "shared.md"))).toMatch(/^stash\/\/shared#akm-fragment-\d+-[0-9a-f]+$/);
+    // fragment — see the comment on the "Fragment body" search assertion
+    // earlier in this file for why that's a real capability gain, not a
+    // regression. `selectedRef` carries that fragment anchor instead of `ref`.
+    expect(refsByPath.get(path.join(storage.stashDir, "shared.md"))).toBe("shared");
+    expect(refsByPath.get(path.join(localRoot, "shared.md"))).toBe("local//shared");
+    expect(refsByPath.get(path.join(stashRoot, "shared.md"))).toBe("stash//shared");
+    expect(selectedRefsByPath.get(path.join(storage.stashDir, "shared.md"))).toMatch(
+      /^shared#akm-fragment-\d+-[0-9a-f]+$/,
+    );
+    expect(selectedRefsByPath.get(path.join(localRoot, "shared.md"))).toMatch(
+      /^local\/\/shared#akm-fragment-\d+-[0-9a-f]+$/,
+    );
+    expect(selectedRefsByPath.get(path.join(stashRoot, "shared.md"))).toMatch(
+      /^stash\/\/shared#akm-fragment-\d+-[0-9a-f]+$/,
+    );
 
     expect((await showLocal({ ref: "local//shared" })).content).toContain("Local identity marker.");
     expect((await showLocal({ ref: "stash//shared" })).content).toContain("Stash identity marker.");

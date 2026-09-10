@@ -283,21 +283,12 @@ export function searchVec(db: Database, queryEmbedding: EmbeddingVector, k: numb
   return searchBlobVec(db, queryEmbedding, k);
 }
 
-/**
- * Return the k nearest neighbours of an already-indexed entry using its
- * persisted embedding — no re-embedding, no network. Decodes the stored BLOB by
- * byte length (dim = bytes / 4) and reuses searchVec (sqlite-vec fast path or
- * JS-cosine fallback). Returns [] when the entry has no stored embedding or the
- * BLOB is corrupt. The query entry itself is typically returned with distance
- * ~0 — callers should filter it out by id.
- */
-export function getNeighborsByEntryId(db: Database, id: number, k: number): DbVecResult[] {
-  const row = db.prepare("SELECT embedding FROM embeddings WHERE id = ?").get(id) as { embedding: Buffer } | undefined;
-  if (!row) return [];
-  const queryEmbedding = bufferToFloat32(row.embedding, Math.floor(row.embedding.byteLength / 4));
-  if (!queryEmbedding) return [];
-  return searchVec(db, queryEmbedding, k);
-}
+// `getNeighborsByEntryId` (the legacy `embeddings`/`entries_vec`-backed
+// nearest-neighbours-of-an-entry lookup) moved to `units-repository.ts`,
+// content-addressed on `units_vec` (index-redesign-contract.md B5f item 4) —
+// nothing writes `embeddings`/`entries_vec` any more, so a lookup against
+// them was silently always empty. The tables themselves stay; a later step
+// deletes them.
 
 function float32Buffer(vec: number[]): Buffer {
   const f32 = new Float32Array(vec);

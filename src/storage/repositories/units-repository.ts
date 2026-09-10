@@ -26,6 +26,8 @@
 import { ConfigError } from "../../core/errors";
 import type { EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
+import type { DbVecResult } from "./index-entry-types";
+import { getMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 import { isVecAvailable } from "./index-vec-repository";
 
@@ -405,6 +407,76 @@ export function groupUnitHitsByEntry(db: Database, hits: readonly UnitSearchHit[
     }
   }
   return result;
+}
+
+/**
+ * The number of raw unit hits `getNeighborsByEntryId` over-fetches relative
+ * to the requested `k` other entries, one-sentence reason: an entry can own
+ * several units (its card plus every fragment), so the nearest raw unit hits
+ * collapse into fewer distinct OTHER entries once grouped by entry and the
+ * querying entry's own units are excluded — over-fetching keeps that
+ * collapse from starving the requested `k`.
+ */
+const NEIGHBOR_CANDIDATE_OVERFETCH = 4;
+
+/**
+ * Decode a `units_vec` embedding BLOB (the same `Buffer.from(new
+ * Float32Array(vector).buffer)` layout {@link upsertUnitVectors} writes) back
+ * into a plain vector, dimension inferred from byte length.
+ */
+function float32BufferToVector(buf: Buffer): EmbeddingVector {
+  return Array.from(new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4)));
+}
+
+/**
+ * The `k` nearest OTHER entries to `id`, by distance between their card
+ * units (`entry_units` ordinal 0) under the active embedding identity —
+ * index-redesign-contract.md B5f item 4's replacement for the legacy
+ * `embeddings`/`entries_vec`-backed `getNeighborsByEntryId`
+ * (`index-vec-repository.ts`), which nothing has written since the units
+ * path became the only index (those tables are deleted in a later step, not
+ * this one — this function simply stops reading them).
+ *
+ * No re-embedding, no network: reads the entry's own already-indexed card
+ * vector and reuses {@link searchUnits}'s KNN, then groups the raw unit hits
+ * back to entries the same way search does ({@link groupUnitHitsByEntry}).
+ * The querying entry is excluded from its own result — its card is its own
+ * nearest neighbour at distance 0, and a caller asking for `k` neighbours
+ * wants `k` genuinely OTHER entries, not one slot spent confirming an entry
+ * is close to itself.
+ *
+ * Returns `[]` when there is no active identity yet, `id` has no card unit,
+ * or that unit has no vector for the active identity (drain has not reached
+ * it) — the caller (`consolidate.ts`'s `narrowToIncrementalCandidates`) fails
+ * open to the full pool on an empty/unusable result, same as it did for the
+ * legacy table being absent.
+ */
+export function getNeighborsByEntryId(db: Database, id: number, k: number): DbVecResult[] {
+  if (k <= 0) return [];
+  const identity = getMeta(db, "embeddingIdentity");
+  if (!identity) return [];
+
+  const cardRow = db
+    .prepare("SELECT unit_hash AS unitHash FROM entry_units WHERE entry_id = ? AND ordinal = 0")
+    .get(id) as { unitHash: string } | undefined;
+  if (!cardRow) return [];
+
+  const vecRow = db
+    .prepare("SELECT embedding FROM units_vec WHERE unit_hash = ? AND identity = ?")
+    .get(cardRow.unitHash, identity) as { embedding: Buffer } | undefined;
+  if (!vecRow) return [];
+
+  const queryVector = float32BufferToVector(vecRow.embedding);
+  if (queryVector.length === 0) return [];
+
+  const hits = searchUnits(db, queryVector, k * NEIGHBOR_CANDIDATE_OVERFETCH, identity);
+  const byEntry = groupUnitHitsByEntry(db, hits);
+  byEntry.delete(id);
+
+  return [...byEntry.entries()]
+    .sort((a, b) => a[1].distance - b[1].distance)
+    .slice(0, k)
+    .map(([entryId, match]) => ({ id: entryId, distance: match.distance }));
 }
 
 // ── Coverage ────────────────────────────────────────────────────────────────
