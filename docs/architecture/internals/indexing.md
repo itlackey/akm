@@ -357,6 +357,12 @@ high-frequency per-batch line JSON mode deliberately omits.
 `embedding.*`) that no longer matches the current config does NOT purge
 unconditionally (#955). `generateEmbeddingsForDb` re-embeds a small sample
 (up to 8) of already-stored entries with the current config and compares:
+each sample's search text is capped to `embedding.maxInputTokens` the same
+way the main embedding pass caps it before the canary request is sent, so
+the freshly re-embedded vector is produced from the identical input that
+produced the stored one — an entry over the cap comparing a capped stored
+vector against an uncapped fresh one used to read as a false mismatch,
+unrelated to the model.
 
 - the server-reported model identity (`index_meta.embeddingIdentity`,
   `remote:<model id the endpoint returned>|<vector width>` for a remote
