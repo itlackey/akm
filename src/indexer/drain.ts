@@ -1,0 +1,259 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * The embedding queue (docs/plans/index-redesign-contract.md, module B4).
+ *
+ * Drains `unit_texts` rows that have no vector under the active identity
+ * (`index_meta.embeddingIdentity`): pending = `unit_texts.unit_hash` minus
+ * `units` for that identity (`listMissingHashes`, stage 1's set-difference —
+ * docs/plans/index-fragment-vectors.md, "Indexing is a set difference"). When
+ * no identity is known yet (a fresh index, or one whose prior identity was
+ * dropped), every candidate hash is pending; the identity is learned from
+ * whichever provider response lands first and adopted from then on.
+ *
+ * Reuses `embedBatch` / `RemoteEmbedder` (src/llm/embedder.ts,
+ * src/llm/embedders/remote.ts) for the batching, retry, back-off and
+ * per-batch commit machinery rather than duplicating it — this module's own
+ * job is the pending set, the identity, and turning each provider batch into
+ * a durable `upsertUnitVectors` write. Requests are packed against the
+ * provider's own window/slot limits (`probeProviderLimits`,
+ * src/llm/embedders/provider-limits.ts) rather than a generic config default.
+ *
+ * Does not touch `materialize-embeddings.ts` (the entry-scoped embedder this
+ * replaces) beyond sharing `deriveObservedEmbeddingIdentity` — B5 deletes it.
+ */
+
+import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
+import { embedBatch } from "../llm/embedder";
+import { probeProviderLimits } from "../llm/embedders/provider-limits";
+import type { EmbeddingBatchCommit, EmbeddingBatchSkip, EmbeddingSkipHandler } from "../llm/embedders/remote";
+import type { EmbeddingVector } from "../llm/embedders/types";
+import type { Database } from "../storage/database";
+import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
+import { SQLITE_CHUNK_SIZE } from "../storage/repositories/index-sql";
+import { dropOtherIdentities, listMissingHashes, upsertUnitVectors } from "../storage/repositories/units-repository";
+import { deriveObservedEmbeddingIdentity } from "./embedding-identity";
+
+export interface DrainCounts {
+  /** Distinct unit hashes found missing a vector for the active identity, before `limit` bounds the work. */
+  pending: number;
+  /** Unit hashes whose vector was newly written this call. */
+  embedded: number;
+  /** Unit hashes the provider could not embed (context-window, timeout, or a genuine transport failure). */
+  failed: number;
+  /** Unit hashes attempted but neither embedded nor reported failed — never dispatched because the circuit breaker tripped. */
+  skipped: number;
+  /** The active identity after this call, or `null` if none has ever been learned. */
+  identity: string | null;
+}
+
+export interface DrainOptions {
+  signal?: AbortSignal;
+  onProgress?: (line: string) => void;
+  /** Cap on how many missing units this call embeds; the rest stay pending for a later call. */
+  limit?: number;
+  /** Restrict the candidate set to exactly these hashes (still filtered down to what is actually missing) — B2's write-time drain uses this to embed only the units a just-written asset added. */
+  onlyHashes?: readonly string[];
+}
+
+/**
+ * Consecutive-failure threshold that stops dispatching further provider
+ * batches. Mirrors materialize-embeddings.ts's own (unexported)
+ * `CIRCUIT_BREAKER_THRESHOLD`, #954 — reimplemented here at the same value
+ * rather than imported, since that file is private and slated for deletion
+ * by B5; the underlying stop-dispatch MECHANISM (`onSkip` returning `false`)
+ * is still the real `RemoteEmbedder`'s, reused unmodified. Two independent
+ * streaks share it: 3 consecutive single-document failures (a multi-document
+ * timeout is not yet evidence of a dead endpoint — `RemoteEmbedder` retries
+ * and splits it smaller before ever reporting it this small), or 3
+ * consecutive network errors at ANY size (never retried, trusted
+ * immediately).
+ */
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("drain interrupted");
+  }
+}
+
+/** Every distinct unit hash the index currently knows about, regardless of identity. */
+function selectAllUnitHashes(db: Database): string[] {
+  return (db.prepare("SELECT unit_hash FROM unit_texts ORDER BY unit_hash").all() as { unit_hash: string }[]).map(
+    (row) => row.unit_hash,
+  );
+}
+
+/** `unit_hash -> text` for exactly `hashes`, chunked to respect SQLite's bound-parameter limit. */
+function fetchUnitTexts(db: Database, hashes: readonly string[]): Map<string, string> {
+  const texts = new Map<string, string>();
+  for (let offset = 0; offset < hashes.length; offset += SQLITE_CHUNK_SIZE) {
+    const chunk = hashes.slice(offset, offset + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT unit_hash, text FROM unit_texts WHERE unit_hash IN (${placeholders})`)
+      .all(...chunk) as { unit_hash: string; text: string }[];
+    for (const row of rows) texts.set(row.unit_hash, row.text);
+  }
+  return texts;
+}
+
+/**
+ * Effective embedding config for this drain: `maxTokens` (the client-side
+ * per-request token budget `RemoteEmbedder` packs batches against) and
+ * `concurrency` (in-flight requests) default to the provider's OWN observed
+ * window/slot limits instead of the generic config defaults, when the
+ * config itself leaves them unset — an explicit `embedding.maxTokens` /
+ * `embedding.concurrency` still wins (`probeProviderLimits` already applies
+ * that same override to `slots`). `RemoteEmbedder`'s existing context-size
+ * split-and-shrink absorbs the gap between the provider's real token count
+ * and the char/4 estimate batching plans against.
+ */
+async function packEmbeddingConfig(
+  config: AkmConfig,
+  signal: AbortSignal | undefined,
+): Promise<EmbeddingConnectionConfig> {
+  const base = config.embedding ?? {};
+  const limits = await probeProviderLimits(base, { signal });
+  return {
+    ...base,
+    maxTokens: base.maxTokens ?? limits.windowTokens,
+    concurrency: base.concurrency ?? limits.slots,
+  };
+}
+
+function formatDoneLine(counts: DrainCounts): string {
+  return (
+    `[drain] done: ${counts.pending} pending, ${counts.embedded} embedded, ${counts.failed} failed, ` +
+    `${counts.skipped} skipped (identity: ${counts.identity ?? "unknown"})`
+  );
+}
+
+export async function drainEmbeddingQueue(
+  db: Database,
+  config: AkmConfig,
+  opts: DrainOptions = {},
+): Promise<DrainCounts> {
+  throwIfAborted(opts.signal);
+
+  let identity = getMeta(db, "embeddingIdentity") ?? null;
+
+  if (config.semanticSearchMode === "off") {
+    return { pending: 0, embedded: 0, failed: 0, skipped: 0, identity };
+  }
+
+  const candidateHashes = opts.onlyHashes ? [...new Set(opts.onlyHashes)] : selectAllUnitHashes(db);
+  const missingHashes = identity ? listMissingHashes(db, candidateHashes, identity) : candidateHashes;
+  const pending = missingHashes.length;
+
+  const emitDone = (counts: DrainCounts): DrainCounts => {
+    opts.onProgress?.(formatDoneLine(counts));
+    return counts;
+  };
+
+  if (pending === 0) {
+    return emitDone({ pending: 0, embedded: 0, failed: 0, skipped: 0, identity });
+  }
+
+  const boundedHashes = opts.limit !== undefined ? missingHashes.slice(0, opts.limit) : missingHashes;
+  const textByHash = fetchUnitTexts(db, boundedHashes);
+  // A hash in `unit_texts` should always resolve to a row (it was just read
+  // from that same table above), but a missing row is dropped rather than
+  // sent to the provider as `undefined` text.
+  const orderedHashes = boundedHashes.filter((hash) => textByHash.has(hash));
+  const texts = orderedHashes.map((hash) => textByHash.get(hash) as string);
+
+  if (texts.length === 0) {
+    return emitDone({ pending, embedded: 0, failed: 0, skipped: 0, identity });
+  }
+
+  const embeddingConfig = await packEmbeddingConfig(config, opts.signal);
+
+  let embedded = 0;
+  let failed = 0;
+  let batchNumber = 0;
+  let consecutiveSingleDocFailures = 0;
+  let consecutiveNetworkErrorFailures = 0;
+
+  const onSkip: EmbeddingSkipHandler = (skip: EmbeddingBatchSkip) => {
+    failed++;
+    if (!skip.batchStart) return undefined;
+    if (skip.reason === "context-window-exceeded") {
+      // Proves the provider IS reachable; not evidence of a dead endpoint.
+      consecutiveSingleDocFailures = 0;
+      consecutiveNetworkErrorFailures = 0;
+      return undefined;
+    }
+    consecutiveSingleDocFailures = skip.batchSize === 1 ? consecutiveSingleDocFailures + 1 : 0;
+    consecutiveNetworkErrorFailures = skip.failureKind === "network-error" ? consecutiveNetworkErrorFailures + 1 : 0;
+    if (
+      consecutiveSingleDocFailures >= CIRCUIT_BREAKER_THRESHOLD ||
+      consecutiveNetworkErrorFailures >= CIRCUIT_BREAKER_THRESHOLD
+    ) {
+      return false;
+    }
+    return undefined;
+  };
+
+  const onBatch: EmbeddingBatchCommit = (indices, embeddings, model, outcome) => {
+    // "retrying"/"budget-lowered" are in-flight notices for a batch that has
+    // not settled yet (see EmbeddingBatchOutcome) — nothing to commit or
+    // count, and not a distinct "batch" for the one-line-per-batch contract.
+    if (outcome?.outcome === "retrying" || outcome?.outcome === "budget-lowered") return;
+
+    const rows: { hash: string; identity: string; vector: EmbeddingVector }[] = [];
+    for (let k = 0; k < indices.length; k++) {
+      const embedding = embeddings[k];
+      if (!embedding) continue;
+      if (identity === null) {
+        // Identity learned from whichever response lands first (concurrent
+        // dispatch aside, onBatch calls run one at a time — JS is
+        // single-threaded — so this fires exactly once per drain call).
+        const learned = deriveObservedEmbeddingIdentity(config.embedding, model, embedding.length);
+        if (learned) {
+          identity = learned;
+          setMeta(db, "embeddingIdentity", identity);
+          // Stage 1's cleanup for any stale identity left behind by an
+          // earlier run — a no-op when nothing else is stored.
+          dropOtherIdentities(db, identity, embedding.length);
+        }
+      }
+      const currentIdentity = identity;
+      if (currentIdentity === null) continue;
+      const hash = orderedHashes[indices[k] as number];
+      if (hash) rows.push({ hash, identity: currentIdentity, vector: embedding });
+    }
+
+    if (rows.length > 0) {
+      // upsertUnitVectors wraps its own writes in a transaction — this IS
+      // "each provider batch commits in its own transaction" (a second,
+      // outer db.transaction() here would only nest as an unobservable
+      // SAVEPOINT inside it, per the ambient-transaction hazard
+      // materialize-embeddings.ts's own drift guard documents).
+      const result = upsertUnitVectors(db, rows);
+      embedded += result.inserted;
+    }
+    if (embeddings.some((embedding) => embedding !== undefined)) {
+      consecutiveSingleDocFailures = 0;
+      consecutiveNetworkErrorFailures = 0;
+    }
+
+    batchNumber++;
+    if (opts.onProgress) {
+      const docCount = outcome?.docCount ?? indices.length;
+      const label =
+        outcome && outcome.outcome !== "stored" ? `failed: ${outcome.reason ?? "unknown"}` : `${rows.length} stored`;
+      opts.onProgress(`[drain] batch ${batchNumber}: ${docCount} docs → ${label}`);
+    }
+  };
+
+  await embedBatch(texts, embeddingConfig, opts.signal, onSkip, onBatch);
+  throwIfAborted(opts.signal);
+
+  const attempted = texts.length;
+  const skipped = Math.max(0, attempted - embedded - failed);
+
+  return emitDone({ pending, embedded, failed, skipped, identity });
+}
