@@ -60,8 +60,14 @@ load-bearing facts, each verified in code:
    `akm curate`, then `akm show <ref>`. A subdirectory's real payoff: its tokens
    join the FTS `name` column — at publication time the highest-weighted BM25
    column (10.0); the index redesign replaced the tuned per-column weights
-   with reciprocal-rank fusion (`src/indexer/search/ranking.ts`), so a strong
-   name-token match still wins primarily through this same column, just no
+   with a two-pool lexical split instead (`searchUnitsLexicalPair`,
+   `src/indexer/search/db-search.ts`): a name match now ranks within the
+   small card-only pool rather than racing every fragment's body text, fused
+   with semantic evidence by magnitude — the calibrated BM25 transform times
+   cosine similarity at a 0.7/0.3 split (`fuseByEntry`,
+   `src/indexer/search/ranking.ts`) — NOT reciprocal-rank fusion, which was
+   tried and measured worse (`docs/plans/index-redesign.md`). A strong
+   name-token match still wins primarily through this same pool, just no
    longer via a hand-set weight — always merge into `tags` (since SPEC-2
    landed; see fact 6), and match the cwd project-context boost
    (`projectContextRankingContributor`, +0.2/token, cap 0.5). No

@@ -232,15 +232,19 @@ semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
 
-**Progress in non-verbose JSON/yaml/jsonl mode:** every phase's progress
-line — including drain's own per-batch and done-summary lines (`[embed]
-endpoint ...`, `[drain] batch N: ...`, `[drain] done: ...`) — reaches stderr
-regardless of `--verbose`: a long-running index build against a slow or
-unresponsive provider is no longer silent until the whole run finishes. In
-this output mode `--verbose` currently makes no further difference to what
-reaches stderr. Text mode is where `--verbose` still matters: without it,
-progress updates a single spinner line in place; with it, every line is
-printed as it arrives instead. JSON stdout output is unaffected either way.
+**Progress in non-verbose JSON/yaml/jsonl mode:** phase-start messages and
+each phase's summary line — including `[embed] endpoint ...` and `[drain]
+done: ...` — reach stderr regardless of `--verbose`: a long-running index
+build against a slow or unresponsive provider is no longer silent until the
+whole run finishes. Two high-frequency, one-line-per-unit-of-work lines are
+the exception and stay suppressed without `--verbose`: drain's per-batch
+commit line (`[drain] batch N: ...`) and reconcile's per-root line
+(`Reconciled "<path>": N files scanned.`) — printing one of those per batch
+or per root would be spam, not a heartbeat. Pass `--verbose` to print those
+two as well, alongside the same summary lines. Text mode is where
+`--verbose` also matters for everything else: without it, progress updates a
+single spinner line in place; with it, every line is printed as it arrives
+instead. JSON stdout output is unaffected either way.
 
 **Reconcile, not a walk-and-rebuild pipeline:** `akm index` diffs every
 configured root's files against the index (stat cache: unchanged files are

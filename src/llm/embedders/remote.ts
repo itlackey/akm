@@ -1137,7 +1137,10 @@ function embeddingEndpointPathHint(endpoint: string): string {
  *
  * Resolution order:
  *   1. `ollamaOptions` — forwarded verbatim (explicit opt-in, takes precedence).
- *   2. `contextLength` — wrapped as `{ num_ctx: contextLength }`.
+ *   2. `ollamaNumCtx` — the caller-supplied, provider-probed native context
+ *      window (`ProviderLimits.ollamaNumCtx`, sourced from
+ *      `probeProviderLimits`, NOT the retired `embedding.contextLength`
+ *      config key), wrapped as `{ num_ctx: ollamaNumCtx }`.
  *   3. Neither set → returns `undefined` (no `options` field in the request body).
  *
  * These options are only meaningful for Ollama's native `/api/embed` endpoint.
