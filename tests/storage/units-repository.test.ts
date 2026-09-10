@@ -153,7 +153,32 @@ describe("units-repository", () => {
     withTempDb((db) => {
       const unavailable = {} as unknown as Database;
       const result = upsertUnitVectors(unavailable, [{ hash: "h1", identity: IDENTITY_A, vector: vector(0) }]);
-      expect(result).toEqual({ inserted: 0 });
+      expect(result).toEqual({ inserted: 0, failed: 0 });
+    });
+  });
+
+  test("upsertUnitVectors: one wrong-width vector in a batch does not roll back its good siblings", () => {
+    withTempDb((db) => {
+      // units_vec was created at DIM=4; a 6-wide vector is a genuine vec0
+      // insert failure ("Dimension mismatch"), mid-batch, alongside two
+      // good rows — the exact shape of a provider bug that returns the
+      // wrong width for one document in an otherwise-fine response.
+      const result = upsertUnitVectors(db, [
+        { hash: "good1", identity: IDENTITY_A, vector: vector(0) },
+        { hash: "bad", identity: IDENTITY_A, vector: [1, 2, 3, 4, 5, 6] },
+        { hash: "good2", identity: IDENTITY_A, vector: vector(10) },
+      ]);
+      expect(result.inserted).toBe(2);
+      expect(result.failed).toBe(1);
+
+      // Both good rows are durably present and searchable...
+      expect(listMissingHashes(db, ["good1", "good2"], IDENTITY_A)).toEqual([]);
+      // ...while the bad row was left out of `units` entirely (not stranded
+      // there with no vector behind it), so the next drain retries it
+      // instead of treating it as permanently satisfied.
+      expect(listMissingHashes(db, ["bad"], IDENTITY_A)).toEqual(["bad"]);
+      const badCount = db.prepare("SELECT COUNT(*) AS n FROM units WHERE unit_hash = 'bad'").get() as { n: number };
+      expect(badCount.n).toBe(0);
     });
   });
 

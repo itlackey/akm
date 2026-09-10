@@ -54,8 +54,18 @@ describe("embedding batches: a failing batch or an oversized document does not d
     server = Bun.serve({
       port: 0,
       async fetch(request) {
+        const { pathname } = new URL(request.url);
+        // `probeProviderLimits` (index-redesign B1's reconcile.ts, probed once
+        // per run before any parsing) tries llama.cpp's `GET /props` and,
+        // failing that, Ollama's `POST /api/show` before any real embedding
+        // request — neither carries an `{ input }` body, so route them away
+        // from the embedding handling below (mirrors
+        // index-embedding-secret-credential.test.ts's own mock server).
+        if (pathname === "/props" || pathname === "/api/show") {
+          return new Response(null, { status: 404 });
+        }
         const body = (await request.json()) as { input: string[] };
-        if (body.input.some((t) => t.includes("trigger_500"))) {
+        if (body.input.some((t) => t.toLowerCase().includes("trigger_500"))) {
           return new Response("synthetic upstream failure", { status: 500 });
         }
         const data = body.input.map(() => ({ embedding: [1, 0, 0, 0] }));
@@ -80,9 +90,15 @@ describe("embedding batches: a failing batch or an oversized document does not d
 
     const result = await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    // The 3 good entries must still be embedded — the bad one's batch
-    // failure must not have discarded them.
-    expect(result.verification.embeddingCount).toBe(3);
+    // `embeddingCount` counts UNITS, not entries (index-redesign A1/B1): each
+    // of the 4 entries here has a structured-fields "card" unit (name/desc,
+    // no body) plus one body-fragment unit (its one-paragraph content, no
+    // heading), so 8 units total. `batchSize: 1` sends one unit per request,
+    // and only the "bad" entry's FRAGMENT unit contains "trigger_500" — its
+    // card unit's request has no such text, so it still embeds fine. The 3
+    // good entries' 6 units plus the bad entry's 1 surviving (card) unit is
+    // the "does not discard the rest" proof at unit granularity: 7 of 8.
+    expect(result.verification.embeddingCount).toBe(7);
     expect(result.verification.entryCount).toBe(4);
   });
 
@@ -90,6 +106,12 @@ describe("embedding batches: a failing batch or an oversized document does not d
     server = Bun.serve({
       port: 0,
       async fetch(request) {
+        const { pathname } = new URL(request.url);
+        // See the other test's mock server for why these two paths are
+        // routed away from the `{ input }`-body embedding handling below.
+        if (pathname === "/props" || pathname === "/api/show") {
+          return new Response(null, { status: 404 });
+        }
         const body = (await request.json()) as { input: string[] };
         const data = body.input.map(() => ({ embedding: [1, 0, 0, 0] }));
         return new Response(JSON.stringify({ data, model: "test", usage: { prompt_tokens: 1, total_tokens: 1 } }), {
@@ -114,10 +136,13 @@ describe("embedding batches: a failing batch or an oversized document does not d
 
     const result = await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    // Both small entries embedded despite the oversized sibling; the run
-    // completes (not a hard phase failure) and reports the shortfall
-    // truthfully rather than crediting the oversized entry.
-    expect(result.verification.embeddingCount).toBe(2);
+    // `embeddingCount` counts UNITS, not entries (see the other test's
+    // comment): 3 entries × (card + one body-fragment unit) = 6 candidate
+    // units. `huge.md`'s NAME is short (its card unit embeds fine); only its
+    // body fragment is long enough to trip `maxTokens: 100` and get skipped
+    // as oversized. Both small entries' 4 units plus huge's surviving card
+    // unit is the "rest still embeds" proof at unit granularity: 5 of 6.
+    expect(result.verification.embeddingCount).toBe(5);
     expect(result.verification.entryCount).toBe(3);
   });
 });

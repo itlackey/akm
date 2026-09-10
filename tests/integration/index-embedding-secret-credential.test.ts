@@ -71,7 +71,11 @@ function createAuthCapturingEmbeddingServer(): {
       }
       authHeaders.push(request.headers.get("authorization"));
       const body = (await request.json()) as { input: string[] };
-      const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0, 0], index: i }));
+      // 8 dimensions: every config below sets `embedding.dimension: 8`, and
+      // `units_vec` (sqlite-vec, index-redesign A2) is a fixed-width virtual
+      // table — a response vector shorter than the configured width fails
+      // the insert outright rather than silently accepting any length.
+      const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0, 0, 0, 0, 0, 0], index: i }));
       return new Response(JSON.stringify({ data, model: "mock", usage: {} }), {
         headers: { "Content-Type": "application/json", Connection: "close" },
       });

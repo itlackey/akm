@@ -23,7 +23,7 @@ import { getDbPath } from "../../../src/core/paths";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import { searchUnitsLexical } from "../../../src/indexer/search/db-search";
-import { fuseByEntry, RRF_K } from "../../../src/indexer/search/ranking";
+import { fuseByEntry, RRF_K, type UnitLexicalHit } from "../../../src/indexer/search/ranking";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { ensureFileAndUnitTextTables } from "../../../src/storage/repositories/files-repository";
@@ -221,29 +221,44 @@ describe("searchUnits identity filtering", () => {
 
 // ── fuseByEntry ──────────────────────────────────────────────────────────────
 
+/**
+ * `fuseByEntry` rescales its raw RRF sum by `1/(RRF_K+1)` — the maximum a
+ * SINGLE list's rank-1 hit can contribute — before returning it
+ * (index-redesign B5, so `ranking-contributors.ts`'s 0–1-calibrated boosts
+ * and the belief-state ceiling see a comparable base instead of RRF's native
+ * ~0.008–0.033 range; a lexical-only or semantic-only rank-1 hit normalizes
+ * to 1.0, a hit both lists rank #1 to 2.0 — `RRF_MAX_SCORE`'s own doc in
+ * ranking.ts has the full reasoning). Mirror that same rescale here rather
+ * than asserting the pre-normalization raw sum.
+ */
+function normalizedRrf(...ranks: number[]): number {
+  const raw = ranks.reduce((sum, rank) => sum + 1 / (RRF_K + rank), 0);
+  return raw / (1 / (RRF_K + 1));
+}
+
 describe("fuseByEntry — reciprocal rank fusion", () => {
   test("RRF_K is the Cormack et al. 2009 constant", () => {
     expect(RRF_K).toBe(60);
   });
 
-  test("lexical-only hit: rankingMode 'fts', score = 1/(RRF_K + rank)", () => {
+  test("lexical-only hit: rankingMode 'fts', normalized score = 0.5 at rank 1", () => {
     const db = openSeededDb("fuse-lexical-only");
     try {
       const entryId = insertEntry(db, "lex-only");
       seedUnit(db, { entryId, ordinal: 0, fragmentId: null, hash: "hL", kind: "card", text: "lexical only text" });
 
-      const results = fuseByEntry(db, [{ unitHash: "hL", rank: 1 }], []);
+      const results = fuseByEntry(db, [{ unitHash: "hL", rank: 1, lexicalMatch: "exact" }], []);
       expect(results).toHaveLength(1);
       expect(results[0]!.id).toBe(entryId);
       expect(results[0]!.rankingMode).toBe("fts");
-      expect(results[0]!.score).toBeCloseTo(1 / (RRF_K + 1), 10);
+      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1), 10);
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hL", fragmentId: null, kind: "card" });
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("semantic-only hit: rankingMode 'semantic', score = 1/(RRF_K + rank)", () => {
+  test("semantic-only hit: rankingMode 'semantic', normalized score = 0.5 at rank 1", () => {
     const db = openSeededDb("fuse-semantic-only");
     try {
       const entryId = insertEntry(db, "sem-only");
@@ -261,7 +276,7 @@ describe("fuseByEntry — reciprocal rank fusion", () => {
       expect(results).toHaveLength(1);
       expect(results[0]!.id).toBe(entryId);
       expect(results[0]!.rankingMode).toBe("semantic");
-      expect(results[0]!.score).toBeCloseTo(1 / (RRF_K + 1), 10);
+      expect(results[0]!.score).toBeCloseTo(normalizedRrf(1), 10);
       expect(results[0]!.matchedUnit).toEqual({ unitHash: "hS", fragmentId: "sec1", kind: "fragment" });
       // Legacy `fragmentId` is also populated so downstream fragment-ref
       // resolution (buildDbHit's ref = `${parentRef}#${fragmentId}`) works.
@@ -288,9 +303,9 @@ describe("fuseByEntry — reciprocal rank fusion", () => {
       seedUnit(db, { entryId: entryB, ordinal: 0, fragmentId: null, hash: "hB-card", kind: "card", text: "b card" });
 
       // Lexical: B ranks 1st, A's card ranks 2nd.
-      const lexical = [
-        { unitHash: "hB-card", rank: 1 },
-        { unitHash: "hA-card", rank: 2 },
+      const lexical: UnitLexicalHit[] = [
+        { unitHash: "hB-card", rank: 1, lexicalMatch: "exact" },
+        { unitHash: "hA-card", rank: 2, lexicalMatch: "exact" },
       ];
       // Semantic: only A's fragment unit hits, so it is the sole (and thus
       // best, entry-rank 1) semantic entry.
@@ -304,12 +319,12 @@ describe("fuseByEntry — reciprocal rank fusion", () => {
       // A's lexical entry-rank is 2 (B took entry-rank 1); its semantic
       // entry-rank is 1 (its only competitor in that list). Semantic ranked
       // it strictly better, so matchedUnit reports the fragment unit.
-      expect(a.score).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 10);
+      expect(a.score).toBeCloseTo(normalizedRrf(2, 1), 10);
       expect(a.matchedUnit).toEqual({ unitHash: "hA-frag", fragmentId: "sec1", kind: "fragment" });
 
       const b = byId.get(entryB)!;
       expect(b.rankingMode).toBe("fts");
-      expect(b.score).toBeCloseTo(1 / (RRF_K + 1), 10);
+      expect(b.score).toBeCloseTo(normalizedRrf(1), 10);
       expect(b.matchedUnit).toEqual({ unitHash: "hB-card", fragmentId: null, kind: "card" });
     } finally {
       closeDatabase(db);
@@ -323,7 +338,11 @@ describe("fuseByEntry — reciprocal rank fusion", () => {
       seedUnit(db, { entryId, ordinal: 0, fragmentId: null, hash: "hCard", kind: "card", text: "card text" });
       seedUnit(db, { entryId, ordinal: 1, fragmentId: "sec1", hash: "hFrag", kind: "fragment", text: "fragment text" });
 
-      const results = fuseByEntry(db, [{ unitHash: "hCard", rank: 1 }], [{ unitId: 1, hash: "hFrag", distance: 0.01 }]);
+      const results = fuseByEntry(
+        db,
+        [{ unitHash: "hCard", rank: 1, lexicalMatch: "exact" }],
+        [{ unitId: 1, hash: "hFrag", distance: 0.01 }],
+      );
       expect(results).toHaveLength(1);
       expect(results[0]!.rankingMode).toBe("hybrid");
       expect(results[0]!.matchedUnit?.unitHash).toBe("hCard");
@@ -354,9 +373,9 @@ describe("fuseByEntry — reciprocal rank fusion", () => {
         text: "skill text",
       });
 
-      const lexical = [
-        { unitHash: "hMem", rank: 1 },
-        { unitHash: "hSkill", rank: 2 },
+      const lexical: UnitLexicalHit[] = [
+        { unitHash: "hMem", rank: 1, lexicalMatch: "exact" },
+        { unitHash: "hSkill", rank: 2, lexicalMatch: "exact" },
       ];
 
       const included = fuseByEntry(db, lexical, [], { typeFilter: ["memory"] });

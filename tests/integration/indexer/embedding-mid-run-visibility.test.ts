@@ -18,10 +18,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
+import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../../src/storage/repositories/index-connection";
-import { getEmbeddingCount } from "../../../src/storage/repositories/index-vec-repository";
 import { writeMarkdownFiles } from "../../_helpers/markdown-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+
+/**
+ * `units` rows with a stored vector — the content-addressed (index-redesign
+ * A2) analogue of the pre-redesign `embeddings` table `getEmbeddingCount`
+ * used to read. That legacy, entry-id-keyed table is only ever written by
+ * `materialize-embeddings.ts`, which nothing calls any more (index-redesign
+ * B5a retired its only caller, the deleted walk/derive pipeline) — it stays
+ * dead weight rather than deleted (out of scope here, B5b/B5c), but reading
+ * it would just see zero for the whole run.
+ */
+function getUnitVectorCount(db: Database): number {
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM units").get() as { cnt: number };
+  return row.cnt;
+}
 
 describe("akm index: mid-run embedding visibility (#954, field-report follow-up)", () => {
   let storage: IsolatedAkmStorage;
@@ -43,6 +57,14 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
     server = Bun.serve({
       port: 0,
       async fetch(request) {
+        const { pathname } = new URL(request.url);
+        // `probeProviderLimits` (index-redesign B1's reconcile.ts, probed
+        // once per run before any parsing) tries llama.cpp's `GET /props`
+        // and, failing that, Ollama's `POST /api/show`, before any real
+        // embedding request — neither carries an `{ input }` body.
+        if (pathname === "/props" || pathname === "/api/show") {
+          return new Response(null, { status: 404 });
+        }
         const body = (await request.json()) as { input: string[] };
         await new Promise((resolve) => setTimeout(resolve, 150));
         const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0, 0], index: i }));
@@ -69,7 +91,7 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
         const reader = openReadonlyExistingDatabase(getDbPath());
         if (reader) {
           try {
-            samples.push(getEmbeddingCount(reader));
+            samples.push(getUnitVectorCount(reader));
           } finally {
             closeDatabase(reader);
           }
@@ -97,7 +119,10 @@ describe("akm index: mid-run embedding visibility (#954, field-report follow-up)
     expect(finalDb).not.toBeNull();
     if (finalDb) {
       try {
-        expect(getEmbeddingCount(finalDb)).toBe(entryCount);
+        // Each entry here is one short, heading-less paragraph: a
+        // structured-fields "card" unit plus one body-fragment unit
+        // (index-redesign A1) — 2 units per entry.
+        expect(getUnitVectorCount(finalDb)).toBe(entryCount * 2);
       } finally {
         closeDatabase(finalDb);
       }

@@ -5,13 +5,19 @@
 /**
  * #956: `akm index` must abort promptly on SIGTERM/SIGINT — cancel
  * the in-flight embedding request through the AbortSignal, dispatch no
- * further batch, release the rebuild lock, and exit within about a second of
- * the signal. This spawns the REAL CLI process (not the in-process
- * `runCliCapture` harness, since the point is what happens when the OS
- * actually delivers SIGTERM to the running process) against a mock embedding
- * server whose handler never resolves on its own, so a request still stuck
- * there when the assertions run proves the client itself cancelled it rather
- * than the server ever answering.
+ * further batch, and exit within about a second of the signal. This spawns
+ * the REAL CLI process (not the in-process `runCliCapture` harness, since the
+ * point is what happens when the OS actually delivers SIGTERM to the running
+ * process) against a mock embedding server whose handler never resolves on
+ * its own, so a request still stuck there when the assertions run proves the
+ * client itself cancelled it rather than the server ever answering.
+ *
+ * index-redesign B5a retired the rebuild-lock file this test used to check
+ * existed while a run was in flight and gone after — reconcile's own
+ * per-file `BEGIN IMMEDIATE` transactions (never a run-scoped lock file) now
+ * serialize concurrent runs, so there is no longer a sentinel to assert on.
+ * The signal-promptness/cancellation behavior itself is unrelated to that
+ * mechanism and still applies unchanged.
  *
  * Integration-scoped (ORG-03/06): spawns a real child process and opens a
  * real index.db.
@@ -21,7 +27,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
-import { getIndexRebuildLockPath } from "../../../../src/core/paths";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
@@ -87,7 +92,6 @@ describe("akm index — SIGTERM promptness (#956)", () => {
       // Proof the embedding phase is genuinely in flight, not a race against
       // startup: wait for the request to actually reach the mock server.
       await waitUntil(() => requestCount > 0, 15_000, "the first embedding request to reach the mock server");
-      expect(fs.existsSync(getIndexRebuildLockPath())).toBe(true);
 
       const requestCountAtSignal = requestCount;
       const signalledAt = Date.now();
@@ -106,8 +110,6 @@ describe("akm index — SIGTERM promptness (#956)", () => {
       // No further batch was dispatched once the signal landed.
       await new Promise((resolve) => setTimeout(resolve, 300));
       expect(requestCount).toBe(requestCountAtSignal);
-
-      expect(fs.existsSync(getIndexRebuildLockPath())).toBe(false);
     } finally {
       child?.kill("SIGKILL");
       server.stop(true);

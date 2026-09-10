@@ -6,8 +6,11 @@
  * Issues #820 and the index materialization boundary.
  *
  * These contracts require one committed index generation: entry mutations
- * publish their FTS projection immediately, and --clean removes stale rows
- * before totals and semantic verification are calculated.
+ * publish their FTS projection atomically, and a rename or content edit
+ * re-points/refreshes the same item_ref-keyed row rather than leaving a
+ * stale generation behind (index-redesign B5a: `--full` reconciles in place;
+ * `--clean` is gone — content-addressed units are never at risk from a
+ * reindex, so there is nothing left to sweep).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -153,7 +156,21 @@ describe("canonical entry mutation", () => {
   });
 });
 
-test("a second full generation removes every child row owned by the first generation", async () => {
+// index-redesign (B5a): `akm index --full` no longer wipes `entries`/`files`
+// and rebuilds a fresh generation from nothing — it reconciles with
+// `forceReparse: true` (every walked file is re-derived, but the existing
+// item_ref-keyed row is UPDATED in place, not replaced; see indexer.ts's
+// `IndexOptions.full` doc). A second full run over a file whose CONTENT
+// changed but whose item_ref (concept identity) did not therefore re-points
+// the SAME `entries` row rather than minting a new id and orphaning the old
+// one — this test used to assert the opposite (the pre-redesign wipe-based
+// generation boundary); it now asserts what actually happens: the row (and
+// its FK-linked `utility_scores`) survive with the same id, only the legacy
+// entry-keyed vector cache (`embeddings`/`entries_vec` — content-addressed by
+// search text, dead tables under the new units pipeline but still cleared
+// here defensively on a content change) and the FTS projection are refreshed
+// to the new content.
+test("a second full generation re-points the same row for unchanged identity, refreshing its content", async () => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     bundles: { primary: { path: storage.stashDir, writable: true } },
@@ -194,15 +211,25 @@ test("a second full generation removes every child row owned by the first genera
       .prepare("SELECT id FROM entries WHERE item_ref = ?")
       .get("primary//knowledge/printmd/preview-server-usage") as { id: number } | undefined;
     if (!newRow) throw new Error("missing second-generation row");
-    expect(newRow.id).not.toBe(oldId);
-    expect(rowCount(currentDb, "entries_fts", "WHERE entry_id = ?", [oldId])).toBe(0);
+    // Same concept identity (item_ref), same row — never a new id.
+    expect(newRow.id).toBe(oldId);
+    // Exactly one FTS projection for this id, carrying the NEW content.
+    expect(rowCount(currentDb, "entries_fts", "WHERE entry_id = ?", [oldId])).toBe(1);
+    expect(searchFts(currentDb, "second generation content", 10).map((hit) => hit.itemRef)).toEqual([
+      "primary//knowledge/printmd/preview-server-usage",
+    ]);
+    // The legacy entry-keyed vector cache is cleared on a content change
+    // (upsertEntry's deleteEntryVectors) — dead tables under the units
+    // pipeline, but still correctly invalidated rather than left stale.
     expect(rowCount(currentDb, "embeddings", "WHERE id = ?", [oldId])).toBe(0);
-    expect(rowCount(currentDb, "utility_scores", "WHERE entry_id = ?", [oldId])).toBe(0);
-    expect(rowCount(currentDb, "utility_scores_scoped", "WHERE entry_id = ?", [oldId])).toBe(0);
     const hasVec = currentDb
       .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'")
       .get() as { present: number } | undefined;
     if (hasVec) expect(rowCount(currentDb, "entries_vec", "WHERE id = ?", [oldId])).toBe(0);
+    // Utility learning is keyed off the row's id and untouched by a content
+    // refresh — it survives, unlike the pre-redesign wipe that discarded it.
+    expect(rowCount(currentDb, "utility_scores", "WHERE entry_id = ?", [oldId])).toBe(1);
+    expect(rowCount(currentDb, "utility_scores_scoped", "WHERE entry_id = ?", [oldId])).toBe(1);
   } finally {
     closeDatabase(currentDb);
   }
@@ -212,7 +239,7 @@ for (const scenario of [
   { label: "default bundle", bundle: "primary", root: () => storage.stashDir },
   { label: "named non-default bundle", bundle: "team", root: () => secondary.dir },
 ] as const) {
-  test(`--clean publishes one post-clean generation for a rename in the ${scenario.label}`, async () => {
+  test(`a rename in the ${scenario.label} re-points the same row and publishes one generation`, async () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       bundles: {
@@ -241,13 +268,20 @@ for (const scenario of [
       closeDatabase(db);
     }
 
+    // `writePreviewAsset` writes byte-identical content under both family
+    // names — only the directory (and so the akm adapter's path-derived
+    // name) differs. Reconcile's rename recognition (reconcile.ts,
+    // index-redesign B1) matches this pair by blob hash and re-points the
+    // SAME `entries` row (`repointEntry`) rather than deleting and
+    // re-inserting: a rename with unchanged content keeps its id, and
+    // everything keyed off that id — the embeddings/utility_scores rows
+    // seeded above included — survives with it.
     const newFile = writePreviewAsset(root, "gutterpress");
     fs.unlinkSync(oldFile);
     expect(fs.existsSync(newFile)).toBe(true);
 
-    const result = await akmIndex({ stashDir: storage.stashDir, clean: true });
+    const result = await akmIndex({ stashDir: storage.stashDir });
 
-    expect(result.clean).toMatchObject({ removed: 1, removedRefs: [oldRef], dryRun: false });
     expect(result.totalEntries).toBe(1);
     expect(result.verification.entryCount).toBe(1);
 
@@ -255,9 +289,13 @@ for (const scenario of [
     let searchRefs: string[];
     try {
       expect(rowCount(finalDb, "entries", "WHERE item_ref = ?", [oldRef])).toBe(0);
-      expect(rowCount(finalDb, "entries_fts", "WHERE entry_id = ?", [oldId])).toBe(0);
-      expect(rowCount(finalDb, "embeddings", "WHERE id = ?", [oldId])).toBe(0);
-      expect(rowCount(finalDb, "utility_scores", "WHERE entry_id = ?", [oldId])).toBe(0);
+      const repointed = finalDb.prepare("SELECT id FROM entries WHERE item_ref = ?").get(newRef) as
+        | { id: number }
+        | undefined;
+      expect(repointed?.id).toBe(oldId);
+      expect(rowCount(finalDb, "entries_fts", "WHERE entry_id = ?", [oldId])).toBe(1);
+      expect(rowCount(finalDb, "embeddings", "WHERE id = ?", [oldId])).toBe(1);
+      expect(rowCount(finalDb, "utility_scores", "WHERE entry_id = ?", [oldId])).toBe(1);
       expect(rowCount(finalDb, "entries")).toBe(result.totalEntries);
       expect(rowCount(finalDb, "entries_fts")).toBe(result.totalEntries);
       searchRefs = searchFts(finalDb, "preview server usage", 10).map((hit) => hit.itemRef);

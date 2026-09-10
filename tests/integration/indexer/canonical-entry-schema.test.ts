@@ -19,6 +19,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { relinkUsageEvents, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
+import { isVecAvailable } from "../../../src/storage/repositories/index-vec-repository";
 
 const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
@@ -210,10 +211,19 @@ describe("canonical derived-index entry schema", () => {
     withTempIndex((dbPath) => {
       const partial = openDatabase(dbPath);
       try {
-        // This fails at a later required DDL surface. Before the v23 ordering
-        // fix, the version was already stamped just after entries creation.
-        partial.exec("CREATE VIEW index_dir_state AS SELECT 1 AS placeholder");
-        expect(() => ensureSchema(partial, undefined)).toThrow(/Cannot add a column to a view/);
+        // This fails at a later required DDL surface (the sqlite-vec virtual
+        // table, which — unlike every `CREATE TABLE IF NOT EXISTS` around it —
+        // has no `IF NOT EXISTS` guard and so cannot silently coexist with a
+        // same-named view). index-redesign (docs/plans/index-redesign.md, B5)
+        // removed the previous trigger for this test (`index_dir_state`'s
+        // `ALTER TABLE ... ADD COLUMN`, the only unguarded DDL statement
+        // `ensureSchema` used to run) along with the table itself; this
+        // exercises the same "version stamped only after every required DDL
+        // surface succeeds" invariant against the DDL surface that replaced
+        // it as the last unguarded one.
+        if (!isVecAvailable(partial)) return;
+        partial.exec("CREATE VIEW entries_vec AS SELECT 1 AS placeholder");
+        expect(() => ensureSchema(partial, undefined)).toThrow(/entries_vec already exists/);
       } finally {
         partial.close();
       }

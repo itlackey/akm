@@ -193,7 +193,16 @@ describe("reconcileRoots", () => {
 
       const counts = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
 
-      expect(counts).toEqual({ scanned: 2, unchanged: 2, added: 0, changed: 0, removed: 0, unitsAdded: 0 });
+      expect(counts).toEqual({
+        scanned: 2,
+        unchanged: 2,
+        added: 0,
+        changed: 0,
+        removed: 0,
+        unitsAdded: 0,
+        complete: true,
+        warnings: [],
+      });
       expect(entriesTable(db)).toEqual(before.entries);
       expect(filesTable(db)).toEqual(before.files);
       expect(unitTextsTable(db)).toEqual(before.unitTexts);
@@ -310,6 +319,56 @@ describe("reconcileRoots", () => {
     }
   });
 
+  test("a duplicate-content file going away is deleted, not mistaken for a rename of its unrelated twin", async () => {
+    const dbPath = newDbPath();
+    const db = openDb(dbPath);
+    try {
+      // Byte-identical bodies (a duplicate a cleanup pass would flag), but
+      // two independently-named, independently-identified files — the exact
+      // shape a naive hash-only rename match misreads as "renamed" instead
+      // of "coincidentally shares content with something that went away".
+      const original = writeNote("memories/original.md", { body: "Shared duplicate body." });
+      const duplicate = writeNote("memories/duplicate.md", { body: "Shared duplicate body." });
+      const counts1 = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }]);
+      expect(counts1.added).toBe(2);
+
+      const before = entriesTable(db);
+      const originalBefore = before.find((e) => e.file_path === original);
+      const duplicateBefore = before.find((e) => e.file_path === duplicate);
+      expect(originalBefore).toBeDefined();
+      expect(duplicateBefore).toBeDefined();
+      expect(originalBefore!.item_ref).toBe(`${BUNDLE_ID}//memories/original`);
+      expect(duplicateBefore!.item_ref).toBe(`${BUNDLE_ID}//memories/duplicate`);
+
+      // The duplicate goes away (archived/pruned elsewhere) while its
+      // byte-identical twin is simply re-walked unchanged (e.g. a --full
+      // reindex, which reparses every file regardless of the stat hint).
+      fs.rmSync(duplicate);
+      const counts2 = await reconcileRoots(db, [{ path: stashDir, bundleId: BUNDLE_ID }], { forceReparse: true });
+
+      // The duplicate's row is genuinely gone — never silently stranded
+      // (unclaimed by a rename AND never swept) and never crashes on a
+      // UNIQUE(item_ref) collision from being wrongly repointed onto the
+      // twin's own established identity.
+      expect(counts2.removed).toBe(1);
+      const after = entriesTable(db);
+      expect(after.length).toBe(1);
+      const afterRow = after[0]!;
+
+      // The twin keeps its OWN row/id/identity untouched — not hijacked by
+      // the gone duplicate's rename match.
+      expect(afterRow.id).toBe(originalBefore!.id);
+      expect(afterRow.file_path).toBe(original);
+      expect(afterRow.item_ref).toBe(`${BUNDLE_ID}//memories/original`);
+
+      const filesAfter = filesTable(db);
+      expect(filesAfter.some((f) => f.path === duplicate)).toBe(false);
+      expect(filesAfter.some((f) => f.path === original)).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   test("orphaned unit_texts/units_fts are pruned once no entry references them, vectors table untouched", async () => {
     const dbPath = newDbPath();
     const db = openDb(dbPath);
@@ -355,7 +414,16 @@ describe("reconcileRoots", () => {
       // A third, serial run afterward sees everything as unchanged — the
       // concurrent pair left the index in a fully consistent state.
       const countsC = await reconcileRoots(dbA, [{ path: stashDir, bundleId: BUNDLE_ID }]);
-      expect(countsC).toEqual({ scanned: 2, unchanged: 2, added: 0, changed: 0, removed: 0, unitsAdded: 0 });
+      expect(countsC).toEqual({
+        scanned: 2,
+        unchanged: 2,
+        added: 0,
+        changed: 0,
+        removed: 0,
+        unitsAdded: 0,
+        complete: true,
+        warnings: [],
+      });
     } finally {
       closeDatabase(dbA);
       closeDatabase(dbB);
@@ -395,7 +463,16 @@ describe("reconcilePaths", () => {
     try {
       const alpha = writeNote("memories/alpha.md");
       const counts = await reconcilePaths(db, [alpha], "no-such-bundle");
-      expect(counts).toEqual({ scanned: 0, unchanged: 0, added: 0, changed: 0, removed: 0, unitsAdded: 0 });
+      expect(counts).toEqual({
+        scanned: 0,
+        unchanged: 0,
+        added: 0,
+        changed: 0,
+        removed: 0,
+        unitsAdded: 0,
+        complete: true,
+        warnings: [],
+      });
       expect(entriesTable(db)).toEqual([]);
     } finally {
       closeDatabase(db);

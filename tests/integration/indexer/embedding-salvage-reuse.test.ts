@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { akmIndex, type IndexProgressEvent } from "../../../src/indexer/indexer";
+import { akmIndex } from "../../../src/indexer/indexer";
 import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
@@ -79,6 +79,18 @@ function entriesVecCount(db: Database): number {
   }
 }
 
+/**
+ * `units` rows with a stored vector — the content-addressed (index-redesign
+ * A2) analogue of the legacy, entry-id-keyed `embeddings` table
+ * `getEmbeddingCount` reads. Nothing writes to that legacy table any more
+ * (index-redesign B5a retired its only caller, `materialize-embeddings.ts`),
+ * so it stays at zero for the `akmIndex` end-to-end tests below — they read
+ * this instead.
+ */
+function unitVectorCount(db: Database): number {
+  return (db.prepare("SELECT COUNT(*) AS c FROM units").get() as { c: number }).c;
+}
+
 // ── Scenarios driven through the real akmIndex end-to-end path ─────────────
 
 describe("embedding salvage across full rebuilds (#955, akmIndex end-to-end)", () => {
@@ -123,7 +135,12 @@ describe("embedding salvage across full rebuilds (#955, akmIndex end-to-end)", (
     chain = sandboxEnvDir("akm-salvage-data", "AKM_DATA_DIR", chain).cleanup;
     chain = sandboxEnvDir("akm-salvage-state", "AKM_STATE_DIR", chain).cleanup;
     cleanup = chain;
-    writeSandboxConfig({ semanticSearchMode: "auto" });
+    // `dimension: 3` matches `stableVec`'s own output shape: `units_vec`
+    // (sqlite-vec, index-redesign A2) is a fixed-width virtual table, unlike
+    // the legacy `embeddings` BLOB column these `akmIndex` end-to-end tests
+    // predate — a real provider response width mismatch (the untouched 384
+    // default against stableVec's 3) fails the insert outright.
+    writeSandboxConfig({ semanticSearchMode: "auto", embedding: { dimension: 3 } });
     installCountingEmbedder();
   });
 
@@ -137,32 +154,37 @@ describe("embedding salvage across full rebuilds (#955, akmIndex end-to-end)", (
     const first = await akmIndex({ stashDir, full: true });
     expect(first.verification.ok).toBe(true);
     expect(providerCalls).toBe(1);
-    expect(lastProviderTextCount).toBe(3);
+    // Each entry here has a heading ("# alpha", etc.) over one paragraph, so
+    // `deriveUnits` (index-redesign A1) gives it a structured-fields "card"
+    // unit plus one body-fragment unit: 3 entries × 2 units = 6 texts in the
+    // one batch (no `batchSize` configured, so nothing splits it further).
+    expect(lastProviderTextCount).toBe(6);
 
     const db1 = openDb();
-    const embeddingsAfterFirst = getEmbeddingCount(db1);
+    const embeddingsAfterFirst = unitVectorCount(db1);
     const vecAfterFirst = entriesVecCount(db1);
     const salvageAfterFirst = salvageRowCount(db1);
     closeDatabase(db1);
-    expect(embeddingsAfterFirst).toBe(3);
+    expect(embeddingsAfterFirst).toBe(6);
     expect(salvageAfterFirst).toBe(0);
 
     providerCalls = 0;
-    const messages: string[] = [];
-    const second = await akmIndex({
-      stashDir,
-      full: true,
-      onProgress: (event: IndexProgressEvent) => messages.push(event.message),
-    });
+    const second = await akmIndex({ stashDir, full: true });
     expect(second.verification.ok).toBe(true);
 
-    // The whole point: NOTHING went to the provider the second time.
+    // The whole point: NOTHING went to the provider the second time. `--full`
+    // drops `entries`/`files` but never `units`/`units_vec` (index-redesign
+    // B5a, docs/plans/index-redesign.md rule 2) — every unit's content hash
+    // is unchanged, so `drainEmbeddingQueue`'s "missing hashes" query finds
+    // nothing pending. There is no discard to salvage FROM in the first
+    // place (#955's `embedding_salvage` is for the legacy entry-id-keyed
+    // `embeddings` table, which nothing writes to any more), so this reuse
+    // needs no salvage step and prints no "Reused N embedding" line either.
     expect(providerCalls).toBe(0);
-    expect(messages.some((m) => m.includes("Reused 3 embedding"))).toBe(true);
 
     const db2 = openDb();
     try {
-      expect(getEmbeddingCount(db2)).toBe(embeddingsAfterFirst);
+      expect(unitVectorCount(db2)).toBe(embeddingsAfterFirst);
       if (vecAfterFirst >= 0) expect(entriesVecCount(db2)).toBe(vecAfterFirst);
       expect(salvageRowCount(db2)).toBe(0);
     } finally {
@@ -179,27 +201,30 @@ describe("embedding salvage across full rebuilds (#955, akmIndex end-to-end)", (
     expect(first.verification.ok).toBe(true);
     expect(providerCalls).toBe(1);
 
-    // Change bravo's description — this changes buildSearchText's output, so
-    // its content hash no longer matches the salvaged vector.
+    // Change bravo's description — this changes its CARD unit's text
+    // (structured-fields, includes description) and therefore its content
+    // hash, so that one unit needs a fresh vector. Its body-fragment unit's
+    // text is header (entry name, unchanged) + body (unchanged) — the same
+    // hash as before, so `drainEmbeddingQueue` never selects it as pending;
+    // it is reused with zero provider involvement, content-addressing doing
+    // what the legacy salvage table used to (see the previous test).
     writeMemory("bravo", "bravo memory revised", "Bravo body.");
 
     providerCalls = 0;
     lastProviderTextCount = 0;
-    const messages: string[] = [];
-    const second = await akmIndex({
-      stashDir,
-      full: true,
-      onProgress: (event: IndexProgressEvent) => messages.push(event.message),
-    });
+    const second = await akmIndex({ stashDir, full: true });
     expect(second.verification.ok).toBe(true);
 
     expect(providerCalls).toBe(1);
     expect(lastProviderTextCount).toBe(1);
-    expect(messages.some((m) => m.includes("Reused 2 embedding"))).toBe(true);
 
     const db = openDb();
     try {
-      expect(getEmbeddingCount(db)).toBe(3);
+      // 6 units from the first pass (unaffected — content-addressed, never
+      // discarded by `--full`) plus bravo's one freshly re-embedded card
+      // unit: the OLD card unit's row (orphaned, its text/FTS mirror pruned
+      // but its vector deliberately left alone) still counts too.
+      expect(unitVectorCount(db)).toBe(7);
       expect(salvageRowCount(db)).toBe(0);
     } finally {
       closeDatabase(db);

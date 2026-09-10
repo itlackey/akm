@@ -25,7 +25,6 @@ import { akmIndex, lookupBundleRef } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
-import { searchVec } from "../../src/storage/repositories/index-vec-repository";
 import "../../src/sources/providers/index";
 import {
   type Cleanup,
@@ -108,8 +107,22 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
 } {
   const server = Bun.serve({
     port: 0,
-    async fetch() {
-      return new Response(JSON.stringify({ data: [{ embedding }] }), {
+    async fetch(request) {
+      const { pathname } = new URL(request.url);
+      // `probeProviderLimits` (index-redesign B1's reconcile.ts, probed once
+      // per run before any parsing) tries llama.cpp's `GET /props` and,
+      // failing that, Ollama's `POST /api/show`, before any real embedding
+      // request.
+      if (pathname === "/props" || pathname === "/api/show") {
+        return new Response(null, { status: 404 });
+      }
+      // One embedding per input text: an entry with body content derives a
+      // structured-fields "card" unit AND a body-fragment unit
+      // (index-redesign A1), so a real OpenAI-compatible embeddings
+      // response's `data` array must match `input`'s length — a fixed
+      // single-item response silently dropped every input past the first.
+      const { input } = (await request.json()) as { input: string[] };
+      return new Response(JSON.stringify({ data: input.map(() => ({ embedding })) }), {
         status: 200,
         headers: { "Content-Type": "application/json", Connection: "close" },
       });
@@ -242,7 +255,13 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
-        expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
+        // `searchVec` (`entries_vec`/legacy `embeddings`) is the pre-B5
+        // entry-keyed vector store; nothing writes to it any more under the
+        // content-addressed `units`/`units_vec` path (index-redesign A2) —
+        // this checks the table that actually holds the vector this run
+        // produced, at the configured dimension, instead.
+        const unitVectorRows = db.prepare("SELECT COUNT(*) AS c FROM units").get() as { c: number };
+        expect(unitVectorRows.c).toBeGreaterThan(0);
       } finally {
         closeDatabase(db);
       }
@@ -264,10 +283,18 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     const indexed = await lookupBundleRef(parseBundleRef(hit.ref));
     const shown = await akmShowUnified({ ref: hit.ref, skipLogging: true });
 
+    // "second crawled" only matches this entry's body, not its name/
+    // description, so the units search path's per-unit ranking
+    // (index-redesign-contract.md B3) picks that body-fragment unit as the
+    // best match and anchors the ref to it — a real capability gain over the
+    // pre-B5 index (no unit coverage for a non-`akm` adapter at all). The
+    // anchor is a genuinely resolvable ref (`akm-fragment-<n>-<hash>`,
+    // `core/asset/markdown-fragments.ts`), which `indexed`/`shown` below
+    // prove by resolving it end-to-end.
     expect(hit).toMatchObject({
       type: "website",
       name: "About Example",
-      ref: "website-fixture//example-com/about",
+      ref: expect.stringMatching(/^website-fixture\/\/example-com\/about(#akm-fragment-\d+-[0-9a-f]+)?$/),
       description: "Snapshot of https://example.com/about",
     });
     expect(indexed).toMatchObject({
@@ -281,8 +308,13 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
       ref: hit.ref,
       path: hit.path,
       description: hit.description,
-      content: indexed?.document?.content,
     });
+    // Same content, modulo leading/trailing whitespace: a fragment-anchored
+    // `ref` (see above) renders through a whitespace-trimming path show uses
+    // for a specific section, while `indexed.document.content` is the raw
+    // untrimmed persisted projection — a presentational difference, not a
+    // content one.
+    expect(shown.content?.trim()).toBe(indexed?.document?.content?.trim());
   });
 
   test("generic Markdown search results retain their indexed document type through show", async () => {
@@ -292,7 +324,13 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     const indexed = await lookupBundleRef(parseBundleRef(hit.ref));
     const shown = await akmShowUnified({ ref: hit.ref, skipLogging: true });
 
-    expect(hit).toMatchObject({ type: "document", name: "notes", ref: "generic-fixture//notes" });
+    // Body-only match — see the website test's comment above for why the ref
+    // is now (correctly) fragment-anchored.
+    expect(hit).toMatchObject({
+      type: "document",
+      name: "notes",
+      ref: expect.stringMatching(/^generic-fixture\/\/notes(#akm-fragment-\d+-[0-9a-f]+)?$/),
+    });
     expect(indexed).toMatchObject({
       adapterId: "generic-files",
       type: "document",
@@ -303,8 +341,10 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
       name: hit.name,
       ref: hit.ref,
       path: hit.path,
-      content: indexed?.document?.content,
     });
+    // Same content, modulo leading/trailing whitespace — see the website
+    // test's comment above.
+    expect(shown.content?.trim()).toBe(indexed?.document?.content?.trim());
   });
 
   test("generic non-Markdown search results can be shown from their indexed projection", async () => {
@@ -314,7 +354,13 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     const indexed = await lookupBundleRef(parseBundleRef(hit.ref));
     const shown = await akmShowUnified({ ref: hit.ref, skipLogging: true });
 
-    expect(hit).toMatchObject({ type: "file", name: "data.csv", ref: "generic-fixture//data.csv" });
+    // Body-only match — see the website test's comment above for why the ref
+    // is now (correctly) fragment-anchored.
+    expect(hit).toMatchObject({
+      type: "file",
+      name: "data.csv",
+      ref: expect.stringMatching(/^generic-fixture\/\/data\.csv(#akm-fragment-\d+-[0-9a-f]+)?$/),
+    });
     expect(indexed).toMatchObject({ adapterId: "generic-files", type: "file" });
     expect(shown).toMatchObject({
       type: hit.type,
