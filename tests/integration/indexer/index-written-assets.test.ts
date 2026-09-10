@@ -3,30 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Tests for `indexWrittenAssets` — the write-path single-file index update
- * used by `writeMarkdownAsset` (akm remember / knowledge writes) and extract's
+ * Tests for `indexWrittenAssets` — the write-path index update used by
+ * `writeMarkdownAsset` (akm remember / knowledge writes) and extract's
  * session assets, so just-written assets are searchable immediately without
  * any read-triggered reindex.
+ *
+ * docs/plans/index-redesign-contract.md, module B2: `indexWrittenAssets` is
+ * now a thin call to B1's `reconcilePaths` (stubbed in this branch — see
+ * src/indexer/reconcile.ts's header) followed by B4's `drainEmbeddingQueue`
+ * (also stubbed — see src/indexer/drain.ts's header), scoped to exactly the
+ * units the write produced. This suite covers what module B2 owns: the
+ * lexical-searchability guarantee and the onlyHashes wiring between the two
+ * calls, plus the fail-open skips that are still B2's responsibility (absent
+ * index, unreadable index, a missing/unindexable file). It no longer covers
+ * the rebuild-lock skip (#956) — the redesign has no rebuild lock to probe —
+ * nor real embedding-provider behavior, which moves to B4's own test suite
+ * once B4 lands for real.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch } from "../../../src/commands/read/search";
-import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
-import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { getDbPath } from "../../../src/core/paths";
+import { _drainCallsForTests, _resetDrainCallsForTests } from "../../../src/indexer/drain";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { _setEmbedderForTests } from "../../../src/llm/embedder";
+import { unitHashesForPaths } from "../../../src/indexer/reconcile";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
-import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
-import {
-  isVecAvailable,
-  isVecFastPathReady,
-  searchVec,
-  setVecFastPathReady,
-  upsertEmbedding,
-} from "../../../src/storage/repositories/index-vec-repository";
 import {
   type Cleanup,
   sandboxEnvDir,
@@ -35,7 +38,6 @@ import {
   sandboxXdgConfigHome,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
-import { overrideSeam } from "../../_helpers/seams";
 
 let stashDir = "";
 let cleanup: Cleanup = () => {};
@@ -71,42 +73,6 @@ function indexedFileCount(filePath: string): number {
   }
 }
 
-function embeddingCountForFile(filePath: string): number {
-  const db = openExistingDatabase(getDbPath());
-  try {
-    return (
-      db
-        .prepare(
-          `SELECT COUNT(*) AS c
-             FROM embeddings b
-             JOIN entries e ON e.id = b.id
-            WHERE e.file_path = ?`,
-        )
-        .get(filePath) as { c: number }
-    ).c;
-  } finally {
-    closeDatabase(db);
-  }
-}
-
-function installSemanticTestEmbedder(): void {
-  const vectorFor = (text: string): number[] =>
-    text.includes("fuel-delivery") || text.includes("gasoline") ? [0, 1, 0, 0] : [1, 0, 0, 0];
-  overrideSeam(_setEmbedderForTests, {
-    embed: async (text) => vectorFor(text),
-    embedBatch: async (texts, _config, _signal, _onSkip, onBatch) => {
-      const embeddings = texts.map(vectorFor);
-      // The materializer commits per onBatch call (#954); a fake standing in
-      // for a whole provider must still fire it, or its writes never land.
-      onBatch?.(
-        texts.map((_t, i) => i),
-        embeddings,
-      );
-      return embeddings;
-    },
-  });
-}
-
 beforeEach(async () => {
   const stash = sandboxStashDir();
   stashDir = stash.dir;
@@ -118,6 +84,7 @@ beforeEach(async () => {
   writeSandboxConfig({ semanticSearchMode: "off" });
   writeMemory("seed-memory", "Seed body.");
   await akmIndex({ stashDir });
+  _resetDrainCallsForTests();
 });
 
 afterEach(() => {
@@ -149,123 +116,6 @@ describe("indexWrittenAssets", () => {
     const idx = queryIndex("quokka");
     expect(idx.entryNames.filter((n) => n === "evolving-note")).toHaveLength(1);
     expect(idx.ftsCount).toBeGreaterThan(0);
-  });
-
-  test("a successful targeted write is immediately visible to semantic-only retrieval", async () => {
-    installSemanticTestEmbedder();
-    writeSandboxConfig({ semanticSearchMode: "auto" });
-    await akmIndex({ stashDir, full: true });
-
-    const filePath = writeMemory("fuel-delivery-note", "Procedures for refueling fleet vehicles.");
-    expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-
-    expect(embeddingCountForFile(filePath)).toBe(1);
-    const dbAfterWrite = openExistingDatabase(getDbPath());
-    try {
-      expect(getMeta(dbAfterWrite, "hasEmbeddings")).toBe("1");
-    } finally {
-      closeDatabase(dbAfterWrite);
-    }
-    const search = await akmSearch({ query: "gasoline", skipLogging: true });
-    expect(search.searchMode).toBe("semantic");
-    expect(search.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/fuel-delivery-note");
-  });
-
-  test("a targeted success cannot promote a globally incomplete vec fast path", async () => {
-    const vector = Array.from({ length: 384 }, (_, index) => (index === 0 ? 1 : 0));
-    overrideSeam(_setEmbedderForTests, {
-      embed: async () => vector,
-      embedBatch: async (texts, _config, _signal, _onSkip, onBatch) => {
-        const embeddings = texts.map(() => vector);
-        // The materializer commits per onBatch call (#954); a fake standing
-        // in for a whole provider must still fire it, or its writes never land.
-        onBatch?.(
-          texts.map((_t, i) => i),
-          embeddings,
-        );
-        return embeddings;
-      },
-    });
-    writeSandboxConfig({ semanticSearchMode: "auto" });
-    writeMemory("second-existing-memory", "A second entry establishes the degraded generation.");
-    await akmIndex({ stashDir, full: true });
-
-    const degradedDb = openExistingDatabase(getDbPath());
-    try {
-      expect(isVecAvailable(degradedDb)).toBe(true);
-      const ids = (degradedDb.prepare("SELECT id FROM entries ORDER BY id").all() as Array<{ id: number }>).map(
-        (row) => row.id,
-      );
-      expect(ids).toHaveLength(2);
-      expect(degradedDb.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 2 });
-
-      const retainedVecId = ids[1];
-      if (retainedVecId === undefined) throw new Error("expected two seeded embedding rows");
-      degradedDb.prepare("DELETE FROM entries_vec").run();
-      expect(upsertEmbedding(degradedDb, retainedVecId, vector).vec).toBe("ok");
-      setVecFastPathReady(degradedDb, false);
-      expect(degradedDb.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 1 });
-    } finally {
-      closeDatabase(degradedDb);
-    }
-
-    const freshFile = writeMemory("targeted-after-degradation", "This targeted write embeds successfully.");
-    expect(await indexWrittenAssets(stashDir, [freshFile])).toBe(true);
-
-    const verifiedDb = openExistingDatabase(getDbPath());
-    try {
-      const allIds = (verifiedDb.prepare("SELECT id FROM entries ORDER BY id").all() as Array<{ id: number }>).map(
-        (row) => row.id,
-      );
-      expect(verifiedDb.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 3 });
-      expect(verifiedDb.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 2 });
-      expect(isVecFastPathReady(verifiedDb)).toBe(false);
-      expect(
-        searchVec(verifiedDb, vector, 10)
-          .map((result) => result.id)
-          .sort((left, right) => left - right),
-      ).toEqual(allIds);
-    } finally {
-      closeDatabase(verifiedDb);
-    }
-  });
-
-  test("embedding failure preserves the authored file and FTS row and reports the failure live", async () => {
-    installSemanticTestEmbedder();
-    writeSandboxConfig({
-      semanticSearchMode: "auto",
-      embedding: { endpoint: "https://embeddings.example.invalid/v1", model: "test-model" },
-    });
-    await akmIndex({ stashDir, full: true });
-    overrideSeam(_setEmbedderForTests, {
-      embed: async () => {
-        throw new Error("embedding provider network unreachable");
-      },
-      embedBatch: async () => {
-        throw new Error("embedding provider network unreachable");
-      },
-    });
-
-    const filePath = writeMemory("offline-provider-note", "Lexical fallback remains available.");
-    expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-
-    expect(fs.existsSync(filePath)).toBe(true);
-    expect(queryIndex("offline").entryNames).toContain("offline-provider-note");
-    expect(queryIndex("offline").ftsCount).toBeGreaterThan(0);
-    expect(embeddingCountForFile(filePath)).toBe(0);
-    const dbAfterFailure = openExistingDatabase(getDbPath());
-    try {
-      expect(getMeta(dbAfterFailure, "hasEmbeddings")).toBe("0");
-    } finally {
-      closeDatabase(dbAfterFailure);
-    }
-    // Query-time semantic search is attempted fresh (no cached verdict short-
-    // circuits it) and hits the same broken embedder live, falling back to
-    // FTS and disclosing it in this response.
-    const search = await akmSearch({ query: "offline-provider-note", skipLogging: true });
-    expect(search.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/offline-provider-note");
-    expect(search.warnings?.join("\n")).toContain("Vector search unavailable");
-    expect(search.searchMode).toBe("fts-fallback");
   });
 
   test("fail-open: absent index.db is a silent no-op (no DB created)", async () => {
@@ -322,80 +172,6 @@ describe("indexWrittenAssets", () => {
     }
   });
 
-  describe("rebuild lock (#956)", () => {
-    afterEach(() => {
-      _setWarnSinkForTests(undefined);
-    });
-
-    function plantHeldRebuildLock(): string {
-      const lockPath = getIndexRebuildLockPath();
-      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-      fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }), "utf8");
-      return lockPath;
-    }
-
-    test("skips the inline upsert while a rebuild holds the lock, warns once, reports success, and never opens index.db", async () => {
-      const lockPath = plantHeldRebuildLock();
-      const filePath = writeMemory("busy-rebuild-note", "Written while a rebuild holds the lock.");
-
-      const notices: string[] = [];
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") notices.push(args.map(String).join(" "));
-      });
-
-      // A live rebuild owns bringing the index to the expected state; the
-      // skip is fail-open success (#956 fix), not a failure — a caller that
-      // gates on this boolean (acceptProposal, source clone) must not fail.
-      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-
-      expect(notices.some((n) => /index rebuild in progress \(pid \d+\)/.test(n) && n.includes(filePath))).toBe(true);
-      expect(indexedFileCount(filePath)).toBe(0);
-      fs.rmSync(lockPath);
-      // Once the rebuild finishes and releases its lock, the same write-path
-      // upsert heals the missing entry.
-      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-      expect(indexedFileCount(filePath)).toBeGreaterThan(0);
-    });
-
-    test("names the launcher pid alongside the holder pid when the lock payload recorded one (#956)", async () => {
-      const lockPath = getIndexRebuildLockPath();
-      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-      fs.writeFileSync(
-        lockPath,
-        JSON.stringify({ pid: process.ppid, launcherPid: 4240, startedAt: new Date().toISOString() }),
-        "utf8",
-      );
-      const filePath = writeMemory("launcher-note", "Written while a launcher-tracked rebuild holds the lock.");
-
-      const notices: string[] = [];
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") notices.push(args.map(String).join(" "));
-      });
-
-      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-
-      expect(
-        notices.some((n) =>
-          new RegExp(`index rebuild in progress \\(pid ${process.ppid} \\(launcher 4240\\)\\)`).test(n),
-        ),
-      ).toBe(true);
-      fs.rmSync(lockPath);
-    });
-
-    test("a dead-pid rebuild lock does not block the write-path upsert", async () => {
-      const lockPath = getIndexRebuildLockPath();
-      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-      fs.writeFileSync(lockPath, JSON.stringify({ pid: 999_999, startedAt: new Date(0).toISOString() }), "utf8");
-
-      const filePath = writeMemory("dead-lock-note", "A stale rebuild lock must not block this.");
-      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-      expect(indexedFileCount(filePath)).toBeGreaterThan(0);
-      // The write path only probes — reclaiming a stale lock stays `akm
-      // index`'s job, not every writer's.
-      expect(fs.existsSync(lockPath)).toBe(true);
-    });
-  });
-
   test("removes stale metadata when a rewritten file is no longer indexable", async () => {
     const filePath = path.join(stashDir, "workflows", "stale-workflow.md");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -417,5 +193,57 @@ describe("indexWrittenAssets", () => {
     );
     await indexWrittenAssets(stashDir, [filePath]);
     expect(indexedFileCount(filePath)).toBe(0);
+  });
+
+  describe("write-time indexing contract (module B2)", () => {
+    test("a written asset is lexically searchable immediately after the call returns", async () => {
+      const filePath = writeMemory("immediacy-note", "Proves the entry is searchable the instant the call returns.");
+
+      const result = await indexWrittenAssets(stashDir, [filePath]);
+
+      expect(result).toBe(true);
+      const idx = queryIndex("immediacy");
+      expect(idx.entryNames).toContain("immediacy-note");
+      expect(idx.ftsCount).toBeGreaterThan(0);
+    });
+
+    test("the drain is asked for exactly the units the write produced — no more, no fewer, none stale", async () => {
+      const firstPath = writeMemory("wiring-first", "First body distinguishing this unit from the second.");
+      const secondPath = writeMemory("wiring-second", "Second body, deliberately different from the first.");
+
+      await indexWrittenAssets(stashDir, [firstPath, secondPath]);
+
+      const calls = _drainCallsForTests();
+      expect(calls).toHaveLength(1);
+      const requested = calls[0]?.onlyHashes ?? [];
+
+      // Non-empty, well-formed unit hashes (sha256 hex from hashEmbeddableText) —
+      // not a placeholder or an empty pass-through.
+      expect(requested.length).toBeGreaterThan(0);
+      for (const hash of requested) expect(hash).toMatch(/^[0-9a-f]{64}$/);
+
+      // Exactly what reconcilePaths derived for these two paths — no
+      // duplicates, nothing dropped, nothing from an unrelated entry
+      // (the beforeEach-seeded "seed-memory" is not among these paths).
+      const expected = unitHashesForPaths([firstPath, secondPath]);
+      expect(new Set(requested)).toEqual(new Set(expected));
+      expect(requested.length).toBe(new Set(requested).size);
+
+      // Two files with different content must not collapse to the same hash
+      // set — proves the wiring carries real per-file hashes, not a fixed
+      // stand-in value.
+      const firstOnly = unitHashesForPaths([firstPath]);
+      const secondOnly = unitHashesForPaths([secondPath]);
+      expect(new Set(firstOnly)).not.toEqual(new Set(secondOnly));
+      expect(new Set(requested)).toEqual(new Set([...firstOnly, ...secondOnly]));
+    });
+
+    test("a call touching zero units after filtering asks the drain for nothing", async () => {
+      await indexWrittenAssets(stashDir, [path.join(stashDir, "memories", "never-written.md")]);
+
+      const calls = _drainCallsForTests();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.onlyHashes).toEqual([]);
+    });
   });
 });
