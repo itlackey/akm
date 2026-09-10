@@ -68,6 +68,7 @@ import {
   getFileStatesByBundle,
   insertNewUnitTexts,
   pruneOrphanUnitTexts,
+  pruneOrphanUnitTextsForHashes,
   upsertFileState,
 } from "../storage/repositories/files-repository";
 import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
@@ -316,7 +317,17 @@ export async function reconcileRoots(
     for (const change of pendingChanges) {
       throwIfAborted(opts?.signal);
       const bucket = goneByHash.get(change.hash);
-      const candidate = bucket?.[0];
+      // A rename match is only trustworthy when exactly one gone row shares
+      // this hash. With two or more byte-identical candidates (e.g. three
+      // copies of the same memory, one deleted and another renamed this same
+      // run) there is no evidence which one this change actually became —
+      // `bucket[0]` would pick whichever row `getFileStatesByBundle`
+      // happened to list first, silently repointing the change onto a
+      // possibly-unrelated row's `entries.id` (and therefore its usage
+      // history). Leaving an ambiguous bucket untouched here falls through
+      // to the ordinary upsert below and lets Phase 4 delete every row still
+      // sitting in it as genuinely gone.
+      const candidate = bucket?.length === 1 ? bucket[0] : undefined;
       // Only actually CLAIM (shift out of `goneByHash`) a same-hash "gone"
       // row when it is a genuine rename — the identity this change's own
       // content/path derives is not ALREADY a different, established row.
@@ -739,22 +750,41 @@ function classifyFile(
     // stat call cannot reach — a permission change or a symlink loop, not
     // "gone". Treating that as "unindexable" would delete any existing row
     // for a file that is still genuinely there. `classifyPathAccess`
-    // distinguishes the two; "inaccessible" is reported as a no-op
-    // ("unchanged" — whatever row already exists is left untouched) exactly
-    // like the sweep's own `unreadableStale` handling, and only a truly
-    // absent path (or any other unexpected classification) still falls
-    // through to "unindexable" and its unconditional delete.
-    if (classifyPathAccess(file.absPath).access === "inaccessible") return "unchanged";
+    // distinguishes the two; only a truly absent path (or any other
+    // unexpected classification) falls through to "unindexable" and its
+    // unconditional delete.
+    const access = classifyPathAccess(file.absPath);
+    if (access.access === "inaccessible") {
+      // A known file (a row already exists) is a no-op — "unchanged" leaves
+      // that existing row untouched, exactly like the sweep's own
+      // `unreadableStale` handling below. A file with NO prior row has
+      // nothing to preserve, so silently folding it into `counts.unchanged`
+      // would mean it is never indexed and nothing ever says why. Report it
+      // through the same channel a parse failure uses, mirroring the
+      // gone-path sweep's own unreadable disclosure.
+      if (!storedHint) {
+        onWarning?.(
+          `New file akm cannot read, never indexed: ${describeInaccessiblePath(file.absPath, access.code)}`,
+          false,
+        );
+      }
+      return "unchanged";
+    }
     return "unindexable";
   }
 
   // A file's own (size, mtime) cannot move when only its BUNDLE's configured
   // adapter changes — the adapter comparison catches that case and forces a
   // re-parse under the new adapter even though the file on disk is untouched.
+  // ctime is compared alongside size/mtime (not size/mtime alone) because an
+  // edit that happens to restore the exact same size and mtime (`rsync -a`,
+  // `cp -p`, reproducible-build tooling) still moves ctime on every
+  // filesystem akm supports — the only signal left standing to catch it.
   if (
     storedHint &&
     storedHint.size === stat.size &&
     storedHint.mtimeMs === stat.mtimeMs &&
+    storedHint.ctimeMs === stat.ctimeMs &&
     storedHint.adapterId === ctx.adapter.id
   ) {
     return "unchanged";
@@ -806,7 +836,11 @@ function applyChange(
   const entryWithSize: IndexDocument = { ...entry, fileSize: stat.size };
   if (hasMarkdownFragmentContent(entry)) setMarkdownFragmentContent(entryWithSize, getMarkdownFragmentContent(entry));
 
-  return withImmediateTransaction(db, () => {
+  // Populated inside the transaction below (F4), then pruned AFTER it
+  // commits — see the call site past `withImmediateTransaction` for why.
+  let orphanedUnitHashes: string[] = [];
+
+  const result = withImmediateTransaction(db, () => {
     // A materialized file has one current owner: if `entries` already holds a
     // row at this exact path under a DIFFERENT item_ref — the same physical
     // file reconciled earlier under another bundle identity (a config change,
@@ -844,6 +878,7 @@ function applyChange(
       bundleId: ctx.bundleId,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
       blobHash: hash,
       adapterId: ctx.adapter.id,
     });
@@ -853,11 +888,22 @@ function applyChange(
       db,
       units.map((unit) => ({ hash: unit.hash, kind: unit.fragmentId === null ? "card" : "fragment", text: unit.text })),
     );
+    // Capture the entry's PREVIOUS unit_hash mapping before replaceEntryUnits
+    // overwrites it — this write's own replaced hashes are exactly the ones
+    // it may have just orphaned (F4). A brand-new entry simply has no prior
+    // mapping, so this is empty and nothing below does any work.
+    const previousHashes = (
+      db.prepare("SELECT unit_hash FROM entry_units WHERE entry_id = ?").all(written.entryId) as {
+        unit_hash: string;
+      }[]
+    ).map((row) => row.unit_hash);
     replaceEntryUnits(
       db,
       written.entryId,
       units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
     );
+    const currentHashes = new Set(units.map((unit) => unit.hash));
+    orphanedUnitHashes = previousHashes.filter((oldHash) => !currentHashes.has(oldHash));
 
     return {
       outcome: written.outcome,
@@ -867,6 +913,18 @@ function applyChange(
       provenance,
     } satisfies FileResult;
   });
+
+  // Outside the transaction (mirroring reconcileRoots's own end-of-run
+  // pruneOrphanUnitTexts, which also runs after every per-file write has
+  // committed): a hash this write replaced is only ACTUALLY orphaned once
+  // nothing else references it, and pruneOrphanUnitTextsForHashes checks
+  // that itself — narrow, hash-scoped cleanup instead of reconcileRoots's
+  // whole-table sweep, so `reconcilePaths` (which never ran that sweep) no
+  // longer leaks a replaced unit's text/FTS rows forever on every edit.
+  // Vectors are untouched: dropping unit_texts never drops units/units_vec.
+  if (orphanedUnitHashes.length > 0) pruneOrphanUnitTextsForHashes(db, orphanedUnitHashes);
+
+  return result;
 }
 
 interface WrittenRow {
@@ -1042,6 +1100,7 @@ function resolvePhysicalOverlaps(db: Database, roots: readonly { path: string; b
             bundleId: winner.bundleId,
             size: stat.size,
             mtimeMs: stat.mtimeMs,
+            ctimeMs: stat.ctimeMs,
             blobHash: winnerRow.hash,
             adapterId: winnerRow.adapterId,
           });

@@ -40,6 +40,15 @@ export interface FileStateRow {
   bundleId: string;
   size: number;
   mtimeMs: number;
+  /**
+   * `fs.Stats.ctimeMs` (inode change time) at the moment this row was
+   * written. `reconcile.ts`'s stat short-circuit compares this alongside
+   * `(size, mtimeMs)`: a content edit that happens to restore the exact same
+   * size and mtime (`rsync -a`, `cp -p`, reproducible-build tooling) still
+   * changes ctime on every filesystem akm supports, so this closes that hole
+   * without hashing every file on every run.
+   */
+  ctimeMs: number;
   blobHash: string;
   /**
    * The adapter id that produced this row's `entries` write. A file's own
@@ -74,6 +83,7 @@ export function ensureFileAndUnitTextTables(db: Database): void {
       bundle_id  TEXT NOT NULL,
       size       INTEGER NOT NULL,
       mtime_ms   REAL NOT NULL,
+      ctime_ms   REAL NOT NULL DEFAULT -1,
       blob_hash  TEXT NOT NULL,
       adapter_id TEXT NOT NULL DEFAULT ''
     );
@@ -95,6 +105,7 @@ export function ensureFileAndUnitTextTables(db: Database): void {
     );
   `);
   ensureFilesAdapterIdColumn(db);
+  ensureFilesCtimeColumn(db);
 }
 
 /**
@@ -112,6 +123,21 @@ function ensureFilesAdapterIdColumn(db: Database): void {
   }
 }
 
+/**
+ * `ctime_ms` was added after `files`' first release, the same additive,
+ * self-healing way `adapter_id` was (see {@link ensureFilesAdapterIdColumn}):
+ * a database created before it needs an `ALTER TABLE`. A pre-existing row's
+ * default `-1` matches no real `ctimeMs` (always >= 0), so the very next
+ * reconcile sees it as a mismatch and re-parses that one file — a one-time,
+ * self-healing cost, not a correctness gap.
+ */
+function ensureFilesCtimeColumn(db: Database): void {
+  const columns = db.prepare("PRAGMA table_info(files)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "ctime_ms")) {
+    db.exec("ALTER TABLE files ADD COLUMN ctime_ms REAL NOT NULL DEFAULT -1");
+  }
+}
+
 // ── files ───────────────────────────────────────────────────────────────────
 
 function rowToFileState(row: {
@@ -119,6 +145,7 @@ function rowToFileState(row: {
   bundle_id: string;
   size: number;
   mtime_ms: number;
+  ctime_ms: number;
   blob_hash: string;
   adapter_id: string;
 }): FileStateRow {
@@ -127,6 +154,7 @@ function rowToFileState(row: {
     bundleId: row.bundle_id,
     size: row.size,
     mtimeMs: row.mtime_ms,
+    ctimeMs: row.ctime_ms,
     blobHash: row.blob_hash,
     adapterId: row.adapter_id,
   };
@@ -135,9 +163,17 @@ function rowToFileState(row: {
 /** The stored stat/hash row for one path, or `undefined` if it has never been reconciled. */
 export function getFileState(db: Database, path: string): FileStateRow | undefined {
   const row = db
-    .prepare("SELECT path, bundle_id, size, mtime_ms, blob_hash, adapter_id FROM files WHERE path = ?")
+    .prepare("SELECT path, bundle_id, size, mtime_ms, ctime_ms, blob_hash, adapter_id FROM files WHERE path = ?")
     .get(path) as
-    | { path: string; bundle_id: string; size: number; mtime_ms: number; blob_hash: string; adapter_id: string }
+    | {
+        path: string;
+        bundle_id: string;
+        size: number;
+        mtime_ms: number;
+        ctime_ms: number;
+        blob_hash: string;
+        adapter_id: string;
+      }
     | undefined;
   return row ? rowToFileState(row) : undefined;
 }
@@ -145,12 +181,13 @@ export function getFileState(db: Database, path: string): FileStateRow | undefin
 /** Every stored `files` row for one bundle — the stat cache `reconcileRoots` diffs one root's walk against. */
 export function getFileStatesByBundle(db: Database, bundleId: string): FileStateRow[] {
   const rows = db
-    .prepare("SELECT path, bundle_id, size, mtime_ms, blob_hash, adapter_id FROM files WHERE bundle_id = ?")
+    .prepare("SELECT path, bundle_id, size, mtime_ms, ctime_ms, blob_hash, adapter_id FROM files WHERE bundle_id = ?")
     .all(bundleId) as Array<{
     path: string;
     bundle_id: string;
     size: number;
     mtime_ms: number;
+    ctime_ms: number;
     blob_hash: string;
     adapter_id: string;
   }>;
@@ -160,10 +197,11 @@ export function getFileStatesByBundle(db: Database, bundleId: string): FileState
 /** Insert or replace one file's stat/hash row. */
 export function upsertFileState(db: Database, row: FileStateRow): void {
   db.prepare(
-    `INSERT INTO files (path, bundle_id, size, mtime_ms, blob_hash, adapter_id) VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO files (path, bundle_id, size, mtime_ms, ctime_ms, blob_hash, adapter_id) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET bundle_id = excluded.bundle_id, size = excluded.size,
-         mtime_ms = excluded.mtime_ms, blob_hash = excluded.blob_hash, adapter_id = excluded.adapter_id`,
-  ).run(row.path, row.bundleId, row.size, row.mtimeMs, row.blobHash, row.adapterId);
+         mtime_ms = excluded.mtime_ms, ctime_ms = excluded.ctime_ms, blob_hash = excluded.blob_hash,
+         adapter_id = excluded.adapter_id`,
+  ).run(row.path, row.bundleId, row.size, row.mtimeMs, row.ctimeMs, row.blobHash, row.adapterId);
 }
 
 /** Remove `files` rows for paths that no longer have an entry (gone, or the adapter no longer recognizes them). */
@@ -219,4 +257,39 @@ export function pruneOrphanUnitTexts(db: Database): { removed: number } {
   );
   const after = (db.prepare("SELECT COUNT(*) AS n FROM unit_texts").get() as { n: number }).n;
   return { removed: before - after };
+}
+
+/**
+ * Delete `unit_texts`/`units_fts` rows for exactly the hashes in `hashes`
+ * that no `entry_units` row references any more — the narrow counterpart to
+ * {@link pruneOrphanUnitTexts}'s whole-table sweep, for a caller that already
+ * knows precisely which hashes its own write just orphaned (`reconcile.ts`'s
+ * `applyChange`, run after every write — including `reconcilePaths`, which
+ * previously never pruned anything and so grew `unit_texts`/`units_fts`
+ * without bound across repeated edits) rather than sweeping every row in the
+ * table on every single write. Vectors (`units`/`units_vec`) are never
+ * touched here either, for the same reason `pruneOrphanUnitTexts` leaves
+ * them alone: dropping a unit's text must not drop its vector, so a hash
+ * that returns resumes serving search without re-embedding.
+ */
+export function pruneOrphanUnitTextsForHashes(db: Database, hashes: readonly string[]): { removed: number } {
+  const unique = [...new Set(hashes)];
+  if (unique.length === 0) return { removed: 0 };
+  let removed = 0;
+  for (let offset = 0; offset < unique.length; offset += SQLITE_CHUNK_SIZE) {
+    const chunk = unique.slice(offset, offset + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    db.prepare(
+      `DELETE FROM units_fts WHERE unit_hash IN (${placeholders}) AND NOT EXISTS ` +
+        `(SELECT 1 FROM entry_units WHERE entry_units.unit_hash = units_fts.unit_hash)`,
+    ).run(...chunk);
+    const result = db
+      .prepare(
+        `DELETE FROM unit_texts WHERE unit_hash IN (${placeholders}) AND NOT EXISTS ` +
+          `(SELECT 1 FROM entry_units WHERE entry_units.unit_hash = unit_texts.unit_hash)`,
+      )
+      .run(...chunk);
+    removed += Number(result.changes);
+  }
+  return { removed };
 }
