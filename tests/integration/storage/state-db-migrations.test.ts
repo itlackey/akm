@@ -1135,3 +1135,143 @@ describe("state.db automatic migration boundary", () => {
     inspected.close();
   });
 });
+
+/**
+ * Field follow-up: two concurrent `akm index` runs against a sandbox with no
+ * pre-existing state.db intermittently exited 70 (internal/unclassified).
+ * Measured root cause: `openStateDatabase`'s fresh-vs-existing reservation
+ * only decides who CREATES the file first (`reserveFreshStateDatabase`'s
+ * `O_CREAT|O_EXCL`) -- with the old one-transaction-per-migration bootstrap,
+ * the LOSER could open its own connection between two of the winner's
+ * commits and observe a real, committed, but still-incomplete ledger. Seeing
+ * a non-empty ledger it correctly (from its own point of view) treated the
+ * database as pre-existing and tried to help finish applying migrations --
+ * which, on reaching historical-destructive migration 018, hit exactly the
+ * same refusal a genuine legacy database gets: "Refusing to apply
+ * historical destructive state migration 018-drop-dead-lane-schema during
+ * an ordinary managed open." A narrower timing (catching the ledger table
+ * freshly created but still empty, with an application table already
+ * visible) instead threw the sibling "Refusing to migrate an existing
+ * unversioned state.db" message. Both are symptoms of the same
+ * non-atomic-bootstrap race, reproduced directly against unfixed code by
+ * racing two real processes against an absent path (no synthetic load
+ * needed, ~3% of pairs in local runs).
+ *
+ * The fix makes a fresh bootstrap atomic (`runMigrations`'s `freshDatabase`
+ * case now locks the entire registry through the final migration, the same
+ * `lockInitialMigrationPrefixThrough` mechanism already used for the
+ * existing-unversioned-ledger case): a concurrent opener can now only ever
+ * observe "nothing committed yet" (correctly treated as fresh) or "fully
+ * current" (nothing left to apply) -- the partially-migrated window this
+ * bug depended on no longer exists. `openStateDatabase`'s catch also now
+ * reclassifies any still-contention-shaped failure from deeper in the
+ * open/migrate sequence into `STATE_DB_CONTENDED` (exit 75) rather than
+ * letting a raw driver message escape as exit 70, matching the documented
+ * retry-shortly contract.
+ */
+describe("state.db first open — concurrent creation never misjudges an in-progress bootstrap (field follow-up)", () => {
+  const repoRoot = path.resolve(import.meta.dir, "../../../");
+
+  interface OpenAttemptResult {
+    ok: boolean;
+    count?: number;
+    message?: string;
+    code?: string;
+  }
+
+  function writeOpenAttemptScript(dir: string): string {
+    const scriptPath = path.join(dir, "open-state-db-attempt.mts");
+    const stateDbModuleUrl = pathToFileURL(path.join(repoRoot, "src/core/state-db.ts")).href;
+    fs.writeFileSync(
+      scriptPath,
+      `
+      const mod = await import(${JSON.stringify(stateDbModuleUrl)});
+      const file = process.argv[2];
+      try {
+        const db = mod.openStateDatabase(file);
+        const ids = db.prepare("SELECT id FROM schema_migrations ORDER BY rowid").all();
+        db.close();
+        console.log(JSON.stringify({ ok: true, count: ids.length }));
+      } catch (error) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            message: error instanceof Error ? error.message : String(error),
+            code: error && typeof error === "object" && "code" in error ? error.code : undefined,
+          }),
+        );
+        process.exitCode = 1;
+      }
+      `,
+      "utf8",
+    );
+    return scriptPath;
+  }
+
+  async function attemptOpen(scriptPath: string, file: string): Promise<OpenAttemptResult> {
+    const child = Bun.spawn(["bun", scriptPath, file], {
+      cwd: repoRoot,
+      env: { ...process.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    const trimmed = stdout.trim();
+    if (!trimmed) throw new Error(`open attempt produced no output on stdout. stderr:\n${stderr}`);
+    return JSON.parse(trimmed) as OpenAttemptResult;
+  }
+
+  // Empirically the smallest trial count that reliably reproduces the race
+  // against unfixed code without synthetic CPU load (~3% of pairs hit it
+  // locally; 120 trials keeps the odds of missing it entirely well under 2%
+  // while keeping this test's own runtime reasonable).
+  const CONCURRENT_TRIALS = 120;
+
+  test("two processes racing an absent state.db never see the legacy-unversioned or historical-destructive refusal", async () => {
+    for (let trial = 0; trial < CONCURRENT_TRIALS; trial += 1) {
+      const file = statePath(`akm-state-first-open-${trial}-`);
+      const scriptPath = writeOpenAttemptScript(path.dirname(file));
+
+      const [a, b] = await Promise.all([attemptOpen(scriptPath, file), attemptOpen(scriptPath, file)]);
+
+      for (const result of [a, b]) {
+        if (result.ok) {
+          expect(result.count).toBe(STATE_MIGRATIONS.length);
+        } else {
+          // The only acceptable failure is the documented transient-contention
+          // contract -- never the legacy-unversioned/historical-destructive
+          // refusal (the field bug) and never an unclassified raw driver error.
+          expect(result.code).toBe("STATE_DB_CONTENDED");
+          expect(result.message ?? "").not.toMatch(/refusing/i);
+        }
+      }
+      // At least one side must actually finish the bootstrap -- two
+      // processes racing a first open may not BOTH be told to retry.
+      expect(a.ok || b.ok).toBe(true);
+    }
+  }, 120_000);
+
+  test("a genuine legacy unversioned state.db is still refused after the fresh-bootstrap atomicity fix", () => {
+    const file = statePath();
+    const before018 = STATE_MIGRATIONS.slice(0, migrationIndex("018-drop-dead-lane-schema"));
+    const seeded = openDatabase(file);
+    runMigrations(seeded, before018);
+    seeded.close();
+
+    // A real, fully-committed, single-process legacy database (not racing
+    // anyone) must still be refused with today's message and still require
+    // the deliberate `akm upgrade` path -- the atomicity fix only changes how
+    // a database THIS SAME open is creating gets bootstrapped, never how an
+    // already-existing on-disk ledger is judged.
+    expect(() => openStateDatabase(file)).toThrow(/018-drop-dead-lane-schema.*akm upgrade/i);
+
+    const inspected = openDatabase(file, { readonly: true });
+    const ids = inspected.prepare("SELECT id FROM schema_migrations ORDER BY rowid").all() as Array<{ id: string }>;
+    expect(ids.map((row) => row.id)).toEqual(before018.map((migration) => migration.id));
+    inspected.close();
+  });
+});

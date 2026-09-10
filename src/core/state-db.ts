@@ -579,7 +579,21 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
     if (existingSource) closeFileIdentity(existingSource);
     if (freshReservation) closeFileIdentity(freshReservation);
     releaseActivity?.();
-    throw error;
+    // The migration engine's own writer-lock retry (sqlite-migrations.ts's
+    // `withImmediateWriteLock`, used by every migration this open can run,
+    // including a from-empty first open) throws the raw driver error after
+    // its own retry budget, not a `TransientError` — only
+    // `beginImmediateTransaction` below does that reclassification, and nothing
+    // upstream of it re-wraps a raw SQLITE_BUSY/LOCKED that surfaces from
+    // deeper in the open/migrate sequence (field follow-up: a from-empty
+    // first open racing a concurrent opener can still hit this under load).
+    // Reclassify uniformly here so the contract this function promises --
+    // contention is reported as `STATE_DB_CONTENDED` (exit 75), never a raw
+    // driver message (exit 70) -- holds regardless of which internal step
+    // the contention was observed at. Anything not contention-shaped
+    // (a genuine legacy-database refusal, corruption, a real schema error)
+    // rethrows exactly as raised.
+    throwBeginFailure(error, "state");
   }
 }
 
