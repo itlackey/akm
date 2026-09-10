@@ -1,569 +1,383 @@
 # Indexing
 
-`akm index` builds and refreshes the local SQLite search index.
+`akm index` builds and refreshes the local SQLite search index. The design is
+the index redesign (`docs/plans/index-redesign.md`,
+`docs/plans/index-redesign-contract.md`): everything derived from a file is
+keyed by the hash of what it was derived from, so an unchanged file never
+re-derives anything and a vector is never re-computed for text the provider
+has already embedded. `akm index` itself is just **reconcile, then drain**:
+diff the filesystem against `index.db`, then work through whatever the
+embedding queue still owes. There is no phase pipeline, no directory
+fingerprint cache, and no index rebuild lock.
 
-By default it builds the local index and keeps metadata in the index. When an
-LLM engine is selected (`defaults.llmEngine`, or `index.enrichment.engine`
-overriding it) and `index.enrichment.enabled` is not `false`, metadata
-enhancement runs during indexing. There is no top-level `llm` config key in
-0.9 — it is retired and hard-rejected at load; per-call tuning lives on each
-named engine under `engines.<name>.*`.
+By default, reconcile also runs an LLM metadata-enrichment pass over newly
+added or changed entries when an engine is configured (`defaults.llmEngine`,
+or `index.enrichment.engine` overriding it) and `index.enrichment.enabled` is
+not `false`. There is no top-level `llm` config key in 0.9 — it is retired
+and hard-rejected at load; per-call tuning lives on each named engine under
+`engines.<name>.*`.
 
-## High-Level Flow
+## Content-addressing
 
-```text
-Resolve all sources (filesystem, git, website, npm) and materialise caches
-        ↓
-Walk files and classify assets
-        ↓
-Generate metadata from the asset
-        ↓
-Build weighted search fields
-        ↓
-Atomically apply entries + FTS projections + vector invalidation
-        ↓
-Reconcile removed sources and explicit --clean deletions
-        ↓
-Generate missing/stale embeddings when enabled
-        ↓
-Re-link preserved usage events and recompute utility scores
-        ↓
-Verify and report the final generation
-```
+Everything the index derives is keyed by the hash of its own input, not by a
+row id or a config string:
 
-Cache materialisation runs through each source's `sync()` method
-(`src/sources/providers/`) before the indexer walks `path()`.
+- A file's bytes hash to `blob_hash` (`files.blob_hash`, `entries.content_hash`).
+  An unchanged file (same `size`/`mtime_ms` on the next stat) is never
+  re-parsed; a changed one is re-hashed and, only if the hash actually moved,
+  re-parsed.
+- A parsed document's units (the card unit; one unit per Markdown fragment)
+  hash to `unit_hash` (`unit_texts.unit_hash`, `INSERT OR IGNORE`) — the same
+  text produced by two different files, or the same file before and after an
+  unrelated edit elsewhere, is stored once.
+- A vector hashes to `(unit_hash, identity)`, where `identity` is what the
+  embedding provider's response actually reported (model id and vector
+  width), not the operator's config string. A rename of `embedding.model`
+  that still resolves to the same server-reported model needs no re-embed; a
+  genuine model or dimension change is a different identity, so its units are
+  simply "missing" for that identity and the drain queue picks them up —
+  there is no separate rename-compatibility check.
 
-## Search Field Mapping
+A generation bump (a schema change to `entries`) re-derives only what its
+schema actually touched; it never forces a re-embed, because vectors are
+never keyed by anything the generation bump changes.
 
-`src/indexer/search/search-fields.ts` builds five FTS columns:
+## `files` and reconcile (`src/indexer/reconcile.ts`)
 
-| Column | Contents |
-| --- | --- |
-| `name` | normalized asset name |
-| `description` | description text |
-| `tags` | tags + aliases |
-| `hints` | `searchHints`, `examples`, `usage`, intent text, wiki xrefs, wiki page kind |
-| `content` | bounded native/adapter body projection, TOC headings, and parameter names/descriptions |
+`files` (`storage/repositories/files-repository.ts`) is the stat cache:
+`(path, bundle_id, size, mtime_ms, blob_hash, adapter_id)`, one row per file
+that currently has an `entries` row. `reconcileRoots(db, roots, opts)` stat-
+walks every configured root and, per file:
 
-The `content` column is intentionally lowest-weight. AKM-native Markdown body
-prose is normalized and bounded at the adapter boundary; secrets, env values,
-raw sessions, and session checkpoints never enter it. Longer structured
-guidance such as `usage` and `intent` continues to feed `hints`.
+- **Unchanged** (`size`/`mtime_ms`/adapter id all still match the stored
+  row): skipped entirely — no hash, no parse.
+- **New or changed**: hashed; if the hash is new, parsed with the same
+  per-file document parser the walker uses (`scan/parse-file.ts`'s
+  `parseFileDocument`, extracted so there is exactly one parser, not a
+  drifting pair); `entries` is upserted (`content_hash` = the blob hash);
+  units are derived (`deriveUnits`, `src/indexer/units/unit.ts`) bounded by
+  the embedding provider's real window (`unitMaxChars(probeProviderLimits(...))`,
+  probed once and cached for the run — never truncated, split into ordinal
+  sub-units instead when a unit would exceed it); new hashes are inserted
+  into `unit_texts`/`units_fts`; `entry_units` is replaced for that entry.
+- **Gone**: the `entries` row is deleted (cascading `entry_units`); `files`
+  loses the row.
+- **Same-bundle rename**: a gone path whose last known `blob_hash` matches a
+  changed/new path's freshly-parsed hash is re-pointed with one `UPDATE` of
+  the existing `entries` row rather than delete-then-insert, so the row keeps
+  its id (and anything keyed off it, e.g. usage history) across the move.
+  Note: the canonical name — and therefore every unit's header line — is
+  derived from the file's path, so a rename still changes every unit's hash;
+  "no re-derive" here means the `entries` row is updated in place, not that
+  its units are reused.
 
-Lexical retrieval uses one central progressive plan: Unicode letter/number
-tokens are deduplicated and capped, then FTS executes strict AND, prefix-AND,
-and—only if both miss—one OR/prefix-OR recovery query. Every stage feeds the
-same BM25 normalization and downstream ranker; callers do not strip stopwords
-or maintain alternate result collections.
+Orphaned `unit_texts`/`units_fts` rows (no `entry_units` mapping references
+the hash any more) are swept once at the end of the run with a single
+`NOT EXISTS` delete; vectors (`units`/`units_vec`) are never touched by this
+sweep — a hash that comes back later resumes serving search with no
+re-embed.
 
-## Modes
+Every write is its own short `BEGIN IMMEDIATE` transaction — one per file (or
+small group), never one transaction for the whole run — so two processes
+reconciling the same root serialize file-by-file and converge on the same end
+state instead of one clobbering the other's snapshot. `reconcileRoots` is
+idempotent: a second run against an unchanged tree touches no row. A stat
+walk of tens of thousands of files takes well under a second, so reconcile
+runs at the start of `akm index` and any other command that reads the index
+when the tree may have moved.
 
-- incremental (default): reprocesses changed directories/files
-- full rebuild (`akm index --full`): rebuilds the search index from scratch
+`reconcilePaths(db, paths, bundleId, opts)` is the same per-file step scoped
+to a known list of paths — the write paths (below) call it directly instead
+of walking the whole tree.
 
-Full rebuilds preserve usage history and then re-link it to rebuilt entries by
-ref.
+## Units and stores
 
-## Locks
+`unit_texts` holds every distinct piece of text the index ranks, keyed by
+`unit_hash`: one **card** unit per entry (name, description, tags, hints —
+`structuredFieldsText`, `src/indexer/units/unit.ts`) and one **fragment** unit
+per Markdown section (a header line — entry name, then `›` and the section
+title — plus the section body). `units_fts` is FTS5 (`porter unicode61`)
+over the same text, written alongside it. `entries` keeps only what other
+commands need to read directly: ref, `blob_hash`, provenance, the parsed
+`document_json`, and `search_text` (kept for the legacy per-entry
+change-detection path below — it is no longer itself a search index).
+`entry_fragments` (the safe-rendered Markdown source, not an FTS index)
+survives unchanged: it is what a matched fragment hit's display metadata is
+projected from and what `akm show <ref>#<fragmentId>` resolves through.
 
-`akm index` takes no blocking lock. #872 deliberately removed the index
-rebuild's earlier 12-hour age-based-stale lease: the index is a fully
-regenerable cache, so two concurrent rebuilds only waste work rather than
-corrupt anything, and a live-but-wedged holder passed that lease's
-PID-liveness check forever — only the age clock could ever free it, and that
-cost one real install a half-day indexing outage. The `index.db.write.lock`
-lease that remains (`src/indexer/index-writer-lock.ts`) is unrelated to
-indexing since that removal; it only serializes actual asset-content
-mutations (`remember`, `import`, `source update`, proposal apply) so two
-writers cannot both pass a git exact-path preflight before either commits.
+`units` and `units_vec` (the vec0 virtual table) are the **one** vector
+store, keyed by `(unit_hash, identity)`. Only one identity is ever kept live:
+adopting a new one drops every row under a different identity
+(`dropOtherIdentities`). There is no BLOB-table fallback for a unit vector —
+`units_vec` requires the `sqlite-vec` extension outright. `entry_units`
+(`entry_id, ordinal, fragment_id, unit_hash`) is the cheap, derived mapping a
+reconcile rebuilds for the entry; ordinal 0 is always the card unit, fragment
+units follow in document order.
 
-#956 added a second, opt-in, advisory-only sentinel:
-`<dataDir>/index.rebuild.lock` (`getIndexRebuildLockPath()`), acquired and
-released by every explicit `akm index` command run
-(`src/indexer/index-rebuild-lock.ts`, built on the same PID-liveness-only
-mechanics in `src/core/run-lock.ts` that `akm improve`'s whole-run lock
-uses — no age-based stale reclaim, per the #872 lesson). It changes nothing
-by default: a plain `akm index` that finds the lock already held just warns
-and proceeds, contending with the other run exactly as before this lock
-existed. Only `akm index --skip-if-locked` (intended for scheduled/
-opportunistic callers — the shipped `index-refresh` task passes it) treats a
-live holder as a reason to skip the run entirely and exit 0. This is
-distinct from `ensureIndex()`'s implicit inline reindex (the read path's
-bootstrap when the index is otherwise unusable): that path never consults
-this lock, since a caller reaching it has no usable index to serve either
-way and must proceed. The lock's "held" message names the pid that actually
-holds it (the bun/node process) and, when the published launcher is
-involved, the launcher pid alongside it — `pid 4242 (launcher 4240)`
-(`createLockPayload`, `src/core/file-lock.ts`; `AKM_LAUNCHER_PID`, #956) —
-since every process listing and task log shows the launcher pid, not the
-child's.
+The pre-redesign per-entry vector tables (`embeddings`, `entries_vec`) are
+still declared in the schema and dimension-tracked, but nothing on the
+reconcile/drain path writes to either any more; see [Database
+Tables](#database-tables) below for what still reads them and why they have
+not been dropped yet.
 
-The write path's targeted index upsert (`indexWrittenAssets`, used by
-`remember`/`import`/`proposal accept`/`source clone`/extract session assets
-to make a just-written asset searchable immediately) probes this same
-rebuild lock before doing any work: a live holder means it skips the
-upsert/embedding entirely with one log line and returns success right away
-— the file write itself already succeeded, and the in-progress rebuild will
-pick up the change on its own. This is a fail-open skip like every other
-branch of `indexWrittenAssets`, not a failure: a caller that gates its own
-result on this boolean (`proposal accept`, `source clone`) must not fail or
-warn just because a rebuild happens to be running concurrently. It never
-tries to acquire or reclaim the lock itself; reclaiming a dead-PID sentinel
-stays `akm index`'s job.
-
-**Embedding phase and transactions** (#954) —
-`generateEmbeddingsForDb` (`src/indexer/materialize-embeddings.ts`) refuses
-to run against a connection that already has a transaction open: its
-per-batch `db.transaction()` calls are only a durable commit when `db` has
-no ambient transaction, since one nested inside another SQLite transaction
-runs as an unobservable SAVEPOINT instead. `akm bundle update`'s coordinator
-(`src/commands/sources/installed-stashes.ts`) opens `index.db` under one
-outer `BEGIN IMMEDIATE` spanning content, lock, canonical entries, FTS, and
-state — but no longer runs the embedding phase inside it. `akmIndex` skips
-its embedding phase entirely when called with a borrowed update transaction
-and finalize records semantic state as `"pending"`, never `"ready"`; after
-the coordinator's own commit, it calls the shared `runEmbeddingPass`
-(`src/indexer/indexer.ts`) directly on a fresh, non-transactional
-connection. A failing post-commit pass (provider down) still leaves the
-update itself successful — content, lock, and index generation are already
-durably committed — with only the reported `semanticStatus: "blocked"`
-(surfaced on `akm bundle update`'s own JSON response, `index.semanticStatus`)
-showing that semantic search fell behind, exactly like a plain `akm index`
-run whose embedding phase fails.
-
-## Mutation and finalization boundary
-
-The canonical entry repository owns each complete synchronous mutation of
-`index.db`: the `entries` row, its weighted `entries_fts` projection, its
-separate `entry_fragments` / `entry_fragments_fts` body projection, and stale
-vector invalidation are committed in one SQLite transaction. Entry deletion
-removes FTS, fragment, vector, and utility children before the parent row.
-Callers do not maintain a dirty queue or request an incremental FTS rebuild.
-The full `rebuildFts()` operation remains only as an explicit recovery verifier
-for this regenerable database.
-
-An explicit `akm index --clean` reconciles missing files after the filesystem
-walk and before embedding, utility recomputation, totals, and verification.
-Consequently `totalEntries`, FTS state, semantic verification, and
-`clean.removed` all describe the same committed generation.
-
-## Indexed Identity and Location
-
-Every current `entries` row carries a canonical fully qualified
-`item_ref` (`bundle//conceptId`), its `bundle_id` and `concept_id` provenance,
-and the absolute `file_path` of the materialized local asset. Search and show
-use those required columns for identity and access rather than reconstructing
-refs from a name or source path. `item_ref` is the sole upsert conflict key;
-`document_json` is the sole stored document projection. The v23 schema does not
-admit incomplete identity rows or retain an entry-key/path lookup fallback.
-This preserves bundle identity when multiple sources contain the same concept.
+Full table shapes are in [Storage
+Locations](storage-locations.md#dataindexdb--main-search-index).
 
 ## LLM Enrichment Pass (on reconcile)
 
-`akm index` is now `reconcileRoots` (`src/indexer/reconcile.ts`) followed by
-`drainEmbeddingQueue` — see docs/plans/index-redesign.md for the full
-reconcile design. Metadata enrichment (`src/indexer/enrich.ts`,
-index-redesign B5e) is folded into that reconcile step, not a separate phase:
-after `reconcileRoots` has upserted every added or changed file for a run —
-every per-file transaction already committed, since a provider call must
-never run inside one — it hands the batch of "generated"-quality, not-yet-
-complete entries (`isEnrichmentComplete`) to `enrichReconciledEntries`, gated
-on `index.metadataEnhance.enabled` (checked per call, inside `enhanceMetadata`)
-and an engine resolving for the `enrichment` pass
-(`resolveIndexPassExecution("enrichment", config)` — `index.enrichment.engine`
-or `defaults.llmEngine`). A resulting `quality: "enriched"` entry and its
-re-derived units are written back through the same `upsertEntry` +
-`deriveUnits`/`replaceEntryUnits` machinery `reconcileRoots` itself uses, in
-one more short transaction, before drain embeds the enriched text.
+Metadata enrichment (`src/indexer/enrich.ts`) is folded into reconcile, not a
+separate phase: after `reconcileRoots` has upserted every added or changed
+file for a run — every per-file transaction already committed, since a
+provider call must never run inside one — it hands the batch of
+"generated"-quality, not-yet-complete entries (`isEnrichmentComplete`) to
+`enrichReconciledEntries`, gated on `index.metadataEnhance.enabled` (checked
+per call, inside `enhanceMetadata`) and an engine resolving for the
+`enrichment` pass (`resolveIndexPassExecution("enrichment", config)` —
+`index.enrichment.engine` or `defaults.llmEngine`). A resulting
+`quality: "enriched"` entry and its re-derived units are written back through
+the same `upsertEntry` + `deriveUnits`/`replaceEntryUnits` machinery
+`reconcileRoots` itself uses, in one more short transaction, before drain
+embeds the enriched text.
 
 **Content-addressed cache** — `llm_enrichment_cache` is consulted with
 `asset_ref = body_hash = ` the file's `blob_hash` (`entries.content_hash`),
 so a cache hit means "this exact byte content has already been enriched"
 regardless of which entry (or how many identically-named-but-different
 entries) currently carries it, and survives a rename untouched. `akm index
---full` re-parses every file (`reconcileRoots`'s `forceReparse`), so an
-unchanged file becomes a candidate again on every `--full` run — but its
-blob hash is unchanged, so this is a cache hit with no new provider call,
-falling out of content-addressing with no special-cased branch.
+--full` re-parses every file, so an unchanged file becomes a candidate again
+on every `--full` run — but its blob hash is unchanged, so this is a cache
+hit with no new provider call, falling out of content-addressing with no
+special-cased branch.
 
 **Fail-soft** — a provider error or a closed `metadata_enhance` feature gate
-(`enhanceMetadata`'s `EnhanceMetadataOutcome`) writes no cache row and never
-sets `quality: "enriched"`, so a transient outage can never poison an entry
-into a permanent enrichment skip; only a genuine `ConfigError` (a required
-symbolic credential that resolved to nothing) escapes fail-soft handling and
-aborts the run.
+writes no cache row and never sets `quality: "enriched"`, so a transient
+outage can never poison an entry into a permanent enrichment skip; only a
+genuine `ConfigError` (a required symbolic credential that resolved to
+nothing) escapes fail-soft handling and aborts the run.
 
 **Concurrency** — candidates are enriched through a bounded pool
-(`concurrentMap` from `src/core/concurrent.ts`). The pool width defaults to
-2 for remote LLM endpoints and 1 for local model servers (localhost
-endpoints — one loaded model at a time), auto-derived by
-`getDefaultLlmConcurrency` (`src/indexer/indexer.ts`; `enrich.ts` mirrors the
-same classifier directly to avoid an import cycle back into `indexer.ts`).
-`engines.<name>.concurrency` is a valid schema field, but it is **not
-honored** on this path — the engine resolver used here never copies
-`concurrency` into the resolved connection, so setting it in config.json has
-no effect on indexing concurrency. Individual candidate failures are
-isolated; the pool continues with remaining work.
+(`concurrentMap`). The pool width defaults to 2 for remote LLM endpoints and
+1 for local model servers (localhost endpoints — one loaded model at a
+time), auto-derived by `getDefaultLlmConcurrency` (`src/indexer/indexer.ts`;
+`enrich.ts` mirrors the same classifier directly to avoid an import cycle
+back into `indexer.ts`). `engines.<name>.concurrency` is a valid schema
+field, but it is **not honored** on this path — the engine resolver used
+here never copies `concurrency` into the resolved connection. Individual
+candidate failures are isolated; the pool continues with remaining work.
 
 **Eligibility** — only entries with `quality: "generated"` and missing
 `description`/`tags`/`searchHints` are enriched (`isEnrichmentComplete`).
 Entries with `quality: "curated"`, `"manual"`, `"proposed"`, or already
 `"enriched"` this run are never candidates.
 
-## Embedding Phase
+## Drain: the embedding queue (`src/indexer/drain.ts`)
 
-Once entries are upserted, `generateEmbeddingsForDb`
-(`src/indexer/materialize-embeddings.ts`) generates and stores vectors for
-every entry that does not already have one. **Fragments are lexical only and
-are never embedded** — the FTS index (`entry_fragments`/`entry_fragments_fts`)
-carries fragment-level text for keyword/BM25 matching, but every entry vector
-comes from that entry's own (capped, see below) search text, not from any of
-its fragments. In practice this means the embedding phase issues roughly one
-embedder input per entry, not per fragment.
+Embedding is a queue, not a phase: the pending set is `unit_texts.unit_hash`
+minus `units` for the active identity (`index_meta.embeddingIdentity`) —
+`listMissingHashes`, a set difference recomputed fresh on every call, never a
+persisted dirty list. When no identity is known yet (a fresh index, or one
+whose prior identity was just dropped), every candidate hash is pending; the
+identity is learned from whichever provider response lands first
+(`deriveObservedEmbeddingIdentity`) and adopted from then on, dropping any
+stale identity's rows.
 
-**Per-document cap** (`embedding.maxInputTokens`, default 512, #956) —
-before batching, each pending document's search text is truncated to
-this many estimated tokens (head only, unicode-safe) if it exceeds the cap;
-a document is skipped only when its capped head is empty. This replaces
-"one oversized document fails its whole batch" with "one oversized document
-is embedded on its head" — llama.cpp rejects a single sequence longer than
-its physical batch (`--ubatch-size`, default 512) with HTTP 500 ("input is
-too large to process"), and the cap's default matches that common local
-default. The materializer logs once per run how many entries were
-truncated.
+`drainEmbeddingQueue(db, config, opts)` reuses `embedBatch` / `RemoteEmbedder`
+(`src/llm/embedder.ts`, `src/llm/embedders/remote.ts`) for the batching,
+retry, back-off, and circuit-breaker machinery — this module's own job is the
+pending set, the identity, and turning each provider batch into a durable
+`upsertUnitVectors` write, one short transaction per batch (never buffered
+and written all at once — a killed run loses at most one in-flight batch, and
+the next call recomputes the same "still missing" query). Requests are
+packed against the provider's own probed window and slot count
+(`probeProviderLimits`, `src/llm/embedders/provider-limits.ts`) rather than a
+generic config default — window, slots, exact token counts where the
+provider offers a tokenizer endpoint. See [Configuration →
+Semantic search](../../reference/configuration.md#semantic-search) for the
+full packing, timeout, retry, split-and-retry, and circuit-breaker detail,
+which is unchanged by this redesign: only what feeds it (units instead of
+whole entries, probed limits instead of four retired config keys) moved.
 
-**Request batching** — `RemoteEmbedder.embedBatch` (`src/llm/embedders/remote.ts`)
-groups (already-capped) texts into provider requests bounded by an estimated
-token budget (`embedding.maxTokens`, default 6000 tokens, lowered from 8000
-by #954 — see below) and a
-document-count safety cap (`embedding.batchSize`, default 100) — the token
-budget is what actually keeps a request inside the endpoint's context window
-and the per-request timeout; the count cap only guards against many tiny
-documents packing an oversized request. With the 512-token per-document cap
-above, a request carries about 11 documents by default. A single document
-whose own estimate still exceeds the token budget (only possible when
-`maxInputTokens` is configured larger than `maxTokens`) is isolated and
-skipped before ever going over HTTP. `embedding.contextLength` does NOT feed
-this budget (#956) — it is Ollama's `num_ctx` only, forwarded
-verbatim as `options.num_ctx` on the native `/api/embed` request (see the
-embedding knobs table in `docs/reference/configuration.md`).
+`opts.onlyHashes` restricts the candidate set to exactly the given hashes,
+still filtered down to what is genuinely missing — the write-time path
+(below) uses this to embed only the units a just-written asset added.
+`opts.limit` caps how many missing units one call embeds, leaving the rest
+pending for a later call. `opts.onProgress` receives one line per provider
+batch and a final `[drain] done: ...` summary line with counts.
 
-**Timeout** — each request is bounded by `embedding.timeoutMs` (positive
-integer, default 120_000 — 120s, #954), used by both
-`RemoteEmbedder.embed` and `requestBatch`. The prior fixed 30s cut off
-exactly the field-report case: a local model server on a large
-token-budget-bounded batch legitimately took longer than that, the timeout
-fired mid-response with no retry, and every batch it hit was silently
-dropped for the rest of an hours-long run. `embedding.timeoutMs` is the
-budget for a request at the FULL token budget; a smaller request gets a
-proportionally smaller timeout, `clamp(timeoutMs × requestTokens /
-tokenBudget, 30_000, timeoutMs)` (2026-09-09 field-review follow-up), so a dead
-endpoint is detected in seconds on the common case of small documents
-instead of always waiting out the full configured budget.
+**Credential diagnostic (#953)** — before the first provider request this
+call makes (only when there is a remote endpoint configured and something is
+actually pending), one default-level line names the endpoint, model, and the
+credential's SOURCE — `secret://...`, `$VAR`, `literal apiKey`, or
+`none configured` — never the resolved value: `[embed] endpoint <url>, model
+<model>; credential: <source>`. Every `RemoteEmbedder` path already resolves
+`secret://...` through one boundary, so a keyless request can only mean
+`embedding.apiKey` was absent from the config this run actually loaded; this
+line lets a field run self-diagnose that without ever surfacing the secret
+itself. Under `--verbose` the same line also names the loaded config file.
 
-**Concurrency** — provider batches are dispatched through a bounded pool
-(`concurrentMap`) instead of strictly sequentially. Default width (unset
-`embedding.concurrency`) — `resolveEmbeddingConcurrency`
-(`src/llm/embedders/remote.ts`) derives it via the same shared
-`defaultConcurrencyForEndpoint` classifier (`src/core/loopback.ts`) that
-`getDefaultLlmConcurrency` above uses: **1** for a loopback endpoint (a
-local model server serves one inference at a time; parallel requests
-thrash it) and **2** for a remote one. `embedding.concurrency` (positive
-integer, 1-16, #954) overrides this default — added after
-field evidence that a multi-slot local server (llama.cpp `--parallel N`,
-vLLM) genuinely serves parallel requests and sat idle under the fixed
-default. Request SIZE remains the first throughput lever regardless (see
-Request batching above); the override exists for a server that actually
-serves parallel slots, not as a blanket "go faster" knob. A caller abort
-(`signal.aborted`) still propagates once the pool drains, even though
-`concurrentMap` itself swallows per-item throws.
+`akm index` is `reconcileRoots` then `drainEmbeddingQueue`; the scheduler's
+`index-refresh` task drains the same way; a write path (below) drains only
+the few units it just created.
 
-**Context-size split-and-retry** — a batch rejected specifically for
-exceeding the endpoint's context window (HTTP 413, or a recognised
-context-size error body such as `exceed_context_size_error`, or llama.cpp's
-own physical-batch rejection — `input is too large to process`, `physical
-batch size`, `ubatch`, #954) is split in half and retried recursively
-rather than discarded whole, down to individual documents; a single
-document that still fails this way becomes a
-`context-window-exceeded` skip.
+## Write-time indexing (`src/indexer/index-written-assets.ts`)
 
-**Run-scoped adaptive budget** (#954, field report on beta.1) — the
-4-chars-per-token estimator undercounts dense technical text by 7-55%,
-which the default budget change above only partly absorbs: an endpoint with
-a smaller real context window, or a configured `embedding.maxTokens` too big
-for it, still sees a steady trickle of rejections. On the FIRST context-size
-rejection of an `embedBatch` run, the effective request budget shrinks to
-three quarters of its current value — floored at twice
-`embedding.maxInputTokens`, so it can never drop below batching at least one
-document per request — for every batch not yet dispatched; the still-planned
-tail of pending documents is re-batched at the smaller budget
-(`buildTokenBoundedBatches`), and one default-level line reports the new
-value. This never touches the rejected batch's OWN split-and-retry above,
-and never fires a second time in the same run even if a later batch is also
-rejected — a budget that is simply too big for the endpoint should
-self-correct once per run, not ratchet down indefinitely.
+Every akm path that writes an asset indexes what it wrote, inline, in the
+same call as the write — `remember`, `import`, extract's session-asset
+capture, `source clone`, and proposal accept all call `indexWrittenAssets`
+right after committing their file write. It is a thin wrapper: `reconcilePaths`
+for exactly the written paths, then `drainEmbeddingQueue` scoped
+(`onlyHashes`) to exactly the unit hashes that reconcile just produced or
+touched (`entries.file_path IN (paths) → entry_units → unit_hash`). No lock
+probe, no rebuild detection, no background spawn — the redesign has no
+full-rebuild pipeline for a write path to defer to.
 
-**Timeout back-off-and-retry** (#954, 2026-09-09 field-review follow-up)
-— a request TIMEOUT never drops its batch outright: field
-confirmation showed that once akm abandons a timed-out request the endpoint
-(e.g. llama-server) keeps computing it anyway, so dropping it immediately
-just grows the provider's queue while every following batch dies the same
-way. Instead, on a timeout, `RemoteEmbedder.embedBatch` backs off (5s,
-doubling, capped at 60s — in practice always the formula's first term, since
-a given request size is only ever retried once before it splits or is
-skipped) so the provider can drain the abandoned request, then retries the
-SAME request once. A second timeout on that retry splits the batch in half
-(like a context-size rejection) and retries each half the same way, down to
-single documents; a single document that times out twice is finally skipped
-with a default-level `warn`. Any other failure (network error, a
-non-timeout HTTP failure, malformed response) still skips the whole batch
-immediately at any size, as before — a genuinely broken batch does not get
-retried into a storm of smaller requests against a down endpoint.
+Fail-open at every step: an absent or empty index is skipped on purpose
+(bootstrap belongs to the first read or an explicit `akm index`); any other
+error (an unreadable index, an unparseable file, a locked database past a
+5-second busy timeout) is reduced to a verbose-only warning and the write
+command still succeeds — the asset appears after the next reconcile instead
+of immediately. The one exception is an index directory/file that exists but
+cannot be **read** at all (not merely absent): that failure will not heal on
+its own on the next reconcile, so it warns audibly and the caller-visible
+result reflects it. A failed embedding drain here is always best-effort: the
+write is already lexically searchable via reconcile, and the embedding queue
+is durable — any later drain, including the next write, picks up the same
+"no vector yet" units.
 
-**Circuit breaker** (#954) — the
-embedding phase stops dispatching further provider requests and ends the
-pass as a failure once either of two consecutive-failure streaks reaches 3:
-failures at single-document size (timeout OR network error — a
-multi-document timeout is not by itself evidence the endpoint is dead,
-since it is retried and split smaller before ever being reported as failed
-at single-document size), or network errors at ANY size (never retried, so
-trusted immediately regardless of size). `context-window-exceeded` never
-counts — it proves the provider IS reachable — and resets both streaks
-instead. The pass ends with: `embedding provider failed 3 consecutive
-batches (last: <reason>); stopped after <N> embeddings were stored — rerun
-akm index when the endpoint is healthy`. Every batch already committed is
-kept; a genuine caller abort (Ctrl-C, the improve budget) is a separate code
-path and stays distinguishable. Mechanically, the materializer's `onSkip`
-callback (policy lives with the caller, not the embedder) returns `false`
-on the batch that trips a threshold; `RemoteEmbedder.embedBatch` honors
-that through its existing dispatch-abort controller — the same one an
-`onBatch` persistence failure already used to stop further dispatch — with
-a distinct reason, and resolves normally with whatever results already
-landed rather than rejecting. This is what turns an hours-long grind
-against a dead provider (the field report's own symptom) into a fast,
-visible failure instead.
+## No index locks
 
-**Per-batch commit** — each provider (or local-embedder) batch is written to
-`index.db` inside its own short `db.transaction()` as it completes, via an
-`onBatch` callback threaded through both `RemoteEmbedder` and `LocalEmbedder`.
-Earlier releases buffered every vector in memory and wrote them all in one
-transaction at the very end of the whole run — an interruption (a competing
-indexer collision, a killed process, any thrown error) discarded everything
-already computed. Per-batch commit keeps whatever landed before the
-interruption and keeps the exclusive-write window short enough for
-`akm remember`/`akm improve` to interleave on the same stash.
+Every index write — reconcile's per-file upsert, drain's per-batch vector
+commit — is an idempotent, content-addressed insert or re-point inside a
+short `BEGIN IMMEDIATE` transaction under WAL with SQLite's own busy timeout.
+Two processes doing the same reconcile converge on the same rows instead of
+fighting over a lock, so the rebuild lock, the index-path branch of the
+maintenance barrier, and their exit-code special cases are gone entirely —
+there is no full-rebuild concept left for a lock to protect. `core/
+maintenance-barrier.ts` itself still exists, but no index-path caller
+acquires it any more; it now only serializes `akm improve`'s own run lock,
+the workflow-run-start barrier, and lockfile integration, all unrelated to
+indexing.
 
-**Progress and throughput** — a progress line (`Embedded N/M entries.`) is
-emitted after EVERY committed batch (#954 — the earlier 500-stored-entries
-bucketing left a non-verbose run silent for its entire embedding phase on
-any run smaller than 500 entries), and the heartbeat (every 15s while
-waiting on the provider) names both the live stored AND failed counts:
-`Still generating embeddings: X/N stored, F failed; waiting on embedding
-provider.` The final line reports throughput: `Stored N embeddings in Xs
-(Y.Y entries/s, ~Z tokens/s).` `Z` sums the estimate of the capped text
-`embedBatch` actually transmitted for each stored entry, not the entry's
-raw pre-cap search text (#954) — otherwise every entry over
-`embedding.maxInputTokens` inflated the reported rate. A failed provider
-batch itself logs at the
-default `warn` level, not `--verbose`-only, naming the batch size and
-reason — a silently grinding, hours-long run against a dead provider with
-one aggregate warning at the very end was the field report's own symptom.
-In the `akm index` CLI, phase-start messages and the heartbeat reach stderr
-in non-verbose JSON/yaml output mode too (via `info()`); text mode keeps
-its spinner instead, and `--verbose` gets everything, including the
-high-frequency per-batch line JSON mode deliberately omits.
+The asset-mutation lease (`src/indexer/index-writer-lock.ts`,
+`index.db.write.lock`) is a different, still-live mechanism: it serializes
+writes to real, authored user content (source updates, `remember`, proposal
+apply) so two concurrent writers cannot both pass a git exact-path preflight
+before either commits. It has been unrelated to indexing since #872 removed
+the index rebuild's own use of it, and it stays under AGENTS.md's
+Defensive-Code rule — it guards against a lost or conflicting git commit, not
+against contention on a fully regenerable cache.
 
-**Fingerprint verification (canary)** — a stored provider fingerprint
-(`index_meta.embeddingFingerprint`, `{model, dimension}` derived from
-`embedding.*`) that no longer matches the current config does NOT purge
-unconditionally (#955). `generateEmbeddingsForDb` re-embeds a small sample
-(up to 8) of already-stored entries with the current config and compares:
-each sample's search text is capped to `embedding.maxInputTokens` the same
-way the main embedding pass caps it before the canary request is sent, so
-the freshly re-embedded vector is produced from the identical input that
-produced the stored one — an entry over the cap comparing a capped stored
-vector against an uncapped fresh one used to read as a false mismatch,
-unrelated to the model.
+Genuine `SQLITE_BUSY` — a second connection holding a write transaction long
+enough to exhaust the driver's own busy timeout — stays a real, if now rare
+(writes are tiny and short-lived), transient condition. `reclassifyIndexDbContention`
+(`src/indexer/indexer.ts`) turns the raw SQLite driver error escaping
+reconcile or drain into `TransientError` / `INDEX_DB_CONTENDED` (exit 75)
+instead of an unclassified exit 70, mirroring `STATE_DB_CONTENDED`'s
+precedent for `state.db` — a scheduler can branch on "retry shortly" instead
+of alerting.
 
-- the server-reported model identity (`index_meta.embeddingIdentity`,
-  `remote:<model id the endpoint returned>|<vector width>` for a remote
-  config, `local:<localModel>|<vector width>` for a local one) against what
-  the canary observes this run — an exact match keeps the index without
-  even looking at the vectors, since a config-only rename that still hits
-  the same server-reported model cannot have changed the vectors;
-- otherwise, the MEDIAN cosine similarity between each sampled stored
-  vector and its freshly re-embedded counterpart — a rename that still
-  resolves to the same underlying model lands its similarities at ~1.0,
-  while a genuinely different model does not get there by chance. A median
-  ≥ 0.999 keeps the index.
+`--skip-if-locked` is accepted with a deprecation warning and does nothing:
+index runs no longer take a rebuild lock, so there is nothing left to skip
+around. It is kept only so an existing script or scheduled task does not
+fail on an unknown flag.
 
-A sample whose re-embed FAILED (the provider skipped or errored on that
-specific text) is excluded from the median rather than scored as zero
-similarity: a partial provider failure is not evidence of a different
-model. A dimension mismatch on a successful re-embed still counts as zero
-(that IS evidence). If half or fewer of the sampled entries re-embedded
-successfully, the run is `unverifiable` — the same outcome as a canary
-that cannot reach the endpoint at all, below.
+## Search
 
-A kept index adopts the new fingerprint (and identity) immediately; a purge
-writes them in the SAME transaction as the purge, before any embedding
-request, so an interruption partway through a rebuild resumes on the next
-run (only the still-missing entries get re-embedded) instead of purging
-again from zero. The very first embedding pass for a db (no stored
-fingerprint to compare against — the canary never runs at all) writes
-`embeddingFingerprint` just as eagerly, before any provider call, for the
-same reason (#956): a per-batch commit is durable the instant
-it lands, and a later `akm index --full`'s salvage-before-discard step
-(#955) tags salvaged rows by this meta — an unset fingerprint would make it
-a no-op even though real vectors were genuinely embedded. A canary that
-cannot reach the endpoint at all leaves the
-existing vectors and the OLD fingerprint untouched and reports failure, so
-a down server does not destroy a working index — the next `akm index`
-retries. `akm index --reembed` bypasses the canary entirely and forces a
-purge + full re-embed. A genuine dimension change is unaffected: it is
-caught earlier and unconditionally by `ensureSchema`
-(`src/storage/repositories/index-schema.ts`), independent of this
-fingerprint mechanism, since a change in vector width leaves nothing for
-the canary to meaningfully compare.
+Search runs one query over `units`: a lexical rank from `units_fts` (BM25)
+and a semantic rank from `units_vec` for the active identity, fused by
+reciprocal rank (`RRF_K = 60`, Cormack, Clarke & Buettcher 2009) so no weight
+or threshold is hand-tuned, grouped to entries by each list's best-ranked
+unit, with the matching unit carried on the hit. Type filters apply to
+entries as before. See `src/indexer/search/db-search.ts` and `ranking.ts`
+for the exact grouping/fusion/contributor mechanics — this module is
+maintained separately from the index-redesign work described above.
 
-**Embedding reuse across rebuilds** (#955) — `akm index --full` (any
-non-incremental run) and an index-generation bump both used to delete every
-embedding unconditionally and re-insert entries under new ids, forcing a
-full re-embed of the whole corpus even when no content changed — the
-0.9.14 v22→v23 bump's own multi-hour post-upgrade run. `embedding_salvage`
-(`src/storage/repositories/embedding-salvage-repository.ts`) is a
-transient, self-emptying table that eliminates this: it is NOT a second
-embedding cache, and has zero steady-state cost.
+## `akm index` flags and `index status`
 
-- *Salvage points* — vectors are copied aside only at the two moments they
-  would otherwise be discarded wholesale, each inside the SAME transaction
-  as the discard so the copy and the delete commit or roll back together:
-  the full-rebuild wipe in `persistDirRecords`
-  (`src/indexer/indexer.ts`, before `deleteAllEntries`) and the
-  generation-rebuild drop in `rebuildIncompatibleIndexGeneration`
-  (`index-schema.ts`, before `DROP TABLE embeddings`). Each salvage row is
-  `(sha256(search_text), the stored embeddingFingerprint, the embedding
-  BLOB, salvaged_at)`. Salvaging is skipped (a no-op) when there is no
-  stored `embeddingFingerprint` to tag rows with, or the generation being
-  discarded predates the `search_text` column or has no `embeddings` table
-  at all — an older generation than that has nothing worth salvaging.
-  `salvageEmbeddingsBeforeDiscard` scans `entries JOIN embeddings` in
-  id-ordered chunks rather than loading every row into memory at once, so a
-  large stash's discard does not spike memory.
-- *Reuse step* — at the start of the SAME `generateEmbeddingsForDb` pass
-  described above, before any provider call and after the fingerprint/
-  canary decision: `reuseSalvagedEmbeddings` first checks whether the
-  salvage table has ANY row under the current fingerprint with a single
-  indexed lookup — the steady state (nothing salvaged, or a fingerprint
-  that no longer matches) costs exactly that lookup and hashes nothing. When
-  it finds a candidate, for every entry still missing an embedding it hashes
-  its `search_text` and looks up a salvage
-  row tagged with the CURRENT fingerprint, writing a match back via
-  `upsertEmbedding` (so `entries_vec` stays in step) in chunks of 500, each
-  its own transaction — mirroring the provider path's per-batch commit.
-  Only the remainder goes to the provider. A progress line reports the
-  split: `Reused N embeddings from the previous generation; embedding M
-  new.`, and the final throughput line reports reused and newly-embedded
-  counts separately.
-- *Never reuse across fingerprints, ever on a byte-different search_text* —
-  the salvage lookup filters on the fingerprint column exactly, and the
-  content hash is an exact match on the full `search_text` string; a single
-  edited character produces a different hash and falls through to the
-  provider like any other new content.
-- *Lifecycle* — a pass that completes without abort or circuit-break
-  purges the whole salvage table (whatever it did not consume is superseded
-  or no longer relevant); an interrupted pass leaves the table untouched
-  for the next attempt. `akm index --reembed` and a canary "rebuild"
-  verdict purge salvage together with the stored embeddings, since those
-  vectors belong to a different model. A canary "keep" verdict (a
-  fingerprint-string rename that resolves to the same model) instead
-  relabels any leftover salvage rows to the new fingerprint string via
-  `relabelEmbeddingSalvageFingerprint`, so they remain reusable rather than
-  silently going stale.
+`akm index` = reconcile + drain. `akm index --full` forces every walked file
+to be treated as needing re-derivation (the stat-hint "unchanged" shortcut is
+skipped, so every file is re-parsed), but each file's existing `entries` row
+is updated in place, not deleted and reinserted — it keeps its id, its
+vectors, and its learned utility scores. Content-addressed units are never at
+risk from a reindex at all, `--full` included: there is nothing to re-embed
+for unchanged content. `akm index --reembed` drops the active embedding
+identity's vectors (`dropActiveIdentityVectors`), then the next drain
+re-embeds every unit from scratch under that identity. `--enrich`/
+`--re-enrich` were removed with the old phase pipeline (plain `akm index` now
+always performs metadata enrichment; re-enrichment of index-time LLM passes
+is not exposed in this slice) and are rejected with a `UsageError` naming the
+replacement; `--clean`/`--dry-run` were removed the same way — every run
+already removes stale entries as part of reconcile, the work `--clean` used
+to opt into.
 
-## Progress Reporting
+`akm index status` (`src/commands/sources/index-status.ts`) is a cheap,
+read-only snapshot: files tracked, entries, distinct units referenced by the
+current `entry_units` mapping, how many of those have a vector for the
+active identity (and therefore how many are still pending), the active
+identity string, and the last reconcile/build times. It mirrors `akm info`'s
+absent/inaccessible handling: a missing index reads as the ordinary
+first-run state (all zeros), and an index that exists but cannot be read is
+reported as `unreadable`, never silently presented as empty.
 
-- text mode: shows a spinner with processed-versus-total source counts
-- `--verbose`: prints every phase progress message to stderr, including the
-  high-frequency per-batch `Embedded N/M entries.` line
-- non-verbose structured output (`json`, `yaml`, `jsonl`, #954):
-  emits clean machine-readable output on stdout, but phase-start messages
-  and the embedding heartbeat (`Still generating embeddings: X/N stored, F
-  failed; waiting on embedding provider.`) now reach stderr via `info()` too
-  — a stalled run used to print nothing at all until the whole run finished,
-  indistinguishable from "no database open, nothing written" (field
-  report). The per-batch `Embedded N/M entries.` line is deliberately
-  excluded here (that would be spam, not a heartbeat).
-- source-cache hydration (`ensureSourceCaches`, `src/indexer/search/search-source.ts`,
-  #954) — which runs BEFORE `index.db` is even opened — reports
-  `Hydrating source i/n: <name>` per source about to sync, plus a 15s
-  heartbeat while that source's sync is in flight, through the same
-  progress channel.
+## Schema Versioning
+
+`index.db` is ephemeral — fully rebuildable from sources by `akm index`. The
+current generation is exactly v24. `ensureSchema()`
+(`src/storage/repositories/index-schema.ts`) accepts an existing generation
+only when `index_meta.version`, the complete `entries` fingerprint, and the
+`entry_fragments` logical surface match the canonical contract
+(`src/storage/repositories/index-entry-schema.ts`); `files`/`unit_texts`/
+`units_fts` are fingerprinted separately by their own schema ensure
+(`files-repository.ts`), not by this generation check. An incompatible
+generation is discarded: AKM drops the entry-dependent derived tables and
+caches, creates the canonical v24 schema, and `akm index` repopulates it from
+current sources and durable usage state. `entries_fts` and
+`entry_fragments_fts` (both FTS5 virtual tables) were dropped going into v24
+— lexical search runs entirely over `units_fts` now, so an entry-level
+lexical query is a units query grouped by entry, and a fragment-level query
+is the same table filtered to fragment-kind units; `entry_fragments` itself
+(the safe-rendered Markdown source, not an index) stays, since a matched
+fragment hit's display metadata and `akm show <ref>#<fragmentId>` both
+consume it independently of what table search queries. Current read-only and
+existing-database openers reject an incompatible generation instead of
+serving it. Durable workflow, task, proposal, event, and usage state in
+`state.db` is never touched by this path.
+
+Workflow `.md` and `.yml` adapters compile directly to source IR version 1.
+The index stores only the ordinary normalized `entries` row and searchable
+metadata derived from that IR. It does not cache a second workflow AST or an
+executable plan. Starting a run recompiles the authored source once and
+freezes the sole durable plan format into `state.db`.
 
 ## Database Tables
 
-`index.db`'s schema (`ensureSchema()`,
-`src/storage/repositories/index-schema.ts`) creates 17 unconditional logical
-tables, including two FTS5 virtual tables. When the optional `sqlite-vec`
-extension loads, it also creates `entries_vec`, a third, conditional virtual
-table. Full column-level detail lives in
-[Storage Locations](storage-locations.md#dataindexdb--main-search-index);
-this is a purpose summary:
+Full column-level detail lives in [Storage
+Locations](storage-locations.md#dataindexdb--main-search-index); this is a
+purpose summary of what `ensureSchema()` creates:
 
 | Table | Purpose |
 | --- | --- |
-| `entries` | normalized asset records |
-| `entries_fts` (virtual, FTS5) | multi-column full-text index |
-| `entry_fragments` | safe Markdown projection retained per parent entry for fragment resolution |
-| `entry_fragments_fts` (virtual, FTS5) | separate lexical body-fragment index; no copied parent metadata |
-| `embeddings` | stored embedding vectors (JS cosine-similarity fallback) |
-| `embedding_salvage` | transient, self-emptying: vectors salvaged from a discard, reused by the next embedding pass (#955) |
-| `entries_vec` (virtual, conditional) | `sqlite-vec` ANN index, created only when the extension loads |
-| `utility_scores` | recomputed utility boost state (global) |
-| `utility_scores_scoped` | same EMA per `(entry, project-anchor)` pair |
-| `index_meta` | schema/version/runtime metadata |
-| `index_dir_state` | incremental-indexing cache (per-directory hash + mtime) |
-| `llm_enrichment_cache` | cached LLM enrichment/graph-extraction/memory-inference results |
-| `registry_index_cache` | cached registry index JSON (replaces flat cache files) |
-| `graph_meta` | per-bundle knowledge-graph telemetry (model, prompt version, cache hits) |
-| `graph_files` | per-file graph-extraction status |
-| `graph_file_entities` | extracted entities per file |
-| `graph_file_relations` | extracted entity relations per file |
-| `graph_extraction_queue` | lazy, priority-ordered backlog of files awaiting graph extraction |
+| `files` | Stat cache reconcile diffs against: `(path, bundle_id, size, mtime_ms, blob_hash, adapter_id)` |
+| `entries` | Normalized asset records (narrowed — no longer the search index itself) |
+| `entry_fragments` | Safe Markdown projection retained per parent entry, for fragment display/resolution — not an FTS index |
+| `unit_texts` | Content-addressed text for every card/fragment unit |
+| `units_fts` (virtual, FTS5) | Lexical index over `unit_texts` |
+| `units` / `units_vec` (virtual, vec0) | The one vector store, keyed by `(unit_hash, identity)` |
+| `entry_units` | Derived entry → ordinal → unit_hash mapping |
+| `embeddings` / `entries_vec` (virtual, conditional) | Legacy per-entry vector tables — still schema-declared, unpopulated by anything on the reconcile/drain path; see [Storage Locations](storage-locations.md#legacy-tables-embeddings-and-entries_vec-conditional) |
+| `utility_scores` / `utility_scores_scoped` | Recomputed utility boost state (global, and per project-anchor) |
+| `index_meta` | Schema/version/runtime metadata, including `embeddingIdentity` and reconcile/build timestamps |
+| `llm_enrichment_cache` | Cached LLM enrichment/graph-extraction/memory-inference results |
+| `registry_index_cache` | Cached registry index JSON |
+| `graph_meta` / `graph_files` / `graph_file_entities` / `graph_file_relations` / `graph_extraction_queue` | Per-bundle knowledge-graph extraction state |
 
 `usage_events` (search/show/feedback telemetry) and workflow runtime state
 both live in `state.db`, not `index.db`, so rebuildable search state remains
 separate from durable runtime state.
 
-## Schema Versioning
-
-`index.db` is ephemeral — fully rebuildable from sources by `akm index`. The
-current generation is exactly v23. `ensureSchema()`
-(`src/storage/repositories/index-schema.ts`) accepts an existing generation
-only when `index_meta.version`, the complete `entries` fingerprint, and the
-three logical search surfaces (`entries_fts`, `entry_fragments`, and
-`entry_fragments_fts`) match the canonical contract. The fingerprint includes
-`AUTOINCREMENT`, required columns, constraints, indexes, collation,
-hidden-column absence, and exact regular/virtual-table DDL for the search
-surfaces. An incompatible generation is discarded: AKM drops the
-entry-dependent derived tables and caches, creates the canonical v23 schema,
-and rebuilds it from current sources and durable usage state. In particular,
-v22 is discarded because it predates the isolated fragment FTS population; v21
-also predates entry-owned synchronous FTS publication and may contain stale
-dirty-queue state. Current read-only and existing-database openers reject an
-incompatible generation instead of serving it. Durable workflow, task,
-proposal, event, and usage state in `state.db` is never touched by this path.
-
-Workflow `.md` and `.yml` adapters compile directly to source IR version 1.
-The index stores only the ordinary normalized `entries` row and searchable
-metadata derived from that IR. It does not cache a second workflow AST or an
-executable plan. Starting a run recompiles the authored source once and freezes
-the sole durable plan format into `state.db`.
-
 ## Metadata Sources
 
-AKM now treats file-derived metadata as the primary runtime source. It derives
+AKM treats file-derived metadata as the primary runtime source. It derives
 metadata from signals such as:
 
 - frontmatter
@@ -575,7 +389,8 @@ metadata from signals such as:
 The live indexer no longer reads `.stash.json` at all — since the 0.9.0
 cutover it is a migrator-only concern: the storage migrator folds each
 sidecar's overrides into the asset's inline metadata (frontmatter or header
-comments) and deletes the sidecar. See `docs/architecture/internals/storage-locations.md`.
+comments) and deletes the sidecar. See
+[Storage Locations](storage-locations.md).
 
 ## Parameters
 
@@ -586,8 +401,15 @@ Structured parameters can come from:
 - script comment extraction
 - workflow markdown parameters
 
-Parameter names and descriptions are stored structurally and also fed into the
-lowest-weight `content` field.
+Parameter names and descriptions are stored structurally in `document_json`
+(read by `akm show` and by execution) and folded into `entries.search_text`,
+but — unlike the pre-redesign `entries_fts.content` column — they are **not**
+currently part of any `unit_texts` row: a card unit is exactly
+name/description/tags/hints, and a fragment unit is exactly a Markdown
+section's own text, so a parameter's structured name/description is
+retrievable via `akm show` but not via lexical or semantic search unless the
+same text also appears as prose in the asset's own Markdown body
+(`src/indexer/units/unit.ts`'s `toUnitSource`/`structuredFieldsText`).
 
 ## Quality Values
 
@@ -601,9 +423,9 @@ Well-known values (defined in `src/indexer/passes/metadata.ts`):
 | `"curated"` | metadata written or explicitly approved by a human |
 | `"proposed"` | metadata from a proposal awaiting review |
 
-The `"enriched"` marker is set by the indexer after a successful metadata
-enrichment pass during plain `akm index` and prevents unnecessary re-enrichment
-on the next run (see LLM Enrichment Pass above).
+The `"enriched"` marker is set after a successful metadata enrichment pass
+during reconcile and prevents unnecessary re-enrichment on the next run (see
+LLM Enrichment Pass above).
 
 ## Utility Recomputation
 
@@ -616,9 +438,15 @@ Utility scores are rebuilt from `usage_events`.
 
 ## Semantic Search Integration
 
-When semantic search is enabled:
-
-- semantic readiness is tracked in `semantic-status.json`
-- provider fingerprints include model/dimension for remote configs, deliberately EXCLUDING the endpoint — moving the same model+dimension to a different host does not force a rebuild
-- fingerprint changes force semantic status back to pending until a rebuild
-- `sqlite-vec` is optional; JS vector fallback still supports embeddings
+- semantic readiness is read live from `index.db` at call time
+  (`index_meta.embeddingIdentity` and unit coverage for it), never a cached
+  verdict file — `$CACHE/semantic-status.json` is no longer written or read
+- provider identity is derived from what the provider's response actually
+  reported (model id, vector width), not a config-derived fingerprint —
+  moving the same model+dimension to a different host, or an
+  endpoint/gateway rename that resolves to the same underlying model, needs
+  no rebuild
+- `sqlite-vec` is required for the unit vector store — there is no JS-cosine
+  fallback for `units_vec` the way the legacy per-entry `embeddings` table
+  once provided (`"ready-js"` is a retired runtime status; nothing produces
+  it any more)

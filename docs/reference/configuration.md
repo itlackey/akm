@@ -357,11 +357,17 @@ bundled.
 ## Indexing
 
 AKM-native Markdown contributes a normalized body projection to the
-lowest-weight `content` search field. The projection is capped at 16,384
-characters, removes frontmatter, comments, fenced code, and link destinations,
-and is never produced for secret, env, session, or session-checkpoint assets.
-Embedding input is separately capped at 8,192 characters with structured
-metadata placed before body content.
+lowest-weight `content` search field. The projection removes frontmatter,
+comments, fenced code, and link destinations, and is never produced for
+secret, env, session, or session-checkpoint assets.
+
+Embedding input is not capped or truncated at all (index redesign): each
+entry's structured fields (name/description/tags/hints) become one "card"
+unit and each Markdown fragment becomes one "fragment" unit
+(`src/indexer/units/unit.ts`), and a unit whose text would still exceed the
+embedding provider's own probed window is split into ordinal sub-units that
+share its fragment id — never truncated. See [Semantic
+search](#semantic-search) for how that window is probed.
 
 ## Semantic search
 
