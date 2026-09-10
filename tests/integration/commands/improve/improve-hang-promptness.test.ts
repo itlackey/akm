@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isProcessAlive } from "../../../../src/core/common";
 import { saveConfig } from "../../../../src/core/config/config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -120,15 +121,6 @@ function stageRealCliLauncher(root: string): { launcherPath: string; pidFile: st
     ].join("\n"),
   );
   return { launcherPath, pidFile };
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 describe("akm improve — real reflect dispatch against a dead endpoint (#957)", () => {
