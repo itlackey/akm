@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.9.15] - 2026-09-10
+## [0.9.15-beta.5] - 2026-09-10
 
 ### Added
 
@@ -502,6 +502,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ignored, not rejected or warned about.
 
 ### Fixed
+
+- **An alias-level `engine` binding in `models.json` is honoured on every
+  platform column (#946).** The per-platform nested form
+  (`"fast": {"opencode": {"engine": "local-fast"}}`) already worked, but the
+  flat shorthand from this issue's own acceptance criteria
+  (`"fast": {"engine": "local-fast"}`) did not: `parseModelMapLayer` treated
+  every key under an alias as a platform-column name, so `engine` was parsed
+  as a fourth platform holding the model string, the three real columns kept
+  their hardcoded cloud defaults, and `akm agent --model fast` silently
+  dispatched to a cloud model instead of the configured local engine. The
+  flat `model`/`inference`/`engine` keys are now a wildcard default merged
+  onto every column, a same-alias per-platform entry still overrides it, and
+  an alias naming an unknown engine fails with a `ConfigError` rather than
+  falling back.
+- **Two `improve` runs colliding on the lock is transient, not a broken
+  config (#948).** The lock-held path threw a `ConfigError`, surfacing as
+  exit 78 (`INVALID_CONFIG_FILE`) and telling a supervisor to stop retrying
+  an ordinary collision. It is now a `TransientError`/`IMPROVE_LOCK_HELD` at
+  exit 75, matching the `MAINTENANCE_BARRIER_BUSY`/`INDEX_DB_CONTENDED`
+  treatment the index rebuild lock already had.
+- **The embedding path no longer leaks a raw `database is locked` (#956).**
+  `reclassifyIndexDbContention` moved out of `indexer.ts` into a shared
+  module and `materialize-embeddings.ts`'s embedding-generation catch now
+  routes through it, so contention produces the same "index database is
+  busy" wording as every other path instead of the raw driver string.
+  Control flow is unchanged: this was always non-fatal.
 
 - **Starting a workflow ref that already has an active run in a different scope
   now warns instead of silently duplicating it (#942).** `akm workflow run
