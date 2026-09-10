@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { ConfigError } from "../../core/errors";
+import { TransientError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import { tryWithMaintenanceStartBarrier, withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
@@ -82,9 +82,16 @@ function tryAcquireImproveLockUnlocked(
     );
     return { state: "skipped" };
   }
-  throw new ConfigError(
+  // #948 field follow-up: two legitimate `improve` invocations colliding on
+  // this lock is ordinary, retryable contention — not a broken config file.
+  // A `ConfigError` here surfaced as exit 78 (INVALID_CONFIG_FILE) and told
+  // a supervisor to stop retrying a normal lock collision. Reclassified to
+  // `TransientError`/`IMPROVE_LOCK_HELD` (exit 75), mirroring the
+  // `MAINTENANCE_BARRIER_BUSY`/`INDEX_DB_CONTENDED` treatment #956 already
+  // applied to the index rebuild lock and the maintenance-start barrier.
+  throw new TransientError(
     `akm improve is already running (PID ${pid}, started ${startedAt}). Delete ${lockPath} to force.`,
-    "INVALID_CONFIG_FILE",
+    "IMPROVE_LOCK_HELD",
   );
 }
 
