@@ -12,10 +12,10 @@
  * fails immediately instead of hanging, and so a learned identity takes the
  * "remote:<model>|<dim>" shape.
  *
- * `unit_texts` (B1's table) and `units`/`units_vec` (A2's store, already
- * wired into ensureSchema) are both real: this suite seeds `unit_texts`
- * directly via the stage-2 stub in
- * src/storage/repositories/unit-texts-repository.ts.
+ * `unit_texts` (B1's table, files-repository.ts) and `units`/`units_vec`
+ * (A2's store) are both real and both wired into `ensureSchema`, so
+ * `openIndexDatabase` already creates them; this suite seeds `unit_texts`
+ * rows directly via B1's own `ensureFileAndUnitTextTables` (idempotent).
  *
  * Integration-scoped (ORG-03/06): opens a real index.db via
  * `openIndexDatabase`.
@@ -28,9 +28,9 @@ import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit, EmbeddingBatchSkip } from "../../../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../../../src/llm/embedders/types";
 import type { Database } from "../../../src/storage/database";
+import { ensureFileAndUnitTextTables } from "../../../src/storage/repositories/files-repository";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
-import { ensureUnitTextsTable } from "../../../src/storage/repositories/unit-texts-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
@@ -60,7 +60,7 @@ function baseConfig(): AkmConfig {
 }
 
 function seedUnitTexts(db: Database, hashes: readonly string[]): void {
-  ensureUnitTextsTable(db);
+  ensureFileAndUnitTextTables(db);
   const insert = db.prepare("INSERT INTO unit_texts (unit_hash, kind, text) VALUES (?, 'card', ?)");
   for (const hash of hashes) insert.run(hash, `text for ${hash}`);
 }
@@ -268,7 +268,7 @@ describe("drainEmbeddingQueue (B4)", () => {
   });
 
   test("no unit_texts rows means nothing pending and the embedder is never called", async () => {
-    ensureUnitTextsTable(db);
+    ensureFileAndUnitTextTables(db);
 
     let calls = 0;
     const mock: EmbedBatchMock = async (texts) => {
