@@ -45,6 +45,14 @@ describe("current improvement CLI documentation contract", () => {
     expect(section).toContain("plan.processes");
   });
 
+  test("improve registers --show-prompt and documents it as a lock/index/engine-free prompt preview (#952)", () => {
+    const args = improveCommand.args as Record<string, { type?: string; default?: unknown }>;
+    expect(args["show-prompt"]).toMatchObject({ type: "boolean", default: false });
+
+    const section = extractSection(cli, "### improve");
+    expect(section).toContain("--show-prompt");
+  });
+
   test("improve registers --run/--since and documents the report scope + usageReport field (#944)", () => {
     const args = improveCommand.args as Record<string, { type?: string }>;
     expect(args.run).toMatchObject({ type: "string" });

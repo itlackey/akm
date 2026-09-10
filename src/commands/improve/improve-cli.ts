@@ -7,8 +7,8 @@ import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
-import { isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
-import type { LlmConnectionConfig } from "../../core/config/config";
+import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
@@ -18,7 +18,9 @@ import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { probeEndpointOnce, probeLlmEndpoint } from "../../llm/client";
-import { akmImprove } from "./improve";
+import { getOutputMode } from "../../output/context";
+import { deliverRendered } from "../../output/html-render";
+import { akmImprove, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
   buildImproveRunId,
@@ -34,6 +36,7 @@ import {
   resolveImprovePlan,
 } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
+import { renderReflectPromptPreview } from "./reflect";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -189,6 +192,44 @@ async function assertRequiredEnginesReachable(
 }
 
 /**
+ * `--show-prompt` (#952): render the composed reflect prompt for one asset ref
+ * and exit, before any lock, log, index write, or engine dispatch — the field
+ * had no cheap way to confirm the #952 prompt fix (unverified-feedback framing,
+ * no-truncation-marker instruction) without running a full improve cycle.
+ * Reuses `renderReflectPromptPreview` (reflect.ts), which stops before the
+ * dispatch lease reflect would otherwise acquire, so this never calls an engine.
+ */
+async function runShowPromptCli(
+  refArg: string,
+  parsedRef: AssetRef,
+  taskArg: string | undefined,
+  targetArg: string | undefined,
+  resolvedPlan: ResolvedImprovePlan,
+): Promise<void> {
+  const readSource = resolveImproveReadSource(resolvedPlan.config as AkmConfig, parsedRef, targetArg);
+  const preview = await renderReflectPromptPreview({
+    ref: refArg,
+    ...(taskArg ? { task: taskArg } : {}),
+    improveProfile: resolvedPlan.strategy.config,
+    config: resolvedPlan.config as AkmConfig,
+    stashDir: readSource.source.path,
+  });
+  const outputMode = getOutputMode();
+  if (outputMode.format === "text") {
+    deliverRendered(preview.prompt, outputMode.outputPath);
+    return;
+  }
+  output("improve", {
+    schemaVersion: 2,
+    ok: true,
+    ref: preview.ref,
+    engine: preview.engine,
+    engineKind: preview.engineKind,
+    prompt: preview.prompt,
+  });
+}
+
+/**
  * `akm improve report` (#944): a scope value that dispatches to the per-run
  * LLM usage/routing report instead of a real improve run — "report" is not,
  * and will never be, a real asset type (`DEFAULT_ALLOWED_TYPES` in
@@ -280,6 +321,12 @@ export const improveCommand = defineCommand({
         "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe (the same probe akm health runs). Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
       default: false,
     },
+    "show-prompt": {
+      type: "boolean",
+      description:
+        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or engine dispatch (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
+      default: false,
+    },
     run: {
       type: "string",
       description:
@@ -326,8 +373,10 @@ export const improveCommand = defineCommand({
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
       // #947 — `--plan` is a zero-logic discoverability alias for `--dry-run`;
-      // it must never fork the computation, only set the same flag.
-      const dryRun = args["dry-run"] || args.plan;
+      // it must never fork the computation, only set the same flag. #952 —
+      // `--show-prompt` implies the same read-only posture (it never reaches
+      // akmImprove at all, but keeps writeTarget/resolvedPlan unset the same way).
+      const dryRun = args["dry-run"] || args.plan || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const requireFeedbackSignal = args["require-feedback-signal"];
@@ -349,6 +398,19 @@ export const improveCommand = defineCommand({
       // is disabled purely by an unreachable credential; a live run keeps
       // throwing (allowAllDisabled unset).
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
+      // #952 — same interception point as the `report` scope above: before any
+      // lock, log, or index side effect. Requires a single fully-qualified
+      // asset ref (not a type or whole-bundle scope).
+      if (args["show-prompt"]) {
+        if (!scopeArg || !scopeRef) {
+          throw new UsageError(
+            "`--show-prompt` requires a fully-qualified asset ref as the scope (e.g. `akm improve lessons/my-lesson --show-prompt`).",
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
+        return;
+      }
       if (args["require-engines"]) {
         assertRequiredEnginesAvailable(resolvedPlan);
         await assertRequiredEnginesReachable(resolvedPlan);

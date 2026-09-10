@@ -494,8 +494,13 @@ interface ImproveReadSource {
   source: { name: string; path: string };
 }
 
-/** Resolve a dry-run inspection source without adapting it into a write target. */
-function resolveImproveReadSource(
+/**
+ * Resolve a dry-run inspection source without adapting it into a write target.
+ * Exported so `improve-cli.ts`'s `--show-prompt` (#952) can resolve the same
+ * read-only bundle a plain `--dry-run` would, without duplicating this
+ * selector/target/fallback precedence.
+ */
+export function resolveImproveReadSource(
   config: AkmConfig,
   scopedRef: AssetRef | undefined,
   explicitTarget: string | undefined,
