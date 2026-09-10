@@ -117,7 +117,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm health` only) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` right now, not a bad command line | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -279,7 +279,12 @@ opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
 advisory, never the blocking lock #872 removed (see
 [Locks](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#locks)). A human-typed
 `akm index` with no flag is never gated by it: if another run already holds
-the lock, it warns and proceeds anyway, contending with the existing run.
+the lock, it warns and proceeds anyway, contending with the existing run. If
+that contention makes index.db genuinely busy (SQLite `database is locked`)
+long enough to exhaust the driver's retry window, the run now fails with
+exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
+driver error at exit 70 — the same retry-shortly contract as
+`STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
 `--skip-if-locked` changes that only for the invocation that passes it: if
 the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`

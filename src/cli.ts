@@ -618,7 +618,7 @@ export const main = defineCommand({
       "  2   usage error\n" +
       "  4   health warn (akm health only)\n" +
       "  70  internal / unclassified error\n" +
-      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db)\n" +
+      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)\n" +
       "  78  config error",
   },
   args: {
