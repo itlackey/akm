@@ -182,7 +182,17 @@ export type TransientErrorCode =
   // collision. Thrown from `acquireMaintenanceBarrier`
   // (src/core/maintenance-barrier.ts) once its own brief backoff-and-retry
   // window is exhausted.
-  | "MAINTENANCE_BARRIER_BUSY";
+  | "MAINTENANCE_BARRIER_BUSY"
+  // Field follow-up to #948 (dev-team field review 2026-09-10): the
+  // `akm improve` whole-run lock (`commands/improve/locks.ts`) is ordinary
+  // contention between two legitimate `improve` invocations — the same
+  // "config error is not the right label for a timing collision" shape #956
+  // fixed for the index rebuild lock and the maintenance-start barrier. It
+  // previously threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing as
+  // exit 78 and telling a supervisor to stop retrying a normal lock
+  // collision. Thrown from `tryAcquireImproveLockUnlocked` when the lock is
+  // held by a live PID and `--skip-if-locked` was not passed.
+  | "IMPROVE_LOCK_HELD";
 
 /** Stable, machine-readable codes for NotFoundError. */
 export type NotFoundErrorCode =
@@ -304,6 +314,8 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
     "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
   MAINTENANCE_BARRIER_BUSY:
     "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled index/improve/workflow runs.",
+  IMPROVE_LOCK_HELD:
+    "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
 };
 
 /** Default hint for each NotFoundError code. */

@@ -52,6 +52,7 @@ import {
   setVecFastPathReady,
   upsertEmbedding,
 } from "../storage/repositories/index-vec-repository";
+import { reclassifyIndexDbContention } from "./index-db-contention";
 
 /** Identifies the embedding provider+model+dimension a stored vector was generated with. */
 export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectionConfig): string {
@@ -872,7 +873,20 @@ export async function generateEmbeddingsForDb(
       if (heartbeatTimer) clearInterval(heartbeatTimer);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    // Field follow-up to #956 (dev-team field review 2026-09-10): a
+    // contention-shaped error (another akm process writing index.db right
+    // now) used to escape this catch as a raw driver string ("database is
+    // locked"), reaching this user-facing message unclassified even though
+    // the acquisition-time path (`akmIndex`'s outer catch) already
+    // reclassifies the same shape into `TransientError("INDEX_DB_CONTENDED")`.
+    // Reuses that ONE shared classifier rather than a second one — see
+    // `index-db-contention.ts`. This catch stays non-fatal (a caller sees
+    // `success: false` and a message, never a thrown error): the run
+    // continues through the remaining index phases exactly as it did
+    // before, only the message is now classified when the error is
+    // contention-shaped.
+    const reclassified = reclassifyIndexDbContention(error);
+    const message = reclassified instanceof Error ? reclassified.message : String(reclassified);
     warn("Embedding generation failed, continuing without:", message);
     onProgress({ phase: "embeddings", message: `Embedding generation failed: ${message}` });
     return {
