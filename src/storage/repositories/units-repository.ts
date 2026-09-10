@@ -286,6 +286,23 @@ export function deleteEntryUnits(db: Database, entryIds: readonly number[]): voi
  * post-filter from starving recall during the rare, transient window where
  * more than one identity's rows coexist in `units_vec` (the steady state,
  * enforced by {@link dropOtherIdentities}, is exactly one identity).
+ *
+ * index-redesign integration note (kept, not dropped): the notes proposed
+ * dropping this filter/overfetch entirely for B5 and asserting the
+ * one-identity invariant where the store is written instead, keeping the
+ * overfetch only if a test proves two identities can coexist. One does:
+ * `tests/storage/units-repository.test.ts`'s "searchUnits returns nearest
+ * units first, scoped by identity" writes two identities into `units_vec`
+ * via the real {@link upsertUnitVectors} (not a raw-SQL seed) and asserts
+ * `searchUnits` still returns only the requested identity's nearest rows —
+ * without this post-filter that test's own tied-vector fixture would drop
+ * a real hit for the requested identity, not merely tolerate a stray one.
+ * `identity` is also a required part of this function's stage-1 contract
+ * signature, used by every real caller (B3's semantic search branch), so an
+ * unenforced parameter here would be a silent footgun. Left in place; no
+ * hard invariant assertion added elsewhere, since the transient
+ * two-identity window this docblock already describes is a real,
+ * non-error state a hard assertion would wrongly reject.
  */
 const UNIT_SEARCH_OVERFETCH = 4;
 
