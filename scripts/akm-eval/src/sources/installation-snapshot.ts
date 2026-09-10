@@ -728,6 +728,18 @@ function rewriteIndexDatabasePaths(
 ): void {
   for (const [table, column] of [
     ["entries", "file_path"],
+    // index-redesign B1's stat cache (reconcile.ts) — a rename this list
+    // never learned about used to leave `files.path` holding the SOURCE
+    // installation's paths after a materialize, silently desyncing the stat
+    // cache from `entries.file_path` (which IS rewritten below). A reconcile
+    // run against the materialized copy would then treat every walked file
+    // as looking brand new — harmless on its own (upsertEntry re-points the
+    // same item_ref-keyed row either way) — but Phase 2's gone-path sweep
+    // reads `storedByPath` FROM this same stale `files` table, so it never
+    // even considered the paths that genuinely disappeared between snapshot
+    // and materialize (e.g. a memory an `improve` pass archived away):
+    // their `entries` rows survived a reindex that should have removed them.
+    ["files", "path"],
     ["graph_meta", "stash_root"],
     ["graph_files", "stash_root"],
     ["graph_files", "file_path"],
@@ -737,7 +749,6 @@ function rewriteIndexDatabasePaths(
     ["graph_file_relations", "file_path"],
     ["graph_extraction_queue", "stash_root"],
     ["graph_extraction_queue", "file_path"],
-    ["index_dir_state", "dir_path"],
     ["llm_enrichment_cache", "asset_ref"],
   ] as const) {
     rewriteTextColumn(database, table, column, mapValue, write);
