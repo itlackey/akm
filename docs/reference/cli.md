@@ -1244,6 +1244,14 @@ Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
 full boot contract, JSON shapes, and exit codes.
 
+`akm upgrade` replaces the binary in place for its own install method, but a
+scheduler binding recorded by an earlier `akm task sync` under a *different*
+install method is not repointed automatically — the scheduler runs the
+binary path recorded at sync time, not whichever akm `upgrade` just
+installed. Run `akm task sync` after switching installers so scheduled runs
+pick up the new binary; see [`task sync`](#task) and `akm health`'s
+`scheduler-binary` advisory.
+
 ### clone
 
 Copy an asset from any source into a managed writable bundle or an unmanaged
@@ -2876,6 +2884,13 @@ result with `akm task doctor`. Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once
 before changing task files or scheduler state; non-interactive setup changes
 neither.
+
+Because the scheduler runs the exact binary path recorded at the last `task
+sync`, upgrading akm through a different installer than the one active at
+that sync (npm-global to a standalone download, or vice versa) leaves
+scheduled runs invoking the old, now-stale binary — `task sync` re-resolves
+the current path and repoints them. `akm health --probe`'s `scheduler-binary`
+advisory warns when the two diverge, naming both versions.
 
 Setup reconfiguration preserves existing scheduler runtime bindings. Changing
 the AKM storage path or installed runtime path therefore requires an explicit

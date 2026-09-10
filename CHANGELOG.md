@@ -268,6 +268,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   apiKey`, or `none configured` — never the credential's value, so a field
   run can compare it directly against what the gateway actually logged.
   `--verbose` also names the config file the run loaded.
+- **`akm health` gains a `scheduler-binary` advisory for scheduler binary
+  drift (#953).** A field report found `akm task sync`'s recorded absolute
+  akm path can go stale after upgrading through a different installer (npm
+  global to a standalone download, or vice versa), leaving a scheduled run
+  invoking the old binary indefinitely with nothing surfacing it. The new
+  `--probe`-gated advisory reads the scheduler's recorded akm invocation —
+  the same binding `task sync`/`task doctor` already read, no crontab text
+  parsing — runs it with `--version`, and `warn`s naming both versions when
+  it differs from the running CLI, pointing at `akm task sync` as the
+  remedy. `unknown` when not probed, no task is installed, or the recorded
+  binary cannot be executed.
 
 ### Changed
 
