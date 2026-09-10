@@ -491,10 +491,24 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
       });
       try {
         preflight.exec("PRAGMA busy_timeout = 30000");
-        const ledger = assertMigrationLedger(preflight, STATE_MIGRATIONS);
+        // Both reads below must observe ONE WAL snapshot. Each is its own
+        // statement, and without an explicit transaction SQLite auto-commits
+        // each separately, so they can see two different snapshots. A sibling
+        // process's fresh bootstrap is now one all-or-nothing transaction, so
+        // a commit landing between the two reads showed an empty ledger to the
+        // first and the sibling's freshly created tables to the second — the
+        // signature of a genuine legacy unversioned database, which this
+        // preflight then refused. Pinned to one snapshot, either nothing the
+        // sibling did is visible (empty ledger AND no tables, correctly fresh)
+        // or all of it is (a current ledger, so the refusal is never reached).
+        // A real legacy database, racing no one, reads exactly as before.
+        const { ledger, hasNoOtherTables } = preflight.transaction(() => ({
+          ledger: assertMigrationLedger(preflight, STATE_MIGRATIONS),
+          hasNoOtherTables: unversionedDatabaseHasNoTables(preflight),
+        }))();
         warnNewerStateLedger(ledger);
         existingUnversionedDatabase = ledger.migrationIds.length === 0;
-        if (existingUnversionedDatabase && unversionedDatabaseHasNoTables(preflight)) {
+        if (existingUnversionedDatabase && hasNoOtherTables) {
           existingUnversionedDatabase = false;
           treatUnversionedAsFresh = true;
         }
