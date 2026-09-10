@@ -93,33 +93,43 @@ describe("index verification truthfulness", () => {
     resetConfigCache();
   }
 
-  test("vec fast-path insert failures never report a false ready-vec (reported blocked, not silently degraded)", async () => {
-    // units_vec is created at FLOAT[8] (config dimension) before the drain's
-    // first response ever lands, but the endpoint delivers 4-wide vectors:
-    // every vec0 insert for this identity fails with a width mismatch. Units
-    // have no BLOB fallback table (module doc, units-repository.ts — "one
-    // copy of every vector, in vec0"), so unlike the old entry-keyed
-    // dual-storage system there is no partially-degraded "ready-js" state to
-    // land in here: a vector that fails to write leaves NO row behind (see
-    // upsertUnitVectors' per-row fault tolerance), so embeddingCount stays 0
-    // and the run honestly reports "blocked" with retry guidance instead of
-    // ever claiming semantic search is ready.
+  test("a configured dimension the provider contradicts self-heals to the observed width", async () => {
+    // `units_vec` is created at FLOAT[8] (the configured `embedding.dimension`)
+    // before the drain's first response lands, but the endpoint delivers
+    // 4-wide vectors. The observed width is what the embedding identity is
+    // keyed on (`deriveObservedEmbeddingIdentity` folds it into the identity
+    // string), so the provider's reality wins over a stale config value:
+    // adopting the identity recreates `units_vec` at the observed width
+    // before anything is written under it, and the run is genuinely ready.
+    //
+    // This test previously asserted the opposite — that the run stays
+    // "blocked" — which encoded a real defect as the contract. The width
+    // check inside `dropOtherIdentities` used to be gated behind
+    // "some other identity already has rows", which is never true on a fresh
+    // index: every insert failed with a width mismatch, the placeholder row
+    // was discarded so the gate stayed shut, and no `akm index`, no
+    // `--reembed`, and not even correcting the config could recover it.
+    // Only deleting index.db could. The guarantee that ran through the old
+    // expectation — never report a false `ready-vec` — is unchanged and
+    // still pinned by "a failing embedding provider lands a real 'blocked'
+    // verification" below and by the missing-sqlite-vec case at the end of
+    // this file; what changed is that a width disagreement is no longer one
+    // of the ways writing can fail.
     const mock = mockEmbeddingServer(4);
     server = mock.server;
     configureEmbedding(mock.url, 8);
 
     const result = await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    expect(result.verification.semanticStatus).not.toBe("ready-vec");
-    expect(result.verification.embeddingCount).toBe(0);
     if (!result.verification.vecAvailable) {
-      // Host without the sqlite-vec extension: nothing was ever attempted
-      // this way — "pending" (never embedded) is trivially non-lying too.
+      // Host without the sqlite-vec extension: there is no vec0 table to
+      // recreate and nothing is ever written, which the missing-extension
+      // test covers on its own terms.
+      expect(result.verification.semanticStatus).toBe("blocked");
       return;
     }
-    expect(result.verification.semanticStatus).toBe("blocked");
-    expect(result.verification.ok).toBe(false);
-    expect(result.verification.guidance).toBeDefined();
+    expect(result.verification.semanticStatus).toBe("ready-vec");
+    expect(result.verification.embeddingCount).toBeGreaterThan(0);
   });
 
   test("a missing sqlite-vec extension reports blocked and never calls the embedding provider", async () => {
@@ -149,7 +159,6 @@ describe("index verification truthfulness", () => {
       _setVecUnavailableForTests(false);
     }
   });
-
   test("a clean vec run still reports ready-vec (control)", async () => {
     const mock = mockEmbeddingServer(8);
     server = mock.server;
