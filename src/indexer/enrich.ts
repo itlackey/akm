@@ -106,9 +106,21 @@ export interface MetadataEnrichmentCounts {
   cacheHits: number;
   /** Of those, how many now carry `quality: "enriched"` (cache hit or a genuine provider success). */
   enriched: number;
-  /** Provider/network failures — fail-soft: entry and cache both left untouched. */
+  /**
+   * Provider/network failures (entry and cache both left untouched), or an
+   * unexpected error writing the merged metadata back to `entries` —
+   * `applyEnrichmentToEntry` already got real metadata (the cache row is
+   * durably written either way), but the DB write itself threw.
+   */
   failed: number;
-  /** The `metadata_enhance` feature gate was closed for this call. */
+  /**
+   * The `metadata_enhance` feature gate was closed for this call, OR the
+   * queued candidate's `entries` row moved on (a concurrent rename/delete)
+   * before this pass's write could land — `applyEnrichmentToEntry` verifies
+   * the live row before writing and no-ops rather than clobbering it. Either
+   * way the cache row (when a provider call happened) is still written, so a
+   * later run over the same content applies it with no new provider call.
+   */
   skipped: number;
 }
 
@@ -248,9 +260,34 @@ async function enrichOneCandidate(
     else counts.skipped++;
     return;
   }
+
+  let applied: boolean;
+  try {
+    applied = applyEnrichmentToEntry(db, candidate, maxChars, metadata);
+  } catch (err) {
+    // A real write failure (not the stale-identity no-op below, which never
+    // throws): `concurrentMap` would otherwise swallow this into a silent
+    // undefined slot with `counts.enriched` never incremented but no record
+    // of the failure either. Surface it the same way a provider failure is
+    // already surfaced.
+    counts.failed++;
+    warn(
+      `[index] Metadata enrichment write failed for ${candidate.filePath}: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    return;
+  }
+  if (!applied) {
+    // The live `entries` row no longer matches the identity this candidate
+    // was queued under (a concurrent rename or delete) — see
+    // `applyEnrichmentToEntry`. The metadata is real and already cached
+    // above, so this is reported as skipped rather than lost, and the next
+    // ordinary run re-applies it from cache with no new provider call.
+    counts.skipped++;
+    return;
+  }
   if (cacheHit) counts.cacheHits++;
   counts.enriched++;
-  applyEnrichmentToEntry(db, candidate, maxChars, metadata);
 }
 
 /**
@@ -267,13 +304,29 @@ async function enrichOneCandidate(
  * re-tag the merged copy — otherwise `deriveUnits` would see no markdown
  * body at all and silently drop every fragment unit `applyChange` already
  * derived for this entry.
+ *
+ * **Stale-identity guard** — `candidate` was captured before the LLM round
+ * trip above, which can take seconds to minutes. A concurrent reconcile can
+ * rename (`repointEntry` updates the SAME `entries.id` in place with a new
+ * `item_ref`/`content_hash`/`file_path`) or delete this row while that call
+ * was in flight. Writing the captured values regardless would either (a)
+ * `upsertEntry` under the stale `item_ref`, which no longer conflicts with
+ * anything and INSERTs a ghost row pointing at an identity that no longer
+ * exists, or (b) `replaceEntryUnits(candidate.entryId)` overwriting a live
+ * renamed row's units with the old identity's hashes — or, if the row was
+ * deleted outright, throw a foreign-key error. So this re-reads the live row
+ * BY ID inside the same transaction and no-ops (returns `false`, counted as
+ * skipped by the caller) unless its `content_hash` and `item_ref` still
+ * match what this candidate was queued under; only then is `candidate.entryId`
+ * — now confirmed live, never a captured id that may no longer exist — used
+ * to write.
  */
 function applyEnrichmentToEntry(
   db: Database,
   candidate: MetadataEnrichmentCandidate,
   maxChars: number,
   metadata: EnhancedMetadata,
-): void {
+): boolean {
   const merged: IndexDocument = { ...candidate.entry, quality: "enriched" };
   if (metadata.description) merged.description = metadata.description;
   if (metadata.tags?.length) merged.tags = metadata.tags;
@@ -283,7 +336,14 @@ function applyEnrichmentToEntry(
   }
   const searchText = buildSearchText(merged);
 
-  withImmediateTransaction(db, () => {
+  return withImmediateTransaction(db, () => {
+    const live = db
+      .prepare("SELECT content_hash AS contentHash, item_ref AS itemRef FROM entries WHERE id = ?")
+      .get(candidate.entryId) as { contentHash: string | null; itemRef: string } | undefined;
+    if (!live || live.contentHash !== candidate.blobHash || live.itemRef !== candidate.provenance.itemRef) {
+      return false;
+    }
+
     upsertEntry(db, candidate.filePath, merged, searchText, candidate.provenance);
     const units = deriveUnits(toUnitSource(candidate.entryId, merged), maxChars);
     insertNewUnitTexts(
@@ -295,5 +355,6 @@ function applyEnrichmentToEntry(
       candidate.entryId,
       units.map((unit) => ({ ordinal: unit.ordinal, fragmentId: unit.fragmentId, hash: unit.hash })),
     );
+    return true;
   });
 }
