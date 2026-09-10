@@ -29,6 +29,7 @@ import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embedd
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit, EmbeddingBatchSkip } from "../../../src/llm/embedders/remote";
+import { capEmbeddingText } from "../../../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../../../src/llm/embedders/types";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
@@ -60,10 +61,10 @@ function orthogonalVec(i: number): EmbeddingVector {
   return [3 + i, -(1 + i), 0.001];
 }
 
-function configWithModel(model: string): AkmConfig {
+function configWithModel(model: string, overrides: Partial<NonNullable<AkmConfig["embedding"]>> = {}): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    embedding: { endpoint: "http://localhost:1", model },
+    embedding: { endpoint: "http://localhost:1", model, ...overrides },
   } as AkmConfig;
 }
 
@@ -110,6 +111,20 @@ describe("generateEmbeddingsForDb: embedding-fingerprint canary (#955)", () => {
       );
       upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, buildSearchText(entry), provenance);
     }
+  }
+
+  /** Seed a single entry with an exact, caller-chosen search text (unlike {@link seedEntries}'s fixed content). */
+  function seedOneEntry(db: Database, searchText: string): void {
+    const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
+    const component = installation?.components[0];
+    if (!installation || !component) throw new Error("failed to derive a test bundle installation");
+    const entry = { name: "big-note", type: "memories", filename: "big-note.md" };
+    const provenance = deriveEntryProvenance(
+      { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
+      "memories",
+      "big-note",
+    );
+    upsertEntry(db, `${storage.stashDir}/memories/big-note.md`, entry, searchText, provenance);
   }
 
   function embeddingBlob(db: Database, index: number): Buffer | undefined {
@@ -387,6 +402,48 @@ describe("generateEmbeddingsForDb: embedding-fingerprint canary (#955)", () => {
       // NOT purged as "vectors differ" the way an unhandled all-undefined
       // canary result used to be misread.
       expect(getMeta(db, "embeddingFingerprint")).toBe(fingerprintBefore);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("(i) the canary embeds the same capped text the pipeline embeds, not the raw search text (#955)", async () => {
+    const db = openIndexDatabase();
+    try {
+      // 10-token cap -> 40-char budget; this entry's search text is 4x that,
+      // so an uncapped canary request would carry a different string than
+      // what produced the stored vector.
+      const maxInputTokens = 10;
+      const bigText = "w".repeat(160);
+      seedOneEntry(db, bigText);
+      const expectedCappedText = capEmbeddingText(bigText, maxInputTokens).text;
+      expect(expectedCappedText.length).toBeLessThan(bigText.length);
+
+      mockEmbedder(simpleMock(stableVec));
+      const first = await generateEmbeddingsForDb(db, configWithModel("model-a", { maxInputTokens }), () => {});
+      expect(first.success).toBe(true);
+      expect(getEmbeddingCount(db)).toBe(1);
+      const before = embeddingBlob(db, 0);
+
+      const canaryTexts: string[] = [];
+      mockEmbedder(async (texts, _config, _signal, _onSkip, onBatch) => {
+        canaryTexts.push(...texts);
+        const vectors = texts.map((_t, i) => stableVec(i));
+        onBatch?.(
+          texts.map((_t, i) => i),
+          vectors,
+        );
+        return vectors;
+      });
+      const second = await generateEmbeddingsForDb(db, configWithModel("model-b", { maxInputTokens }), () => {});
+
+      // Same model, so the vectors the mock returns for the canary are
+      // identical to the stored ones -> "keep". The assertion that matters
+      // is the request BODY: the canary must have embedded exactly the
+      // capped text the first pass embedded, never the raw 160-char text.
+      expect(second.success).toBe(true);
+      expect(embeddingBlob(db, 0)).toEqual(before);
+      expect(canaryTexts).toEqual([expectedCappedText]);
     } finally {
       closeDatabase(db);
     }
