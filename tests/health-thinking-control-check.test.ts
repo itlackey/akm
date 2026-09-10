@@ -52,11 +52,16 @@ describe("thinking-control check (#949)", () => {
     expect(check?.channel).toBe("advisory");
   });
 
-  test("is registered before the #950 cli-version/engine-last-used advisories (order is load-bearing)", () => {
+  test("is registered before the #950/#953 trailing advisories (order is load-bearing)", () => {
     const names = HEALTH_CHECKS.map((c) => c.name);
     const thinkingControlIndex = names.indexOf("thinking-control");
     expect(thinkingControlIndex).toBeGreaterThanOrEqual(0);
-    expect(names.slice(thinkingControlIndex)).toEqual(["thinking-control", "cli-version", "engine-last-used"]);
+    expect(names.slice(thinkingControlIndex)).toEqual([
+      "thinking-control",
+      "cli-version",
+      "engine-last-used",
+      "scheduler-binary",
+    ]);
   });
 
   test("unknown when no configured engine sets enableThinking: false", () => {

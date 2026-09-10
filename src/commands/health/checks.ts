@@ -138,6 +138,13 @@ export interface HealthCheckContext {
    * used" to be a meaningful signal, e.g. a fresh install.
    */
   improveRunsInLookbackWindow: number;
+  /**
+   * #953: the `scheduler-binary` advisory, computed once in `health.ts`
+   * (same `--probe`/`--no-probe` gate as `versionDrift`, same best-effort
+   * discipline) so `scheduler-binary` stays a pure projection like every
+   * other check.
+   */
+  schedulerBinaryDrift: HealthCheckResult;
 }
 
 /** Which array a check's result is collected into. */
@@ -1507,8 +1514,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     run: (ctx) => ctx.versionDrift,
   },
   {
-    // #950: registered last — order is load-bearing (see the HEALTH_CHECKS
-    // doc comment above). Advisory channel, `kind: "deterministic"` — same
+    // #950: advisory channel, `kind: "deterministic"` — same
     // exit-code-gating rationale as thinking-control above.
     name: "engine-last-used",
     channel: "advisory",
@@ -1519,5 +1525,15 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         ctx.improveRunsInLookbackWindow,
         ENGINE_LAST_USED_LOOKBACK_DAYS,
       ),
+  },
+  {
+    // #953: registered last — order is load-bearing (see the HEALTH_CHECKS
+    // doc comment above). Best-effort scheduler-binary-drift advisory, gated
+    // behind the same --probe/--no-probe flag as engine reachability and
+    // cli-version. Computed once in health.ts (process-spawn IO), projected
+    // here like versionDrift/engineProbes.
+    name: "scheduler-binary",
+    channel: "advisory",
+    run: (ctx) => ctx.schedulerBinaryDrift,
   },
 ];

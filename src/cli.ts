@@ -336,8 +336,9 @@ const healthCommand = defineCommand({
       type: "boolean",
       default: true,
       description:
-        "Probe default-llm-engine / configured-engines reachability and check for a newer akm release (on by default).",
-      negativeDescription: "Skip the reachability probes and the update check (for an offline or air-gapped host).",
+        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, and check the scheduler's recorded akm binary version (on by default).",
+      negativeDescription:
+        "Skip the reachability probes, the update check, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
   },
   async run({ args }) {
@@ -618,7 +619,7 @@ export const main = defineCommand({
       "  2   usage error\n" +
       "  4   health warn (akm health only)\n" +
       "  70  internal / unclassified error\n" +
-      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db)\n" +
+      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)\n" +
       "  78  config error",
   },
   args: {

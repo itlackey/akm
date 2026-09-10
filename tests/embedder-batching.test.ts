@@ -22,8 +22,10 @@ import { _setWarnSinkForTests } from "../src/core/warn";
 import {
   _setEmbeddingTimeoutBackoffForTests,
   DEFAULT_EMBEDDING_TIMEOUT_MS,
+  DEFAULT_TOKEN_BUDGET,
   describeEmbeddingCredential,
   embeddingTimeoutRetryBackoffMs,
+  estimateTokenCount,
   isContextExceededResponse,
   RemoteEmbedder,
   resolveEmbeddingConcurrency,
@@ -198,8 +200,8 @@ describe("RemoteEmbedder.embedBatch: contextLength no longer affects the request
       async () => {
         // contextLength set very low (would force single-document batches if
         // it still fed the token budget) and maxTokens left unset, so the
-        // DEFAULT_TOKEN_BUDGET (8000 tokens) is what actually governs
-        // batching. Five short documents easily fit one 8000-token request.
+        // DEFAULT_TOKEN_BUDGET (6000 tokens, #954) is what actually governs
+        // batching. Five short documents easily fit one 6000-token request.
         const embedder = new RemoteEmbedder({
           endpoint: "http://localhost:1/v1",
           model: "test-model",
@@ -291,20 +293,27 @@ describe("RemoteEmbedder.embedBatch: context-size split-and-retry", () => {
     await withMockedFetch(
       async () => {
         const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model" });
-        const committed: Array<{ indices: number[]; embeddings: (EmbeddingVector | undefined)[] }> = [];
+        const committed: Array<{ indices: number[]; embeddings: (EmbeddingVector | undefined)[]; outcome?: string }> =
+          [];
         const results = await embedder.embedBatch(
           ["a", "bb", "ccc", "dddd"],
           undefined,
           undefined,
-          (indices, embeddings) => committed.push({ indices, embeddings }),
+          (indices, embeddings, _model, outcome) => committed.push({ indices, embeddings, outcome: outcome?.outcome }),
         );
 
         // Every text ends up embedded; none skipped.
         expect(results).toHaveLength(4);
         expect(results.every((r) => r !== undefined)).toBe(true);
-        // Split all the way down to singles: 4 onBatch commits, one per text.
-        expect(committed).toHaveLength(4);
-        expect(committed.flatMap((c) => c.indices).sort()).toEqual([0, 1, 2, 3]);
+        // This batch's own rejection is also the run's FIRST context-size
+        // rejection (#954), so it additionally fires one budget-lowered
+        // notification commit alongside the 4 settled (one-per-text) ones —
+        // see the adaptive-budget describe block below for that event's own
+        // coverage; this test stays about the split-and-retry shape itself.
+        const settled = committed.filter((c) => c.outcome !== "budget-lowered");
+        expect(settled).toHaveLength(4);
+        expect(settled.flatMap((c) => c.indices).sort()).toEqual([0, 1, 2, 3]);
+        expect(committed.filter((c) => c.outcome === "budget-lowered")).toHaveLength(1);
         // Requests: size 4 (413) -> left half [0,1] size 2 (413) -> [0] then
         // [1] (200 each) -> right half [2,3] size 2 (413) -> [2] then [3]
         // (200 each). The left branch fully resolves before the right starts.
@@ -353,6 +362,139 @@ describe("RemoteEmbedder.embedBatch: context-size split-and-retry", () => {
     );
     // A single request for the whole batch — no splitting on a generic 500.
     expect(requestCount).toBe(1);
+  });
+});
+
+describe("DEFAULT_TOKEN_BUDGET (#954, field report on beta.1)", () => {
+  test("defaults to 6000, lowered from 8000 after the field's undercount evidence", () => {
+    expect(DEFAULT_TOKEN_BUDGET).toBe(6000);
+  });
+});
+
+describe("RemoteEmbedder.embedBatch: run-scoped adaptive request budget after a context-size rejection (#954)", () => {
+  /** Provider's real tokenizer counts this much denser than akm's 4-chars-per-token estimate (field-measured 7-55% undercount on dense text). */
+  const PROVIDER_DENSITY_FACTOR = 1.4;
+  /** The field's llama.cpp embedder's real context window, in the provider's own (denser) token count. */
+  const PROVIDER_CONTEXT_WINDOW = 8192;
+  /** Uniform per-document size (chars) chosen so estimateTokenCount is exact: 2340 / 4 = 585 tokens. */
+  const DOC_CHARS = 2340;
+
+  function llamaCppRejection(): Response {
+    return new Response(
+      JSON.stringify({ error: { message: "input is too large to process. increase the physical batch size" } }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  test("shrinks the budget once on the first rejection, re-plans undispatched batches, and finishes with every vector stored", async () => {
+    const docCount = 34;
+    const texts = Array.from({ length: docCount }, () => "x".repeat(DOC_CHARS));
+    const requestDocCounts: number[] = [];
+    let rejections = 0;
+
+    const committed: Array<{ indices: number[]; embeddings: unknown[]; outcome?: string; reason?: string }> = [];
+    const skips: Array<{ index: number; reason: string }> = [];
+
+    const results = await withMockedFetch(
+      async () => {
+        // maxTokens set explicitly to the OLD default (8000) — reproducing a
+        // field config that has not adopted the new 6000 default — proves
+        // the adaptive shrink rescues the run regardless of the starting
+        // budget, not just the new default's own headroom.
+        const embedder = new RemoteEmbedder({
+          endpoint: "http://localhost:1/v1",
+          model: "test-model",
+          maxTokens: 8000,
+        });
+        return embedder.embedBatch(
+          texts,
+          undefined,
+          (skip) => skips.push(skip),
+          (indices, embeddings, _model, outcome) =>
+            committed.push({ indices, embeddings, outcome: outcome?.outcome, reason: outcome?.reason }),
+        );
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { input: string[] };
+        requestDocCounts.push(body.input.length);
+        const estimatedTokens = body.input.reduce((sum, t) => sum + estimateTokenCount(t), 0);
+        const providerTokens = Math.round(estimatedTokens * PROVIDER_DENSITY_FACTOR);
+        if (providerTokens > PROVIDER_CONTEXT_WINDOW) {
+          rejections++;
+          return llamaCppRejection();
+        }
+        const data = body.input.map((_t, i) => ({ embedding: [1, 0], index: i }));
+        return new Response(JSON.stringify({ data }), { headers: { "Content-Type": "application/json" } });
+      },
+    );
+
+    // Every document ends up embedded — the shrink recovers the run rather
+    // than letting the split-and-retry chain alone grind through it.
+    expect(results).toHaveLength(docCount);
+    expect(results.every((r) => r !== undefined)).toBe(true);
+    expect(skips).toHaveLength(0);
+
+    // The 8000-token budget really did overflow the provider's real (denser)
+    // context window at least once — otherwise this test would not be
+    // exercising the shrink at all.
+    expect(rejections).toBe(1);
+
+    // First request is the full un-shrunk batch (13 docs at 8000 tokens);
+    // later requests are all sized against the shrunk 6000-token budget
+    // (<=10 docs) or the mid-split halves of the rejected batch (<=7 docs).
+    expect(requestDocCounts[0]).toBe(13);
+    expect(requestDocCounts.every((n) => n <= 13)).toBe(true);
+    expect(requestDocCounts.slice(1).every((n) => n <= 10)).toBe(true);
+
+    // Exactly one "budget-lowered" notice, naming the rejected request's own
+    // token count and the new (three-quarters, 8000 -> 6000) budget.
+    const budgetLines = committed.filter((c) => c.outcome === "budget-lowered");
+    expect(budgetLines).toHaveLength(1);
+    expect(budgetLines[0]?.reason).toContain("request budget lowered to 6,000 for the rest of this run");
+  });
+
+  test("a second rejection after the shrink does not shrink the budget again", async () => {
+    // Each 3000-token document fits both the original 5000-token budget and
+    // the shrunk 3750-token one (round(5000 * 0.75)) on its own, but never
+    // alongside a sibling (2x3000 > either budget) — so every batch is a
+    // real single-document request, and a provider that rejects
+    // unconditionally keeps producing genuine context-size rejections after
+    // the shrink too, not pre-flight oversized skips.
+    const docTokens = 3000;
+    const texts = ["a", "b", "c"].map((c) => c.repeat(docTokens * 4));
+    const committed: Array<{ outcome?: string; reason?: string }> = [];
+    const skips: Array<{ index: number; reason: string }> = [];
+    let requestCount = 0;
+
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({
+          endpoint: "http://localhost:1/v1",
+          model: "test-model",
+          maxTokens: 5000,
+        });
+        await embedder.embedBatch(
+          texts,
+          undefined,
+          (skip) => skips.push(skip),
+          (_indices, _embeddings, _model, outcome) =>
+            committed.push({ outcome: outcome?.outcome, reason: outcome?.reason }),
+        );
+      },
+      async () => {
+        requestCount++;
+        return new Response("context length exceeded", { status: 413 });
+      },
+    );
+
+    // Three real, genuinely-rejected requests (one per document) — proof the
+    // second and third rejections are real provider round-trips, not
+    // pre-flight oversized skips that would never call fetch at all.
+    expect(requestCount).toBe(3);
+    const budgetLines = committed.filter((c) => c.outcome === "budget-lowered");
+    expect(budgetLines).toHaveLength(1);
+    expect(skips.every((s) => s.reason === "context-window-exceeded")).toBe(true);
+    expect(skips).toHaveLength(3);
   });
 });
 

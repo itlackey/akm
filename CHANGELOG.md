@@ -268,6 +268,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   apiKey`, or `none configured` — never the credential's value, so a field
   run can compare it directly against what the gateway actually logged.
   `--verbose` also names the config file the run loaded.
+- **`akm health` gains a `scheduler-binary` advisory for scheduler binary
+  drift (#953).** A field report found `akm task sync`'s recorded absolute
+  akm path can go stale after upgrading through a different installer (npm
+  global to a standalone download, or vice versa), leaving a scheduled run
+  invoking the old binary indefinitely with nothing surfacing it. The new
+  `--probe`-gated advisory reads the scheduler's recorded akm invocation —
+  the same binding `task sync`/`task doctor` already read, no crontab text
+  parsing — runs it with `--version`, and `warn`s naming both versions when
+  it differs from the running CLI, pointing at `akm task sync` as the
+  remedy. `unknown` when not probed, no task is installed, or the recorded
+  binary cannot be executed.
 
 ### Changed
 
@@ -322,6 +333,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single document that still fails this way is skipped, as
   `context-window-exceeded`; every other failure (network error, 5xx, malformed
   response) keeps the prior skip-the-whole-batch behavior.
+- **The default per-request token budget is lower, and adapts mid-run after a
+  context-size rejection (#954, field report on beta.1).**
+  `embedding.maxTokens`'s default dropped from 8000 to 6000: the 4-chars-per-
+  token estimator undercounts dense technical text by 7-55%, so 8000 regularly
+  overshot a real 8192-token endpoint. On an `akm index` run's first
+  context-size rejection, the effective request budget additionally shrinks to
+  three quarters of its current value (floored at twice
+  `embedding.maxInputTokens`) for every request not yet sent, and one
+  default-level line reports the new value; it never shrinks a second time in
+  the same run. Users who set `embedding.maxTokens` explicitly keep it as the
+  starting point but still benefit from this same-run recovery.
 - **Embedding requests are dispatched through a small in-flight window instead of
   strictly sequentially (#954).** The window defaults to 1 request at a time for
   a loopback endpoint and 2 for a remote one; the actual throughput knob is
@@ -432,6 +454,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Source-cache hydration (which runs before `index.db` is even opened) now
   reports its own progress the same way: `Hydrating source i/n: <name>` per
   source, plus a 15s heartbeat while a sync is in flight.
+- **`embedding.chunkSize` is retired (#954).** Nothing under `src/` ever read
+  it; it was declared in the config schema but had no effect. It is removed
+  from `EmbeddingConnectionConfigSchema` and `schemas/akm-config.json`. The
+  `embedding` object stays `.passthrough()`, so a config that still sets
+  `embedding.chunkSize` keeps loading exactly as before — the key is simply
+  ignored, not rejected or warned about.
 
 ### Fixed
 
@@ -533,6 +561,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   physical batch size", which the existing context-size pattern
   (`exceed_context_size_error`, "context size", …) did not match, so the
   whole batch was dropped instead of being split and retried like a 413.
+- **The end-of-run throughput line now sums the capped text actually sent to
+  the embedding provider (#954).** `storedTokens` accumulated
+  `estimateTokenCount(entry.searchText)` — the entry's pre-cap search text —
+  while the request `embedBatch` received held the text `capEmbeddingText`
+  had already truncated to `embedding.maxInputTokens`, so the reported
+  `tokens/s` figure overstated throughput for every entry over the cap. The
+  final line now sums the estimate of the capped text the batching loop
+  already built, matching what the provider was actually asked to embed.
 - **A `kill <launcher-pid>` no longer orphans the running `akm` process
   (#956).** The published launcher (`scripts/node-runtime/akm`/
   `akm-migrate`) now forwards SIGTERM/SIGINT/SIGHUP to its bun/node child
@@ -562,6 +598,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of reusing them. A plain `akm index` resume after an interruption
   now embeds only the entries still missing a vector, with no purge and no
   canary.
+- **A concurrent `akm index` without `--skip-if-locked` now fails with a
+  retryable-shortly exit code instead of a raw driver error (#956).**
+  Contention with another writer touching index.db (a second `akm index`, a
+  source add/update's embedding pass, the per-command background reindex)
+  used to exhaust the SQLite driver's retry window and surface as
+  `{"ok":false,"error":"database is locked"}` at exit 70
+  (internal/unclassified). It is now reclassified into a `TransientError`
+  with a dedicated `INDEX_DB_CONTENDED` code (exit 75), naming the rebuild
+  lock's live holder pid when known, mirroring `STATE_DB_CONTENDED`'s
+  precedent (#948) for state.db; the original driver text survives as
+  `cause`. `--skip-if-locked` is unaffected — it already skips gracefully
+  before ever attempting the write.
+- **The fingerprint-rename canary embeds the exact text the stored vector was
+  generated from (#955).** `sampleEmbeddedEntriesForCanary` handed the canary
+  the entry's raw `search_text`, while the main embedding pass caps it to
+  `embedding.maxInputTokens` before ever calling the provider — so for any
+  entry whose search text exceeded the cap, the canary's freshly re-embedded
+  vector came from a different input than the one that produced the stored
+  vector, and the median cosine similarity could fall below the compatibility
+  threshold for reasons unrelated to the model, triggering a needless full
+  purge and rebuild on a same-model rename. The canary now caps each sampled
+  entry's search text the same way, through the same `capEmbeddingText`
+  helper, before requesting its vector.
 
 ## [0.9.14] - 2026-09-04
 

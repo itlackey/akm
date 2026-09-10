@@ -217,12 +217,13 @@ truncated.
 
 **Request batching** — `RemoteEmbedder.embedBatch` (`src/llm/embedders/remote.ts`)
 groups (already-capped) texts into provider requests bounded by an estimated
-token budget (`embedding.maxTokens`, default 8000 tokens) and a
+token budget (`embedding.maxTokens`, default 6000 tokens, lowered from 8000
+by #954 — see below) and a
 document-count safety cap (`embedding.batchSize`, default 100) — the token
 budget is what actually keeps a request inside the endpoint's context window
 and the per-request timeout; the count cap only guards against many tiny
 documents packing an oversized request. With the 512-token per-document cap
-above, a request carries about 16 documents by default. A single document
+above, a request carries about 11 documents by default. A single document
 whose own estimate still exceeds the token budget (only possible when
 `maxInputTokens` is configured larger than `maxTokens`) is isolated and
 skipped before ever going over HTTP. `embedding.contextLength` does NOT feed
@@ -268,6 +269,22 @@ batch size`, `ubatch`, #954) is split in half and retried recursively
 rather than discarded whole, down to individual documents; a single
 document that still fails this way becomes a
 `context-window-exceeded` skip.
+
+**Run-scoped adaptive budget** (#954, field report on beta.1) — the
+4-chars-per-token estimator undercounts dense technical text by 7-55%,
+which the default budget change above only partly absorbs: an endpoint with
+a smaller real context window, or a configured `embedding.maxTokens` too big
+for it, still sees a steady trickle of rejections. On the FIRST context-size
+rejection of an `embedBatch` run, the effective request budget shrinks to
+three quarters of its current value — floored at twice
+`embedding.maxInputTokens`, so it can never drop below batching at least one
+document per request — for every batch not yet dispatched; the still-planned
+tail of pending documents is re-batched at the smaller budget
+(`buildTokenBoundedBatches`), and one default-level line reports the new
+value. This never touches the rejected batch's OWN split-and-retry above,
+and never fires a second time in the same run even if a later batch is also
+rejected — a budget that is simply too big for the endpoint should
+self-correct once per run, not ratchet down indefinitely.
 
 **Timeout back-off-and-retry** (#954, 2026-09-09 field-review follow-up)
 — a request TIMEOUT never drops its batch outright: field
@@ -326,7 +343,11 @@ any run smaller than 500 entries), and the heartbeat (every 15s while
 waiting on the provider) names both the live stored AND failed counts:
 `Still generating embeddings: X/N stored, F failed; waiting on embedding
 provider.` The final line reports throughput: `Stored N embeddings in Xs
-(Y.Y entries/s, ~Z tokens/s).` A failed provider batch itself logs at the
+(Y.Y entries/s, ~Z tokens/s).` `Z` sums the estimate of the capped text
+`embedBatch` actually transmitted for each stored entry, not the entry's
+raw pre-cap search text (#954) — otherwise every entry over
+`embedding.maxInputTokens` inflated the reported rate. A failed provider
+batch itself logs at the
 default `warn` level, not `--verbose`-only, naming the batch size and
 reason — a silently grinding, hours-long run against a dead provider with
 one aggregate warning at the very end was the field report's own symptom.
@@ -340,6 +361,12 @@ high-frequency per-batch line JSON mode deliberately omits.
 `embedding.*`) that no longer matches the current config does NOT purge
 unconditionally (#955). `generateEmbeddingsForDb` re-embeds a small sample
 (up to 8) of already-stored entries with the current config and compares:
+each sample's search text is capped to `embedding.maxInputTokens` the same
+way the main embedding pass caps it before the canary request is sent, so
+the freshly re-embedded vector is produced from the identical input that
+produced the stored one — an entry over the cap comparing a capped stored
+vector against an uncapped fresh one used to read as a false mismatch,
+unrelated to the model.
 
 - the server-reported model identity (`index_meta.embeddingIdentity`,
   `remote:<model id the endpoint returned>|<vector width>` for a remote

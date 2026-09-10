@@ -48,13 +48,12 @@ export const EmbeddingConnectionConfigSchema = z
     maxInputTokens: positiveInt.optional(),
     /**
      * Client-side per-request token budget — how many documents' estimated
-     * tokens fit in one HTTP request (default `DEFAULT_TOKEN_BUDGET` = 8000
+     * tokens fit in one HTTP request (default `DEFAULT_TOKEN_BUDGET` = 6000
      * in `src/llm/embedders/remote.ts`). With the 512-token `maxInputTokens`
-     * cap above, a request carries about 16 documents by default.
+     * cap above, a request carries about 11 documents by default.
      */
     maxTokens: positiveInt.optional(),
     batchSize: positiveInt.optional(),
-    chunkSize: positiveInt.optional(),
     /**
      * Ollama's `num_ctx` ONLY (#956) — sent verbatim as
      * `options.num_ctx` on the native `/api/embed` request. It no longer also

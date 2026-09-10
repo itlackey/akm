@@ -240,11 +240,18 @@ type CanaryDecision =
  * direct `RemoteEmbedder`) so every embedder branch — remote, local,
  * deterministic, and test overrides via `_setEmbedderForTests` — is
  * exercised identically to the main embedding pass.
+ *
+ * `maxInputTokens` must be the SAME cap the main pass below applies via
+ * {@link capEmbeddingText} — the stored vector for each sampled entry was
+ * produced from its capped text, so comparing against a fresh vector of the
+ * uncapped text would compare unlike inputs for any entry over the cap
+ * (#955).
  */
 async function runEmbeddingCanary(
   db: Database,
   config: AkmConfig,
   signal: AbortSignal | undefined,
+  maxInputTokens: number,
 ): Promise<CanaryDecision> {
   const samples: EmbeddingCanarySample[] = sampleEmbeddedEntriesForCanary(db, CANARY_SAMPLE_SIZE);
   if (samples.length === 0) {
@@ -256,7 +263,14 @@ async function runEmbeddingCanary(
   let canaryVectors: (EmbeddingVector | undefined)[];
   try {
     canaryVectors = await embedBatch(
-      samples.map((sample) => sample.searchText),
+      // #955: the stored vector for each sample was produced from
+      // capEmbeddingText(searchText, maxInputTokens) — the main pass below
+      // caps every document before embedding it. The canary must re-embed
+      // the SAME capped text, or an entry over the cap compares a fresh
+      // vector of a different input against a stored vector of the capped
+      // one, and a genuine model match can read as a rebuild-worthy
+      // mismatch for reasons unrelated to the model.
+      samples.map((sample) => capEmbeddingText(sample.searchText, maxInputTokens).text),
       config.embedding,
       signal,
       (skip) => skips.push(skip),
@@ -384,6 +398,10 @@ export async function generateEmbeddingsForDb(
   let targetEntryIds = entryIds;
   /** Set only on an actual rebuild, so the up-front "Re-embedding N entries" line names why. */
   let rebuildReason: string | undefined;
+  // Resolved once and reused by both the canary (below) and the main pass's
+  // cap loop (further down) — the same cap must apply to both, or the canary
+  // compares a differently-capped text against the stored vector (#955).
+  const maxInputTokens = config.embedding?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
 
   if (opts?.forceReembed) {
     // `akm index --reembed`: an explicit operator override, skips the canary
@@ -404,7 +422,7 @@ export async function generateEmbeddingsForDb(
     targetEntryIds = undefined;
     rebuildReason = "forced by --reembed";
   } else if (storedFingerprint && storedFingerprint !== currentFingerprint) {
-    const decision = await runEmbeddingCanary(db, config, signal);
+    const decision = await runEmbeddingCanary(db, config, signal, maxInputTokens);
 
     if (decision.outcome === "unverifiable") {
       // Destroying a good index because the server happens to be down right
@@ -514,12 +532,12 @@ export async function generateEmbeddingsForDb(
     }
 
     // Cap each document's embedded text at
-    // embedding.maxInputTokens (default DEFAULT_MAX_INPUT_TOKENS) instead of
-    // ever failing a whole batch over one oversized entry — truncation keeps
-    // the head of the text, unicode-safe. A document is skipped only when its
+    // embedding.maxInputTokens (default DEFAULT_MAX_INPUT_TOKENS, resolved
+    // once above so the canary uses the identical cap) instead of ever
+    // failing a whole batch over one oversized entry — truncation keeps the
+    // head of the text, unicode-safe. A document is skipped only when its
     // head is empty (the impossible case: nothing left to embed), never
     // merely for being long.
-    const maxInputTokens = config.embedding?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
     let truncatedCount = 0;
     const texts: string[] = [];
     const pendingEntries: typeof candidateEntries = [];
@@ -669,6 +687,23 @@ export async function generateEmbeddingsForDb(
           }
           return;
         }
+        // #954: a "budget-lowered" event is the same kind of notice as
+        // "retrying" above — the run's first context-size rejection just
+        // shrank the request budget for everything not yet dispatched, but
+        // THIS rejected batch's own indices are still being split and
+        // retried by the embedder (their real stored/failed outcome lands in
+        // a later onBatch call). Nothing here has settled, so it must never
+        // touch storage, only report the notice — one line, at most once per
+        // run.
+        if (outcome?.outcome === "budget-lowered") {
+          if (reportPerBatchLine) {
+            onProgress({
+              phase: "embeddings",
+              message: `[embed] batch ${outcome.batchIndex}/${outcome.batchCount}: ${outcome.docCount} docs, ${outcome.requestTokens.toLocaleString()} tokens → ${outcome.reason}`,
+            });
+          }
+          return;
+        }
         if (model) observedModel = model;
         // A batch that delivered at least one real embedding proves the
         // provider is currently answering — reset both circuit-breaker
@@ -681,7 +716,8 @@ export async function generateEmbeddingsForDb(
         }
         db.transaction(() => {
           for (let k = 0; k < indices.length; k++) {
-            const entry = pendingEntries[indices[k] as number];
+            const index = indices[k] as number;
+            const entry = pendingEntries[index];
             if (!entry) continue;
             const embedding = batchEmbeddings[k];
             if (!embedding) {
@@ -692,7 +728,13 @@ export async function generateEmbeddingsForDb(
             const result = upsertEmbedding(db, entry.id, embedding);
             if (result.stored) {
               storedCount++;
-              storedTokens += estimateTokenCount(entry.searchText);
+              // #954: sum the estimate of the text actually sent —
+              // `texts[index]` is the capped string `embedBatch` was handed,
+              // parallel to `pendingEntries` by construction above (the
+              // `entry` guard covers both) — not `entry.searchText`, which is
+              // the pre-cap original and overstates throughput for every
+              // entry over the cap.
+              storedTokens += estimateTokenCount(texts[index] as string);
             } else {
               skippedCount++;
             }

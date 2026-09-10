@@ -117,7 +117,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm health` only) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` right now, not a bad command line | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -279,7 +279,12 @@ opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
 advisory, never the blocking lock #872 removed (see
 [Locks](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#locks)). A human-typed
 `akm index` with no flag is never gated by it: if another run already holds
-the lock, it warns and proceeds anyway, contending with the existing run.
+the lock, it warns and proceeds anyway, contending with the existing run. If
+that contention makes index.db genuinely busy (SQLite `database is locked`)
+long enough to exhaust the driver's retry window, the run now fails with
+exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
+driver error at exit 70 — the same retry-shortly contract as
+`STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
 `--skip-if-locked` changes that only for the invocation that passes it: if
 the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
@@ -358,15 +363,17 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes and the `cli-version` update check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
 default agent engine, and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
 to the `default-llm-engine` and every `configured-engines` LLM connection (and
-an SDK engine's LLM fallback), one probe per distinct endpoint, and checks the
-installed akm-cli version against the latest GitHub release (`cli-version`).
+an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
+installed akm-cli version against the latest GitHub release (`cli-version`),
+and runs the scheduler's recorded akm binary with `--version` to check it
+against the running CLI (`scheduler-binary`).
 
 Primary result fields:
 
@@ -1238,6 +1245,14 @@ not a discoverable, tab-completable flag). See STABILITY.md.
 Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
 full boot contract, JSON shapes, and exit codes.
+
+`akm upgrade` replaces the binary in place for its own install method, but a
+scheduler binding recorded by an earlier `akm task sync` under a *different*
+install method is not repointed automatically — the scheduler runs the
+binary path recorded at sync time, not whichever akm `upgrade` just
+installed. Run `akm task sync` after switching installers so scheduled runs
+pick up the new binary; see [`task sync`](#task) and `akm health`'s
+`scheduler-binary` advisory.
 
 ### clone
 
@@ -2871,6 +2886,13 @@ result with `akm task doctor`. Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once
 before changing task files or scheduler state; non-interactive setup changes
 neither.
+
+Because the scheduler runs the exact binary path recorded at the last `task
+sync`, upgrading akm through a different installer than the one active at
+that sync (npm-global to a standalone download, or vice versa) leaves
+scheduled runs invoking the old, now-stale binary — `task sync` re-resolves
+the current path and repoints them. `akm health --probe`'s `scheduler-binary`
+advisory warns when the two diverge, naming both versions.
 
 Setup reconfiguration preserves existing scheduler runtime bindings. Changing
 the AKM storage path or installed runtime path therefore requires an explicit
