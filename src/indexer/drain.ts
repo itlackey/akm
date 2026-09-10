@@ -225,8 +225,8 @@ export async function drainEmbeddingQueue(
   // upsertUnitVectors is a no-op without sqlite-vec (units-repository.ts), so
   // embedding the pending set here would just throw every vector away and
   // leave it "missing" again for the next call — pure wasted provider
-  // traffic. `warnIfVecMissing` (indexer.ts) already told the operator once;
-  // this is silent. `pending` is computed above so the done line and `akm
+  // traffic. `akmIndex`'s verification reports the missing extension as
+  // blocked; this stays silent. `pending` is computed above so the done line and `akm
   // index status` stay truthful even though nothing was attempted.
   if (!isVecAvailable(db)) {
     return emitDone({ pending, embedded: 0, failed: 0, skipped: pending, identity });

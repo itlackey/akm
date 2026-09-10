@@ -580,6 +580,26 @@ function buildIndexVerification(
     };
   }
 
+  // sqlite-vec is the only vector store (no BLOB fallback since the index
+  // redesign), so without the extension no drain can ever make progress and
+  // "in progress" would be a status that never resolves. Report it as
+  // blocked, with the fix.
+  if (!vecAvailable) {
+    return {
+      ok: false,
+      message: `Semantic search unavailable: the sqlite-vec extension is not loaded (${coverage.unitsPresent}/${coverage.unitsTotal} unit embeddings).`,
+      guidance:
+        "Install the optional sqlite-vec extension (see docs/reference/configuration.md, sqlite-vec extension), then run `akm index`; keyword search keeps working meanwhile.",
+      semanticSearchEnabled,
+      semanticSearchMode: config.semanticSearchMode,
+      semanticStatus: "blocked",
+      embeddingProvider,
+      entryCount: totalEntries,
+      embeddingCount: coverage.unitsPresent,
+      vecAvailable,
+    };
+  }
+
   // Not fully covered: a fresh index whose queue is still draining ("pending",
   // not a failure) vs. a drain that ran and made no progress at all, OR
   // threw outright mid-run ("blocked" either way — matches the guidance the
