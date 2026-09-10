@@ -666,6 +666,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   aborted the in-flight request correctly (confirmed by this investigation,
   not changed), and SIGTERM/SIGINT already ended the process within its
   documented grace period.
+- **`akm improve --show-prompt` now includes `avoidPatterns` when a live
+  improve loop has set them (#952).** The preview built its own second copy
+  of reflect's prompt-source gathering and `ReflectPromptInput` assembly,
+  which had already drifted from the real dispatch path: it never read
+  `avoidPatterns` (recent-error context from earlier assets in the same
+  run), so the preview was not always the prompt a live iteration would
+  actually send. Both the preview and the real dispatch path (`akmReflect`,
+  `runReflectRefineIterations`) now gather sources and assemble the prompt
+  input through the same two shared helpers, so this cannot drift again.
 
 ## [0.9.14] - 2026-09-04
 

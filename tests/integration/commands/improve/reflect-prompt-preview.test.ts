@@ -14,7 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { improveCommand } from "../../../../src/commands/improve/improve-cli";
-import { renderReflectPromptPreview } from "../../../../src/commands/improve/reflect";
+import { akmReflect, renderReflectPromptPreview } from "../../../../src/commands/improve/reflect";
 import { appendEvent } from "../../../../src/core/events";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import { writeLesson } from "../../../_helpers/assets";
@@ -74,6 +74,66 @@ describe("renderReflectPromptPreview (#952)", () => {
     expect(preview.prompt).toContain("Never include the truncation marker");
     expect(preview.prompt).toContain("Current asset content (verbatim):");
     expect(preview.prompt.split(REFLECT_TRUNCATION_MARKER).length - 1).toBe(1);
+  });
+
+  test("#952 — the preview's prompt equals the real dispatch path's prompt for the same fixture inputs, avoidPatterns included", async () => {
+    const stashDir = storage.stashDir;
+    writeLesson(stashDir, "test-lesson", "existing description", "existing usage");
+    appendEvent({
+      eventType: "feedback",
+      ref: "lessons/test-lesson",
+      metadata: { signal: "outdated", reason: "the example command no longer works" },
+    });
+
+    const config = withTestImproveLlm(makeConfig(stashDir));
+    // Same shape a live improve loop passes: gathered source inputs plus
+    // avoidPatterns (O-5 / #378) from earlier assets in the same run.
+    const improveProfile = {
+      processes: {
+        reflect: { qualityGate: { enabled: false } },
+        distill: { qualityGate: { enabled: false } },
+      },
+    };
+    const avoidPatterns = ["do not invent a changelog entry that was not requested"];
+
+    let dispatchPrompt: string | undefined;
+    const dispatched = await akmReflect({
+      ref: "lessons/test-lesson",
+      improveProfile,
+      config,
+      stashDir,
+      avoidPatterns,
+      chat: async (_connection, messages) => {
+        dispatchPrompt = messages[0]?.content;
+        return JSON.stringify({
+          content: "# Existing\n\nExample proposed content.\n",
+          confidence: 0.9,
+          frontmatterPatch: { description: null, when_to_use: null },
+        });
+      },
+    });
+    expect(dispatched.ok).toBe(true);
+    if (dispatchPrompt === undefined) throw new Error("dispatch chat seam was never invoked");
+
+    const preview = await withMockedFetch(
+      () =>
+        renderReflectPromptPreview({
+          ref: "lessons/test-lesson",
+          improveProfile,
+          config,
+          stashDir,
+          avoidPatterns,
+        }),
+      () => {
+        throw new Error("renderReflectPromptPreview must never call fetch — it makes no engine call");
+      },
+    );
+
+    // Before #952's extraction, the preview silently dropped avoidPatterns —
+    // this is the drift the shared gatherReflectPromptSources/
+    // buildReflectPromptInput helpers close.
+    expect(preview.prompt).toContain("do not invent a changelog entry that was not requested");
+    expect(preview.prompt).toBe(dispatchPrompt);
   });
 
   test("rejects a missing ref", async () => {
