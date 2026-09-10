@@ -318,7 +318,9 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     // from embeddings any more — embeddable count == full entry count — and the
     // index verifies ok and lands in a ready status.
     expect(result.verification.ok).toBe(true);
-    expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
+    // "ready-js" (the JS-cosine fallback for a BLOB-vector table) is
+    // retired (index redesign, B5) — units_vec is a vec0-only store.
+    expect(result.verification.semanticStatus).toBe("ready-vec");
     // Every indexed entry is embeddable, so the verification entry count equals
     // the embedding count.
     expect(result.verification.entryCount).toBe(result.verification.embeddingCount);

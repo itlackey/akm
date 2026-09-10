@@ -12,8 +12,14 @@
  * only the verification/status vocabulary below survives.
  */
 
-/** Live runtime state of semantic search, computed fresh at index-finalize time. */
-export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "ready-vec" | "blocked";
+/**
+ * Live runtime state of semantic search, computed fresh at index-finalize
+ * time. `"ready-js"` (a JS-computed cosine-similarity fallback for when the
+ * sqlite-vec extension was unavailable, reading a BLOB-vector table instead)
+ * is retired (index redesign, B5): `units_vec` is a vec0-only store with no
+ * BLOB fallback to fall back to, so nothing produces that value any more.
+ */
+export type SemanticSearchRuntimeStatus = "pending" | "ready-vec" | "blocked";
 
 export type SemanticSearchReason =
   | "missing-package"

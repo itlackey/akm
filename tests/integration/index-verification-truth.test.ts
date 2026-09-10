@@ -123,7 +123,11 @@ describe("index verification truthfulness", () => {
     const result = await akmIndex({ stashDir: storage.stashDir, full: true });
 
     expect(result.verification.embeddingCount).toBeGreaterThan(0);
-    expect(result.verification.semanticStatus).toBe(result.verification.vecAvailable ? "ready-vec" : "ready-js");
+    // "ready-js" is retired (index redesign, B5): units_vec is a vec0-only
+    // store, so a non-zero embeddingCount already proves vecAvailable was
+    // true (nothing else can write it) and the only honest status is
+    // "ready-vec".
+    expect(result.verification.semanticStatus).toBe("ready-vec");
   });
 
   test("a failing embedding provider lands a real 'blocked' verification, not a crash or a lie", async () => {
