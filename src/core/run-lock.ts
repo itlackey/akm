@@ -4,8 +4,11 @@
 
 /**
  * PID-liveness-only run lock — the shared mechanics behind `akm improve`'s
- * whole-run lock (`commands/improve/locks.ts`) and the index rebuild lock
- * (`indexer/index-rebuild-lock.ts`, #956).
+ * whole-run lock (`commands/improve/locks.ts`). Originally also backed the
+ * index rebuild lock (`indexer/index-rebuild-lock.ts`, #956); index-redesign
+ * deleted that consumer (every index write is now a short, idempotent,
+ * content-addressed transaction, so there is no rebuild to serialize), and
+ * `improve`'s lock is this module's only caller today.
  *
  * No `staleAfterMs`: only a verifiably dead holder is ever reclaimed. This is
  * the #872 lesson encoded at the mechanics layer so every future caller gets

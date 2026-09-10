@@ -179,9 +179,12 @@ export type TransientErrorCode =
   // Field follow-up to #956 (G1, dev-team field review 2026-09-10): two real
   // concurrent akm processes (e.g. two plain `akm index` runs started back
   // to back by a scheduler) can both reach `acquireMaintenanceBarrier()` —
-  // the short critical section that registers the opt-in rebuild lock — in
-  // the same instant. The barrier is meant to be held for milliseconds, so
-  // losing that race is ordinary contention, never a broken config file:
+  // the short critical section that registers a long-lived AKM lock, lease,
+  // or state activity (canonical state.db's own open registers one; so did
+  // the opt-in index rebuild lock, before index-redesign deleted that
+  // consumer) — in the same instant. The barrier is meant to be held for
+  // milliseconds, so losing that race is ordinary contention, never a
+  // broken config file:
   // previously this threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing
   // as exit 78 and telling a supervisor to stop retrying a normal lock
   // collision. Thrown from `acquireMaintenanceBarrier`
