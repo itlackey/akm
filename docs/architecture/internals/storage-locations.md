@@ -145,14 +145,19 @@ LLM cache rows within a current generation. See
 | `value` | TEXT NOT NULL | String-encoded value |
 
 Known keys: `version` (stored `DB_VERSION`), `embeddingDim` (e.g. `"384"`),
-`hasEmbeddings` (`"0"` or `"1"`), `embeddingIdentity` (the one embedding
-identity `units`/`units_vec` currently carry — `remote:<model>|<dim>` or
+`hasEmbeddings` (`"0"` or `"1"` — a proxy for "semantic search is fully
+ready", set from `units`/`entry_units` coverage each time the embedding pass
+runs rather than derived on every read; see `runEmbeddingPass` in
+`indexer.ts`), `embeddingIdentity` (the one embedding identity
+`units`/`units_vec` currently carry — `remote:<model>|<dim>` or
 `local:<model>|<dim>`, learned from the first provider response and absent
 until then), `lastReconcileAt` / `builtAt` (ISO-8601, set when `reconcileRoots`
 / `akmIndex()` last finished), `stashDir` / `stashDirs` / `sourceOwners`
 (installation bookkeeping), `last_utility_computed_at`, and `vecResetPending`
-(set when a generation rebuild could not drop the legacy `entries_vec` table
-because the extension was unavailable at the time; cleared once it can be).
+(set on an open where the legacy `entries_vec` table (below) still existed
+but sqlite-vec was not loaded, so the unconditional drop `ensureSchema()`
+otherwise runs on every open could not run; cleared the first later open
+where the extension is available).
 
 #### Table: `entries`
 
@@ -175,9 +180,12 @@ Indexes: the UNIQUE `item_ref` constraint plus `idx_entries_bundle` on
 `bundle_id`, `idx_entries_type` on `type`, `idx_entries_file_path` on
 `file_path`, and `idx_entries_derived_from` on `derived_from`. `search_text`
 no longer feeds `entries_fts` (index redesign, v24 — removed, see below);
-lexical and semantic search both run over `units`/`unit_texts` instead. The
-column stays as the change-detection input the legacy per-entry vector write
-path (`embeddings`/`entries_vec`, also below) still compares against.
+lexical and semantic search both run over `units`/`unit_texts` instead. It
+is still written on every entries upsert but has no current reader — the
+legacy per-entry vector write path that used to compare it for stale-vector
+invalidation (`embeddings`/`entries_vec`) is gone (index redesign, B5h):
+content-addressed units simply derive a new hash when the text changes, so
+no explicit invalidation step is needed.
 
 #### Table: `files`
 
@@ -274,9 +282,10 @@ UNIQUE `(unit_hash, identity)`.
 | `identity` | TEXT (auxiliary, `+`) | |
 
 Requires the `sqlite-vec` extension — there is no BLOB-table fallback for a
-unit vector the way the legacy `embeddings`/`entries_vec` pair (below)
-provided. Rows exist if and only if a vector was actually written for that
-hash: `drainEmbeddingQueue` (`src/indexer/drain.ts`) is the only writer, and
+unit vector (the pre-redesign `embeddings`/`entries_vec` pair that used to
+provide one is gone, index redesign B5h). Rows exist if and only if a vector
+was actually written for that hash: `drainEmbeddingQueue`
+(`src/indexer/drain.ts`) is the only writer, and
 only ever keeps ONE identity live at a time — adopting a new one drops every
 row under a different identity (`dropOtherIdentities`). Never dropped by a
 generation rebuild, `akm index --full`, or `--reembed`'s own purge of the
@@ -297,25 +306,24 @@ The cheap, derived entry → ordinal → unit mapping a reconcile rebuilds.
 PRIMARY KEY `(entry_id, ordinal)`; index `entry_units_hash` on `unit_hash`.
 Replaced wholesale for an entry whenever it is re-derived.
 
-#### Legacy tables: `embeddings` and `entries_vec` (conditional)
+#### Removed: `embeddings` and `entries_vec` (index redesign, B5h)
 
 The pre-redesign per-entry BLOB vector table (`embeddings`: `id INTEGER
 PRIMARY KEY` matching `entries.id`, `embedding BLOB NOT NULL`, float32
 little-endian) and its `sqlite-vec` ANN mirror (`entries_vec`, conditional on
-the extension, `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`) are still
-declared by `ensureSchema()` and dimension-tracked, but nothing in the
-reconcile/drain path writes to either any more — `units`/`units_vec` above is
-the one vector store search reads. `akm improve consolidate`'s incremental
-neighbour lookup (`getNeighborsByEntryId`,
-`src/storage/repositories/index-vec-repository.ts`) still reads `embeddings`
-for its candidate expansion; since nothing populates it for entries
-reconciled under the new pipeline, that lookup currently finds no rows.
-Migrating that one remaining consumer onto `units_vec`, and dropping these two
-tables outright, is tracked as follow-up work outside the redesign's own
-scope. The transient `embedding_salvage` table these two used to feed before
-a discard is gone — `ensureSchema()` drops it unconditionally on every open —
-since content-addressed units make a copy-aside step unnecessary: a generation
-bump keeps whatever vectors are still keyed by an unchanged unit hash.
+the extension, `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`) are gone —
+`units`/`units_vec` above is the one vector store, and every reader
+(`akm improve consolidate`'s incremental neighbour lookup included, now
+`getNeighborsByEntryId` in `units-repository.ts`, keyed on unit content
+instead of an entry id) and writer of the two legacy tables was moved onto it
+or deleted first. `ensureSchema()` drops both tables unconditionally on every
+open of an index built before this change — `embeddings` outright,
+`entries_vec` (a vec0 virtual table) as soon as an open has the `sqlite-vec`
+extension loaded, tracked by the `vecResetPending` meta key above in the rare
+case it does not yet. The transient `embedding_salvage` table these two used
+to feed before a discard was retired earlier in the same redesign — content-
+addressed units make a copy-aside step unnecessary: a generation bump keeps
+whatever vectors are still keyed by an unchanged unit hash.
 
 #### Workflow source indexing
 

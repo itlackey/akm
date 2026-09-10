@@ -58,9 +58,9 @@ function writeSizedMemoryFiles(rootDir: string, fileCount: number, marker: strin
  * `units` rows with a stored vector — the content-addressed (index-redesign
  * A2) analogue of the pre-redesign, entry-id-keyed `embeddings` table
  * `getEmbeddingCount` used to read. `materialize-embeddings.ts`, the only
- * writer of that legacy table, had no callers left and is deleted
- * (index-redesign B5b) — the `embeddings` table itself is out of scope here
- * (B5c), but reading it would just see zero for the whole run either way.
+ * writer of that legacy table, had no callers left and was deleted
+ * (index-redesign B5b); the `embeddings` table itself (and `getEmbeddingCount`)
+ * followed once every reader had moved off it (B5h).
  */
 function getUnitVectorCount(db: Database): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM units").get() as { cnt: number };

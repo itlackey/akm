@@ -116,10 +116,11 @@ reconcile rebuilds for the entry; ordinal 0 is always the card unit, fragment
 units follow in document order.
 
 The pre-redesign per-entry vector tables (`embeddings`, `entries_vec`) are
-still declared in the schema and dimension-tracked, but nothing on the
-reconcile/drain path writes to either any more; see [Database
-Tables](#database-tables) below for what still reads them and why they have
-not been dropped yet.
+gone (index redesign, B5h) — every reader and writer moved onto
+`units`/`units_vec` first, and `ensureSchema()` drops both tables
+unconditionally on an open of an index built before this change (no
+generation bump; see [Storage
+Locations](storage-locations.md#removed-embeddings-and-entries_vec-index-redesign-b5h)).
 
 Full table shapes are in [Storage
 Locations](storage-locations.md#dataindexdb--main-search-index).
@@ -365,7 +366,6 @@ purpose summary of what `ensureSchema()` creates:
 | `units_fts` (virtual, FTS5) | Lexical index over `unit_texts` |
 | `units` / `units_vec` (virtual, vec0) | The one vector store, keyed by `(unit_hash, identity)` |
 | `entry_units` | Derived entry → ordinal → unit_hash mapping |
-| `embeddings` / `entries_vec` (virtual, conditional) | Legacy per-entry vector tables — still schema-declared, unpopulated by anything on the reconcile/drain path; see [Storage Locations](storage-locations.md#legacy-tables-embeddings-and-entries_vec-conditional) |
 | `utility_scores` / `utility_scores_scoped` | Recomputed utility boost state (global, and per project-anchor) |
 | `index_meta` | Schema/version/runtime metadata, including `embeddingIdentity` and reconcile/build timestamps |
 | `llm_enrichment_cache` | Cached LLM enrichment/graph-extraction/memory-inference results |
@@ -451,5 +451,5 @@ Utility scores are rebuilt from `usage_events`.
   no rebuild
 - `sqlite-vec` is required for the unit vector store — there is no JS-cosine
   fallback for `units_vec` the way the legacy per-entry `embeddings` table
-  once provided (`"ready-js"` is a retired runtime status; nothing produces
-  it any more)
+  once provided; that table is gone (index redesign, B5h) along with it
+  (`"ready-js"` is a retired runtime status; nothing produces it any more)

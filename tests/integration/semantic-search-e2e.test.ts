@@ -21,7 +21,7 @@ import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories
 import { getEmbeddableEntryCount, getEntryCount } from "../../src/storage/repositories/index-entries-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
 import { EMBEDDING_DIM } from "../../src/storage/repositories/index-schema";
-import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
+import { unitCoverage } from "../../src/storage/repositories/units-repository";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -349,21 +349,25 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       // Verify hasEmbeddings flag is set
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
 
-      // Verify embedding count matches the embeddable entry count. The `vault`
+      // Verify unit coverage matches the embeddable entry count. The `vault`
       // asset type was removed in 0.9.0 and the indexer SKIPS `vaults/` entirely
       // (the fixture's vaults/prod.env contributes nothing). No entry type is
       // excluded from embeddings any more, so getEmbeddableEntryCount (#502) is
       // now an alias for getEntryCount: all 5 indexed assets are embeddable.
       const entryCount = getEntryCount(db);
       const embeddableCount = getEmbeddableEntryCount(db);
-      const embeddingCount = getEmbeddingCount(db);
       expect(entryCount).toBe(5); // 5 assets; vaults/ is not indexed
       expect(embeddableCount).toBe(entryCount); // no entry type is excluded
-      expect(embeddingCount).toBe(embeddableCount); // every embeddable entry embedded
 
-      // Verify each embedding has the correct dimension (384 for bge-small-en-v1.5)
-      const rows = db.prepare("SELECT id, embedding FROM embeddings").all() as Array<{ id: number; embedding: Buffer }>;
-      expect(rows.length).toBe(embeddableCount);
+      const identity = getMeta(db, "embeddingIdentity");
+      expect(identity).toBeDefined();
+      const coverage = unitCoverage(db, identity as string);
+      expect(coverage.entries).toBe(embeddableCount);
+      expect(coverage.entriesFullyCovered).toBe(embeddableCount); // every embeddable entry fully embedded
+
+      // Verify each unit vector has the correct dimension (384 for bge-small-en-v1.5)
+      const rows = db.prepare("SELECT embedding FROM units_vec").all() as Array<{ embedding: Buffer }>;
+      expect(rows.length).toBe(coverage.unitsPresent);
 
       for (const row of rows) {
         const f32 = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
@@ -603,7 +607,7 @@ describe("Semantic search graceful degradation", () => {
     try {
       expect(getMeta(db, "hasEmbeddings")).toBe("0");
       expect(getEntryCount(db)).toBeGreaterThan(0);
-      expect(getEmbeddingCount(db)).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM units").get() as { n: number }).n).toBe(0);
     } finally {
       closeDatabase(db);
     }

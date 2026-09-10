@@ -805,7 +805,7 @@ export function searchUnitsLexicalPair(
   };
 }
 
-/** Count of `units` rows for the active identity — the units-path analogue of `getEmbeddingCount`. */
+/** Count of `units` rows for the active identity. */
 function getUnitVectorCount(db: Database, identity: string): number {
   try {
     const row = db.prepare("SELECT COUNT(*) AS cnt FROM units WHERE identity = ?").get(identity) as

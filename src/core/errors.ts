@@ -64,9 +64,9 @@ export type ConfigErrorCode =
   // the call site.
   | "SECRET_REFERENCE_UNRESOLVED"
   // units-repository's searchUnits: sqlite-vec is not loaded, so the units_vec
-  // KNN query cannot run. There is no JS-cosine fallback for units (unlike
-  // entries_vec) — the caller is expected to catch this and fall back to
-  // lexical search instead (docs/plans/index-fragment-vectors.md).
+  // KNN query cannot run. There is no JS-cosine fallback for units — the
+  // caller is expected to catch this and fall back to lexical search instead
+  // (docs/plans/index-fragment-vectors.md).
   | "EMBEDDING_VEC_UNAVAILABLE";
 
 /** Stable, machine-readable codes for UsageError. */
