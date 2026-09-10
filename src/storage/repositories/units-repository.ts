@@ -423,18 +423,12 @@ export function searchUnits(
   const hasTypeFilter = Boolean(typeOpts?.typeFilter?.length || typeOpts?.excludeTypes?.length);
   const typed = hasTypeFilter
     ? (() => {
-        const eligible = eligibleUnitHashesByType(
-          db,
-          [...new Set(identityFiltered.map((row) => row.hash))],
-          typeOpts!,
-        );
+        const eligible = eligibleUnitHashesByType(db, [...new Set(identityFiltered.map((row) => row.hash))], typeOpts!);
         return identityFiltered.filter((row) => eligible.has(row.hash));
       })()
     : identityFiltered;
 
-  return typed
-    .slice(0, k)
-    .map(({ unitId, hash, distance }) => ({ unitId, hash, distance }));
+  return typed.slice(0, k).map(({ unitId, hash, distance }) => ({ unitId, hash, distance }));
 }
 
 /**

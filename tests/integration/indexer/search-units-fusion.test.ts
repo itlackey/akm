@@ -837,9 +837,9 @@ describe("belief-state score ceiling invariant restored by magnitude fusion", ()
     const db = openSeededDb("belief-ceiling-invariant");
     try {
       const deprecatedId = insertEntry(db, "deprecated-entry");
-      db.prepare("UPDATE entries SET document_json = json_set(document_json, '$.beliefState', 'deprecated') WHERE id = ?").run(
-        deprecatedId,
-      );
+      db.prepare(
+        "UPDATE entries SET document_json = json_set(document_json, '$.beliefState', 'deprecated') WHERE id = ?",
+      ).run(deprecatedId);
       seedUnit(db, {
         entryId: deprecatedId,
         ordinal: 0,

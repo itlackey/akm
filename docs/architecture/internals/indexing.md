@@ -285,12 +285,20 @@ fail on an unknown flag.
 
 ## Search
 
-Search runs one query over `units`: a lexical rank from `units_fts` (BM25)
-and a semantic rank from `units_vec` for the active identity, fused by
-reciprocal rank (`RRF_K = 60`, Cormack, Clarke & Buettcher 2009) so no weight
-or threshold is hand-tuned, grouped to entries by each list's best-ranked
-unit, with the matching unit carried on the hit. Type filters apply to
-entries as before. See `src/indexer/search/db-search.ts` and `ranking.ts`
+Search runs one query over `units`: lexical evidence from `units_fts`, scored
+by BM25 magnitude through `stableFtsScore` (`src/core/lexical-score.ts`), and
+semantic evidence from `units_vec` for the active identity as cosine
+similarity, combined on the 0.7/0.3 split the pre-redesign path used, grouped
+to entries by best unit, with the matching unit carried on the hit.
+Reciprocal-rank fusion was implemented first and measured worse on the
+`curate-golden` fixture than the path it replaced — a rank carries no
+information about match strength, so a unit matching one common term scores
+nearly as high as one matching every rare term, and a semantic-only hit ties
+a lexical one. Type filters are applied in SQL before the candidate cap. The
+exact/prefix/relaxed ladder is a priority order that tops up to the
+candidate budget, not an early exit at the first non-empty tier: a unit is a
+card or one Markdown section, so a conjunctive query is rarely satisfied by
+any single unit and one incidental hit used to suppress the whole pool. See `src/indexer/search/db-search.ts` and `ranking.ts`
 for the exact grouping/fusion/contributor mechanics — this module is
 maintained separately from the index-redesign work described above.
 

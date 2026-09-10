@@ -769,8 +769,9 @@ and without warning.
 still loads, unvalidated and without warning. It used to tune a
 semantic-only floor over the old entries_fts + entries_vec search path,
 calibrated for that path's 0-1 cosine/BM25 scores. The single search path is
-`units_fts` + `units_vec` fused by reciprocal rank, normalized to the same
-scale the ranking contributors expect — no separate floor is applied.
+`units_fts` + `units_vec`, scoring lexical evidence by BM25 magnitude and
+semantic evidence by cosine similarity on the same 0.7/0.3 split as before,
+on the scale the ranking contributors expect — no separate floor is applied.
 
 `embedding.maxInputTokens`, `embedding.maxTokens`, `embedding.batchSize`,
 and `embedding.contextLength` are retired (index redesign): `akm index`

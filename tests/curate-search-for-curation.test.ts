@@ -59,7 +59,7 @@ describe("searchForCuration", () => {
       // score order, only `curateSearchResults`'s downstream selector
       // re-sorts by score — so assert relevance via score, which is what
       // actually reaches `akm curate`'s output order.
-      const byRef = new Map(result.hits.map((hit) => [("ref" in hit ? hit.ref : `registry:${hit.id}`), hit]));
+      const byRef = new Map(result.hits.map((hit) => ["ref" in hit ? hit.ref : `registry:${hit.id}`, hit]));
       const dockerScore = byRef.get("scripts/docker-clean.sh")?.score ?? 0;
       const auditScore = byRef.get("commands/cleanup-audit")?.score ?? 0;
       expect(dockerScore).toBeGreaterThan(auditScore);
