@@ -48,8 +48,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   accept each reconcile and drain exactly the paths/units they touched, in
   the same call as the write, with no lock probe and no background reindex
   spawn.
-- **Search fuses one lexical and one semantic rank by reciprocal rank**
-  over `units`, replacing the old per-column BM25 weights and semantic-only
+- **Search fuses three ranked lists by reciprocal rank** — card-unit
+  lexical, fragment-unit lexical, and semantic — over `units`, replacing the old per-column BM25 weights and semantic-only
   score floor — there is no longer a tuned weight or threshold to
   calibrate.
 - **`akm index --full`** no longer drops anything first: it forces every

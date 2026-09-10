@@ -408,9 +408,9 @@ Request PACKING — how many documents land in one HTTP request, and the
 token budget that bounds it — is no longer config at all. `akm index`
 probes the embedding endpoint itself (llama.cpp's `GET /props`, Ollama's
 `POST /api/show`) for its real context window and in-flight slot count
-before packing any request, and uses the provider's own tokenizer
-(llama.cpp's `/tokenize`) for exact counts where it offers one; an endpoint
-that answers neither probe (an OpenAI-compatible server, a gateway) gets a
+before packing any request, calibrating its chars-per-token estimate
+against the provider's own tokenizer (llama.cpp's `/tokenize`) where it
+offers one; an endpoint that answers neither probe (an OpenAI-compatible server, a gateway) gets a
 conservative built-in default. This replaced four retired keys —
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength` — see
 [Retired Configuration](#retired-configuration).

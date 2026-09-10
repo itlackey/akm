@@ -191,8 +191,8 @@ and written all at once — a killed run loses at most one in-flight batch, and
 the next call recomputes the same "still missing" query). Requests are
 packed against the provider's own probed window and slot count
 (`probeProviderLimits`, `src/llm/embedders/provider-limits.ts`) rather than a
-generic config default — window, slots, exact token counts where the
-provider offers a tokenizer endpoint. See [Configuration →
+generic config default — window, slots, and a chars-per-token ratio
+calibrated on the provider's tokenizer endpoint where it offers one. See [Configuration →
 Semantic search](../../reference/configuration.md#semantic-search) for the
 full packing, timeout, retry, split-and-retry, and circuit-breaker detail,
 which is unchanged by this redesign: only what feeds it (units instead of
