@@ -14,8 +14,7 @@
  */
 
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { toUnitSource } from "../../src/indexer/units/unit";
-import { deriveUnits } from "../../src/indexer/units/unit";
+import { deriveUnits, toUnitSource } from "../../src/indexer/units/unit";
 import type { Database } from "../../src/storage/database";
 import { insertNewUnitTexts } from "../../src/storage/repositories/files-repository";
 import { replaceEntryUnits } from "../../src/storage/repositories/units-repository";
