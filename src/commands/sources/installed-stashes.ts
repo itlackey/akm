@@ -29,7 +29,7 @@ import { beginImmediateTransaction, getStateDbPath, openStateDatabase } from "..
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { akmIndex, runEmbeddingPass } from "../../indexer/indexer";
+import { akmIndex, reclassifyIndexDbContention, runEmbeddingPass } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import {
   compareAndSwapLockfileSnapshot,
@@ -713,7 +713,15 @@ async function runPostCommitEmbeddingPass(
     const { verification } = await runEmbeddingPass({ db, config, onProgress: () => {} });
     return { ...index, verification };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    // Run the failure through the same index.db contention classifier the
+    // drain catch uses (indexer.ts's reclassifyIndexDbContention) before
+    // building the message: this catch's first statement, openIndexDatabase
+    // (init runs ensureSchema and writes), can throw the raw SQLite driver
+    // error under contention, and this was the last surviving non-fatal
+    // catch that printed that raw text verbatim to the operator instead of
+    // reporting it as index.db contention.
+    const reportedError = reclassifyIndexDbContention(error);
+    const message = reportedError instanceof Error ? reportedError.message : String(reportedError);
     warn(`[akm bundle update] post-commit embedding pass failed: ${message}`);
     return {
       ...index,

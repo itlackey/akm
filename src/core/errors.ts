@@ -324,7 +324,8 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
     "Another akm process is writing index.db right now. Wait a few seconds and retry — index runs take no rebuild " +
     "lock, so this clears quickly; a scheduled run left alone will simply run again next time.",
   MAINTENANCE_BARRIER_BUSY:
-    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled improve/workflow runs.",
+    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on " +
+    "scheduled improve runs to skip gracefully instead — workflow run does not treat this code as skippable.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
 };
