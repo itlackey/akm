@@ -10,6 +10,7 @@ import {
   loadModelMapLayers,
   mergedModelMapProfiles,
   mergeModelMapLayers,
+  WILDCARD_ENGINE_KEY,
 } from "../integrations/agent/model-map";
 
 interface ModelsListRow {
@@ -43,6 +44,10 @@ function modelsListRows(): ModelsListRow[] {
   const rows: ModelsListRow[] = [];
   for (const [alias, columns] of Object.entries(resolved.aliases)) {
     for (const [column, profile] of Object.entries(columns)) {
+      // The wildcard default (#946) is an alias-wide fallback, not a real
+      // platform column an operator would dispatch to; report it folded into
+      // the real per-platform rows above instead of as its own row.
+      if (column === WILDCARD_ENGINE_KEY) continue;
       const raw = rawProfiles[alias]?.[column];
       const via: "literal" | "engine" = raw?.engine !== undefined ? "engine" : "literal";
       const defaultProfile = defaultsOnly.aliases[alias]?.[column];

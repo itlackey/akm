@@ -11,14 +11,12 @@ import type { BundleComponent } from "../core/adapter/types";
 import { isHttpUrl, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
-import { AkmError, ConfigError, TransientError } from "../core/errors";
-import { probeLock } from "../core/file-lock";
+import { ConfigError } from "../core/errors";
 import { defaultConcurrencyForEndpoint } from "../core/loopback";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
-import { formatLockHolderPid } from "../core/run-lock";
-import { isSqliteContentionError, withStateDb } from "../core/state-db";
+import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
 import {
@@ -103,7 +101,7 @@ import {
 } from "../storage/repositories/index-vec-repository";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { deleteStoredGraph } from "./db/graph-db";
-import { indexRebuildLockPath } from "./index-rebuild-lock";
+import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import {
   type AdapterConceptOwner,
@@ -695,46 +693,13 @@ export function _setAkmIndexForTests(fake?: typeof akmIndexReal): void {
   akmIndexOverride = fake;
 }
 
-/**
- * Read-only description of the rebuild lock's current holder, appended to a
- * reclassified index.db contention message when known (field follow-up to
- * #956). `probeLock` only inspects the sentinel — it never acquires or
- * mutates it — so this is safe to call from inside an error path.
- */
-function describeIndexRebuildLockHolder(): string {
-  const probe = probeLock(indexRebuildLockPath());
-  if (probe.state !== "held") return "";
-  return ` The rebuild lock is currently held by pid ${formatLockHolderPid({
-    pid: probe.holderPid,
-    launcherPid: probe.launcherPid ?? null,
-  })}.`;
-}
-
-/**
- * Reclassify a contention-shaped error escaping the walk, index, or
- * embedding phase into a retryable-shortly `TransientError` (field
- * follow-up to #956, dev-team field review 2026-09-10): a concurrent writer
- * (another `akm index`, a source-update embedding pass, the per-command
- * background reindex) can make index.db busy, and the raw SQLite driver
- * error ("database is locked") used to escape as exit 70
- * (internal/unclassified) instead of the "retry shortly" contract exit 75
- * gives a scheduler to branch on — mirroring `STATE_DB_CONTENDED`'s
- * precedent for state.db (`core/state-db.ts`). Reuses the ONE shared
- * classifier, `isSqliteContentionError`, rather than a second one. An error
- * that is already a classified akm error (e.g. a `STATE_DB_CONTENDED`
- * TransientError from an inner state.db write) is never re-wrapped — only a
- * raw, unclassified error matching the shared contention shape is
- * reclassified. Every other error is rethrown unchanged.
- */
-export function reclassifyIndexDbContention(error: unknown): unknown {
-  if (error instanceof AkmError || !isSqliteContentionError(error)) return error;
-  const contended = new TransientError(
-    `akm's index database is busy (another akm process is writing it); retry shortly.${describeIndexRebuildLockHolder()}`,
-    "INDEX_DB_CONTENDED",
-  );
-  contended.cause = error;
-  return contended;
-}
+// Moved to its own module (field follow-up to #956) so
+// `generateEmbeddingsForDb` (materialize-embeddings.ts) can reuse the same
+// classifier without an indexer.ts <-> materialize-embeddings.ts import
+// cycle. Re-exported here for back-compat with existing call sites/tests
+// that import it from `./indexer`. See index-db-contention.ts for the full
+// rationale.
+export { reclassifyIndexDbContention };
 
 export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
   try {
