@@ -66,7 +66,7 @@ import {
 } from "./fts-query";
 import { applyRankingRules, fuseByEntry, lexicalNameMatchTier, type UnitLexicalHit } from "./ranking";
 import { typeBoostFor } from "./ranking-contributors";
-import type { MatchedUnit, RankedEntryInput } from "./ranking-types";
+import type { MatchedUnit, RankedEntryInput, UnitKind } from "./ranking-types";
 import { attachSearchHitAttribution, copySearchHitAttribution, getSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -668,16 +668,35 @@ function runUnitsFtsQuery(
   ftsQuery: string,
   lexicalMatch: LexicalQueryExecution,
   k: number,
+  kind?: UnitKind,
 ): UnitLexicalHit[] {
+  // `kind` filters via a subquery against `unit_texts` rather than joining
+  // (and aliasing) `units_fts` directly — FTS5's `bm25()` auxiliary function
+  // must name the exact identifier `units_fts` is referenced by in the FROM
+  // clause, so aliasing it would mean threading that alias through `bm25()`
+  // too. The subquery keeps `units_fts` unaliased and lets the MATCH still
+  // drive the query through FTS5's own index (`unit_texts_kind` then narrows
+  // it, see `files-repository.ts`).
   const rows = db
-    .prepare(`
+    .prepare(
+      kind
+        ? `
+      SELECT unit_hash AS unitHash, bm25(units_fts) AS score
+      FROM units_fts
+      WHERE units_fts MATCH ?
+        AND unit_hash IN (SELECT unit_hash FROM unit_texts WHERE kind = ?)
+      ORDER BY score ASC
+      LIMIT ?
+    `
+        : `
       SELECT unit_hash AS unitHash, bm25(units_fts) AS score
       FROM units_fts
       WHERE units_fts MATCH ?
       ORDER BY score ASC
       LIMIT ?
-    `)
-    .all(ftsQuery, k) as Array<{ unitHash: string; score: number }>;
+    `,
+    )
+    .all(...(kind ? [ftsQuery, kind, k] : [ftsQuery, k])) as Array<{ unitHash: string; score: number }>;
   // Competition ranking (ties share a rank) rather than strict sequential
   // position: SQLite gives no deterministic secondary order for an exact
   // bm25 tie, and RRF fusion (ranking.ts's `fuseByEntry`) sums by RANK, not
@@ -695,28 +714,95 @@ function runUnitsFtsQuery(
 }
 
 /**
- * `units_fts` bm25 lexical search over unit text, ranked best-first (1-based).
- * Mirrors `searchFts`'s own exact → prefix → relaxed fallback
- * (`index-fts-repository.ts`): a sentence-shaped query whose terms never all
- * land in one unit (the conjunctive `exact`/`exactPrefix` queries) still
- * needs the one-measured-relaxation OR query to surface anything at all —
- * without it, lexical search over units silently returns nothing exactly
- * where the legacy `entries_fts` path would have found the relaxed pool.
+ * `units_fts` bm25 lexical search over unit text, ranked best-first (1-based),
+ * optionally scoped to one unit `kind`. Mirrors `searchFts`'s own exact →
+ * prefix → relaxed fallback (`index-fts-repository.ts`): a sentence-shaped
+ * query whose terms never all land in one unit (the conjunctive
+ * `exact`/`exactPrefix` queries) still needs the one-measured-relaxation OR
+ * query to surface anything at all — without it, lexical search over units
+ * silently returns nothing exactly where the legacy `entries_fts` path would
+ * have found the relaxed pool. The fallback ladder runs independently within
+ * the scoped kind, so a query with no card-unit match still falls back to a
+ * relaxed card-unit search before giving up on that list.
  */
-export function searchUnitsLexical(db: Database, query: string, k: number): UnitLexicalHit[] {
+function searchUnitsLexicalScoped(db: Database, query: string, k: number, kind?: UnitKind): UnitLexicalHit[] {
   if (k <= 0) return [];
   const plan = buildLexicalQueryPlan(query);
   if (!plan.exact) return [];
 
-  const exact = runUnitsFtsQuery(db, plan.exact, "exact", k);
+  const exact = runUnitsFtsQuery(db, plan.exact, "exact", k, kind);
   if (exact.length > 0) return exact;
 
   if (plan.exactPrefix) {
-    const prefix = runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k);
+    const prefix = runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, kind);
     if (prefix.length > 0) return prefix;
   }
 
-  return plan.relaxed ? runUnitsFtsQuery(db, plan.relaxed, "relaxed", k) : [];
+  return plan.relaxed ? runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, kind) : [];
+}
+
+/**
+ * `units_fts` bm25 lexical search over EVERY unit, kind-agnostic — the
+ * original single-pool query, kept for callers that want one flat
+ * entry-level lexical ranking rather than the card/fragment split
+ * `collectSearchSignals` uses (below): `searchEntriesLexical`'s
+ * deterministic-only canary scoring for collapse-detector, which has no use
+ * for field emphasis.
+ */
+export function searchUnitsLexical(db: Database, query: string, k: number): UnitLexicalHit[] {
+  return searchUnitsLexicalScoped(db, query, k);
+}
+
+/**
+ * `units_fts` bm25 lexical search over BOTH kind-scoped pools (`"card"`,
+ * `"fragment"`) at once, sharing ONE exact → prefix → relaxed fallback tier
+ * decision across them (index-redesign-contract.md B5f item 2). Structural
+ * field emphasis: `"card"` units hold name/description/tags/hints and are
+ * few (one per entry), so a name match ranks near the top of a SMALL pool
+ * instead of racing every fragment's body text in one shared BM25 ranking —
+ * the same effect the old per-column BM25 weights (name 10x, description
+ * 5x, ...) bought through tuning, gotten here from the units' own structure
+ * instead.
+ *
+ * The tier is picked ONCE for the query, not independently per kind: if
+ * EITHER pool has an "exact" AND-all-tokens hit, BOTH pools stop there — a
+ * pool with no hit at that tier stays empty rather than escalating on its
+ * own. Two independent per-kind ladders regressed real cases: a query whose
+ * CARD names an entry exactly (e.g. "authored-provenance-marker") has no
+ * fragment carrying every token, so an independent fragment-side ladder fell
+ * all the way to a relaxed OR match on one shared word ("marker") in an
+ * unrelated entry's body — noise the old single combined pool never
+ * produced, because its one ladder stopped at "exact" for the whole query
+ * the instant the card hit existed. Sharing the tier decision restores that.
+ */
+export function searchUnitsLexicalPair(
+  db: Database,
+  query: string,
+  k: number,
+): { card: UnitLexicalHit[]; fragment: UnitLexicalHit[] } {
+  const plan = buildLexicalQueryPlan(query);
+  const empty = { card: [] as UnitLexicalHit[], fragment: [] as UnitLexicalHit[] };
+  if (!plan.exact) return empty;
+
+  const exact = {
+    card: runUnitsFtsQuery(db, plan.exact, "exact", k, "card"),
+    fragment: runUnitsFtsQuery(db, plan.exact, "exact", k, "fragment"),
+  };
+  if (exact.card.length > 0 || exact.fragment.length > 0) return exact;
+
+  if (plan.exactPrefix) {
+    const prefix = {
+      card: runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, "card"),
+      fragment: runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k, "fragment"),
+    };
+    if (prefix.card.length > 0 || prefix.fragment.length > 0) return prefix;
+  }
+
+  if (!plan.relaxed) return empty;
+  return {
+    card: runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, "card"),
+    fragment: runUnitsFtsQuery(db, plan.relaxed, "relaxed", k, "fragment"),
+  };
 }
 
 /** Count of `units` rows for the active identity — the units-path analogue of `getEmbeddingCount`. */
@@ -769,14 +855,21 @@ async function collectSearchSignals(
   const startedAt = Date.now();
   const unitK = Math.max(1, Math.round(candidateLimit * meanUnitsPerEntry(db)));
   const semanticPromise = tryUnitVecScores(db, query, unitK, config);
-  const lexicalHits = searchUnitsLexical(db, query, unitK);
+  // index-redesign-contract.md B5f item 2 — two kind-scoped lexical lists,
+  // not one mixed pool: a card (name/description/tags/hints) match ranks
+  // within its own small pool instead of competing against every fragment's
+  // body text on raw BM25, so field emphasis falls out of the units'
+  // structure rather than tuned per-column weights. `searchUnitsLexicalPair`
+  // shares one fallback tier across both pools — see its own doc for why an
+  // independent ladder per kind is wrong.
+  const { card: cardLexicalHits, fragment: fragmentLexicalHits } = searchUnitsLexicalPair(db, query, unitK);
   const semanticResult = await semanticPromise;
   const mode: SearchExecutionMode = semanticResult.warning
     ? "fts-fallback"
     : semanticResult.hits !== null
       ? "semantic"
       : "keyword";
-  const unitScored = fuseByEntry(db, lexicalHits, semanticResult.hits ?? [], {
+  const unitScored = fuseByEntry(db, cardLexicalHits, fragmentLexicalHits, semanticResult.hits ?? [], {
     typeFilter: typeFilter ? [typeFilter] : undefined,
     excludeTypes,
   });
@@ -801,7 +894,11 @@ async function collectSearchSignals(
 export function searchEntriesLexical(db: Database, query: string, k: number): RankedEntryInput[] {
   const unitK = Math.max(1, Math.round(k * meanUnitsPerEntry(db)));
   const lexicalHits = searchUnitsLexical(db, query, unitK);
-  return fuseByEntry(db, lexicalHits, []).sort((a, b) => b.score - a.score);
+  // One flat kind-agnostic pool, not the card/fragment split
+  // `collectSearchSignals` uses — deliberately: this is the kind-agnostic
+  // single-list mode `fuseByEntry` still supports for a caller with no use
+  // for field emphasis (see `searchUnitsLexical`'s own doc).
+  return fuseByEntry(db, lexicalHits, [], []).sort((a, b) => b.score - a.score);
 }
 
 /**

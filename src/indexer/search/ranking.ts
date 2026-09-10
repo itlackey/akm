@@ -86,32 +86,41 @@ export interface UnitLexicalHit {
  * "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning
  * Methods"). It damps how much a #1 rank in one list dominates the fused
  * score relative to lower ranks, so a document ranked highly by only one of
- * the two retrievers still competes with one ranked moderately by both.
- * Nothing else about the fusion is tuned — nor is this constant, per the
- * paper's own finding that results were insensitive to its exact value.
+ * the lists still competes with one ranked moderately by several. Nothing
+ * else about the fusion is tuned — nor is this constant, per the paper's own
+ * finding that results were insensitive to its exact value. `fuseByEntry`
+ * fuses three lists (card lexical, fragment lexical, semantic — B5f item 2);
+ * this same constant governs all three, unchanged by that count (see
+ * `RRF_MAX_SCORE` below for why the list count doesn't enter the formula).
  */
 export const RRF_K = 60;
 
 /**
  * The maximum score a SINGLE list's best-ranked hit can contribute:
- * `1/(RRF_K + 1)`. `ranking-contributors.ts`'s pipeline (graph/project/utility
- * boosts, the belief-state ceiling) is calibrated for a 0–1 fused score; RRF's
- * native range is ~0.008–0.033 at `RRF_K = 60`, which would flatten every
- * contributor's effect and make the belief-state ceiling a no-op. Dividing
- * every fused score by this constant before contributors ever see it rescales
- * a single list's rank-1 hit to 1.0 and a hit both lists rank #1 to 2.0 — the
- * SAME "not a hard clamp" territory contributor boosts already push a fused
- * score into today (`displaySearchScore`'s final monotone projection is what
- * brings the public score back into [0,1), per CLAUDE.md's locked contract).
- * A lexical-only exact-name match is not artificially halved by requiring
- * semantic agreement it never had the chance to earn — semantic search can be
- * off entirely (`ranking-regression.test.ts`'s "Score preservation (not
- * RRF-flattened)" describe block, lexical-only throughout, still expects a
- * clearly-exact top hit's public score above 0.9). Normalising by the two-list
- * sum instead (dividing by `2/(RRF_K+1)`) was tried and reverted: it halves
- * every lexical-only or semantic-only score before contributors ever see it,
- * and no contributor boost bridges that gap back to what an unambiguous
- * single-list match deserves.
+ * `1/(RRF_K + 1)`, independent of how many lists `fuseByEntry` fuses (three,
+ * as of B5f item 2: card lexical, fragment lexical, semantic — was two
+ * before). `ranking-contributors.ts`'s pipeline (graph/project/utility
+ * boosts, the belief-state ceiling) is calibrated for a 0–1 fused score;
+ * RRF's native range is ~0.008–0.033 at `RRF_K = 60`, which would flatten
+ * every contributor's effect and make the belief-state ceiling a no-op.
+ * Dividing every fused score by this constant before contributors ever see
+ * it rescales a single list's rank-1 hit to 1.0 and a hit that ranks #1 in
+ * every list it appears in to (list count).0 — the SAME "not a hard clamp"
+ * territory contributor boosts already push a fused score into today
+ * (`displaySearchScore`'s final monotone projection is what brings the
+ * public score back into [0,1), per CLAUDE.md's locked contract). A
+ * lexical-only exact-name match is not artificially reduced by requiring
+ * agreement from lists it never had the chance to earn — semantic search can
+ * be off entirely, or a match can be fragment-only (`ranking-regression.test.ts`'s
+ * "Score preservation (not RRF-flattened)" describe block, lexical-only
+ * throughout, still expects a clearly-exact top hit's public score above
+ * 0.9). Normalising by the N-list sum instead (dividing by `N/(RRF_K+1)`)
+ * was tried at N=2 and reverted: it reduces every single-list score before
+ * contributors ever see it, and no contributor boost bridges that gap back
+ * to what an unambiguous single-list match deserves — the same reasoning
+ * holds, more strongly, at N=3, so the divisor stays anchored to ONE list's
+ * max regardless of how many lists are in play (pinned by
+ * `search-units-fusion.test.ts`'s three-list fusion cases).
  */
 const RRF_MAX_SCORE = 1 / (RRF_K + 1);
 
@@ -198,65 +207,107 @@ type LexicalEntryRank = { rank: number; value: EntryUnitWinner };
 type SemanticEntryRank = { rank: number; value: { distance: number; fragmentId: string | null; hash: string } };
 
 /**
- * Pick which side's unit is reported as `matchedUnit`/`fragmentId`: whichever
- * ranked the entry better; a tie favors the lexical side (exact-term
- * evidence reads more directly into `whyMatched` than a vector neighbor).
- * At least one of the two is defined for every `entryId` this is called
- * with — it comes from the union of both ranked maps' keys.
+ * Pick which list's unit is reported as `matchedUnit`/`fragmentId`: whichever
+ * ranked the entry best (lowest rank number) across however many of the
+ * (up to three) lists it appears in; a rank tie prefers card lexical evidence
+ * over fragment lexical evidence over a vector neighbor — the closer the
+ * evidence is to exact-term name/description matter, the more directly it
+ * reads into `whyMatched`. At least one of the three is defined for every
+ * `entryId` this is called with — it comes from the union of all three
+ * ranked maps' keys.
  */
 function pickFusionWinner(
-  lexicalHit: LexicalEntryRank | undefined,
+  cardHit: LexicalEntryRank | undefined,
+  fragmentHit: LexicalEntryRank | undefined,
   semanticHit: SemanticEntryRank | undefined,
 ): { unitHash: string; fragmentId: string | null } {
-  if (lexicalHit && (!semanticHit || lexicalHit.rank <= semanticHit.rank)) {
-    return { unitHash: lexicalHit.value.unitHash, fragmentId: lexicalHit.value.fragmentId };
+  const candidates: Array<{ priority: number; rank: number; unitHash: string; fragmentId: string | null }> = [];
+  if (cardHit) {
+    candidates.push({
+      priority: 0,
+      rank: cardHit.rank,
+      unitHash: cardHit.value.unitHash,
+      fragmentId: cardHit.value.fragmentId,
+    });
   }
-  const semantic = semanticHit as SemanticEntryRank;
-  return { unitHash: semantic.value.hash, fragmentId: semantic.value.fragmentId };
+  if (fragmentHit) {
+    candidates.push({
+      priority: 1,
+      rank: fragmentHit.rank,
+      unitHash: fragmentHit.value.unitHash,
+      fragmentId: fragmentHit.value.fragmentId,
+    });
+  }
+  if (semanticHit) {
+    candidates.push({
+      priority: 2,
+      rank: semanticHit.rank,
+      unitHash: semanticHit.value.hash,
+      fragmentId: semanticHit.value.fragmentId,
+    });
+  }
+  candidates.sort((a, b) => a.rank - b.rank || a.priority - b.priority);
+  const winner = candidates[0]!;
+  return { unitHash: winner.unitHash, fragmentId: winner.fragmentId };
 }
 
 /**
- * Fuse the lexical (`units_fts`) and semantic (`units_vec`) unit-level result
- * lists into one ranked entry list (index-redesign-contract.md B3).
+ * Fuse the card-lexical, fragment-lexical (both `units_fts`) and semantic
+ * (`units_vec`) unit-level result lists into one ranked entry list
+ * (index-redesign-contract.md B3, restructured for field emphasis by B5f
+ * item 2). Splitting lexical into two kind-scoped lists — rather than one
+ * pool mixing card and fragment units — is what replaces the old per-column
+ * BM25 weights (name 10x, description 5x, tags 3x, hints 2x, content 1x): a
+ * card (name/description/tags/hints) match now ranks within its own small
+ * pool instead of racing every fragment's body text on raw BM25, so a
+ * name/description match contributes a top rank in its own list structurally,
+ * with no weight tuned.
  *
  * Each list is first grouped to entries via `entry_units`, keeping that
  * list's own best (lowest lexical rank / lowest vector distance) unit per
  * entry — `groupUnitHitsByEntry` from the stage-1 unit store does this for
- * the semantic side; `groupLexicalHitsByEntry` mirrors it for the lexical
- * side. That grouping produces two entry-level rankings (best entry first),
- * which are then combined by reciprocal rank: `score = Σ 1/(RRF_K + rank)`
- * over whichever of the two lists an entry appears in. `matchedUnit` reports
- * the unit belonging to whichever side ranked the entry higher (ties favor
- * the lexical side, since it is exact-term evidence and therefore more
- * directly explainable in `whyMatched`).
+ * the semantic side; `groupLexicalHitsByEntry` mirrors it for each lexical
+ * side. That grouping produces three entry-level rankings (best entry
+ * first), which are then combined by reciprocal rank:
+ * `score = Σ 1/(RRF_K + rank)` over whichever of the three lists an entry
+ * appears in — an entry whose card AND a fragment both match gets credit
+ * from both, on top of any semantic credit; nothing here is a weight, only
+ * which pool a unit's rank was earned in. `matchedUnit` reports the unit
+ * belonging to whichever list ranked the entry best (see `pickFusionWinner`).
  */
 export function fuseByEntry(
   db: Database,
-  lexical: readonly UnitLexicalHit[],
+  cardLexical: readonly UnitLexicalHit[],
+  fragmentLexical: readonly UnitLexicalHit[],
   semantic: readonly UnitSearchHit[],
   opts: { typeFilter?: string[]; excludeTypes?: string[] } = {},
 ): RankedEntryInput[] {
-  const lexicalByEntry = groupLexicalHitsByEntry(db, lexical);
+  const cardByEntry = groupLexicalHitsByEntry(db, cardLexical);
+  const fragmentByEntry = groupLexicalHitsByEntry(db, fragmentLexical);
   const semanticByEntry = groupUnitHitsByEntry(db, semantic);
 
-  const lexicalRanked = rankEntryWinners(lexicalByEntry, (a, b) => a.rank - b.rank);
+  const cardRanked = rankEntryWinners(cardByEntry, (a, b) => a.rank - b.rank);
+  const fragmentRanked = rankEntryWinners(fragmentByEntry, (a, b) => a.rank - b.rank);
   const semanticRanked = rankEntryWinners(semanticByEntry, (a, b) => a.distance - b.distance);
 
   const includeTypes = opts.typeFilter && opts.typeFilter.length > 0 ? new Set(opts.typeFilter) : null;
   const excludeTypes = opts.excludeTypes && opts.excludeTypes.length > 0 ? new Set(opts.excludeTypes) : null;
 
-  const entryIds = new Set<number>([...lexicalRanked.keys(), ...semanticRanked.keys()]);
+  const entryIds = new Set<number>([...cardRanked.keys(), ...fragmentRanked.keys(), ...semanticRanked.keys()]);
   const results: RankedEntryInput[] = [];
 
   for (const entryId of entryIds) {
-    const lexicalHit = lexicalRanked.get(entryId);
+    const cardHit = cardRanked.get(entryId);
+    const fragmentHit = fragmentRanked.get(entryId);
     const semanticHit = semanticRanked.get(entryId);
     let score = 0;
-    if (lexicalHit) score += 1 / (RRF_K + lexicalHit.rank);
+    if (cardHit) score += 1 / (RRF_K + cardHit.rank);
+    if (fragmentHit) score += 1 / (RRF_K + fragmentHit.rank);
     if (semanticHit) score += 1 / (RRF_K + semanticHit.rank);
     score /= RRF_MAX_SCORE;
 
-    const { unitHash, fragmentId } = pickFusionWinner(lexicalHit, semanticHit);
+    const { unitHash, fragmentId } = pickFusionWinner(cardHit, fragmentHit, semanticHit);
+    const lexicalHit = cardHit ?? fragmentHit;
 
     const found = getEntryById(db, entryId);
     if (!found) continue;

@@ -84,6 +84,11 @@ export function ensureFileAndUnitTextTables(db: Database): void {
       kind      TEXT NOT NULL CHECK (kind IN ('card','fragment')),
       text      TEXT NOT NULL
     );
+    -- index-redesign-contract.md B5f item 2: search runs the lexical query as
+    -- two kind-scoped lists (card, fragment) so a name/description match
+    -- ranks in its own small pool instead of competing with body text in one
+    -- BM25 pool. That kind filter runs on every search, so it needs an index.
+    CREATE INDEX IF NOT EXISTS unit_texts_kind ON unit_texts(kind);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS units_fts USING fts5(
       unit_hash UNINDEXED, text, tokenize='porter unicode61'
