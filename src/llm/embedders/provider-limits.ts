@@ -295,6 +295,19 @@ function defaultLimits(config: EmbeddingConnectionConfig): ProviderLimits {
   };
 }
 
+/**
+ * An implausible probed window that cannot even fit its own header margin
+ * plus one real character of unit text — `unitMaxChars` would floor to 0,
+ * and `deriveUnits` (`src/indexer/units/unit.ts`) throws on a non-positive
+ * `maxChars`. Reusing `unitMaxChars` itself as the usability test, rather
+ * than a second hand-picked threshold, keeps the two in lockstep by
+ * construction: a window this function accepts is, by definition, one
+ * `deriveUnits` can never crash on.
+ */
+function isUsableWindow(limits: ProviderLimits): boolean {
+  return unitMaxChars(limits) > 0;
+}
+
 async function probeProviderLimitsUncached(
   config: EmbeddingConnectionConfig,
   opts?: { signal?: AbortSignal; fetch?: typeof fetch },
@@ -306,11 +319,17 @@ async function probeProviderLimitsUncached(
   const timeoutMs = resolveProbeTimeoutMs(config);
   const signal = opts?.signal;
 
+  // An endpoint that answers with a window too small to be usable (at or
+  // below UNIT_HEADER_MARGIN_TOKENS) is treated exactly like one that
+  // reported nothing recognisable: falling through here means EVERY window
+  // this module ever hands out is safe to feed straight into
+  // `unitMaxChars`/`deriveUnits`, so the crash guard lives in exactly one
+  // place instead of being re-defended at every downstream call site.
   const llamaCpp = await probeLlamaCpp(origin, config, fetchImpl, timeoutMs, signal).catch(() => undefined);
-  if (llamaCpp) return llamaCpp;
+  if (llamaCpp && isUsableWindow(llamaCpp)) return llamaCpp;
 
   const ollama = await probeOllama(origin, config, fetchImpl, timeoutMs, signal).catch(() => undefined);
-  if (ollama) return ollama;
+  if (ollama && isUsableWindow(ollama)) return ollama;
 
   return defaultLimits(config);
 }
@@ -338,11 +357,12 @@ export function _resetProviderLimitsCacheForTests(): void {
 /**
  * Probe the configured embedding endpoint for its OWN window/slot limits.
  * Tries llama.cpp's `GET /props` first, then Ollama's `POST /api/show`; an
- * endpoint that answers neither (an OpenAI-compatible server, a gateway) —
- * or a config with no remote `endpoint` at all (a local-only embedder) —
- * gets the conservative default. Never throws: any probe failure (a
- * network error, a malformed response, an unparseable endpoint) resolves
- * to the same default shape rather than rejecting.
+ * endpoint that answers neither (an OpenAI-compatible server, a gateway),
+ * one that answers with an implausibly small window (see
+ * {@link isUsableWindow}) — or a config with no remote `endpoint` at all (a
+ * local-only embedder) — gets the conservative default. Never throws: any
+ * probe failure (a network error, a malformed response, an unparseable
+ * endpoint) resolves to the same default shape rather than rejecting.
  *
  * Memoised per process — see {@link providerLimitsCache} — so every caller
  * with the same effective config (`endpoint`/`model`/`concurrency`/
