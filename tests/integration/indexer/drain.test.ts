@@ -39,7 +39,7 @@ import type { Database } from "../../../src/storage/database";
 import { openDatabase } from "../../../src/storage/database";
 import { ensureFileAndUnitTextTables } from "../../../src/storage/repositories/files-repository";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { ensureSchema } from "../../../src/storage/repositories/index-schema";
 import { isVecAvailable } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -324,6 +324,145 @@ describe("drainEmbeddingQueue (B4)", () => {
     expect(result).toEqual({ pending: 6, embedded: 0, failed: 3, skipped: 3, identity: null });
     expect(unitRowCount(db)).toBe(0);
     expect(getMeta(db, "embeddingIdentity")).toBeUndefined();
+  });
+
+  test("E1: an identity is adopted at most once per call — a later batch reporting a different identity is left missing, not switched to", async () => {
+    seedUnitTexts(db, ["h1", "h2"]);
+
+    // Two committed batches within ONE drainEmbeddingQueue call: the first
+    // reports model "a" (h1), the second reports model "b" (h2) — same
+    // width, only the model differs, the shape of a load-balanced gateway
+    // whose responses alternate between two models across batches of one
+    // call.
+    const alternatingMock: EmbedBatchMock = async (texts, _config, _signal, _onSkip, onBatch) => {
+      onBatch?.([0], [stableVec(0)], "a");
+      onBatch?.([1], [stableVec(1)], "b");
+      return [stableVec(0), stableVec(1)];
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: alternatingMock });
+
+    const first = await drainEmbeddingQueue(db, baseConfig(), {});
+
+    // Only the FIRST committed batch's identity ("a") is adopted this call —
+    // h2's "b"-reported vector is left missing, not written then dropped.
+    expect(first).toEqual({ pending: 2, embedded: 1, failed: 0, skipped: 1, identity: "remote:a|3" });
+    expect(unitRowCount(db)).toBe(1);
+    const rows = db.prepare("SELECT unit_hash, identity FROM units").all() as {
+      unit_hash: string;
+      identity: string;
+    }[];
+    expect(rows).toEqual([{ unit_hash: "h1", identity: "remote:a|3" }]);
+
+    // A SECOND call whose provider now consistently reports "b" converges:
+    // h2 is still missing (never written under any identity), this call's
+    // own first committed batch adopts "b", and purges "a"'s row — no rows
+    // lost for the identity it adopts.
+    const settledMock: EmbedBatchMock = async (texts, _config, _signal, _onSkip, onBatch) => {
+      const vectors = texts.map((_t, i) => stableVec(i + 5));
+      onBatch?.(
+        texts.map((_t, i) => i),
+        vectors,
+        "b",
+      );
+      return vectors;
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: settledMock });
+
+    const second = await drainEmbeddingQueue(db, baseConfig(), {});
+
+    expect(second).toEqual({ pending: 1, embedded: 1, failed: 0, skipped: 0, identity: "remote:b|3" });
+    const finalRows = db.prepare("SELECT unit_hash, identity FROM units").all() as {
+      unit_hash: string;
+      identity: string;
+    }[];
+    expect(finalRows).toEqual([{ unit_hash: "h2", identity: "remote:b|3" }]);
+  });
+
+  test("E2: an occasional success interleaved among failures no longer resets the breaker to zero", async () => {
+    seedUnitTexts(db, ["h1", "h2", "h3", "h4", "h5", "h6"]);
+
+    // fail, success, fail, fail, success, fail — the shape concurrent
+    // dispatch produces once outcomes settle out of dispatch order. A
+    // "reset streak to zero on any success" breaker never trips against
+    // this (interleaved successes keep erasing the evidence); a rate-based
+    // one trips once failures reach the threshold within the recent window
+    // regardless of the interleaved successes.
+    const outcomes = ["fail", "success", "fail", "fail", "success", "fail"] as const;
+    let requestCount = 0;
+    const mixedMock: EmbedBatchMock = async (texts, _config, _signal, onSkip, onBatch) => {
+      for (let i = 0; i < texts.length; i++) {
+        requestCount++;
+        if (outcomes[i] === "success") {
+          onBatch?.([i], [stableVec(i)], "mock-model");
+          continue;
+        }
+        const stop = onSkip?.({
+          index: i,
+          reason: "batch-request-failed",
+          message: "connection refused",
+          batchStart: true,
+          batchSize: 1,
+          failureKind: "network-error",
+        });
+        onBatch?.([i], [undefined], undefined, {
+          batchIndex: i + 1,
+          batchCount: texts.length,
+          docCount: 1,
+          requestTokens: 5,
+          elapsedMs: 1,
+          outcome: "failed",
+          reason: "connection refused",
+        });
+        if (stop === false) break;
+      }
+      return texts.map(() => undefined);
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: mixedMock });
+
+    const result = await drainEmbeddingQueue(db, baseConfig(), {});
+
+    // Trips on the 4th dispatched hash (the sequence's second "fail" after
+    // the interleaved success is the 3rd failure overall) — h5/h6 are never
+    // dispatched at all.
+    expect(requestCount).toBe(4);
+    expect(result).toEqual({ pending: 6, embedded: 1, failed: 3, skipped: 2, identity: "remote:mock-model|3" });
+  });
+
+  test("E5b: a sustained storage failure feeds the same breaker streaks the provider failures use, and stops dispatch", async () => {
+    seedUnitTexts(db, ["h1", "h2", "h3", "h4", "h5", "h6"]);
+
+    // Pre-adopt the identity the fake embedder will report, at a width the
+    // REAL units_vec table does not actually have. Since the identity
+    // already matches what the embedder reports, drain.ts's onBatch never
+    // re-derives/re-adopts it (E1) and so never calls dropOtherIdentities to
+    // self-heal the width (E6) mid-call: every write for the rest of this
+    // call genuinely fails at the SQL layer ("Dimension mismatch for
+    // inserted vector"), simulating a sustained storage failure (a full
+    // disk, contention, permissions) with no fake/seam needed — the provider
+    // itself succeeds every time.
+    setMeta(db, "embeddingIdentity", "remote:mock-model|3");
+    db.exec("DROP TABLE units_vec");
+    db.exec(
+      "CREATE VIRTUAL TABLE units_vec USING vec0(unit_id INTEGER PRIMARY KEY, embedding FLOAT[9], +unit_hash TEXT, +identity TEXT)",
+    );
+
+    let requestCount = 0;
+    const mock: EmbedBatchMock = async (texts, _config, _signal, _onSkip, onBatch) => {
+      for (let i = 0; i < texts.length; i++) {
+        requestCount++;
+        onBatch?.([i], [stableVec(i)], "mock-model");
+      }
+      return texts.map((_t, i) => stableVec(i));
+    };
+    overrideSeam(_setEmbedderForTests, { embedBatch: mock });
+
+    await expect(drainEmbeddingQueue(db, baseConfig(), {})).rejects.toThrow(/storage write failures/);
+
+    // The provider was never even asked for the rest — every write attempt
+    // genuinely failed, tripping the breaker after exactly
+    // CIRCUIT_BREAKER_THRESHOLD (3) of them.
+    expect(requestCount).toBe(3);
+    expect(unitRowCount(db)).toBe(0);
   });
 
   test("no unit_texts rows means nothing pending and the embedder is never called", async () => {
