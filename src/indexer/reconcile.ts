@@ -175,6 +175,19 @@ export async function reconcileRoots(
      * cache), so a genuinely deleted file is still removed normally.
      */
     forceReparse?: boolean;
+    /**
+     * `akm bundle update`'s coordinator holds one `BEGIN IMMEDIATE` spanning
+     * index.db and an attached state.db for the whole `akmIndex` call
+     * (`indexer.ts`'s `deferredUpdateTransaction`). The embedding drain is
+     * already skipped entirely in that mode for the same reason (a
+     * long-running provider call must not nest inside a long-lived
+     * transaction and lock out every other akm process touching index.db or
+     * state.db for as long as it takes) — this mirrors that skip:
+     * `enrichReconciledEntries` is not called at all, and the next ordinary
+     * `akm index` enriches these candidates instead (the content-addressed
+     * cache means no work is repeated).
+     */
+    insideBorrowedTransaction?: boolean;
   },
 ): Promise<ReconcileCounts> {
   const counts = emptyCounts();
@@ -387,10 +400,12 @@ export async function reconcileRoots(
   // moments later (entry_units cascades with its `entries` row; any orphaned
   // `unit_texts`/`units_fts` rows are swept by `pruneOrphanUnitTexts` below
   // regardless of ordering) — never a resurrection.
-  await enrichReconciledEntries(db, config, enrichmentCandidates, maxChars, {
-    signal: opts?.signal,
-    onProgress: opts?.onProgress,
-  });
+  if (!opts?.insideBorrowedTransaction) {
+    await enrichReconciledEntries(db, config, enrichmentCandidates, maxChars, {
+      signal: opts?.signal,
+      onProgress: opts?.onProgress,
+    });
+  }
 
   // Two configured bundle roots can physically overlap (a bundle added inside
   // another bundle's root, or one adapter's `includeAllDirectories` reaching a

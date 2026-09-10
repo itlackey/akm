@@ -753,7 +753,15 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       owners
         .filter((owner) => !owner.unresolved)
         .map((owner) => ({ path: owner.sourceRoot, bundleId: owner.bundleId })),
-      { signal, onProgress: (line) => onProgress({ phase: "scan", message: line }), forceReparse: full },
+      {
+        signal,
+        onProgress: (line) => onProgress({ phase: "scan", message: line }),
+        forceReparse: full,
+        // #954-precedent (same as the embedding drain skip below): a
+        // borrowed transaction must not hold open across enrichment's LLM
+        // round trip.
+        insideBorrowedTransaction: Boolean(options.deferredUpdateTransaction),
+      },
     );
     onProgress({
       phase: "scan",
