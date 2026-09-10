@@ -362,3 +362,31 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
     });
   }
 });
+
+// #951: curate_rerank reads a different config location (search.curateRerank,
+// not an index/improve process block) so it isn't a member of the
+// FeatureKey/configWith() table above — covered directly here instead.
+describe("isLlmFeatureEnabled — curate_rerank (#951)", () => {
+  test("defaults to disabled when search.curateRerank is absent", () => {
+    const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp/stash" };
+    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
+  });
+
+  test("defaults to disabled when enabled is unset", () => {
+    const cfg: AkmConfig = {
+      semanticSearchMode: "auto",
+      stashDir: "/tmp/stash",
+      search: { curateRerank: { endpoint: "http://localhost:8080/rerank" } },
+    };
+    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
+  });
+
+  test("enabled: true turns the gate on", () => {
+    const cfg: AkmConfig = {
+      semanticSearchMode: "auto",
+      stashDir: "/tmp/stash",
+      search: { curateRerank: { enabled: true, endpoint: "http://localhost:8080/rerank" } },
+    };
+    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(true);
+  });
+});
