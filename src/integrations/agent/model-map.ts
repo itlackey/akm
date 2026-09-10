@@ -73,6 +73,20 @@ const ENGINE_KEY_PATTERN = new RegExp(ENGINE_NAME_PATTERN_SOURCE);
 const ALIAS_KEY_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const RESERVED_MAP_KEYS = new Set(["__proto__", "constructor", "prototype", "tostring"]);
 
+/**
+ * A profile's own field names (#946). When one of these appears directly
+ * under an alias — e.g. `"fast": { "engine": "local-fast" }` — it is not a
+ * per-platform column named `model`/`inference`/`engine`; it is a wildcard
+ * default profile applied to every platform column of that alias, exactly
+ * the flat shorthand the original proposal asked for. A nested per-platform
+ * entry in the same alias (`"fast": { "claude": { ... } }`) still overrides
+ * the wildcard for that one column, so both forms compose.
+ */
+const PROFILE_FIELD_KEYS = new Set(["model", "inference", "engine"]);
+
+/** Internal key the wildcard default profile is stored under (never user-writable directly). */
+export const WILDCARD_ENGINE_KEY = "*";
+
 function assertSafeMapKey(key: string, source: string, jsonPath: string): void {
   if (RESERVED_MAP_KEYS.has(key.toLowerCase())) {
     invalid(source, jsonPath, "reserved prototype-like key is not allowed");
@@ -194,7 +208,17 @@ export function parseModelMapLayer(text: string, source: string): ModelMapLayerV
     }
     const engines: Array<readonly [string, ModelMapEntryLayer]> = [];
     const enginesSeen = new Map<string, string>();
-    for (const [rawEngine, rawProfile] of Object.entries(engineRecord)) {
+
+    const wildcardFields: Record<string, unknown> = {};
+    const platformEntries: Array<readonly [string, unknown]> = [];
+    for (const [rawKey, rawValue] of Object.entries(engineRecord)) {
+      if (PROFILE_FIELD_KEYS.has(rawKey)) wildcardFields[rawKey] = rawValue;
+      else platformEntries.push([rawKey, rawValue]);
+    }
+    if (Object.keys(wildcardFields).length > 0) {
+      engines.push([WILDCARD_ENGINE_KEY, parseProfileLayer(wildcardFields, source, `$.aliases.${rawAlias}`)]);
+    }
+    for (const [rawEngine, rawProfile] of platformEntries) {
       const engine = rawEngine.toLowerCase();
       assertSafeMapKey(engine, source, `$.aliases.${rawAlias}.${rawEngine}`);
       if (!ENGINE_KEY_PATTERN.test(engine)) {
@@ -299,6 +323,17 @@ function mergeRawProfileLayers(
   const apply = (layer: ModelMapLayerV1): void => {
     for (const [alias, layerEngines] of Object.entries(layer.aliases)) {
       const mergedEngines = aliases.get(alias) ?? new Map<string, ModelMapProfileLayer>();
+      const wildcard = ownValue(layerEngines, WILDCARD_ENGINE_KEY);
+      if (wildcard !== undefined) {
+        // This layer's wildcard default (#946) overlays every platform column
+        // already accumulated from earlier layers, before this layer's own
+        // explicit per-platform entries (applied below) get a chance to
+        // override it for their one column.
+        for (const [engineKey, profile] of mergedEngines) {
+          if (engineKey === WILDCARD_ENGINE_KEY) continue;
+          mergedEngines.set(engineKey, mergeProfiles(profile, wildcard));
+        }
+      }
       for (const [engineKey, profile] of Object.entries(layerEngines)) {
         mergedEngines.set(engineKey, mergeProfiles(mergedEngines.get(engineKey), profile));
       }
@@ -405,7 +440,9 @@ export function resolveModelMapAlias(
   const alias = input.toLowerCase();
   const selectedEngine = engine.toLowerCase();
   const tier = ownValue(map.aliases, alias);
-  const profile = ownValue(tier, selectedEngine);
+  // A specific platform column always wins; the alias-level wildcard default
+  // (#946) is only a fallback for a column no layer ever set explicitly.
+  const profile = ownValue(tier, selectedEngine) ?? ownValue(tier, WILDCARD_ENGINE_KEY);
   if (profile !== undefined) return selectionFromProfile(input, profile);
 
   const knownAliasUnmappedForEngine = tier !== undefined;
