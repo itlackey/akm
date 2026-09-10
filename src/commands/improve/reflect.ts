@@ -32,7 +32,7 @@ import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
@@ -2176,6 +2176,79 @@ function validateReflectPayloadRef(args: {
     // Malformed refs are rejected downstream by proposal validation.
     return undefined;
   }
+}
+
+/**
+ * #952 — render the composed reflect prompt for exactly one asset with no
+ * engine dispatch. Reuses every read-only step `akmReflect` performs before
+ * {@link buildReflectPrompt} (source resolution, runner resolution, feedback /
+ * schema-hint / related-lesson / rejected-proposal gathering) and stops right
+ * there: no dispatch lease is acquired, no request is sent, and — because the
+ * `emitReflectFailed` callback passed to {@link resolveReflectSource} here is
+ * a no-op — no `reflect_invoked`/`reflect_completed` event is appended either.
+ *
+ * `akm improve <ref> --show-prompt` (`improve-cli.ts`) is the CLI surface: a
+ * field operator uses it to see the exact prompt reflect would send, in
+ * seconds, without running a full improve cycle or needing a reachable
+ * engine.
+ */
+export async function renderReflectPromptPreview(
+  options: AkmReflectOptions,
+): Promise<{ ref: string; prompt: string; engine: string; engineKind: RunnerSpec["kind"] }> {
+  if (!options.ref) {
+    throw new UsageError("renderReflectPromptPreview requires options.ref.", "INVALID_FLAG_VALUE");
+  }
+  const ref = options.ref;
+  const stash = resolveRunStashDir(options.stashDir);
+
+  const sourceResolved = await resolveReflectSource(options, stash, () => {
+    // No event emitted: this is a read-only preview, not a real invocation.
+  });
+  if ("failure" in sourceResolved) {
+    const { failure } = sourceResolved;
+    throw new UsageError(
+      (!failure.ok && failure.error) || `Reflect cannot preview ref "${ref}".`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const { assetContent, parsedRef } = sourceResolved;
+
+  const { runnerSpec, engineName } = resolveReflectRunner(options);
+  const ctx = buildReflectRunContext({ options, stash, config: options.config ?? loadConfig(), runnerSpec });
+  const assetCtx = ctx.withFreshAssetMemo();
+
+  const feedback = readRecentFeedback(options.itemRef ?? durableImproveRef(ref), options.eventsCtx);
+  const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
+  const relatedLessons = parsedRef ? await readRelatedLessons(assetCtx, stash, ref, parsedRef, options.itemRef) : [];
+  const rejectedProposals = readRejectedProposals(stash, ref, options.ctx);
+  const standardsContext = resolveStandardsContext(ref, stash);
+
+  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
+  const outputMode: ReflectLlmOutputMode | undefined = runnerIsLlm(runnerSpec)
+    ? wantsJsonSchemaOutput(runnerSpec.connection)
+      ? "json_schema"
+      : "framed_markdown"
+    : undefined;
+  // Same tmp-path synthesis a real dispatch would use (Issue A) — never
+  // written to, since this preview never runs the agent.
+  const draftFilePath = canRunnerWriteFile ? synthesizeReflectDraftPath(ref) : undefined;
+
+  const { prompt } = buildReflectPrompt({
+    ref,
+    ...(parsedRef?.type ? { type: parsedRef.type } : {}),
+    ...(parsedRef?.name ? { name: parsedRef.name } : {}),
+    ...(assetContent !== undefined ? { assetContent } : {}),
+    ...(feedback.length > 0 ? { feedback } : {}),
+    ...(schemaHints.length > 0 ? { schemaHints } : {}),
+    ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
+    ...(options.task ? { task: options.task } : {}),
+    ...(standardsContext.trim() ? { standardsContext } : {}),
+    ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
+    ...(draftFilePath ? { draftFilePath } : {}),
+    ...(outputMode ? { outputMode } : {}),
+  });
+
+  return { ref, prompt, engine: engineName, engineKind: runnerSpec.kind };
 }
 
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
