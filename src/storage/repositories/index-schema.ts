@@ -210,11 +210,19 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
       "and the LLM enrichment cache). This re-walks and re-indexes every source on the next run.",
   );
 
-  // The legacy per-entry vector tables (`embeddings`, `entries_vec`) are not
-  // touched here any more — they are dropped unconditionally on every open
-  // (see ensureSchema below), independent of a generation rebuild. Vectors
-  // themselves live only in the content-addressed `units`/`units_vec` store,
-  // which a generation rebuild never drops (ensureUnitTables' contract).
+  // A pre-redesign (v23 or older) index can still carry the legacy
+  // `embeddings` table, declared `FOREIGN KEY (id) REFERENCES entries(id)`
+  // with no cascade. Under `foreign_keys=ON`, `DROP TABLE entries` below
+  // fails with "FOREIGN KEY constraint failed" unless `embeddings` (and its
+  // vec0 mirror `entries_vec`, dropped alongside it for symmetry) is gone
+  // first — so both must be dropped here, inside this transaction, BEFORE
+  // `entries`. `ensureSchema` also drops them unconditionally on every open
+  // (it is what cleans up a v24 index built before the tables were retired,
+  // and clears `entries_vec` when sqlite-vec was unavailable here), but it
+  // runs AFTER this rebuild, so it cannot be the only place the drop
+  // happens. Vectors themselves live only in the content-addressed
+  // `units`/`units_vec` store, which a generation rebuild never drops
+  // (ensureUnitTables' contract).
   db.transaction(() => {
     db.exec("DROP TABLE IF EXISTS graph_file_relations");
     db.exec("DROP TABLE IF EXISTS graph_file_entities");
@@ -225,6 +233,8 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
     db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
     db.exec("DROP TABLE IF EXISTS entry_fragments");
     db.exec("DROP TABLE IF EXISTS entries_fts");
+    db.exec("DROP TABLE IF EXISTS embeddings");
+    if (isVecAvailable(db)) db.exec("DROP TABLE IF EXISTS entries_vec");
     db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
     db.exec("DROP TABLE IF EXISTS utility_scores");
     db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
