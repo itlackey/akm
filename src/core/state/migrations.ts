@@ -1254,11 +1254,31 @@ export interface RunStateMigrationsOptions {
  * Delegates to the shared SQLite migration engine; state.db has no
  * pre-versioning bootstrap step, so no `bootstrap` hook is passed.
  *
+ * `freshDatabase` is the one exception to "single transaction per migration":
+ * the entire registry is locked through the final migration and applied as
+ * ONE transaction (mirroring the existing-unversioned prefix lock below).
+ * Two akm processes can race to create the same brand-new state.db
+ * (`openStateDatabase`'s file-reservation only decides who creates the file,
+ * not who finishes initializing it first); with per-migration commits, the
+ * loser could open its own connection between two of the winner's commits,
+ * see a real-but-incomplete ledger, and — correctly believing this is an
+ * ordinary existing database needing to catch up on pending migrations —
+ * refuse historical-destructive migration 018 with the same message a
+ * genuine legacy database gets. Applying every migration for a fresh
+ * database atomically removes that partially-migrated state from view
+ * entirely: a concurrent opener now only ever observes "nothing committed
+ * yet" (treated as fresh) or "fully current" (nothing left to apply), never
+ * the in-between. Safe to lose on a crash mid-bootstrap: a fresh database
+ * has no prior data to preserve, so rolling back to nothing and letting the
+ * next open retry from scratch is strictly fine.
+ *
  * Called automatically by `openStateDatabase()`.
  */
 export function runMigrations(db: Database, options?: RunStateMigrationsOptions): void {
   const initialMigration = STATE_MIGRATIONS[0];
   if (!initialMigration) throw new Error("State migration registry has no initial migration.");
+  const finalMigration = STATE_MIGRATIONS[STATE_MIGRATIONS.length - 1];
+  if (!finalMigration) throw new Error("State migration registry has no final migration.");
   let existingUnversionedSnapshotPrepared = false;
 
   const prepareExistingUnversionedState = (lockedDb: Database): void => {
@@ -1284,7 +1304,11 @@ export function runMigrations(db: Database, options?: RunStateMigrationsOptions)
   };
 
   runSqliteMigrations(db, STATE_MIGRATIONS, {
-    lockInitialMigrationPrefixThrough: options?.existingUnversionedDatabase ? "002-task-history-per-run" : undefined,
+    lockInitialMigrationPrefixThrough: options?.existingUnversionedDatabase
+      ? "002-task-history-per-run"
+      : options?.freshDatabase
+        ? finalMigration.id
+        : undefined,
     beforeLedgerInitializationLocked(lockedDb) {
       if (options?.freshDatabase) return;
       prepareExistingUnversionedState(lockedDb);
