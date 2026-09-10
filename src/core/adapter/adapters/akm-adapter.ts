@@ -94,6 +94,7 @@ import {
 } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import {
+  assetPathCandidatesAreOrderedByPreference,
   assetPathCandidatesForName,
   assetPathForName,
   deriveCanonicalAssetNameFromStashRoot,
@@ -518,7 +519,25 @@ export const akmAdapter: BundleAdapter = {
    * type's own stash subdir) and the LOOSE FALLBACK (authored anywhere else
    * in the bundle, so the canonical name is the file's full path relative to
    * the bundle root instead of the stash subdir). `assetPathCandidatesForName`
-   * additionally expands `env`'s `.env`/`<name>.env` duality on each.
+   * additionally expands `env`'s `.env`/`<name>.env` duality, and memory's
+   * `<name>`/`<name>.derived` twin duality, on each.
+   *
+   * `priority` (#882 fix) carries each candidate's rank WITHIN its own root's
+   * list, but ONLY for a type whose duality is a declared, ORDERED
+   * preference per `assetPathCandidatesAreOrderedByPreference` (only
+   * `memory`, today) — `assetPathCandidatesForName` returns primary before
+   * derived-twin for that type, so index 0 is the declared winner when both
+   * exist. CANONICAL and LOOSE are separate lists whose ranks both start
+   * back at 0: two candidates that tie on rank (e.g. the canonical and loose
+   * spellings both being the primary, rank-0, form) are a genuine collision
+   * between two independently-authored files, not a declared preference —
+   * only a rank difference WITHIN one root's own list resolves silently.
+   * Every other type's candidates (including `env`'s `.env`/`default.env`
+   * pair — co-equal spellings, not an ordered preference, per that same
+   * predicate's doc comment) carry NO `priority`, unchanged from before
+   * #882: `resolveAdapterConceptOwner` treats priority-less candidates as
+   * tied, so more than one existing together still collides. See
+   * `AdapterReadCandidate.priority`'s doc comment.
    */
   readCandidates(c: BundleComponent, conceptId: string) {
     const posix = conceptId.replace(/\\/g, "/");
@@ -530,9 +549,22 @@ export const akmAdapter: BundleAdapter = {
     if (type === undefined || rest.length === 0) return [];
     const canonical = assetPathCandidatesForName(type, path.join(c.root, head), rest);
     const loose = assetPathCandidatesForName(type, c.root, rest);
-    return [...new Set([...canonical, ...loose])].map((candidatePath) => ({
+    if (!assetPathCandidatesAreOrderedByPreference(type)) {
+      return [...new Set([...canonical, ...loose])].map((candidatePath) => ({
+        path: candidatePath,
+        conceptId: posix,
+      }));
+    }
+    const priorityByPath = new Map<string, number>();
+    for (const list of [canonical, loose]) {
+      list.forEach((candidatePath, rank) => {
+        if (!priorityByPath.has(candidatePath)) priorityByPath.set(candidatePath, rank);
+      });
+    }
+    return [...priorityByPath.keys()].map((candidatePath) => ({
       path: candidatePath,
       conceptId: posix,
+      priority: priorityByPath.get(candidatePath),
     }));
   },
 
