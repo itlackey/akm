@@ -144,9 +144,9 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
 
   // Insert an indexed memory entry + its card-unit vector into the real
   // index DB so findEntryIdByRef("memory:NAME") and getNeighborsByEntryId()
-  // resolve it. The dim-4 unit vectors are crafted so cosine similarity (the
-  // JS fallback in searchBlobVec, and sqlite-vec when present) ranks
-  // neighbours deterministically.
+  // resolve it. The dim-4 unit vectors are crafted so sqlite-vec's cosine
+  // distance ranks neighbours deterministically (there is no JS fallback for
+  // units — searchUnits requires sqlite-vec).
   function indexMemory(db: ReturnType<typeof openIndexDatabase>, name: string, embedding: number[]): number {
     const entry: IndexDocument = { type: "memory", name, description: `desc for ${name}` };
     // Chunk-8: production resolves entries by their D-R2 item_ref

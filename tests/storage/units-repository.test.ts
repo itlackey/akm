@@ -23,7 +23,7 @@ import type { Database } from "../../src/storage/database";
 import { openDatabase } from "../../src/storage/database";
 import { deleteAllEntries } from "../../src/storage/repositories/index-entries-repository";
 import { ensureSchema } from "../../src/storage/repositories/index-schema";
-import { isVecAvailable, loadVecExtension, purgeEmbeddings } from "../../src/storage/repositories/index-vec-repository";
+import { isVecAvailable, loadVecExtension } from "../../src/storage/repositories/index-vec-repository";
 import {
   deleteEntryUnits,
   dropOtherIdentities,
@@ -456,16 +456,6 @@ describe("units-repository", () => {
         // entry_units (derived, entry_id-keyed) cascades away with its entry...
         expect(db.prepare("SELECT COUNT(*) AS n FROM entry_units").get()).toEqual({ n: 0 });
         // ...but the durable, content-addressed vector store does not.
-        expect(db.prepare("SELECT COUNT(*) AS n FROM units WHERE unit_hash = 'keep-me'").get()).toEqual({ n: 1 });
-        const hits = searchUnits(db, vector(0), 1, IDENTITY_A);
-        expect(hits.map((h) => h.hash)).toEqual(["keep-me"]);
-      });
-    });
-
-    test("purgeEmbeddings (the entries_vec / embeddings purge) does not touch units/units_vec", () => {
-      withTempDb((db) => {
-        upsertUnitVectors(db, [{ hash: "keep-me", identity: IDENTITY_A, vector: vector(0) }]);
-        purgeEmbeddings(db, { dropVecTable: true });
         expect(db.prepare("SELECT COUNT(*) AS n FROM units WHERE unit_hash = 'keep-me'").get()).toEqual({ n: 1 });
         const hits = searchUnits(db, vector(0), 1, IDENTITY_A);
         expect(hits.map((h) => h.hash)).toEqual(["keep-me"]);

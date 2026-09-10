@@ -19,7 +19,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { relinkUsageEvents, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
-import { isVecAvailable } from "../../../src/storage/repositories/index-vec-repository";
+import { isVecAvailable, loadVecExtension } from "../../../src/storage/repositories/index-vec-repository";
 
 const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
@@ -191,20 +191,21 @@ describe("canonical derived-index entry schema", () => {
   test("does not stamp a generation until every required DDL surface succeeds", () => {
     withTempIndex((dbPath) => {
       const partial = openDatabase(dbPath);
+      loadVecExtension(partial);
       try {
-        // This fails at a later required DDL surface (the sqlite-vec virtual
-        // table, which — unlike every `CREATE TABLE IF NOT EXISTS` around it —
-        // has no `IF NOT EXISTS` guard and so cannot silently coexist with a
-        // same-named view). index-redesign (docs/plans/index-redesign.md, B5)
-        // removed the previous trigger for this test (`index_dir_state`'s
+        // This fails at a later required DDL surface (the units_vec vec0
+        // virtual table, which — unlike every `CREATE TABLE IF NOT EXISTS`
+        // around it — has no `IF NOT EXISTS` guard and so cannot silently
+        // coexist with a same-named view). index-redesign (B5) removed the
+        // previous trigger for this test (`index_dir_state`'s
         // `ALTER TABLE ... ADD COLUMN`, the only unguarded DDL statement
-        // `ensureSchema` used to run) along with the table itself; this
-        // exercises the same "version stamped only after every required DDL
-        // surface succeeds" invariant against the DDL surface that replaced
-        // it as the last unguarded one.
+        // `ensureSchema` used to run) along with the table itself; B5h then
+        // removed `entries_vec` (this test's trigger up to that point) along
+        // with the rest of the legacy per-entry vector tables — `units_vec`
+        // is the surviving unguarded DDL surface this invariant now exercises.
         if (!isVecAvailable(partial)) return;
-        partial.exec("CREATE VIEW entries_vec AS SELECT 1 AS placeholder");
-        expect(() => ensureSchema(partial, undefined)).toThrow(/entries_vec already exists/);
+        partial.exec("CREATE VIEW units_vec AS SELECT 1 AS placeholder");
+        expect(() => ensureSchema(partial, undefined)).toThrow(/units_vec already exists/);
       } finally {
         partial.close();
       }

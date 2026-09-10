@@ -15,7 +15,6 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/war
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
-import { upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
 import { createWorkflowAsset, getWorkflowTemplate } from "../../src/workflows/authoring/authoring";
 import { getNextWorkflowStep, listWorkflowRuns } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
@@ -317,12 +316,14 @@ describe("OKF first-class conformance", () => {
         .all() as Array<{ id: number; filePath: string }>
     ).map((row) => ({ ...row, dirPath: path.dirname(row.filePath) }));
     expect(staleRows).toHaveLength(2);
-    for (const row of staleRows)
-      upsertEmbedding(
-        db,
-        row.id,
-        new Array(384).fill(0).map((_, i) => (i === 0 ? 1 : 0)),
-      );
+    const staleIds = staleRows.map((row) => row.id);
+    const stalePlaceholders = staleIds.map(() => "?").join(",");
+    // Sanity: these entries really do own `entry_units` rows before the
+    // prune, so the post-prune assertion below proves cleanup, not just an
+    // empty table to begin with.
+    expect(
+      db.prepare(`SELECT COUNT(*) AS count FROM entry_units WHERE entry_id IN (${stalePlaceholders})`).get(...staleIds),
+    ).not.toEqual({ count: 0 });
     closeDatabase(db);
 
     configure("akm");
@@ -338,14 +339,13 @@ describe("OKF first-class conformance", () => {
       ).toEqual({
         count: 0,
       });
+      // `entry_units` cascades away with its `entries` row (ON DELETE
+      // CASCADE) — the units-path analogue of the legacy entry-keyed
+      // `embeddings`/`entries_vec` cleanup this test used to assert
+      // (index redesign, B5h).
       expect(
-        switched.prepare(`SELECT COUNT(*) AS count FROM embeddings WHERE id IN (${placeholders})`).get(...ids),
+        switched.prepare(`SELECT COUNT(*) AS count FROM entry_units WHERE entry_id IN (${placeholders})`).get(...ids),
       ).toEqual({ count: 0 });
-      expect(
-        switched.prepare(`SELECT COUNT(*) AS count FROM entries_vec WHERE id IN (${placeholders})`).get(...ids),
-      ).toEqual({
-        count: 0,
-      });
     } finally {
       closeDatabase(switched);
     }
