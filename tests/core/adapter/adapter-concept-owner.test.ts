@@ -249,6 +249,35 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
     }
   });
 
+  // #882's fix distinguishes memory's ORDERED `.derived`-twin duality from a
+  // genuine collision. env's `.env`/`default.env` duality is co-equal, NOT
+  // ordered (assetPathCandidatesAreOrderedByPreference), and must keep
+  // colliding exactly as before — pinned here for the "akm" adapter
+  // specifically (not just "dotenv" below), because that is the adapter
+  // `akm show env/default` actually resolves through, and a first pass at
+  // #882's fix regressed exactly this case: a real "both files exist" ref
+  // that used to throw a collision started resolving to a bogus "not found"
+  // instead (the resolver silently picked `.env`, but the index still had
+  // `default.env`'s entry).
+  test("akm adapter: env duality collides when both '.env' and 'default.env' are authored together (default: write) — NOT treated as an ordered #882 duality", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "akm");
+      const envDir = path.join(root, "env");
+      fs.mkdirSync(envDir, { recursive: true });
+      fs.writeFileSync(path.join(envDir, ".env"), "TOKEN=hidden\n");
+      fs.writeFileSync(path.join(envDir, "default.env"), "TOKEN=hidden\n");
+      expect(() => resolveAdapterConceptOwner(root, "akm", "env/default")).toThrow(AdapterConceptCollisionError);
+      // Read mode (what `akm show` resolves through) must not silently pick
+      // a winner either — it still warns and picks deterministically, same
+      // as any other genuine collision, never a throw-free single owner.
+      const readModeOwner = resolveAdapterConceptOwner(root, "akm", "env/default", { mode: "read" });
+      expect(readModeOwner).toBeDefined();
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
   test("env duality collides when both '.env' and 'default.env' are authored together (default: write)", () => {
     const sandbox = sandboxStashDir();
     try {
