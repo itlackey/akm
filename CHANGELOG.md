@@ -443,6 +443,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Source-cache hydration (which runs before `index.db` is even opened) now
   reports its own progress the same way: `Hydrating source i/n: <name>` per
   source, plus a 15s heartbeat while a sync is in flight.
+- **`embedding.chunkSize` is retired (#954).** Nothing under `src/` ever read
+  it; it was declared in the config schema but had no effect. It is removed
+  from `EmbeddingConnectionConfigSchema` and `schemas/akm-config.json`. The
+  `embedding` object stays `.passthrough()`, so a config that still sets
+  `embedding.chunkSize` keeps loading exactly as before — the key is simply
+  ignored, not rejected or warned about.
 
 ### Fixed
 
