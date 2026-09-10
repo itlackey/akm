@@ -1,16 +1,19 @@
-import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import { MARKDOWN_CONTENT_MAX_CHARS, projectMarkdownContent } from "../../../src/indexer/passes/metadata";
 import { recognizeStashEntries } from "../../../src/indexer/scan/drain-dir";
+import { searchUnitsLexical } from "../../../src/indexer/search/db-search";
 import { buildLexicalQueryPlan } from "../../../src/indexer/search/fts-query";
-import { buildSearchFields, buildSearchText } from "../../../src/indexer/search/search-fields";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
-import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { getEntryById, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
+import { seedUnitsForAllEntries } from "../../_helpers/seed-units";
 
 const createdDirs: string[] = [];
 
@@ -19,61 +22,31 @@ afterAll(() => {
 });
 
 function makeDb(): AkmDatabase {
-  const db = new Database(":memory:") as unknown as AkmDatabase;
-  db.exec(`
-    CREATE TABLE entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      file_path TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL,
-      item_ref TEXT NOT NULL UNIQUE,
-      bundle_id TEXT NOT NULL,
-      component_id TEXT NOT NULL,
-      concept_id TEXT NOT NULL,
-      adapter_id TEXT NOT NULL,
-      document_json TEXT NOT NULL,
-      search_text TEXT NOT NULL,
-      content_hash TEXT,
-      derived_from TEXT
-    );
-    CREATE VIRTUAL TABLE entries_fts USING fts5(
-      entry_id UNINDEXED,
-      name,
-      description,
-      tags,
-      hints,
-      content,
-      tokenize='porter unicode61'
-    );
-  `);
-  return db;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-progressive-retrieval-"));
+  createdDirs.push(dir);
+  return openIndexDatabase(path.join(dir, "index.db"));
 }
 
 function insert(db: AkmDatabase, name: string, entry: IndexDocument): void {
   const conceptId = `knowledge/${name}`;
-  const inserted = db
-    .prepare<{ id: number }>(`
-      INSERT INTO entries (
-        file_path, type, item_ref, bundle_id, component_id, concept_id,
-        adapter_id, document_json, search_text
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING id
-    `)
-    .get(
-      `/fixture/${conceptId}.md`,
-      entry.type,
-      `fixture//${conceptId}`,
-      "fixture",
-      "fixture",
-      conceptId,
-      "akm",
-      JSON.stringify(entry),
-      buildSearchText(entry),
-    );
-  if (!inserted) throw new Error("expected inserted retrieval fixture");
-  const fields = buildSearchFields(entry);
-  db.prepare(
-    "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(inserted.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+  const provenance = deriveEntryProvenance(
+    { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
+    entry.type,
+    name,
+  );
+  upsertEntry(db, `/fixture/${conceptId}.md`, entry, buildSearchText(entry), provenance);
+}
+
+/** The units path's entry-level lexical equivalent of the old `searchFts`'s `.entry.name`/`.lexicalMatch` result shape. */
+function searchEntryNames(db: AkmDatabase, query: string, k: number): Array<{ name: string; lexicalMatch: string }> {
+  return searchUnitsLexical(db, query, k).flatMap((hit) => {
+    const row = db.prepare("SELECT entry_id FROM entry_units WHERE unit_hash = ?").get(hit.unitHash) as
+      | { entry_id: number }
+      | undefined;
+    if (!row) return [];
+    const found = getEntryById(db, row.entry_id);
+    return found ? [{ name: found.entry.name, lexicalMatch: hit.lexicalMatch }] : [];
+  });
 }
 
 describe("progressive lexical query planning (#819)", () => {
@@ -150,6 +123,7 @@ describe("progressive lexical query planning (#819)", () => {
         description: "Assorted operational observations",
         content: "The spectral quokka calibration nonce rotates every Thursday.",
       });
+      seedUnitsForAllEntries(db);
       const cases = [
         { query: "cache-pruner", expected: "cache-pruner", execution: "exact" },
         { query: "kuber config", expected: "kubernetes-configurator", execution: "prefix" },
@@ -162,19 +136,19 @@ describe("progressive lexical query planning (#819)", () => {
       ] as const;
 
       for (const row of cases) {
-        const results = searchFts(db, row.query, 10);
+        const results = searchEntryNames(db, row.query, 10);
         expect(
-          results.some((result) => result.entry.name === row.expected),
+          results.some((result) => result.name === row.expected),
           row.query,
         ).toBe(true);
         expect(results[0]?.lexicalMatch, row.query).toBe(row.execution);
       }
 
-      expect(searchFts(db, "spectral quokka rotation", 10)[0]?.entry.name).toBe("spectral-quokka-rotation");
-      expect(() => searchFts(db, 'NEAR OR and " ( ) *** the the', 3)).not.toThrow();
-      expect(searchFts(db, 'NEAR OR and " ( ) *** the the', 3).length).toBeLessThanOrEqual(3);
+      expect(searchEntryNames(db, "spectral quokka rotation", 10)[0]?.name).toBe("spectral-quokka-rotation");
+      expect(() => searchUnitsLexical(db, 'NEAR OR and " ( ) *** the the', 3)).not.toThrow();
+      expect(searchUnitsLexical(db, 'NEAR OR and " ( ) *** the the', 3).length).toBeLessThanOrEqual(3);
     } finally {
-      db.close();
+      closeDatabase(db);
     }
   });
 });

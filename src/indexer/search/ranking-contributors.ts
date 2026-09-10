@@ -198,10 +198,10 @@ const BELIEF_STATE_SCORE_CEILINGS: Record<string, number> = {
  * order and displayed scores stay consistent (single scoring pipeline).
  *
  * When the ceiling clamps, the pre-clamp score is recorded as
- * `preCeilingScore` so db-search's semantic-only `minScore` floor can judge
- * the hit by what it would have scored WITHOUT the demotion — a ceiling below
- * the floor (archived 0.15 < default minScore 0.2) must demote a hit to last
- * place, never silently drop it from the results.
+ * `preCeilingScore` so db-search's final ranking comparator can order
+ * demoted hits by what they would have scored WITHOUT the demotion — a
+ * ceilinged item still lists (ranked last among un-demoted peers), never
+ * silently dropped from the results.
  */
 export function applyBeliefStateScoreCeiling(item: RankedEntryInput): void {
   const state = item.entry.beliefState;

@@ -27,7 +27,7 @@ import { buildSearchText } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions, RelinkUsageEventsOptions } from "./index-entry-types";
-import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
+import { deleteFragmentSource, replaceFragmentSource } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
 
@@ -77,10 +77,9 @@ export function upsertEntry(
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
     if (previous?.id === result.id && previous.search_text !== searchText) deleteEntryVectors(db, result.id);
-    replaceFtsEntry(
+    replaceFragmentSource(
       db,
       result.id,
-      entry,
       hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : undefined,
     );
     return result.id;
@@ -311,13 +310,12 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     }
     if (row.search_text !== searchText) deleteEntryVectors(db, row.id);
     if (document)
-      replaceFtsEntry(
+      replaceFragmentSource(
         db,
         row.id,
-        document,
         hasMarkdownFragmentContent(document) ? (getMarkdownFragmentContent(document) ?? null) : undefined,
       );
-    else deleteFtsEntries(db, [row.id]);
+    else deleteFragmentSource(db, [row.id]);
   })();
 
   // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
@@ -520,9 +518,12 @@ function deleteRelatedRows(
   const numericIds = ids.map((r) => r.id);
   const vecAvail = isVecAvailable(db);
 
-  // FTS is part of the canonical mutation boundary, not a caller-maintained
-  // dirty queue. Delete it before the parent row inside this transaction.
-  deleteFtsEntries(db, numericIds);
+  // The safe-Markdown fragment source is part of the canonical mutation
+  // boundary, not a caller-maintained dirty queue. Delete it before the
+  // parent row inside this transaction (redundant with entry_fragments' own
+  // ON DELETE CASCADE, but explicit here alongside the other child-row
+  // cleanup this function owns).
+  deleteFragmentSource(db, numericIds);
 
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
@@ -608,7 +609,8 @@ export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
 
 /**
  * Delete entries by their primary key IDs, along with all related rows
- * (embeddings, entries_vec, entries_fts, utility scores, usage_events).
+ * (embeddings, entries_vec, entry_fragments, entry_units, utility scores,
+ * usage_events).
  *
  * Used by explicit `--clean` reconciliation before embeddings and final
  * verification to remove stale entries whose source files no longer exist.

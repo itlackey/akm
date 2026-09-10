@@ -21,7 +21,7 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
  *
  * AKM maintains four indexes per stash:
  *   1. Frontmatter index (SQLite `entries` table) — asset metadata.
- *   2. FTS5 full-text search index (SQLite `entries_fts` / `units_fts` virtual tables).
+ *   2. FTS5 full-text search index (SQLite `units_fts` virtual table).
  *   3. Vector (embedding) index (SQLite `units_vec` table).
  *   4. Graph index (SQLite `graph_nodes`, `graph_edges` tables).
  *

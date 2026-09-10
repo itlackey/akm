@@ -15,10 +15,10 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
+import { searchUnitsLexical } from "../../src/indexer/search/db-search";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
-import { searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "../_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ describe("Issue #36: short FTS5 query tokens", () => {
         // Directly test FTS with "ai" query
         const db = openIndexDatabase();
         try {
-          const results = searchFts(db, "ai", 10);
+          const results = searchUnitsLexical(db, "ai", 10);
           expect(results.length).toBeGreaterThanOrEqual(1);
         } finally {
           closeDatabase(db);
@@ -277,7 +277,7 @@ describe("Issue #36: short FTS5 query tokens", () => {
       // for short identifiers (e.g., "R", "C", "x") can return results.
       const db = openIndexDatabase();
       try {
-        const results = searchFts(db, "x", 10);
+        const results = searchUnitsLexical(db, "x", 10);
         // "x" appears in the indexed search text, so FTS should find it
         expect(results.length).toBeGreaterThanOrEqual(1);
       } finally {

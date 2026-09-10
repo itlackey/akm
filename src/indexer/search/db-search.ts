@@ -42,19 +42,15 @@ import {
 import {
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
-  getEntryById,
   getEntryCount,
   getPositiveFeedbackCountsByIds,
 } from "../../storage/repositories/index-entries-repository";
-import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
 import {
   getIndexedMarkdownFragment,
   getIndexedMarkdownFragments,
   type IndexedMarkdownFragment,
-  searchFts,
 } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
-import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import type { UnitSearchHit } from "../../storage/repositories/units-repository";
 import { searchUnits } from "../../storage/repositories/units-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
@@ -68,14 +64,7 @@ import {
   parseRefPrefixQuery,
   parseRetiredTypePrefixQuery,
 } from "./fts-query";
-import {
-  applyRankingRules,
-  combineSearchScores,
-  fuseByEntry,
-  lexicalNameMatchTier,
-  normalizeFtsScores,
-  type UnitLexicalHit,
-} from "./ranking";
+import { applyRankingRules, fuseByEntry, lexicalNameMatchTier, type UnitLexicalHit } from "./ranking";
 import { typeBoostFor } from "./ranking-contributors";
 import type { MatchedUnit, RankedEntryInput } from "./ranking-types";
 import { attachSearchHitAttribution, copySearchHitAttribution, getSearchHitAttribution } from "./search-attribution";
@@ -382,9 +371,8 @@ function buildSearchResultComparator(query: string): (a: RankedEntryInput, b: Ra
     if (rawScoreDiff !== 0) return rawScoreDiff;
     // Ceiling values are intentionally allowed to demote visibility, but not
     // to erase relevance. Prefer the score before a relaxed body-only ceiling;
-    // a later belief-state ceiling has its own minScore handoff and must not
-    // overwrite this ordering evidence. Belief-only ceilings fall back to
-    // their `preCeilingScore`.
+    // a later belief-state ceiling must not overwrite this ordering evidence.
+    // Belief-only ceilings fall back to their `preCeilingScore`.
     const preCeilingRelevance = (item: RankedEntryInput): number =>
       item.preRelaxedCeilingScore ?? item.preCeilingScore ?? item.score;
     const ceilingDiff = stableRankScore(preCeilingRelevance(b)) - stableRankScore(preCeilingRelevance(a));
@@ -488,10 +476,11 @@ async function searchDatabase(
     };
   }
 
-  // Start the async embedding request without awaiting, then run FTS
-  // synchronously while the HTTP/local embedding request is in-flight.
+  // Start the async embedding request without awaiting, then run the lexical
+  // units_fts query synchronously while the HTTP/local embedding request is
+  // in-flight.
   const typeFilter = searchType === "any" ? undefined : searchType;
-  const { ftsResults, embeddingScores, embedMs, mode, semanticWarning, unitScored } = await collectSearchSignals(
+  const { embedMs, mode, semanticWarning, unitScored } = await collectSearchSignals(
     db,
     query,
     limit * 3,
@@ -502,40 +491,7 @@ async function searchDatabase(
 
   const tRank0 = Date.now();
 
-  // index-redesign-contract.md B3: once units_fts has rows, `collectSearchSignals`
-  // already returns the fused RankedEntryInput[] via `fuseByEntry` — skip the
-  // old entries_fts/entries_vec combine step entirely rather than running both.
-  let scored: Array<RankedEntryInput & IndexedProvenance>;
-  if (unitScored) {
-    scored = unitScored.filter(hasIndexedProvenance);
-  } else {
-    // ── Score normalization ──────────────────────────────────────────────
-    // Stable bounded BM25 transform + cosine similarity with weighted addition
-    // (FTS 0.7, vector 0.3). The lexical transform is per-row, so widening the
-    // candidate set cannot alter a pre-existing row's base score.
-    const ftsScoreMap = normalizeFtsScores(ftsResults);
-
-    // Build embedding score map (cosine similarities already 0-1)
-    const embedScoreMap = new Map<number, number>();
-    if (embeddingScores) {
-      for (const [id, cosine] of embeddingScores) {
-        embedScoreMap.set(id, cosine);
-      }
-    }
-
-    // ── Combine FTS + vector scores ──────────────────────────────────────
-    scored = combineSearchScores({
-      ftsScoreMap,
-      embedScoreMap,
-      getEntryById: (id) => getEntryById(db, id) ?? undefined,
-      typeFilter,
-      // #627 — also exclude default-hidden types from the vector-only branch so a
-      // session asset that is a top-k vector neighbor (but not an FTS match) does
-      // not leak into default ('any') results. defaultExcludes is already []
-      // unless this is the untyped path without includeExcludedTypes.
-      excludeTypes: defaultExcludes,
-    }).filter(hasIndexedProvenance);
-  }
+  const scored: Array<RankedEntryInput & IndexedProvenance> = unitScored.filter(hasIndexedProvenance);
 
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
@@ -606,32 +562,15 @@ async function searchDatabase(
     scopeKey,
   });
 
-  // ── minScore floor ──────────────────────────────────────────────────────
-  // Drop semantic-only hits (cosine-only, no FTS match) whose score falls
-  // below the configured floor. FTS hits and hybrid hits are always kept.
-  // Default floor: 0.2. Set search.minScore = 0 in config to disable.
-  // Judged on the PRE-ceiling score when a demoting belief state clamped the
-  // item (`preCeilingScore`): the belief ceilings can sit below this floor
-  // (archived 0.15 < 0.2), and a demotion must rank the hit last, not
-  // silently remove a result that would otherwise have listed.
-  //
-  // index-redesign-contract.md B3 lists `search.minScore` among what belongs
-  // to "the old path" (entries_fts + searchVec + FTS_WEIGHT/VEC_WEIGHT),
-  // left for B5 to delete alongside it. It is calibrated for that path's
-  // 0-1 cosine/BM25-derived scores; a fused RRF score (`Σ 1/(RRF_K+rank)`,
-  // at most ~0.03) is a different, much smaller scale that floor was never
-  // set against, so the units path skips it entirely rather than dropping
-  // nearly every semantic-only unit hit.
-  const minScore = config.search?.minScore ?? 0.2;
-  const preFilter =
-    !unitScored && minScore > 0
-      ? scored.filter((item) => item.rankingMode !== "semantic" || (item.preCeilingScore ?? item.score) >= minScore)
-      : scored;
-
-  preFilter.sort(buildSearchResultComparator(query));
+  // The units path's RRF-fused score is normalized to the same [0, 1]-ish
+  // scale the ranking contributors and the belief-state ceiling are
+  // calibrated for (`RRF_MAX_SCORE` in ranking.ts) — no separate minScore
+  // floor is applied. A demoting belief state already caps a hit's score and
+  // ranks it last via `buildSearchResultComparator` rather than dropping it.
+  scored.sort(buildSearchResultComparator(query));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
-  const deduped = deduplicateByPath(preFilter);
+  const deduped = deduplicateByPath(scored);
 
   // Source → scope → proposed-quality → derived-twin belief inheritance →
   // belief: the post-candidate filter chain shared with enumerateEntries (see
@@ -697,87 +636,15 @@ async function searchDatabase(
   return { embedMs, rankMs, hits, mode, semanticWarning };
 }
 
-async function collectSearchSignals(
-  db: Database,
-  query: string,
-  candidateLimit: number,
-  typeFilter: string | undefined,
-  excludeTypes: string[],
-  config: AkmConfig,
-): Promise<{
-  ftsResults: DbSearchResult[];
-  embeddingScores: Map<number, number> | null;
-  embedMs: number;
-  mode: SearchExecutionMode;
-  semanticWarning?: string;
-  /** Set only on the units search path (index-redesign-contract.md B3). */
-  unitScored?: RankedEntryInput[];
-}> {
-  if (hasFullUnitsCoverage(db)) {
-    return collectUnitSearchSignals(db, query, candidateLimit, typeFilter, excludeTypes, config);
-  }
-  const startedAt = Date.now();
-  const embeddingPromise = tryVecScores(db, query, candidateLimit, config);
-  const ftsResults = searchFts(db, query, candidateLimit, typeFilter, excludeTypes);
-  const embeddingResult = await embeddingPromise;
-  const mode: SearchExecutionMode = embeddingResult.warning
-    ? "fts-fallback"
-    : embeddingResult.scores !== null
-      ? "semantic"
-      : "keyword";
-  return {
-    ftsResults,
-    embeddingScores: embeddingResult.scores,
-    embedMs: Date.now() - startedAt,
-    mode,
-    semanticWarning: embeddingResult.warning,
-  };
-}
-
 // ── Units search (index-redesign-contract.md B3) ────────────────────────────
-
-/**
- * Whether every current `entries` row is reachable through `entry_units` —
- * the switch B3 wires between the old path (`entries_fts` + `searchVec`,
- * fused by `combineSearchScores`) and the new one (`searchUnitsLexical` +
- * stage-1's `searchUnits`, fused by `fuseByEntry`).
- *
- * index-redesign B5a update: `akm index` is now ENTIRELY `reconcileRoots`
- * (both `--full` and incremental — the old drain-dir walk and its own
- * separate write path are gone), and reconcile derives + persists units for
- * every successfully-parsed file on every run, full or incremental. So this
- * now evaluates true for any index.db a current `akm index` run has touched
- * at all — full coverage, in practice, is the steady state, not a
- * first-pass-vs-later distinction any more. What it still legitimately
- * guards is the one remaining bridge case B3 originally wrote it for: an
- * index.db from BEFORE `entry_units` existed (or one no `akm index` run has
- * touched since upgrading) has entries with zero `entry_units` rows — the
- * ordinary "not yet migrated" case, not an error — and must keep serving
- * search off the legacy `entries_fts`/`searchVec` path (nothing else has any
- * data yet) until the next `akm index` run migrates it. Collapsing this
- * check to "the table exists at all" would be equivalent today (reconcile
- * covers every entry it touches, atomically, in the same run that creates
- * the row) but is left as a full-coverage check rather than simplified
- * further here — B5a's mandate was the reconcile/drain rewrite itself, not a
- * search-layer change, and this switch is exercised by a wide swath of
- * existing search tests that a routing change deserves its own focused pass
- * on (flagged for B5b/B5c, alongside deleting `entries_fts`/`searchVec`'s
- * writers outright once nothing needs the bridge).
- */
-function hasFullUnitsCoverage(db: Database): boolean {
-  try {
-    const totalEntries = (db.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number }).n;
-    if (totalEntries === 0) return false;
-    const uncovered = db
-      .prepare(
-        "SELECT 1 FROM entries e WHERE NOT EXISTS (SELECT 1 FROM entry_units eu WHERE eu.entry_id = e.id) LIMIT 1",
-      )
-      .get();
-    return uncovered == null;
-  } catch {
-    return false;
-  }
-}
+//
+// Every write path (reconcile, and `indexWrittenAssets` for a just-written
+// asset) populates `unit_texts`/`units_fts`/`entry_units` atomically with the
+// `entries` row itself (B1's contract), so there is exactly one search path:
+// lexical `units_fts` fused with semantic `units_vec` by reciprocal rank.
+// There is no longer a coverage check to branch on — B5a's generation bump
+// (index-schema.ts) discards `entries` outright on an incompatible schema, so
+// a readable `entries` row always has its `entry_units` sibling.
 
 /**
  * `units_fts`/`units_vec` are keyed by UNIT, not by entry, and one entry can
@@ -886,7 +753,7 @@ async function tryUnitVecScores(
   }
 }
 
-async function collectUnitSearchSignals(
+async function collectSearchSignals(
   db: Database,
   query: string,
   candidateLimit: number,
@@ -894,8 +761,6 @@ async function collectUnitSearchSignals(
   excludeTypes: string[],
   config: AkmConfig,
 ): Promise<{
-  ftsResults: DbSearchResult[];
-  embeddingScores: Map<number, number> | null;
   embedMs: number;
   mode: SearchExecutionMode;
   semanticWarning?: string;
@@ -916,13 +781,27 @@ async function collectUnitSearchSignals(
     excludeTypes,
   });
   return {
-    ftsResults: [],
-    embeddingScores: null,
     embedMs: Date.now() - startedAt,
     mode,
     semanticWarning: semanticResult.warning,
     unitScored,
   };
+}
+
+/**
+ * Entry-level lexical-only search over units, best match first — for
+ * consumers that need ranked entries without semantic fusion (e.g.
+ * collapse-detector's canary scoring, which is deterministic-only by design:
+ * see `src/commands/improve/collapse-detector.ts`). The `units_fts` card unit
+ * carries name/description/tags/hints, so an entry-level lexical search is a
+ * units query grouped by entry — the same grouping `collectSearchSignals`
+ * uses, with an empty semantic list so the RRF fusion degenerates to a pure
+ * lexical-rank ordering.
+ */
+export function searchEntriesLexical(db: Database, query: string, k: number): RankedEntryInput[] {
+  const unitK = Math.max(1, Math.round(k * meanUnitsPerEntry(db)));
+  const lexicalHits = searchUnitsLexical(db, query, unitK);
+  return fuseByEntry(db, lexicalHits, []).sort((a, b) => b.score - a.score);
 }
 
 /**
@@ -1164,38 +1043,6 @@ function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilter
 }
 
 // ── Vector scorer ───────────────────────────────────────────────────────────
-
-async function tryVecScores(
-  db: Database,
-  query: string,
-  k: number,
-  config: AkmConfig,
-): Promise<{ scores: Map<number, number> | null; warning?: string }> {
-  if (config.semanticSearchMode === "off") return { scores: null };
-  // A real-time completeness fact, not a cached verdict: skip the network
-  // round trip only when the index has never embedded anything. A PARTIAL
-  // failure (some entries embedded, one write degraded) still attempts —
-  // and if the endpoint is genuinely down, the failure surfaces as a live
-  // `semanticWarning` below instead of silently skipping with no signal.
-  if (getEmbeddingCount(db) === 0) return { scores: null };
-
-  try {
-    const { embed } = await import("../../llm/embedder.js");
-    const queryEmbedding = await embed(query, config.embedding);
-    const vecResults = searchVec(db, queryEmbedding, k);
-
-    const scores = new Map<number, number>();
-    for (const { id, distance } of vecResults) {
-      // Convert L2 distance to cosine similarity (vectors are normalized).
-      // Guard against NaN/Infinity from sqlite-vec edge cases.
-      const raw = 1 - (distance * distance) / 2;
-      scores.set(id, Number.isFinite(raw) ? Math.max(0, raw) : 0);
-    }
-    return { scores };
-  } catch (error) {
-    return { scores: null, warning: buildVectorFallbackWarning(config, error) };
-  }
-}
 
 function buildVectorFallbackWarning(config: AkmConfig, error: unknown): string {
   const endpoint = safeEmbeddingEndpoint(config);

@@ -6,8 +6,8 @@ import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
 import { setMeta } from "../../src/storage/repositories/index-meta-repository";
+import { seedUnitsForAllEntries } from "./seed-units";
 
 /**
  * Seed a stored graph snapshot, also creating the minimal `entries` rows
@@ -40,9 +40,9 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
       }
     }
     try {
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
     } catch {
-      /* fts rebuild is best-effort for helper seeds */
+      /* unit seeding is best-effort for helper seeds */
     }
     // Mark the index as fresh so auto-index in show/search CLIs treats the
     // seeded data as current and does not wipe entries / cascade-delete the

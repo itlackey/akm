@@ -26,7 +26,6 @@ import {
   getEntryIdByFilePath,
   upsertEntry,
 } from "../../../src/storage/repositories/index-entries-repository";
-import { rebuildFts, searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { DB_VERSION, EMBEDDING_DIM } from "../../../src/storage/repositories/index-schema";
 import {
@@ -172,15 +171,15 @@ describe("Schema", () => {
     }
   });
 
-  test("openIndexDatabase creates FTS5 table", () => {
+  test("openIndexDatabase creates the units_fts FTS5 table", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get() as
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'units_fts'").get() as
         | { name: string }
         | undefined;
       expect(row).toBeDefined();
-      expect(row?.name).toBe("entries_fts");
+      expect(row?.name).toBe("units_fts");
     } finally {
       closeDatabase(db);
     }
@@ -485,184 +484,6 @@ describe("Entry CRUD", () => {
 });
 
 // ── Section 1.3: FTS search ────────────────────────────────────────────────
-
-describe("FTS search", () => {
-  test("searchFts returns results ranked by BM25", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "deploy-tool", {
-        description: "Deploy applications to production servers",
-        searchText: "deploy deploy deploy applications production servers deployment",
-      });
-      insertTestEntry(db, "infra-tool", {
-        description: "Cloud infrastructure for deploy pipelines",
-        searchText: "cloud infrastructure management scaling networking deploy pipelines automation",
-      });
-      rebuildFts(db);
-
-      const results = searchFts(db, "deploy", 10);
-      expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("deploy-tool");
-      expect(results[1]!.entry.name).toBe("infra-tool");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("searchFts with type filter", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "build-script", {
-        type: "script",
-        description: "Build the project",
-        searchText: "build project compilation",
-      });
-      insertTestEntry(db, "build-skill", {
-        type: "skill",
-        description: "Build pipeline skill",
-        searchText: "build pipeline skill compilation",
-      });
-      rebuildFts(db);
-
-      const scriptResults = searchFts(db, "build", 10, "script");
-      expect(scriptResults).toHaveLength(1);
-      expect(scriptResults[0]!.entry.type).toBe("script");
-
-      const allResults = searchFts(db, "build", 10);
-      expect(allResults).toHaveLength(2);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("searchFts sanitizes query tokens", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "hello-tool", {
-        description: "hello world 123 greeting",
-        searchText: "hello world 123 greeting",
-      });
-      rebuildFts(db);
-
-      // Should not throw a SQL error despite special characters
-      const results = searchFts(db, "hello! world@123", 10);
-      expect(results[0]!.entry.name).toBe("hello-tool");
-      // "hello" and "world" and "123" are valid tokens after sanitization
-      expect(results.length).toBeGreaterThanOrEqual(1);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("searchFts returns empty for garbage query", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "some-tool", { searchText: "some useful tool" });
-      rebuildFts(db);
-
-      const results = searchFts(db, "!@#$%", 10);
-      expect(results).toEqual([]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  // ── T5: lexical query-plan edge cases ────────────────────────────────────
-  // Exercise the shared planner indirectly through searchFts.
-
-  test("query that becomes empty after sanitization returns no results", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "target", { searchText: "some useful content" });
-      rebuildFts(db);
-
-      // "! @" contains only non-alphanumeric chars; after sanitization all
-      // tokens are stripped, leaving an empty FTS query.
-      const results = searchFts(db, "! @", 10);
-      expect(results).toEqual([]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("query with only 1-character tokens returns no results when content has no matching single-char terms", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
-      rebuildFts(db);
-
-      // "a b c" — single-char tokens are passed to FTS5 but don't match
-      // "alpha", "bravo", "charlie" because FTS5 doesn't do prefix matching.
-      const results = searchFts(db, "a b c", 10);
-      expect(results).toEqual([]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("FTS5 syntax injection is neutralized", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "foo-tool", { description: "foo bar baz", searchText: "foo bar baz" });
-      insertTestEntry(db, "bar-tool", { description: "bar qux quux", searchText: "bar qux quux" });
-      rebuildFts(db);
-
-      // "NEAR(foo, bar)" is raw FTS5 syntax that should be sanitized.
-      // After sanitization, syntax chars and NEAR are stripped, leaving
-      // tokens "foo" "bar" (implicit AND) — should not throw and should
-      // return matches containing both foo and bar.
-      const results = searchFts(db, "NEAR(foo, bar)", 10);
-      expect(results.length).toBeGreaterThanOrEqual(1);
-
-      // foo-tool has both "foo" and "bar" in its search text
-      const names = results.map((r) => r.entry.name);
-      expect(names).toContain("foo-tool");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("normal multi-word query returns correct results", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "deploy-prod", {
-        description: "deploy application production servers",
-        searchText: "deploy application production servers",
-      });
-      insertTestEntry(db, "test-runner", {
-        description: "test runner unit integration",
-        searchText: "test runner unit integration",
-      });
-      rebuildFts(db);
-
-      const results = searchFts(db, "deploy production", 10);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.entry.name).toBe("deploy-prod");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("rebuildFts synchronizes FTS with entries table", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      insertTestEntry(db, "alpha", { description: "alpha functionality", searchText: "alpha functionality" });
-      insertTestEntry(db, "beta", { description: "beta functionality", searchText: "beta functionality" });
-      insertTestEntry(db, "gamma", { description: "gamma functionality", searchText: "gamma functionality" });
-
-      rebuildFts(db);
-
-      const alphaResults = searchFts(db, "alpha", 10);
-      expect(alphaResults).toHaveLength(1);
-      expect(alphaResults[0]!.entry.name).toBe("alpha");
-
-      const allResults = searchFts(db, "functionality", 10);
-      expect(allResults).toHaveLength(3);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-});
 
 // ── Section 1.4: Meta helpers ──────────────────────────────────────────────
 
@@ -996,70 +817,6 @@ describe("Vector / Embedding integration", () => {
     } catch (error) {
       expect((error as ConfigError).code).toBe("INDEX_SCHEMA_INCOMPATIBLE");
       expect((error as Error).message).not.toMatch(/no such table|SQLITE/i);
-    }
-  });
-});
-
-// ── Incremental rebuildFts (#177 perf finding) ──────────────────────────────
-
-describe("entry-owned FTS projection", () => {
-  function makeEntry(name: string, description = ""): IndexDocument {
-    return {
-      name,
-      type: "skill",
-      description,
-      filename: `${name}.md`,
-    };
-  }
-
-  function ftsCount(db: Database): number {
-    const row = db.prepare("SELECT COUNT(*) AS cnt FROM entries_fts").get() as { cnt: number } | undefined;
-    return row?.cnt ?? 0;
-  }
-
-  function upsertFtsEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
-    const provenance = deriveEntryProvenance(
-      { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-      entry.type,
-      key,
-    );
-    return upsertEntry(db, `/d/${key}.md`, entry, searchText, provenance);
-  }
-
-  test("upsertEntry immediately inserts and replaces its FTS row", () => {
-    const db = openIndexDatabase(tmpDbPath("entry-fts"));
-    try {
-      upsertFtsEntry(db, "k1", makeEntry("alpha", "first"), "alpha first");
-      upsertFtsEntry(db, "k2", makeEntry("bravo", "legacyuniquemarker"), "bravo legacyuniquemarker");
-      upsertFtsEntry(db, "k3", makeEntry("charlie", "third"), "charlie third");
-      expect(ftsCount(db)).toBe(3);
-
-      upsertFtsEntry(db, "k2", makeEntry("bravo", "currentuniquemarker"), "bravo currentuniquemarker");
-      expect(ftsCount(db)).toBe(3);
-
-      const updatedHits = db
-        .prepare("SELECT entry_id FROM entries_fts WHERE entries_fts MATCH ?")
-        .all(`"currentuniquemarker"`) as Array<{ entry_id: number }>;
-      const staleHits = db
-        .prepare("SELECT entry_id FROM entries_fts WHERE entries_fts MATCH ?")
-        .all(`"legacyuniquemarker"`) as Array<{ entry_id: number }>;
-      expect(updatedHits).toHaveLength(1);
-      expect(staleHits).toHaveLength(0);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("rebuildFts remains an explicit full recovery operation", () => {
-    const db = openIndexDatabase(tmpDbPath("entry-fts-recovery"));
-    try {
-      upsertFtsEntry(db, "k1", makeEntry("alpha"), "alpha");
-      db.exec("DELETE FROM entries_fts");
-      expect(ftsCount(db)).toBe(0);
-      rebuildFts(db);
-      expect(ftsCount(db)).toBe(1);
-    } finally {
-      closeDatabase(db);
     }
   });
 });

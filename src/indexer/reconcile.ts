@@ -72,7 +72,7 @@ import {
 } from "../storage/repositories/files-repository";
 import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
-import { replaceFtsEntry } from "../storage/repositories/index-fts-repository";
+import { replaceFragmentSource } from "../storage/repositories/index-fts-repository";
 import { replaceEntryUnits } from "../storage/repositories/units-repository";
 import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../workflows/source-files";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
@@ -861,7 +861,7 @@ function repointOrInsert(
   return { entryId: oldRow.id, outcome: "changed" };
 }
 
-/** UPDATE one `entries` row in place — same id, new path/identity/content — and refresh its FTS projection. */
+/** UPDATE one `entries` row in place — same id, new path/identity/content — and refresh its safe-fragment source. */
 function repointEntry(
   db: Database,
   entryId: number,
@@ -891,10 +891,9 @@ function repointEntry(
     derivedFrom,
     entryId,
   );
-  replaceFtsEntry(
+  replaceFragmentSource(
     db,
     entryId,
-    entry,
     hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : undefined,
   );
 }
@@ -1013,15 +1012,16 @@ function deleteFileAndEntryByPath(db: Database, filePath: string): boolean {
  * types), set during `recognize` and present ONLY for that adapter. Every
  * other adapter (`okf`, ...) never calls it, so `hasMarkdownFragmentContent`
  * is always false for their entries — falling straight to `null` here would
- * leave their body content in `entries_fts`'s single per-entry `content`
- * column (`buildSearchFields`, unconditional) but in NO unit at all, an
- * asymmetry that would silently blank a whole adapter's fragment search once
- * unit coverage is complete (index-redesign-contract.md B3). `entry.content`
+ * leave their body content in `entries.search_text`'s unconditional `content`
+ * field (`buildSearchFields`) but in NO unit at all, an asymmetry that would
+ * silently blank a whole adapter's fragment search (index-redesign-contract.md
+ * B3). `entry.content`
  * — the same field already surfaced through search hits and `show`, so
  * already that adapter's own public-safe projection — is the fallback
  * fragment source for exactly this case.
  */
-function toUnitSource(entryId: number, entry: IndexDocument): UnitSource {
+/** Exported for tests that seed `entries` rows directly (bypassing the file-walk) and need the same unit derivation reconcile itself uses. */
+export function toUnitSource(entryId: number, entry: IndexDocument): UnitSource {
   const fields = buildSearchFields(entry);
   const safeMarkdown = hasMarkdownFragmentContent(entry)
     ? (getMarkdownFragmentContent(entry) ?? null)

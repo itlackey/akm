@@ -11,7 +11,7 @@ import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
+
 import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import { searchVec, upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
 import { runCliCapture } from "../_helpers/cli";
@@ -22,6 +22,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
 } from "../_helpers/sandbox";
+import { seedUnitsForAllEntries } from "../_helpers/seed-units";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ describe("assembleInfo", () => {
       "test skill",
       infoEntryProvenance("skill", "test-skill"),
     );
-    rebuildFts(db);
+    seedUnitsForAllEntries(db);
     setMeta(db, "builtAt", "2026-03-17T00:00:00Z");
     closeDatabase(db);
 
@@ -182,7 +183,7 @@ describe("assembleInfo", () => {
       "test doc",
       infoEntryProvenance("knowledge", "test-doc"),
     );
-    rebuildFts(db);
+    seedUnitsForAllEntries(db);
     closeDatabase(db);
 
     const info = assembleInfo({ dbPath });
@@ -275,7 +276,7 @@ describe("assembleInfo", () => {
     );
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     setMeta(db, "hasEmbeddings", "1");
-    rebuildFts(db);
+    seedUnitsForAllEntries(db);
     closeDatabase(db);
 
     const info = assembleInfo({ dbPath });
