@@ -54,7 +54,6 @@ export const EmbeddingConnectionConfigSchema = z
      */
     maxTokens: positiveInt.optional(),
     batchSize: positiveInt.optional(),
-    chunkSize: positiveInt.optional(),
     /**
      * Ollama's `num_ctx` ONLY (#956) — sent verbatim as
      * `options.num_ctx` on the native `/api/embed` request. It no longer also

@@ -526,6 +526,22 @@ describe("embedding config", () => {
     saveConfig({ ...loadConfig(), embedding: undefined });
     expect(loadConfig().embedding).toBeUndefined();
   });
+
+  test("ignores the retired `embedding.chunkSize` key, unvalidated, with no error and no warning (#954)", () => {
+    // Nothing in src/ ever read embedding.chunkSize; it is dead, not migrated. Before #954 it was
+    // still a *validated* schema field (positiveInt), so an out-of-range value failed config
+    // load even though the value was never used. Retiring the key drops the validation with it:
+    // `embedding` stays `.passthrough()`, so a config that still sets chunkSize — valid or not —
+    // is simply carried through unread, never rejected and never warned about. -3 is chosen
+    // because it fails the old `positiveInt` (int + positive) validation, making this the
+    // distinguishing case: it throws on the unchanged schema and loads clean once retired.
+    writeCurrentConfig({ embedding: { chunkSize: -3 } });
+    const warnings = captureWarnings(() => {
+      expect(() => loadConfig()).not.toThrow();
+    });
+    expect(warnings).toEqual([]);
+    expect(loadConfig().embedding?.chunkSize).toBe(-3);
+  });
 });
 
 // ── LLM engine config ───────────────────────────────────────────────────────
