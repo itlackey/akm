@@ -633,6 +633,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   purge and rebuild on a same-model rename. The canary now caps each sampled
   entry's search text the same way, through the same `capEmbeddingText`
   helper, before requesting its vector.
+- **`akm improve --require-engines` now probes reachability instead of only
+  checking config/credentials, and a dead engine can no longer hang a run
+  past its timeout or a signal (#957).** Field, beta.3: engines pointed at a
+  dead endpoint, then `akm improve --require-engines` ran ~4 minutes with
+  zero output, ignoring an external `timeout 30` (SIGTERM) and akm's own
+  `--timeout-ms` — the documented exit-78 "required engines unavailable"
+  path could never be observed, because `--require-engines` only checked
+  that an engine was configured and credentialed, never whether it actually
+  answered. It now also runs the same bounded reachability probe `akm
+  health`'s `default-llm-engine`/`configured-engines` checks already use
+  (one `/models` request per distinct endpoint), before any lock, log, or
+  index side effect, and aborts at exit 78 naming the unreachable engine and
+  endpoint. Separately, a live run now prints one default-level line if it
+  has waited more than a few seconds on its first engine response, so a
+  scheduled run's log is never silently empty while an engine is slow or
+  dead — `--timeout-ms` and an engine's own configured timeout already
+  aborted the in-flight request correctly (confirmed by this investigation,
+  not changed), and SIGTERM/SIGINT already ended the process within its
+  documented grace period.
 
 ## [0.9.14] - 2026-09-04
 

@@ -64,12 +64,21 @@ function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
  * opened for its other events. A getter is resolved for every append so a
  * caller can replace its context binding without replacing this owning sink.
  * When omitted, `appendEvent` falls back to its default open-insert-close path.
+ *
+ * `onRecord`, when supplied, runs synchronously for every terminal record
+ * BEFORE persistence — improve's first-engine-response heartbeat (#957) uses
+ * it to know the run is no longer silent, without this module taking on any
+ * dependency of its own on improve's lifecycle.
  */
-export function installLlmUsagePersistence(ctx?: EventsContextSource): () => void {
+export function installLlmUsagePersistence(
+  ctx?: EventsContextSource,
+  onRecord?: (record: LlmUsageRecord) => void,
+): () => void {
   let expectedTerminalRecords = 0;
   let disposed = false;
   setLlmUsageSink((record) => {
     expectedTerminalRecords += 1;
+    onRecord?.(record);
     appendEvent(
       { eventType: LLM_USAGE_EVENT, metadata: toEventMetadata(record) },
       typeof ctx === "function" ? ctx() : ctx,
