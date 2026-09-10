@@ -24,6 +24,7 @@ import {
 } from "./index-entry-schema";
 import { getMeta, setMeta } from "./index-meta-repository";
 import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
+import { ensureUnitTables } from "./units-repository";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -426,6 +427,14 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
       setMeta(db, "embeddingDim", String(effectiveDim));
     }
   }
+
+  // units / units_vec / entry_units (docs/plans/index-fragment-vectors.md):
+  // created if missing, same `effectiveDim` as entries_vec above, and NEVER
+  // dropped by the generation rebuild above or by a purge — only
+  // dropOtherIdentities (called from the embedding loop on a real identity
+  // change) removes rows. ensureUnitTables is idempotent, so this runs on
+  // every ensureSchema call, not just the first.
+  ensureUnitTables(db, effectiveDim);
 
   // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
   // no longer created here.
