@@ -32,6 +32,7 @@ export {
   formatFeedbackPlain,
   formatImportPlain,
   formatIndexPlain,
+  formatIndexStatusPlain,
   formatInfoPlain,
   formatInitPlain,
   formatListPlain,

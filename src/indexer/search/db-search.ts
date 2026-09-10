@@ -742,22 +742,27 @@ async function collectSearchSignals(
  * fused by `combineSearchScores`) and the new one (`searchUnitsLexical` +
  * stage-1's `searchUnits`, fused by `fuseByEntry`).
  *
- * Full coverage, not merely "at least one unit row exists": `akm index`'s
- * full walk does not run reconcile yet (that rewire is module B5's — see
- * docs/plans/index-redesign-contract.md), so TODAY only the write path
- * (module B2, `indexWrittenAssets` → `reconcilePaths`) ever populates
- * `entry_units`. A single write-path call after an ordinary `akm index` run
- * would otherwise flip this switch for the WHOLE index.db — the old path's
- * FTS-indexed entries stay in `entries_fts`, but the units path can only
- * ever surface an entry reachable via `entry_units`, so every entry the
- * full walk indexed would silently vanish from every search until the next
- * full reindex. Requiring full coverage keeps every existing search test
- * (and, in production, an ordinary index) on the old, complete path until
- * reconcile has genuinely covered the whole index — the "bridge during the
- * first pass" A4's contract already describes for the semantic branch,
- * applied here to the switch as a whole. A missing `entry_units` table (an
- * index.db from before this design) is the ordinary "not yet migrated"
- * case, not an error.
+ * index-redesign B5a update: `akm index` is now ENTIRELY `reconcileRoots`
+ * (both `--full` and incremental — the old drain-dir walk and its own
+ * separate write path are gone), and reconcile derives + persists units for
+ * every successfully-parsed file on every run, full or incremental. So this
+ * now evaluates true for any index.db a current `akm index` run has touched
+ * at all — full coverage, in practice, is the steady state, not a
+ * first-pass-vs-later distinction any more. What it still legitimately
+ * guards is the one remaining bridge case B3 originally wrote it for: an
+ * index.db from BEFORE `entry_units` existed (or one no `akm index` run has
+ * touched since upgrading) has entries with zero `entry_units` rows — the
+ * ordinary "not yet migrated" case, not an error — and must keep serving
+ * search off the legacy `entries_fts`/`searchVec` path (nothing else has any
+ * data yet) until the next `akm index` run migrates it. Collapsing this
+ * check to "the table exists at all" would be equivalent today (reconcile
+ * covers every entry it touches, atomically, in the same run that creates
+ * the row) but is left as a full-coverage check rather than simplified
+ * further here — B5a's mandate was the reconcile/drain rewrite itself, not a
+ * search-layer change, and this switch is exercised by a wide swath of
+ * existing search tests that a routing change deserves its own focused pass
+ * on (flagged for B5b/B5c, alongside deleting `entries_fts`/`searchVec`'s
+ * writers outright once nothing needs the bridge).
  */
 function hasFullUnitsCoverage(db: Database): boolean {
   try {
@@ -791,11 +796,12 @@ function meanUnitsPerEntry(db: Database): number {
   return typeof mean === "number" && Number.isFinite(mean) && mean > 0 ? mean : 1;
 }
 
-/** `units_fts` bm25 lexical search over unit text, ranked best-first (1-based). */
-export function searchUnitsLexical(db: Database, query: string, k: number): UnitLexicalHit[] {
-  if (k <= 0) return [];
-  const plan = buildLexicalQueryPlan(query);
-  if (!plan.exact) return [];
+function runUnitsFtsQuery(
+  db: Database,
+  ftsQuery: string,
+  lexicalMatch: LexicalQueryExecution,
+  k: number,
+): UnitLexicalHit[] {
   const rows = db
     .prepare(`
       SELECT unit_hash AS unitHash, bm25(units_fts) AS score
@@ -804,8 +810,46 @@ export function searchUnitsLexical(db: Database, query: string, k: number): Unit
       ORDER BY score ASC
       LIMIT ?
     `)
-    .all(plan.exact, k) as Array<{ unitHash: string; score: number }>;
-  return rows.map((row, index) => ({ unitHash: row.unitHash, rank: index + 1 }));
+    .all(ftsQuery, k) as Array<{ unitHash: string; score: number }>;
+  // Competition ranking (ties share a rank) rather than strict sequential
+  // position: SQLite gives no deterministic secondary order for an exact
+  // bm25 tie, and RRF fusion (ranking.ts's `fuseByEntry`) sums by RANK, not
+  // raw score — a strict `index + 1` would silently turn "these two units
+  // tied on relevance" into "this one wins", robbing the final ranking
+  // comparator's content-based tie-break (`canonicalContentTieKey`) of the
+  // exact score tie it needs to ever run.
+  let rank = 0;
+  let previousScore: number | undefined;
+  return rows.map((row, index) => {
+    if (previousScore === undefined || row.score !== previousScore) rank = index + 1;
+    previousScore = row.score;
+    return { unitHash: row.unitHash, rank, lexicalMatch };
+  });
+}
+
+/**
+ * `units_fts` bm25 lexical search over unit text, ranked best-first (1-based).
+ * Mirrors `searchFts`'s own exact → prefix → relaxed fallback
+ * (`index-fts-repository.ts`): a sentence-shaped query whose terms never all
+ * land in one unit (the conjunctive `exact`/`exactPrefix` queries) still
+ * needs the one-measured-relaxation OR query to surface anything at all —
+ * without it, lexical search over units silently returns nothing exactly
+ * where the legacy `entries_fts` path would have found the relaxed pool.
+ */
+export function searchUnitsLexical(db: Database, query: string, k: number): UnitLexicalHit[] {
+  if (k <= 0) return [];
+  const plan = buildLexicalQueryPlan(query);
+  if (!plan.exact) return [];
+
+  const exact = runUnitsFtsQuery(db, plan.exact, "exact", k);
+  if (exact.length > 0) return exact;
+
+  if (plan.exactPrefix) {
+    const prefix = runUnitsFtsQuery(db, plan.exactPrefix, "prefix", k);
+    if (prefix.length > 0) return prefix;
+  }
+
+  return plan.relaxed ? runUnitsFtsQuery(db, plan.relaxed, "relaxed", k) : [];
 }
 
 /** Count of `units` rows for the active identity — the units-path analogue of `getEmbeddingCount`. */

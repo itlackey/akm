@@ -46,6 +46,30 @@ export interface FlagScanCommand {
 const IMPLICIT_FLAGS = ["help", "h", "version", "v"];
 
 /**
+ * Keys `GLOBAL_OUTPUT_ARGS` (cli/shared.ts) contributes. Every leaf AND every
+ * group re-declares these so citty's parser consumes their values (see that
+ * constant's own doc) — so their mere presence in a group's own `args` never
+ * means the group has a real business use for its own flags; only a key
+ * beyond this set does. Duplicated here (not imported) to avoid coupling this
+ * shared scanner to `cli/shared.ts`'s own dependency surface; keep in sync if
+ * `GLOBAL_OUTPUT_ARGS` gains or loses a key.
+ */
+const GLOBAL_OUTPUT_ARG_KEYS = new Set(["format", "detail", "shape", "output", "quiet", "verbose"]);
+
+/**
+ * Whether a group declares any flag of its own beyond the global output
+ * scaffold — i.e. whether its bare invocation (no subcommand token) runs a
+ * REAL default body that reads those flags (`akm index`'s `full`/`reembed`),
+ * as opposed to the canonical bare-group usage error every other group falls
+ * through to (`defineGroupCommand`, cli/shared.ts) — a `UsageError` either
+ * way, whose own declared args (if any) exist only so `--help` documents them,
+ * never so a body reads them.
+ */
+function hasOwnBusinessArgs(cmd: FlagScanCommand): boolean {
+  return Object.keys(cmd.args ?? {}).some((key) => !GLOBAL_OUTPUT_ARG_KEYS.has(key));
+}
+
+/**
  * Retired flags whose commands still diagnose them THEMSELVES, with a message
  * that names the replacement ("`--scope` was removed, use `--filter`",
  * "`--source` was renamed to `--generator`"). A generic "unknown flag" would
@@ -137,8 +161,20 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
     if (!subCommands || Object.keys(subCommands).length === 0) break;
     const idx = findCittyTopLevelCommandIndex(args, (cmd.args ?? {}) as CittyArgsDefinitionForScan);
     const token = idx >= 0 ? args[idx] : undefined;
-    // A group with no subcommand token: citty reports "no command specified".
-    if (token === undefined) return { names, valueFlags, booleanFlags, displayNames, path, resolved: false };
+    // A group with no subcommand token: citty always calls the group's own
+    // `run` regardless (a `defineGroupCommand` group's `run` is never
+    // undefined — see its doc in cli/shared.ts). For most groups that `run`
+    // is the canonical bare-group usage error, and its own declared args (if
+    // any) exist only for `--help`, so a flag meant for the subcommand the
+    // caller forgot to type must not be misreported as "unknown" — stand
+    // down, exactly as before. `akm index` is the one group with a REAL
+    // default body that reads its own flags (`full`/`reembed`), so `akm index
+    // --background` must still be rejected even though `index` also carries a
+    // real subcommand (`status`) — `hasOwnBusinessArgs` is what tells the two
+    // apart.
+    if (token === undefined) {
+      return { names, valueFlags, booleanFlags, displayNames, path, resolved: hasOwnBusinessArgs(cmd) };
+    }
     const sub = subCommands[token];
     // An unrecognized token: citty reports the unknown command, which is the
     // real problem — its flags are beside the point.

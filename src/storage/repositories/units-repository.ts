@@ -149,13 +149,25 @@ function float32Buffer(vector: EmbeddingVector): Buffer {
  * on the next call instead of leaving a permanent gap `searchUnits` can never
  * see.
  *
- * A no-op returning `{ inserted: 0 }` when sqlite-vec is unavailable: there is
- * no BLOB fallback table for units (docs/plans/index-fragment-vectors.md — one
- * copy of every vector, in vec0), so writing a `units` row with no vector
- * behind it would make it look present to {@link listMissingHashes} forever.
+ * A no-op returning `{ inserted: 0, failed: 0 }` when sqlite-vec is
+ * unavailable: there is no BLOB fallback table for units
+ * (docs/plans/index-fragment-vectors.md — one copy of every vector, in
+ * vec0), so writing a `units` row with no vector behind it would make it
+ * look present to {@link listMissingHashes} forever.
+ *
+ * Each row commits in its OWN transaction (not one transaction for the whole
+ * batch): a vec0 insert can throw — most concretely a vector-width mismatch,
+ * "Dimension mismatch for inserted vector" — and a single malformed or
+ * wrong-width row from an otherwise-good provider response must not roll
+ * back every other row this call already wrote. A row that fails is left out
+ * of `units` entirely (any `units` placeholder this call itself just created
+ * for it is deleted again), not left dangling with no vector behind it, so
+ * {@link listMissingHashes} still sees it as missing and retries it on the
+ * next drain — the same "no row without a vector" invariant the module
+ * doc above states, just enforced per-row instead of per-batch.
  */
-export function upsertUnitVectors(db: Database, rows: readonly UnitVectorRow[]): { inserted: number } {
-  if (rows.length === 0 || !isVecAvailable(db)) return { inserted: 0 };
+export function upsertUnitVectors(db: Database, rows: readonly UnitVectorRow[]): { inserted: number; failed: number } {
+  if (rows.length === 0 || !isVecAvailable(db)) return { inserted: 0, failed: 0 };
 
   const insertUnit = db.prepare(
     "INSERT INTO units (unit_hash, identity) VALUES (?, ?) ON CONFLICT(unit_hash, identity) DO NOTHING",
@@ -163,22 +175,39 @@ export function upsertUnitVectors(db: Database, rows: readonly UnitVectorRow[]):
   const selectUnitId = db.prepare("SELECT unit_id FROM units WHERE unit_hash = ? AND identity = ?");
   const deleteVec = db.prepare("DELETE FROM units_vec WHERE unit_id = ?");
   const insertVec = db.prepare("INSERT INTO units_vec (unit_id, embedding, unit_hash, identity) VALUES (?, ?, ?, ?)");
+  const deleteUnit = db.prepare("DELETE FROM units WHERE unit_id = ?");
+
+  const writeOne = db.transaction((row: UnitVectorRow) => {
+    const result = insertUnit.run(row.hash, row.identity);
+    const freshlyInserted = Number(result.changes) > 0;
+    const unitRow = selectUnitId.get(row.hash, row.identity) as { unit_id: number } | undefined;
+    if (!unitRow) return false;
+    // DELETE-then-INSERT (not INSERT OR REPLACE) mirrors upsertEmbedding's
+    // vec0 mirror in index-vec-repository.ts — the established pattern for
+    // writing a fixed-rowid row into a vec0 table on this driver.
+    deleteVec.run(unitRow.unit_id);
+    try {
+      insertVec.run(unitRow.unit_id, float32Buffer(row.vector), row.hash, row.identity);
+    } catch (err) {
+      // Undo the vector-less `units` row this call would otherwise leave
+      // behind — whether it was just created above or already existed (its
+      // prior vector, if any, is already gone via deleteVec either way).
+      deleteUnit.run(unitRow.unit_id);
+      throw err;
+    }
+    return freshlyInserted;
+  });
 
   let inserted = 0;
-  db.transaction(() => {
-    for (const row of rows) {
-      const result = insertUnit.run(row.hash, row.identity);
-      if (Number(result.changes) > 0) inserted++;
-      const unitRow = selectUnitId.get(row.hash, row.identity) as { unit_id: number } | undefined;
-      if (!unitRow) continue;
-      // DELETE-then-INSERT (not INSERT OR REPLACE) mirrors upsertEmbedding's
-      // vec0 mirror in index-vec-repository.ts — the established pattern for
-      // writing a fixed-rowid row into a vec0 table on this driver.
-      deleteVec.run(unitRow.unit_id);
-      insertVec.run(unitRow.unit_id, float32Buffer(row.vector), row.hash, row.identity);
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      if (writeOne(row)) inserted++;
+    } catch {
+      failed++;
     }
-  })();
-  return { inserted };
+  }
+  return { inserted, failed };
 }
 
 /**

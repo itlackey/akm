@@ -85,26 +85,6 @@ export interface DbVecResult {
   distance: number;
 }
 
-/**
- * Per-directory incremental-index state row. `fileSetHash`/`fileMtimeMaxMs`
- * fingerprint the directory's walked file set (every file the walk saw,
- * recognized or not) as of its last drain, so a later run can skip the
- * directory from stat data alone.
- */
-export interface IndexDirState {
-  dirPath: string;
-  fileSetHash: string;
-  fileMtimeMaxMs: number;
-  reason: string;
-  updatedAt: string;
-  /**
-   * Entries the last drain persisted for this directory; `undefined` on a
-   * row written before #900 or by a drain that lost rows to per-source dedup
-   * (those directories depend on their predecessors and keep draining).
-   */
-  rowCount?: number;
-}
-
 /** Parameters for `rekeyEntryInPlace`. */
 export interface RekeyEntryOptions {
   /** New canonical asset name, written into `document_json.name`. */

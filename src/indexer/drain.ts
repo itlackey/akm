@@ -227,13 +227,16 @@ export async function drainEmbeddingQueue(
     }
 
     if (rows.length > 0) {
-      // upsertUnitVectors wraps its own writes in a transaction — this IS
-      // "each provider batch commits in its own transaction" (a second,
-      // outer db.transaction() here would only nest as an unobservable
-      // SAVEPOINT inside it, per the ambient-transaction hazard
-      // materialize-embeddings.ts's own drift guard documents).
+      // upsertUnitVectors commits each row in its own transaction — this IS
+      // "each provider batch commits durably" (a wrapping db.transaction()
+      // here would only nest as an unobservable SAVEPOINT inside it, per the
+      // ambient-transaction hazard materialize-embeddings.ts's own drift
+      // guard documents), now made even finer-grained so one malformed
+      // vector in a batch (e.g. a width mismatch) can't roll back the rest
+      // of an otherwise-good response.
       const result = upsertUnitVectors(db, rows);
       embedded += result.inserted;
+      failed += result.failed;
     }
     if (embeddings.some((embedding) => embedding !== undefined)) {
       consecutiveSingleDocFailures = 0;

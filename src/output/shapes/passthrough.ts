@@ -60,6 +60,7 @@ const PASSTHROUGH_COMMANDS = [
   "improve-report",
   "import",
   "index",
+  "index-status",
   "info",
   "lint",
   "list",

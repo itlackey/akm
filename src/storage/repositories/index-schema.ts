@@ -317,18 +317,6 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
       ON utility_scores_scoped(entry_id);
   `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS index_dir_state (
-      dir_path          TEXT PRIMARY KEY,
-      file_set_hash     TEXT NOT NULL,
-      file_mtime_max_ms REAL NOT NULL,
-      reason            TEXT NOT NULL,
-      updated_at        TEXT NOT NULL,
-      row_count         INTEGER
-    );
-  `);
-  ensureIndexDirStateRowCountColumn(db);
-
   // LLM enrichment result cache. Stores a SHA-256 body hash and the JSON
   // result for each asset so that subsequent `akm index --enrich` runs can
   // skip the LLM call when the body hasn't changed. The cache is keyed by
@@ -462,18 +450,4 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
 function tableExists(db: Database, name: string): boolean {
   const row = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1").get(name);
   return row !== undefined && row !== null;
-}
-
-/**
- * #900: `row_count` was added after the table's first release, so a database
- * created before it needs an `ALTER TABLE` (`CREATE TABLE IF NOT EXISTS` only
- * shapes a fresh table). Idempotent. Pre-existing rows keep NULL until their
- * directory is next drained; index.db is a regenerable cache, so nothing is
- * backfilled.
- */
-function ensureIndexDirStateRowCountColumn(db: Database): void {
-  const columns = db.prepare("PRAGMA table_info(index_dir_state)").all() as Array<{ name: string }>;
-  if (!columns.some((column) => column.name === "row_count")) {
-    db.exec("ALTER TABLE index_dir_state ADD COLUMN row_count INTEGER");
-  }
 }

@@ -41,6 +41,15 @@ export interface FileStateRow {
   size: number;
   mtimeMs: number;
   blobHash: string;
+  /**
+   * The adapter id that produced this row's `entries` write. A file's own
+   * `(size, mtime)` cannot change when only its BUNDLE's configured adapter
+   * changes (e.g. `okf` → `akm`), so `reconcile.ts`'s stat short-circuit
+   * additionally compares this against the root's current adapter — a
+   * mismatch forces a re-parse under the new adapter even though the file
+   * itself is untouched.
+   */
+  adapterId: string;
 }
 
 export type UnitTextKind = "card" | "fragment";
@@ -65,7 +74,8 @@ export function ensureFileAndUnitTextTables(db: Database): void {
       bundle_id  TEXT NOT NULL,
       size       INTEGER NOT NULL,
       mtime_ms   REAL NOT NULL,
-      blob_hash  TEXT NOT NULL
+      blob_hash  TEXT NOT NULL,
+      adapter_id TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS files_bundle ON files(bundle_id);
 
@@ -79,6 +89,22 @@ export function ensureFileAndUnitTextTables(db: Database): void {
       unit_hash UNINDEXED, text, tokenize='porter unicode61'
     );
   `);
+  ensureFilesAdapterIdColumn(db);
+}
+
+/**
+ * `adapter_id` was added after `files`' first release, so a database created
+ * before it needs an `ALTER TABLE` (`CREATE TABLE IF NOT EXISTS` only shapes
+ * a fresh table). Idempotent. A pre-existing row's default `''` matches no
+ * real adapter id, so the very next reconcile sees it as a mismatch and
+ * re-parses that one file under its current adapter — a one-time,
+ * self-healing cost, not a correctness gap.
+ */
+function ensureFilesAdapterIdColumn(db: Database): void {
+  const columns = db.prepare("PRAGMA table_info(files)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "adapter_id")) {
+    db.exec("ALTER TABLE files ADD COLUMN adapter_id TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 // ── files ───────────────────────────────────────────────────────────────────
@@ -89,14 +115,24 @@ function rowToFileState(row: {
   size: number;
   mtime_ms: number;
   blob_hash: string;
+  adapter_id: string;
 }): FileStateRow {
-  return { path: row.path, bundleId: row.bundle_id, size: row.size, mtimeMs: row.mtime_ms, blobHash: row.blob_hash };
+  return {
+    path: row.path,
+    bundleId: row.bundle_id,
+    size: row.size,
+    mtimeMs: row.mtime_ms,
+    blobHash: row.blob_hash,
+    adapterId: row.adapter_id,
+  };
 }
 
 /** The stored stat/hash row for one path, or `undefined` if it has never been reconciled. */
 export function getFileState(db: Database, path: string): FileStateRow | undefined {
-  const row = db.prepare("SELECT path, bundle_id, size, mtime_ms, blob_hash FROM files WHERE path = ?").get(path) as
-    | { path: string; bundle_id: string; size: number; mtime_ms: number; blob_hash: string }
+  const row = db
+    .prepare("SELECT path, bundle_id, size, mtime_ms, blob_hash, adapter_id FROM files WHERE path = ?")
+    .get(path) as
+    | { path: string; bundle_id: string; size: number; mtime_ms: number; blob_hash: string; adapter_id: string }
     | undefined;
   return row ? rowToFileState(row) : undefined;
 }
@@ -104,18 +140,25 @@ export function getFileState(db: Database, path: string): FileStateRow | undefin
 /** Every stored `files` row for one bundle — the stat cache `reconcileRoots` diffs one root's walk against. */
 export function getFileStatesByBundle(db: Database, bundleId: string): FileStateRow[] {
   const rows = db
-    .prepare("SELECT path, bundle_id, size, mtime_ms, blob_hash FROM files WHERE bundle_id = ?")
-    .all(bundleId) as Array<{ path: string; bundle_id: string; size: number; mtime_ms: number; blob_hash: string }>;
+    .prepare("SELECT path, bundle_id, size, mtime_ms, blob_hash, adapter_id FROM files WHERE bundle_id = ?")
+    .all(bundleId) as Array<{
+    path: string;
+    bundle_id: string;
+    size: number;
+    mtime_ms: number;
+    blob_hash: string;
+    adapter_id: string;
+  }>;
   return rows.map(rowToFileState);
 }
 
 /** Insert or replace one file's stat/hash row. */
 export function upsertFileState(db: Database, row: FileStateRow): void {
   db.prepare(
-    `INSERT INTO files (path, bundle_id, size, mtime_ms, blob_hash) VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO files (path, bundle_id, size, mtime_ms, blob_hash, adapter_id) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET bundle_id = excluded.bundle_id, size = excluded.size,
-         mtime_ms = excluded.mtime_ms, blob_hash = excluded.blob_hash`,
-  ).run(row.path, row.bundleId, row.size, row.mtimeMs, row.blobHash);
+         mtime_ms = excluded.mtime_ms, blob_hash = excluded.blob_hash, adapter_id = excluded.adapter_id`,
+  ).run(row.path, row.bundleId, row.size, row.mtimeMs, row.blobHash, row.adapterId);
 }
 
 /** Remove `files` rows for paths that no longer have an entry (gone, or the adapter no longer recognizes them). */

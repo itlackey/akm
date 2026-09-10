@@ -12,7 +12,7 @@ import { groupUnitHitsByEntry } from "../../storage/repositories/units-repositor
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { IndexDocument } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
-import { buildLexicalQueryPlan } from "./fts-query";
+import { buildLexicalQueryPlan, type LexicalQueryExecution } from "./fts-query";
 import { lexicalNameTokens, structuralNameTokenMatch } from "./name-match";
 import {
   applyBeliefStateScoreCeiling,
@@ -181,6 +181,8 @@ export function combineSearchScores(options: {
 export interface UnitLexicalHit {
   unitHash: string;
   rank: number;
+  /** Which tier of the exact → prefix → relaxed fallback produced this hit — every hit in one call shares it. */
+  lexicalMatch: LexicalQueryExecution;
 }
 
 /**
@@ -194,11 +196,35 @@ export interface UnitLexicalHit {
  */
 export const RRF_K = 60;
 
+/**
+ * The maximum score a SINGLE list's best-ranked hit can contribute:
+ * `1/(RRF_K + 1)`. `ranking-contributors.ts`'s pipeline (graph/project/utility
+ * boosts, the belief-state ceiling) is calibrated for a 0–1 fused score; RRF's
+ * native range is ~0.008–0.033 at `RRF_K = 60`, which would flatten every
+ * contributor's effect and make the belief-state ceiling a no-op. Dividing
+ * every fused score by this constant before contributors ever see it rescales
+ * a single list's rank-1 hit to 1.0 and a hit both lists rank #1 to 2.0 — the
+ * SAME "not a hard clamp" territory contributor boosts already push a fused
+ * score into today (`displaySearchScore`'s final monotone projection is what
+ * brings the public score back into [0,1), per CLAUDE.md's locked contract).
+ * A lexical-only exact-name match is not artificially halved by requiring
+ * semantic agreement it never had the chance to earn — semantic search can be
+ * off entirely (`ranking-regression.test.ts`'s "Score preservation (not
+ * RRF-flattened)" describe block, lexical-only throughout, still expects a
+ * clearly-exact top hit's public score above 0.9). Normalising by the two-list
+ * sum instead (dividing by `2/(RRF_K+1)`) was tried and reverted: it halves
+ * every lexical-only or semantic-only score before contributors ever see it,
+ * and no contributor boost bridges that gap back to what an unambiguous
+ * single-list match deserves.
+ */
+const RRF_MAX_SCORE = 1 / (RRF_K + 1);
+
 interface EntryUnitWinner {
   /** 1-based position of this entry once its own list is sorted best-first. */
   rank: number;
   unitHash: string;
   fragmentId: string | null;
+  lexicalMatch: LexicalQueryExecution;
 }
 
 /**
@@ -235,22 +261,39 @@ function groupLexicalHitsByEntry(db: Database, hits: readonly UnitLexicalHit[]):
     for (const owner of ownersByHash.get(hit.unitHash) ?? []) {
       const existing = best.get(owner.entryId);
       if (!existing || hit.rank < existing.rank) {
-        best.set(owner.entryId, { rank: hit.rank, unitHash: hit.unitHash, fragmentId: owner.fragmentId });
+        best.set(owner.entryId, {
+          rank: hit.rank,
+          unitHash: hit.unitHash,
+          fragmentId: owner.fragmentId,
+          lexicalMatch: hit.lexicalMatch,
+        });
       }
     }
   }
   return best;
 }
 
-/** Re-rank a per-entry "best unit" map (already the winner within its own list) best-first, 1-based. */
+/**
+ * Re-rank a per-entry "best unit" map (already the winner within its own
+ * list) best-first, 1-based — competition ranking, so two entries `compare`
+ * calls exactly equal (0) share a rank instead of one arbitrarily winning by
+ * sort-stability/iteration order. Without this, a genuine tie collapses the
+ * moment it is re-ranked here, and RRF fusion (which sums by this rank) never
+ * sees the tie it needs to hand off to the final ranking comparator's
+ * content-based tie-break (`canonicalContentTieKey`, db-search.ts).
+ */
 function rankEntryWinners<V>(
   winners: Map<number, V>,
   compare: (a: V, b: V) => number,
 ): Map<number, { rank: number; value: V }> {
   const ranked = new Map<number, { rank: number; value: V }>();
   const ordered = [...winners.entries()].sort((a, b) => compare(a[1], b[1]));
+  let rank = 0;
+  let previous: V | undefined;
   ordered.forEach(([entryId, value], index) => {
-    ranked.set(entryId, { rank: index + 1, value });
+    if (previous === undefined || compare(previous, value) !== 0) rank = index + 1;
+    previous = value;
+    ranked.set(entryId, { rank, value });
   });
   return ranked;
 }
@@ -315,6 +358,7 @@ export function fuseByEntry(
     let score = 0;
     if (lexicalHit) score += 1 / (RRF_K + lexicalHit.rank);
     if (semanticHit) score += 1 / (RRF_K + semanticHit.rank);
+    score /= RRF_MAX_SCORE;
 
     const { unitHash, fragmentId } = pickFusionWinner(lexicalHit, semanticHit);
 
@@ -332,6 +376,7 @@ export function fuseByEntry(
       itemRef: found.itemRef,
       bundleId: found.bundleId,
       conceptId: found.conceptId,
+      ...(lexicalHit ? { lexicalMatch: lexicalHit.value.lexicalMatch } : {}),
       ...(fragmentId ? { fragmentId } : {}),
       matchedUnit: { unitHash, fragmentId, kind: unitKindFromFragmentId(fragmentId) },
     });

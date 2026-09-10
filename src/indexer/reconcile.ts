@@ -52,9 +52,13 @@ import { hashContent } from "../core/adapter/adapters/shared";
 import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
+import { compareCodePoints } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { loadConfig } from "../core/config/config";
+import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
+import { canonicalizeWorkflowName } from "../core/recognition-util";
 import { withImmediateTransaction } from "../core/state-db";
+import { isVerbose, warn, warnOnce } from "../core/warn";
 import { probeProviderLimits, unitMaxChars } from "../llm/embedders/provider-limits";
 import type { Database } from "../storage/database";
 import {
@@ -70,11 +74,13 @@ import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-e
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import { replaceFtsEntry } from "../storage/repositories/index-fts-repository";
 import { replaceEntryUnits } from "../storage/repositories/units-repository";
+import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../workflows/source-files";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import {
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   type IndexDocument,
+  isWorkflowSkipWarning,
   setMarkdownFragmentContent,
 } from "./passes/metadata";
 import { parseFileDocument } from "./scan/parse-file";
@@ -93,6 +99,24 @@ export interface ReconcileCounts {
   changed: number;
   removed: number;
   unitsAdded: number;
+  /**
+   * False when any root's walk could not be trusted (a listing or stat
+   * failure somewhere under it — see the gone-path sweep below) or named a
+   * bundle whose adapter did not resolve. `akmIndex()` (index-redesign B5)
+   * reduces this across every root it reconciled to decide `scanComplete` on
+   * its `IndexResponse`. `reconcilePaths` has no walk to trust or distrust,
+   * so it is always `true` there.
+   */
+  complete: boolean;
+  /**
+   * Per-file skip warnings (a missing conceptId, or a workflow document that
+   * fails to compile — `parseFileDocument`'s `warning`), in the order
+   * encountered. `akmIndex()` surfaces these verbatim as `IndexResponse.warnings`
+   * regardless of verbosity; verbosity only gates the immediate stderr line
+   * (`buildMetadataSkipWarning`) and the one-line workflow-skip summary
+   * `reconcileRoots` emits itself (issue #273's noise gate).
+   */
+  warnings: string[];
 }
 
 interface RootContext {
@@ -116,7 +140,19 @@ interface FileResult {
 export async function reconcileRoots(
   db: Database,
   roots: readonly { path: string; bundleId: string }[],
-  opts?: { signal?: AbortSignal; onProgress?: (line: string) => void },
+  opts?: {
+    signal?: AbortSignal;
+    onProgress?: (line: string) => void;
+    /**
+     * `akm index --full`: treat every walked file as needing re-derivation,
+     * ignoring the stat-hint shortcut that ordinarily short-circuits an
+     * unchanged file — the mechanism for "re-derive everything even though
+     * nothing's stat moved" (a parsing-logic change, an adapter fix). Gone-
+     * path detection is unaffected (still compares against the real stat
+     * cache), so a genuinely deleted file is still removed normally.
+     */
+    forceReparse?: boolean;
+  },
 ): Promise<ReconcileCounts> {
   const counts = emptyCounts();
   const config = loadConfig();
@@ -128,22 +164,95 @@ export async function reconcileRoots(
     const ctx = resolveRootContext(root.path, root.bundleId);
     if (!ctx) {
       opts?.onProgress?.(`Skipping "${root.path}": no adapter resolved for bundle "${root.bundleId}".`);
+      counts.complete = false;
       continue;
     }
 
     const walked = walkStashFlatWithStatus(root.path, walkOptionsFor(ctx.component));
     counts.scanned += walked.files.length;
 
-    const storedByPath = new Map(getFileStatesByBundle(db, root.bundleId).map((row) => [row.path, row]));
+    // An incomplete walk (a listing or stat failure somewhere under this
+    // root) freezes the WHOLE root's snapshot for this run, not merely the
+    // gone-path sweep below: the walker cannot vouch for what it saw either,
+    // since a transient failure on one file says nothing about whether the
+    // OTHER files it did list are genuinely current — a sibling that
+    // legitimately changed on disk this run is not distinguishable, from
+    // here, from one whose apparent change is an artifact of the same
+    // underlying disruption (a mid-run unmount, a git-index race). Applying
+    // adds/changes for the files that happened to walk fine while treating
+    // the rest as gone would publish a half-true snapshot with no way for a
+    // caller to know it is half true. The next complete walk catches up
+    // fully; `counts.complete = false` (→ `IndexResponse.scanComplete`)
+    // reports the freeze truthfully in the meantime.
+    if (!walked.complete) {
+      opts?.onProgress?.(`"${root.path}" was not scanned completely; preserving its entire snapshot this run.`);
+      counts.complete = false;
+      continue;
+    }
+
+    warnIfAdapterSkipsAkmContent(ctx.component, walked.files, ctx.adapter);
+
+    // #339-adjacent: `files` (the stat cache) and `entries` can desync —
+    // most plainly when something clears `entries` without also clearing
+    // `files` (a crash mid-rebuild, a hand operation, a bug elsewhere) —
+    // and the two are two different tables with no FK between them, so
+    // SQLite enforces nothing here. A `storedHint` whose row has genuinely
+    // gone missing must never let `classifyFile`'s stat-only short-circuit
+    // conclude "unchanged": that would leave the file silently unindexed
+    // forever, since nothing else would ever re-examine it. Filtering
+    // `storedByPath` down to paths that still have a live `entries` row
+    // makes every other file look "new" to `classifyFile`, which reparses
+    // and reinserts it — self-healing the desync on the very next reconcile.
+    const entryPaths = new Set(
+      (
+        db.prepare("SELECT file_path FROM entries WHERE bundle_id = ?").all(root.bundleId) as { file_path: string }[]
+      ).map((row) => row.file_path),
+    );
+    const storedByPath = new Map(
+      getFileStatesByBundle(db, root.bundleId)
+        .filter((row) => entryPaths.has(row.path))
+        .map((row) => [row.path, row]),
+    );
     const currentPaths = new Set(walked.files.map((file) => file.absPath));
+
+    // A full-root walk can see both peer workflow formats (.md/.yml) for one
+    // canonical ref at once — ownership arbitration needs that whole-root view,
+    // so it happens here rather than in the single-file `classifyFile` (which
+    // only ever sees one already-known-changed file, mirroring drain-dir.ts's
+    // pre-redesign "peer-workflow-format ownership arbitration" doc comment,
+    // fallback included: the owner file is always tried FIRST, and if IT
+    // drops with its own workflow-compile error, the shadow lifts so the
+    // previously-shadowed sibling still gets indexed rather than the whole
+    // canonical ref silently vanishing). Only `reconcileRoots` (the full-walk
+    // path) does this: `reconcilePaths` (index-written-assets.ts's targeted
+    // write) has no visibility into a sibling file it did not just write, so
+    // a newly-added shadowed sibling there deliberately stales the cache
+    // instead — the next full reconcile (or the read-path physical-owner
+    // fallback in the meantime) resolves it.
+    const ownership = workflowOwnershipContext(ctx.component, walked.files);
 
     // Phase 1: classify every walked file without writing anything yet.
     // Unchanged files short-circuit on the stat hint alone; everything else
     // is parsed once (yielding the hash a rename match needs) and queued.
+    // Iterates in ownership order (a workflow canonical ref's owner file
+    // before its shadowed peers) so the fallback above can observe the
+    // owner's outcome before deciding a peer's fate.
     const pendingChanges: ParsedChange[] = [];
-    for (const file of walked.files) {
+    for (const file of ownership.orderedFiles) {
       throwIfAborted(opts?.signal);
-      const classified = classifyFile(ctx, file, storedByPath.get(file.absPath));
+      if (ownership.isShadowed(file)) {
+        if (deleteFileAndEntryByPath(db, file.absPath)) counts.removed++;
+        continue;
+      }
+      const classified = classifyFile(
+        ctx,
+        file,
+        opts?.forceReparse ? undefined : storedByPath.get(file.absPath),
+        (message, isWorkflowDrop) => {
+          counts.warnings.push(message);
+          ownership.onDropped(file, isWorkflowDrop);
+        },
+      );
       if (classified === "unchanged") {
         counts.unchanged++;
       } else if (classified === "unindexable") {
@@ -153,47 +262,197 @@ export async function reconcileRoots(
       }
     }
 
-    // Phase 2: gone paths (only when the walk was trustworthy — see below),
-    // indexed by blob hash so phase 3 can recognize a same-bundle rename
-    // instead of a delete paired with an unrelated insert.
-    //
-    // An incomplete walk (a listing or stat failure somewhere under the root)
-    // must never be read as "everything else is gone" — that would cascade a
-    // transient scan failure into a mass delete. Additions/edits this walk DID
-    // see are still applied above; only the gone-path sweep is skipped.
+    // Phase 2: gone paths, indexed by blob hash so phase 3 can recognize a
+    // same-bundle rename instead of a delete paired with an unrelated
+    // insert. The walk is known-complete here (an incomplete one already
+    // `continue`d the whole root above), so reading "not currently walked" as
+    // "gone" is safe — nothing this root's walk merely failed to see can end
+    // up here.
     const goneByHash = new Map<string, FileStateRow[]>();
-    if (walked.complete) {
-      for (const stale of storedByPath.values()) {
-        if (currentPaths.has(stale.path)) continue;
-        const bucket = goneByHash.get(stale.blobHash);
-        if (bucket) bucket.push(stale);
-        else goneByHash.set(stale.blobHash, [stale]);
-      }
-    } else {
-      opts?.onProgress?.(`"${root.path}" was not scanned completely; preserving rows this walk could not see.`);
+    for (const stale of storedByPath.values()) {
+      if (currentPaths.has(stale.path)) continue;
+      const bucket = goneByHash.get(stale.blobHash);
+      if (bucket) bucket.push(stale);
+      else goneByHash.set(stale.blobHash, [stale]);
     }
 
     // Phase 3: apply every queued change, claiming a rename match when one exists.
     for (const change of pendingChanges) {
       throwIfAborted(opts?.signal);
-      const renameSource = goneByHash.get(change.hash)?.shift();
-      applyOutcome(counts, applyChange(db, ctx, change, maxChars, renameSource));
+      const bucket = goneByHash.get(change.hash);
+      const candidate = bucket?.[0];
+      // Only actually CLAIM (shift out of `goneByHash`) a same-hash "gone"
+      // row when it is a genuine rename — the identity this change's own
+      // content/path derives is not ALREADY a different, established row.
+      // Two independently-named files that happen to be byte-identical
+      // (e.g. an un-cleaned-up duplicate memory) hash-match a "gone" row
+      // that is not really them renamed; repointOrInsert declines that case
+      // too (see its own doc comment) and falls back to a plain upsert, so
+      // leaving the candidate UNSHIFTED here is what lets Phase 4 still see
+      // it as genuinely gone and delete it — shifting it out regardless of
+      // whether it gets used would strand it: not repointed, not deleted,
+      // permanently stale.
+      const itemRefAlreadyClaimed = candidate
+        ? db
+            .prepare("SELECT 1 FROM entries WHERE item_ref = ? AND file_path <> ?")
+            .get(deriveItemRefForChange(ctx, change), candidate.path) != null
+        : false;
+      const renameSource = candidate && !itemRefAlreadyClaimed ? bucket?.shift() : undefined;
+      applyOutcome(counts, applyChange(db, ctx, change, maxChars, renameSource, false));
     }
 
-    // Phase 4: whatever gone rows no rename claimed are genuinely gone.
+    // Phase 4: whatever gone rows no rename claimed are genuinely gone —
+    // except a path the walk merely could not read (a permission change, a
+    // symlink loop — #791): `walkStashManual`/`walkStashGit` silently drop an
+    // unresolvable path from `walked.files` the same way they drop an
+    // ordinary symlink, so it lands here looking exactly like "deleted".
+    // "Absent" (ENOENT) is deleted as before; "inaccessible" keeps its row
+    // and is reported, mirroring the pre-redesign `--clean` pass's own
+    // absent-vs-inaccessible contract, now applied on every run since
+    // reconcile is what "removes what's gone" unconditionally.
+    const unreadableStale: FileStateRow[] = [];
     for (const bucket of goneByHash.values()) {
       for (const stale of bucket) {
         throwIfAborted(opts?.signal);
+        if (classifyPathAccess(stale.path).access === "inaccessible") {
+          unreadableStale.push(stale);
+          continue;
+        }
         if (deleteFileAndEntryByPath(db, stale.path)) counts.removed++;
       }
+    }
+    if (unreadableStale.length > 0) {
+      const shown = unreadableStale
+        .slice(0, 5)
+        .map((row) => describeInaccessiblePath(row.path, classifyPathAccess(row.path).code));
+      warn(
+        `Reconcile kept ${unreadableStale.length} entr${unreadableStale.length === 1 ? "y" : "ies"} whose file akm ` +
+          `cannot read (unreadable is not deleted): ${shown.join("; ")}${unreadableStale.length > shown.length ? "; …" : ""}`,
+      );
     }
 
     opts?.onProgress?.(`Reconciled "${root.path}": ${walked.files.length} files scanned.`);
   }
 
+  // Two configured bundle roots can physically overlap (a bundle added inside
+  // another bundle's root, or one adapter's `includeAllDirectories` reaching a
+  // dotdir the other skips): each root's own per-file loop above writes its
+  // own row for the shared file under its own item_ref, oblivious to the
+  // other root's claim — and `files` (the stat cache) has exactly one row PER
+  // PATH (`path TEXT PRIMARY KEY`, files-repository.ts), so whichever root's
+  // write lands last simply steals that tracking row out from under the
+  // other, regardless of which bundle should actually own the file. Resolving
+  // this per-file, during either root's own walk, would make the outcome
+  // depend on processing order; instead this runs once, after every root has
+  // had its turn, and is therefore order-independent.
+  resolvePhysicalOverlaps(db, roots);
+
   pruneOrphanUnitTexts(db);
 
+  // Workflow validation noise gate (issue #273): suppress per-spec stderr
+  // lines at default verbosity and emit a single summary instead. In verbose
+  // mode the per-spec lines are already printed by `buildMetadataSkipWarning`
+  // at generation time (inside `parseFileDocument`) — no second pass needed
+  // here. `counts.warnings` itself always carries every per-file detail,
+  // verbosity or not — only this immediate stderr summary is gated.
+  if (!isVerbose()) {
+    const skippedWorkflowCount = counts.warnings.filter(isWorkflowSkipWarning).length;
+    if (skippedWorkflowCount > 0) {
+      const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
+      warn(
+        `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
+          "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
+      );
+    }
+  }
+
   return counts;
+}
+
+interface WorkflowOwnershipContext {
+  /** `files` reordered so each canonical ref's owner is visited before its shadowed peers. */
+  orderedFiles: readonly FileContext[];
+  /** Whether `file` is currently shadowed by a higher-precedence peer (ported from drain-dir.ts's `orderedFileContexts`/`ownerPath` check). */
+  isShadowed(file: FileContext): boolean;
+  /** Record a file's drop outcome — an owner's own workflow-compile failure lifts the shadow over its peers (drain-dir.ts's `invalidWorkflowOwnerNames`). */
+  onDropped(file: FileContext, isWorkflowDrop: boolean): void;
+}
+
+const NO_WORKFLOW_OWNERSHIP: WorkflowOwnershipContext = {
+  orderedFiles: [],
+  isShadowed: () => false,
+  onDropped: () => undefined,
+};
+
+/**
+ * Peer-workflow-format ownership arbitration over one root's walked files —
+ * the deterministic ".md wins over .yml" precedence `resolveWorkflowSourceDomains`
+ * already applies for the read path (`resolveAdapterConceptOwner` →
+ * `resolveUniqueWorkflowSource` → `pickWorkflowSource`), now applied at
+ * indexing time (ported verbatim from the pre-redesign `drain-dir.ts`'s
+ * `drainDirDocuments`, whose caller this reconcile engine replaced) so the
+ * persisted row for a colliding canonical ref agrees with what a lookup/show
+ * would physically resolve to.
+ *
+ * Content validity plays no part in the INITIAL pick — a malformed `.md`
+ * still shadows a perfectly valid `.yml` sibling, since `pickWorkflowSource`'s
+ * domain resolution is path-level only — but the shadow is provisional:
+ * `orderedFiles` visits the owner before its peers, and if the owner's own
+ * `parseFileDocument` call reports a workflow-compile drop (`onDropped` with
+ * `isWorkflowDrop: true`), `isShadowed` starts returning `false` for that
+ * canonical name so the peer still gets indexed rather than the ref vanishing
+ * entirely — never a "multiple sources" collision, just the owner's own
+ * parse error surfacing alone. A domain with no resolvable owner at all
+ * (every candidate individually invalid — a broken symlink, an escaping
+ * path) shadows nothing: each candidate fails its own validation independently.
+ */
+function workflowOwnershipContext(component: BundleComponent, files: readonly FileContext[]): WorkflowOwnershipContext {
+  if (component.adapter !== "akm" && component.adapter !== "akm-workflow") {
+    return { ...NO_WORKFLOW_OWNERSHIP, orderedFiles: files };
+  }
+  const adapterId = component.adapter;
+  const domains = resolveWorkflowSourceDomains(
+    component.root,
+    adapterId,
+    files.map((file) => file.absPath),
+  );
+  const ownerPathByCanonicalName = new Map<string, string>();
+  for (const domain of domains) {
+    if (domain.source) ownerPathByCanonicalName.set(domain.canonicalName, path.resolve(domain.source.path));
+  }
+  const invalidOwnerNames = new Set<string>();
+
+  const canonicalNameFor = (file: FileContext): string | undefined => {
+    const name = workflowNameForSourcePath(component.root, adapterId, file.absPath);
+    return name === undefined ? undefined : canonicalizeWorkflowName(name);
+  };
+
+  const orderedFiles = [...files].sort((left, right) => {
+    const leftName = canonicalNameFor(left);
+    const rightName = canonicalNameFor(right);
+    const leftOwner = leftName !== undefined && ownerPathByCanonicalName.get(leftName) === path.resolve(left.absPath);
+    const rightOwner =
+      rightName !== undefined && ownerPathByCanonicalName.get(rightName) === path.resolve(right.absPath);
+    if (leftOwner !== rightOwner) return leftOwner ? -1 : 1;
+    return compareCodePoints(left.absPath, right.absPath);
+  });
+
+  return {
+    orderedFiles,
+    isShadowed(file) {
+      const canonicalName = canonicalNameFor(file);
+      if (canonicalName === undefined) return false;
+      const ownerPath = ownerPathByCanonicalName.get(canonicalName);
+      return (
+        ownerPath !== undefined && ownerPath !== path.resolve(file.absPath) && !invalidOwnerNames.has(canonicalName)
+      );
+    },
+    onDropped(file, isWorkflowDrop) {
+      if (!isWorkflowDrop) return;
+      const canonicalName = canonicalNameFor(file);
+      if (canonicalName !== undefined) invalidOwnerNames.add(canonicalName);
+    },
+  };
 }
 
 /**
@@ -247,7 +506,7 @@ export async function reconcilePaths(
       continue;
     }
     const file = buildFileContext(rootPath, absPath);
-    const classified = classifyFile(ctx, file, getFileState(db, absPath));
+    const classified = classifyFile(ctx, file, getFileState(db, absPath), (message) => counts.warnings.push(message));
     if (classified === "unchanged") counts.unchanged++;
     else if (classified === "unindexable") {
       if (deleteFileAndEntryByPath(db, absPath)) counts.removed++;
@@ -255,7 +514,7 @@ export async function reconcilePaths(
       // No rename matching for the known-paths write path (index-redesign B1
       // scoping decision): the caller already knows exactly which paths it
       // just wrote, so there is no gone-path pool here to correlate against.
-      applyOutcome(counts, applyChange(db, ctx, classified, maxChars, undefined));
+      applyOutcome(counts, applyChange(db, ctx, classified, maxChars, undefined, true));
     }
   }
 
@@ -271,11 +530,30 @@ export async function reconcilePaths(
  * installation id verbatim (a slug-legal `registryId` IS the installation id).
  */
 function resolveRootContext(rootPath: string, bundleId: string): RootContext | undefined {
-  const component = deriveInstallations([{ path: rootPath, registryId: bundleId, writable: true }])[0]?.components[0];
+  const component = deriveInstallations([
+    { path: rootPath, registryId: bundleId, writable: true, adapterId: configuredAdapterIdForBundle(bundleId) },
+  ])[0]?.components[0];
   if (!component) return undefined;
   const adapter = adapterForId(component.adapter);
   if (!adapter) return undefined;
   return { bundleId, component, adapter };
+}
+
+/**
+ * A bundle's explicitly configured adapter (`bundles.<id>.components.<name>.adapter`),
+ * or `undefined` when unconfigured. Without this, `resolveRootContext` built its
+ * synthetic single-source `SearchSource` with no `adapterId` at all, so
+ * `deriveInstallations` fell through to `detectAdapterId` — silently
+ * AUTO-DETECTING an adapter instead of respecting one a human explicitly
+ * configured, exactly the kind of drift `detectAndPersistBundleAdapters`
+ * (indexer.ts) exists to prevent everywhere else. Mirrors the same
+ * first-component convention `detectAndPersistBundleAdapters` and
+ * `resolveBundleRoot` (below) already use for a single-component bundle.
+ */
+function configuredAdapterIdForBundle(bundleId: string): string | undefined {
+  const bundle = loadConfig().bundles?.[bundleId];
+  if (!bundle) return undefined;
+  return Object.values(bundle.components ?? {})[0]?.adapter;
 }
 
 /** Resolve a configured bundle id back to its root path + component + adapter, for `reconcilePaths`. */
@@ -304,6 +582,72 @@ function walkOptionsFor(component: BundleComponent): WalkStashFlatOptions {
   };
 }
 
+/**
+ * #908: a bundle whose explicitly configured adapter is not `akm` can shadow
+ * whole top-level directories of ordinary akm-recognizable content (a stash
+ * with `content/`, `knowledge/`, `scripts/`, `workflows/`, `workspace/`
+ * indexed under, say, `agent-skills` — an adapter that only claims one of
+ * those) with zero disclosure: the files are simply never recognized, never
+ * indexed, and nothing says why. This warns ONCE per root, naming the count
+ * and the directories, not one warning per directory — enough to point an
+ * operator at the fix (`components.<name>.adapter: "akm"`).
+ *
+ * A directory only counts as "skipped" when the CHOSEN adapter recognizes
+ * NOTHING in it (so a directory the chosen adapter partially owns is not
+ * flagged) AND the `akm` adapter would have recognized at least one file
+ * there (so a directory neither adapter cares about — e.g. `.git/`, `node_modules/`
+ * — is not a false positive).
+ */
+function warnIfAdapterSkipsAkmContent(
+  component: BundleComponent,
+  files: readonly FileContext[],
+  adapter: BundleAdapter,
+): void {
+  if (adapter.id === "akm") return;
+  const akm = adapterForId("akm");
+  if (!akm) return;
+
+  const byTopDir = new Map<string, FileContext[]>();
+  for (const file of files) {
+    const top = file.ancestorDirs[0];
+    if (!top) continue; // a root-level file is not a "skipped directory" concern
+    const group = byTopDir.get(top);
+    if (group) group.push(file);
+    else byTopDir.set(top, [file]);
+  }
+
+  const akmComponent: BundleComponent = { ...component, adapter: "akm" };
+  let skippedCount = 0;
+  const skippedDirs: string[] = [];
+  for (const [dir, dirFiles] of byTopDir) {
+    const chosenRecognizesAny = dirFiles.some((file) => {
+      try {
+        return adapter.recognize(component, file) !== null;
+      } catch {
+        return false;
+      }
+    });
+    if (chosenRecognizesAny) continue; // the chosen adapter owns this dir; nothing skipped
+    const akmCandidates = dirFiles.filter((file) => {
+      try {
+        return akm.recognize(akmComponent, file) !== null;
+      } catch {
+        return false;
+      }
+    });
+    if (akmCandidates.length === 0) continue; // akm would drop it too — not a shadowing case
+    skippedCount += akmCandidates.length;
+    skippedDirs.push(dir);
+  }
+  if (skippedCount === 0) return;
+  skippedDirs.sort();
+  warnOnce(
+    "adapter-skip-akm-content",
+    `${adapter.id} adapter skipped ${skippedCount} file${skippedCount === 1 ? "" : "s"} in ` +
+      `${skippedDirs.map((dir) => `${dir}/`).join(", ")} — set components.<name>.adapter to "akm" to index them`,
+  );
+}
+
 // ── Per-file reconcile ────────────────────────────────────────────────────────
 
 /** A file that needs a write: parsed once, carrying everything `applyChange` needs. */
@@ -326,21 +670,56 @@ function classifyFile(
   ctx: RootContext,
   file: FileContext,
   storedHint: FileStateRow | undefined,
+  onWarning?: (message: string, isWorkflowDrop: boolean) => void,
 ): "unchanged" | "unindexable" | ParsedChange {
   let stat: fs.Stats;
   try {
     stat = file.stat();
   } catch {
+    // #791, applied here too (not just the gone-path sweep below): a walker
+    // can list a path (a git-tracked listing, say) that a later, individual
+    // stat call cannot reach — a permission change or a symlink loop, not
+    // "gone". Treating that as "unindexable" would delete any existing row
+    // for a file that is still genuinely there. `classifyPathAccess`
+    // distinguishes the two; "inaccessible" is reported as a no-op
+    // ("unchanged" — whatever row already exists is left untouched) exactly
+    // like the sweep's own `unreadableStale` handling, and only a truly
+    // absent path (or any other unexpected classification) still falls
+    // through to "unindexable" and its unconditional delete.
+    if (classifyPathAccess(file.absPath).access === "inaccessible") return "unchanged";
     return "unindexable";
   }
 
-  if (storedHint && storedHint.size === stat.size && storedHint.mtimeMs === stat.mtimeMs) return "unchanged";
+  // A file's own (size, mtime) cannot move when only its BUNDLE's configured
+  // adapter changes — the adapter comparison catches that case and forces a
+  // re-parse under the new adapter even though the file on disk is untouched.
+  if (
+    storedHint &&
+    storedHint.size === stat.size &&
+    storedHint.mtimeMs === stat.mtimeMs &&
+    storedHint.adapterId === ctx.adapter.id
+  ) {
+    return "unchanged";
+  }
 
   const outcome = parseFileDocument(ctx.adapter, ctx.component, file);
-  if (outcome.parsed === null) return "unindexable";
+  if (outcome.parsed === null) {
+    if (outcome.warning !== null) onWarning?.(outcome.warning, outcome.isWorkflowDrop);
+    return "unindexable";
+  }
 
   const hash = outcome.parsed.hash ?? hashContent(file.content());
   return { file, stat, entry: outcome.parsed.entry, conceptId: outcome.parsed.conceptId, hash };
+}
+
+/** The `item_ref` a change's own content/path would derive — same inputs `applyChange` itself feeds `deriveEntryProvenance`, exposed separately so Phase 3 can check it BEFORE deciding whether to claim a same-hash rename candidate. */
+function deriveItemRefForChange(ctx: RootContext, change: ParsedChange): string {
+  return deriveEntryProvenance(
+    { bundleId: ctx.bundleId, componentId: ctx.component.id, adapterId: ctx.component.adapter },
+    change.entry.type,
+    change.entry.name,
+    change.conceptId,
+  ).itemRef;
 }
 
 /**
@@ -356,6 +735,7 @@ function applyChange(
   change: ParsedChange,
   maxChars: number,
   renameSource: FileStateRow | undefined,
+  supersedeOtherBundles: boolean,
 ): FileResult {
   const { file, stat, entry, conceptId, hash } = change;
   const searchText = buildSearchText(entry);
@@ -378,7 +758,25 @@ function applyChange(
     // (index-written-assets.ts's prior `supersededIds` logic). Without this a
     // second identity's reconcile leaves two rows at one file_path and any
     // plain `WHERE file_path = ?` lookup can return either.
-    supersedeOtherItemRefsAtPath(db, file.absPath, provenance.itemRef);
+    //
+    // `reconcileRoots`'s full walk passes `supersedeOtherBundles: false`: a
+    // NESTED bundle (`akm bundle add ./vendor` where vendor sits inside the
+    // primary stash) walks the same physical file from BOTH roots by design
+    // — the enclosing bundle's own path-derived conceptId and the nested
+    // bundle's own conceptId are two legitimate, simultaneously-valid
+    // identities for it, and an unqualified ref can only resolve through the
+    // enclosing bundle's copy (`lookupBundleRefWithResolutionUsing`,
+    // indexer.ts, stops at the first candidate whose physical owner has no
+    // matching row rather than trying a later, more specific source). Which
+    // of the two ends up the durable survivor when they physically collide on
+    // the SAME file is `resolvePhysicalOverlaps`'s job, run once after every
+    // root has had its own turn (see its own doc comment) — not this
+    // per-file, order-dependent supersede. Only `reconcilePaths` (the
+    // write-time path, which reconciles ONE bundle at a time with no
+    // whole-root visibility into a sibling bundle that might physically
+    // overlap it, so it has no later pass to rely on) still needs the
+    // stale-identity cleanup this guards.
+    if (supersedeOtherBundles) supersedeOtherItemRefsAtPath(db, file.absPath, provenance.itemRef);
     const written = renameSource
       ? repointOrInsert(db, renameSource.path, file.absPath, entryWithSize, searchText, provenance, hash)
       : upsertOrInsert(db, file.absPath, entryWithSize, searchText, provenance, hash);
@@ -389,6 +787,7 @@ function applyChange(
       size: stat.size,
       mtimeMs: stat.mtimeMs,
       blobHash: hash,
+      adapterId: ctx.adapter.id,
     });
 
     const units = deriveUnits(toUnitSource(written.entryId, entry), maxChars);
@@ -442,6 +841,22 @@ function repointOrInsert(
 ): WrittenRow {
   const oldRow = db.prepare("SELECT id FROM entries WHERE file_path = ?").get(oldPath) as { id: number } | undefined;
   if (!oldRow) return upsertOrInsert(db, newPath, entry, searchText, provenance, hash);
+  // A blob-hash match is only a genuine rename when the identity the NEW
+  // path's own content derives (`provenance.itemRef`) is not ALREADY a
+  // different, established row. Two independently-named files that happen
+  // to be byte-identical (e.g. an un-cleaned-up duplicate memory) hash-match
+  // a "gone" row that is not really them renamed — it just happens to share
+  // bytes with something that went away elsewhere. Repointing onto an
+  // item_ref another row already legitimately holds would collide on the
+  // UNIQUE constraint, and would be wrong even if it somehow did not: it
+  // would silently reassign that OTHER row's id/embeddings/utility scores
+  // onto this unrelated file. Fall back to a plain upsert at the new path
+  // instead — the existing row for THIS identity updates in place as usual,
+  // and the old "gone" row is left unclaimed for Phase 4's ordinary delete.
+  const claimedByOther = db
+    .prepare("SELECT 1 FROM entries WHERE item_ref = ? AND id <> ?")
+    .get(provenance.itemRef, oldRow.id);
+  if (claimedByOther) return upsertOrInsert(db, newPath, entry, searchText, provenance, hash);
   repointEntry(db, oldRow.id, newPath, entry, searchText, provenance, hash);
   return { entryId: oldRow.id, outcome: "changed" };
 }
@@ -494,6 +909,87 @@ function supersedeOtherItemRefsAtPath(db: Database, filePath: string, keepItemRe
   if (staleIds.length > 0) deleteEntriesByIds(db, staleIds);
 }
 
+/**
+ * Resolve every file_path this run's `roots` disagree about: when it has
+ * `entries` rows under more than one of THESE bundles, keep exactly one and
+ * delete the rest, then repoint the shared `files` stat-cache row at the
+ * winner. Two bundles can only physically share one file when one bundle's
+ * root contains the other's (there is no other way for the same absolute
+ * path to fall under two distinct configured roots), so comparing resolved
+ * root-path length is sufficient to find the more specific (longer) root's
+ * sibling and the broader (shorter, outer) root that contains it — the outer
+ * root's row wins, mirroring the pre-redesign read path's own
+ * `findSourceForPath` "more specific source is attributed the asset for
+ * POLICY purposes, but the outer bundle is still what a plain unqualified ref
+ * resolves through" split: the physical-owner arbitration in
+ * `resolveAdapterConceptOwner`/`findSourceForPath` already picks the more
+ * specific source for a raw path lookup regardless of which bundle's index
+ * row exists, so the index only needs to keep ONE durable identity per file
+ * and the outer bundle's is the one every unqualified/enclosing ref depends
+ * on. A collision naming a bundleId outside `roots` (some other, unrelated
+ * bundle this call was not asked to reconcile) is left alone.
+ */
+function resolvePhysicalOverlaps(db: Database, roots: readonly { path: string; bundleId: string }[]): void {
+  if (roots.length < 2) return;
+  const rootPathByBundle = new Map(roots.map((root) => [root.bundleId, path.resolve(root.path)]));
+
+  const collisions = db
+    .prepare(
+      `SELECT file_path FROM entries WHERE file_path IN (
+         SELECT file_path FROM entries GROUP BY file_path HAVING COUNT(DISTINCT bundle_id) > 1
+       ) GROUP BY file_path`,
+    )
+    .all() as { file_path: string }[];
+
+  for (const { file_path: filePath } of collisions) {
+    withImmediateTransaction(db, () => {
+      const rows = db.prepare("SELECT id, bundle_id AS bundleId FROM entries WHERE file_path = ?").all(filePath) as {
+        id: number;
+        bundleId: string;
+      }[];
+      if (rows.length < 2 || !rows.every((row) => rootPathByBundle.has(row.bundleId))) return;
+
+      let winner = rows[0]!;
+      for (const row of rows) {
+        if ((rootPathByBundle.get(row.bundleId) ?? "").length < (rootPathByBundle.get(winner.bundleId) ?? "").length) {
+          winner = row;
+        }
+      }
+      const losers = rows.filter((row) => row.id !== winner.id);
+      deleteEntriesByIds(
+        db,
+        losers.map((row) => row.id),
+      );
+
+      // `files` has one row per path (the global PK), so whichever losing
+      // bundle wrote it last this run may currently own its tracking even
+      // though it just lost the collision. Repoint it at the winner with a
+      // fresh stat: the winner's own next reconcile then sees this path as
+      // already tracked (an "unchanged" short-circuit), and a demoted loser
+      // sees it as untracked — able to compete again if it ever regains sole
+      // physical access to the file.
+      try {
+        const stat = fs.statSync(filePath);
+        const winnerRow = db
+          .prepare("SELECT content_hash AS hash, adapter_id AS adapterId FROM entries WHERE id = ?")
+          .get(winner.id) as { hash: string; adapterId: string } | undefined;
+        if (winnerRow) {
+          upsertFileState(db, {
+            path: filePath,
+            bundleId: winner.bundleId,
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+            blobHash: winnerRow.hash,
+            adapterId: winnerRow.adapterId,
+          });
+        }
+      } catch {
+        // Vanished between the write and this pass — the next gone-path sweep handles it.
+      }
+    });
+  }
+}
+
 /** Delete a gone path's `entries` row (cascade removes `entry_units`) and its `files` row. Returns whether anything existed. */
 function deleteFileAndEntryByPath(db: Database, filePath: string): boolean {
   return withImmediateTransaction(db, () => {
@@ -507,23 +1003,45 @@ function deleteFileAndEntryByPath(db: Database, filePath: string): boolean {
   });
 }
 
-/** `UnitSource` from the freshly parsed entry — `buildSearchFields` for the structured fields, the entry's own carried markdown for fragments. */
+/**
+ * `UnitSource` from the freshly parsed entry — `buildSearchFields` for the
+ * structured fields, the entry's own carried markdown for fragments.
+ *
+ * `hasMarkdownFragmentContent`/`getMarkdownFragmentContent` is the `akm`
+ * adapter's own line-structure-preserving fragment projection
+ * (`applyPreContributorFields`, gated `.md`-only and excluding sensitive
+ * types), set during `recognize` and present ONLY for that adapter. Every
+ * other adapter (`okf`, ...) never calls it, so `hasMarkdownFragmentContent`
+ * is always false for their entries — falling straight to `null` here would
+ * leave their body content in `entries_fts`'s single per-entry `content`
+ * column (`buildSearchFields`, unconditional) but in NO unit at all, an
+ * asymmetry that would silently blank a whole adapter's fragment search once
+ * unit coverage is complete (index-redesign-contract.md B3). `entry.content`
+ * — the same field already surfaced through search hits and `show`, so
+ * already that adapter's own public-safe projection — is the fallback
+ * fragment source for exactly this case.
+ */
 function toUnitSource(entryId: number, entry: IndexDocument): UnitSource {
   const fields = buildSearchFields(entry);
+  const safeMarkdown = hasMarkdownFragmentContent(entry)
+    ? (getMarkdownFragmentContent(entry) ?? null)
+    : typeof entry.content === "string" && entry.content.trim()
+      ? entry.content
+      : null;
   return {
     entryId,
     name: fields.name,
     description: fields.description,
     tags: fields.tags,
     hints: fields.hints,
-    safeMarkdown: hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : null,
+    safeMarkdown,
   };
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
 function emptyCounts(): ReconcileCounts {
-  return { scanned: 0, unchanged: 0, added: 0, changed: 0, removed: 0, unitsAdded: 0 };
+  return { scanned: 0, unchanged: 0, added: 0, changed: 0, removed: 0, unitsAdded: 0, complete: true, warnings: [] };
 }
 
 function applyOutcome(counts: ReconcileCounts, result: FileResult): void {
