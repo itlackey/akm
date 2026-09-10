@@ -49,6 +49,60 @@ export function resolveTaskLogPath(logDir: string | undefined, taskId: string, s
 }
 
 /**
+ * Delete per-run flat log files (`<logDir>/<taskId>/<timestamp>.log`) older
+ * than `retentionDays` (#951). These files are a transitional human-readable
+ * tail only — the durable record lives in logs.db, already purged by
+ * {@link purgeOldTaskLogs} in ../../core/logs-db — so deleting an old file
+ * here loses nothing that isn't already retained (and separately purged)
+ * there.
+ *
+ * Bounded by construction: only ever reads/deletes inside `logDir` (defaults
+ * to {@link getTaskLogDir}), one level of `<taskId>` subdirectories, `.log`
+ * files only. A missing/unreadable directory is a no-op, not an error —
+ * mirrors the best-effort contract the rest of this module holds for log
+ * persistence.
+ */
+export function purgeOldTaskLogFiles(logDir: string | undefined, retentionDays = 90): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const dir = logDir ?? getTaskLogDir();
+  const cutoffMs = Date.now() - retentionDays * 86_400_000;
+  let deleted = 0;
+  let taskDirs: fs.Dirent[];
+  try {
+    taskDirs = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    rethrowIfTestIsolationError(error);
+    return 0;
+  }
+  for (const taskDirEntry of taskDirs) {
+    if (!taskDirEntry.isDirectory()) continue;
+    const taskDirPath = path.join(dir, taskDirEntry.name);
+    let logFiles: fs.Dirent[];
+    try {
+      logFiles = fs.readdirSync(taskDirPath, { withFileTypes: true });
+    } catch (error) {
+      rethrowIfTestIsolationError(error);
+      continue;
+    }
+    for (const logFile of logFiles) {
+      if (!logFile.isFile() || !logFile.name.endsWith(".log")) continue;
+      const logFilePath = path.join(taskDirPath, logFile.name);
+      try {
+        const stat = fs.statSync(logFilePath);
+        if (stat.mtimeMs < cutoffMs) {
+          fs.unlinkSync(logFilePath);
+          deleted++;
+        }
+      } catch (error) {
+        rethrowIfTestIsolationError(error);
+        // Best-effort: a file that vanished or can't be stat'd/removed is skipped.
+      }
+    }
+  }
+  return deleted;
+}
+
+/**
  * Redact logs.db rows against the SAME contiguous text the file sink sees.
  *
  * The rows arrive already split on "\n" (see {@link streamLines}), but the

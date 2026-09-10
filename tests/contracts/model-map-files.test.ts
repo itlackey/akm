@@ -344,6 +344,83 @@ describe("versioned installed/user model-map contract", () => {
     });
   });
 
+  test("an alias-level engine binding applies to every platform column (#946)", () => {
+    // Reproduces the exact bug report on 0.9.15-beta.4: `"fast": { "engine":
+    // "local-fast" }` — the flat shorthand from the original issue body and
+    // acceptance criteria, set directly on the alias rather than nested under
+    // one platform column — must bind every platform column (claude,
+    // opencode, opencode-sdk) to the configured engine, not be silently
+    // parsed as a literal fourth platform named "engine".
+    const installedWithFast = parseModelMapLayer(
+      JSON.stringify({
+        version: 1,
+        aliases: {
+          fast: {
+            claude: "claude-haiku-4-5-20251001",
+            opencode: "opencode/claude-haiku-4-5",
+            "opencode-sdk": "anthropic/claude-haiku-4-5",
+          },
+        },
+      }),
+      "installed models.json",
+    );
+    const user = parseModelMapLayer(
+      JSON.stringify({ version: 1, aliases: { fast: { engine: "local-fast" } } }),
+      "user models.json",
+    );
+    const engines = {
+      "local-fast": { kind: "agent" as const, platform: "opencode" as const, model: "krang/qwen3.5-9b" },
+    };
+
+    const merged = mergeModelMapLayers(installedWithFast, user, engines);
+    expect(merged.aliases.fast?.claude).toEqual({ model: "krang/qwen3.5-9b" });
+    expect(merged.aliases.fast?.opencode).toEqual({ model: "krang/qwen3.5-9b" });
+    expect(merged.aliases.fast?.["opencode-sdk"]).toEqual({ model: "krang/qwen3.5-9b" });
+
+    for (const platform of ["claude", "opencode", "opencode-sdk"]) {
+      expect(resolveModelMapAlias("fast", platform, merged)).toEqual({
+        input: "fast",
+        interpretation: "alias",
+        model: "krang/qwen3.5-9b",
+      });
+    }
+  });
+
+  test("a per-platform override still wins over the alias-level engine binding (#946)", () => {
+    const installedWithFast = parseModelMapLayer(
+      JSON.stringify({
+        version: 1,
+        aliases: { fast: { claude: "claude-haiku-4-5-20251001", opencode: "opencode/claude-haiku-4-5" } },
+      }),
+      "installed models.json",
+    );
+    const user = parseModelMapLayer(
+      JSON.stringify({
+        version: 1,
+        aliases: { fast: { engine: "local-fast", claude: "operator-pinned-model" } },
+      }),
+      "user models.json",
+    );
+    const engines = {
+      "local-fast": { kind: "agent" as const, platform: "opencode" as const, model: "krang/qwen3.5-9b" },
+    };
+    const merged = mergeModelMapLayers(installedWithFast, user, engines);
+    expect(merged.aliases.fast?.claude).toEqual({ model: "operator-pinned-model" });
+    expect(merged.aliases.fast?.opencode).toEqual({ model: "krang/qwen3.5-9b" });
+  });
+
+  test("an alias-level engine binding referencing an unknown engine is a clear error, not a silent fallback (#946)", () => {
+    const installedWithFast = parseModelMapLayer(
+      JSON.stringify({ version: 1, aliases: { fast: { claude: "claude-haiku-4-5-20251001" } } }),
+      "installed models.json",
+    );
+    const user = parseModelMapLayer(
+      JSON.stringify({ version: 1, aliases: { fast: { engine: "does-not-exist" } } }),
+      "user models.json",
+    );
+    expect(() => mergeModelMapLayers(installedWithFast, user, {})).toThrow(/unknown engine "does-not-exist"/);
+  });
+
   test("missing user file is healthy while invalid and unreadable files remain distinguishable", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-map-load-"));
     const env = { XDG_CONFIG_HOME: root } as NodeJS.ProcessEnv;

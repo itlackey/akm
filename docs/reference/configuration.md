@@ -524,6 +524,23 @@ single one against a healthy endpoint.
 | --- | --- |
 | `search.graphBoost.*` | Entity-graph relevance boost: `directBoostPerEntity`/`directBoostCap` (directly related entities), `hopBoostPerEntity`/`hopBoostCap` (multi-hop, capped at `maxHops` ≤ 3), `confidenceMode` (`blend`, the only supported value), `confidenceWeight` (0–1, default `0.2`) |
 
+### Curate rerank (#951)
+
+An optional cross-encoder rerank pass over `akm curate`'s already-selected
+candidates, via a standalone `/rerank`-style HTTP endpoint (NOT one of the
+`engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a misconfigured
+endpoint, network failure, timeout, or malformed response falls back to
+curate's own ranking unchanged.
+
+| Key | Purpose |
+| --- | --- |
+| `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
+| `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
+| `search.curateRerank.model` | Model name sent to the endpoint (optional) |
+| `search.curateRerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
+| `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
+| `search.curateRerank.topN` | How many of curate's ranked candidates to send (default `8`, max `50`) |
+
 ## Feedback
 
 `feedback` shapes the `akm feedback` taxonomy:

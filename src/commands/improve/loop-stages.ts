@@ -16,7 +16,7 @@ import type {
   ImproveEligibleRef,
 } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
-import { getDbPath } from "../../core/paths";
+import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
 import {
@@ -53,6 +53,7 @@ import {
   listAssetSalienceMissingState,
   stampAssetSalienceMissing,
 } from "../../storage/repositories/salience-repository";
+import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
@@ -1516,6 +1517,30 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
           // best-effort
         }
       }
+    }
+
+    // Per-run flat log files under getTaskLogDir() (#951): logs.db above is
+    // the durable record and already retention-purged, so the transitional
+    // `<taskId>/<timestamp>.log` tail files can be deleted on the same
+    // window without losing anything. A separate try/catch — a filesystem
+    // problem here must not block the DB purges above.
+    try {
+      const taskLogFilesPurged = purgeOldTaskLogFiles(undefined, retentionDays);
+      if (taskLogFilesPurged > 0) {
+        info(
+          `[improve] task log files purge: ${taskLogFilesPurged} file(s) older than ${retentionDays}d removed from ${getTaskLogDir()}`,
+        );
+      }
+      appendEvent(
+        {
+          eventType: "task_log_files_purged",
+          ref: "task_log_files/_purge",
+          metadata: { purgedCount: taskLogFilesPurged, retentionDays },
+        },
+        eventsCtx,
+      );
+    } catch (err) {
+      warnings.push(`task log files purge failed: ${errMessage(err)}`);
     }
   }
   return { warnings };

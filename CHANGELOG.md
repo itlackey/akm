@@ -301,6 +301,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (#951).** These are akm's resolved data/config/cache/state directories, so a
   script can read `akm info --format json | jq -r .dataDir` instead of hardcoding
   a path that differs between a host install and a container.
+- **A real `curate_rerank` implementation: `search.curateRerank`, a cross-
+  encoder rerank pass over `akm curate`'s already-selected candidates (#951).**
+  `curate_rerank` was a dead `llm.features.*` key removed in 0.8.0 with no wire
+  call ever implemented under it. `search.curateRerank.{enabled, endpoint,
+  model, apiKey, timeoutMs, topN}` configures a standalone `/rerank`-style
+  endpoint (`src/llm/rerank-client.ts`, `POST {model, query, documents}` →
+  `{results: [{index, relevance_score}]}`); when enabled, curate sends its top
+  `topN` (default 8) already-ranked candidates and reorders them by the
+  endpoint's scores. Disabled by default, and best-effort like every other
+  bounded LLM feature: a misconfigured endpoint, network failure, timeout, or
+  malformed response falls back to curate's own ranking unchanged rather than
+  failing the command. Deliberately its own config arm rather than a third
+  `engines` kind alongside `"llm"`/`"agent"` — that union's kinds are
+  load-bearing through execution-lowering, runner dispatch, and the harness
+  model map, none of which a reranker touches.
+- **Per-run task log files are purged past the retention window (#951).**
+  `tasks/logs/<taskId>/<timestamp>.log` (the per-run human-readable tail;
+  `logs.db` is the durable, already-purged record) had file separation but no
+  cleanup, so old run files accumulated forever. `akm improve`'s existing
+  retention pass now also deletes `.log` files under `getTaskLogDir()` older
+  than the same `improve.eventRetentionDays` window (default 90d, `0` disables
+  it) it already uses for `task_logs`/events/`improve_runs` — bounded to that
+  one directory, one level of `<taskId>` subdirectories, `.log` files only.
+  Path-agnostic bundled scripts and the `akm show env/<name>`/`akm task list`
+  items from the same review were previously confirmed shipped and are
+  unchanged here.
 - **`akm index --reembed` forces a full re-embed (#955).** Bypasses the
   compatibility check above entirely and purges + regenerates every stored
   embedding, for the rare case where the check's verdict should not be trusted. A
@@ -618,6 +644,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ignored, not rejected or warned about.
 
 ### Fixed
+
+- **An alias-level `engine` binding in `models.json` is honoured on every
+  platform column (#946).** The per-platform nested form
+  (`"fast": {"opencode": {"engine": "local-fast"}}`) already worked, but the
+  flat shorthand from this issue's own acceptance criteria
+  (`"fast": {"engine": "local-fast"}`) did not: `parseModelMapLayer` treated
+  every key under an alias as a platform-column name, so `engine` was parsed
+  as a fourth platform holding the model string, the three real columns kept
+  their hardcoded cloud defaults, and `akm agent --model fast` silently
+  dispatched to a cloud model instead of the configured local engine. The
+  flat `model`/`inference`/`engine` keys are now a wildcard default merged
+  onto every column, a same-alias per-platform entry still overrides it, and
+  an alias naming an unknown engine fails with a `ConfigError` rather than
+  falling back.
+- **Two `improve` runs colliding on the lock is transient, not a broken
+  config (#948).** The lock-held path threw a `ConfigError`, surfacing as
+  exit 78 (`INVALID_CONFIG_FILE`) and telling a supervisor to stop retrying
+  an ordinary collision. It is now a `TransientError`/`IMPROVE_LOCK_HELD` at
+  exit 75, matching the `MAINTENANCE_BARRIER_BUSY`/`INDEX_DB_CONTENDED`
+  treatment the index rebuild lock already had.
+- **The embedding path no longer leaks a raw `database is locked` (#956).**
+  `reclassifyIndexDbContention` moved out of `indexer.ts` into a shared
+  module and `materialize-embeddings.ts`'s embedding-generation catch now
+  routes through it, so contention produces the same "index database is
+  busy" wording as every other path instead of the raw driver string.
+  Control flow is unchanged: this was always non-fatal.
 
 - **Starting a workflow ref that already has an active run in a different scope
   now warns instead of silently duplicating it (#942).** `akm workflow run

@@ -842,9 +842,15 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         // unit coverage, not undone by this catch.
         throwIfAborted(signal);
         drainFailed = true;
+        // This catch is non-fatal by design, so `akmIndex`'s outer catch never
+        // sees the error and never classifies it — which is exactly how the
+        // field saw a raw "database is locked" driver string in this warning
+        // under the phase pipeline this replaced. Run it through the same
+        // classifier that path uses, so contention reads as contention.
+        const reportedDrainError = reclassifyIndexDbContention(drainError);
         warn(
           "[index] Embedding drain failed; the index is lexically searchable and vectors will be attempted on the next run:",
-          drainError instanceof Error ? drainError.message : String(drainError),
+          reportedDrainError instanceof Error ? reportedDrainError.message : String(reportedDrainError),
         );
       }
     }

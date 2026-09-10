@@ -32,6 +32,8 @@ import {
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
+import { tryLlmFeature } from "../../llm/feature-gate";
+import { rerankDocuments } from "../../llm/rerank-client";
 import { truncateDescription } from "../../output/shapes/helpers";
 import type {
   RegistrySearchResultHit,
@@ -293,7 +295,7 @@ export async function curateSearchResults(
     selectedType && selectedType !== "any" ? allStashHits.filter((hit) => hit.type === selectedType) : allStashHits;
 
   const selected = selectCuratedStashHits(query, stashHits, limit);
-  const selectedStashHits = selected.selected;
+  const selectedStashHits = await maybeRerankCuratedStashHits(query, selected.selected);
   const supportRefsByRef = selected.supportRefsByRef;
 
   // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
@@ -819,6 +821,44 @@ function appendCurateSupportRef(
   const existing = supportRefsByRef.get(ownerRef) ?? [];
   if (existing.some((entry) => entry.ref === supportRef.ref)) return;
   supportRefsByRef.set(ownerRef, [...existing, supportRef]);
+}
+
+/** Default number of `selectCuratedStashHits` candidates sent to the reranker when `search.curateRerank.topN` isn't set. */
+const DEFAULT_CURATE_RERANK_TOP_N = 8;
+
+/**
+ * Optional cross-encoder rerank pass over curate's already-selected, already-
+ * ranked candidates (#951). Disabled by default (`search.curateRerank.enabled`
+ * is falsy) and, when enabled, best-effort: any failure (misconfigured
+ * endpoint, network error, timeout, malformed response) falls back to
+ * `selectCuratedStashHits`'s own ranking unchanged — a reranker outage must
+ * never turn into a curate failure.
+ *
+ * Only the top `topN` (default {@link DEFAULT_CURATE_RERANK_TOP_N}) already-
+ * selected hits are sent (bounded request size); anything past that keeps its
+ * original position appended after the reranked prefix.
+ */
+async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[]): Promise<SourceSearchHit[]> {
+  if (hits.length <= 1) return hits;
+  const config = loadConfig();
+  const rerankConfig = config.search?.curateRerank;
+  return tryLlmFeature(
+    "curate_rerank",
+    config,
+    async () => {
+      const topN = rerankConfig?.topN ?? DEFAULT_CURATE_RERANK_TOP_N;
+      const head = hits.slice(0, topN);
+      const tail = hits.slice(topN);
+      const documents = head.map((hit) => [hit.name, hit.description].filter(Boolean).join(" — "));
+      const ranked = await rerankDocuments(rerankConfig ?? {}, query, documents);
+      const rerankedHead = ranked
+        .map(({ index }) => head[index])
+        .filter((hit): hit is SourceSearchHit => hit !== undefined);
+      return [...rerankedHead, ...tail];
+    },
+    hits,
+    { timeoutMs: rerankConfig?.timeoutMs ?? null },
+  );
 }
 
 function selectCuratedStashHits(
