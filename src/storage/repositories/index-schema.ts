@@ -13,6 +13,7 @@
  */
 
 import { ConfigError } from "../../core/errors";
+import { withImmediateTransaction } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import type { Database } from "../database";
 import { ensureFileAndUnitTextTables } from "./files-repository";
@@ -223,25 +224,29 @@ function rebuildIncompatibleIndexGeneration(db: Database): void {
   // happens. Vectors themselves live only in the content-addressed
   // `units`/`units_vec` store, which a generation rebuild never drops
   // (ensureUnitTables' contract).
-  db.transaction(() => {
-    db.exec("DROP TABLE IF EXISTS graph_file_relations");
-    db.exec("DROP TABLE IF EXISTS graph_file_entities");
-    db.exec("DROP TABLE IF EXISTS graph_files");
-    db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
-    db.exec("DROP TABLE IF EXISTS graph_meta");
-    db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
-    db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
-    db.exec("DROP TABLE IF EXISTS entry_fragments");
-    db.exec("DROP TABLE IF EXISTS entries_fts");
-    db.exec("DROP TABLE IF EXISTS embeddings");
-    if (isVecAvailable(db)) db.exec("DROP TABLE IF EXISTS entries_vec");
-    db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
-    db.exec("DROP TABLE IF EXISTS utility_scores");
-    db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
-    db.exec("DROP TABLE IF EXISTS index_dir_state");
-    db.exec("DROP TABLE IF EXISTS entries");
-    db.exec("DELETE FROM index_meta");
-  })();
+  withImmediateTransaction(
+    db,
+    () => {
+      db.exec("DROP TABLE IF EXISTS graph_file_relations");
+      db.exec("DROP TABLE IF EXISTS graph_file_entities");
+      db.exec("DROP TABLE IF EXISTS graph_files");
+      db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
+      db.exec("DROP TABLE IF EXISTS graph_meta");
+      db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
+      db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
+      db.exec("DROP TABLE IF EXISTS entry_fragments");
+      db.exec("DROP TABLE IF EXISTS entries_fts");
+      db.exec("DROP TABLE IF EXISTS embeddings");
+      if (isVecAvailable(db)) db.exec("DROP TABLE IF EXISTS entries_vec");
+      db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
+      db.exec("DROP TABLE IF EXISTS utility_scores");
+      db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
+      db.exec("DROP TABLE IF EXISTS index_dir_state");
+      db.exec("DROP TABLE IF EXISTS entries");
+      db.exec("DELETE FROM index_meta");
+    },
+    "index",
+  );
 }
 
 export function ensureSchema(db: Database, embeddingDim: number | undefined): void {

@@ -16,7 +16,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { isPathAbsent } from "../../core/path-access";
-import { getStateDbPath, withStateDb } from "../../core/state-db";
+import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   getMarkdownFragmentContent,
@@ -84,11 +84,31 @@ export function upsertEntry(
     );
     return result.id;
   };
-  // Always enter the driver's transaction wrapper. Both supported SQLite
-  // drivers lower a transaction opened inside another transaction to a
-  // savepoint, so a caller that catches this mutation's error cannot commit a
-  // partial entries row through its outer transaction.
-  return db.transaction(apply)();
+  // Both production callers (reconcile.ts's `applyChange`, enrich.ts's
+  // `applyEnrichmentToEntry`) always invoke this from inside their OWN outer
+  // `withImmediateTransaction`, so `db.inTransaction` is already true and a
+  // standalone top-level call never happens today — but a caller that DOES
+  // call this standalone (no outer transaction) must still get a proper
+  // `BEGIN IMMEDIATE`, not a bare deferred `db.transaction()` that fails
+  // instantly with SQLITE_BUSY under a competing writer instead of honouring
+  // `busy_timeout` (docs/plans/index-redesign.md rule 5). Route ONLY that
+  // standalone case through `withImmediateTransaction`.
+  //
+  // The nested case deliberately keeps the driver's own `db.transaction()`
+  // instead of `withImmediateTransaction`: the driver lowers a transaction
+  // opened inside an already-open one to a SAVEPOINT, so a caller that
+  // catches this mutation's error and continues its OWN outer (bare)
+  // transaction still cannot commit a partial entries row — the exact
+  // contract tests/integration/indexer/index-mutation-boundary.test.ts pins
+  // (#820). `withImmediateTransaction`'s join-if-open guard runs `fn`
+  // directly with NO isolation boundary of its own (by design, #686 — see
+  // its doc comment), which would let such a caught, partial write escape
+  // through the outer transaction's COMMIT instead of rolling back to a
+  // savepoint. Both real production callers already hold their OWN
+  // immediate transaction before calling this, so this nested branch is a
+  // savepoint under an already-immediate lock, not a fresh deferred BEGIN —
+  // no busy_timeout race to lose here either way.
+  return db.inTransaction ? db.transaction(apply)() : withImmediateTransaction(db, apply, "index");
 }
 
 interface UpsertStmts {
@@ -281,32 +301,36 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
   }
   const newItemRef = `${opts.sourceName}//${opts.newRef}`;
 
-  db.transaction(() => {
-    const stale = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(newItemRef) as
-      | { id: number }
-      | undefined
-      | null;
-    if (stale && stale.id !== row.id) {
-      // Full child-row cleanup (utility scores, usage events, fragment
-      // source) BEFORE the entries delete — the FK-less child rows would
-      // otherwise orphan permanently.
-      deleteRelatedRows(db, [{ id: stale.id }]);
-      db.prepare("DELETE FROM entries WHERE id = ?").run(stale.id);
-    }
-    db.prepare(
-      "UPDATE entries SET file_path = ?, document_json = ?, search_text = ?, item_ref = ?, concept_id = ? WHERE id = ?",
-    ).run(opts.newFilePath, documentJson, searchText, newItemRef, opts.newRef, row.id);
-    if (opts.newDerivedFrom !== undefined) {
-      db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
-    }
-    if (document)
-      replaceFragmentSource(
-        db,
-        row.id,
-        hasMarkdownFragmentContent(document) ? (getMarkdownFragmentContent(document) ?? null) : undefined,
-      );
-    else deleteFragmentSource(db, [row.id]);
-  })();
+  withImmediateTransaction(
+    db,
+    () => {
+      const stale = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(newItemRef) as
+        | { id: number }
+        | undefined
+        | null;
+      if (stale && stale.id !== row.id) {
+        // Full child-row cleanup (utility scores, usage events, fragment
+        // source) BEFORE the entries delete — the FK-less child rows would
+        // otherwise orphan permanently.
+        deleteRelatedRows(db, [{ id: stale.id }]);
+        db.prepare("DELETE FROM entries WHERE id = ?").run(stale.id);
+      }
+      db.prepare(
+        "UPDATE entries SET file_path = ?, document_json = ?, search_text = ?, item_ref = ?, concept_id = ? WHERE id = ?",
+      ).run(opts.newFilePath, documentJson, searchText, newItemRef, opts.newRef, row.id);
+      if (opts.newDerivedFrom !== undefined) {
+        db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
+      }
+      if (document)
+        replaceFragmentSource(
+          db,
+          row.id,
+          hasMarkdownFragmentContent(document) ? (getMarkdownFragmentContent(document) ?? null) : undefined,
+        );
+      else deleteFragmentSource(db, [row.id]);
+    },
+    "index",
+  );
 
   // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
   // state.db now, so this is a SEPARATE cross-DB transaction (best-effort — the
@@ -338,9 +362,9 @@ function rewriteUsageEventRefForMove(opts: RekeyEntryOptions): void {
   };
   try {
     withStateDb((stateDb) => {
-      stateDb.transaction(() => {
+      withImmediateTransaction(stateDb, () => {
         rename(stateDb, `${opts.sourceName}//${opts.oldRef}`, `${opts.sourceName}//${opts.newRef}`);
-      })();
+      });
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -450,15 +474,23 @@ export function deleteEntriesByDirAndBundle(
   bundleId: string,
   options: { cleanupUsageEvents?: boolean } = {},
 ): number[] {
-  return db.transaction(() => deleteEntryRows(db, rowsInDirectory(db, dirPath, bundleId), options))();
+  return withImmediateTransaction(
+    db,
+    () => deleteEntryRows(db, rowsInDirectory(db, dirPath, bundleId), options),
+    "index",
+  );
 }
 
 /** Delete every entry and child row belonging to one canonical bundle. */
 export function deleteEntriesByBundle(db: Database, bundleId: string): void {
-  db.transaction(() => {
-    const rows = db.prepare("SELECT id FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{ id: number }>;
-    deleteEntryRows(db, rows);
-  })();
+  withImmediateTransaction(
+    db,
+    () => {
+      const rows = db.prepare("SELECT id FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{ id: number }>;
+      deleteEntryRows(db, rows);
+    },
+    "index",
+  );
 }
 
 /**
@@ -467,10 +499,14 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
  * usage events so the finalize pass can relink them to the new row ids.
  */
 export function deleteAllEntries(db: Database, options: { cleanupUsageEvents?: boolean } = {}): number[] {
-  return db.transaction(() => {
-    const rows = db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>;
-    return deleteEntryRows(db, rows, options);
-  })();
+  return withImmediateTransaction(
+    db,
+    () => {
+      const rows = db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>;
+      return deleteEntryRows(db, rows, options);
+    },
+    "index",
+  );
 }
 
 /**
@@ -493,10 +529,14 @@ export function deleteEntriesByDirExceptRefs(
   keepRefs: ReadonlySet<string>,
   options: { cleanupUsageEvents?: boolean } = {},
 ): number[] {
-  return db.transaction(() => {
-    const doomed = rowsInDirectory(db, dirPath, bundleId).filter((row) => !keepRefs.has(row.item_ref));
-    return deleteEntryRows(db, doomed, options);
-  })();
+  return withImmediateTransaction(
+    db,
+    () => {
+      const doomed = rowsInDirectory(db, dirPath, bundleId).filter((row) => !keepRefs.has(row.item_ref));
+      return deleteEntryRows(db, doomed, options);
+    },
+    "index",
+  );
 }
 
 function deleteRelatedRows(
@@ -594,15 +634,19 @@ export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
  */
 export function deleteEntriesByIds(db: Database, ids: number[]): void {
   if (ids.length === 0) return;
-  db.transaction(() => {
-    const idObjs = ids.map((id) => ({ id }));
-    deleteRelatedRows(db, idObjs);
-    for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
-      const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
-      const placeholders = chunk.map(() => "?").join(",");
-      db.prepare(`DELETE FROM entries WHERE id IN (${placeholders})`).run(...chunk);
-    }
-  })();
+  withImmediateTransaction(
+    db,
+    () => {
+      const idObjs = ids.map((id) => ({ id }));
+      deleteRelatedRows(db, idObjs);
+      for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+        const placeholders = chunk.map(() => "?").join(",");
+        db.prepare(`DELETE FROM entries WHERE id IN (${placeholders})`).run(...chunk);
+      }
+    },
+    "index",
+  );
 }
 
 // ── All entries ─────────────────────────────────────────────────────────────
@@ -960,10 +1004,9 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
       const nullOut = stateDb.prepare(
         `UPDATE ${usageEvents} SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?`,
       );
-      const nullTx = stateDb.transaction(() => {
+      withImmediateTransaction(stateDb, () => {
         for (const { id, ref } of staleLinks) nullOut.run(id, ref);
       });
-      nullTx();
     }
 
     // Step 2: re-resolve each fully-qualified ref. Bare rows are not current
@@ -973,7 +1016,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
       .all() as { ref: string }[];
 
     const update = stateDb.prepare(`UPDATE ${usageEvents} SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL`);
-    const relinkTx = stateDb.transaction(() => {
+    withImmediateTransaction(stateDb, () => {
       for (const { ref } of refs) {
         let id: number | undefined;
         try {
@@ -985,6 +1028,5 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
         if (id !== undefined) update.run(id, ref);
       }
     });
-    relinkTx();
   }, "usage_events table may not exist yet during entry_id re-resolution");
 }
