@@ -68,6 +68,31 @@ function isProbeRequest(request: Request): boolean {
 /** Minimum gap (ms) between a document's two requests that only a real back-off (not an immediate retry) can produce. */
 const MIN_PROVEN_BACKOFF_MS = 2_000;
 
+/**
+ * A single large memory entry whose CARD unit (structured-fields text —
+ * `${name}\n${description}`, no markdown body so no second fragment unit is
+ * derived, same rationale as `writeMemory` below) is, by itself, too big to
+ * ever share a request with a sibling: the index redesign (B5) retired
+ * `embedding.batchSize` as a config config key, so this test's premise
+ * ("already at single-document size", no splitting needed to get there) now
+ * has to come from the GREEDY packer's own token-budget math against the
+ * default (unprobed, 8192-token) window instead of a config override.
+ * `DESCRIPTION_CHARS` (17,000) estimates to ~4,252 tokens
+ * (`estimateTokenCount`, chars/4) — under `unitMaxChars`'s ~21,132-char
+ * ceiling for this same window (so it stays ONE undivided unit), but over
+ * half the 8,192-token budget, so two of them together (~8,504) never fit
+ * one request.
+ */
+const DESCRIPTION_CHARS = 17_000;
+
+function writeLargeMemory(name: string): void {
+  fs.writeFileSync(
+    path.join(storage.stashDir, "memories", name),
+    `---\ndescription: ${"x".repeat(DESCRIPTION_CHARS)}\n---\n`,
+    "utf8",
+  );
+}
+
 test("stops after exactly 3 consecutive single-document timeouts against a dead endpoint and reports it, with endpoint guidance", async () => {
   let requestCount = 0;
   const requestTimestamps: number[] = [];
@@ -88,7 +113,7 @@ test("stops after exactly 3 consecutive single-document timeouts against a dead 
     },
   });
 
-  for (let i = 0; i < 5; i++) writeMemory(`entry-${i}.md`);
+  for (let i = 0; i < 5; i++) writeLargeMemory(`entry-${i}.md`);
 
   writeSandboxConfig({
     semanticSearchMode: "auto",
@@ -98,7 +123,6 @@ test("stops after exactly 3 consecutive single-document timeouts against a dead 
       endpoint: `http://localhost:${server.port}`,
       model: "test-model",
       dimension: 4,
-      batchSize: 1,
       timeoutMs: 300,
     },
   });

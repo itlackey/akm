@@ -57,9 +57,11 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, descriptio
 
 describe("akm index — SIGTERM promptness (#956)", () => {
   test("cancels the in-flight request, dispatches no further batch, releases the lock, and exits promptly", async () => {
-    // batchSize: 1 with a loopback endpoint (fixed concurrency 1, #954) means
-    // one document per request, strictly sequential — three documents give a
-    // run that kept going after the signal two more chances to prove it.
+    // A loopback endpoint means fixed concurrency 1 (#954): whatever request
+    // the packer plans (these few tiny units easily fit one, but the count
+    // doesn't matter below — only that at least one is genuinely in flight
+    // when the signal lands, and that dispatch is strictly sequential so a
+    // still-hung first request blocks any other from starting).
     for (let i = 0; i < 3; i++) writeMemory(`note-${i}`);
 
     let requestCount = 0;
@@ -79,7 +81,7 @@ describe("akm index — SIGTERM promptness (#956)", () => {
     try {
       saveConfig({
         semanticSearchMode: "auto",
-        embedding: { endpoint: `http://localhost:${server.port}`, model: "test-model", batchSize: 1 },
+        embedding: { endpoint: `http://localhost:${server.port}`, model: "test-model" },
       });
 
       child = Bun.spawn(["bun", "src/cli.ts", "index", "--full", "--format=json"], {
