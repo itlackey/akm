@@ -99,6 +99,9 @@ describe("akm index — index.db contention (field follow-up to #956, F1)", () =
       expect(envelope.ok).toBe(false);
       expect(envelope.code).toBe("INDEX_DB_CONTENDED");
       expect(envelope.error).toContain("index database is busy");
+      // Pins the brief-mandated holder-pid clause (describeIndexRebuildLockHolder / formatLockHolderPid):
+      // the rebuild lock planted above is still live for this assertion, so the message must name its holder.
+      expect(envelope.error).toContain(`held by pid ${process.pid}`);
       expect(envelope.hint).toContain("--skip-if-locked");
 
       // --skip-if-locked, same live rebuild-lock + held index.db
