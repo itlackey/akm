@@ -15,6 +15,7 @@ import {
   updateConfig,
 } from "../src/core/config/config";
 import { backupExistingConfig } from "../src/core/config/config-io";
+import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schema";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
@@ -541,6 +542,7 @@ describe("embedding config", () => {
     });
     expect(warnings).toEqual([]);
     expect(loadConfig().embedding?.chunkSize).toBe(-3);
+    expect(Object.keys(EmbeddingConnectionConfigSchema.shape)).not.toContain("chunkSize");
   });
 });
 
