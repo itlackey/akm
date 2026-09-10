@@ -57,7 +57,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   weak one; the shipped scoring measures 0.936 with no banned-above-required
   hits. The semantic-only `minScore` floor is gone, type filters now apply in
   SQL before the candidate cap, and the exact/prefix/relaxed ladder tops up to
-  the candidate budget instead of stopping at the first non-empty tier.
+  the candidate budget instead of stopping at the first non-empty tier. The
+  tier a hit came from is also ranking evidence: a unit matching every query
+  token outranks one matching a subset, because the calibrated BM25 transform
+  compresses even a sixfold magnitude difference into a few thousandths — far
+  less than any single ranking contributor — so tier decides across tiers and
+  magnitude decides within one.
 - **`akm index --full`** no longer drops anything first: it forces every
   walked file to be re-parsed (skipping the unchanged-file shortcut) but
   updates each file's existing row in place, keeping its id, vectors, and
@@ -98,13 +103,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `embedding.batchSize`, `embedding.contextLength`, and
   `search.minScore`.** Embedding request packing is sourced from the
   provider's own probed limits (unchanged from 0.9.15 packing, applied to
-  units instead of whole entries); the fused reciprocal-rank score has no
-  comparable 0–1 threshold to tune. A config that still sets any of them
-  loads without error and is simply ignored.
+  units instead of whole entries); the fused score has no comparable 0–1
+  threshold to tune. A config that still sets any of them loads without
+  error and is simply ignored.
 - **The `"ready-js"` semantic-search status.** Named a pure-JS
   cosine-similarity fallback for when `sqlite-vec` was unavailable; the new
   unit vector store has no BLOB-table fallback to fall back to, so nothing
   produces that value any more.
+
+### Fixed
+
+- **Two akm processes starting at the same moment against a database neither
+  has created yet no longer fail.** `state.db` and `index.db` each had a
+  first-open race. `index.db` created `entries` about twenty statements
+  before it stamped the generation, so a second opener read
+  entries-without-a-generation as a stale index and dropped the table out
+  from under the first process, which then exited 70 with `no such table:
+  entries` — measured at 8 of 440 racing child processes. `state.db` read its
+  migration ledger and its "does this file have any other tables" check as
+  two separate statements, so a sibling's bootstrap committing between them
+  looked exactly like a legacy unversioned database and was refused outright
+  — 2 of 1200 racing trials. Both initializations are now single atomic
+  units, measured at zero failures in 840 and 1200 trials respectively, idle
+  and under load. Only a genuinely contended run still fails, as
+  `INDEX_DB_CONTENDED`/`STATE_DB_CONTENDED` at exit 75, the documented
+  retry-shortly contract. An already-initialized database takes the same
+  unlocked path it always did.
+- **`akm show <memory>` no longer fails when that memory has an inferred
+  `.derived` twin.** It exited 2 with `RESOURCE_ALREADY_EXISTS` ("multiple
+  physical owners"), so once `akm improve` derived a memory — its ordinary
+  output — the base ref stopped being usable, and the read path that did not
+  fail served the twin's content instead of the memory's. `.derived` is a
+  provenance marker on the same identity and the placement layer always
+  declared that the plain file wins; the physical-owner lookup now honours
+  that instead of discarding it. Genuinely ambiguous cases, including two
+  case-only spellings of one name and `env`'s co-equal `.env`/`default.env`
+  pair, still fail loudly and unchanged. Present since before 0.9.15.
+- **A derived memory no longer outranks the memory it was derived from.** A
+  twin's own filename contributed a `derived` tag that minted a synthetic
+  alias, and the machine-written `source:` provenance backref was folded into
+  search hints, together handing the twin a flat 0.42 of ranking credit for
+  bookkeeping no author wrote — enough to beat a memory whose description
+  matched the query verbatim. Neither field earns ranking credit any more.
 
 ## [0.9.15] - 2026-09-10
 

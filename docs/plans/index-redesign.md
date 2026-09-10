@@ -89,6 +89,20 @@ floor. The exact/prefix/relaxed tier ladder became a priority order that tops up
 candidate budget rather than stopping at the first non-empty tier, because a unit is a card or
 one section and a conjunctive query is rarely satisfied by any single unit.
 
+One correction, measured after the table above and before release. Calling the shipped
+configuration "magnitude-scored" overstates what the transform delivers: `stableFtsScore`'s
+reference constant puts every realistic BM25 value deep into `log1p` saturation, so its whole
+output band is 0.029 wide across a 320-fold range of match strength — 0.021 after the 0.7
+weight, and less than any single ranking contributor. Two integration tests caught the
+consequence that ten bench cases could not: a memory whose description matched a query verbatim
+lost to a derived twin matching two of its three tokens. So the tier a hit came from is now
+ranking evidence too, ahead of the fused score — a candidate matching every query token
+outranks one matching a subset — and magnitude decides only within a tier. Recalibrating the
+transform instead was tried and rejected: it cannot reach the second failing case at all,
+because the score floor is a separate constant that no rescaling moves below the belief-state
+ceilings. Gating the ranking contributors on tier was also tried and rejected on measurement,
+at 0.917. The shipped combination holds the bench at 0.936 with the per-case table unchanged.
+
 One fixture case regressed (`residue-docker`, 1.000 to 0.816) and is recorded rather than tuned
 away; ten hand-labelled cases cannot justify fitting a constant.
 
