@@ -354,6 +354,40 @@ export function canonicalContentTieKey(entry: Pick<IndexDocument, "content" | "d
   return Buffer.from(asciiCaseFold(source), "utf8").toString("hex");
 }
 
+/**
+ * Priority rank for `RankedEntryInput.lexicalMatch` — lower is stronger
+ * evidence. `undefined` (a pure-semantic hit with no lexical component at
+ * all) ranks weakest, below even a relaxed OR-pool recovery.
+ *
+ * Named-mechanism fix (fix-ranking-derived-outranks-primary): the exact →
+ * prefix → relaxed tier ladder (`searchUnitsLexicalScoped` in this file) is
+ * computed and carried on every candidate as `lexicalMatch`, but nothing
+ * downstream ever CONSULTED it as ranking evidence — `fuseByEntry` scores
+ * every tier on the same `stableFtsScore` magnitude scale (deliberately, so a
+ * relaxed hit that topped up the candidate pool floors at 0.3 instead of
+ * racing on rank), and the final comparator below sorted purely by that
+ * magnitude. `stableFtsScore`'s [0.3, 0.8] compression then flattens a large
+ * raw-BM25 gap between an all-token exact match and a two-of-three relaxed
+ * match to a few thousandths (e.g. 0.7148 vs 0.7053 for a ~6x BM25 gap) — well
+ * inside the swing of any single additive ranking contributor (alias-ranking
+ * alone is +0.3) or a belief-state ceiling. So a contributor or a ceiling,
+ * neither of which is supposed to do more than nudge, ends up DECIDING an
+ * ordering that the lexical tier — which already told us conclusively that
+ * one candidate matched every query token and the other did not — should
+ * have decided.
+ *
+ * This is the same escape hatch `aNameTier === 3` below already uses for a
+ * perfect name match, generalized to the tier ladder: exact tier is stronger
+ * evidence than prefix, which is stronger than relaxed, independent of the
+ * compressed magnitude gap between them. It sits after the name-tier-3 gate
+ * (an exact full name equality is stronger evidence still) and before the
+ * score comparison it used to lose to.
+ */
+const LEXICAL_TIER_RANK: Record<LexicalQueryExecution, number> = { exact: 0, prefix: 1, relaxed: 2 };
+function lexicalTierRank(tier: LexicalQueryExecution | undefined): number {
+  return tier === undefined ? 3 : LEXICAL_TIER_RANK[tier];
+}
+
 function buildSearchResultComparator(query: string): (a: RankedEntryInput, b: RankedEntryInput) => number {
   const queryTokens = buildLexicalQueryPlan(query).tokens.map((token) => token.toLowerCase());
   const displayScore = (score: number): number => Math.round(displaySearchScore(score) * 10000) / 10000;
@@ -366,6 +400,8 @@ function buildSearchResultComparator(query: string): (a: RankedEntryInput, b: Ra
       const nameDiff = bNameTier - aNameTier;
       if (nameDiff !== 0) return nameDiff;
     }
+    const tierDiff = lexicalTierRank(a.lexicalMatch) - lexicalTierRank(b.lexicalMatch);
+    if (tierDiff !== 0) return tierDiff;
     const scoreDiff = displayScore(b.score) - displayScore(a.score);
     if (scoreDiff !== 0) return scoreDiff;
     const rawScoreDiff = stableRankScore(b.score) - stableRankScore(a.score);

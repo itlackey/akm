@@ -186,7 +186,17 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
         const fm = parseFrontmatter(file.content()).data;
         applyFrontmatterDescriptionAndTags(fm, out);
         const hints = new Set<string>();
-        const source = nonEmptyString(fm.source);
+        // fix-ranking-derived-outranks-primary: `source:` on an ordinary
+        // memory is an author-written citation worth indexing as a hint, but
+        // on an inferred (`.derived`) twin it is ALWAYS the machine-written
+        // provenance backref `memory-inference.ts` writes (`memories/<parent>`
+        // — see its `FM_SOURCE`), already captured properly as
+        // `entry.derivedFrom` (metadata.ts). Folding that backref into
+        // searchHints too means the base memory's own name — almost always a
+        // query token whenever the base is relevant — auto-credits the twin
+        // via `search-hint-ranking`'s substring match, independent of whether
+        // the twin's own content actually matches the query.
+        const source = fm.inferred === true ? undefined : nonEmptyString(fm.source);
         if (source) hints.add(source);
         const fmObservedAt = nonEmptyString(fm.observed_at);
         if (fmObservedAt) {
