@@ -728,12 +728,13 @@ export async function generateEmbeddingsForDb(
             const result = upsertEmbedding(db, entry.id, embedding);
             if (result.stored) {
               storedCount++;
-              // #954 (field-F4 F4b): sum the estimate of the text actually
-              // sent — `texts[index]` is the capped string `embedBatch` was
-              // handed, parallel to `pendingEntries` by construction above —
-              // not `entry.searchText`, which is the pre-cap original and
-              // overstates throughput for every entry over the cap.
-              storedTokens += estimateTokenCount(texts[index] ?? entry.searchText);
+              // #954: sum the estimate of the text actually sent —
+              // `texts[index]` is the capped string `embedBatch` was handed,
+              // parallel to `pendingEntries` by construction above (the
+              // `entry` guard covers both) — not `entry.searchText`, which is
+              // the pre-cap original and overstates throughput for every
+              // entry over the cap.
+              storedTokens += estimateTokenCount(texts[index] as string);
             } else {
               skippedCount++;
             }
