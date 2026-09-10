@@ -93,8 +93,9 @@ of walking the whole tree.
 ## Units and stores
 
 `unit_texts` holds every distinct piece of text the index ranks, keyed by
-`unit_hash`: one **card** unit per entry (name, description, tags, hints —
-`structuredFieldsText`, `src/indexer/units/unit.ts`) and one **fragment** unit
+`unit_hash`: one **card** unit per entry (name, description, tags, hints,
+parameters — `structuredFieldsText`, `src/indexer/units/unit.ts`) and one
+**fragment** unit
 per Markdown section (a header line — entry name, then `›` and the section
 title — plus the section body). `units_fts` is FTS5 (`porter unicode61`)
 over the same text, written alongside it. `entries` keeps only what other
@@ -402,14 +403,16 @@ Structured parameters can come from:
 - workflow markdown parameters
 
 Parameter names and descriptions are stored structurally in `document_json`
-(read by `akm show` and by execution) and folded into `entries.search_text`,
-but — unlike the pre-redesign `entries_fts.content` column — they are **not**
-currently part of any `unit_texts` row: a card unit is exactly
-name/description/tags/hints, and a fragment unit is exactly a Markdown
-section's own text, so a parameter's structured name/description is
-retrievable via `akm show` but not via lexical or semantic search unless the
-same text also appears as prose in the asset's own Markdown body
-(`src/indexer/units/unit.ts`'s `toUnitSource`/`structuredFieldsText`).
+(read by `akm show` and by execution) and folded into `entries.search_text`.
+They are also part of the card unit (index-redesign B5g): `structuredFieldsText`
+(`src/indexer/units/unit.ts`) appends one line per parameter after hints —
+just the name, or `name: description` when the parameter has one — so a
+parameter's structured name/description is retrievable via lexical (and
+semantic) search through `units_fts`/`units_vec`, not only via `akm show`.
+TOC headings stay out of the card unit on purpose: a fragment unit already
+carries its own section's heading as the first line of its header whenever
+the fragment begins at that heading, so folding every heading into the card
+unit too would only inflate it without adding coverage.
 
 ## Quality Values
 

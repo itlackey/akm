@@ -15,6 +15,7 @@
  * split into ordinal sub-units that all share its `fragmentId`. Nothing is
  * ever truncated.
  */
+import type { AssetParameter } from "../../core/adapter/types";
 import { parseMarkdownToc } from "../../core/asset/markdown";
 import { type MarkdownFragment, splitMarkdownFragments } from "../../core/asset/markdown-fragments";
 import { hashEmbeddableText } from "../../core/hash";
@@ -46,14 +47,43 @@ export interface UnitSource {
   description: string;
   tags: string;
   hints: string;
+  /**
+   * Parameter name/description lines, one per parameter, in declaration
+   * order — `name` alone, or `name: description` when the parameter has
+   * one — or `""` when the entry declares none. Kept as its own field
+   * (rather than folded into `hints`) so `structuredFieldsText` can place it
+   * last, after hints (index-redesign B5g) — restoring, for the card unit,
+   * the parameter coverage the old per-entry `entries_fts.content` column
+   * used to give search before the redesign. TOC headings are deliberately
+   * NOT carried here; they reach fragment units as their header line
+   * whenever a fragment starts on one.
+   */
+  parameters: string;
   /** entry_fragments.safe_markdown, or null for an entry without markdown content. */
   safeMarkdown: string | null;
 }
 
-/** Unit 0's body: description, tags, hints — the non-empty ones, one per line, in that order. */
+/** Unit 0's body: description, tags, hints, parameters — the non-empty ones, one per line, in that order. */
 function structuredFieldsText(source: UnitSource): string {
-  const body = [source.description, source.tags, source.hints].filter((field) => field.length > 0).join("\n");
+  const body = [source.description, source.tags, source.hints, source.parameters]
+    .filter((field) => field.length > 0)
+    .join("\n");
   return `${source.name}\n${body}`;
+}
+
+/**
+ * One line per parameter — `name`, or `name: description` when the
+ * parameter has a description — lowercased to match `buildSearchFields`'s
+ * other structured fields (`units_fts` is case-insensitive either way; this
+ * keeps the card unit's casing uniform). `""` when `parameters` is absent or
+ * empty, so `structuredFieldsText`'s filter drops it cleanly.
+ */
+function parametersText(parameters: readonly AssetParameter[] | undefined): string {
+  if (!parameters || parameters.length === 0) return "";
+  return parameters
+    .map((param) => (param.description ? `${param.name}: ${param.description}` : param.name))
+    .join("\n")
+    .toLowerCase();
 }
 
 function fragmentHeaderText(name: string, sectionTitle: string | null): string {
@@ -180,6 +210,7 @@ export function toUnitSource(entryId: number, entry: IndexDocument): UnitSource 
     description: fields.description,
     tags: fields.tags,
     hints: fields.hints,
+    parameters: parametersText(entry.parameters),
     safeMarkdown,
   };
 }

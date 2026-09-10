@@ -12,7 +12,8 @@
 import { describe, expect, test } from "bun:test";
 import { splitMarkdownFragments } from "../../../src/core/asset/markdown-fragments";
 import { hashEmbeddableText } from "../../../src/core/hash";
-import { deriveUnits, type UnitSource } from "../../../src/indexer/units/unit";
+import type { IndexDocument } from "../../../src/indexer/passes/metadata";
+import { deriveUnits, toUnitSource, type UnitSource } from "../../../src/indexer/units/unit";
 
 const LARGE_MAX_CHARS = 1_000_000;
 
@@ -23,6 +24,7 @@ function source(overrides: Partial<UnitSource> = {}): UnitSource {
     description: "a small widget",
     tags: "widget tools",
     hints: "use for widgets",
+    parameters: "",
     safeMarkdown: null,
     ...overrides,
   };
@@ -55,6 +57,44 @@ describe("deriveUnits — structured-fields unit (ordinal 0)", () => {
     const units = deriveUnits(src, LARGE_MAX_CHARS);
 
     expect(units[0]!.text).toBe("widget\nwidget tools");
+  });
+});
+
+describe("deriveUnits — card unit parameters (index-redesign B5g)", () => {
+  test("parameters are appended as their own lines, after hints", () => {
+    const src = source({ parameters: "retrybudget: how many retries are allowed\nverbose" });
+    const units = deriveUnits(src, LARGE_MAX_CHARS);
+
+    expect(units).toHaveLength(1);
+    expect(units[0]!.text).toBe(
+      "widget\na small widget\nwidget tools\nuse for widgets\nretrybudget: how many retries are allowed\nverbose",
+    );
+  });
+
+  test("an entry with no parameters is unaffected (empty parameters field is dropped, like other empty fields)", () => {
+    const src = source({ parameters: "" });
+    const units = deriveUnits(src, LARGE_MAX_CHARS);
+
+    expect(units[0]!.text).toBe("widget\na small widget\nwidget tools\nuse for widgets");
+  });
+
+  test("the card unit's hash changes when a parameter is added", () => {
+    const before = deriveUnits(source(), LARGE_MAX_CHARS)[0]!;
+    const after = deriveUnits(source({ parameters: "retrybudget: how many retries are allowed" }), LARGE_MAX_CHARS)[0]!;
+
+    expect(after.text).not.toBe(before.text);
+    expect(after.hash).not.toBe(before.hash);
+  });
+
+  test("parameters never leak into a fragment unit's text", () => {
+    const src = source({ parameters: "retrybudget: how many retries are allowed", safeMarkdown: "# Alpha\nbody text" });
+    const units = deriveUnits(src, LARGE_MAX_CHARS);
+
+    expect(units).toHaveLength(2);
+    expect(units[0]!.fragmentId).toBeNull();
+    expect(units[0]!.text).toContain("retrybudget");
+    expect(units[1]!.fragmentId).not.toBeNull();
+    expect(units[1]!.text).not.toContain("retrybudget");
   });
 });
 
@@ -197,6 +237,40 @@ describe("deriveUnits — maxChars splitting", () => {
   test("rejects a non-positive maxChars", () => {
     expect(() => deriveUnits(source(), 0)).toThrow(RangeError);
     expect(() => deriveUnits(source(), -5)).toThrow(RangeError);
+  });
+});
+
+describe("toUnitSource — parameters (index-redesign B5g)", () => {
+  test("formats each parameter as its own line: 'name: description', or bare 'name' with none", () => {
+    const entry: IndexDocument = {
+      name: "widget",
+      type: "command",
+      description: "A small widget.",
+      parameters: [
+        { name: "retryBudget", description: "How many retries are allowed before giving up." },
+        { name: "verbose" },
+      ],
+    };
+    const src = toUnitSource(1, entry);
+
+    expect(src.parameters).toBe("retrybudget: how many retries are allowed before giving up.\nverbose");
+  });
+
+  test("an entry with no parameters gets the empty string", () => {
+    const entry: IndexDocument = { name: "widget", type: "memory", description: "A small widget." };
+    expect(toUnitSource(1, entry).parameters).toBe("");
+  });
+
+  test("a parameter name is present in the card unit's text, and the card unit's hash changes when one is added", () => {
+    const base: IndexDocument = { name: "retry-runner", type: "command", description: "Runs retries." };
+    const withParam: IndexDocument = { ...base, parameters: [{ name: "retryBudget" }] };
+
+    const beforeUnit = deriveUnits(toUnitSource(1, base), LARGE_MAX_CHARS)[0]!;
+    const afterUnit = deriveUnits(toUnitSource(1, withParam), LARGE_MAX_CHARS)[0]!;
+
+    expect(beforeUnit.text).not.toContain("retrybudget");
+    expect(afterUnit.text).toContain("retrybudget");
+    expect(afterUnit.hash).not.toBe(beforeUnit.hash);
   });
 });
 
