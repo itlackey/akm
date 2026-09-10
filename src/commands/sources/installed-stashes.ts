@@ -631,7 +631,9 @@ function openUnifiedUpdateTransaction(): UnifiedUpdateTransaction {
         candidate.exec(`ATTACH DATABASE ${sqliteStringLiteral(statePath)} AS "${UPDATE_STATE_SCHEMA}"`);
         // openIndexDatabase invokes this before ensureSchema, so the outer
         // transaction begins before the first update-owned index mutation.
-        beginImmediateTransaction(candidate);
+        // `candidate` is the index.db connection, so contention here must
+        // report as INDEX_DB_CONTENDED, not the state.db default.
+        beginImmediateTransaction(candidate, "index");
       },
     });
     return {

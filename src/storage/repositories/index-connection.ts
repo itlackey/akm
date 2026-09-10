@@ -68,9 +68,6 @@ export function openIndexDatabase(
   try {
     return openManagedDatabase(spec);
   } catch (error) {
-    if (process.env.AKM_RACE_TRACE === "1") {
-      console.error(`[race-trace pid=${process.pid}]`, error instanceof Error ? error.stack : error);
-    }
     // index.db is a derived cache, fully regenerable from the stash on disk
     // (see src/core/state-db.ts's "Why a separate database from index.db"
     // note) — so real on-disk corruption is recovered by deleting the file

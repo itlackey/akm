@@ -120,9 +120,6 @@ export function emitJsonError(error: unknown): void {
   // internal errors have none.
   const code = error instanceof AkmError ? error.code : undefined;
   console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
-  if (process.env.AKM_RACE_TRACE === "1" && error instanceof Error) {
-    console.error(`[race-trace pid=${process.pid}]`, error.stack);
-  }
   process.exitCode = exitCode;
 }
 
