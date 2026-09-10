@@ -325,14 +325,12 @@ interface TextBatch {
  * a document-count cap, so one large document does not silently blow the
  * batch past the endpoint's context window (#874).
  *
- * `tokenCounts[i]`, when given, is the EXACT count for `texts[i]` — from the
- * provider's own tokenizer (`ProviderLimits.countTokens`, threaded in by
- * `drain.ts` via `RemoteEmbedder.embedBatch`'s `packing` option,
- * docs/plans/index-redesign-contract.md B5) — used instead of
- * {@link estimateTokenCount}'s 4-chars≈1-token guess, so packing is exact
- * wherever the provider exposes a tokenizer (llama.cpp's `/tokenize`).
- * Omitted (or shorter than `texts`, e.g. a caller with no exact counter)
- * falls back to the estimate for the texts it does not cover.
+ * `tokenCounts[i]`, when given, is the count to use for `texts[i]` instead of
+ * {@link estimateTokenCount}'s fixed 4-chars≈1-token guess — `embedBatch`
+ * passes the calibrated `charsPerToken` estimate for every text
+ * (`EmbeddingRequestPacking.charsPerToken`, sourced from the provider's own
+ * probed limits). Omitted (or shorter than `texts`, e.g. a caller with no
+ * packing at all) falls back to the estimate for the texts it does not cover.
  *
  * A single document whose own count exceeds `tokenBudget` can never fit any
  * batch — it is reported as its own oversized "batch" so the caller can skip
@@ -409,8 +407,8 @@ export interface EmbeddingRequestPacking {
   tokenBudget?: number;
   /** Per-request document-count safety cap; {@link DEFAULT_REMOTE_BATCH_SIZE} when omitted. */
   maxCount?: number;
-  /** Exact tokenizer from the provider (`ProviderLimits.countTokens`), used instead of {@link estimateTokenCount} to plan batches when present. */
-  countTokens?: (text: string) => Promise<number>;
+  /** Calibrated chars-per-token ratio (`ProviderLimits.charsPerToken`), used in place of {@link estimateTokenCount}'s fixed 4-chars-per-token guess when planning batches. */
+  charsPerToken?: number;
   /**
    * True once `tokenBudget` is itself an observed value
    * (`ProviderLimits.source` `"llama.cpp"`/`"ollama"`), not the generic
@@ -576,23 +574,11 @@ export class RemoteEmbedder implements Embedder {
     const headers = this.buildHeaders();
     const ollamaOpts = resolveOllamaOptions(this.config, packing?.ollamaNumCtx);
 
-    // Exact per-text counts from the provider's own tokenizer
-    // (`packing.countTokens`, e.g. llama.cpp's `/tokenize`) when offered —
-    // packing then plans against the REAL count instead of
-    // `estimateTokenCount`'s 4-chars≈1-token guess. A per-text failure
-    // (a transient tokenize-endpoint hiccup) falls back to the estimate for
-    // just that text rather than losing exact counting for the whole call.
-    const tokenCounts = packing?.countTokens
-      ? await Promise.all(
-          texts.map(async (text) => {
-            try {
-              return await (packing.countTokens as (t: string) => Promise<number>)(text);
-            } catch {
-              return estimateTokenCount(text);
-            }
-          }),
-        )
-      : texts.map((text) => estimateTokenCount(text));
+    // Per-text counts from the calibrated chars-per-token ratio
+    // (`packing.charsPerToken`, sourced from the provider's own probed
+    // limits) rather than a per-text HTTP tokenize call — synchronous, so
+    // planning a corpus of any size costs no requests at all.
+    const tokenCounts = texts.map((text) => Math.ceil(text.length / (packing?.charsPerToken ?? 4)));
 
     // `effectiveTokenBudget` (#954) starts at the probed/configured/default
     // value and MAY shrink once, on the run's first context-size rejection —

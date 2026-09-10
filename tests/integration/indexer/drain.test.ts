@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { drainEmbeddingQueue } from "../../../src/indexer/drain";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
+import { CHARS_PER_TOKEN_TAIL } from "../../../src/llm/embedders/provider-limits";
 import type {
   EmbeddingBatchCommit,
   EmbeddingBatchSkip,
@@ -306,7 +307,7 @@ type EmbedBatchMockWithPacking = (
 ) => Promise<(EmbeddingVector | undefined)[]>;
 
 describe("drainEmbeddingQueue: packing sourced from probeProviderLimits, not config (B5)", () => {
-  test("an endpoint that answers neither /props nor /api/show gets the default window, unknown, no exact counter", async () => {
+  test("an endpoint that answers neither /props nor /api/show gets the default window, unknown, fallback charsPerToken", async () => {
     seedUnitTexts(db, ["h1"]);
 
     let capturedPacking: EmbeddingRequestPacking | undefined;
@@ -328,7 +329,7 @@ describe("drainEmbeddingQueue: packing sourced from probeProviderLimits, not con
 
     expect(capturedPacking?.tokenBudget).toBe(8_192);
     expect(capturedPacking?.windowIsKnown).toBe(false);
-    expect(capturedPacking?.countTokens).toBeUndefined();
+    expect(capturedPacking?.charsPerToken).toBe(CHARS_PER_TOKEN_TAIL);
     expect(capturedPacking?.ollamaNumCtx).toBeUndefined();
   });
 
@@ -344,7 +345,7 @@ describe("drainEmbeddingQueue: packing sourced from probeProviderLimits, not con
             headers: { "Content-Type": "application/json" },
           });
         }
-        // No /tokenize support — countTokens stays undefined.
+        // No /tokenize support — charsPerToken falls back to CHARS_PER_TOKEN_TAIL.
         return new Response(null, { status: 404 });
       },
     });
@@ -371,7 +372,7 @@ describe("drainEmbeddingQueue: packing sourced from probeProviderLimits, not con
 
       expect(capturedPacking?.tokenBudget).toBe(2_048);
       expect(capturedPacking?.windowIsKnown).toBe(true);
-      expect(capturedPacking?.countTokens).toBeUndefined();
+      expect(capturedPacking?.charsPerToken).toBe(CHARS_PER_TOKEN_TAIL);
       expect(capturedPacking?.ollamaNumCtx).toBeUndefined();
     } finally {
       server.stop(true);
