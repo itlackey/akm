@@ -2237,9 +2237,13 @@ restore_semantic_dirs() {
 | --- | --- | --- |
 | `disabled` | Mode is `off` | FTS only, no embedding request |
 | `pending` | Enabled but not verified/current fingerprint changed | FTS fallback with advisory |
-| `ready-js` | Complete vectors, JavaScript cosine path | Hybrid/vector search |
 | `ready-vec` | Complete vectors, sqlite-vec fast path ready | Hybrid/vector search |
 | `blocked` | Recent embedding failure | FTS fallback until retry/expiry |
+
+`ready-js` named a pure-JS cosine fallback for a BLOB vector table and is
+retired: the unit vector store is vec0-only, so nothing produces that value
+any more. A run that cannot use the extension reports `blocked` or stays
+`pending`.
 
 - [ ] **[CORE]** With mode off, full index reports disabled, stores zero
       embeddings, and search remains exact FTS with no model/network request.
@@ -2262,11 +2266,15 @@ export AKM_EMBED_DETERMINISTIC=1
 
 akm index --full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-index.json"
+# A vector is per UNIT since the index redesign, not per entry: every entry
+# contributes at least its card unit, plus one unit per Markdown section, so
+# embeddingCount is >= entryCount rather than equal to it. "ready-js" named a
+# pure-JS fallback this release retired, so "ready-vec" is the only ready
+# status left.
 jq -e '
   .verification.ok == true and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec") and
-  .verification.embeddingCount == .verification.entryCount
+  .verification.semanticStatus == "ready-vec" and
+  .verification.embeddingCount >= .verification.entryCount
 ' "$AKM_SANDBOX/semantic-deterministic-index.json"
 
 akm search "deploy docker compose in a homelab" \
@@ -2303,12 +2311,12 @@ akm config set embedding "$(jq -nc \
 akm config set semanticSearchMode auto --silent
 
 akm index --full --format json >"$AKM_SANDBOX/semantic-remote-index.json"
+# Per-unit vectors and the retired "ready-js" status, same as above.
 jq -e '
   .verification.ok == true and
   .verification.embeddingProvider == "remote" and
-  .verification.embeddingCount == .verification.entryCount and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec")
+  .verification.embeddingCount >= .verification.entryCount and
+  .verification.semanticStatus == "ready-vec"
 ' "$AKM_SANDBOX/semantic-remote-index.json"
 
 akm search deploy --detail full --no-project-context --format json \
