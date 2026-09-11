@@ -28,6 +28,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  sandboxXdgDataHome,
 } from "../_helpers/sandbox";
 
 // ── Gate ───────────────────────────────────────────────────────────────────
@@ -321,9 +322,33 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     // "ready-js" (the JS-cosine fallback for a BLOB-vector table) is
     // retired (index redesign, B5) — units_vec is a vec0-only store.
     expect(result.verification.semanticStatus).toBe("ready-vec");
-    // Every indexed entry is embeddable, so the verification entry count equals
-    // the embedding count.
-    expect(result.verification.entryCount).toBe(result.verification.embeddingCount);
+
+    // A vector is per UNIT since the index redesign (indexer.ts sets
+    // `embeddingCount: coverage.unitsPresent`), not per entry: the 5 fixture
+    // entries derive many more units (one card unit per entry plus one per
+    // Markdown section), so `entryCount` and `embeddingCount` are expected to
+    // differ — asserting they're equal was true only under the pre-redesign
+    // one-vector-per-entry model. The real invariant is complete coverage —
+    // no unit left without a vector for the active identity — expressed the
+    // same way `akm index status` and `listMissingHashes` express it
+    // (units-repository.ts's own vocabulary), not a new query.
+    const dbPath = getDbPath();
+    const verifyDb = openIndexDatabase(dbPath);
+    try {
+      const identity = getMeta(verifyDb, "embeddingIdentity");
+      expect(identity).toBeDefined();
+      const coverage = unitCoverage(verifyDb, identity as string);
+      // `embeddingCount` reflects the same unit coverage the repository
+      // itself tracks.
+      expect(result.verification.embeddingCount).toBe(coverage.unitsPresent);
+      // Complete coverage: every unit for the active identity has a vector.
+      expect(coverage.unitsPresent).toBe(coverage.unitsTotal);
+      // entryCount is still meaningful: every entry contributed at least one
+      // unit to the mapping (none were dropped).
+      expect(result.verification.entryCount).toBe(coverage.entries);
+    } finally {
+      closeDatabase(verifyDb);
+    }
   }, 120_000); // 2 minute timeout for model download on first run
 
   // Restore env vars before each test in case the degradation describe
@@ -549,15 +574,28 @@ describe("Semantic search graceful degradation", () => {
   let stashDir: string;
   let degradationCacheDir: string;
   let degradationConfigDir: string;
+  let degradationDataDir: string;
   let degradationEnvCleanup: Cleanup = () => {};
 
   beforeAll(() => {
     const cacheResult = sandboxXdgCacheHome();
     const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-    const stashResult = sandboxStashDir(cfgResult.cleanup);
+    // ISOLATION: this suite shares the file with "Semantic search
+    // end-to-end (real embeddings)" above, which sandboxes cache/config/stash
+    // but not XDG_DATA_HOME — so without sandboxing it here too, both
+    // describes resolve the SAME index.db (getDbPath() falls through to the
+    // process-wide default). In gated CI the real-embeddings suite runs
+    // first and writes real unit vectors there; content-addressed vectors
+    // deliberately survive a later `akm index --full` (index-redesign), so
+    // this suite's "semanticSearch is disabled" reindex found them still
+    // present — a leak, not a product bug. Give this suite its own data home
+    // the same way it already isolates cache and config.
+    const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+    const stashResult = sandboxStashDir(dataResult.cleanup);
     degradationEnvCleanup = stashResult.cleanup;
     degradationCacheDir = cacheResult.dir;
     degradationConfigDir = cfgResult.dir;
+    degradationDataDir = dataResult.dir;
     stashDir = stashResult.dir;
 
     // Create a minimal stash. #39: sidecars retired — the skill's metadata now
@@ -573,6 +611,7 @@ describe("Semantic search graceful degradation", () => {
   beforeEach(() => {
     mutateScopedEnv("XDG_CACHE_HOME", degradationCacheDir);
     mutateScopedEnv("XDG_CONFIG_HOME", degradationConfigDir);
+    mutateScopedEnv("XDG_DATA_HOME", degradationDataDir);
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     resetConfigCache();
   });
