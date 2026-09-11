@@ -450,15 +450,21 @@ const SEARCH_DROP_OFF_FRACTION = (() => {
  * only backfill each dropped hit from deeper in the pool — measured on the
  * curate-golden fixture, that changes which hits come back but not how many.
  */
-function applyRelativeDropOff<T extends { score: number }>(hits: T[]): T[] {
+function applyRelativeDropOff<T extends RankedEntryInput>(hits: T[]): T[] {
   if (SEARCH_DROP_OFF_FRACTION <= 0 || hits.length <= 1) return hits;
-  const top = displaySearchScore(hits[0]?.score ?? 0);
+  // Judge every hit on its PRE-ceiling relevance, the same score the final
+  // comparator tie-breaks on. `applyBeliefStateScoreCeiling` promises a
+  // demoted hit still lists, ranked last, and is never silently dropped — so
+  // the cut must not read the clamped score, or a superseded memory would
+  // vanish from results instead of sorting to the bottom.
+  const relevance = (hit: T): number => displaySearchScore(hit.preCeilingScore ?? hit.score);
+  const top = relevance(hits[0] as T);
   if (!(top > 0)) return hits;
   const cut = top * SEARCH_DROP_OFF_FRACTION;
   // Filter rather than truncate: the comparator's tier and name gates can
   // place a strong hit after a weaker one, and truncating at the first hit
   // below the cut would drop it with the tail.
-  return hits.filter((hit, index) => index === 0 || displaySearchScore(hit.score) >= cut);
+  return hits.filter((hit, index) => index === 0 || relevance(hit) >= cut);
 }
 
 async function searchDatabase(

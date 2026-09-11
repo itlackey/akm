@@ -821,6 +821,11 @@ function appendCurateSupportRef(
   supportRefsByRef.set(ownerRef, [...existing, supportRef]);
 }
 
+const BELIEF_DEMOTED_STATES = new Set(["deprecated", "superseded", "contradicted", "archived"]);
+function isBeliefDemoted(state: string | undefined): boolean {
+  return state !== undefined && BELIEF_DEMOTED_STATES.has(state);
+}
+
 // SWEEP KNOB — replaced by a plain constant once the fraction is chosen.
 const CURATE_DROP_OFF_FRACTION = (() => {
   const raw = Number(process.env.AKM_CURATE_DROP_OFF);
@@ -838,7 +843,13 @@ function applyCurateDropOff(ranked: AnnotatedCurateHit[]): AnnotatedCurateHit[] 
   const top = ranked[0]?.rawScore ?? 0;
   if (!(top > 0)) return ranked;
   const cut = top * CURATE_DROP_OFF_FRACTION;
-  return ranked.filter((entry, index) => index === 0 || entry.rawScore >= cut);
+  // A belief-demoted hit arrives here with its score already clamped to the
+  // demotion ceiling, so the ratio would always cut it. Search promises such
+  // a hit still lists, ranked last (`applyBeliefStateScoreCeiling`), so the
+  // cut exempts it rather than deleting what the ranker only meant to demote.
+  return ranked.filter(
+    (entry, index) => index === 0 || entry.rawScore >= cut || isBeliefDemoted(entry.hit.beliefState),
+  );
 }
 
 function selectCuratedStashHits(
