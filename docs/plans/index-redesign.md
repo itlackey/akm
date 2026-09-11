@@ -48,7 +48,8 @@ no full rebuild, no phase pipeline, no background reindex spawned per command.
 row in `units_vec` for the active identity. Any process drains some of it in provider-bounded
 batches, each batch committed on its own; a killed run loses one batch and the next run computes
 the same query. `akm index` is reconcile plus drain; the scheduler drains; a write path drains the
-few units it just created. Limits (window, slots, exact token counts) come from the provider.
+few units it just created. Limits (window, slots, a chars-per-token ratio calibrated on the
+provider's own tokenizer where it has one) come from the provider.
 The four sizing keys go; `concurrency` and `timeoutMs` stay optional for gateways that report
 nothing.
 
@@ -61,11 +62,49 @@ becomes rare because writes are tiny.
 
 ## Search
 
-One query over `units`: lexical rank from `units_fts` (BM25), semantic rank from `units_vec`
-for the active identity, fused by reciprocal rank so no weight or threshold is tuned, grouped to
-entries by best unit, the matching unit returned with the hit. Type filters apply to entries as
-today. Ranking quality is measured on the existing `curate-golden` fixture before and after; the
-two named weights and `minScore` are deleted once it is equal or better.
+One query over `units`: lexical evidence from `units_fts` (BM25) and semantic evidence from
+`units_vec` for the active identity, grouped to entries by best unit, the matching unit
+returned with the hit. Type filters are applied in SQL, before the candidate cap, so a filtered
+type cannot be starved by a truncated pool.
+
+Fusion was going to be reciprocal rank, so that no weight or threshold needed tuning. That was
+measured against the `curate-golden` fixture and rejected. Rank-only fusion cannot tell a strong
+match from a weak one — a unit matching one common word earns nearly the credit of one matching
+every rare word, and a semantic-only hit ties a lexical hit — so with a weak or still-draining
+embedder, noise crowds out real matches. Measured means, against the pre-redesign path at 0.933:
+
+| configuration | mean | leapfrogs |
+| --- | ---: | ---: |
+| three-list reciprocal rank | 0.918 | 0 |
+| one lexical pool instead of the card/fragment split | 0.918 | 0 |
+| card list weighted 3x in the rank sum | 0.918 | 0 |
+| tier concatenation, still rank-only | 0.855 | 0 |
+| magnitude-scored lexical evidence, 0.7/0.3 split | 0.936 | 0 |
+
+The first three being identical per case is the finding: the card/fragment split and list
+weighting change nothing under rank-only fusion. What shipped keeps the calibrated BM25
+transform this repository already had (`stableFtsScore`, `src/core/lexical-score.ts`) and the
+proven 0.7/0.3 lexical/semantic split, now over units. `minScore` IS deleted — there is no
+floor. The exact/prefix/relaxed tier ladder became a priority order that tops up to the
+candidate budget rather than stopping at the first non-empty tier, because a unit is a card or
+one section and a conjunctive query is rarely satisfied by any single unit.
+
+One correction, measured after the table above and before release. Calling the shipped
+configuration "magnitude-scored" overstates what the transform delivers: `stableFtsScore`'s
+reference constant puts every realistic BM25 value deep into `log1p` saturation, so its whole
+output band is 0.029 wide across a 320-fold range of match strength — 0.021 after the 0.7
+weight, and less than any single ranking contributor. Two integration tests caught the
+consequence that ten bench cases could not: a memory whose description matched a query verbatim
+lost to a derived twin matching two of its three tokens. So the tier a hit came from is now
+ranking evidence too, ahead of the fused score — a candidate matching every query token
+outranks one matching a subset — and magnitude decides only within a tier. Recalibrating the
+transform instead was tried and rejected: it cannot reach the second failing case at all,
+because the score floor is a separate constant that no rescaling moves below the belief-state
+ceilings. Gating the ranking contributors on tier was also tried and rejected on measurement,
+at 0.917. The shipped combination holds the bench at 0.936 with the per-case table unchanged.
+
+One fixture case regressed (`residue-docker`, 1.000 to 0.816) and is recorded rather than tuned
+away; ten hand-labelled cases cannot justify fitting a constant.
 
 ## What stays
 
@@ -111,13 +150,21 @@ Six parallel modules against one contract, one integrator, one gate:
 | units and stores | `units`, `units_fts`, `units_vec`; card and fragment units with headers and the real-token split |
 | write-time indexing | the write paths index what they wrote, inline |
 | drain | the embedding queue on the existing batching code, provider limits probed |
-| search | one query, reciprocal-rank fusion, grouping, the matched unit in the hit |
+| search | one query, magnitude-scored fusion under a lexical-tier priority, grouping, the matched unit in the hit |
 | removal and migration | delete the machinery above, new generation, `akm index status`, docs |
 
-The units, store and provider-limits modules already in progress are the first three rows'
-foundations and carry over unchanged in role.
+All six shipped. The search row is the one whose deliverable changed during the
+build: reciprocal-rank fusion was the plan and lost on measurement, so what shipped
+scores lexical evidence by magnitude and ranks the lexical tier ahead of the fused
+score — see the Search section above for the table and the two rejected alternatives.
 
 ## Measure first
+
+These are the sizing queries that were run BEFORE the build, against the pre-redesign
+schema, to get the corpus token count the Cost section quotes. They do not run on a
+0.9.16 index: `entries.search_text` and `entry_fragments_fts` are both gone. The
+equivalent on the new schema is `akm index status`, which reports files, entries,
+distinct units and how many carry a vector for the active identity.
 
 ```sql
 SELECT COUNT(*) AS entries, SUM(length(search_text)) / 4 AS corpus_rho4_tokens FROM entries;

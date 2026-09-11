@@ -22,7 +22,7 @@
  * `relevance_score` descending and callers treat a missing index as
  * "unscored" (kept in its original relative position, after every scored
  * document). Deliberately independent of `EngineConfigSchema`'s "llm"/"agent"
- * kinds — see the comment on `CurateRerankConfigSchema` in
+ * kinds — see the comment on `SearchRerankConfigSchema` in
  * `core/config/schema/search.ts` for why.
  */
 
@@ -32,8 +32,8 @@ import { isApiKeyReference } from "../core/config/schema/primitives";
 import { redactErrorBody, redactSensitiveText } from "../core/redaction";
 import { resolveSecretFromStore } from "../sources/snapshot-fetchers/secret-seam";
 
-/** Mirrors `CurateRerankConfigSchema` (`core/config/schema/search.ts`) — kept as a plain interface here to avoid this transport module depending on the Zod schema module. */
-export interface CurateRerankConfig {
+/** Mirrors `SearchRerankConfigSchema` (`core/config/schema/search.ts`) — kept as a plain interface here to avoid this transport module depending on the Zod schema module. */
+export interface SearchRerankConfig {
   enabled?: boolean;
   endpoint?: string;
   model?: string;
@@ -70,17 +70,17 @@ interface RerankResponseBody {
  * after every scored document (never dropped).
  *
  * Throws {@link RerankCallError} on any transport/parse failure — callers
- * that want a graceful fallback should use `tryLlmFeature("curate_rerank", ...)`
+ * that want a graceful fallback should use `tryLlmFeature("search_rerank", ...)`
  * (`llm/feature-gate.ts`), matching every other bounded in-tree LLM/rerank
  * call site.
  */
 export async function rerankDocuments(
-  config: CurateRerankConfig,
+  config: SearchRerankConfig,
   query: string,
   documents: readonly string[],
 ): Promise<RerankResult[]> {
   if (!config.endpoint) {
-    throw new RerankCallError("search.curateRerank.endpoint is not configured.", "provider_error");
+    throw new RerankCallError("search.rerank.endpoint is not configured.", "provider_error");
   }
   if (documents.length === 0) return [];
 

@@ -917,13 +917,26 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
   test("the three PKG-8-owned sites (health, index, lint) declare GLOBAL_OUTPUT_ARGS", () => {
     const requiredKeys = Object.keys(GLOBAL_OUTPUT_ARGS);
     const leaves = collectTerminalLeafCommands(main as unknown as AnyCittyCommandForTest);
-    for (const path of ["health", "index", "lint"]) {
+    for (const path of ["health", "lint"]) {
       const leaf = leaves.find((entry) => entry.path === path);
       expect(leaf).toBeDefined();
       const argKeys = new Set(Object.keys(leaf?.args ?? {}));
       for (const key of requiredKeys) {
         expect(argKeys.has(key)).toBe(true);
       }
+    }
+    // `index` (index-redesign B5) is no longer a pure leaf — `akm index
+    // status` sits under it as a real citty subcommand — so it no longer
+    // shows up in `collectTerminalLeafCommands`'s `!hasSubCommands` walk.
+    // Its own default body (`akm index` with no subcommand) still builds the
+    // index directly and still needs GLOBAL_OUTPUT_ARGS on its own `args`,
+    // so check the citty tree directly instead. `index status` is a genuine
+    // leaf and is already covered by the walk-based test above.
+    const indexGroup = (main as unknown as { subCommands?: Record<string, AnyCittyCommandForTest> }).subCommands?.index;
+    expect(indexGroup).toBeDefined();
+    const indexArgKeys = new Set(Object.keys(indexGroup?.args ?? {}));
+    for (const key of requiredKeys) {
+      expect(indexArgKeys.has(key)).toBe(true);
     }
   });
 });

@@ -491,10 +491,24 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
       });
       try {
         preflight.exec("PRAGMA busy_timeout = 30000");
-        const ledger = assertMigrationLedger(preflight, STATE_MIGRATIONS);
+        // Both reads below must observe ONE WAL snapshot. Each is its own
+        // statement, and without an explicit transaction SQLite auto-commits
+        // each separately, so they can see two different snapshots. A sibling
+        // process's fresh bootstrap is now one all-or-nothing transaction, so
+        // a commit landing between the two reads showed an empty ledger to the
+        // first and the sibling's freshly created tables to the second — the
+        // signature of a genuine legacy unversioned database, which this
+        // preflight then refused. Pinned to one snapshot, either nothing the
+        // sibling did is visible (empty ledger AND no tables, correctly fresh)
+        // or all of it is (a current ledger, so the refusal is never reached).
+        // A real legacy database, racing no one, reads exactly as before.
+        const { ledger, hasNoOtherTables } = preflight.transaction(() => ({
+          ledger: assertMigrationLedger(preflight, STATE_MIGRATIONS),
+          hasNoOtherTables: unversionedDatabaseHasNoTables(preflight),
+        }))();
         warnNewerStateLedger(ledger);
         existingUnversionedDatabase = ledger.migrationIds.length === 0;
-        if (existingUnversionedDatabase && unversionedDatabaseHasNoTables(preflight)) {
+        if (existingUnversionedDatabase && hasNoOtherTables) {
           existingUnversionedDatabase = false;
           treatUnversionedAsFresh = true;
         }
@@ -579,7 +593,21 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
     if (existingSource) closeFileIdentity(existingSource);
     if (freshReservation) closeFileIdentity(freshReservation);
     releaseActivity?.();
-    throw error;
+    // The migration engine's own writer-lock retry (sqlite-migrations.ts's
+    // `withImmediateWriteLock`, used by every migration this open can run,
+    // including a from-empty first open) throws the raw driver error after
+    // its own retry budget, not a `TransientError` — only
+    // `beginImmediateTransaction` below does that reclassification, and nothing
+    // upstream of it re-wraps a raw SQLITE_BUSY/LOCKED that surfaces from
+    // deeper in the open/migrate sequence (field follow-up: a from-empty
+    // first open racing a concurrent opener can still hit this under load).
+    // Reclassify uniformly here so the contract this function promises --
+    // contention is reported as `STATE_DB_CONTENDED` (exit 75), never a raw
+    // driver message (exit 70) -- holds regardless of which internal step
+    // the contention was observed at. Anything not contention-shaped
+    // (a genuine legacy-database refusal, corruption, a real schema error)
+    // rethrows exactly as raised.
+    throwBeginFailure(error, "state");
   }
 }
 
@@ -736,6 +764,52 @@ function sleepSyncMs(ms: number): void {
 }
 
 /**
+ * Which physical database an exhausted-retry BEGIN failure is reported
+ * against (field follow-up to #956). Every existing caller of
+ * {@link beginImmediateTransaction} / {@link withImmediateTransaction} passed
+ * no such thing before this database-identity-carrying error existed, so
+ * `"state"` — today's only behaviour — stays the default; callers that open
+ * index.db pass `"index"` explicitly to get `INDEX_DB_CONTENDED` instead of a
+ * state.db message describing the wrong database.
+ */
+export type ImmediateTransactionDbKind = "state" | "index";
+
+/**
+ * Reclassify an exhausted-retry BEGIN failure that is still contention-shaped
+ * (#948) into a `TransientError`, mirroring the RUN_LEASE_HELD precedent
+ * (`WorkflowRunsRepository.acquireEngineLease`): the driver text is accurate
+ * but unhelpful (`{"ok":false,"error":"database is locked"}`, exit
+ * 70/INTERNAL) — this instead reads as a retryable-shortly signal (exit 75,
+ * sysexits EX_TEMPFAIL — #948 addendum) with the original error preserved as
+ * `cause` for `--verbose`/debugging. A genuinely unrelated error (not
+ * contention-shaped) is rethrown exactly as raised, never reclassified.
+ *
+ * `dbKind` (field follow-up to #956) picks the reported identity: `"state"`
+ * (default, unchanged text) yields `STATE_DB_CONTENDED`; `"index"` yields
+ * `INDEX_DB_CONTENDED` with index.db's own message, mirroring
+ * `reclassifyIndexDbContention`'s text (`src/indexer/indexer.ts`) so a caller
+ * that reaches this helper directly and one that only reclassifies a raw
+ * driver error report the same thing.
+ */
+function throwBeginFailure(err: unknown, dbKind: ImmediateTransactionDbKind): never {
+  if (isSqliteContentionError(err)) {
+    const contended =
+      dbKind === "index"
+        ? new TransientError(
+            "akm's index database is busy (another akm process is writing it); retry shortly.",
+            "INDEX_DB_CONTENDED",
+          )
+        : new TransientError(
+            "akm's state database is busy (another akm process is writing it); retry shortly.",
+            "STATE_DB_CONTENDED",
+          );
+    contended.cause = err;
+    throw contended;
+  }
+  throw err;
+}
+
+/**
  * Open, but deliberately do not finish, an immediate transaction.
  *
  * This is the split-phase counterpart to {@link withImmediateTransaction} for
@@ -744,30 +818,7 @@ function sleepSyncMs(ms: number): void {
  * publication have all succeeded. The caller that asked for this split phase
  * owns the matching COMMIT/ROLLBACK.
  */
-/**
- * Reclassify an exhausted-retry BEGIN failure that is still contention-shaped
- * (#948) into a `TransientError("STATE_DB_CONTENDED")`, mirroring the
- * RUN_LEASE_HELD precedent (`WorkflowRunsRepository.acquireEngineLease`): the
- * driver text is accurate but unhelpful (`{"ok":false,"error":"database is
- * locked"}`, exit 70/INTERNAL) — this instead reads as a retryable-shortly
- * signal (exit 75, sysexits EX_TEMPFAIL — #948 addendum) with the original
- * error preserved as `cause` for `--verbose`/debugging. A genuinely unrelated
- * error (not contention-shaped) is rethrown exactly as raised, never
- * reclassified.
- */
-function throwBeginFailure(err: unknown): never {
-  if (isSqliteContentionError(err)) {
-    const contended = new TransientError(
-      "akm's state database is busy (another akm process is writing it); retry shortly.",
-      "STATE_DB_CONTENDED",
-    );
-    contended.cause = err;
-    throw contended;
-  }
-  throw err;
-}
-
-export function beginImmediateTransaction(db: Database): void {
+export function beginImmediateTransaction(db: Database, dbKind: ImmediateTransactionDbKind = "state"): void {
   if (db.inTransaction) {
     throw new Error("beginImmediateTransaction requires a connection with no active transaction");
   }
@@ -792,13 +843,17 @@ export function beginImmediateTransaction(db: Database): void {
         sleepSyncMs(2 ** (attempt - 1));
         continue;
       }
-      throwBeginFailure(err);
+      throwBeginFailure(err, dbKind);
     }
   }
-  throwBeginFailure(lastBeginErr);
+  throwBeginFailure(lastBeginErr, dbKind);
 }
 
-export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
+export function withImmediateTransaction<T>(
+  db: Database,
+  fn: () => T,
+  dbKind: ImmediateTransactionDbKind = "state",
+): T {
   // Re-entrancy guard (issue #686): if a transaction is already open on this
   // connection (e.g. a nested withImmediateTransaction call inside an outer
   // frame's fn), join it — run fn directly with no BEGIN/COMMIT/ROLLBACK of
@@ -809,7 +864,7 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
   if (db.inTransaction) {
     return fn();
   }
-  beginImmediateTransaction(db);
+  beginImmediateTransaction(db, dbKind);
   try {
     const result = fn();
     if (!db.inTransaction) {

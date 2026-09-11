@@ -4,11 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
+import { searchUnitsLexical } from "../../src/indexer/search/db-search";
+import type { UnitLexicalHit } from "../../src/indexer/search/ranking";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
-import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { rebuildFts, searchFts } from "../../src/storage/repositories/index-fts-repository";
+import { getEntryById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import { seedUnitsForAllEntries } from "../_helpers/seed-units";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -83,20 +85,44 @@ function insertTestEntry(
   );
 }
 
+/**
+ * The units path's entry-level lexical equivalent of the old `searchFts`'s
+ * `.entry.name`/`.entry.type`/`.lexicalMatch` result shape: resolve each
+ * matched unit back to its owning entry via `entry_units`, optionally
+ * narrowed by type (`searchUnitsLexical` itself has no type filter — that
+ * narrowing lives one layer up, in `fuseByEntry`/`collectSearchSignals`).
+ */
+function searchEntries(
+  db: Database,
+  query: string,
+  k: number,
+  entryType?: string,
+): Array<{ name: string; type: string; lexicalMatch: UnitLexicalHit["lexicalMatch"] }> {
+  return searchUnitsLexical(db, query, k).flatMap((hit) => {
+    const row = db.prepare("SELECT entry_id FROM entry_units WHERE unit_hash = ?").get(hit.unitHash) as
+      | { entry_id: number }
+      | undefined;
+    if (!row) return [];
+    const found = getEntryById(db, row.entry_id);
+    if (!found || (entryType && found.entry.type !== entryType)) return [];
+    return [{ name: found.entry.name, type: found.entry.type, lexicalMatch: hit.lexicalMatch }];
+  });
+}
+
 // ── Fuzzy / prefix fallback tests ───────────────────────────────────────────
 
-describe("Fuzzy prefix fallback in searchFts", () => {
+describe("Fuzzy prefix fallback in searchUnitsLexical", () => {
   test("exact match still works normally", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration platform",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
-      const results = searchFts(db, "kubernetes", 10);
+      const results = searchEntries(db, "kubernetes", 10);
       expect(results.length).toBe(1);
-      expect(results[0]!.entry.name).toBe("kubernetes");
+      expect(results[0]!.name).toBe("kubernetes");
     } finally {
       closeDatabase(db);
     }
@@ -108,12 +134,12 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration platform",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // "kubernet" has no exact FTS match; the prefix fallback expands it to "kubernet*".
-      const results = searchFts(db, "kubernet", 10);
+      const results = searchEntries(db, "kubernet", 10);
       expect(results.length).toBe(1);
-      expect(results[0]!.entry.name).toBe("kubernetes");
+      expect(results[0]!.name).toBe("kubernetes");
     } finally {
       closeDatabase(db);
     }
@@ -128,13 +154,13 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "kubelet", {
         searchText: "kubelet node agent kubernetes",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // "kube" should not match exactly (FTS5 uses full token matching).
       // The prefix fallback should append * and find both "kubernetes" and "kubelet".
-      const results = searchFts(db, "kube", 10);
+      const results = searchEntries(db, "kube", 10);
       expect(results.length).toBe(2);
-      const names = results.map((r) => r.entry.name).sort();
+      const names = results.map((r) => r.name).sort();
       expect(names).toContain("kubernetes");
       expect(names).toContain("kubelet");
     } finally {
@@ -151,16 +177,22 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "deploy-docker", {
         searchText: "deploy docker containers locally",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
-      // "deploy kube" — "deploy" matches exactly, "kube" needs prefix fallback.
-      // Should find "deploy-kubernetes" because "deploy" AND "kube*" matches.
-      const results = searchFts(db, "deploy kube", 10);
+      // "deploy kube" — "deploy" matches exactly, "kube" needs prefix
+      // fallback: "deploy-kubernetes" wins the prefix tier ("deploy"
+      // "kube*"). Item 2 (search fix round 2) — the tier ladder is a
+      // priority order, not an early exit — so with capacity to spare
+      // (k=10) it also tops up with the relaxed tier, where "deploy-docker"
+      // legitimately matches on "deploy" alone; magnitude fusion
+      // (ranking.ts's fuseByEntry) is what makes surfacing it safe, since a
+      // relaxed match no longer competes on RANK with the stronger prefix
+      // hit the way it would have under reciprocal rank fusion.
+      const results = searchEntries(db, "deploy kube", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
-      const names = results.map((r) => r.entry.name);
-      expect(names).toContain("deploy-kubernetes");
-      // "deploy-docker" should NOT match since "kube*" doesn't match "docker"
-      expect(names).not.toContain("deploy-docker");
+      const byName = new Map(results.map((r) => [r.name, r]));
+      expect(byName.get("deploy-kubernetes")?.lexicalMatch).toBe("prefix");
+      expect(byName.get("deploy-docker")?.lexicalMatch).toBe("relaxed");
     } finally {
       closeDatabase(db);
     }
@@ -172,10 +204,10 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // "xyznonexist" has no prefix match in the index
-      const results = searchFts(db, "xyznonexist", 10);
+      const results = searchEntries(db, "xyznonexist", 10);
       expect(results).toEqual([]);
     } finally {
       closeDatabase(db);
@@ -191,16 +223,16 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "kafka", {
         searchText: "kafka streaming events",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // "k" is a 1-char token — should NOT be prefix-expanded to "k*" which
       // would match everything starting with "k".
       // Since "k" doesn't match any full token, should return empty.
-      const results = searchFts(db, "k", 10);
+      const results = searchEntries(db, "k", 10);
       expect(results).toEqual([]);
 
       // "ka" is a 2-char token — also should not be prefix-expanded.
-      const results2 = searchFts(db, "ka", 10);
+      const results2 = searchEntries(db, "ka", 10);
       expect(results2).toEqual([]);
     } finally {
       closeDatabase(db);
@@ -216,10 +248,10 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "js-tooling", {
         searchText: "js javascript tooling bundler",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
-      const results = searchFts(db, "go js", 10);
-      expect(results.map((result) => result.entry.name)).toContain("js-tooling");
+      const results = searchEntries(db, "go js", 10);
+      expect(results.map((result) => result.name)).toContain("js-tooling");
       expect(results.every((result) => result.lexicalMatch === "relaxed")).toBe(true);
     } finally {
       closeDatabase(db);
@@ -235,16 +267,16 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       insertTestEntry(db, "deployment-manager", {
         searchText: "deployment manager orchestration",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // "deploy" matches exactly — should return results from exact match,
       // not the prefix fallback. FTS5 with porter stemmer may match
       // "deployment" as well through stemming, but the key point is that
       // the exact query runs first and returns results.
-      const results = searchFts(db, "deploy", 10);
+      const results = searchEntries(db, "deploy", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
       // The first result should be "deploy" (exact match has best BM25)
-      expect(results[0]!.entry.name).toBe("deploy");
+      expect(results[0]!.name).toBe("deploy");
     } finally {
       closeDatabase(db);
     }
@@ -261,13 +293,13 @@ describe("Fuzzy prefix fallback in searchFts", () => {
         type: "script",
         searchText: "kubernetes deployment script automation",
       });
-      rebuildFts(db);
+      seedUnitsForAllEntries(db);
 
       // "kube" with type filter "skill" should only return the skill entry
-      const results = searchFts(db, "kube", 10, "skill");
+      const results = searchEntries(db, "kube", 10, "skill");
       expect(results.length).toBe(1);
-      expect(results[0]!.entry.name).toBe("kubernetes-skill");
-      expect(results[0]!.entry.type).toBe("skill");
+      expect(results[0]!.name).toBe("kubernetes-skill");
+      expect(results[0]!.type).toBe("skill");
     } finally {
       closeDatabase(db);
     }

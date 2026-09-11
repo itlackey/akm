@@ -211,22 +211,6 @@
           "type": "string",
           "minLength": 1
         },
-        "maxInputTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "maxTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "batchSize": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "contextLength": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
         "ollamaOptions": {
           "type": "object",
           "properties": {
@@ -546,10 +530,6 @@
     "search": {
       "type": "object",
       "properties": {
-        "minScore": {
-          "type": "number",
-          "minimum": 0
-        },
         "defaultExcludeTypes": {
           "type": "array",
           "items": {
@@ -597,7 +577,7 @@
           },
           "additionalProperties": true
         },
-        "curateRerank": {
+        "rerank": {
           "type": "object",
           "properties": {
             "enabled": {
@@ -1939,22 +1919,6 @@
               "type": "string",
               "minLength": 1
             },
-            "maxInputTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "maxTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "batchSize": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "contextLength": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
             "ollamaOptions": {
               "type": "object",
               "properties": {
@@ -2274,10 +2238,6 @@
         "search": {
           "type": "object",
           "properties": {
-            "minScore": {
-              "type": "number",
-              "minimum": 0
-            },
             "defaultExcludeTypes": {
               "type": "array",
               "items": {
@@ -2325,7 +2285,7 @@
               },
               "additionalProperties": true
             },
-            "curateRerank": {
+            "rerank": {
               "type": "object",
               "properties": {
                 "enabled": {
@@ -3544,22 +3504,6 @@
         "localModel": {
           "type": "string",
           "minLength": 1
-        },
-        "maxInputTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "maxTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "batchSize": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "contextLength": {
-          "type": "integer",
-          "exclusiveMinimum": 0
         },
         "ollamaOptions": {
           "type": "object",

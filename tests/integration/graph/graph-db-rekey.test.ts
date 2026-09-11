@@ -317,10 +317,11 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   });
 
   // AC#5 — version + graph-schema lock --------------------------------------
-  // DB_VERSION 23 adds the isolated fragment FTS population; graph schema
-  // version 4 remains the current independently keyed graph shape.
-  test("AC#5: DB_VERSION is 23, GRAPH_SCHEMA_VERSION is 4, graph DDL is the current shape", () => {
-    expect(DB_VERSION).toBe(23);
+  // DB_VERSION 24 drops entries_fts/entry_fragments_fts (index-redesign
+  // B5c — lexical search is units_fts now); graph schema version 4 remains
+  // the current independently keyed graph shape.
+  test("AC#5: DB_VERSION is 24, GRAPH_SCHEMA_VERSION is 4, graph DDL is the current shape", () => {
+    expect(DB_VERSION).toBe(24);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
 
     const db = openIndexDatabase(tmpDbPath());
@@ -349,18 +350,18 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   });
 
   // AC#6 — index.db is derived state. Crossing a generation boundary discards
-  // graph and embedding caches together with entries; there is no live legacy
-  // graph rename/copy architecture.
-  test("AC#6: an incompatible generation discards derived entries, embeddings, and graph data", () => {
+  // entries and graph caches together; there is no live legacy graph
+  // rename/copy architecture. (The legacy per-entry `embeddings` table this
+  // test used to seed and re-check is gone, index redesign B5h — vectors
+  // are content-addressed in `units`/`units_vec` now and a generation
+  // rebuild never touches them; see units-repository.test.ts's "lifecycle"
+  // describe block for that coverage.)
+  test("AC#6: an incompatible generation discards derived entries and graph data", () => {
     const dbPath = tmpDbPath();
     let db = openIndexDatabase(dbPath);
     try {
       const file = path.join(STASH, "discard.md");
-      const entryId = seedEntry(db, file, "discard");
-      db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(
-        entryId,
-        new Uint8Array([1, 2, 3, 4]),
-      );
+      seedEntry(db, file, "discard");
       replaceStoredGraph(db, graphFor([fileNode(file, "discard-hash", ["alpha", "beta"])]));
       expect(hasGraphData(db, STASH, file)).toBe(true);
       setMeta(db, "version", String(DB_VERSION - 1));
@@ -370,7 +371,6 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
       expect(tableInfoColumns(db, "graph_files")).not.toContain("entry_id");
       expect(tableInfoColumns(db, "graph_files")).toContain("body_hash");
       expect((db.prepare("SELECT COUNT(*) c FROM entries").get() as { c: number }).c).toBe(0);
-      expect((db.prepare("SELECT COUNT(*) c FROM embeddings").get() as { c: number }).c).toBe(0);
       expect((db.prepare("SELECT COUNT(*) c FROM graph_files").get() as { c: number }).c).toBe(0);
       expect(getMeta(db, "version")).toBe(String(DB_VERSION));
     } finally {

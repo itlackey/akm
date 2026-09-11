@@ -32,8 +32,6 @@ import {
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
-import { tryLlmFeature } from "../../llm/feature-gate";
-import { rerankDocuments } from "../../llm/rerank-client";
 import { truncateDescription } from "../../output/shapes/helpers";
 import type {
   RegistrySearchResultHit,
@@ -59,6 +57,14 @@ export type CuratedStashItem = {
   type: string;
   name: string;
   ref: string;
+  /**
+   * index-redesign-contract.md B5f item 1 — the fragment-qualified ref when
+   * the underlying search hit matched a Markdown fragment (`hit.selectedRef`),
+   * carried through so `packCuratedHits` and the curated `followUp` command
+   * can still reach the matched section directly now that `ref` itself is
+   * always the bare entry ref.
+   */
+  selectedRef?: string;
   path: string;
   editable: boolean;
   editHint?: string;
@@ -287,7 +293,7 @@ export async function curateSearchResults(
     selectedType && selectedType !== "any" ? allStashHits.filter((hit) => hit.type === selectedType) : allStashHits;
 
   const selected = selectCuratedStashHits(query, stashHits, limit);
-  const selectedStashHits = await maybeRerankCuratedStashHits(query, selected.selected);
+  const selectedStashHits = selected.selected;
   const supportRefsByRef = selected.supportRefsByRef;
 
   // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
@@ -332,10 +338,16 @@ export interface CuratePackResult {
 /**
  * Pack a curate result's stash hits into a single token-budgeted blob:
  * resolve each hit's content via the SAME path `akm show` uses
- * (`akmShowUnified` — this also means a `ref#fragment` hit packs just the
- * matched section), then greedily accumulate hits, in the ranking order
- * `curateSearchResults` already produced, until the next hit would exceed
- * `budgetTokens`.
+ * (`akmShowUnified`, called with `item.selectedRef ?? item.ref` — this also
+ * means a hit whose search match was a Markdown fragment packs just the
+ * matched section, not the whole entry `item.ref` now always addresses; see
+ * index-redesign-contract.md B5f item 1), then greedily accumulate hits, in
+ * the ranking order `curateSearchResults` already produced, until the next
+ * hit would exceed `budgetTokens`. Each packed item's `ref` is that SAME
+ * fetched ref (`item.selectedRef ?? item.ref`), mirroring
+ * `enrichCuratedStashHit`'s own `contentRef` convention — labelling a packed
+ * fragment with the bare entry ref would let a later `akm show <ref>` return
+ * a different, larger document than what was actually packed and budgeted.
  *
  * Registry hits are never packed — only `CuratedStashItem`s (locked
  * contract, AGENTS.md: registry results stay separate/opt-in).
@@ -350,9 +362,17 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   let used = 0;
 
   for (const item of stashItems) {
+    // item 4 — record the ref actually FETCHED (`contentRef`), mirroring
+    // `enrichCuratedStashHit`'s own convention: `item.ref` is now always the
+    // bare entry ref, but a body-only match's content came from the
+    // fragment-qualified `selectedRef`. Recording `item.ref` here labelled a
+    // packed fragment with the whole entry's ref, so a consumer that later
+    // ran `akm show <that ref>` got a different, larger document than what
+    // was actually packed and budgeted.
+    const contentRef = item.selectedRef ?? item.ref;
     let shown: ShowResponse | undefined;
     try {
-      shown = await akmShowUnified({ ref: item.ref, skipLogging: true });
+      shown = await akmShowUnified({ ref: contentRef, skipLogging: true });
     } catch {
       continue;
     }
@@ -360,7 +380,7 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
     const tokens = estimateTokenCount(content);
 
     if (used + tokens <= budgetTokens) {
-      packed.push({ ref: item.ref, tokens, content });
+      packed.push({ ref: contentRef, tokens, content });
       used += tokens;
       continue;
     }
@@ -369,7 +389,7 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
       const remaining = budgetTokens - used;
       if (remaining > 0) {
         const truncated = content.slice(0, remaining * 4);
-        packed.push({ ref: item.ref, tokens: estimateTokenCount(truncated), content: truncated });
+        packed.push({ ref: contentRef, tokens: estimateTokenCount(truncated), content: truncated });
         used += estimateTokenCount(truncated);
       }
     }
@@ -386,9 +406,15 @@ async function enrichCuratedStashHit(
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
 ): Promise<CuratedStashItem> {
+  // index-redesign-contract.md B5f item 1 — `hit.ref` is always the bare entry
+  // ref now; `contentRef` is the fragment-qualified ref when the search match
+  // was a Markdown fragment (`hit.selectedRef`), so the preview/description
+  // resolved below and the curated item's own `followUp` still land on the
+  // matched section instead of regressing to the whole entry.
+  const contentRef = hit.selectedRef ?? hit.ref;
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: hit.ref, eventSource, skipLogging: true });
+    shown = await akmShowUnified({ ref: contentRef, eventSource, skipLogging: true });
   } catch {
     shown = undefined;
   }
@@ -407,10 +433,13 @@ async function enrichCuratedStashHit(
     type: shown?.type ?? hit.type,
     name: shown?.name ?? hit.name,
     ref: hit.ref,
+    ...(hit.selectedRef ? { selectedRef: hit.selectedRef } : {}),
     path: shown?.path ?? hit.path,
     editable: shown?.editable ?? hit.editable ?? false,
     ...((shown?.editable ?? hit.editable ?? false) === false
-      ? { editHint: shown?.editHint ?? hit.editHint ?? `This asset is read-only. Inspect it with: akm show ${hit.ref}` }
+      ? {
+          editHint: shown?.editHint ?? hit.editHint ?? `This asset is read-only. Inspect it with: akm show ${hit.ref}`,
+        }
       : {}),
     ...(description ? { description } : {}),
     ...(preview ? { preview } : {}),
@@ -418,7 +447,7 @@ async function enrichCuratedStashHit(
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
     ...(mergedSupportRefs.length > 0 ? { supportRefs: mergedSupportRefs } : {}),
-    followUp: `akm show ${hit.ref}`,
+    followUp: `akm show ${contentRef}`,
     reason: buildCuratedReason(query, shown?.type ?? hit.type),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
@@ -790,44 +819,6 @@ function appendCurateSupportRef(
   const existing = supportRefsByRef.get(ownerRef) ?? [];
   if (existing.some((entry) => entry.ref === supportRef.ref)) return;
   supportRefsByRef.set(ownerRef, [...existing, supportRef]);
-}
-
-/** Default number of `selectCuratedStashHits` candidates sent to the reranker when `search.curateRerank.topN` isn't set. */
-const DEFAULT_CURATE_RERANK_TOP_N = 8;
-
-/**
- * Optional cross-encoder rerank pass over curate's already-selected, already-
- * ranked candidates (#951). Disabled by default (`search.curateRerank.enabled`
- * is falsy) and, when enabled, best-effort: any failure (misconfigured
- * endpoint, network error, timeout, malformed response) falls back to
- * `selectCuratedStashHits`'s own ranking unchanged — a reranker outage must
- * never turn into a curate failure.
- *
- * Only the top `topN` (default {@link DEFAULT_CURATE_RERANK_TOP_N}) already-
- * selected hits are sent (bounded request size); anything past that keeps its
- * original position appended after the reranked prefix.
- */
-async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[]): Promise<SourceSearchHit[]> {
-  if (hits.length <= 1) return hits;
-  const config = loadConfig();
-  const rerankConfig = config.search?.curateRerank;
-  return tryLlmFeature(
-    "curate_rerank",
-    config,
-    async () => {
-      const topN = rerankConfig?.topN ?? DEFAULT_CURATE_RERANK_TOP_N;
-      const head = hits.slice(0, topN);
-      const tail = hits.slice(topN);
-      const documents = head.map((hit) => [hit.name, hit.description].filter(Boolean).join(" — "));
-      const ranked = await rerankDocuments(rerankConfig ?? {}, query, documents);
-      const rerankedHead = ranked
-        .map(({ index }) => head[index])
-        .filter((hit): hit is SourceSearchHit => hit !== undefined);
-      return [...rerankedHead, ...tail];
-    },
-    hits,
-    { timeoutMs: rerankConfig?.timeoutMs ?? null },
-  );
 }
 
 function selectCuratedStashHits(

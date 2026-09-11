@@ -310,3 +310,39 @@ export function assetPathCandidatesForName(assetType: string, typeRoot: string, 
   const namedForm = path.join(typeRoot, base, "default.env");
   return [...new Set([primary, dotForm, namedForm])];
 }
+
+/**
+ * Whether {@link assetPathCandidatesForName}'s returned list for `assetType`
+ * is an ORDERED preference — earlier candidates are a declared winner over
+ * later ones, so a physical-owner resolver may pick the earliest that exists
+ * with no throw when more than one does — or a set of CO-EQUAL spellings,
+ * where more than one existing together is a genuine authoring collision to
+ * report, not a preference to resolve silently. #882's fix (the memory
+ * `.derived`-twin bug) needs this distinction: attaching a declared rank to
+ * every multi-candidate type's list turned `env`'s co-equal collision into a
+ * silently-resolved false negative (#882 follow-up) — the two dualities this
+ * module documents are NOT the same kind of thing.
+ *
+ * Only `memory` is ordered. Its own doc comment above states a winner in so
+ * many words: "The plain `.md` file wins when both exist, so it stays
+ * `primary`" — `.derived` is a provenance marker on the SAME identity, not a
+ * second, independently-authored file.
+ *
+ * `env`'s `.env`/`default.env` duality is explicitly NOT ordered — the doc
+ * comment above says only that both spellings "derive the same canonical
+ * name" and a lookup "must consider both", never that one wins over the
+ * other. They are two independently authored files that happen to collide
+ * on one ref; both existing together is exactly the ambiguity
+ * `AdapterConceptCollisionError` exists to report.
+ *
+ * Callers that attach a preference rank to distinguish a declared duality
+ * from a genuine collision (`AdapterReadCandidate.priority`,
+ * `resolveAdapterConceptOwner` in `indexer/lookup/adapter-concept-owner.ts`)
+ * must consult this predicate per asset type rather than assuming every
+ * multi-candidate type behaves like `memory` — and must NOT special-case the
+ * literal `.derived` suffix or `assetType === "memory"` themselves; this is
+ * the one place that knowledge lives.
+ */
+export function assetPathCandidatesAreOrderedByPreference(assetType: string): boolean {
+  return assetType === "memory";
+}

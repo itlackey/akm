@@ -125,6 +125,10 @@ export function retiredCommandHint(parentPath: readonly string[], attempted: str
  */
 const RETIRED_FLAG_HINTS: Record<string, string> = {
   "index --background": "`--background` was removed in 0.9 — the flag never actually backgrounded; use `--quiet`.",
+  "index --clean":
+    "`--clean` was removed in the index redesign — every `akm index` run now removes stale entries as part of reconcile, the same work `--clean` used to opt into.",
+  "index --dry-run":
+    "`--dry-run` was removed in the index redesign along with `--clean`, the only flag it ever modified.",
   "setup --detect-only":
     "`--detect-only` was removed in 0.9 — environment detection runs inside `akm setup`; `akm info` reports the configured capabilities.",
   "setup --reset-recommended":

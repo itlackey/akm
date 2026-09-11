@@ -1400,7 +1400,25 @@ export function applyPostContributorFields(
   entry.tags = [...(entry.tags ?? []), ...extractDirTagsFromName(canonicalName)];
 
   entry.tags = normalizeTerms(entry.tags ?? []);
-  entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
+  // fix-ranking-derived-outranks-primary: `.derived` is a structural marker
+  // on a memory's OWN filename (memory-inference.ts's `derivedChildPath`/
+  // `isDerivedByName` convention: `<parent>.derived.md`), not a topical
+  // word — `extractTagsFromPath` above tokenizes on `.` alongside `-`/`_`,
+  // so every derived twin's filename contributes a "derived" tag purely as
+  // an artifact of that convention (kept in `entry.tags` itself; only the
+  // ALIAS input below is filtered, so anything else keyed on the raw tag
+  // set is unaffected). Left in, `buildAliases`' tags.join(" ") mints a
+  // SYNTHETIC "<base> derived" alias purely because tags.length > 1, which
+  // then wins `alias-ranking` credit any time the base name is a query
+  // token — see `exactNameRankingContributor`, which already strips this
+  // exact suffix before treating a derived twin's name as content, for the
+  // identical reason. Scoped to memory so a coincidentally
+  // ".derived"-suffixed asset of another type is untouched.
+  const aliasTagInput =
+    entry.type === "memory" && canonicalName.toLowerCase().endsWith(".derived")
+      ? entry.tags.filter((tag) => tag !== "derived")
+      : entry.tags;
+  entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, aliasTagInput));
 
   // Search hints are only generated when LLM is configured (via enhanceStashWithLlm)
   // Heuristic search hints are too noisy to be useful for search quality

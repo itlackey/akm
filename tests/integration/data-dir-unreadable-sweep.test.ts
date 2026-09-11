@@ -245,9 +245,14 @@ describe("bundle listing does not report zero items for an index it cannot read 
   });
 });
 
-// ── the --clean pass ────────────────────────────────────────────────────────
+// ── reconcile's gone-path sweep (formerly the --clean pass) ────────────────
+//
+// index-redesign (docs/plans/index-redesign.md): `--clean` is gone — every
+// `akm index` run now reconciles gone paths unconditionally (rule 3). The
+// absent-vs-inaccessible contract #791 gave `--clean` moved with it into
+// `reconcile.ts`'s gone-path sweep.
 
-describe("akm index --clean deletes absent files, never unreadable ones (#791)", () => {
+describe("akm index deletes absent files, never unreadable ones (#791)", () => {
   test("an unreadable asset keeps its index row and is reported", async () => {
     const stashDir = storage.stashDir;
     const keep = path.join(stashDir, "scripts", "keep", "keep.sh");
@@ -264,18 +269,18 @@ describe("akm index --clean deletes absent files, never unreadable ones (#791)",
 
     let result: Awaited<ReturnType<typeof akmIndex>> | undefined;
     const warnings = await captureWarnings(async () => {
-      result = await akmIndex({ stashDir, clean: true });
+      result = await akmIndex({ stashDir });
     });
 
-    // Pre-sweep: `existsSync` said the file was gone, so --clean DELETED its
-    // index row and reported the deletion as a clean success.
-    expect(result?.clean?.removed).toBe(0);
-    expect(result?.clean?.removedRefs).toEqual([]);
+    // Pre-#791-in-reconcile: the walker silently drops an unresolvable path
+    // from its results the same way it drops an ordinary symlink, so it
+    // looked exactly like "deleted" to the gone-path sweep and lost its row.
+    expect(result?.totalEntries).toBe(2);
     expect(warnings.join("\n")).toContain(restricted);
     expect(warnings.join("\n")).toMatch(/ELOOP/);
   });
 
-  test("a genuinely deleted asset is still cleaned", async () => {
+  test("a genuinely deleted asset is still removed", async () => {
     const stashDir = storage.stashDir;
     const keep = path.join(stashDir, "scripts", "keep", "keep.sh");
     const gone = path.join(stashDir, "scripts", "gone", "gone.sh");
@@ -283,12 +288,12 @@ describe("akm index --clean deletes absent files, never unreadable ones (#791)",
     writeFile(gone, "#!/usr/bin/env bash\necho gone\n");
     saveConfig(stashConfig(stashDir));
 
-    await akmIndex({ stashDir, full: true });
+    const first = await akmIndex({ stashDir, full: true });
+    expect(first.totalEntries).toBe(2);
     fs.unlinkSync(gone);
 
-    const result = await akmIndex({ stashDir, clean: true });
-    expect(result.clean?.removed).toBe(1);
-    expect(result.clean?.removedRefs[0]).toContain("gone");
+    const result = await akmIndex({ stashDir });
+    expect(result.totalEntries).toBe(1);
   });
 });
 

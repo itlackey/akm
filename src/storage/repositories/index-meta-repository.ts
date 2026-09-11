@@ -3,15 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `index.db` meta + per-directory index-state repository.
+ * `index.db` meta repository.
  *
- * Owns the raw SQL for `index_meta` (the key/value stamp table) and
- * `index_dir_state` (incremental-index bookkeeping). Lives in the storage
- * layer, not the indexer, so the storage layer owns these primitives.
+ * Owns the raw SQL for `index_meta` (the key/value stamp table). Lives in the
+ * storage layer, not the indexer, so the storage layer owns this primitive.
  */
 
 import type { Database } from "../database";
-import type { IndexDirState } from "./index-entry-types";
 
 // ── Meta helpers ────────────────────────────────────────────────────────────
 
@@ -34,59 +32,4 @@ export function setMeta(db: Database, key: string, value: string): void {
  */
 export function deleteMeta(db: Database, key: string): void {
   db.prepare("DELETE FROM index_meta WHERE key = ?").run(key);
-}
-
-// ── Per-directory index state ───────────────────────────────────────────────
-
-export function getIndexDirState(db: Database, dirPath: string): IndexDirState | undefined {
-  const row = db
-    .prepare(
-      "SELECT dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at, row_count FROM index_dir_state WHERE dir_path = ?",
-    )
-    .get(dirPath) as
-    | {
-        dir_path: string;
-        file_set_hash: string;
-        file_mtime_max_ms: number;
-        reason: string;
-        updated_at: string;
-        row_count: number | null;
-      }
-    | undefined;
-  if (!row) return undefined;
-  return {
-    dirPath: row.dir_path,
-    fileSetHash: row.file_set_hash,
-    fileMtimeMaxMs: row.file_mtime_max_ms,
-    reason: row.reason,
-    updatedAt: row.updated_at,
-    rowCount: row.row_count ?? undefined,
-  };
-}
-
-export function upsertIndexDirState(
-  db: Database,
-  state: Pick<IndexDirState, "dirPath" | "fileSetHash" | "fileMtimeMaxMs" | "reason" | "rowCount">,
-): void {
-  db.prepare(
-    `INSERT INTO index_dir_state (dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at, row_count)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(dir_path) DO UPDATE SET
-       file_set_hash = excluded.file_set_hash,
-       file_mtime_max_ms = excluded.file_mtime_max_ms,
-       reason = excluded.reason,
-       updated_at = excluded.updated_at,
-       row_count = excluded.row_count`,
-  ).run(
-    state.dirPath,
-    state.fileSetHash,
-    state.fileMtimeMaxMs,
-    state.reason,
-    new Date().toISOString(),
-    state.rowCount ?? null,
-  );
-}
-
-export function deleteIndexDirState(db: Database, dirPath: string): void {
-  db.prepare("DELETE FROM index_dir_state WHERE dir_path = ?").run(dirPath);
 }

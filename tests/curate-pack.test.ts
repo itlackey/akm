@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  akmCurate,
   type CuratedRegistryItem,
   type CuratedStashItem,
   type CurateResponse,
@@ -154,6 +155,48 @@ describe("packCuratedHits", () => {
       const packed = await packCuratedHits(result, 10_000);
 
       expect(packed.items.map((item) => item.ref)).toEqual(["knowledge/real"]);
+    });
+  });
+
+  // index-redesign-contract.md B5f item 1 — a search hit's primary `ref` is
+  // always the bare entry now, even when the best match was a Markdown
+  // fragment; `selectedRef` carries the fragment-qualified ref instead. This
+  // proves the two consumers that genuinely need the fragment (curate's
+  // `followUp` and `packCuratedHits`'s content fetch) still reach it via that
+  // explicit field rather than regressing to whole-document packing.
+  test("a body-only match packs just the matched fragment via selectedRef, not the whole entry", async () => {
+    await withIndexedStash(async (stashDir) => {
+      const filler = Array.from({ length: 500 }, () => "background filler material").join(" ");
+      writeFile(
+        path.join(stashDir, "knowledge", "fragment-curate.md"),
+        `---\ndescription: fragment curate fixture\n---\n\n${filler}\n\nNeedleCurateProof: unique curated marker!`,
+      );
+      await akmIndex({ stashDir, full: true });
+
+      const result = await akmCurate({ query: "NeedleCurateProof" });
+      const item = result.items.find(
+        (candidate): candidate is CuratedStashItem =>
+          candidate.source === "local" && candidate.ref === "knowledge/fragment-curate",
+      );
+      if (!item) throw new Error("expected the fragment-curate item in the curated result");
+
+      expect(item.ref).toBe("knowledge/fragment-curate");
+      expect(item.selectedRef).toMatch(/^knowledge\/fragment-curate#akm-fragment-/);
+      expect(item.followUp).toBe(`akm show ${item.selectedRef}`);
+
+      const packed = await packCuratedHits(curateResponse([item], result.query), 10_000);
+      expect(packed.items).toHaveLength(1);
+      // item 4 — the packed `ref` is the ref actually FETCHED (`selectedRef`,
+      // the fragment), not the bare entry ref: `packCuratedHits` fetches via
+      // `item.selectedRef ?? item.ref` but used to record `ref: item.ref`,
+      // so a consumer running `akm show <that ref>` got the whole entry —
+      // a different, larger document than what was packed and budgeted.
+      expect(packed.items[0]?.ref).toBe(item.selectedRef);
+      expect(packed.items[0]?.content).toContain("NeedleCurateProof");
+      // Fragment-scoped: the filler paragraph elsewhere in the same document
+      // is NOT pulled in — proof this packed the matched section, not the
+      // whole entry `item.ref` now always addresses.
+      expect(packed.items[0]?.content).not.toContain("background filler material");
     });
   });
 });

@@ -429,19 +429,11 @@ export function formatInitPlain(r: Record<string, unknown>): string {
 
 export function formatIndexPlain(r: Record<string, unknown>): string {
   const indexResult = r as Partial<IndexResponse>;
-  let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+  let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.sourcesScanned ?? 0} source${indexResult.sourcesScanned === 1 ? "" : "s"} (mode: ${indexResult.mode ?? "unknown"})`;
   const warnings = indexResult.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     out += `\nWarnings (${warnings.length}):`;
     for (const message of warnings) out += `\n  - ${String(message)}`;
-  }
-  const notices = Array.isArray(indexResult.notices) ? indexResult.notices : [];
-  for (const notice of notices) {
-    const severity = notice.severity === "info" ? "info" : "warning";
-    const field = typeof notice.field === "string" ? ` field=${notice.field}` : "";
-    out +=
-      `\n  notice[${severity}] ${notice.code} adapter=${notice.adapter}${field}` +
-      (notice.message ? `: ${notice.message}` : "");
   }
   const verification = indexResult.verification;
   if (verification?.ok === false && verification.message) {
@@ -452,15 +444,29 @@ export function formatIndexPlain(r: Record<string, unknown>): string {
     out +=
       `\nTiming: total ${timing.totalMs}ms` +
       `, preflight ${timing.preflightMs}ms` +
-      `, walk ${timing.walkMs}ms` +
-      `, llm ${timing.llmMs}ms` +
+      `, source cache ${timing.sourceCacheMs}ms` +
+      `, reconcile ${timing.reconcileMs}ms` +
       `, embeddings ${timing.embedMs}ms` +
-      `, fts ${timing.ftsMs}ms` +
       `, finalize ${timing.finalizeMs}ms` +
-      `, clean ${timing.cleanMs}ms` +
       `, end-to-end ${timing.endToEndMs}ms`;
   }
   return out;
+}
+
+/** Render `akm index status`'s `IndexStatusResponse` (src/commands/sources/index-status.ts). */
+export function formatIndexStatusPlain(r: Record<string, unknown>): string {
+  const units = (r.units ?? {}) as Record<string, unknown>;
+  const lines = [
+    `Index: ${String(r.indexPath ?? "unknown")}`,
+    `Files: ${Number(r.files ?? 0)}`,
+    `Entries: ${Number(r.entries ?? 0)}`,
+    `Units: ${Number(units.total ?? 0)} total, ${Number(units.withVector ?? 0)} with a vector, ${Number(units.pending ?? 0)} pending`,
+    `Active identity: ${typeof r.activeIdentity === "string" ? r.activeIdentity : "none yet"}`,
+    `Last reconcile: ${typeof r.lastReconcileAt === "string" ? r.lastReconcileAt : "never"}`,
+    `Built at: ${typeof r.builtAt === "string" ? r.builtAt : "never"}`,
+  ];
+  if (typeof r.unreadable === "string") lines.push(`Unreadable: ${r.unreadable}`);
+  return lines.join("\n");
 }
 
 export function formatListPlain(r: Record<string, unknown>): string {

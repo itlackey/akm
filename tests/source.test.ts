@@ -351,15 +351,19 @@ Creates a user.
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
       const searched = await akmSearch({ query: "NeedleFragmentCase", type: "knowledge" });
       const hit = searched.hits[0];
-      expect(hit && isLocalHit(hit) ? hit.ref : undefined).toMatch(/#akm-fragment-/);
-      if (!hit || !isLocalHit(hit)) throw new Error("expected a local fragment hit");
+      // index-redesign-contract.md B5f item 1 — the hit's primary `ref` is
+      // always the bare entry now; the fragment-qualified selector lives on
+      // `selectedRef`.
+      expect(hit && isLocalHit(hit) ? hit.ref : undefined).toBe("knowledge/fragment-roundtrip");
+      expect(hit && isLocalHit(hit) ? hit.selectedRef : undefined).toMatch(/#akm-fragment-/);
+      if (!hit || !isLocalHit(hit) || !hit.selectedRef) throw new Error("expected a local fragment hit");
       // Search refs address the indexed safe revision. A concurrent disk edit
       // must not make the opaque selector disappear or show different bytes.
       writeFile(
         path.join(stashDir, "knowledge", "fragment-roundtrip.md"),
         "---\ndescription: changed\n---\nnew disk bytes",
       );
-      const shown = await akmShow({ ref: hit.ref });
+      const shown = await akmShow({ ref: hit.selectedRef });
       expect(shown.content).toBe("NeedleFragmentCase: Proof Appears Here!");
       expect(shown.content).not.toContain("new disk bytes");
       const selection = readEvents({ type: "select" }).events.at(-1);
@@ -428,9 +432,11 @@ Creates a user.
       ];
       for (const [query, expected] of cases) {
         const hit = (await akmSearch({ query, type: "knowledge" })).hits[0];
-        expect(hit && isLocalHit(hit) ? hit.ref : undefined).toMatch(/#akm-fragment-/);
-        if (!hit || !isLocalHit(hit)) throw new Error("expected local fragment hit");
-        expect((await akmShow({ ref: hit.ref })).content).toContain(expected);
+        // index-redesign-contract.md B5f item 1 — `ref` stays the bare entry;
+        // `selectedRef` carries the fragment-qualified selector.
+        expect(hit && isLocalHit(hit) ? hit.selectedRef : undefined).toMatch(/#akm-fragment-/);
+        if (!hit || !isLocalHit(hit) || !hit.selectedRef) throw new Error("expected local fragment hit");
+        expect((await akmShow({ ref: hit.selectedRef })).content).toContain(expected);
       }
     });
   });

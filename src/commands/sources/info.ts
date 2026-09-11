@@ -63,16 +63,16 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   // Semantic status is read live from the index's own state, not a cached
   // verdict — a failed embed attempt at search time falls back to FTS and
   // reports that in the search response, it never disables the mode here.
+  // "ready-js" (a JS-computed cosine-similarity fallback for when the
+  // sqlite-vec extension is unavailable) is retired (index redesign, B5):
+  // the units vector store (`units_vec`) is a vec0 virtual table with no
+  // BLOB fallback, so there is nothing to have embeddings without also
+  // having the extension available — `vecAvailable` false and
+  // `hasEmbeddings` true together is no longer a reachable combination.
   const semanticStatus: InfoResponse["semanticSearch"]["status"] =
-    config.semanticSearchMode === "off"
-      ? "disabled"
-      : !indexStats.hasEmbeddings
-        ? "pending"
-        : indexStats.vecAvailable
-          ? "ready-vec"
-          : "ready-js";
+    config.semanticSearchMode === "off" ? "disabled" : !indexStats.hasEmbeddings ? "pending" : "ready-vec";
   const searchModes: string[] = ["fts"];
-  if (semanticStatus === "ready-js" || semanticStatus === "ready-vec") {
+  if (semanticStatus === "ready-vec") {
     searchModes.push("semantic", "hybrid");
   }
 

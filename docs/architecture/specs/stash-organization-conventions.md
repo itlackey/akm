@@ -58,14 +58,25 @@ load-bearing facts, each verified in code:
 2. **Retrieval is search, not browse — and folders are highly visible to the
    ranker.** There is no folder walk at query time — agents `akm search`/
    `akm curate`, then `akm show <ref>`. A subdirectory's real payoff: its tokens
-   join the FTS `name` column at the highest bm25 weight (10.0), always merge
-   into `tags` (since SPEC-2 landed; see fact 6), and match the cwd
-   project-context boost (`projectContextRankingContributor`, +0.2/token,
-   cap 0.5). No "indexing-confidence bump" for subdirectories exists in code.
-3. **The FTS surface is `name`, `description`, `tags`, `hints`, `content`**
-   (`entries_fts`, `src/storage/repositories/index-schema.ts`). There is **no `project` field** —
-   a bare `project:` frontmatter value is invisible to search. Off-axis facets
-   must be `tags` to be retrievable.
+   join the FTS `name` column — at publication time the highest-weighted BM25
+   column (10.0); the index redesign replaced the tuned per-column weights
+   with a two-pool lexical split instead (`searchUnitsLexicalPair`,
+   `src/indexer/search/db-search.ts`): a name match now ranks within the
+   small card-only pool rather than racing every fragment's body text, fused
+   with semantic evidence by magnitude — the calibrated BM25 transform times
+   cosine similarity at a 0.7/0.3 split (`fuseByEntry`,
+   `src/indexer/search/ranking.ts`) — NOT reciprocal-rank fusion, which was
+   tried and measured worse (`docs/plans/index-redesign.md`). A strong
+   name-token match still wins primarily through this same pool, just no
+   longer via a hand-set weight — always merge into `tags` (since SPEC-2
+   landed; see fact 6), and match the cwd project-context boost
+   (`projectContextRankingContributor`, +0.2/token, cap 0.5). No
+   "indexing-confidence bump" for subdirectories exists in code.
+3. **The lexical surface is `name`, `description`, `tags`, `hints`, `content`**
+   (the entry's "card" unit, plus one unit per Markdown fragment —
+   `units_fts`, index redesign; `entries_fts` at publication time). There is
+   **no `project` field** — a bare `project:` frontmatter value is invisible
+   to search. Off-axis facets must be `tags` to be retrievable.
 4. **`xrefs:` fold into the FTS `hints` field for all types**
    (`src/indexer/search/search-fields.ts:58`). Back-links are a *retrieval*
    signal, not decoration — which means both too few and too many degrade

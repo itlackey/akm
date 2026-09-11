@@ -103,13 +103,13 @@ export async function prepareSemanticSearchAssets(
       p.log.info("sqlite-vec is available for fast vector search.");
     } else {
       p.log.info(
-        "sqlite-vec is not available. Semantic search will use the JS fallback until the optional extension is installed.",
+        "sqlite-vec is not available. Semantic search will stay unavailable (keyword search still works) until the optional extension is installed.",
       );
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     p.log.warn(
-      `Could not open the local database or check for sqlite-vec. Semantic search will use the JS fallback. (${message})\n` +
+      `Could not open the local database or check for sqlite-vec. Semantic search will stay unavailable. (${message})\n` +
         "Check file permissions and available disk space in the cache directory, or run `akm index --full --verbose` to diagnose.",
     );
   } finally {

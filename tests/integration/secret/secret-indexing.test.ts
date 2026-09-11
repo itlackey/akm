@@ -97,9 +97,7 @@ describe("secret indexer safety", () => {
 
       // 4. CRITICAL: the value cannot be retrieved via FTS5 search.
       type FtsRow = { c: number };
-      const ftsHit = db
-        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
-        .get("correct") as FtsRow;
+      const ftsHit = db.prepare("SELECT count(*) AS c FROM units_fts WHERE units_fts MATCH ?").get("correct") as FtsRow;
       expect(ftsHit.c).toBe(0);
     } finally {
       closeDatabase(db);
@@ -114,9 +112,7 @@ describe("secret indexer safety", () => {
     const db = openIndexDatabase();
     try {
       type FtsRow = { c: number };
-      const byName = db
-        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
-        .get("stripe") as FtsRow;
+      const byName = db.prepare("SELECT count(*) AS c FROM units_fts WHERE units_fts MATCH ?").get("stripe") as FtsRow;
       expect(byName.c).toBe(1);
     } finally {
       closeDatabase(db);

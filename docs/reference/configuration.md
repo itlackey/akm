@@ -357,11 +357,17 @@ bundled.
 ## Indexing
 
 AKM-native Markdown contributes a normalized body projection to the
-lowest-weight `content` search field. The projection is capped at 16,384
-characters, removes frontmatter, comments, fenced code, and link destinations,
-and is never produced for secret, env, session, or session-checkpoint assets.
-Embedding input is separately capped at 8,192 characters with structured
-metadata placed before body content.
+lowest-weight `content` search field. The projection removes frontmatter,
+comments, fenced code, and link destinations, and is never produced for
+secret, env, session, or session-checkpoint assets.
+
+Embedding input is not capped or truncated at all (index redesign): each
+entry's structured fields (name/description/tags/hints) become one "card"
+unit and each Markdown fragment becomes one "fragment" unit
+(`src/indexer/units/unit.ts`), and a unit whose text would still exceed the
+embedding provider's own probed window is split into ordinal sub-units that
+share its fragment id — never truncated. See [Semantic
+search](#semantic-search) for how that window is probed.
 
 ## Semantic search
 
@@ -396,76 +402,80 @@ unless a remote `embedding` config is provided.
 `akm improve`'s memory-inference/consolidate passes when they call an
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
 reference, same rules as engine `apiKey`), `dimension`, `localModel`,
-`maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
-`concurrency`, and `ollamaOptions.num_ctx`.
+`timeoutMs`, `concurrency`, and `ollamaOptions.num_ctx`.
 
-The knobs that bound request/document size and rate, all optional (defaults
-apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
+Request PACKING — how many documents land in one HTTP request, and the
+token budget that bounds it — is no longer config at all. `akm index`
+probes the embedding endpoint itself (llama.cpp's `GET /props`, Ollama's
+`POST /api/show`) for its real context window and in-flight slot count
+before packing any request, calibrating its chars-per-token estimate
+against the provider's own tokenizer (llama.cpp's `/tokenize`) where it
+offers one; an endpoint that answers neither probe (an OpenAI-compatible server, a gateway) gets a
+conservative built-in default. This replaced four retired keys —
+`maxInputTokens`, `maxTokens`, `batchSize`, `contextLength` — see
+[Retired Configuration](#retired-configuration).
+
+The knobs that remain, both optional (defaults apply when unset), for a
+remote endpoint (`src/llm/embedders/remote.ts`):
 
 | Key | Default | Bounds |
 | --- | --- | --- |
-| `embedding.maxInputTokens` | `512` | Per-DOCUMENT cap, applied before batching (#956). A document's embedded text is truncated to its head (unicode-safe) at this many estimated tokens instead of ever being skipped for size alone — a document is skipped only when its truncated head is empty. |
-| `embedding.maxTokens` | `6000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 11 documents by default. Lowered from 8000 to 6000 (#954): the 4-chars-per-token estimator undercounts dense technical text by 7-55%, so 8000 regularly overshot an 8192-token endpoint's real context window. |
-| `embedding.batchSize` | `100` | Per-REQUEST document-COUNT safety cap, independent of the token budget — guards against many tiny documents packing an oversized request. |
-| `embedding.contextLength` | unset | Ollama's `num_ctx` ONLY, forwarded verbatim as `options.num_ctx` on the native `/api/embed` request. Does **not** feed the request token budget above (#956) — the two used to share this one field, so setting it for the server's context window silently changed request batching too. |
 | `embedding.timeoutMs` | `120000` (120s) | Per-request wall timeout — see below. |
-| `embedding.concurrency` | `1` loopback / `2` remote | In-flight request window — see below. |
+| `embedding.concurrency` | `1` loopback / `2` remote, or the provider's own probed slot count | In-flight request window — see below. |
 
-**Which knob fixed the field's 8k-context overflow, worked examples.** A
-0.9.15-beta field report described documents estimated under the request
-budget that still tokenized to 8.5k-12.4k real tokens against an
-8192-token endpoint, because the 4-chars-per-token estimator undercounts
-dense technical text. Three knobs changed shape between beta and this
-release; only one of them makes that overflow structurally unreachable:
+**What used to fix the field's 8k-context overflow.** A 0.9.15-beta field
+report described documents estimated under the request budget that still
+tokenized to 8.5k-12.4k real tokens against an 8192-token endpoint, because
+the 4-chars-per-token estimator undercounts dense technical text.
+0.9.15-beta answered it with three of the four now-retired keys; none of
+them does anything in this release (see [Retired
+Configuration](#retired-configuration)), but the shape of the old fix is
+worth knowing because the probed-window replacement above closes the same
+gap structurally instead of by convention:
 
-- `embedding.maxInputTokens: 512` — per-DOCUMENT cap, applied before
-  batching. Example: a 6,000-character API reference page is truncated to
-  its first ~2,000 characters (512 estimated tokens) before it is ever
-  counted toward a request. This is the fix for the original overflow: no
-  single document can contribute more than 512 estimated tokens to a
-  request, no matter how `maxTokens` or `contextLength` are set.
-- `embedding.maxTokens: 6000` — per-REQUEST budget: how many already-capped
-  documents' estimated tokens fit in one HTTP request. Example: with the
-  default 512-token document cap, a request packs about 11 documents before
-  this budget is reached and the request is sent; if the run's first
-  request is still rejected for exceeding the endpoint's real context
-  window, akm shrinks this budget to three quarters of its value (floored
-  at twice `maxInputTokens`) for every later request in the same run. A
-  request-level budget alone cannot stop one oversized document from
-  overflowing a request — only the per-document cap above does that.
-- `embedding.contextLength: 8192` — Ollama's `num_ctx` only, forwarded
-  verbatim on a native `/api/embed` request. It has no effect on request or
-  document sizing, and no effect at all against a non-Ollama endpoint — see
-  below for why that used not to be true.
+- `embedding.maxInputTokens: 512` used to be a per-DOCUMENT cap, applied
+  before batching. This was the actual fix for the original overflow: no
+  single document could contribute more than 512 estimated tokens to a
+  request, no matter how `maxTokens` or `contextLength` were set.
+- `embedding.maxTokens: 6000` used to be the per-REQUEST budget: how many
+  already-capped documents' estimated tokens fit in one HTTP request. A
+  request-level budget alone could not stop one oversized document from
+  overflowing a request — only the per-document cap above did that.
+- `embedding.contextLength: 8192` fed only Ollama's `num_ctx`, forwarded
+  verbatim on a native `/api/embed` request. It never bounded request or
+  document sizing, and had no effect at all against a non-Ollama endpoint.
 
-A field config of `contextLength: 8192` + `maxTokens: 8000` (the exact
-0.9.15-beta values from the original report) produces no 400s on 0.9.15:
-`maxInputTokens` (512, new this release) caps every document before it is
-counted, so the original 8.5k-12.4k-token documents that overflowed the
-8192-token endpoint can never reach the request budget in the first place —
-independent of whatever `maxTokens` or `contextLength` are set to.
+None of the three is read any more. A field config still carrying
+`contextLength: 8192` + `maxTokens: 8000` (the exact 0.9.15-beta values
+from the original report) loads on this release without error and without
+effect — the same "ignored, unvalidated, no warning" handling every retired
+key gets (see below) — because `akm index` now probes the endpoint's real
+context window itself and packs every request against that instead of
+against a configured estimate, so the original overflow is unreachable
+regardless of what either retired key is set to.
 
 `embedding.timeoutMs` (positive integer, default `120000` — 120s) is the
-budget for a request at the FULL token budget (`embedding.maxTokens`); a
-local model server on a large, token-budget-bounded batch legitimately takes
-longer than the prior fixed 30s cut off. A smaller request gets a
-proportionally smaller timeout —
+budget for a request at the FULL (probed) token budget; a local model
+server on a large, token-budget-bounded batch legitimately takes longer
+than the prior fixed 30s cut off. A smaller request gets a proportionally
+smaller timeout —
 `clamp(timeoutMs × requestTokens / tokenBudget, 30000, timeoutMs)` — so a
 dead endpoint is still detected in seconds on the common case of small
 documents. Set `embedding.timeoutMs` lower to fail fast against a
 known-fast endpoint, or higher for a slow local server on large batches.
 
-`embedding.maxTokens` (or its default) is also a run-scoped adaptive
-starting point, not a hard ceiling (#954): on the FIRST rejection of an
-`akm index` run for exceeding the endpoint's context window, akm shrinks
-the request budget to three quarters of its current value — floored at
-twice `embedding.maxInputTokens` — for every request not yet sent, and
-prints one line naming the new value. This never changes the rejected
-request's own split-and-retry (below), never shrinks a second time in the
-same run, and never grows the budget back up. Users who set
-`embedding.maxTokens` explicitly are unaffected by the LOWERED DEFAULT
-above but still benefit from this same-run recovery if their own value
-turns out to be too high for the endpoint.
+The probed token budget is also a run-scoped adaptive starting point, not a
+hard ceiling, but ONLY when the endpoint did not report a real window of
+its own (an OpenAI-compatible server or gateway, the conservative built-in
+default): on the FIRST rejection of an `akm index` run for exceeding the
+endpoint's context window, akm shrinks the request budget to three quarters
+of its current value for every request not yet sent, and prints one line
+naming the new value. A window akm actually probed from the endpoint
+(llama.cpp, Ollama) is treated as authoritative and is never second-guessed
+this way — a rejection against it still recovers via the same
+split-and-retry every rejection gets (below), just without lowering the
+budget for the rest of the run. This never fires a second time in the same
+run either way.
 
 A request TIMEOUT (not a rejection for exceeding the context window) never
 drops its batch immediately: field confirmation showed that once akm
@@ -485,19 +495,17 @@ requests and reports failure — batches already committed are kept; rerun
 once (a remote endpoint only; the local transformer path is unaffected):
 `1` for a loopback endpoint (`localhost`, `127.0.0.0/8`, etc. — a local
 model server serves one inference at a time, and parallel requests thrash
-it) and `2` for a remote one, unless `embedding.concurrency` (positive
-integer, 1-16) overrides it. This default holds for the overwhelming
-majority of setups; set the override only for an endpoint that genuinely
-serves parallel requests — a local server started with a multi-slot flag
-(llama.cpp's `--parallel N`, vLLM) — not to "speed up" an ordinary
-single-slot model server, which the default already protects from
+it) and `2` for a remote one, unless the provider's own probed slot count
+(llama.cpp's `total_slots`) or `embedding.concurrency` (positive integer,
+1-16, checked first) overrides it. This default holds for the overwhelming
+majority of setups; set an explicit override only for an endpoint that
+genuinely serves parallel requests — a local server started with a
+multi-slot flag (llama.cpp's `--parallel N`, vLLM) — not to "speed up" an
+ordinary single-slot model server, which the default already protects from
 reload-thrash. Request SIZE remains the first throughput lever regardless:
-`embedding.batchSize` (a document-count cap, default 100) together with
-`embedding.maxTokens` (an estimated token budget per request, default 6000
-— NOT `embedding.contextLength`, see the table above) control how many
-documents land in one request — with the default 512-token
-`embedding.maxInputTokens` document cap, that is about 11 documents,
-taking about the same wall time as a single one against a healthy endpoint.
+the probed token budget and document-count cap described above control how
+many documents land in one request, taking about the same wall time as a
+single one against a healthy endpoint.
 
 ## Search tuning
 
@@ -505,7 +513,6 @@ taking about the same wall time as a single one against a healthy endpoint.
 
 | Key | Purpose |
 | --- | --- |
-| `search.minScore` | Drop results below this score |
 | `search.defaultExcludeTypes` | Asset types excluded from results by default |
 
 ### Graph boost search tuning
@@ -514,22 +521,35 @@ taking about the same wall time as a single one against a healthy endpoint.
 | --- | --- |
 | `search.graphBoost.*` | Entity-graph relevance boost: `directBoostPerEntity`/`directBoostCap` (directly related entities), `hopBoostPerEntity`/`hopBoostCap` (multi-hop, capped at `maxHops` ≤ 3), `confidenceMode` (`blend`, the only supported value), `confidenceWeight` (0–1, default `0.2`) |
 
-### Curate rerank (#951)
+### Search rerank (#951)
 
-An optional cross-encoder rerank pass over `akm curate`'s already-selected
-candidates, via a standalone `/rerank`-style HTTP endpoint (NOT one of the
-`engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a misconfigured
-endpoint, network failure, timeout, or malformed response falls back to
-curate's own ranking unchanged.
+An optional cross-encoder rerank pass over `akm search`'s already-ranked
+LOCAL stash hits, via a standalone `/rerank`-style HTTP endpoint (NOT one of
+the `engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a
+misconfigured endpoint, network failure, timeout, or malformed response
+falls back to search's own ranking unchanged. Applied once to local hits
+before `--from local`/`--from all` diverge, so both see the reranked order
+and neither double-applies it; registry hits (`--from registry`, and the
+registry half of `--from all`) are never reranked and never trigger the
+endpoint — registry results staying separate from stash hits is a locked
+contract (AGENTS.md).
+
+Reranking changes hit ORDER only. Each hit's `score` is left as the
+retrieval score `akm search` already computed — see the score-vs-order note
+in `docs/reference/cli.md`'s search section for why.
+
+Moved here from `akm curate` in 0.9.16 (`search.curateRerank` →
+`search.rerank`) — the pass was always meant for search, not curate; see
+`docs/migration/release-notes/0.9.16.md`.
 
 | Key | Purpose |
 | --- | --- |
-| `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
-| `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
-| `search.curateRerank.model` | Model name sent to the endpoint (optional) |
-| `search.curateRerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
-| `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
-| `search.curateRerank.topN` | How many of curate's ranked candidates to send (default `8`, max `50`) |
+| `search.rerank.enabled` | Turn the rerank pass on (default `false`) |
+| `search.rerank.endpoint` | Full URL of the reranker's rerank endpoint |
+| `search.rerank.model` | Model name sent to the endpoint (optional) |
+| `search.rerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
+| `search.rerank.timeoutMs` | Request timeout (default `10000`) |
+| `search.rerank.topN` | How many of search's ranked LOCAL hits to send (default `8`, max `50`) |
 
 ## Feedback
 
@@ -804,3 +824,22 @@ profile identities.
 `embedding.chunkSize` was never read by anything under `src/` (#954), so a
 config that still sets it is simply ignored — it still loads, unvalidated
 and without warning.
+
+`search.minScore` was never read by anything under `src/` as of 0.9
+(index-redesign B5c), so a config that still sets it is simply ignored — it
+still loads, unvalidated and without warning. It used to tune a
+semantic-only floor over the old entries_fts + entries_vec search path,
+calibrated for that path's 0-1 cosine/BM25 scores. The single search path is
+`units_fts` + `units_vec`, scoring lexical evidence by BM25 magnitude and
+semantic evidence by cosine similarity on the same 0.7/0.3 split as before,
+on the scale the ranking contributors expect — no separate floor is applied.
+
+`embedding.maxInputTokens`, `embedding.maxTokens`, `embedding.batchSize`,
+and `embedding.contextLength` are retired (index redesign): `akm index`
+packs requests against the embedding provider's own probed context window
+and slot count instead (see [Semantic search](#semantic-search)). A config
+that still sets any of them is simply ignored — it still loads, unvalidated
+and without warning, the same as `embedding.chunkSize` above.
+`embedding.contextLength` specifically fed Ollama's `num_ctx`; that request
+field is now sent automatically from the same probe, or set explicitly via
+`embedding.ollamaOptions.num_ctx`.

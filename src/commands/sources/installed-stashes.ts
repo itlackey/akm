@@ -29,7 +29,7 @@ import { beginImmediateTransaction, getStateDbPath, openStateDatabase } from "..
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { akmIndex, runEmbeddingPass } from "../../indexer/indexer";
+import { akmIndex, reclassifyIndexDbContention, runEmbeddingPass } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import {
   compareAndSwapLockfileSnapshot,
@@ -387,11 +387,15 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       config: {
         sourceCount: getSources(updatedConfig).length,
       },
+      // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+      // removed (#index-redesign W6) — this response's own `index` shape is
+      // unchanged, so bridge from the renamed source field;
+      // `directoriesSkipped` was already always 0.
       index: {
         mode: index.mode,
         totalEntries: index.totalEntries,
-        directoriesScanned: index.directoriesScanned,
-        directoriesSkipped: index.directoriesSkipped,
+        directoriesScanned: index.sourcesScanned,
+        directoriesSkipped: 0,
       },
     };
   }
@@ -420,21 +424,25 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
+    // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+    // removed (#index-redesign W6) — this response's own `index` shape is
+    // unchanged, so bridge from the renamed source field;
+    // `directoriesSkipped` was already always 0.
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
     },
   };
 }
 
 // ── akmUpdate helpers ────────────────────────────────────────────────────────
 
-type UpdateIndexSummary = Pick<
-  Awaited<ReturnType<typeof akmIndex>>,
-  "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"
-> & { scanComplete?: boolean; verification?: Awaited<ReturnType<typeof akmIndex>>["verification"] };
+type UpdateIndexSummary = Pick<Awaited<ReturnType<typeof akmIndex>>, "mode" | "totalEntries" | "sourcesScanned"> & {
+  scanComplete?: boolean;
+  verification?: Awaited<ReturnType<typeof akmIndex>>["verification"];
+};
 
 /**
  * Read the current index generation without creating or hydrating anything.
@@ -447,14 +455,13 @@ type UpdateIndexSummary = Pick<
 function readCurrentIndexSummary(): UpdateIndexSummary {
   const db = openReadonlyExistingDatabase(getDbPath());
   if (!db) {
-    return { mode: "incremental", totalEntries: 0, directoriesScanned: 0, directoriesSkipped: 0 };
+    return { mode: "incremental", totalEntries: 0, sourcesScanned: 0 };
   }
   try {
     return {
       mode: "incremental",
       totalEntries: getAllEntries(db).length,
-      directoriesScanned: 0,
-      directoriesSkipped: 0,
+      sourcesScanned: 0,
     };
   } finally {
     closeDatabase(db);
@@ -486,11 +493,15 @@ function buildUpdateResponse(
     config: {
       sourceCount: getSources(finalConfig).length,
     },
+    // `IndexResponse.directoriesScanned`/`directoriesSkipped` were renamed/
+    // removed (#index-redesign W6) — `UpdateResponse["index"]`'s own shape is
+    // unchanged, so bridge from the renamed source field;
+    // `directoriesSkipped` was already always 0.
     index: {
       mode: index.mode,
       totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
+      directoriesScanned: index.sourcesScanned,
+      directoriesSkipped: 0,
       ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
       // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
       // verified `semanticStatus`. When no pass ran this update (the
@@ -620,7 +631,9 @@ function openUnifiedUpdateTransaction(): UnifiedUpdateTransaction {
         candidate.exec(`ATTACH DATABASE ${sqliteStringLiteral(statePath)} AS "${UPDATE_STATE_SCHEMA}"`);
         // openIndexDatabase invokes this before ensureSchema, so the outer
         // transaction begins before the first update-owned index mutation.
-        beginImmediateTransaction(candidate);
+        // `candidate` is the index.db connection, so contention here must
+        // report as INDEX_DB_CONTENDED, not the state.db default.
+        beginImmediateTransaction(candidate, "index");
       },
     });
     return {
@@ -700,7 +713,15 @@ async function runPostCommitEmbeddingPass(
     const { verification } = await runEmbeddingPass({ db, config, onProgress: () => {} });
     return { ...index, verification };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    // Run the failure through the same index.db contention classifier the
+    // drain catch uses (indexer.ts's reclassifyIndexDbContention) before
+    // building the message: this catch's first statement, openIndexDatabase
+    // (init runs ensureSchema and writes), can throw the raw SQLite driver
+    // error under contention, and this was the last surviving non-fatal
+    // catch that printed that raw text verbatim to the operator instead of
+    // reporting it as index.db contention.
+    const reportedError = reclassifyIndexDbContention(error);
+    const message = reportedError instanceof Error ? reportedError.message : String(reportedError);
     warn(`[akm bundle update] post-commit embedding pass failed: ${message}`);
     return {
       ...index,

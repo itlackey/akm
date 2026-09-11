@@ -37,7 +37,7 @@ import {
 } from "../../storage/repositories/index-connection";
 import { findEntryIdByRef, getAllEntries, getEntryById } from "../../storage/repositories/index-entries-repository";
 import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
-import { getNeighborsByEntryId } from "../../storage/repositories/index-vec-repository";
+import { getNeighborsByEntryId } from "../../storage/repositories/units-repository";
 import {
   isProposalSkipped,
   listProposals,
@@ -1828,8 +1828,11 @@ export function narrowToIncrementalCandidates(
     for (const m of changed) {
       const id = findEntryIdByRef(db, conceptIdFromTypeName("memory", m.name));
       if (id === undefined) continue;
-      for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged + 1)) {
-        if (hit.id === id) continue;
+      // index-redesign-contract.md B5f item 4 — `getNeighborsByEntryId`
+      // (units-repository.ts) already excludes the querying entry itself, so
+      // `neighborsPerChanged` genuinely OTHER neighbours are requested
+      // directly (no `+ 1` for self, no self-filter here).
+      for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged)) {
         const entry = getEntryById(db, hit.id);
         if (!entry) continue;
         const name = entry.entry.name;

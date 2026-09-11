@@ -31,7 +31,7 @@ import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatt
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
+import { getDbPath, getIndexWriterLockPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
@@ -1174,6 +1174,51 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
   });
 
+  test("accept warns and succeeds when the index cannot be updated, rather than failing the whole command (#W2)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    fs.writeFileSync(path.join(stash, "memories", "index-seed.md"), "Index seed.\n", "utf8");
+    await akmIndex({ stashDir: stash });
+
+    const created = createProposal(stash, {
+      ref: "lessons/warn-not-fatal-index",
+      source: "distill",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: index update failure must warn, not fail accept\nwhen_to_use: Verifying W2\n---\n\nBody.\n",
+      },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    // index.db present but unreadable AS A DATABASE (#791's own repro shape)
+    // — indexWrittenAssets's documented contract: a `false` return means "the
+    // write stands, but tell the operator the index needs a manual `akm
+    // index`", not a fatal accept failure. The WAL/SHM sidecars from the real
+    // `akmIndex` run above must go too — SQLite recovers a corrupted main
+    // file straight from an intact `-wal`, which would silently heal this
+    // instead of reproducing the fault.
+    const dbPath = getDbPath();
+    for (const candidate of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) fs.rmSync(candidate, { force: true });
+    fs.writeFileSync(dbPath, "not a sqlite database");
+
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    let acceptResult: Awaited<ReturnType<typeof akmProposalAccept>>;
+    try {
+      acceptResult = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+
+    expect(acceptResult.ok).toBe(true);
+    expect(fs.existsSync(acceptResult.assetPath)).toBe(true);
+    expect(getProposal(stash, created.id).status).toBe("accepted");
+    expect(warnings.some((line) => line.includes("index update failed"))).toBe(true);
+  });
+
   test("revert reindexes the restored asset immediately", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
@@ -1196,7 +1241,12 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     // Establish the accepted index state independently so this test isolates
     // the revert path rather than depending on the accept-path assertion above.
-    await indexWrittenAssets(stash, [accepted.assetPath]);
+    // Same bundleId ("stash", the createProposal wrapper's default target)
+    // the real accept path itself used — `files`'s per-path stat cache
+    // (module B1) makes a second reconcile under a DIFFERENT bundleId for
+    // the same path a same-content no-op ("unchanged"), not a fresh upsert
+    // under that other bundleId's own item_ref.
+    await indexWrittenAssets(stash, [accepted.assetPath], { bundleId: "stash" });
     expect(indexedEntry(lessonPath)?.description).toBe("accepted zanzibar marker");
 
     await akmProposalRevert({ stashDir: stash, id: created.id, config });
@@ -1927,33 +1977,9 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
   });
 });
 
-// ── #956 fix (fix-index item 1) — a rebuild-in-progress skip is fail-open ──
-
-describe("akmProposalAccept succeeds while a live index rebuild holds the lock (#956 fix)", () => {
-  test("finalizes normally instead of throwing 'index finalization failed'", async () => {
-    const stash = makeStashDir();
-    const config = makeConfig(stash);
-    const created = createProposal(stash, {
-      ref: "lessons/accept-during-rebuild",
-      source: "distill",
-      force: true,
-      payload: { content: VALID_LESSON },
-    });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
-
-    // A live pid holds the index rebuild lock — indexWrittenAssets must skip
-    // its inline upsert (the in-progress rebuild will pick up the change on
-    // its own) and report the skip as success, not failure, so the caller
-    // that gates on that boolean never sees "index finalization failed"
-    // while an unrelated `akm index` run is in progress.
-    const lockPath = getIndexRebuildLockPath();
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
-
-    const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
-
-    fs.rmSync(lockPath, { force: true });
-    expect(accepted.proposal.status).toBe("accepted");
-    expect(getProposal(stash, created.id).status).toBe("accepted");
-  });
-});
+// #956's fix (fix-index item 1) was "a rebuild-in-progress skip is fail-open".
+// docs/plans/index-redesign-contract.md (module B2) removes the rebuild lock
+// and the write path's probe of it entirely — there is no rebuild pipeline
+// left to hold that lock, so the regression this block pinned no longer
+// applies. The write-time indexing suite (module B2) is
+// tests/integration/indexer/index-written-assets.test.ts.

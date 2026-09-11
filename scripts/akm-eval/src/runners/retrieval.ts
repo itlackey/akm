@@ -41,6 +41,14 @@ export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<E
     .join("\n")
     .toLowerCase();
 
+  // A hit's ref is anchored to its best-scoring unit
+  // (index-redesign-contract.md B3): `entryRef` for an entry-level match, or
+  // `entryRef#akm-fragment-<n>-<hash>` when a body fragment won. A case's
+  // `mustIncludeRefs`/`mustNotIncludeRefs` name the ENTRY, so a fragment
+  // suffix must not make an otherwise-correct match miss.
+  const matchesRef = (candidate: string, expectedRef: string): boolean =>
+    candidate === expectedRef || candidate.startsWith(`${expectedRef}#`);
+
   const mustInclude = expected.mustIncludeRefs ?? [];
   const mustNotInclude = expected.mustNotIncludeRefs ?? [];
   const keywords = expected.keywords ?? [];
@@ -49,8 +57,8 @@ export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<E
   const includeScore =
     mustInclude.length === 0
       ? 1
-      : mustInclude.filter((r) => refs.includes(r)).length / mustInclude.length;
-  const forbiddenHits = mustNotInclude.filter((r) => refs.includes(r));
+      : mustInclude.filter((r) => refs.some((ref) => matchesRef(ref, r))).length / mustInclude.length;
+  const forbiddenHits = mustNotInclude.filter((r) => refs.some((ref) => matchesRef(ref, r)));
   const forbiddenScore = forbiddenHits.length === 0 ? 1 : 0;
   const keywordHits = keywords.filter((k) => text.includes(k.toLowerCase()));
   const keywordScore = keywords.length === 0 ? 1 : keywordHits.length / keywords.length;
@@ -87,7 +95,10 @@ export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<E
       keywordScore,
       forbiddenScore,
       minHitsScore,
-      hitAt1: mustInclude.length === 0 ? null : refs[0] !== undefined && mustInclude.includes(refs[0]),
+      hitAt1:
+        mustInclude.length === 0
+          ? null
+          : refs[0] !== undefined && mustInclude.some((r) => matchesRef(refs[0] as string, r)),
       hitAtK: includeScore > 0,
       forbiddenHits,
       keywordHits,

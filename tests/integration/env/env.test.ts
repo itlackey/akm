@@ -311,9 +311,7 @@ describe("env indexer safety", () => {
       // 6. CRITICAL: neither values nor comment text can be retrieved via FTS5
       type FtsRow = { c: number };
       for (const term of ["correct", "zqxoldcredleak", "zqxcommentleak"]) {
-        const ftsHit = db
-          .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
-          .get(term) as FtsRow;
+        const ftsHit = db.prepare("SELECT count(*) AS c FROM units_fts WHERE units_fts MATCH ?").get(term) as FtsRow;
         expect(ftsHit.c).toBe(0);
       }
     } finally {
@@ -332,7 +330,7 @@ describe("env indexer safety", () => {
     try {
       type FtsRow = { c: number };
       const hit = db
-        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
+        .prepare("SELECT count(*) AS c FROM units_fts WHERE units_fts MATCH ?")
         .get("STRIPE_API_KEY") as FtsRow;
       expect(hit.c).toBe(1);
     } finally {

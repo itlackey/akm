@@ -1451,10 +1451,20 @@ async function finalizeProposalTransaction(
   }
   let accepted = getProposal(p.stashDir, p.proposalId, ctx);
   if (txn.journal.phase === "proposal-persisted") {
-    if (!(await indexWrittenAssets(txn.journal.root, [p.assetPath], { bundleId: target.source.name }))) {
-      throw new Error(`Proposal ${p.proposalId} index finalization failed.`);
+    if (await indexWrittenAssets(txn.journal.root, [p.assetPath], { bundleId: target.source.name })) {
+      advanceTxn(txn, "index-finalized");
+    } else {
+      // `indexWrittenAssets`'s contract (index-written-assets.ts): `false`
+      // means the asset write already stands, but the index itself needs a
+      // manual `akm index` — warn and continue, the same as `source clone`
+      // treats the same return, instead of failing the whole accept/revert.
+      // Leave the phase at "proposal-persisted" (do not advance) so a later
+      // recovery of this journal retries the index update rather than
+      // skipping it as already done.
+      warn(
+        `${p.operation === "accept" ? "Accept" : "Revert"} of ${p.ref} succeeded, but its index update failed; run \`akm index\` to refresh it.`,
+      );
     }
-    advanceTxn(txn, "index-finalized");
   }
   if (txn.journal.phase === "index-finalized") {
     accepted = getProposal(p.stashDir, p.proposalId, ctx);

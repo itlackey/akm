@@ -630,6 +630,16 @@ export async function probeLlmReachable(config: LlmConnectionConfig): Promise<{ 
 }
 
 /**
+ * Default bound for a best-effort capability/reachability probe (#914):
+ * generous enough for a cold local model server to answer a route-existence
+ * check, short enough that `akm health --probe` and the provider-limits
+ * probe (`src/llm/embedders/provider-limits.ts`, index-units) do not stall a
+ * run on a dead endpoint. Shared so both probes bound themselves to the same
+ * value instead of drifting apart.
+ */
+export const HEALTH_PROBE_TIMEOUT_MS = 3_000;
+
+/**
  * Reachability probe for `akm health` (#914): one GET against the
  * OpenAI-compatible `/models` route, bounded by `timeoutMs`. Any HTTP
  * response counts as reachable — the question is whether the endpoint
@@ -638,7 +648,7 @@ export async function probeLlmReachable(config: LlmConnectionConfig): Promise<{ 
  */
 export async function probeLlmEndpoint(
   config: LlmConnectionConfig,
-  timeoutMs = 3_000,
+  timeoutMs = HEALTH_PROBE_TIMEOUT_MS,
 ): Promise<{ reachable: boolean; error?: string }> {
   try {
     await fetch(`${config.endpoint.replace(/\/+$/, "")}/models`, { signal: AbortSignal.timeout(timeoutMs) });

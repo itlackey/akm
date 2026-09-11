@@ -32,7 +32,10 @@ describe("reclassifyIndexDbContention", () => {
     expect((result as Error).cause).toBe(raw);
     // Falls back to the code-derived TRANSIENT_HINTS entry (no rebuild lock
     // held in this synthetic case, so the message carries no holder pid).
-    expect((result as TransientError).hint()).toContain("--skip-if-locked");
+    // --skip-if-locked is a deprecated no-op for `akm index` (index-redesign
+    // B5a), so the hint no longer advises it — just retry.
+    expect((result as TransientError).hint()).toContain("retry");
+    expect((result as TransientError).hint()).not.toContain("--skip-if-locked");
   });
 
   test("a non-contention error is rethrown exactly as raised, never reclassified", () => {

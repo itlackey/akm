@@ -62,7 +62,12 @@ export type ConfigErrorCode =
   // A `secret://<name>` apiKey reference did not resolve to a stored value —
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
-  | "SECRET_REFERENCE_UNRESOLVED";
+  | "SECRET_REFERENCE_UNRESOLVED"
+  // units-repository's searchUnits: sqlite-vec is not loaded, so the units_vec
+  // KNN query cannot run. There is no JS-cosine fallback for units — the
+  // caller is expected to catch this and fall back to lexical search instead
+  // (docs/plans/index-fragment-vectors.md).
+  | "EMBEDDING_VEC_UNAVAILABLE";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
@@ -174,9 +179,12 @@ export type TransientErrorCode =
   // Field follow-up to #956 (G1, dev-team field review 2026-09-10): two real
   // concurrent akm processes (e.g. two plain `akm index` runs started back
   // to back by a scheduler) can both reach `acquireMaintenanceBarrier()` —
-  // the short critical section that registers the opt-in rebuild lock — in
-  // the same instant. The barrier is meant to be held for milliseconds, so
-  // losing that race is ordinary contention, never a broken config file:
+  // the short critical section that registers a long-lived AKM lock, lease,
+  // or state activity (canonical state.db's own open registers one; so did
+  // the opt-in index rebuild lock, before index-redesign deleted that
+  // consumer) — in the same instant. The barrier is meant to be held for
+  // milliseconds, so losing that race is ordinary contention, never a
+  // broken config file:
   // previously this threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing
   // as exit 78 and telling a supervisor to stop retrying a normal lock
   // collision. Thrown from `acquireMaintenanceBarrier`
@@ -230,6 +238,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   EXECUTION_NOT_AUTHORIZED: "Change the selected tools or update the machine/user execution policy, then retry.",
   SECRET_REFERENCE_UNRESOLVED:
     "Check the secret exists (`akm secret list`) and the name after `secret://` matches, or run `akm secret set <name> <value>` to store it.",
+  EMBEDDING_VEC_UNAVAILABLE:
+    "Install sqlite-vec for unit-level semantic search, or rely on lexical search until it is available.",
 };
 
 // Code-review finding: COMPOSITION_INVALID covers several unrelated causes
@@ -311,9 +321,11 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
   INDEX_DB_CONTENDED:
-    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+    "Another akm process is writing index.db right now. Wait a few seconds and retry — index runs take no rebuild " +
+    "lock, so this clears quickly; a scheduled run left alone will simply run again next time.",
   MAINTENANCE_BARRIER_BUSY:
-    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled index/improve/workflow runs.",
+    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on " +
+    "scheduled improve runs to skip gracefully instead — workflow run does not treat this code as skippable.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
 };

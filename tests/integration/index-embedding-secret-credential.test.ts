@@ -12,13 +12,14 @@
  * `LAB_API_KEY` deliberately absent from the environment reportedly sent
  * every embedding request with NO Authorization header at all — silently,
  * not as a resolution error. This suite reproduces the standalone `akm
- * index` materializer path in-process AND as a real CLI child process
+ * index` embedding path (`drain.ts`) in-process AND as a real CLI child process
  * (since the field failure was specifically the CLI), plus every other path
  * that reaches `RemoteEmbedder`: an `extends`-inherited apiKey with adapter
  * detection persisting mid-run (#945); `akm bundle update`'s post-commit
  * embedding pass (`runPostCommitEmbeddingPass`, reached via `akmUpdate`);
- * the `remember` write path (`indexWrittenAssets`, which calls
- * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the
+ * the `remember` write path (`indexWrittenAssets`, docs/plans/index-redesign-contract.md
+ * module B2 — a thin call to B1's `reconcilePaths` then B4's real
+ * `drainEmbeddingQueue`, which now owns talking to the embedder); and the
  * improve consolidate path as the known-good control.
  *
  * Every request the mock server sees is asserted to carry the resolved
@@ -58,9 +59,23 @@ function createAuthCapturingEmbeddingServer(): {
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
+      const { pathname } = new URL(request.url);
+      // `probeProviderLimits` (module A3, wired into drain.ts's B4 path)
+      // probes llama.cpp's `GET /props` and, failing that, Ollama's
+      // `POST /api/show` before any real embedding request — neither is
+      // credentialed and neither carries an `{ input }` body, so route them
+      // away from the embedding-request handling below rather than letting
+      // them corrupt authHeaders or throw parsing a body that isn't there.
+      if (pathname === "/props" || pathname === "/api/show") {
+        return new Response(null, { status: 404 });
+      }
       authHeaders.push(request.headers.get("authorization"));
       const body = (await request.json()) as { input: string[] };
-      const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0, 0], index: i }));
+      // 8 dimensions: every config below sets `embedding.dimension: 8`, and
+      // `units_vec` (sqlite-vec, index-redesign A2) is a fixed-width virtual
+      // table — a response vector shorter than the configured width fails
+      // the insert outright rather than silently accepting any length.
+      const data = body.input.map((_t, i) => ({ embedding: [1, 0, 0, 0, 0, 0, 0, 0], index: i }));
       return new Response(JSON.stringify({ data, model: "mock", usage: {} }), {
         headers: { "Content-Type": "application/json", Connection: "close" },
       });
@@ -299,8 +314,9 @@ describe("akm bundle update: post-commit embedding pass carries the secret:// cr
     try {
       const result = await akmUpdate({ target: id, stashDir: storage.stashDir });
 
-      expect(result.index.semanticStatus).toBeDefined();
-      expect(["ready-vec", "ready-js"]).toContain(result.index.semanticStatus as string);
+      // "ready-js" (the JS-cosine fallback for a BLOB-vector table) is
+      // retired (index redesign, B5) — units_vec is a vec0-only store.
+      expect(result.index.semanticStatus).toBe("ready-vec");
       expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer bundle-update-store-secret-value");
     } finally {
       syncSpy.mockRestore();
@@ -323,7 +339,7 @@ describe("akm remember write path: indexWrittenAssets carries the secret:// cred
     resetConfigCache();
   });
 
-  test("generateEmbeddingsForDb, called at indexWrittenAssets's own fresh loadConfig(), sends Bearer <store value>", async () => {
+  test("reconcilePaths + drainEmbeddingQueue (module B2/B4) send Bearer <store value>", async () => {
     setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("remember-store-secret-value"));
 
     const capture = createAuthCapturingEmbeddingServer();
@@ -346,7 +362,8 @@ describe("akm remember write path: indexWrittenAssets carries the secret:// cred
     // Establish the index via a normal full run first (already covered by the
     // in-process akmIndex variant above) — the assertion below isolates the
     // write path's OWN fresh `loadConfig()` call inside `indexWrittenAssets`,
-    // reached via `generateEmbeddingsForDb`, not this seed run.
+    // reached via `reconcilePaths` then `drainEmbeddingQueue`, not this seed
+    // run.
     await akmIndex({ stashDir: storage.stashDir, full: true });
     capture.authHeaders.length = 0;
 
@@ -357,7 +374,13 @@ describe("akm remember write path: indexWrittenAssets carries the secret:// cred
       "utf8",
     );
 
-    expect(await indexWrittenAssets(storage.stashDir, [filePath])).toBe(true);
+    // Explicit bundleId, matching how every real production caller invokes
+    // this (source.name / installation id / ref.origin) — `reconcilePaths`
+    // resolves it back to a stash root via the configured `bundles` entry
+    // above, so it must be the SAME id that configuration derives ("stash",
+    // the bundle key), not indexWrittenAssets's own ad-hoc path-derived
+    // fallback for an unconfigured stash.
+    expect(await indexWrittenAssets(storage.stashDir, [filePath], { bundleId: "stash" })).toBe(true);
     expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer remember-store-secret-value");
   });
 });

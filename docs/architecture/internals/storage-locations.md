@@ -107,12 +107,14 @@ journal mode. Foreign-key policy is called out per database below.
 ### `$DATA/index.db` — Main Search Index
 
 Schema managed by `ensureSchema()` (`src/storage/repositories/index-schema.ts`).
-The current derived generation is exactly v23: `index_meta.version`, the
-complete canonical `entries` fingerprint, and the exact logical
-`entries_fts`/`entry_fragments`/`entry_fragments_fts` surfaces must all match.
-It uses the shared opening pragma policy above with foreign keys ON and
-optionally loads the `sqlite-vec` extension for fast ANN (approximate
-nearest-neighbour) vector search.
+The current derived generation is exactly v24: `index_meta.version`, the
+complete canonical `entries` fingerprint, and the `entry_fragments` logical
+surface must all match (`src/storage/repositories/index-entry-schema.ts`).
+`files`/`unit_texts`/`units_fts` (below) are fingerprinted separately by
+`files-repository.ts`'s own schema ensure, not by this generation check. It
+uses the shared opening pragma policy above with foreign keys ON and
+optionally loads the `sqlite-vec` extension, required for the vec0 unit
+vector store below (there is no non-vec0 fallback — see `units_vec`).
 
 Opened by:
 - `openIndexDatabase()` — managed schema initialization and generation rebuild,
@@ -120,14 +122,20 @@ Opened by:
 - `openExistingDatabase()` — no schema mutation; validates the exact current
   generation before returning a handle to search/show/curate and other readers
 
-**Retention:** `index.db` is a fully regenerable derived cache. A missing or
-noncanonical v23 `entries` fingerprint or required logical search surface
-causes the managed opener to discard the entry-dependent derived generation and
-create the exact current schema; the indexer then repopulates it from current
-sources and durable usage state. Existing/read-only openers reject a
-noncanonical generation. This path never modifies `state.db`.
-`clearStaleCacheEntries()` removes orphaned LLM cache rows within a current
-generation.
+**Retention:** `index.db` is a fully regenerable derived cache, content-
+addressed throughout (index redesign, `docs/plans/index-redesign.md`): parsed
+documents and units are keyed by `blob_hash`/`unit_hash`, so an unchanged file
+never re-derives anything and a generation bump re-derives only what its
+schema actually touched — it never forces a re-embed, since vectors are keyed
+by content hash and embedding identity, not by a row id or a config string. A
+missing or noncanonical `entries` fingerprint or required logical search
+surface causes the managed opener to discard the entry-dependent derived
+generation and create the exact current schema; `akm index`'s `reconcileRoots`
++ `drainEmbeddingQueue` then repopulate it from current sources and durable
+usage state. Existing/read-only openers reject a noncanonical generation. This
+path never modifies `state.db`. `clearStaleCacheEntries()` removes orphaned
+LLM cache rows within a current generation. See
+[Indexing](indexing.md) for the full reconcile/drain design.
 
 #### Table: `index_meta`
 
@@ -136,7 +144,20 @@ generation.
 | `key` | TEXT PRIMARY KEY | Metadata key |
 | `value` | TEXT NOT NULL | String-encoded value |
 
-Known keys: `version` (stored DB_VERSION), `embeddingDim` (e.g. `"384"`), `hasEmbeddings` (`"0"` or `"1"`).
+Known keys: `version` (stored `DB_VERSION`), `embeddingDim` (e.g. `"384"`),
+`hasEmbeddings` (`"0"` or `"1"` — a proxy for "semantic search is fully
+ready", set from `units`/`entry_units` coverage each time the embedding pass
+runs rather than derived on every read; see `runEmbeddingPass` in
+`indexer.ts`), `embeddingIdentity` (the one embedding identity
+`units`/`units_vec` currently carry — `remote:<model>|<dim>` or
+`local:<model>|<dim>`, learned from the first provider response and absent
+until then), `lastReconcileAt` / `builtAt` (ISO-8601, set when `reconcileRoots`
+/ `akmIndex()` last finished), `stashDir` / `stashDirs` / `sourceOwners`
+(installation bookkeeping), `last_utility_computed_at`, and `vecResetPending`
+(set on an open where the legacy `entries_vec` table (below) still existed
+but sqlite-vec was not loaded, so the unconditional drop `ensureSchema()`
+otherwise runs on every open could not run; cleared the first later open
+where the extension is available).
 
 #### Table: `entries`
 
@@ -150,31 +171,40 @@ Known keys: `version` (stored DB_VERSION), `embeddingDim` (e.g. `"384"`), `hasEm
 | `adapter_id` | TEXT NOT NULL | Adapter that recognized and renders the document |
 | `type` | TEXT NOT NULL | Adapter-emitted item type |
 | `file_path` | TEXT NOT NULL | Absolute path to the asset file |
-| `content_hash` | TEXT | Content hash for change detection |
+| `content_hash` | TEXT | The file's `blob_hash` (sha256 of its bytes), for change detection |
 | `document_json` | TEXT NOT NULL | Sole stored `IndexDocument` projection |
-| `search_text` | TEXT NOT NULL | Pre-built BM25 search string |
+| `search_text` | TEXT NOT NULL | Concatenated name/description/tags/hints/content, kept for change detection (see below) — no longer a search index itself |
 | `derived_from` | TEXT | Set on entries derived from another asset (e.g. `.derived` memories) |
 
 Indexes: the UNIQUE `item_ref` constraint plus `idx_entries_bundle` on
 `bundle_id`, `idx_entries_type` on `type`, `idx_entries_file_path` on
-`file_path`, and `idx_entries_derived_from` on `derived_from`.
+`file_path`, and `idx_entries_derived_from` on `derived_from`. `search_text`
+no longer feeds `entries_fts` (index redesign, v24 — removed, see below);
+lexical and semantic search both run over `units`/`unit_texts` instead. It
+is still written on every entries upsert but has no current reader — the
+legacy per-entry vector write path that used to compare it for stale-vector
+invalidation (`embeddings`/`entries_vec`) is gone (index redesign, B5h):
+content-addressed units simply derive a new hash when the text changes, so
+no explicit invalidation step is needed.
 
-#### Virtual Table: `entries_fts` (FTS5)
+#### Table: `files`
 
-BM25-weighted full-text search. Tokenizer: `porter unicode61`.
+The stat cache `reconcile.ts` diffs against on every run — one row per file
+that currently has an `entries` row.
 
-| Column | BM25 weight |
-|---|---|
-| `name` | 10.0 |
-| `description` | 5.0 |
-| `tags` | 3.0 |
-| `hints` | 2.0 |
-| `content` | 1.0 |
+| Column | Type | Notes |
+|---|---|---|
+| `path` | TEXT PRIMARY KEY | Absolute path |
+| `bundle_id` | TEXT NOT NULL | Owning installation identity |
+| `size` | INTEGER NOT NULL | Byte size at last reconcile |
+| `mtime_ms` | REAL NOT NULL | mtime (ms since epoch) at last reconcile |
+| `blob_hash` | TEXT NOT NULL | sha256 of the file's bytes |
+| `adapter_id` | TEXT NOT NULL DEFAULT `''` | The bundle adapter that produced this row's `entries` write — a stash-adapter change re-parses a file whose `(size, mtime)` alone did not move |
 
-The canonical entry repository replaces this projection in the same SQLite
-transaction as its `entries` upsert. Deletes remove the FTS row before the
-parent entry. There is no caller-managed FTS dirty queue; a full FTS rebuild is
-reserved for explicit recovery of regenerable index state.
+Index: `files_bundle` on `bundle_id`. A `(size, mtime_ms)` match against the
+stat just taken skips re-parsing the file entirely; a mismatch (or a new path)
+re-parses and re-hashes it. A path no longer found under any configured root
+is deleted here and its `entries` row removed.
 
 #### Table: `entry_fragments`
 
@@ -183,47 +213,117 @@ reserved for explicit recovery of regenerable index state.
 | `entry_id` | INTEGER PRIMARY KEY | FK → `entries(id)` ON DELETE CASCADE; one safe source projection per parent entry |
 | `safe_markdown` | TEXT NOT NULL | Line-preserving, retrieval-safe Markdown projection used to resolve a returned fragment selector |
 
-This table keeps the parent-owned source for lexical fragment retrieval. It is
-derived state and is replaced or removed in the same transaction as the
-parent's FTS projections.
+Not a search index (`entry_fragments_fts` is gone, v24) — this table is what a
+matched fragment hit's display metadata is projected from, and what `akm show
+<ref>#<fragmentId>` resolves an opaque fragment selector through. It is
+derived state, replaced or removed in the same transaction as the parent
+entry.
 
-#### Virtual Table: `entry_fragments_fts` (FTS5)
+#### Table: `unit_texts`
 
-Separate lexical body-fragment population. Tokenizer: `porter unicode61`.
-Its rows carry `entry_id UNINDEXED`, `fragment_id UNINDEXED`,
-`fragment_ordinal UNINDEXED`, and searchable `content`. Parent metadata is not
-copied onto fragment rows, preserving the parent FTS conjunction semantics and
-keeping the two BM25 populations independently calibrated. Search selects one
-fragment per matching parent and merges it with parent results; `fragment_id`
-is the selector returned in the hit ref.
-
-#### Table: `embeddings`
+Content-addressed text for every embedding/lexical unit any entry currently
+references. An entry's structured fields (name/description/tags/hints) become
+one `kind: "card"` unit; each of its Markdown fragments becomes one
+`kind: "fragment"` unit (header line, then body) — see `src/indexer/units/unit.ts`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | INTEGER PRIMARY KEY | Matches `entries.id` |
-| `embedding` | BLOB NOT NULL | Float32 vector, little-endian IEEE-754 |
+| `unit_hash` | TEXT PRIMARY KEY | sha256 of exactly the unit's text |
+| `kind` | TEXT NOT NULL | `'card'` or `'fragment'` |
+| `text` | TEXT NOT NULL | The unit's full text, header included |
 
-Used by JS cosine-similarity fallback when `sqlite-vec` is absent.
+`INSERT OR IGNORE` — a hash already stored from a previous entry (or a prior
+version of this one) never gets a duplicate row. Pruned only once no entry's
+`entry_units` mapping references the hash any more; pruning `unit_texts` never
+touches `units`/`units_vec` (below) — a hash that comes back (the same text
+re-appears, e.g. a revert) resumes serving search without re-embedding.
 
-#### Virtual Table: `entries_vec` (conditional)
+#### Virtual Table: `units_fts` (FTS5)
 
-Created only when `sqlite-vec` is loadable. Columns: `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`. Dropped and recreated if embedding dimension changes.
+Lexical index over `unit_texts`. Tokenizer: `porter unicode61`.
 
-#### Table: `embedding_salvage` (#955)
+| Column | Notes |
+|---|---|
+| `unit_hash` | UNINDEXED — join key back to `unit_texts`/`entry_units` |
+| `text` | Searchable (BM25) |
+
+Written alongside `unit_texts` (same `INSERT OR IGNORE` gate — FTS5 has no
+unique constraint of its own to dedupe against). A lexical query ranks units,
+then `entry_units` groups the result to entries, keeping each entry's best-
+ranked unit. This replaces `entries_fts` and `entry_fragments_fts` (both
+dropped in v24): a card unit already carries name/description/tags/hints, so
+an entry-level lexical query is a units query grouped by entry, and a
+fragment-level query is the same table filtered to fragment-kind units.
+
+#### Table: `units` and Virtual Table: `units_vec` (vec0)
+
+The one vector store, keyed by `(unit_hash, identity)` — `identity` is what
+the embedding provider actually returned (`remote:<model>|<dim>` or
+`local:<model>|<dim>`), not a config string, so a transport-only rename that
+still reports the same model needs no re-embed and a genuine model or
+dimension change is a different identity rather than an ambiguous compat
+check. `units` is a plain lookup table mirroring `units_vec`'s key (vec0
+auxiliary columns are not indexable, so a point lookup or an `IN (...)` filter
+directly against `units_vec` would be a full scan).
+
+| `units` column | Type | Notes |
+|---|---|---|
+| `unit_id` | INTEGER PRIMARY KEY | |
+| `unit_hash` | TEXT NOT NULL | |
+| `identity` | TEXT NOT NULL | |
+
+UNIQUE `(unit_hash, identity)`.
+
+| `units_vec` column | Type | Notes |
+|---|---|---|
+| `unit_id` | INTEGER PRIMARY KEY | Matches `units.unit_id` |
+| `embedding` | FLOAT[`<dim>`] | vec0 KNN column |
+| `unit_hash` | TEXT (auxiliary, `+`) | |
+| `identity` | TEXT (auxiliary, `+`) | |
+
+Requires the `sqlite-vec` extension — there is no BLOB-table fallback for a
+unit vector (the pre-redesign `embeddings`/`entries_vec` pair that used to
+provide one is gone, index redesign B5h). Rows exist if and only if a vector
+was actually written for that hash: `drainEmbeddingQueue`
+(`src/indexer/drain.ts`) is the only writer, and
+only ever keeps ONE identity live at a time — adopting a new one drops every
+row under a different identity (`dropOtherIdentities`). Never dropped by a
+generation rebuild, `akm index --full`, or `--reembed`'s own purge of the
+active identity's rows; a hash's vector, once written, survives indefinitely
+until its identity is superseded.
+
+#### Table: `entry_units`
+
+The cheap, derived entry → ordinal → unit mapping a reconcile rebuilds.
 
 | Column | Type | Notes |
 |---|---|---|
-| `content_hash` | TEXT PRIMARY KEY | `sha256(entries.search_text)` |
-| `fingerprint` | TEXT NOT NULL | The `embeddingFingerprint` the salvaged vector was generated under |
-| `embedding` | BLOB NOT NULL | Float32 vector, little-endian IEEE-754 — copied verbatim from `embeddings.embedding` |
-| `salvaged_at` | TEXT NOT NULL | ISO-8601 timestamp of the discard that salvaged this row |
+| `entry_id` | INTEGER NOT NULL | FK → `entries(id)` ON DELETE CASCADE |
+| `ordinal` | INTEGER NOT NULL | 0 = the card unit; fragment units follow in document order |
+| `fragment_id` | TEXT | Set for a fragment unit, `NULL` for the card unit |
+| `unit_hash` | TEXT NOT NULL | Join key into `unit_texts`/`units`/`units_vec` |
 
-Transient and self-emptying, not a second embedding cache: rows are written
-only at the two points that discard `embeddings` wholesale (a full-index
-rebuild, a generation bump) and are consumed — or the whole table purged —
-by the very next embedding pass. See "Embedding reuse across rebuilds" in
-[Indexing](indexing.md#embedding-phase).
+PRIMARY KEY `(entry_id, ordinal)`; index `entry_units_hash` on `unit_hash`.
+Replaced wholesale for an entry whenever it is re-derived.
+
+#### Removed: `embeddings` and `entries_vec` (index redesign, B5h)
+
+The pre-redesign per-entry BLOB vector table (`embeddings`: `id INTEGER
+PRIMARY KEY` matching `entries.id`, `embedding BLOB NOT NULL`, float32
+little-endian) and its `sqlite-vec` ANN mirror (`entries_vec`, conditional on
+the extension, `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`) are gone —
+`units`/`units_vec` above is the one vector store, and every reader
+(`akm improve consolidate`'s incremental neighbour lookup included, now
+`getNeighborsByEntryId` in `units-repository.ts`, keyed on unit content
+instead of an entry id) and writer of the two legacy tables was moved onto it
+or deleted first. `ensureSchema()` drops both tables unconditionally on every
+open of an index built before this change — `embeddings` outright,
+`entries_vec` (a vec0 virtual table) as soon as an open has the `sqlite-vec`
+extension loaded, tracked by the `vecResetPending` meta key above in the rare
+case it does not yet. The transient `embedding_salvage` table these two used
+to feed before a discard was retired earlier in the same redesign — content-
+addressed units make a copy-aside step unnecessary: a generation bump keeps
+whatever vectors are still keyed by an unchanged unit hash.
 
 #### Workflow source indexing
 
@@ -231,18 +331,6 @@ Peer `.md` and `.yml` workflow sources compile directly to source IR version 1.
 The index stores the ordinary normalized `entries` row and metadata derived from
 that IR; there is no workflow-specific AST cache or parallel persisted source
 representation. Executable durable plans belong only to `state.db`.
-
-#### Table: `index_dir_state`
-
-| Column | Type | Notes |
-|---|---|---|
-| `dir_path` | TEXT PRIMARY KEY | Absolute path to the directory |
-| `file_set_hash` | TEXT NOT NULL | Hash of file names in directory |
-| `file_mtime_max_ms` | REAL NOT NULL | Max file mtime across directory (ms since epoch) |
-| `reason` | TEXT NOT NULL | Human-readable description |
-| `updated_at` | TEXT NOT NULL | ISO-8601 |
-
-Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 
 #### Table: `llm_enrichment_cache`
 
@@ -621,7 +709,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json`, written by `backupExistingConfig()` in `src/core/config/config-io.ts` before each config write. `config.latest.json` is a second copy (not a symlink) always overwritten with the newest snapshot. Dir created/chmod'd `0700`; both the timestamped file and `config.latest.json` are chmod'd `0600` (08-F4, mirroring the env-cli write-mode convention). This is the only live backup location — legacy `$DATA/config-backups/` and `$CONFIG/config-backups/` write paths have been removed. | Capped at `MAX_CONFIG_BACKUPS = 5` most-recent timestamped snapshots; `pruneOldBackups()` deletes the rest on every write |
 | `$CONFIG/akm.lock` | Legacy location. Removed in v0.8.0 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
 | `$DATA/akm.lock` | Installed bundle lockfile (moved from `$CONFIG`). Application-managed install state. Same format as `$CONFIG/akm.lock`. | Managed by `akm bundle add`/`akm bundle remove` |
-| `$CACHE/semantic-status.json` | Embedding provider health: `status` (pending/ready-js/ready-vec/blocked), `reason`, `providerFingerprint`, `lastCheckedAt`, `entryCount`, `embeddingCount`. Blocked status auto-expires after 24h. | Reset on `akm index --full` |
+| `$CACHE/semantic-status.json` | No longer written or read (index redesign) — semantic readiness is read live from `index.db` (`index_meta.embeddingIdentity`, unit coverage) instead of a cached verdict file. A stale file from an older install is inert. | Dead residue |
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Legacy consolidation journal; current advisory consolidation does not read or write it. | Dead residue (itlackey/akm#889); reported by `akm migrate status`, removed by `akm migrate apply` |
@@ -801,8 +889,8 @@ akm feedback
   → insertUsageEvent()       → usage_events (signal column)
   → appendEvent()            → events table in state.db (for improve/distill/reflect pipeline)
 
-akm index  (recomputeUtilityScores)
-  → reads source='user' usage_events aggregates per entry
+akm index
+  → recomputeUtilityScores() → reads source='user' usage_events aggregates per entry
        selectRate   = min(1, show_count / search_count)
        feedbackRate = (positive_count − negative_count) / total_feedback
        effectiveRate = max(selectRate, feedbackRate)
@@ -836,7 +924,7 @@ not affect ranking, salience, real-query labels, or GRR.
 | 6 | `$CACHE/config-backups/config-<ts>.json` | JSON | Config pre-save backups (0600 files / 0700 dir; capped at 5) |
 | 7 | `$DATA/akm.lock` | JSON | Installed bundle lockfile |
 | 8 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
-| 9 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
+| 9 | `$CACHE/semantic-status.json` | JSON | No longer written or read (index redesign) — dead residue only |
 | 10 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
 | 11 | `$DATA/index.db` (`graph_*` tables) | SQLite | Knowledge graph data — there is no `graph.json` file; see the `graph_*` table row above |
 | 12 | `$DATA/state.db` (`proposals` table) | SQLite | Proposal queue; archival is a `status` change, not a separate directory |

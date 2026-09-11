@@ -169,20 +169,25 @@ function beliefStateBoost(item: RankedEntryInput): number {
  * stash-conventions-code-spec.md — corrections demotion).
  *
  * Why the additive {@link beliefStateBoost} penalties alone are not enough:
- * keyword base scores have a bounded lexical floor (`normalizeFtsScores`),
- * while the boost sum then MULTIPLIES the base (`score *= 1 + boostSum`,
- * {@link applyScoreContributors}). A superseded incumbent can still earn
- * enough independent boosts to outrank its own correction, so additive
- * penalties alone cannot guarantee the corrections pattern's point ("so the
- * ranker demotes the stale version instead of letting it outrank your fix").
+ * keyword base scores have a bounded lexical floor (`stableFtsScore`, in
+ * `core/lexical-score.ts` — the calibrated per-row bm25 transform
+ * `ranking.ts`'s `fuseByEntry` fuses on), while the boost sum then
+ * MULTIPLIES the base (`score *= 1 + boostSum`, {@link applyScoreContributors}).
+ * A superseded incumbent can still earn enough independent boosts to
+ * outrank its own correction, so additive penalties alone cannot guarantee
+ * the corrections pattern's point ("so the ranker demotes the stale version
+ * instead of letting it outrank your fix").
  *
  * The ceilings guarantee the demotion while keeping flagged entries VISIBLE:
- * un-demoted keyword hits floor at a 0.3 base, so any un-demoted hit outranks
- * a ceilinged one; demoted entries still list (belief FILTERING stays a
- * separate opt-in axis, `--belief`), and scores already below a ceiling keep
- * their relative ordering. Ceiling order mirrors the additive-penalty
- * severity order pinned in tests/integration/belief-state-phase1a.test.ts:
- * deprecated (mildest) > superseded > contradicted > archived.
+ * un-demoted keyword hits floor at `stableFtsScore`'s 0.3 base, so any
+ * un-demoted matching hit outranks a ceilinged one (verified end-to-end by
+ * `search-units-fusion.test.ts`'s belief-ceiling-invariant case, not just the
+ * ceiling constants below); demoted entries still list (belief FILTERING
+ * stays a separate opt-in axis, `--belief`), and scores already below a
+ * ceiling keep their relative ordering. Ceiling order mirrors the
+ * additive-penalty severity order pinned in
+ * tests/integration/belief-state-phase1a.test.ts: deprecated (mildest) >
+ * superseded > contradicted > archived.
  */
 const BELIEF_STATE_SCORE_CEILINGS: Record<string, number> = {
   deprecated: 0.28,
@@ -198,10 +203,10 @@ const BELIEF_STATE_SCORE_CEILINGS: Record<string, number> = {
  * order and displayed scores stay consistent (single scoring pipeline).
  *
  * When the ceiling clamps, the pre-clamp score is recorded as
- * `preCeilingScore` so db-search's semantic-only `minScore` floor can judge
- * the hit by what it would have scored WITHOUT the demotion — a ceiling below
- * the floor (archived 0.15 < default minScore 0.2) must demote a hit to last
- * place, never silently drop it from the results.
+ * `preCeilingScore` so db-search's final ranking comparator can order
+ * demoted hits by what they would have scored WITHOUT the demotion — a
+ * ceilinged item still lists (ranked last among un-demoted peers), never
+ * silently dropped from the results.
  */
 export function applyBeliefStateScoreCeiling(item: RankedEntryInput): void {
   const state = item.entry.beliefState;

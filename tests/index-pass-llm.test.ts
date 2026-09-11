@@ -1,3 +1,25 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * Tests for standalone index-pass engine resolution.
+ *
+ * index-redesign B5e: restored after the reconcile rewrite (`cec41361`)
+ * deleted this file along with `akm index`'s only caller of the metadata-
+ * enrichment pass. `resolveIndexPassExecution` and the `index.<pass>` config
+ * shape it resolves against were never touched by that rewrite — the pass
+ * itself is restored on the new reconcile path in `src/indexer/enrich.ts`,
+ * which calls this same function. One adaptation: the old
+ * `createEnrichmentDeadline` (a per-entry-timeout-times-entry-count
+ * `AbortSignal.timeout` budget for the old directory-batched pass) is not
+ * restored — the new content-addressed, per-blob-hash pass has no equivalent
+ * aggregate deadline, only each call's own `tryLlmFeature` timeout
+ * (`engines.<name>.timeoutMs`, default 10 minutes) — so the one test that
+ * exercised it now only asserts the unbounded `timeoutMs: null` passes
+ * through `resolveIndexPassExecution` untouched.
+ */
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,12 +28,9 @@ import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { LoweringNotice } from "../src/execution/resolved-request";
-import { createEnrichmentDeadline } from "../src/indexer/indexer";
 import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
-
-// Tests for standalone index-pass engine resolution.
 
 let envCleanup: Cleanup = () => {};
 
@@ -132,9 +151,6 @@ describe("resolveIndexPassExecution", () => {
     };
 
     expect(resolveIndexPassExecution("enrichment", config).runner?.timeoutMs).toBeNull();
-    expect(
-      createEnrichmentDeadline(resolveIndexPassExecution("enrichment", config).runner?.timeoutMs, 3),
-    ).toBeUndefined();
   });
 
   describe("per-pass engines", () => {

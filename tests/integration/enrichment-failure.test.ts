@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Regression lock for the enrichment "success after failure" bug.
+ * Regression lock for the enrichment "success after failure" bug, restored
+ * on the reconcile path (index-redesign B5e).
  *
  * When the metadata-enhance LLM call fails (here: the endpoint returns HTTP
  * 500), the indexer must NOT mark the entry `quality: "enriched"` and must NOT
@@ -11,22 +12,37 @@
  * poison the entry into a PERMANENT enrichment skip (the cache would report the
  * body already enriched on every later run) even though nothing was enhanced.
  *
- * Drives the real `akmIndex` path (not the private enrichment helper) with
+ * Drives the real `akmIndex` path (not a private enrichment helper) with
  * `semanticSearchMode: "off"` so no embedding work runs, and points the index
- * engine at a local server that always 500s.
+ * engine at a local server whose response this file controls per test.
+ *
+ * index-redesign B5e note: `akm index`'s reconcile rewrite (`cec41361`)
+ * dropped the call site this file exercised (and this file with it, in
+ * `396edcc9`); `src/indexer/enrich.ts` restores it on the new reconcile path.
+ * The cache is now keyed by content (`asset_ref = body_hash = blobHash`, see
+ * `enrich.ts`'s module doc) rather than by the entry's canonical `item_ref` —
+ * this file's assertions do not depend on the key shape, only on whether a
+ * cache row exists at all, so they carry over unchanged. Two tests from the
+ * pre-redesign version of this file are intentionally NOT restored: the
+ * credential-lease test (the new pass has no cross-candidate lease — each
+ * candidate resolves its own credential independently) and the
+ * "freezes enrichment selection" notices test (the old directory-batched
+ * pass surfaced `LoweringNotice`s on `IndexResponse.notices`; the new
+ * per-blob-hash pass does not thread them onto the response). A fourth test
+ * new to this file proves the point of keying the cache by content: a cache
+ * hit re-applies cached metadata under `--full` with no new provider call.
  */
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
-import { getConfigPath, getDbPath } from "../../src/core/paths";
+import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
-  mutateScopedEnv,
   sandboxEnvDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
@@ -38,18 +54,12 @@ let stashDir = "";
 let cleanup: Cleanup = () => {};
 let llmCallCount = 0;
 let llmSucceeds = false;
-let llmModels: string[] = [];
-let llmAuthorizations: Array<string | null> = [];
-let onLlmRequest: (() => void) | undefined;
 
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
     llmCallCount++;
-    llmAuthorizations.push(request.headers.get("authorization"));
-    onLlmRequest?.();
-    const payload = (await request.json()) as { model?: string };
-    if (typeof payload.model === "string") llmModels.push(payload.model);
+    await request.json(); // drain the body; the handler does not need its contents
     if (llmSucceeds) {
       return Response.json({
         choices: [
@@ -79,9 +89,6 @@ beforeEach(() => {
   cleanup = chain;
   llmCallCount = 0;
   llmSucceeds = false;
-  llmModels = [];
-  llmAuthorizations = [];
-  onLlmRequest = undefined;
 });
 
 afterEach(() => {
@@ -92,13 +99,15 @@ afterAll(() => {
   llmServer.stop(true);
 });
 
-test("failed enrichment does not mark the entry enriched or poison the cache", async () => {
+function writeThing(): string {
   const knowledgeDir = path.join(stashDir, "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });
-  // A bare markdown asset with no curated frontmatter → quality "generated" and
-  // incomplete metadata, so it is eligible for LLM enrichment.
-  fs.writeFileSync(path.join(knowledgeDir, "thing.md"), "# Thing\n\nSome body prose about a thing.\n");
+  const filePath = path.join(knowledgeDir, "thing.md");
+  fs.writeFileSync(filePath, "# Thing\n\nSome body prose about a thing.\n");
+  return filePath;
+}
 
+function configureEngine(apiKey?: string): void {
   saveConfig({
     semanticSearchMode: "off",
     engines: {
@@ -106,15 +115,21 @@ test("failed enrichment does not mark the entry enriched or poison the cache", a
         kind: "llm",
         endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
         model: "test-model",
+        ...(apiKey ? { apiKey } : {}),
       },
     },
     index: {
       defaults: { engine: "index" },
       // Open the metadata_enhance feature gate so the enrichment call actually
-      // runs (and then fails against the 500 server).
+      // runs.
       metadataEnhance: { enabled: true },
     },
   });
+}
+
+test("failed enrichment does not mark the entry enriched or poison the cache", async () => {
+  writeThing();
+  configureEngine();
 
   await akmIndex({ stashDir, full: true });
 
@@ -141,22 +156,8 @@ test("failed enrichment does not mark the entry enriched or poison the cache", a
 });
 
 test("missing required symbolic credential aborts indexing without provider or enrichment-cache writes", async () => {
-  const knowledgeDir = path.join(stashDir, "knowledge");
-  fs.mkdirSync(knowledgeDir, { recursive: true });
-  fs.writeFileSync(path.join(knowledgeDir, "thing.md"), "# Thing\n\nSome body prose about a thing.\n");
-
-  saveConfig({
-    semanticSearchMode: "off",
-    engines: {
-      index: {
-        kind: "llm",
-        endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-        model: "test-model",
-        apiKey: "$AKM_ENRICH_REQUIRED_KEY",
-      },
-    },
-    index: { defaults: { engine: "index" }, metadataEnhance: { enabled: true } },
-  });
+  writeThing();
+  configureEngine("$AKM_ENRICH_REQUIRED_KEY");
 
   const failure = withEnv({ AKM_ENRICH_REQUIRED_KEY: undefined }, () => akmIndex({ stashDir, full: true }));
   await expect(failure).rejects.toBeInstanceOf(ConfigError);
@@ -174,63 +175,10 @@ test("missing required symbolic credential aborts indexing without provider or e
   }
 });
 
-test("metadata enrichment keeps one preflight credential across every entry mutation", async () => {
-  llmSucceeds = true;
-  const knowledgeDir = path.join(stashDir, "knowledge");
-  fs.mkdirSync(knowledgeDir, { recursive: true });
-  fs.writeFileSync(path.join(knowledgeDir, "first.md"), "# First\n\nFirst generated body.\n");
-  fs.writeFileSync(path.join(knowledgeDir, "second.md"), "# Second\n\nSecond generated body.\n");
-
-  saveConfig({
-    semanticSearchMode: "off",
-    engines: {
-      index: {
-        kind: "llm",
-        endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-        model: "test-model",
-        apiKey: "$AKM_ENRICH_LEASE_KEY",
-      },
-    },
-    index: { defaults: { engine: "index" }, metadataEnhance: { enabled: true } },
-  });
-  const secret = "enrichment-lease-original-092";
-  onLlmRequest = () => {
-    if (llmCallCount === 1) mutateScopedEnv("AKM_ENRICH_LEASE_KEY", undefined);
-  };
-
-  await withEnv({ AKM_ENRICH_LEASE_KEY: secret }, () => akmIndex({ stashDir, full: true }));
-
-  expect(llmAuthorizations).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
-  const db = openIndexDatabase(getDbPath());
-  try {
-    expect(getAllEntries(db).filter((row) => row.entry.quality === "enriched")).toHaveLength(2);
-    const cacheCount = (db.prepare("SELECT COUNT(*) AS cnt FROM llm_enrichment_cache").get() as { cnt: number }).cnt;
-    expect(cacheCount).toBe(2);
-  } finally {
-    closeDatabase(db);
-  }
-});
-
 test("successful enrichment preserves the entry's indexed provenance", async () => {
   llmSucceeds = true;
-  const knowledgeDir = path.join(stashDir, "knowledge");
-  fs.mkdirSync(knowledgeDir, { recursive: true });
-  fs.writeFileSync(path.join(knowledgeDir, "thing.md"), "# Thing\n\nSome body prose about a thing.\n");
-
-  saveConfig({
-    semanticSearchMode: "off",
-    engines: {
-      index: {
-        kind: "llm",
-        endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-        model: "test-model",
-      },
-    },
-    index: {
-      defaults: { engine: "index" },
-      metadataEnhance: { enabled: true },
-    },
-  });
+  const filePath = writeThing();
+  configureEngine();
 
   await akmIndex({ stashDir, full: true });
 
@@ -241,7 +189,7 @@ test("successful enrichment preserves the entry's indexed provenance", async () 
         "SELECT item_ref AS itemRef, bundle_id AS bundleId, component_id AS componentId, " +
           "concept_id AS conceptId, adapter_id AS adapterId FROM entries WHERE file_path = ?",
       )
-      .get(path.join(knowledgeDir, "thing.md")) as {
+      .get(filePath) as {
       itemRef: string;
       bundleId: string;
       componentId: string;
@@ -257,53 +205,41 @@ test("successful enrichment preserves the entry's indexed provenance", async () 
   }
 });
 
-test("index freezes enrichment selection once and returns its structured notices", async () => {
+test("a cache hit re-applies cached enrichment under --full with no new provider call", async () => {
   llmSucceeds = true;
-  const knowledgeDir = path.join(stashDir, "knowledge");
-  fs.mkdirSync(knowledgeDir, { recursive: true });
-  fs.writeFileSync(path.join(knowledgeDir, "thing.md"), "# Thing\n\nSome body prose about a thing.\n");
-  const modelsPath = path.join(path.dirname(getConfigPath()), "models.json");
-  const writeModels = (model: string): void => {
-    fs.writeFileSync(
-      modelsPath,
-      JSON.stringify({
-        version: 1,
-        aliases: { reasoning: { index: { model, inference: { effort: "high" } } } },
-      }),
-    );
-  };
-  writeModels("frozen-model");
-  saveConfig({
-    semanticSearchMode: "off",
-    engines: {
-      index: {
-        kind: "llm",
-        endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-        model: "reasoning",
-      },
-    },
-    index: { defaults: { engine: "index" }, metadataEnhance: { enabled: true } },
-  });
+  writeThing();
+  configureEngine();
 
-  let mutatedAfterSummary = false;
-  const result = await akmIndex({
-    stashDir,
-    full: true,
-    onProgress: (event) => {
-      if (event.phase !== "summary" || mutatedAfterSummary) return;
-      mutatedAfterSummary = true;
-      writeModels("mutated-model");
-    },
-  });
+  await akmIndex({ stashDir, full: true });
+  expect(llmCallCount).toBe(1);
 
-  expect(mutatedAfterSummary).toBe(true);
-  expect(llmModels).toEqual(["frozen-model"]);
-  expect(result.notices).toEqual([
-    expect.objectContaining({
-      code: "untranslated-field",
-      adapter: "llm",
-      field: "inference.effort",
-    }),
-  ]);
-  expect(JSON.stringify(result.notices)).not.toContain("mutated-model");
+  const db = openIndexDatabase(getDbPath());
+  try {
+    const thing = getAllEntries(db).find((entry) => entry.entry.name === "thing");
+    expect(thing?.entry.quality).toBe("enriched");
+    expect(thing?.entry.description).toBe("Enriched thing");
+    const cacheCount = (db.prepare("SELECT COUNT(*) AS cnt FROM llm_enrichment_cache").get() as { cnt: number }).cnt;
+    expect(cacheCount).toBe(1);
+  } finally {
+    closeDatabase(db);
+  }
+
+  // The file on disk is untouched (enrichment only ever wrote the DB row), so
+  // `--full` re-parses it to `quality: "generated"` again and it becomes an
+  // enrichment candidate again — but its blob hash is unchanged, so the
+  // content-addressed cache lookup hits and no new provider call happens.
+  await akmIndex({ stashDir, full: true });
+  expect(llmCallCount).toBe(1);
+
+  const db2 = openIndexDatabase(getDbPath());
+  try {
+    const thing = getAllEntries(db2).find((entry) => entry.entry.name === "thing");
+    expect(thing?.entry.quality).toBe("enriched");
+    expect(thing?.entry.description).toBe("Enriched thing");
+    expect(thing?.entry.tags).toEqual(["enriched"]);
+    const cacheCount = (db2.prepare("SELECT COUNT(*) AS cnt FROM llm_enrichment_cache").get() as { cnt: number }).cnt;
+    expect(cacheCount).toBe(1);
+  } finally {
+    closeDatabase(db2);
+  }
 });

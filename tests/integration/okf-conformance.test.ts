@@ -15,7 +15,6 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/war
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
-import { upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
 import { createWorkflowAsset, getWorkflowTemplate } from "../../src/workflows/authoring/authoring";
 import { getNextWorkflowStep, listWorkflowRuns } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
@@ -168,7 +167,23 @@ describe("OKF first-class conformance", () => {
     const hit = search.hits.find(
       (candidate) => "path" in candidate && candidate.path === path.join(okfRoot, "unknown.md"),
     );
+    // The query only matches this entry's body ("Fragment body." lives under
+    // "## Details and Usage", not in name/description/tags/hints), so the
+    // units search path's per-unit ranking (index-redesign-contract.md B3)
+    // correctly picks that fragment unit as the entry's best-scoring match — a
+    // real capability gain over the pre-B5 index, which had no unit coverage
+    // for non-`akm` adapters at all (`okf` never calls
+    // `setMarkdownFragmentContent`, so its content only ever reached
+    // `entries_fts`'s single per-entry column, never a fragment). The hit's
+    // primary `ref` stays the bare entry (index-redesign-contract.md B5f item
+    // 1); `selectedRef` carries the genuinely resolvable anchor, the same
+    // `akm-fragment-<n>-<hash>` id `showLocal({ ref: "...#details-and-usage" })`
+    // below reaches by its heading-slug alias (`splitMarkdownFragments`,
+    // `core/asset/markdown-fragments.ts`).
     expect(hit && "ref" in hit ? hit.ref : undefined).toBe("adversarial//unknown");
+    expect(hit && "selectedRef" in hit ? hit.selectedRef : undefined).toMatch(
+      /^adversarial\/\/unknown#akm-fragment-\d+-[0-9a-f]+$/,
+    );
 
     const fragment = await showLocal({ ref: "adversarial//unknown#details-and-usage" });
     expect(fragment.content).toContain("## Details and Usage");
@@ -301,12 +316,14 @@ describe("OKF first-class conformance", () => {
         .all() as Array<{ id: number; filePath: string }>
     ).map((row) => ({ ...row, dirPath: path.dirname(row.filePath) }));
     expect(staleRows).toHaveLength(2);
-    for (const row of staleRows)
-      upsertEmbedding(
-        db,
-        row.id,
-        new Array(384).fill(0).map((_, i) => (i === 0 ? 1 : 0)),
-      );
+    const staleIds = staleRows.map((row) => row.id);
+    const stalePlaceholders = staleIds.map(() => "?").join(",");
+    // Sanity: these entries really do own `entry_units` rows before the
+    // prune, so the post-prune assertion below proves cleanup, not just an
+    // empty table to begin with.
+    expect(
+      db.prepare(`SELECT COUNT(*) AS count FROM entry_units WHERE entry_id IN (${stalePlaceholders})`).get(...staleIds),
+    ).not.toEqual({ count: 0 });
     closeDatabase(db);
 
     configure("akm");
@@ -322,17 +339,13 @@ describe("OKF first-class conformance", () => {
       ).toEqual({
         count: 0,
       });
+      // `entry_units` cascades away with its `entries` row (ON DELETE
+      // CASCADE) — the units-path analogue of the legacy entry-keyed
+      // `embeddings`/`entries_vec` cleanup this test used to assert
+      // (index redesign, B5h).
       expect(
-        switched.prepare(`SELECT COUNT(*) AS count FROM embeddings WHERE id IN (${placeholders})`).get(...ids),
+        switched.prepare(`SELECT COUNT(*) AS count FROM entry_units WHERE entry_id IN (${placeholders})`).get(...ids),
       ).toEqual({ count: 0 });
-      expect(
-        switched.prepare(`SELECT COUNT(*) AS count FROM entries_vec WHERE id IN (${placeholders})`).get(...ids),
-      ).toEqual({
-        count: 0,
-      });
-      for (const row of staleRows) {
-        expect(switched.prepare("SELECT 1 FROM index_dir_state WHERE dir_path = ?").get(row.dirPath)).toBeNull();
-      }
     } finally {
       closeDatabase(switched);
     }
@@ -504,7 +517,7 @@ describe("OKF first-class conformance", () => {
     }
   });
 
-  test("an unavailable configured secondary source preserves rows, freshness, and clean state", async () => {
+  test("an unavailable configured secondary source preserves rows and freshness", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const beforeDb = openExistingDatabase(getDbPath());
     let builtAt = "";
@@ -519,8 +532,14 @@ describe("OKF first-class conformance", () => {
     fs.renameSync(okfRoot, aside);
     try {
       resetConfigCache();
-      const result = await akmIndex({ stashDir: storage.stashDir, clean: true });
-      expect(result.clean).toEqual({ checked: 0, removed: 0, removedRefs: [], dryRun: false });
+      // `adversarial` stays a CONFIGURED bundle throughout (only its content
+      // root vanished), so reconcile's own walk-completeness guard —
+      // never `removeStaleSourceOwners`, which only fires when a bundle
+      // leaves `config.bundles` entirely — is what preserves its rows here:
+      // `walkStashFlatWithStatus` reports that root incomplete, so its
+      // gone-path sweep is skipped and `scanComplete` is false.
+      const result = await akmIndex({ stashDir: storage.stashDir });
+      expect(result.scanComplete).toBe(false);
     } finally {
       fs.renameSync(aside, okfRoot);
     }
@@ -663,9 +682,30 @@ describe("OKF first-class conformance", () => {
     const refsByPath = new Map(
       search.hits.flatMap((hit) => ("path" in hit && "ref" in hit ? [[hit.path, hit.ref] as const] : [])),
     );
+    const selectedRefsByPath = new Map(
+      search.hits.flatMap((hit) =>
+        "path" in hit && "selectedRef" in hit ? [[hit.path, hit.selectedRef] as const] : [],
+      ),
+    );
+    // Bundle qualification round-trips through the hit's primary ref, which is
+    // always the bare entry now (index-redesign-contract.md B5f item 1). As
+    // above: "Primary identity marker." is body content, not part of the
+    // name/description, so the winning unit is the (sole, heading-less) body
+    // fragment — see the comment on the "Fragment body" search assertion
+    // earlier in this file for why that's a real capability gain, not a
+    // regression. `selectedRef` carries that fragment anchor instead of `ref`.
     expect(refsByPath.get(path.join(storage.stashDir, "shared.md"))).toBe("shared");
     expect(refsByPath.get(path.join(localRoot, "shared.md"))).toBe("local//shared");
     expect(refsByPath.get(path.join(stashRoot, "shared.md"))).toBe("stash//shared");
+    expect(selectedRefsByPath.get(path.join(storage.stashDir, "shared.md"))).toMatch(
+      /^shared#akm-fragment-\d+-[0-9a-f]+$/,
+    );
+    expect(selectedRefsByPath.get(path.join(localRoot, "shared.md"))).toMatch(
+      /^local\/\/shared#akm-fragment-\d+-[0-9a-f]+$/,
+    );
+    expect(selectedRefsByPath.get(path.join(stashRoot, "shared.md"))).toMatch(
+      /^stash\/\/shared#akm-fragment-\d+-[0-9a-f]+$/,
+    );
 
     expect((await showLocal({ ref: "local//shared" })).content).toContain("Local identity marker.");
     expect((await showLocal({ ref: "stash//shared" })).content).toContain("Stash identity marker.");
