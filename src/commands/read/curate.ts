@@ -821,6 +821,26 @@ function appendCurateSupportRef(
   supportRefsByRef.set(ownerRef, [...existing, supportRef]);
 }
 
+// SWEEP KNOB — replaced by a plain constant once the fraction is chosen.
+const CURATE_DROP_OFF_FRACTION = (() => {
+  const raw = Number(process.env.AKM_CURATE_DROP_OFF);
+  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : 0;
+})();
+
+/**
+ * Relative drop-off on the FINAL curated list: keep the top hit plus every
+ * item scoring at least `CURATE_DROP_OFF_FRACTION` of it. Applied after the
+ * `limit` slice, so a cut item is not backfilled from deeper in the pool —
+ * curate returns fewer items rather than a different six.
+ */
+function applyCurateDropOff(ranked: AnnotatedCurateHit[]): AnnotatedCurateHit[] {
+  if (CURATE_DROP_OFF_FRACTION <= 0 || ranked.length <= 1) return ranked;
+  const top = ranked[0]?.rawScore ?? 0;
+  if (!(top > 0)) return ranked;
+  const cut = top * CURATE_DROP_OFF_FRACTION;
+  return ranked.filter((entry, index) => index === 0 || entry.rawScore >= cut);
+}
+
 function selectCuratedStashHits(
   query: string,
   hits: SourceSearchHit[],
@@ -833,7 +853,8 @@ function selectCuratedStashHits(
     .sort(compareCurateHits);
   const supportRefsByRef = collapsed.supportRefsByRef;
 
-  return { selected: ranked.slice(0, limit).map((entry) => entry.hit), supportRefsByRef };
+  const kept = applyCurateDropOff(ranked.slice(0, limit));
+  return { selected: kept.map((entry) => entry.hit), supportRefsByRef };
 }
 
 function collapseCurateFamilies(

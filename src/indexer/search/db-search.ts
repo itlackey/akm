@@ -427,6 +427,40 @@ function buildSearchResultComparator(query: string): (a: RankedEntryInput, b: Ra
   };
 }
 
+// SWEEP KNOB — replaced by a plain constant once the fraction is chosen.
+const SEARCH_DROP_OFF_FRACTION = (() => {
+  const raw = Number(process.env.AKM_SEARCH_DROP_OFF);
+  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : 0;
+})();
+
+/**
+ * Relative drop-off: keep the top hit plus every hit scoring at least
+ * `SEARCH_DROP_OFF_FRACTION` of it, and stop at the first hit below that. The
+ * ratio is taken on the `displaySearchScore` scale — the one the emitted
+ * `SearchHit.score` uses — so the fraction means what a reader of the results
+ * would take it to mean.
+ *
+ * This is NOT the absolute `search.minScore` floor the index redesign
+ * deleted: the ratio is taken against the run's own top hit, so the cut can
+ * never empty a result set that had a match, and a query whose candidates are
+ * all comparably strong still fills `limit`. What it removes is the tail the
+ * tier top-up pads on when the evidence has already run out.
+ *
+ * It runs AFTER the `limit` slice on purpose. Cutting the pool first would
+ * only backfill each dropped hit from deeper in the pool — measured on the
+ * curate-golden fixture, that changes which hits come back but not how many.
+ */
+function applyRelativeDropOff<T extends { score: number }>(hits: T[]): T[] {
+  if (SEARCH_DROP_OFF_FRACTION <= 0 || hits.length <= 1) return hits;
+  const top = displaySearchScore(hits[0]?.score ?? 0);
+  if (!(top > 0)) return hits;
+  const cut = top * SEARCH_DROP_OFF_FRACTION;
+  // Filter rather than truncate: the comparator's tier and name gates can
+  // place a strong hit after a weaker one, and truncating at the first hit
+  // below the cut would drop it with the tail.
+  return hits.filter((hit, index) => index === 0 || displaySearchScore(hit.score) >= cut);
+}
+
 async function searchDatabase(
   db: Database,
   query: string,
@@ -628,7 +662,7 @@ async function searchDatabase(
 
   const rankMs = Date.now() - tRank0;
 
-  const selected = beliefFiltered.slice(0, limit);
+  const selected = applyRelativeDropOff(beliefFiltered.slice(0, limit));
   const fragmentSelections = selected.flatMap((ranked) =>
     ranked.fragmentId && allowsFragmentRef(ranked.entry.type) && hasIndexedProvenance(ranked)
       ? [{ entryId: ranked.id, itemRef: ranked.itemRef, fragmentId: ranked.fragmentId }]
