@@ -24,6 +24,8 @@ import {
   getSearchHitAttribution,
   usageEventAttributionMetadata,
 } from "../../indexer/search/search-attribution";
+import { tryLlmFeature } from "../../llm/feature-gate";
+import { rerankDocuments } from "../../llm/rerank-client";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
@@ -199,13 +201,24 @@ export async function akmSearch(input: {
           disableScopedUtility: input.disableScopedUtility === true,
         });
 
+  // #951 (moved from curate in 0.9.16 — the pass was always meant for
+  // search). Applied ONCE here, to LOCAL hits only, before the source
+  // branches below divide the same `localResult.hits` between the "local"
+  // and "all" responses — so both get the rerank and neither double-applies
+  // it. `localResult` is `undefined` for `source === "registry"`, so a
+  // registry-only search never reaches this call and never pays for the
+  // reranker's HTTP request; registry hits are never reranked (registry
+  // results staying separate from stash hits is a locked contract,
+  // AGENTS.md).
+  const rerankedLocalHits = localResult ? await maybeRerankSearchHits(query, localResult.hits, config) : undefined;
+
   const registryResult =
     source === "local"
       ? undefined
       : await searchRegistry(query, { limit, includeAssets: input.assets === true, registries: config.registries });
 
   if (source === "local") {
-    const localHits = localResult?.hits ?? [];
+    const localHits = rerankedLocalHits ?? [];
     const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
@@ -254,7 +267,7 @@ export async function akmSearch(input: {
   }
 
   // source === "all"
-  const allStashHits = (localResult?.hits ?? []).slice(0, limit);
+  const allStashHits = (rerankedLocalHits ?? []).slice(0, limit);
   const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])];
   const hasResults = allStashHits.length > 0 || registryHits.length > 0;
 
@@ -276,6 +289,53 @@ export async function akmSearch(input: {
 /** Usage telemetry retains its historical semantic|keyword vocabulary. */
 function usageSearchMode(mode: SearchExecutionMode | undefined): "semantic" | "keyword" {
   return mode === "semantic" ? "semantic" : "keyword";
+}
+
+/** Default number of `searchLocal`'s already-ranked LOCAL hits sent to the reranker when `search.rerank.topN` isn't set. */
+const DEFAULT_SEARCH_RERANK_TOP_N = 8;
+
+/**
+ * Optional cross-encoder rerank pass over `akm search`'s already-ranked LOCAL
+ * hits (#951, moved from `akm curate` in 0.9.16 — the pass was always meant
+ * for search). Disabled by default (`search.rerank.enabled` is falsy) and,
+ * when enabled, best-effort: any failure (misconfigured endpoint, network
+ * error, timeout, malformed response, an out-of-range or duplicate index in
+ * the response) falls back to `searchLocal`'s own ranking unchanged — a
+ * reranker outage must never turn into a search failure.
+ *
+ * Only the top `topN` (default {@link DEFAULT_SEARCH_RERANK_TOP_N}) hits are
+ * sent (bounded request size); anything past that keeps its original
+ * position appended after the reranked prefix. The reranker changes ARRAY
+ * ORDER only — each hit's own `score` is left untouched as the retrieval
+ * score (see docs/reference/cli.md and docs/reference/configuration.md for
+ * why: `SearchHit.score` is a locked `[0,1]` contract downstream consumers
+ * compare and threshold on, while ordering is the field a rerank-aware
+ * consumer reads).
+ */
+async function maybeRerankSearchHits(
+  query: string,
+  hits: SourceSearchHit[],
+  config: AkmConfig,
+): Promise<SourceSearchHit[]> {
+  if (hits.length <= 1) return hits;
+  const rerankConfig = config.search?.rerank;
+  return tryLlmFeature(
+    "search_rerank",
+    config,
+    async () => {
+      const topN = rerankConfig?.topN ?? DEFAULT_SEARCH_RERANK_TOP_N;
+      const head = hits.slice(0, topN);
+      const tail = hits.slice(topN);
+      const documents = head.map((hit) => [hit.name, hit.description].filter(Boolean).join(" — "));
+      const ranked = await rerankDocuments(rerankConfig ?? {}, query, documents);
+      const rerankedHead = ranked
+        .map(({ index }) => head[index])
+        .filter((hit): hit is SourceSearchHit => hit !== undefined);
+      return [...rerankedHead, ...tail];
+    },
+    hits,
+    { timeoutMs: rerankConfig?.timeoutMs ?? null },
+  );
 }
 
 function maybeLogSearchEvent(
