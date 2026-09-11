@@ -493,6 +493,18 @@ query. The last case also adds one sanitized, endpoint-naming entry to
 preserved by `--shape agent` so machine consumers can lower their confidence
 instead of treating keyword fallback as healthy semantic ranking.
 
+An optional cross-encoder rerank pass (#951, `search.rerank.*` —
+`docs/reference/configuration.md`) can run over local hits before `--from
+local`/`--from all` diverge; disabled by default, and registry hits (`--from
+registry`, and the registry half of `--from all`) are never reranked. When it
+runs, it changes hit **ORDER** only — each hit's `score` stays the retrieval
+score `akm search` computed, not the reranker's own relevance value. A
+consumer that wants the reranked ranking must read hits in ARRAY ORDER, not
+by re-sorting on `score`: `score` is a fixed `[0,1]` contract (see the
+callout below) that a reranker's own scale — provider-defined, not
+calibrated to `[0,1]` — would break if it overwrote it, and a re-sort would
+silently undo the rerank for exactly the consumers it exists to serve.
+
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |

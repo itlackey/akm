@@ -363,30 +363,32 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
   }
 });
 
-// #951: curate_rerank reads a different config location (search.curateRerank,
-// not an index/improve process block) so it isn't a member of the
+// #951: search_rerank reads a different config location (search.rerank, not
+// an index/improve process block) so it isn't a member of the
 // FeatureKey/configWith() table above — covered directly here instead.
-describe("isLlmFeatureEnabled — curate_rerank (#951)", () => {
-  test("defaults to disabled when search.curateRerank is absent", () => {
+// Moved from curate to search (and renamed from curate_rerank) in 0.9.16 —
+// the pass was always meant for `akm search`, not `akm curate`.
+describe("isLlmFeatureEnabled — search_rerank (#951)", () => {
+  test("defaults to disabled when search.rerank is absent", () => {
     const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp/stash" };
-    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "search_rerank")).toBe(false);
   });
 
   test("defaults to disabled when enabled is unset", () => {
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
       stashDir: "/tmp/stash",
-      search: { curateRerank: { endpoint: "http://localhost:8080/rerank" } },
+      search: { rerank: { endpoint: "http://localhost:8080/rerank" } },
     };
-    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "search_rerank")).toBe(false);
   });
 
   test("enabled: true turns the gate on", () => {
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
       stashDir: "/tmp/stash",
-      search: { curateRerank: { enabled: true, endpoint: "http://localhost:8080/rerank" } },
+      search: { rerank: { enabled: true, endpoint: "http://localhost:8080/rerank" } },
     };
-    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(true);
+    expect(isLlmFeatureEnabled(cfg, "search_rerank")).toBe(true);
   });
 });

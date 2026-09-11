@@ -521,22 +521,35 @@ single one against a healthy endpoint.
 | --- | --- |
 | `search.graphBoost.*` | Entity-graph relevance boost: `directBoostPerEntity`/`directBoostCap` (directly related entities), `hopBoostPerEntity`/`hopBoostCap` (multi-hop, capped at `maxHops` ≤ 3), `confidenceMode` (`blend`, the only supported value), `confidenceWeight` (0–1, default `0.2`) |
 
-### Curate rerank (#951)
+### Search rerank (#951)
 
-An optional cross-encoder rerank pass over `akm curate`'s already-selected
-candidates, via a standalone `/rerank`-style HTTP endpoint (NOT one of the
-`engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a misconfigured
-endpoint, network failure, timeout, or malformed response falls back to
-curate's own ranking unchanged.
+An optional cross-encoder rerank pass over `akm search`'s already-ranked
+LOCAL stash hits, via a standalone `/rerank`-style HTTP endpoint (NOT one of
+the `engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a
+misconfigured endpoint, network failure, timeout, or malformed response
+falls back to search's own ranking unchanged. Applied once to local hits
+before `--from local`/`--from all` diverge, so both see the reranked order
+and neither double-applies it; registry hits (`--from registry`, and the
+registry half of `--from all`) are never reranked and never trigger the
+endpoint — registry results staying separate from stash hits is a locked
+contract (AGENTS.md).
+
+Reranking changes hit ORDER only. Each hit's `score` is left as the
+retrieval score `akm search` already computed — see the score-vs-order note
+in `docs/reference/cli.md`'s search section for why.
+
+Moved here from `akm curate` in 0.9.16 (`search.curateRerank` →
+`search.rerank`) — the pass was always meant for search, not curate; see
+`docs/migration/release-notes/0.9.16.md`.
 
 | Key | Purpose |
 | --- | --- |
-| `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
-| `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
-| `search.curateRerank.model` | Model name sent to the endpoint (optional) |
-| `search.curateRerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
-| `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
-| `search.curateRerank.topN` | How many of curate's ranked candidates to send (default `8`, max `50`) |
+| `search.rerank.enabled` | Turn the rerank pass on (default `false`) |
+| `search.rerank.endpoint` | Full URL of the reranker's rerank endpoint |
+| `search.rerank.model` | Model name sent to the endpoint (optional) |
+| `search.rerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
+| `search.rerank.timeoutMs` | Request timeout (default `10000`) |
+| `search.rerank.topN` | How many of search's ranked LOCAL hits to send (default `8`, max `50`) |
 
 ## Feedback
 

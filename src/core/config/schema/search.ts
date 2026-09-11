@@ -27,8 +27,9 @@ const SearchGraphBoostSchema = z
   .passthrough();
 
 /**
- * `search.curateRerank` (#951) — an optional cross-encoder rerank pass over
- * `akm curate`'s already-selected candidates.
+ * `search.rerank` (#951, moved from `search.curateRerank` in 0.9.16 — the
+ * pass was always meant for `akm search`, not `akm curate`) — an optional
+ * cross-encoder rerank pass over search's already-ranked LOCAL stash hits.
  *
  * Deliberately its own small config arm rather than a third member of the
  * `engines` map (`EngineConfigSchema` in ./engines.ts): that union's "llm" /
@@ -41,18 +42,20 @@ const SearchGraphBoostSchema = z
  * connection shape as an LLM engine without inheriting that machinery.
  *
  * `curate_rerank` was removed as a dead `llm.features.*` key in 0.8.0 (no
- * implementation ever sent a request); this is a new, real implementation,
- * disabled by default.
+ * implementation ever sent a request); 0.9.15 shipped a real implementation
+ * wired to curate under `search.curateRerank`, disabled by default; 0.9.16
+ * moves it to search and renames the key (no compatibility alias — the old
+ * key shipped hours earlier, default-off, so nobody has it meaningfully set).
  */
-export const CurateRerankConfigSchema = z
+export const SearchRerankConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     /** Full URL of the reranker's rerank endpoint, e.g. `http://host:port/rerank`. */
     endpoint: httpUrl.optional(),
     model: nonEmptyString.optional(),
-    apiKey: symbolicOrWarnApiKey("search.curateRerank.apiKey").optional(),
+    apiKey: symbolicOrWarnApiKey("search.rerank.apiKey").optional(),
     timeoutMs: positiveInt.optional(),
-    /** How many of curate's already-ranked candidates to send to the reranker. Default 8. */
+    /** How many of search's already-ranked LOCAL hits to send to the reranker. Default 8. */
     topN: positiveInt.max(50).optional(),
   })
   .passthrough();
@@ -61,6 +64,6 @@ export const SearchConfigSchema = z
   .object({
     defaultExcludeTypes: z.array(nonEmptyString).optional(),
     graphBoost: SearchGraphBoostSchema.optional(),
-    curateRerank: CurateRerankConfigSchema.optional(),
+    rerank: SearchRerankConfigSchema.optional(),
   })
   .passthrough();

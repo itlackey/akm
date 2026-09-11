@@ -45,7 +45,7 @@ export type LlmFeatureKey =
   | "reflect_proposal"
   | "remember_enrich"
   | "schema_repair"
-  | "curate_rerank";
+  | "search_rerank";
 
 /**
  * For each feature key, return the effective enabled state by reading the
@@ -56,9 +56,11 @@ const FEATURE_LOCATION: Partial<Record<LlmFeatureKey, (cfg: AkmConfig) => boolea
   graph_extraction: (cfg) => cfg.index?.graph?.enabled ?? true,
   metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
   // #951: a real implementation of the dead `curate_rerank` key removed in
-  // 0.8.0. Off by default — it requires a `search.curateRerank.endpoint` a
+  // 0.8.0, shipped in 0.9.15 wired to curate, then moved to search in 0.9.16
+  // (renamed `curate_rerank` → `search_rerank`; the pass was always meant for
+  // search). Off by default — it requires a `search.rerank.endpoint` a
   // caller must explicitly configure.
-  curate_rerank: (cfg) => Boolean(cfg.search?.curateRerank?.enabled),
+  search_rerank: (cfg) => Boolean(cfg.search?.rerank?.enabled),
   // Always on at the LLM-wrapper level. Enablement is decided ONCE at the
   // extract entry point (`akmExtract`): the `extract.enabled` process toggle
   // gates extract as a STAGE of `akm improve` (the active improve strategy, per

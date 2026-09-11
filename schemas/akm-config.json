@@ -577,7 +577,7 @@
           },
           "additionalProperties": true
         },
-        "curateRerank": {
+        "rerank": {
           "type": "object",
           "properties": {
             "enabled": {
@@ -2285,7 +2285,7 @@
               },
               "additionalProperties": true
             },
-            "curateRerank": {
+            "rerank": {
               "type": "object",
               "properties": {
                 "enabled": {
