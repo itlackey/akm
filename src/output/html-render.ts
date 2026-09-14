@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import healthTemplate from "../assets/templates/html/health.html" with { type: "text" };
 import { getDirname } from "../runtime";
+import { writeStdout } from "./stdout";
 
 const TEMPLATES_DIR = path.join(getDirname(import.meta.url), "../assets/templates/html");
 
@@ -111,5 +112,5 @@ export function deliverRendered(content: string, outputPath: string | undefined)
     fs.writeFileSync(outputPath, content.endsWith("\n") ? content : `${content}\n`);
     return;
   }
-  console.log(content);
+  writeStdout(content);
 }
