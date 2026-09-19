@@ -44,6 +44,28 @@ import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
 
+function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: string): string[] {
+  const ownersByConcept = new Map<string, string[]>();
+  for (const hit of hits) {
+    const displayRef = (hit.parentRef ?? hit.ref).split("#", 1)[0] ?? hit.ref;
+    const boundary = displayRef.indexOf("//");
+    const conceptId = boundary >= 0 ? displayRef.slice(boundary + 2) : displayRef;
+    const owner = hit.origin ?? defaultBundle ?? "working-bundle";
+    const owners = ownersByConcept.get(conceptId) ?? [];
+    if (!owners.includes(owner)) owners.push(owner);
+    ownersByConcept.set(conceptId, owners);
+  }
+
+  return [...ownersByConcept]
+    .filter(([, owners]) => owners.length > 1)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(
+      ([conceptId, owners]) =>
+        `Multiple bundles provide "${conceptId}": ${owners.join(", ")}. ` +
+        "Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly.",
+    );
+}
+
 interface SearchEventLoggingInput {
   skipLogging?: boolean;
   eventSource?: UsageEventSource;
@@ -206,6 +228,7 @@ export async function akmSearch(input: {
 
   if (source === "local") {
     const localHits = localResult?.hits ?? [];
+    const warnings = [...(localResult?.warnings ?? []), ...duplicateConceptWarnings(localHits, config.defaultBundle)];
     const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
@@ -213,7 +236,7 @@ export async function akmSearch(input: {
       source,
       hits: localHits,
       tip: hasResults ? undefined : localResult?.tip,
-      warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
+      warnings: warnings.length ? warnings : undefined,
       searchMode: localResult?.mode ?? "keyword",
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
@@ -255,7 +278,11 @@ export async function akmSearch(input: {
 
   // source === "all"
   const allStashHits = (localResult?.hits ?? []).slice(0, limit);
-  const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])];
+  const warnings = [
+    ...(localResult?.warnings ?? []),
+    ...duplicateConceptWarnings(allStashHits, config.defaultBundle),
+    ...(registryResult?.warnings ?? []),
+  ];
   const hasResults = allStashHits.length > 0 || registryHits.length > 0;
 
   const response: SearchResponse = {

@@ -30,16 +30,24 @@ import {
   validateWebsiteInputUrl,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import type { AddResponse } from "../../sources/types";
-import { bundleKeyForPath, bundleKeyForUrl, nextBundleKey } from "./bundle-config-ops";
+import {
+  type BundleInsertPosition,
+  bundleKeyForPath,
+  bundleKeyForUrl,
+  nextBundleKey,
+  placeBundle,
+} from "./bundle-config-ops";
 
-export async function akmAdd(input: {
-  ref: string;
-  name?: string;
-  options?: Record<string, unknown>;
-  writable?: boolean;
-  /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
-  adapter?: string;
-}): Promise<AddResponse> {
+export async function akmAdd(
+  input: {
+    ref: string;
+    name?: string;
+    options?: Record<string, unknown>;
+    writable?: boolean;
+    /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
+    adapter?: string;
+  } & BundleInsertPosition,
+): Promise<AddResponse> {
   const ref = input.ref.trim();
   if (!ref)
     throw new UsageError(
@@ -50,7 +58,7 @@ export async function akmAdd(input: {
   const stashDir = resolveStashDir();
 
   if (shouldAddAsWebsiteUrl(ref)) {
-    return addWebsiteSource(ref, stashDir, input.name, input.options);
+    return addWebsiteSource(ref, stashDir, input.name, input.options, input);
   }
 
   // Local directories become filesystem bundles; registry refs use the
@@ -58,13 +66,13 @@ export async function akmAdd(input: {
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
-      return addLocalSource(ref, parsed.sourcePath, stashDir, input.name, input.adapter);
+      return addLocalSource(ref, parsed.sourcePath, stashDir, input.name, input.adapter, input);
     }
   } catch {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryStash(ref, stashDir, input.writable);
+  return addRegistryStash(ref, stashDir, input.writable, input);
 }
 
 /** Add a local directory as a filesystem bundle. */
@@ -74,6 +82,7 @@ async function addLocalSource(
   stashDir: string,
   explicitName?: string,
   explicitAdapter?: string,
+  position: BundleInsertPosition = {},
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
@@ -95,11 +104,11 @@ async function addLocalSource(
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
     bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
-    bundles[bundleKey] = {
+    const entry: BundleConfigEntry = {
       path: resolvedPath,
       components: { main: { root: ".", adapter } },
     };
-    return { ...config, bundles };
+    return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
 
   const index = await akmIndex({ stashDir });
@@ -133,6 +142,7 @@ async function addWebsiteSource(
   stashDir: string,
   name?: string,
   options?: Record<string, unknown>,
+  position: BundleInsertPosition = {},
 ): Promise<AddResponse> {
   const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(ref);
   const normalizedUrl = validateWebsiteInputUrl(ref, { allowPrivateHosts });
@@ -165,9 +175,9 @@ async function addWebsiteSource(
       entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
       return config;
     }
-    bundles[key] = nextBundle;
+    const nextBundles = placeBundle(bundles, key, nextBundle, position);
     entry = bundleEntryToSourceEntry(key, nextBundle) as SourceConfigEntry;
-    return { ...config, bundles };
+    return { ...config, bundles: nextBundles };
   });
 
   const cachePaths = await ensureWebsiteMirror(entry as SourceConfigEntry, {
@@ -205,7 +215,12 @@ async function addWebsiteSource(
  * Install a stash from a registry (npm, github, git) by dispatching to the
  * matching syncable provider and persisting the lock entry.
  */
-async function addRegistryStash(ref: string, stashDir: string, writable?: boolean): Promise<AddResponse> {
+async function addRegistryStash(
+  ref: string,
+  stashDir: string,
+  writable?: boolean,
+  position: BundleInsertPosition = {},
+): Promise<AddResponse> {
   const parsedRef = parseRegistryRef(ref);
   if (writable === true && parsedRef.source !== "git" && parsedRef.source !== "github") {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
@@ -229,18 +244,21 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     ...(requiredRoots.length > 0 ? { writableRequiredRoots: requiredRoots } : {}),
   });
 
-  const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry({
-    id: synced.id,
-    source: synced.source,
-    ref: synced.ref,
-    artifactUrl: synced.artifactUrl,
-    resolvedVersion: synced.resolvedVersion,
-    resolvedRevision: synced.resolvedRevision,
-    stashRoot: synced.contentDir,
-    cacheDir: synced.cacheDir,
-    installedAt: synced.syncedAt,
-    writable: synced.writable,
-  });
+  const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry(
+    {
+      id: synced.id,
+      source: synced.source,
+      ref: synced.ref,
+      artifactUrl: synced.artifactUrl,
+      resolvedVersion: synced.resolvedVersion,
+      resolvedRevision: synced.resolvedRevision,
+      stashRoot: synced.contentDir,
+      cacheDir: synced.cacheDir,
+      installedAt: synced.syncedAt,
+      writable: synced.writable,
+    },
+    position,
+  );
 
   // The prior materialized root (if this is a re-install) — read BEFORE the lock
   // upsert overwrites it, so a moved cache root can be cleaned afterwards.
@@ -306,7 +324,10 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
  * via {@link upsertLockEntry} with the returned `bundleId`). Returns the config
  * plus the derived bundle id so the caller keys its lock entry identically.
  */
-export function upsertInstalledRegistryEntry(entry: InstalledBundle): { config: AkmConfig; bundleId: string } {
+export function upsertInstalledRegistryEntry(
+  entry: InstalledBundle,
+  position: BundleInsertPosition = {},
+): { config: AkmConfig; bundleId: string } {
   let bundleId = entry.id;
   const config = mutateConfig((current) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
@@ -327,13 +348,13 @@ export function upsertInstalledRegistryEntry(entry: InstalledBundle): { config: 
           },
         };
     const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
-    bundles[bundleId] = {
+    const nextEntry: BundleConfigEntry = {
       ...descriptor,
       ...(entry.writable === true ? { writable: true } : {}),
       ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
       components: components satisfies NonNullable<BundleConfigEntry["components"]>,
     };
-    return { ...current, bundles };
+    return { ...current, bundles: placeBundle(bundles, bundleId, nextEntry, position) };
   }).config;
   return { config, bundleId };
 }

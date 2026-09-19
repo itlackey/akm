@@ -64,14 +64,28 @@ function bundlesConfig(...ids: string[]): AkmConfig {
   return { configVersion: "0.9.0", semanticSearchMode: "auto", bundles } as unknown as AkmConfig;
 }
 
+function bundleConfigAt(id: string, bundlePath: string): AkmConfig {
+  return {
+    configVersion: "0.9.0",
+    semanticSearchMode: "auto",
+    bundles: { [id]: { path: bundlePath } },
+  } as unknown as AkmConfig;
+}
+
 describe("§11.5 bundle-rename startup guard", () => {
   test("warns on the hand-rename signature (configured id missing, unconfigured id indexed)", () => {
     seedIndexBundles(["oldname"]);
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));
     expect(warnCalls).toHaveLength(1);
     expect(warnCalls[0]).toContain("bundle identity drift");
     expect(warnCalls[0]).toContain('"newname"');
     expect(warnCalls[0]).toContain('"oldname"');
+  });
+
+  test("stays silent for a genuinely new bundle while unrelated stale rows remain (#971)", () => {
+    seedIndexBundles(["oldname"]);
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/newname"));
+    expect(warnCalls).toHaveLength(0);
   });
 
   test("stays silent when the configured bundle ids match the indexed prefixes", () => {
@@ -118,8 +132,8 @@ describe("§11.5 bundle-rename startup guard", () => {
 
   test("warns only once per process until re-armed", () => {
     seedIndexBundles(["oldname"]);
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));
     expect(warnCalls).toHaveLength(1);
   });
 });

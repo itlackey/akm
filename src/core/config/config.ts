@@ -660,18 +660,17 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
 
 /**
  * What to persist for a `mutateConfig`/`mutateConfigWithPrecommit` write:
- * the full effective `next` when the local file has no `extends` (unchanged
- * pre-#945 behavior), otherwise only the changed-or-already-local fields
- * (#945 finding above).
+ * only the changed-or-already-local fields. This applies both to inherited
+ * configs and ordinary configs: lifecycle mutations must not serialize every
+ * schema default merely because validation materialized it in memory (#972).
  */
 function configWriteBody(
   localRaw: Record<string, unknown> | undefined,
   current: AkmConfig,
   next: AkmConfig,
 ): AkmConfig {
-  const usesExtends = typeof localRaw?.extends === "string" && localRaw.extends.trim().length > 0;
-  if (!usesExtends) return next;
-  return pruneUnchangedInheritedFields(current, next, localRaw) as unknown as AkmConfig;
+  const pruned = pruneUnchangedInheritedFields(current, next, localRaw) as Record<string, unknown>;
+  return { ...pruned, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
 }
 
 /**

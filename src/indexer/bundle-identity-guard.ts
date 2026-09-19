@@ -30,6 +30,7 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import type { AkmConfig } from "../core/config/config";
 import { loadConfig } from "../core/config/config";
 import { rethrowIfTestIsolationError } from "../core/errors";
@@ -45,19 +46,25 @@ export function resetBundleIdentityGuardForTests(): void {
   guardSettled = false;
 }
 
-/** Distinct non-empty `bundle_id` prefixes persisted in the index, or `undefined` when unreadable. */
-function indexBundlePrefixes(dbPath: string): string[] | undefined {
+interface IndexedBundlePath {
+  bundleId: string;
+  filePath: string;
+}
+
+/** Bundle/path ownership persisted in the index, or `undefined` when unreadable. */
+function indexedBundlePaths(dbPath: string): IndexedBundlePath[] | undefined {
   if (!fs.existsSync(dbPath)) return undefined;
   let db: ReturnType<typeof openReadonlyExistingDatabase>;
   try {
     db = openReadonlyExistingDatabase(dbPath);
     if (!db) return undefined;
     if (!isCanonicalIndexGeneration(db)) return undefined;
-    return (
-      db
-        .prepare("SELECT DISTINCT bundle_id AS b FROM entries WHERE bundle_id IS NOT NULL AND bundle_id != ''")
-        .all() as Array<{ b: string }>
-    ).map((row) => row.b);
+    return db
+      .prepare(
+        "SELECT DISTINCT bundle_id AS bundleId, file_path AS filePath FROM entries " +
+          "WHERE bundle_id IS NOT NULL AND bundle_id != '' AND file_path IS NOT NULL AND file_path != ''",
+      )
+      .all() as IndexedBundlePath[];
   } catch (error) {
     rethrowIfTestIsolationError(error);
     // Best-effort startup diagnostic: a locked/corrupted index just means this
@@ -81,22 +88,56 @@ export function warnOnBundleRenameDrift(config: AkmConfig = loadConfig()): void 
   const configIds = new Set(Object.keys(bundles));
   if (configIds.size === 0) return;
 
-  const indexIds = indexBundlePrefixes(getDbPath());
-  if (indexIds === undefined || indexIds.length === 0) return; // nothing indexed yet — re-check later
+  const indexedPaths = indexedBundlePaths(getDbPath());
+  if (indexedPaths === undefined || indexedPaths.length === 0) return; // nothing indexed yet — re-check later
 
   // A real comparison happened over a populated index: settle so the steady
   // state is one boolean check.
   guardSettled = true;
 
+  const indexIds = [...new Set(indexedPaths.map((row) => row.bundleId))];
   const indexIdSet = new Set(indexIds);
   const configuredMissingFromIndex = [...configIds].filter((id) => !indexIdSet.has(id));
   const indexedNotConfigured = indexIds.filter((id) => !configIds.has(id));
   if (configuredMissingFromIndex.length === 0 || indexedNotConfigured.length === 0) return;
 
+  // A mismatched id set alone is also the ordinary signature of adding a new
+  // bundle while stale rows from a removed bundle still exist. Treat it as a
+  // hand rename only when the old rows physically live beneath the newly named
+  // filesystem bundle's root. This keeps the guard useful without warning on
+  // unrelated new bundles (#971).
+  const renamedConfiguredIds = configuredMissingFromIndex.filter((configuredId) => {
+    const configuredPath = config.bundles?.[configuredId]?.path;
+    if (typeof configuredPath !== "string") return false;
+    const root = path.resolve(configuredPath);
+    return indexedPaths.some((row) => {
+      if (!indexedNotConfigured.includes(row.bundleId)) return false;
+      const relative = path.relative(root, path.resolve(row.filePath));
+      return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+    });
+  });
+  if (renamedConfiguredIds.length === 0) return;
+
+  const renamedOldIds = [
+    ...new Set(
+      indexedPaths
+        .filter((row) => {
+          if (!indexedNotConfigured.includes(row.bundleId)) return false;
+          return renamedConfiguredIds.some((configuredId) => {
+            const configuredPath = config.bundles?.[configuredId]?.path;
+            if (typeof configuredPath !== "string") return false;
+            const relative = path.relative(path.resolve(configuredPath), path.resolve(row.filePath));
+            return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+          });
+        })
+        .map((row) => row.bundleId),
+    ),
+  ];
+
   warn(
     "WARNING: bundle identity drift detected. " +
-      `Configured bundle(s) with no indexed content: ${configuredMissingFromIndex.map((id) => `"${id}"`).join(", ")}; ` +
-      `indexed content under unconfigured bundle id(s): ${indexedNotConfigured.map((id) => `"${id}"`).join(", ")}. ` +
+      `Configured bundle(s) with no indexed content: ${renamedConfiguredIds.map((id) => `"${id}"`).join(", ")}; ` +
+      `indexed content under unconfigured bundle id(s): ${renamedOldIds.map((id) => `"${id}"`).join(", ")}. ` +
       "This is the signature of a hand-renamed bundle id (spec §11.5). AKM will NOT silently re-mint fresh state " +
       "under the new id. There is no rekey command in 0.9.0: either restore the previous bundle id in config.json " +
       "to reattach the existing rows, or keep the new id and run `akm index --full` to re-mint under it, accepting " +

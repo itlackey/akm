@@ -90,6 +90,18 @@ describe("akmShow stash .meta convention", () => {
   });
 });
 
+describe("akmShow legacy colon refs (#964)", () => {
+  test("returns the exact slash-form replacement without treating meta refs as assets", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(
+      /Use the slash form instead: akm show knowledge\/print\/some-doc/,
+    );
+    await expect(akmShow({ ref: "team//skill:ai/agent-tools#usage" })).rejects.toThrow(
+      /akm show team\/\/skills\/ai\/agent-tools#usage/,
+    );
+  });
+});
+
 // ── Installed ref with missing asset ─────────────────────────────────────────
 
 describe("akmShow installed ref", () => {

@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addStash, removeStash } from "../src/commands/sources/source-manage";
-import { getSources, loadConfig, saveConfig } from "../src/core/config/config";
+import { getSources, loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
+import { getConfigPath } from "../src/core/paths";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -63,6 +64,39 @@ describe("addStash", () => {
 
     expect(result.added).toBe(true);
     expect(result.entry?.name).toBe("my-stash");
+  });
+
+  test("inserts a new bundle before or after an existing bundle (#982)", () => {
+    const first = createTmpDir("akm-fs-order-first-");
+    const second = createTmpDir("akm-fs-order-second-");
+    const middle = createTmpDir("akm-fs-order-middle-");
+    addStash({ target: first, name: "first" });
+    addStash({ target: second, name: "second" });
+    addStash({ target: middle, name: "middle", before: "second" });
+    addStash({ target: "https://last.example.com", providerType: "website", name: "last", after: "second" });
+
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["first", "middle", "second", "last"]);
+  });
+
+  test("rejects ambiguous or missing bundle position targets (#982)", () => {
+    const source = createTmpDir("akm-fs-order-invalid-");
+    expect(() => addStash({ target: source, name: "source", before: "a", after: "b" })).toThrow(
+      "Only one of --before or --after",
+    );
+    expect(() => addStash({ target: source, name: "source", before: "missing" })).toThrow(
+      'Bundle position target "missing" is not configured',
+    );
+  });
+
+  test("bundle add persists only authored settings instead of schema defaults (#972)", () => {
+    fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.9.0" }, null, 2)}\n`, "utf8");
+    resetConfigCache();
+
+    addStash({ target: "lodash", providerType: "npm", name: "lodash" });
+
+    const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
+    expect(Object.keys(raw).sort()).toEqual(["bundles", "configVersion"]);
+    expect(raw.bundles).toEqual({ lodash: { npm: "lodash" } });
   });
 
   test("rejects duplicate filesystem paths", () => {

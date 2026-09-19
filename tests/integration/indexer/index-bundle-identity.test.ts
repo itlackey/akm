@@ -100,6 +100,9 @@ describe("full-index bundle identity", () => {
     const result = await akmSearch({ query: "crossbundlemarker", skipLogging: true });
     const refs = result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
     expect(refs).toEqual(["knowledge/shared", "team//knowledge/shared"]);
+    expect(result.warnings).toContain(
+      'Multiple bundles provide "knowledge/shared": primary, team. Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly.',
+    );
 
     const primary = await akmShowUnified({ ref: "primary//knowledge/shared", skipLogging: true });
     const team = await akmShowUnified({ ref: "team//knowledge/shared", skipLogging: true });

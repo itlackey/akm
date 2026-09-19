@@ -17,9 +17,45 @@
 import path from "node:path";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { bundleKeyForContentRoot, primaryBundlePath } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
 import { deriveBundleId } from "../../indexer/installations";
 
 export { primaryBundlePath };
+
+export interface BundleInsertPosition {
+  before?: string;
+  after?: string;
+}
+
+/**
+ * Insert or move a bundle at an explicit config-map position. Object insertion
+ * order is bundle resolution priority after `defaultBundle`, which always
+ * remains first. Without a position an existing key keeps its place and a new
+ * key is appended.
+ */
+export function placeBundle(
+  bundles: Record<string, BundleConfigEntry>,
+  key: string,
+  entry: BundleConfigEntry,
+  position: BundleInsertPosition = {},
+): Record<string, BundleConfigEntry> {
+  if (position.before && position.after) {
+    throw new UsageError("Only one of --before or --after may be used.");
+  }
+  const target = position.before ?? position.after;
+  if (!target) return { ...bundles, [key]: entry };
+  if (target === key) throw new UsageError(`Bundle "${key}" cannot be positioned relative to itself.`);
+  if (!(target in bundles)) throw new UsageError(`Bundle position target "${target}" is not configured.`);
+
+  const ordered: Record<string, BundleConfigEntry> = {};
+  for (const [existingKey, existingEntry] of Object.entries(bundles)) {
+    if (existingKey === key) continue;
+    if (position.before === existingKey) ordered[key] = entry;
+    ordered[existingKey] = existingEntry;
+    if (position.after === existingKey) ordered[key] = entry;
+  }
+  return ordered;
+}
 
 /**
  * Upsert the primary filesystem bundle (`{ path, writable: true }`) and point

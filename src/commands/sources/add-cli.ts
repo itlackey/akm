@@ -102,6 +102,8 @@ export const addCommand = defineJsonCommand({
       description: "Mark a git bundle as writable so changes can be pushed back",
       default: false,
     },
+    before: { type: "string", description: "Insert the new bundle before this configured bundle" },
+    after: { type: "string", description: "Insert the new bundle after this configured bundle" },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
     "allow-insecure": {
@@ -115,6 +117,7 @@ export const addCommand = defineJsonCommand({
     const ref = args.ref.trim();
     const allowInsecure = args["allow-insecure"];
     const allowDangerousKeys = allowInsecure;
+    if (args.before && args.after) throw new UsageError("Only one of --before or --after may be used.");
 
     // --provider → declarative bundle source (URL for git/website; bare
     // package spec for npm — R-013). Config-only write; content is not
@@ -152,6 +155,8 @@ export const addCommand = defineJsonCommand({
         providerType: args.provider,
         options: parsedOptions,
         writable: args.writable,
+        before: args.before,
+        after: args.after,
       });
       appendEvent({
         eventType: "add",
@@ -182,6 +187,8 @@ export const addCommand = defineJsonCommand({
       options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
       writable: args.writable,
       adapter: args.adapter,
+      before: args.before,
+      after: args.after,
     });
     appendEvent({
       eventType: "add",

@@ -122,6 +122,14 @@ export async function akmShowUnified(input: {
     if (metaRef) return showStashMeta(metaRef);
   }
 
+  const legacyReplacement = legacyColonRefReplacement(ref);
+  if (legacyReplacement) {
+    throw new NotFoundError(
+      `The legacy colon ref "${ref}" was removed in 0.9.0. Use the slash form instead: ` +
+        `akm show ${legacyReplacement}`,
+    );
+  }
+
   // Env/secret bodies have no safe fragment surface, and a fragment cannot
   // widen what the env/secret renderers expose: both always omit the body
   // (env — key names only; secret — never rendered), fragment or not. Warn
@@ -158,6 +166,19 @@ export async function akmShowUnified(input: {
     }
   }
   return result;
+}
+
+/** Actionable migration guidance for the retired `[bundle//]type:name` spelling. */
+function legacyColonRefReplacement(ref: string): string | undefined {
+  const match = /^(?:(?<bundle>[^/#]+)\/\/)?(?<type>[a-z][a-z0-9-]*):(?<name>[^#]+)(?<fragment>#.*)?$/i.exec(ref);
+  const type = match?.groups?.type?.toLowerCase();
+  const name = match?.groups?.name;
+  if (!type || !name) return undefined;
+  const stashDir = stashDirFor(type);
+  if (!stashDir) return undefined;
+  const bundle = match?.groups?.bundle;
+  const fragment = match?.groups?.fragment ?? "";
+  return `${bundle ? `${bundle}//` : ""}${stashDir}/${name}${fragment}`;
 }
 
 /**

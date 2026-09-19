@@ -8,7 +8,13 @@ import { isRemoteUrl } from "../../core/common";
 import type { BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import { bundleEntryToSourceEntry, bundlesToSourceEntries, getSources, mutateConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
-import { bundleKeyForPath, bundleKeyForUrl, nextBundleKey } from "./bundle-config-ops";
+import {
+  type BundleInsertPosition,
+  bundleKeyForPath,
+  bundleKeyForUrl,
+  nextBundleKey,
+  placeBundle,
+} from "./bundle-config-ops";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,14 +41,16 @@ export interface SourceRemoveResult {
  * `http://` or `https://`. URL sources require a `providerType` option
  * (e.g. "website", "git").
  */
-export function addStash(opts: {
-  target: string;
-  name?: string;
-  providerType?: string;
-  options?: Record<string, unknown>;
-  writable?: boolean;
-}): SourceAddResult {
-  const { target, name, providerType, options: providerOptions, writable } = opts;
+export function addStash(
+  opts: {
+    target: string;
+    name?: string;
+    providerType?: string;
+    options?: Record<string, unknown>;
+    writable?: boolean;
+  } & BundleInsertPosition,
+): SourceAddResult {
+  const { target, name, providerType, options: providerOptions, writable, before, after } = opts;
   if (providerType === "openviking") {
     throw new ConfigError("openviking is not supported in akm v1.", "INVALID_CONFIG_FILE");
   }
@@ -82,7 +90,15 @@ export function addStash(opts: {
         return config;
       }
       key = nextBundleKey(bundles, name, target);
-      bundles[key] = urlBundleDescriptor(providerType as string, target, providerOptions, writable === true);
+      const entry = urlBundleDescriptor(providerType as string, target, providerOptions, writable === true);
+      const nextBundles = placeBundle(bundles, key, entry, { before, after });
+      const next = { ...config, bundles: nextBundles };
+      result = {
+        sources: bundlesToSourceEntries(next) ?? [],
+        added: true,
+        entry: bundleEntryToSourceEntry(key, entry) as SourceConfigEntry,
+      };
+      return next;
     } else {
       const resolvedPath = path.resolve(target);
       if (bundleKeyForPath(config, resolvedPath)) {
@@ -90,18 +106,22 @@ export function addStash(opts: {
         return config;
       }
       key = nextBundleKey(bundles, name, resolvedPath);
-      bundles[key] = {
+      const entry: BundleConfigEntry = {
         path: resolvedPath,
         ...(writable === true ? { writable: true } : {}),
         components: {
           main: { root: ".", adapter: detectAdapterId(resolvedPath), writable: writable ?? true },
         },
       };
+      const nextBundles = placeBundle(bundles, key, entry, { before, after });
+      const next = { ...config, bundles: nextBundles };
+      result = {
+        sources: bundlesToSourceEntries(next) ?? [],
+        added: true,
+        entry: bundleEntryToSourceEntry(key, entry) as SourceConfigEntry,
+      };
+      return next;
     }
-    const next = { ...config, bundles };
-    const entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
-    result = { sources: bundlesToSourceEntries(next) ?? [], added: true, entry };
-    return next;
   });
   return result as SourceAddResult;
 }
