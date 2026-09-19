@@ -35,14 +35,14 @@ const MAINTENANCE_BARRIER_STALE_AFTER_MS = 5 * 60 * 1000;
  * very same instant (e.g. two `akm index` runs a scheduler launched back to
  * back) can still collide on it; retrying briefly resolves that ordinary
  * case instead of failing a legitimate concurrent invocation outright
- * (field follow-up to #956, G1). Bounded short so a genuinely wedged holder
- * still surfaces the busy error promptly rather than making a losing
- * process hang — comfortably above the barrier's normal hold time, well
- * below a length that would make this feel like the blocking lock #872
- * removed. Never applies to the rebuild lock itself, which stays
+ * (field follow-up to #956, G1). Five seconds matches the async and
+ * synchronous-activity registration paths below and tolerates a holder being
+ * descheduled under heavy process-shard load; the barrier's normal hold time
+ * remains sub-millisecond. The bound still surfaces a genuinely wedged holder
+ * promptly and never applies to the rebuild lock itself, which stays
  * non-blocking (#872).
  */
-const MAINTENANCE_BARRIER_BUSY_RETRY_BOUND_MS = 1_500;
+const MAINTENANCE_BARRIER_BUSY_RETRY_BOUND_MS = 5_000;
 
 let busyRetryBoundMsForTests: number | undefined;
 
