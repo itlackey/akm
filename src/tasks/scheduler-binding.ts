@@ -96,6 +96,10 @@ export interface InstalledSchedulerBinding {
    * `belongsToBundle` in scheduler-sync.ts).
    */
   readonly ownerBundlePath?: string;
+  /** Source-authored enabled intent recovered from backend metadata, when available. */
+  readonly sourceEnabled?: boolean;
+  /** True when the native scheduler entry was disabled outside the source document. */
+  readonly manuallyDisabled?: boolean;
 }
 
 /** Existing native ownership visible during an explicit destructive rebind. */
@@ -111,6 +115,8 @@ export interface SchedulerInstallOptions {
   readonly target?: string;
   readonly binding?: readonly string[];
   readonly contextPath?: string;
+  /** Preserve a native manual disable while reconciling other source changes. */
+  readonly preserveDisabled?: boolean;
 }
 
 /** Read-only native inventory, including artifacts whose invocation is malformed. */

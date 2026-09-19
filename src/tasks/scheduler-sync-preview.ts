@@ -25,6 +25,10 @@ export interface SchedulerPlanPreviewOperation {
   readonly ownerBundlePath?: string;
   /** Why `akm task prune` (#851) selected this entry. Absent for `sync`'s own removals. */
   readonly reason?: "invalid-context" | "dead-bundle-path";
+  /** Exact native definition currently installed. Updates only. */
+  readonly installedFingerprint?: string;
+  /** Exact native definition the update would install. Updates only. */
+  readonly expectedFingerprint?: string;
 }
 
 export interface SchedulerPlanPreview {
@@ -67,7 +71,14 @@ export function renderSchedulerPlanPreview(
     } else if (operation.kind === "install") {
       adds.push({ id: operation.binding.id, kind: "install" });
     } else {
-      updates.push({ id: operation.binding.id, kind: "update" });
+      updates.push({
+        id: operation.binding.id,
+        kind: "update",
+        ...(operation.expected.fingerprint !== undefined
+          ? { installedFingerprint: operation.expected.fingerprint }
+          : {}),
+        ...(operation.resultFingerprint !== undefined ? { expectedFingerprint: operation.resultFingerprint } : {}),
+      });
     }
   }
   return Object.freeze({

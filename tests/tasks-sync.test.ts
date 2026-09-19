@@ -85,6 +85,17 @@ describe("akmTasksSync — schedule drift", () => {
     });
   };
 
+  const backendForPath = (exec: CronExec, envPath: string) => {
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), envPath));
+    return CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath,
+    });
+  };
+
   test("installs missing, then reports unchanged on a no-op re-sync", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
@@ -102,6 +113,37 @@ describe("akmTasksSync — schedule drift", () => {
     const bundleName = path.basename(stashDir).toLowerCase();
     expect(exec.current()).toContain(`task run alpha --bundle ${bundleName} --scheduled`);
     expect(exec.current()).toContain(`task run beta --bundle ${bundleName} --scheduled`);
+  });
+
+  test("adding one task preserves existing bindings captured under a different ambient PATH", async () => {
+    const exec = memoryExec();
+    writeTask("alpha", "*/15 * * * *");
+    await akmTasksSync({ backend: backendForPath(exec, "/captured/bin:/usr/bin") });
+    const alphaBefore = exec.current().match(/# akm:task alpha BEGIN[\s\S]*?# akm:task alpha END/)?.[0];
+
+    writeTask("beta", "0 2 * * *");
+    const result = await akmTasksSync({ backend: backendForPath(exec, "/ambient/bin:/usr/bin") });
+
+    expect(result.installed).toEqual(["beta"]);
+    expect(result.updated).toEqual([]);
+    expect(result.unchanged).toEqual(["alpha"]);
+    expect(exec.current().match(/# akm:task alpha BEGIN[\s\S]*?# akm:task alpha END/)?.[0]).toBe(alphaBefore);
+  });
+
+  test("an unrelated sync preserves a task manually disabled in crontab", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    exec.write(exec.current().replace(/^([^#\n].*task run alpha.*)$/m, "# akm:disabled $1"));
+
+    writeTask("beta", "0 2 * * *");
+    const result = await akmTasksSync({ backend });
+
+    expect(result.installed).toEqual(["beta"]);
+    expect(result.updated).toEqual([]);
+    expect(result.unchanged).toEqual(["alpha"]);
+    expect(exec.current()).toContain("# akm:disabled */15 * * * *");
   });
 
   test("detects a changed schedule and reinstalls it (the bug fix)", async () => {

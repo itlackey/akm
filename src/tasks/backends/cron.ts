@@ -103,6 +103,7 @@ export interface CronBackendOptions {
 const BEGIN = (id: string) => `# akm:task ${assertCronValue(id)} BEGIN`;
 const END = (id: string) => `# akm:task ${assertCronValue(id)} END`;
 const DISABLED_PREFIX = "# akm:disabled ";
+const SOURCE_ENABLED_PREFIX = "# akm:source-enabled ";
 const BLOCK_RE = /^# akm:task ([\w.@:_-]+) BEGIN$/;
 const BLOCK_END_RE = /^# akm:task ([\w.@:_-]+) END$/;
 export const PORTABLE_CRON_LINE_LIMIT = 1000;
@@ -168,7 +169,13 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
       } else if (prior) {
         assertSchedulerNativeArtifactOwner(prior.id, task, extractCronInvocation(prior.body)?.invocation);
       }
-      const block = renderBlock(nativeId, cronLine, task.enabled, task.executionEvidenceDigest);
+      const block = renderBlock(
+        nativeId,
+        cronLine,
+        opts?.preserveDisabled ? false : task.enabled,
+        task.executionEvidenceDigest,
+        task.enabled,
+      );
       const next = upsertBlock(existing, nativeId, block);
       replaceCrontab(exec, existing, next);
     },
@@ -296,7 +303,14 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
         opts?.target,
       );
       assertPortableCronLine(cronLine);
-      return normalizeSignature(cronBlockBody(cronLine, task.enabled, task.executionEvidenceDigest));
+      return normalizeSignature(
+        cronBlockBody(
+          cronLine,
+          opts?.preserveDisabled ? false : task.enabled,
+          task.executionEvidenceDigest,
+          task.enabled,
+        ),
+      );
     },
   };
 }
@@ -310,6 +324,7 @@ function inspectCronState(crontab: string, fallbackContextPath: string): Schedul
     const artifact = cronArtifact(id, body);
     artifacts.push(artifact);
     if (!parsed) continue;
+    const sourceEnabled = cronSourceEnabled(body);
     const ref: InstalledSchedulerBinding = {
       id: schedulerLogicalBindingId(id, parsed.invocation),
       signature: fingerprint,
@@ -323,6 +338,8 @@ function inspectCronState(crontab: string, fallbackContextPath: string): Schedul
       // rather than an empty path, since the row is about to be reconciled
       // to a current one anyway (#881).
       contextPath: parsed.contextPath || fallbackContextPath,
+      ...(sourceEnabled !== undefined ? { sourceEnabled } : {}),
+      ...(cronIsDisabled(body) && sourceEnabled !== false ? { manuallyDisabled: true } : {}),
     };
     Object.defineProperty(ref, "nativeId", { value: id });
     Object.defineProperty(ref, "invocation", { value: Object.freeze([...parsed.invocation]) });
@@ -416,18 +433,30 @@ export function buildCronLine(
 }
 
 /** The crontab line as it appears inside a block — commented when disabled. */
-export function cronBlockBody(cronLine: string, enabled: boolean, executionEvidenceDigest?: string): string {
+export function cronBlockBody(
+  cronLine: string,
+  enabled: boolean,
+  executionEvidenceDigest?: string,
+  sourceEnabled = enabled,
+): string {
   const lines = [
     cronLine,
     ...(executionEvidenceDigest === undefined
       ? []
       : [`# akm:workflow-evidence ${assertSchedulerExecutionEvidenceDigest(executionEvidenceDigest)}`]),
+    `${SOURCE_ENABLED_PREFIX}${sourceEnabled}`,
   ];
   return (enabled ? lines : lines.map((line) => `${DISABLED_PREFIX}${line}`)).join("\n");
 }
 
-export function renderBlock(id: string, cronLine: string, enabled: boolean, executionEvidenceDigest?: string): string {
-  return [BEGIN(id), cronBlockBody(cronLine, enabled, executionEvidenceDigest), END(id)].join("\n");
+export function renderBlock(
+  id: string,
+  cronLine: string,
+  enabled: boolean,
+  executionEvidenceDigest?: string,
+  sourceEnabled = enabled,
+): string {
+  return [BEGIN(id), cronBlockBody(cronLine, enabled, executionEvidenceDigest, sourceEnabled), END(id)].join("\n");
 }
 
 /**
@@ -574,8 +603,26 @@ function normalizeSignature(body: string): string {
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
+    .filter((l) => !stripDisabledPrefix(l).startsWith(SOURCE_ENABLED_PREFIX))
     .filter((l) => l.length > 0)
     .join("\n");
+}
+
+function stripDisabledPrefix(line: string): string {
+  return line.startsWith(DISABLED_PREFIX) ? line.slice(DISABLED_PREFIX.length) : line;
+}
+
+function cronSourceEnabled(body: string): boolean | undefined {
+  for (const line of body.split(/\r?\n/)) {
+    const value = stripDisabledPrefix(line.trim());
+    if (value === `${SOURCE_ENABLED_PREFIX}true`) return true;
+    if (value === `${SOURCE_ENABLED_PREFIX}false`) return false;
+  }
+  return undefined;
+}
+
+function cronIsDisabled(body: string): boolean {
+  return body.trimStart().startsWith(DISABLED_PREFIX);
 }
 
 export function upsertBlock(existing: string, id: string, block: string): string {

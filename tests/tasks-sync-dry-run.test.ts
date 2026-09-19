@@ -131,6 +131,9 @@ describe("akmTasksSyncPlan — dry-run", () => {
 
     expect(preview.adds).toEqual([]);
     expect(preview.updates.map((op) => op.id)).toEqual(["alpha"]);
+    expect(preview.updates[0]?.installedFingerprint).toContain("*/15 * * * *");
+    expect(preview.updates[0]?.expectedFingerprint).toContain("45 */6 * * *");
+    expect(preview.updates[0]?.installedFingerprint).not.toBe(preview.updates[0]?.expectedFingerprint);
     expect(preview.removes).toEqual([]);
     expect(preview.hasRemovals).toBe(false);
 

@@ -220,7 +220,7 @@ export function finalizeSchedulerSyncPlan(
 
   for (const binding of desired) {
     const current = present.get(binding.id);
-    const options = installOptionsFor(coherentInput, current);
+    const options = installOptionsFor(coherentInput, current, binding);
     const resultFingerprint = coherentInput.expectedSignature?.(binding, options);
     if (!current) {
       installed.push(binding.id);
@@ -235,7 +235,16 @@ export function finalizeSchedulerSyncPlan(
       );
       continue;
     }
-    if (current.signature !== undefined && resultFingerprint !== undefined && current.signature === resultFingerprint) {
+    const sourceIntentChanged =
+      current.sourceEnabled !== undefined
+        ? current.sourceEnabled !== binding.enabled
+        : binding.enabled === false && current.manuallyDisabled === true;
+    if (
+      current.signature !== undefined &&
+      resultFingerprint !== undefined &&
+      current.signature === resultFingerprint &&
+      !sourceIntentChanged
+    ) {
       unchanged.push(binding.id);
       continue;
     }
@@ -806,12 +815,14 @@ function enumerateWorkflowLookups(
 function installOptionsFor(
   input: SchedulerSyncPlanInput,
   current: InstalledSchedulerBinding | undefined,
+  desired: SchedulerBinding,
 ): SchedulerInstallOptions | undefined {
   if (current && !input.rebind) {
     return Object.freeze({
       ...(input.bundleTarget ? { target: input.bundleTarget } : {}),
       binding: Object.freeze([...current.binding]),
       contextPath: current.contextPath,
+      ...(current.manuallyDisabled === true && desired.enabled ? { preserveDisabled: true } : {}),
     });
   }
   return input.installOptions ? Object.freeze({ ...input.installOptions }) : undefined;
