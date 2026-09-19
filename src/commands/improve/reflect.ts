@@ -32,6 +32,7 @@ import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { generatedContentRejection, stripReflectPromptScaffolding } from "../../core/content-safety";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult } from "../../core/improve-types";
@@ -705,7 +706,12 @@ export function sanitizeReflectPayload(
     }
   }
 
-  const cleanedBody = stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, ""));
+  const withoutAppendedFrontmatter = stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, ""));
+  const promptScaffolding = stripReflectPromptScaffolding(withoutAppendedFrontmatter);
+  const cleanedBody = promptScaffolding.content;
+  if (promptScaffolding.stripped) {
+    warnings.push('Removed echoed run-only "Avoid These Patterns" guidance from the proposed asset body (#963).');
+  }
 
   // #636 — deterministic description fallback (reflect-side belt-and-suspenders).
   // If the type requires a `description` and the merged frontmatter is still
@@ -2456,7 +2462,25 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       cleanupReflectDrafts(draftPathsToCleanup);
     }
 
-    payload = { ...payload, content: redactSensitiveText(payload.content, sensitiveValues) };
+    const unsafeContent = generatedContentRejection(
+      payload.content,
+      redactSensitiveText(payload.content, sensitiveValues),
+    );
+    if (unsafeContent) {
+      emitReflectFailed("parse_error", "parse_error", options.ref, {
+        ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+      });
+      return {
+        schemaVersion: 2,
+        ok: false,
+        reason: "parse_error",
+        error: unsafeContent,
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+        exitCode: result.exitCode,
+        ...reflectNoticeFields(executionNotices),
+      };
+    }
 
     const refFailure = validateReflectPayloadRef({
       payload,

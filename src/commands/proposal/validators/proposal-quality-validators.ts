@@ -69,6 +69,12 @@ import {
   WHEN_TO_USE_MAX_CHARS,
   WHEN_TO_USE_MIN_CHARS,
 } from "../../../core/authoring-rules";
+import {
+  containsRedactedContent,
+  containsReflectPromptScaffolding,
+  REDACTED_CONTENT_MARKER,
+  REFLECT_AVOID_PATTERNS_HEADING,
+} from "../../../core/content-safety";
 import { proposalContent } from "../../../core/file-change";
 
 /**
@@ -452,6 +458,40 @@ const reflectTruncationMarkerValidator: ProposalValidator = {
   },
 };
 
+/** Never promote proposal text that already contains an output-redaction marker (#962). */
+const redactedContentValidator: ProposalValidator = {
+  name: "redacted-content",
+  appliesTo(proposal) {
+    return typeof proposal.payload?.content === "string";
+  },
+  validate(proposal) {
+    if (!containsRedactedContent(proposalContent(proposal))) return [];
+    return [
+      {
+        kind: "redacted-content",
+        message: `Proposal ${proposal.id} (${proposal.ref}) contains ${REDACTED_CONTENT_MARKER}. Restore the original non-secret prose and create a clean proposal; redacted output cannot be promoted.`,
+      },
+    ];
+  },
+};
+
+/** Defense in depth when a reflect proposal bypasses creation-time sanitization (#963). */
+const reflectPromptScaffoldingValidator: ProposalValidator = {
+  name: "reflect-prompt-scaffolding",
+  appliesTo(proposal) {
+    return proposal.source === "reflect" && typeof proposal.payload?.content === "string";
+  },
+  validate(proposal) {
+    if (!containsReflectPromptScaffolding(proposalContent(proposal))) return [];
+    return [
+      {
+        kind: "reflect-prompt-scaffolding",
+        message: `Proposal ${proposal.id} (${proposal.ref}) still contains the run-only "${REFLECT_AVOID_PATTERNS_HEADING}" prompt section. Reflect the asset again before promotion.`,
+      },
+    ];
+  },
+};
+
 /**
  * Report a validator's findings as advisory.
  *
@@ -479,9 +519,9 @@ function advisory(validator: ProposalValidator): ProposalValidator {
  * Full set of quality validators in registration order. Appended onto
  * {@link defaultProposalValidators} so they run inside `validateProposal` on
  * `proposal accept` automatically. All prose-quality checks report without
- * blocking (see {@link advisory}); {@link reflectTruncationMarkerValidator} is
- * the one exception and blocks, since it guards against data loss rather than
- * prose quality.
+ * blocking (see {@link advisory}). The truncation-marker, redacted-content,
+ * and reflected-prompt-scaffolding validators block because they protect
+ * durable content rather than judging prose quality.
  */
 export const defaultProposalQualityValidators: ProposalValidator[] = [
   ...[
@@ -491,4 +531,6 @@ export const defaultProposalQualityValidators: ProposalValidator[] = [
     reflectSizeGuardValidator,
   ].map(advisory),
   reflectTruncationMarkerValidator,
+  redactedContentValidator,
+  reflectPromptScaffoldingValidator,
 ];
