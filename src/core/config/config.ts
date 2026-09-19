@@ -670,6 +670,11 @@ function configWriteBody(
   next: AkmConfig,
   persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
 ): AkmConfig {
+  // A first write keeps the established full-default scaffold. Besides being
+  // useful to a new user, the add -> rejected-install -> remove lifecycle
+  // relies on that symmetry to return a pristine install to DEFAULT_CONFIG.
+  if (localRaw === undefined) return next;
+
   const pruned = pruneUnchangedInheritedFields(current, next, localRaw) as Record<string, unknown>;
   // A caller may need to persist an explicit user choice even when it equals
   // the schema default. Interactive setup uses this for semanticSearchMode:
@@ -678,7 +683,21 @@ function configWriteBody(
   for (const key of persistTopLevelKeys) {
     if (Object.hasOwn(next, key)) pruned[key] = next[key];
   }
-  return { ...pruned, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
+  pruned.configVersion = CURRENT_CONFIG_VERSION;
+
+  // Keep existing top-level keys in their authored order. Lifecycle rollback
+  // writes the same logical object twice (add, then remove); reordering those
+  // surviving keys would violate its byte-parity guarantee even though the
+  // parsed JSON is equivalent. Newly changed keys follow in `next` order,
+  // while nested maps (notably `bundles`) retain mutation-selected ordering.
+  const ordered: Record<string, unknown> = {};
+  for (const key of Object.keys(localRaw)) {
+    if (Object.hasOwn(pruned, key)) ordered[key] = pruned[key];
+  }
+  for (const [key, value] of Object.entries(pruned)) {
+    if (!Object.hasOwn(ordered, key)) ordered[key] = value;
+  }
+  return ordered as AkmConfig;
 }
 
 /**
