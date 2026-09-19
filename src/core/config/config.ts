@@ -668,8 +668,16 @@ function configWriteBody(
   localRaw: Record<string, unknown> | undefined,
   current: AkmConfig,
   next: AkmConfig,
+  persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
 ): AkmConfig {
   const pruned = pruneUnchangedInheritedFields(current, next, localRaw) as Record<string, unknown>;
+  // A caller may need to persist an explicit user choice even when it equals
+  // the schema default. Interactive setup uses this for semanticSearchMode:
+  // "off" means the user declined the opt-in, not an incidental default that
+  // should disappear from the saved configuration.
+  for (const key of persistTopLevelKeys) {
+    if (Object.hasOwn(next, key)) pruned[key] = next[key];
+  }
   return { ...pruned, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
 }
 
@@ -709,6 +717,7 @@ export function mutateConfig(
 export async function mutateConfigWithPrecommit<T>(
   mutate: (current: AkmConfig) => AkmConfig,
   precommit: (next: AkmConfig) => Promise<T>,
+  options?: { persistTopLevelKeys?: readonly (keyof AkmConfig)[] },
 ): Promise<ConfigMutationResult & { precommit: T }> {
   cachedConfig = undefined;
   const configPath = getConfigPath();
@@ -724,7 +733,10 @@ export async function mutateConfigWithPrecommit<T>(
     const precommitResult = await precommit(next);
     if (mutated === current) return { config: current, written: false, precommit: precommitResult };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    writeConfigAtomic(configPath, sanitizeConfigForWrite(configWriteBody(localRaw, current, next)));
+    writeConfigAtomic(
+      configPath,
+      sanitizeConfigForWrite(configWriteBody(localRaw, current, next, options?.persistTopLevelKeys)),
+    );
     return { config: next, written: true, precommit: precommitResult };
   } finally {
     release();

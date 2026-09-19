@@ -252,10 +252,12 @@ async function saveSetupConfig<T>(
   original: AkmConfig,
   desired: AkmConfig,
   precommit: (config: AkmConfig) => Promise<T>,
+  options?: { persistTopLevelKeys?: readonly (keyof AkmConfig)[] },
 ): Promise<{ config: AkmConfig; precommit: T }> {
   const result = await mutateConfigWithPrecommit(
     (latest) => rebaseSetupChanges(original, desired, latest) as AkmConfig,
     precommit,
+    options,
   );
   return { config: result.config, precommit: result.precommit };
 }
@@ -679,9 +681,14 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 
   const finalConfig = finalizeSetupDraft(newConfig);
   validateCompleteConfig(finalConfig);
-  const { config: savedConfig } = await saveSetupConfig(current, finalConfig, async () => {
-    if (!opts?.noInit) await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  });
+  const { config: savedConfig } = await saveSetupConfig(
+    current,
+    finalConfig,
+    async () => {
+      if (!opts?.noInit) await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+    },
+    { persistTopLevelKeys: ["semanticSearchMode"] },
+  );
 
   // After config persistence, the task step reviews the plan and asks one
   // explicit confirmation before changing task files or scheduler state.

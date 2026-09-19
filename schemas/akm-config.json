@@ -473,6 +473,10 @@
             "type": "string",
             "minLength": 1
           },
+          "credential": {
+            "type": "string",
+            "minLength": 1
+          },
           "writable": {
             "type": "boolean"
           },
@@ -2198,6 +2202,10 @@
                 "additionalProperties": true
               },
               "npm": {
+                "type": "string",
+                "minLength": 1
+              },
+              "credential": {
                 "type": "string",
                 "minLength": 1
               },
