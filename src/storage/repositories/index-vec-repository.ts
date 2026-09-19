@@ -115,6 +115,118 @@ export function isVecFastPathComplete(db: Database): boolean {
   }
 }
 
+export interface VecFastPathRepairResult {
+  readonly available: boolean;
+  readonly repaired: number;
+  readonly removedOrphans: number;
+  readonly rejected: number;
+  readonly complete: boolean;
+  readonly error?: string;
+}
+
+/**
+ * Reconcile sqlite-vec's derived mirror from the durable BLOB embeddings.
+ *
+ * This never calls an embedding provider and never mutates the BLOB table.
+ * The readiness flag is lowered before the first mutation and is promoted only
+ * after a bidirectional aggregate check proves both ID sets match exactly.
+ */
+export function repairVecFastPath(db: Database, embeddingDim: number): VecFastPathRepairResult {
+  let repaired = 0;
+  let removedOrphans = 0;
+  let rejected = 0;
+  setVecFastPathReady(db, false);
+
+  if (!isVecAvailable(db) || !hasVecTable(db)) {
+    return { available: false, repaired, removedOrphans, rejected, complete: false };
+  }
+
+  if (!Number.isInteger(embeddingDim) || embeddingDim <= 0) {
+    return {
+      available: true,
+      repaired,
+      removedOrphans,
+      rejected,
+      complete: false,
+      error: `Invalid embedding dimension ${embeddingDim}.`,
+    };
+  }
+
+  try {
+    while (true) {
+      const orphanIds = db
+        .prepare(`
+          SELECT id FROM entries_vec
+          EXCEPT
+          SELECT id FROM embeddings
+          ORDER BY id
+          LIMIT ?
+        `)
+        .all(SQLITE_CHUNK_SIZE) as Array<{ id: number }>;
+      if (orphanIds.length === 0) break;
+      db.transaction(() => {
+        const remove = db.prepare("DELETE FROM entries_vec WHERE id = ?");
+        for (const { id } of orphanIds) {
+          remove.run(id);
+          removedOrphans++;
+        }
+      })();
+    }
+
+    let afterId = -1;
+    while (true) {
+      const missingIds = db
+        .prepare(`
+          SELECT id FROM (
+            SELECT id FROM embeddings
+            EXCEPT
+            SELECT id FROM entries_vec
+          ) AS missing
+          WHERE id > ?
+          ORDER BY id
+          LIMIT ?
+        `)
+        .all(afterId, SQLITE_CHUNK_SIZE) as Array<{ id: number }>;
+      if (missingIds.length === 0) break;
+      afterId = missingIds[missingIds.length - 1]!.id;
+      const placeholders = missingIds.map(() => "?").join(",");
+      const rows = db
+        .prepare(`SELECT id, embedding FROM embeddings WHERE id IN (${placeholders}) ORDER BY id`)
+        .all(...missingIds.map(({ id }) => id)) as Array<{ id: number; embedding: Uint8Array }>;
+
+      db.transaction(() => {
+        const insert = db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)");
+        for (const row of rows) {
+          if (row.embedding.byteLength !== embeddingDim * 4) {
+            rejected++;
+            continue;
+          }
+          try {
+            insert.run(row.id, Buffer.from(row.embedding));
+            repaired++;
+          } catch {
+            rejected++;
+          }
+        }
+      })();
+    }
+
+    const complete = rejected === 0 && isVecFastPathComplete(db);
+    setVecFastPathReady(db, complete);
+    return { available: true, repaired, removedOrphans, rejected, complete };
+  } catch (error) {
+    setVecFastPathReady(db, false);
+    return {
+      available: true,
+      repaired,
+      removedOrphans,
+      rejected,
+      complete: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 const vecTablePresent = new WeakMap<Database, boolean>();
 
 /**

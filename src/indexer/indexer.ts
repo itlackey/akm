@@ -2342,7 +2342,7 @@ function verifyIndexState(
         vecActive
           ? "sqlite-vec active"
           : vecAvailable
-            ? "JS fallback active — vec fast path degraded, run 'akm index --full' to restore"
+            ? "JS fallback active — vec fast path degraded; run 'akm index' to repair valid stored vectors or 'akm index --reembed' to regenerate incompatible ones"
             : "JS fallback active"
       }).`,
       semanticSearchEnabled: true,

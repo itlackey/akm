@@ -41,6 +41,7 @@ import {
 } from "../storage/repositories/embedding-salvage-repository";
 import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
 import { deleteMeta, getMeta, setMeta } from "../storage/repositories/index-meta-repository";
+import { EMBEDDING_DIM } from "../storage/repositories/index-schema";
 import {
   type EmbeddingCanarySample,
   getAllEntriesForEmbedding,
@@ -48,6 +49,7 @@ import {
   isVecFastPathComplete,
   isVecFastPathReady,
   purgeEmbeddings,
+  repairVecFastPath,
   sampleEmbeddedEntriesForCanary,
   setVecFastPathReady,
   upsertEmbedding,
@@ -490,6 +492,22 @@ export async function generateEmbeddingsForDb(
 
   try {
     throwIfAborted(signal);
+    if (entryIds === undefined && (!vecFastPathWasReady || !isVecFastPathComplete(db))) {
+      const storedDim = Number(getMeta(db, "embeddingDim"));
+      const expectedDim =
+        Number.isInteger(storedDim) && storedDim > 0 ? storedDim : (config.embedding?.dimension ?? EMBEDDING_DIM);
+      const repair = repairVecFastPath(db, expectedDim);
+      if (
+        repair.available &&
+        (repair.repaired > 0 || repair.removedOrphans > 0 || repair.rejected > 0 || repair.error !== undefined)
+      ) {
+        const detail = repair.error ? `; repair stopped: ${repair.error}` : "";
+        onProgress({
+          phase: "embeddings",
+          message: `[embed] Repaired ${repair.repaired} missing sqlite-vec row${repair.repaired === 1 ? "" : "s"}; removed ${repair.removedOrphans} orphan${repair.removedOrphans === 1 ? "" : "s"}; ${repair.rejected} rejected${detail}.`,
+        });
+      }
+    }
     const allEntries = getAllEntriesForEmbedding(db, targetEntryIds);
 
     let vecFailedCount = 0;
