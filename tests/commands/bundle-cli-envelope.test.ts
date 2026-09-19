@@ -26,6 +26,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isSkippableBundleUpdateLock } from "../../src/commands/sources/bundle-cli";
+import { TransientError, UsageError } from "../../src/core/errors";
 import { runCliStatus as runCli } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -57,6 +59,14 @@ afterEach(() => {
 });
 
 describe("akm bundle group — JSON envelope snapshot (S7)", () => {
+  test("update --skip-if-locked recognizes only update-relevant transient lock failures (#976)", () => {
+    for (const code of ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED", "MAINTENANCE_BARRIER_BUSY"] as const) {
+      expect(isSkippableBundleUpdateLock(new TransientError("busy", code))).toBe(true);
+    }
+    expect(isSkippableBundleUpdateLock(new TransientError("busy", "IMPROVE_LOCK_HELD"))).toBe(false);
+    expect(isSkippableBundleUpdateLock(new UsageError("bad input"))).toBe(false);
+  });
+
   test("create: success envelope carries bundleDir + created + bundle-create shape (exit 0)", async () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bundle-create-"));
     createdTmpDirs.push(parent);

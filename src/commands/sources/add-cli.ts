@@ -9,9 +9,9 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
 import { auditStashForDangerousKeys, type DangerousKeyAuditDecision } from "./dangerous-env-audit";
-import { akmRemove } from "./installed-stashes";
+import { akmRemove, akmUpdate } from "./installed-stashes";
 import { akmAdd } from "./source-add";
-import { addStash } from "./source-manage";
+import { addStash, removeStash } from "./source-manage";
 
 // ── Shared website-options helper ──────────
 
@@ -104,6 +104,10 @@ export const addCommand = defineJsonCommand({
     },
     before: { type: "string", description: "Insert the new bundle before this configured bundle" },
     after: { type: "string", description: "Insert the new bundle after this configured bundle" },
+    credential: {
+      type: "string",
+      description: "Git HTTPS bearer credential reference ($VAR or secret://name); never a literal token",
+    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
     "allow-insecure": {
@@ -120,8 +124,8 @@ export const addCommand = defineJsonCommand({
     if (args.before && args.after) throw new UsageError("Only one of --before or --after may be used.");
 
     // --provider → declarative bundle source (URL for git/website; bare
-    // package spec for npm — R-013). Config-only write; content is not
-    // synced until a later `akm update`.
+    // package spec for npm — R-013). Git is materialized below before success;
+    // other providers remain declarative until bundle update.
     if (args.provider) {
       if (shouldWarnOnPlainHttp(ref)) {
         if (!allowInsecure) {
@@ -157,7 +161,31 @@ export const addCommand = defineJsonCommand({
         writable: args.writable,
         before: args.before,
         after: args.after,
+        credential: args.credential,
       });
+      // Declarative git sources must be materialized and indexed before add
+      // reports success. This also makes --provider git behave consistently
+      // with inferred/registry git installs (#968/#970).
+      if (args.provider === "git" && result.added && result.entry?.name) {
+        let updated: Awaited<ReturnType<typeof akmUpdate>>;
+        try {
+          updated = await akmUpdate({ target: result.entry.name, allowInsecure });
+        } catch (error) {
+          removeStash(result.entry.name);
+          throw error;
+        }
+        appendEvent({
+          eventType: "add",
+          metadata: {
+            target: ref,
+            provider: args.provider,
+            name: args.name ?? null,
+            writable: args.writable === true,
+          },
+        });
+        output("add", { ...result, index: updated.index });
+        return;
+      }
       appendEvent({
         eventType: "add",
         metadata: { target: ref, provider: args.provider, name: args.name ?? null, writable: args.writable === true },
@@ -189,6 +217,7 @@ export const addCommand = defineJsonCommand({
       adapter: args.adapter,
       before: args.before,
       after: args.after,
+      credential: args.credential,
     });
     appendEvent({
       eventType: "add",

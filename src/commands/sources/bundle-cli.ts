@@ -26,8 +26,9 @@
  */
 
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
 import { addCommand } from "./add-cli";
 import { akmInit } from "./init";
@@ -128,11 +129,20 @@ const removeCommand = defineJsonCommand({
 });
 
 const updateCommand = defineJsonCommand({
-  meta: { name: "update", description: "Refresh one or all configured bundles and reconcile their index" },
+  meta: {
+    name: "update",
+    description:
+      "Refresh one or all configured bundles and reconcile their index. Git refresh is explicit; schedule this command for automatic updates.",
+  },
   args: {
     target: { type: "positional", description: "Bundle to update (id or ref)", required: false },
     all: { type: "boolean", description: "Update all configured bundles and report each outcome", default: false },
     force: { type: "boolean", description: "Force fresh download even if version is unchanged", default: false },
+    "skip-if-locked": {
+      type: "boolean",
+      description: "Exit successfully when index/state database contention shows another akm operation is active",
+      default: false,
+    },
     "allow-insecure": {
       type: "boolean",
       description:
@@ -152,13 +162,22 @@ const updateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const result = await akmUpdate({
-      target: args.target,
-      all: args.all,
-      force: args.force,
-      yes: args.yes,
-      allowInsecure: args["allow-insecure"],
-    });
+    let result: Awaited<ReturnType<typeof akmUpdate>>;
+    try {
+      result = await akmUpdate({
+        target: args.target,
+        all: args.all,
+        force: args.force,
+        yes: args.yes,
+        allowInsecure: args["allow-insecure"],
+      });
+    } catch (error) {
+      const skippable = isSkippableBundleUpdateLock(error);
+      if (!args["skip-if-locked"] || !skippable) throw error;
+      warn(`[bundle update] ${error.message}; skipping (--skip-if-locked)`);
+      output("update", { ok: true, skipped: { reason: "lock-held", code: error.code } });
+      return;
+    }
     appendEvent({
       eventType: "update",
       metadata: {
@@ -174,6 +193,13 @@ const updateCommand = defineJsonCommand({
     output("update", result);
   },
 });
+
+export function isSkippableBundleUpdateLock(error: unknown): error is TransientError {
+  return (
+    error instanceof TransientError &&
+    ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED", "MAINTENANCE_BARRIER_BUSY"].includes(error.code)
+  );
+}
 
 export const bundleCommand = defineGroupCommand({
   meta: {

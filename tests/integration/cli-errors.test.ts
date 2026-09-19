@@ -818,6 +818,16 @@ describe("S11: sectioned root help", () => {
     for (const id of VALID_ADAPTER_IDS) {
       expect(stdout).toContain(id);
     }
+    expect(stdout).toContain("--credential");
+    expect(stdout).toContain("secret://name");
+  });
+
+  test("akm bundle update --help documents scheduling and lock-aware automation (#967/#976)", () => {
+    const { status, stdout, stderr } = spawnCli(["bundle", "update", "--help"], { cwd: repoRoot });
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("--skip-if-locked");
+    expect(stdout).toContain("schedule this command");
   });
 
   test("akm task run --help includes the akm prefix on nested USAGE lines", () => {

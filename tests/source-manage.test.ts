@@ -155,6 +155,38 @@ describe("addStash", () => {
     expect(result.entry?.options).toEqual({ searchType: "text" });
   });
 
+  test("stores only a symbolic credential reference for a git source (#977)", () => {
+    const result = addStash({
+      target: "https://git.example.com/private/repo.git",
+      providerType: "git",
+      name: "private-repo",
+      credential: "$GIT_READ_TOKEN",
+    });
+
+    expect(result.added).toBe(true);
+    expect(loadConfig().bundles?.["private-repo"]?.credential).toBe("$GIT_READ_TOKEN");
+  });
+
+  test("rejects literal and non-git credentials before writing config (#977)", () => {
+    expect(() =>
+      addStash({
+        target: "https://git.example.com/private/repo.git",
+        providerType: "git",
+        name: "literal-token",
+        credential: "literal-secret-token",
+      }),
+    ).toThrow(/credential must be a \$VAR/);
+    expect(() =>
+      addStash({
+        target: "https://docs.example.com",
+        providerType: "website",
+        name: "website-token",
+        credential: "$GIT_READ_TOKEN",
+      }),
+    ).toThrow(/credential is only supported on git/);
+    expect(loadConfig().bundles).toBeUndefined();
+  });
+
   test("throws when URL source has no provider type", () => {
     expect(() => addStash({ target: "https://example.com" })).toThrow("--provider is required");
   });

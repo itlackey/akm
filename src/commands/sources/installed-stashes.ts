@@ -21,7 +21,13 @@ import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
-import { acquireConfigReadFence, bundleComponentConfig, getSources, loadConfig } from "../../core/config/config";
+import {
+  acquireConfigReadFence,
+  bundleComponentConfig,
+  getSources,
+  loadConfig,
+  resolveSecret,
+} from "../../core/config/config";
 import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
@@ -96,6 +102,7 @@ interface ManagedInstall {
   componentRoot: string;
   requiredRoots: string[];
   auditConfigGeneration: string;
+  credential?: string;
 }
 
 interface BundleAuditFence {
@@ -176,6 +183,7 @@ function listManagedInstalls(config: AkmConfig): ManagedInstall[] {
       componentRoot,
       requiredRoots: lock.localRoot ? [path.resolve(lock.localRoot, componentRoot)] : [],
       auditConfigGeneration: bundleAuditGeneration(bundle),
+      ...(bundle.credential !== undefined ? { credential: bundle.credential } : {}),
     });
   }
   return out;
@@ -907,6 +915,7 @@ function prepareWritableManagedUpdate(managed: ManagedInstall, force: boolean): 
     writable: true,
     writableRoot: stagedContentRoot,
     ...(stagedPhysicalRequiredRoots.length > 0 ? { writableRequiredRoots: stagedPhysicalRequiredRoots } : {}),
+    ...(managed.credential ? { credential: resolveSecret(managed.credential, storeSecretResolver.resolveSecret) } : {}),
   })
     .then((staged) => {
       const auditedTargetHead = gitHead(stagedRepo);
@@ -959,6 +968,9 @@ async function prepareManagedUpdate(managed: ManagedInstall, force: boolean): Pr
       force,
       writable: false,
       cacheRootDir: stagingParent,
+      ...(managed.credential
+        ? { credential: resolveSecret(managed.credential, storeSecretResolver.resolveSecret) }
+        : {}),
     });
     if (!pathAtOrBelow(staged.cacheDir, stagingParent)) {
       // Test/provider seams may return an already-isolated candidate. It remains
@@ -1076,14 +1088,18 @@ async function prepareGitPlainUpdate(
   const stagingParent = createStagingParent(path.dirname(livePaths.rootDir));
   const stagedPaths = getCachePaths(repo.canonicalUrl, stagingParent);
   try {
-    const expectedOldHead = writable ? gitHead(livePaths.repoDir) : undefined;
-    if (writable && fs.existsSync(livePaths.rootDir)) {
+    const hasLiveCheckout = writable && fs.existsSync(livePaths.repoDir);
+    const expectedOldHead = hasLiveCheckout ? gitHead(livePaths.repoDir) : undefined;
+    if (hasLiveCheckout) {
       fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
     }
     const staged = await syncMirroredRepo(gitSource, {
       force: true,
       writable,
       cacheRootDir: stagingParent,
+      ...(gitSource.credential
+        ? { credential: resolveSecret(gitSource.credential, storeSecretResolver.resolveSecret) }
+        : {}),
     });
     const configuredStagedAuditRoot = resolveComponentAuditRoot(
       resolveGitContentRoot(staged.contentDir),
@@ -1116,7 +1132,16 @@ async function prepareGitPlainUpdate(
         `Post-sync component root for "${gitSource.name ?? "git"}"`,
       );
       publishedAuditRoot = remapStagedPath(configuredStagedAuditRoot, staged.cacheDir, livePaths.rootDir);
-      publishedAuditContainmentRoot = canonicalWritablePath(livePaths.repoDir, "plain Git checkout");
+      if (hasLiveCheckout) {
+        publishedAuditContainmentRoot = canonicalWritablePath(livePaths.repoDir, "plain Git checkout");
+      } else {
+        const physicalCacheParent = canonicalWritablePath(path.dirname(livePaths.rootDir), "plain Git cache parent");
+        publishedAuditContainmentRoot = path.join(
+          physicalCacheParent,
+          path.basename(livePaths.rootDir),
+          path.relative(livePaths.rootDir, livePaths.repoDir),
+        );
+      }
       publishedAuditExpectedPhysicalRoot = path.join(
         publishedAuditContainmentRoot,
         path.relative(physicalStagedRepo, auditRoot),
@@ -1127,13 +1152,14 @@ async function prepareGitPlainUpdate(
       ...(publishedAuditRoot ? { publishedAuditRoot } : {}),
       ...(publishedAuditContainmentRoot ? { publishedAuditContainmentRoot } : {}),
       ...(publishedAuditExpectedPhysicalRoot ? { publishedAuditExpectedPhysicalRoot } : {}),
-      publication: writable
-        ? writableGitPublication({
-            stagedRepo: stagedPaths.repoDir,
-            liveRepo: livePaths.repoDir,
-            expectedOldHead,
-          })
-        : prepareDirectoryPublication(staged.cacheDir, livePaths.rootDir),
+      publication:
+        writable && hasLiveCheckout
+          ? writableGitPublication({
+              stagedRepo: stagedPaths.repoDir,
+              liveRepo: livePaths.repoDir,
+              expectedOldHead,
+            })
+          : prepareDirectoryPublication(staged.cacheDir, livePaths.rootDir),
       cleanup: () => cleanupStagingParent(stagingParent),
     };
   } catch (error) {

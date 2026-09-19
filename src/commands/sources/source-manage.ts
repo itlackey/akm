@@ -48,14 +48,18 @@ export function addStash(
     providerType?: string;
     options?: Record<string, unknown>;
     writable?: boolean;
+    credential?: string;
   } & BundleInsertPosition,
 ): SourceAddResult {
-  const { target, name, providerType, options: providerOptions, writable, before, after } = opts;
+  const { target, name, providerType, options: providerOptions, writable, credential, before, after } = opts;
   if (providerType === "openviking") {
     throw new ConfigError("openviking is not supported in akm v1.", "INVALID_CONFIG_FILE");
   }
   if (writable === true && providerType && providerType !== "filesystem" && providerType !== "git") {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
+  }
+  if (credential && providerType !== "git") {
+    throw new ConfigError("credential is only supported on git sources", "INVALID_CONFIG_FILE");
   }
   let result: SourceAddResult | undefined;
 
@@ -90,7 +94,7 @@ export function addStash(
         return config;
       }
       key = nextBundleKey(bundles, name, target);
-      const entry = urlBundleDescriptor(providerType as string, target, providerOptions, writable === true);
+      const entry = urlBundleDescriptor(providerType as string, target, providerOptions, writable === true, credential);
       const nextBundles = placeBundle(bundles, key, entry, { before, after });
       const next = { ...config, bundles: nextBundles };
       result = {
@@ -137,6 +141,7 @@ function urlBundleDescriptor(
   locator: string,
   options: Record<string, unknown> | undefined,
   writable: boolean,
+  credential?: string,
 ): BundleConfigEntry {
   if (providerType === "website") {
     // Website provider options ride on the (passthrough) website descriptor and
@@ -147,7 +152,9 @@ function urlBundleDescriptor(
     };
   }
   if (providerType === "npm") return { npm: locator };
-  if (providerType === "git") return { git: locator, ...(writable ? { writable: true } : {}) };
+  if (providerType === "git") {
+    return { git: locator, ...(writable ? { writable: true } : {}), ...(credential ? { credential } : {}) };
+  }
   throw new ConfigError(
     `unsupported source type "${providerType}"; expected filesystem, git, website, or npm`,
     "INVALID_CONFIG_FILE",

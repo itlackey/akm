@@ -264,6 +264,7 @@ akm bundle add @scope/pkg                            # From npm (managed)
 akm bundle add owner/repo                            # From GitHub (managed)
 akm bundle add ./path/to/local/bundle                   # Local directory
 akm bundle add git@github.com:org/repo.git --provider git --name my-skills --writable
+akm bundle add https://github.com/org/private.git --provider git --credential '$GIT_READ_TOKEN'
 akm registry add https://skills.sh --name skills.sh --provider skills-sh  # Add the skills.sh registry
 akm registry remove skills.sh                 # Remove the skills.sh registry
 akm bundle list                                      # List all sources
@@ -272,7 +273,11 @@ akm bundle remove <target>                           # Remove by id, ref, path, 
 akm bundle update --all                              # Update all managed sources
 akm bundle update <target> --force                   # Force re-download
 akm bundle update <target> --allow-insecure          # Approve reviewed dangerous env keys
+akm bundle update --all --skip-if-locked             # Scheduled refresh; exit 0 on DB contention
 ```
+
+Git bundles refresh only when `akm bundle update` runs. Schedule that command
+when automatic refresh is desired.
 
 ## Registries
 

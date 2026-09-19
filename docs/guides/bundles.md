@@ -45,6 +45,13 @@ akm bundle add github:itlackey/akm-stash
 
 # Mark a git bundle as writable (enables akm sync to push):
 akm bundle add git@github.com:org/skills.git --provider git --name my-skills --writable
+
+# Authenticate an HTTPS Git bundle without storing a token in its URL:
+GIT_READ_TOKEN=... akm bundle add https://github.com/org/private.git --provider git \
+  --name private --credential '$GIT_READ_TOKEN'
+
+# Control secondary-bundle resolution priority (the default bundle is always first):
+akm bundle add github:owner/team-bundle --name team --before community
 ```
 
 | Bundle kind | Input shape | Behavior |
@@ -54,7 +61,15 @@ akm bundle add git@github.com:org/skills.git --provider git --name my-skills --w
 | `npm` | `@scope/pkg` | Installed into cache, read-only |
 | `website` | Other HTTP/HTTPS URL | Crawled, converted to markdown, refreshed every 12 hours |
 
-After `akm bundle add`, run `akm index` to bring the search index up to date.
+`akm bundle add` materializes and indexes Git install refs before it reports
+success. A declarative `--provider git` add does the same, including writable
+checkouts. Other declarative provider entries are materialized by
+`akm bundle update`.
+
+Git credentials must be symbolic references: `$VAR`, `${VAR}`, or
+`secret://name`. AKM resolves the reference only at the Git subprocess boundary
+and sends it as an HTTPS bearer header; it does not put the token in the remote
+URL or `config.json`.
 
 **Website bundles.** A `website` URL is offered to a set of specialized
 fetchers (YouTube, Bluesky, X, RSS/Atom feeds) before falling back to a
@@ -97,11 +112,18 @@ staged outside its active root, audited for dangerous environment keys, and
 only then published and indexed. `akm bundle remove` disconnects a bundle and
 re-indexes without it.
 
+Bundle refresh is deliberately explicit: Git bundles do not poll upstream on
+their own. Consumers that want automatic refresh should schedule
+`akm bundle update <name>` or `akm bundle update --all`. Scheduled invocations
+should pass `--skip-if-locked` so concurrent index or improve activity becomes
+a successful skip instead of exit 75.
+
 ```sh
 # Update
 akm bundle update @scope/bundle          # One managed bundle
 akm bundle update --all                 # All managed bundles
 akm bundle update --all --force         # Force fresh download even if version unchanged
+akm bundle update --all --skip-if-locked # Scheduled refresh: exit 0 on DB contention
 akm bundle update @scope/bundle --allow-insecure  # Approve reviewed dangerous env keys
 
 # Remove
@@ -117,6 +139,17 @@ of an obsolete moved install directory; it never approves security findings.
 For `--all`, blocked and failed bundles are reported separately and later
 bundles continue. A rejected or failed bundle keeps its prior bytes, lock/config
 state, and search-index generation.
+
+Private bundles that intentionally version every file under `env/` and
+`secrets/` can place this documented marker anywhere in their root
+`.gitignore`:
+
+```gitignore
+# akm: intentionally track env and secrets
+```
+
+The stash scaffold then leaves the ignore file unchanged. Use this only for a
+private remote whose exposure policy you have reviewed.
 
 During publication AKM holds a SQLite writer transaction across the index and
 the update-owned state work. Existing readers keep seeing the prior generation,

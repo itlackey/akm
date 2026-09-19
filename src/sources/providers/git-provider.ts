@@ -7,12 +7,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import { stashDirNames } from "../../core/asset/asset-placement";
-import type { SourceConfigEntry } from "../../core/config/config";
+import { resolveSecret, type SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
-import type { SourceProvider } from "../provider";
+import type { SyncOptions as ProviderSyncOptions, SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
 import { assertNoIgnoredPathOverwrite, cloneRepo, inspectGitUpstream, runGit } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
@@ -56,8 +56,13 @@ export class GitSourceProvider implements SourceProvider {
     return this.#path;
   }
 
-  async sync(options?: { force?: boolean }): Promise<void> {
-    await syncMirroredRepo(this.#config, { force: options?.force });
+  async sync(options?: ProviderSyncOptions): Promise<void> {
+    await syncMirroredRepo(this.#config, {
+      force: options?.force,
+      ...(this.#config.credential
+        ? { credential: resolveSecret(this.#config.credential, options?.secrets?.resolveSecret) }
+        : {}),
+    });
   }
 }
 
@@ -99,7 +104,7 @@ export function getCachePaths(
 export async function ensureGitMirror(
   repo: ParsedRepoUrl,
   cachePaths: ReturnType<typeof getCachePaths>,
-  options?: { requireRepoDir?: boolean; writable?: boolean; force?: boolean },
+  options?: { requireRepoDir?: boolean; writable?: boolean; force?: boolean; credential?: string },
 ): Promise<void> {
   const requireRepoDir = options?.requireRepoDir === true;
   const writable = options?.writable === true;
@@ -115,9 +120,9 @@ export async function ensureGitMirror(
       fs.mkdirSync(cachePaths.rootDir, { recursive: true });
       if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
         // Writable repo already cloned — pull instead of re-clone to preserve local changes
-        pullRepo(cachePaths.repoDir);
+        pullRepo(cachePaths.repoDir, options?.credential);
       } else {
-        cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable);
+        cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable, options?.credential);
       }
       // Touch index file to track freshness
       fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
@@ -140,6 +145,7 @@ export async function syncMirroredRepo(config: SourceConfigEntry, options?: Sync
     requireRepoDir: true,
     writable: options?.writable ?? config.writable === true,
     force: options?.force,
+    credential: options?.credential,
   });
 
   const syncedAt = (options?.now ?? new Date()).toISOString();
@@ -157,12 +163,12 @@ export async function syncMirroredRepo(config: SourceConfigEntry, options?: Sync
   };
 }
 
-function pullRepo(repoDir: string): void {
+function pullRepo(repoDir: string, credential?: string): void {
   const status = runGit(["-C", repoDir, "status", "--porcelain"]);
   if (status.status !== 0 || status.stdout.trim()) {
     throw new UsageError(`Writable Git source at ${repoDir} has uncommitted changes; refusing to update it.`);
   }
-  const relation = inspectGitUpstream(repoDir);
+  const relation = inspectGitUpstream(repoDir, credential);
   if (relation.behind > 0 && relation.upstream) {
     if (relation.ahead > 0) {
       throw new UsageError(`Writable Git source at ${repoDir} has unpushed commits; refusing to update it.`);

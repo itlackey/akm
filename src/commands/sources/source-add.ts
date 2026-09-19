@@ -14,6 +14,7 @@ import {
   installedSourceDescriptor,
   loadConfig,
   mutateConfig,
+  resolveSecret,
 } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
@@ -44,6 +45,8 @@ export async function akmAdd(
     name?: string;
     options?: Record<string, unknown>;
     writable?: boolean;
+    /** Symbolic Git credential reference; resolved only for Git subprocesses. */
+    credential?: string;
     /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
     adapter?: string;
   } & BundleInsertPosition,
@@ -72,7 +75,7 @@ export async function akmAdd(
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryStash(ref, stashDir, input.writable, input);
+  return addRegistryStash(ref, stashDir, input.writable, input, input.credential);
 }
 
 /** Add a local directory as a filesystem bundle. */
@@ -220,10 +223,14 @@ async function addRegistryStash(
   stashDir: string,
   writable?: boolean,
   position: BundleInsertPosition = {},
+  credentialRef?: string,
 ): Promise<AddResponse> {
   const parsedRef = parseRegistryRef(ref);
   if (writable === true && parsedRef.source !== "git" && parsedRef.source !== "github") {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
+  }
+  if (credentialRef && parsedRef.source !== "git" && parsedRef.source !== "github") {
+    throw new ConfigError("credential is only supported on git sources", "INVALID_CONFIG_FILE");
   }
 
   const currentConfig = loadConfig();
@@ -242,6 +249,11 @@ async function addRegistryStash(
     writable: effectiveWritable,
     ...(effectiveWritable && priorLock?.localRoot ? { writableRoot: priorLock.localRoot } : {}),
     ...(requiredRoots.length > 0 ? { writableRequiredRoots: requiredRoots } : {}),
+    ...(credentialRef
+      ? { credential: resolveSecret(credentialRef, storeSecretResolver.resolveSecret) }
+      : existingBundle?.credential
+        ? { credential: resolveSecret(existingBundle.credential, storeSecretResolver.resolveSecret) }
+        : {}),
   });
 
   const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry(
@@ -258,6 +270,7 @@ async function addRegistryStash(
       writable: synced.writable,
     },
     position,
+    credentialRef,
   );
 
   // The prior materialized root (if this is a re-install) — read BEFORE the lock
@@ -327,6 +340,7 @@ async function addRegistryStash(
 export function upsertInstalledRegistryEntry(
   entry: InstalledBundle,
   position: BundleInsertPosition = {},
+  credential?: string,
 ): { config: AkmConfig; bundleId: string } {
   let bundleId = entry.id;
   const config = mutateConfig((current) => {
@@ -348,8 +362,10 @@ export function upsertInstalledRegistryEntry(
           },
         };
     const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
+    const effectiveCredential = credential ?? bundles[bundleId]?.credential;
     const nextEntry: BundleConfigEntry = {
       ...descriptor,
+      ...(effectiveCredential ? { credential: effectiveCredential } : {}),
       ...(entry.writable === true ? { writable: true } : {}),
       ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
       components: components satisfies NonNullable<BundleConfigEntry["components"]>,

@@ -23,6 +23,29 @@ import type {
 } from "./types";
 
 /**
+ * Pass an HTTPS bearer credential to Git without placing it in the remote URL
+ * or argv. The value exists only in the child-process environment and is never
+ * persisted or included in diagnostics.
+ */
+export function gitCredentialEnvironment(credential?: string): NodeJS.ProcessEnv {
+  if (!credential) return { ...process.env };
+  if (/[\r\n\0]/.test(credential)) {
+    throw new UsageError("Git credential contains an invalid control character.");
+  }
+  const configuredCount = process.env.GIT_CONFIG_COUNT;
+  const nextIndex = configuredCount === undefined ? 0 : Number(configuredCount);
+  if (!Number.isSafeInteger(nextIndex) || nextIndex < 0) {
+    throw new UsageError("GIT_CONFIG_COUNT must be a non-negative integer before a Git credential can be added.");
+  }
+  return {
+    ...process.env,
+    GIT_CONFIG_COUNT: String(nextIndex + 1),
+    [`GIT_CONFIG_KEY_${nextIndex}`]: "http.extraHeader",
+    [`GIT_CONFIG_VALUE_${nextIndex}`]: `Authorization: Bearer ${credential}`,
+  };
+}
+
+/**
  * Validate that a URL is safe to pass to git.
  * Allowlists https:, http:, ssh:, git: schemes and git@ SSH shorthand.
  * Rejects git protocol helpers (ext::, fd::) that can execute arbitrary commands.
@@ -158,16 +181,19 @@ function detectRegistrySearchId(ref: string): string | undefined {
   return lines.join("\n");
 }
 
-export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {
+export async function resolveRegistryArtifact(
+  parsed: ParsedRegistryRef,
+  options?: { gitCredential?: string },
+): Promise<ResolvedRegistryArtifact> {
   switch (parsed.source) {
     case "npm":
       return resolveNpmArtifact(parsed);
     case "local":
       return resolveLocalArtifact(parsed);
     case "git":
-      return resolveGitArtifact(parsed);
+      return resolveGitArtifact(parsed, options?.gitCredential);
     case "github":
-      return resolveGithubArtifact(parsed);
+      return resolveGithubArtifact(parsed, options?.gitCredential);
   }
 }
 
@@ -497,13 +523,13 @@ async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistr
   };
 }
 
-async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedRegistryArtifact> {
+async function resolveGithubArtifact(parsed: ParsedGithubRef, credential?: string): Promise<ResolvedRegistryArtifact> {
   const gitUrl = `https://github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}.git`;
   const repoBase = `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`;
 
   // Prefer git-backed installs so private GitHub repos work with the user's
   // normal git credential helper rather than requiring API-specific auth.
-  const gitResolvedRevision = resolveGitRevisionFromRemote(gitUrl, parsed.requestedRef);
+  const gitResolvedRevision = resolveGitRevisionFromRemote(gitUrl, parsed.requestedRef, credential);
   if (gitResolvedRevision) {
     return {
       id: parsed.id,
@@ -515,7 +541,7 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     };
   }
 
-  const headers = githubHeaders();
+  const headers = { ...githubHeaders(), ...(credential ? { Authorization: `Bearer ${credential}` } : {}) };
 
   if (parsed.requestedRef) {
     const commit = await tryFetchJson<Record<string, unknown>>(
@@ -575,18 +601,22 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
   };
 }
 
-function resolveGitRevisionFromRemote(url: string, requestedRef?: string): string | undefined {
+function resolveGitRevisionFromRemote(url: string, requestedRef?: string, credential?: string): string | undefined {
   validateGitUrl(url);
   const ref = requestedRef ?? "HEAD";
   if (requestedRef) validateGitRef(requestedRef);
-  const result = spawnSync("git", ["ls-remote", url, ref], { encoding: "utf8", timeout: 30_000 });
+  const result = spawnSync("git", ["ls-remote", url, ref], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: gitCredentialEnvironment(credential),
+  });
   if (result.status !== 0) return undefined;
   const firstLine = result.stdout.trim().split(/\r?\n/)[0];
   return firstLine?.split(/\s/)[0] || undefined;
 }
 
-async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {
-  const resolvedRevision = resolveGitRevisionFromRemote(parsed.url, parsed.requestedRef);
+async function resolveGitArtifact(parsed: ParsedGitRef, credential?: string): Promise<ResolvedRegistryArtifact> {
+  const resolvedRevision = resolveGitRevisionFromRemote(parsed.url, parsed.requestedRef, credential);
   if (!resolvedRevision) {
     // Unlike the GitHub path (which falls back to the REST API on a failed
     // `git ls-remote`), a plain git source has no fallback resolver — an

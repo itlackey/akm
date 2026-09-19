@@ -104,6 +104,7 @@ export function bundleEntryToSourceEntry(
   const base = {
     name: key,
     ...(bundle.writable !== undefined ? { writable: bundle.writable } : {}),
+    ...(bundle.credential !== undefined ? { credential: bundle.credential } : {}),
     ...(bundle.enabled !== undefined ? { enabled: bundle.enabled } : {}),
     ...(isPrimary ? { primary: true } : {}),
   };

@@ -29,6 +29,8 @@ export interface SyncOptions {
   writableRequiredRoots?: readonly string[];
   /** Override cache root directory — primarily for tests. */
   cacheRootDir?: string;
+  /** Resolved HTTPS bearer credential. Never persisted or included in diagnostics. */
+  credential?: string;
 }
 
 export interface SourceLockData {
