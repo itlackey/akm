@@ -219,6 +219,7 @@ describe("start URL the operator typed is not refused outright", () => {
       () =>
         fetchWebsiteMarkdownSnapshot("https://split-horizon.internal-corp.example/handbook", {
           resolveSecret: undefined,
+          resolveHostname: resolverReturning("10.20.30.40"),
         }),
       async () => new Response("<html><body>hello from the intranet</body></html>", { status: 200 }),
     );
