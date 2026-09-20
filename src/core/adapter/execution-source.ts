@@ -156,15 +156,6 @@ function nullableObject(value: unknown, path: string): ExecutionJsonObject | nul
   return value === null ? null : cloneExecutionJsonObject(value, path);
 }
 
-function nullableEnvironment(value: unknown, path: string): ExecutionJsonObject | null {
-  if (value === null) return null;
-  const environment = cloneExecutionJsonObject(value, path);
-  if (Object.values(environment).some((entry) => typeof entry !== "string")) {
-    throw new TypeError(`${path} values must be strings`);
-  }
-  return environment;
-}
-
 function nullableTimeout(value: unknown, path: string): string | number | null {
   const timeout = cloneExecutionJson(value, path);
   if (timeout !== null && typeof timeout !== "string" && typeof timeout !== "number") {
@@ -209,6 +200,18 @@ export function executionDefaultsFromFrontmatter(
   const namespace = own(frontmatter, "akm")
     ? requireMetadataMapping(frontmatter.akm, "frontmatter.akm")
     : snapshotStrictRecord({}, "frontmatter.akm");
+  for (const key of ["workspace", "environment", "runtime"] as const) {
+    const location = own(frontmatter, key)
+      ? `frontmatter.${key}`
+      : own(namespace, key)
+        ? `frontmatter.akm.${key}`
+        : undefined;
+    if (location) {
+      throw new TypeError(
+        `${location} is host-controlled and cannot be declared by an executable asset; configure the selected engine or workflow execution environment instead`,
+      );
+    }
+  }
   const out = Object.create(null) as Record<string, unknown>;
   if (kind === "command" && own(frontmatter, "agent")) {
     out.agent = nullableString(frontmatter.agent, "frontmatter.agent");
@@ -308,25 +311,6 @@ export function executionDefaultsFromFrontmatter(
       : namespacedTimeouts.get(selectedTimeoutKey);
   }
 
-  for (const key of ["workspace", "environment", "runtime"] as const) {
-    const namespaced = own(namespace, key)
-      ? key === "workspace"
-        ? nullableString(namespace[key], `frontmatter.akm.${key}`)
-        : key === "environment"
-          ? nullableEnvironment(namespace[key], `frontmatter.akm.${key}`)
-          : nullableObject(namespace[key], `frontmatter.akm.${key}`)
-      : undefined;
-    const topLevel =
-      allowTopLevelEngine && own(frontmatter, key)
-        ? key === "workspace"
-          ? nullableString(frontmatter[key], `frontmatter.${key}`)
-          : key === "environment"
-            ? nullableEnvironment(frontmatter[key], `frontmatter.${key}`)
-            : nullableObject(frontmatter[key], `frontmatter.${key}`)
-        : undefined;
-    if (topLevel !== undefined) out[key] = topLevel;
-    else if (namespaced !== undefined) out[key] = namespaced;
-  }
   return out as UnresolvedExecutionDefaults;
 }
 

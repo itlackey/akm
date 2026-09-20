@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 describe("dangerous-key install gate (C3 fail-closed)", () => {
-  test("non-TTY install with a dangerous key is BLOCKED (no --allow-insecure)", async () => {
+  test("non-TTY install with a dangerous key is BLOCKED (no --allow-dangerous-env-keys)", async () => {
     const stashRoot = makeStashWithEnv("LD_PRELOAD=/evil/lib.so\nSAFE=ok\n");
 
     const decision = await auditInstalledStashForDangerousKeys({
@@ -74,7 +74,7 @@ describe("dangerous-key install gate (C3 fail-closed)", () => {
     }
   });
 
-  test("--allow-insecure lets a dangerous-key install proceed (not blocked)", async () => {
+  test("--allow-dangerous-env-keys lets a dangerous-key install proceed (not blocked)", async () => {
     const stashRoot = makeStashWithEnv("LD_PRELOAD=/evil/lib.so\n");
 
     const decision = await auditInstalledStashForDangerousKeys({

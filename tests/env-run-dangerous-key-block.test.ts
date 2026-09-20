@@ -55,7 +55,7 @@ describe("env run dangerous-key blocking", () => {
     expect(parsed.error).toContain("GIT_CONFIG_GLOBAL");
   });
 
-  test("blocks a genuine RCE-class key (GIT_SSH_COMMAND) for a third-party stash without --allow-insecure", async () => {
+  test("blocks a genuine RCE-class key (GIT_SSH_COMMAND) for a third-party stash without --allow-dangerous-env-keys", async () => {
     const sourceDir = makeTempStash();
     fs.mkdirSync(path.join(sourceDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(sourceDir, "env", "danger.env"), "GIT_SSH_COMMAND=/tmp/evil-ssh\n", "utf8");
@@ -82,10 +82,10 @@ describe("env run dangerous-key blocking", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("Refusing to inject env from a third-party stash");
     expect(parsed.error).toContain("GIT_SSH_COMMAND");
-    expect(parsed.error).toContain("--allow-insecure");
+    expect(parsed.error).toContain("--allow-dangerous-env-keys");
   });
 
-  test("--allow-insecure warns and injects the same RCE-class key from a third-party stash", async () => {
+  test("--allow-dangerous-env-keys warns and injects the same RCE-class key from a third-party stash", async () => {
     const sourceDir = makeTempStash();
     fs.mkdirSync(path.join(sourceDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(sourceDir, "env", "danger.env"), "GIT_SSH_COMMAND=/tmp/evil-ssh\n", "utf8");
@@ -109,7 +109,7 @@ describe("env run dangerous-key blocking", () => {
           "env",
           "run",
           "vendor//env/danger",
-          "--allow-insecure",
+          "--allow-dangerous-env-keys",
           "--",
           process.execPath,
           "-e",
@@ -120,7 +120,7 @@ describe("env run dangerous-key blocking", () => {
 
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("GIT_SSH_COMMAND");
-    expect(result.stderr).toContain("--allow-insecure");
+    expect(result.stderr).toContain("--allow-dangerous-env-keys");
     expect(fs.readFileSync(markerFile, "utf8")).toBe("/tmp/evil-ssh");
   });
 });

@@ -7,6 +7,7 @@
  * values from the current bundle map in an {@link AkmConfig}.
  */
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../errors";
 import type { AkmConfig, BundleConfigEntry, ConfiguredSource, SourceConfigEntry, SourceSpec } from "./config-types";
@@ -37,6 +38,89 @@ export function bundleComponentConfig(
  */
 export function bundleContentRoot(entryPath: string, componentRoot?: string): string {
   return path.resolve(entryPath, componentRoot ?? ".");
+}
+
+/**
+ * Physical identity for an already materialized filesystem bundle.
+ *
+ * Configuration may spell the same directory through relative paths or
+ * symbolic links. Those spellings are not distinct sources: treating them as
+ * distinct would make ownership, default-source trust, and scheduler grants
+ * depend on syntax instead of the directory the OS will actually read.
+ */
+export function bundlePhysicalContentRoot(entryPath: string, componentRoot?: string): string {
+  const resolved = bundleContentRoot(entryPath, componentRoot);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch (cause) {
+    // Cache-backed sources can be configured before they are materialized.
+    // Their source descriptor remains the identity until a real path exists.
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return resolved;
+    throw new ConfigError(
+      `Unable to resolve physical bundle root ${JSON.stringify(resolved)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+}
+
+/** Whether a configured bundle participates in reads, writes, and execution. */
+export function isBundleEnabled(config: AkmConfig, bundleId: string): boolean {
+  const bundle = config.bundles?.[bundleId];
+  return bundle !== undefined && bundle.enabled !== false;
+}
+
+/**
+ * Stable identity of the origin currently installed under a bundle id.
+ *
+ * This deliberately excludes mutable policy (`enabled`, `writable`,
+ * credentials, adapter selection) and bundle contents. Ordinary updates and
+ * adapter auto-detection for the same origin keep their grant; changing the
+ * locator or component root does not.
+ */
+export function bundleSourceId(config: AkmConfig, bundleId: string): string {
+  const bundle = config.bundles?.[bundleId];
+  if (!bundle) {
+    throw new ConfigError(`Bundle ${JSON.stringify(bundleId)} is not configured.`, "INVALID_CONFIG_FILE");
+  }
+  const component = bundleComponentConfig(bundle);
+  let source: Readonly<Record<string, unknown>>;
+  if (bundle.path !== undefined) {
+    source = { kind: "filesystem", locator: bundlePhysicalContentRoot(bundle.path, component?.root) };
+  } else if (bundle.git !== undefined) {
+    source = { kind: "git", locator: normalizeInstalledGitRef("git", bundle.git) };
+  } else if (bundle.website !== undefined) {
+    // Crawl/refresh settings are mutable fetch policy, not source identity.
+    // Changing them must not silently revoke a user's scheduling decision for
+    // the same website origin.
+    source = { kind: "website", url: bundle.website.url };
+  } else if (bundle.npm !== undefined) {
+    source = { kind: "npm", locator: bundle.npm };
+  } else {
+    throw new ConfigError(`Bundle ${JSON.stringify(bundleId)} has no source descriptor.`, "INVALID_CONFIG_FILE");
+  }
+  return hashBundleSourceIdentity({
+    version: 1,
+    source,
+    registryId: bundle.registryId ?? null,
+    componentRoot: component?.root ?? ".",
+  });
+}
+
+/** Identity for an environment-only filesystem bundle not persisted in config. */
+export function filesystemBundleSourceId(contentRoot: string): string {
+  return hashBundleSourceIdentity({
+    version: 1,
+    source: { kind: "filesystem", locator: bundlePhysicalContentRoot(contentRoot) },
+    registryId: null,
+    componentRoot: ".",
+  });
+}
+
+function hashBundleSourceIdentity(identity: Readonly<Record<string, unknown>>): string {
+  return `sha256:${createHash("sha256")
+    .update("akm.bundle-source\0v1\0")
+    .update(JSON.stringify(identity))
+    .digest("hex")}`;
 }
 
 /**
@@ -71,14 +155,20 @@ export function bundleContentRoots(config: AkmConfig): { id: string; contentRoot
   const out: { id: string; contentRoot: string }[] = [];
   for (const [id, entry] of Object.entries(bundles)) {
     if (typeof entry.path !== "string" || entry.path.length === 0) continue;
-    out.push({ id, contentRoot: bundleContentRoot(entry.path, bundleComponentConfig(entry)?.root) });
+    out.push({ id, contentRoot: bundlePhysicalContentRoot(entry.path, bundleComponentConfig(entry)?.root) });
   }
   return out;
 }
 
 /** The bundle id whose resolved content root already matches `resolvedContentRoot`, if any. */
 export function bundleKeyForContentRoot(config: AkmConfig, resolvedContentRoot: string): string | undefined {
-  return bundleContentRoots(config).find((entry) => entry.contentRoot === resolvedContentRoot)?.id;
+  let physical = path.resolve(resolvedContentRoot);
+  try {
+    physical = fs.realpathSync.native(physical);
+  } catch {
+    // Compare the unresolved absolute locator when the candidate is not yet materialized.
+  }
+  return bundleContentRoots(config).find((entry) => entry.contentRoot === physical)?.id;
 }
 
 export function bundlesToSourceEntries(config: AkmConfig): SourceConfigEntry[] | undefined {
@@ -247,6 +337,11 @@ export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] 
     }
   }
   return out;
+}
+
+/** Active sources in the same deterministic order as `resolveConfiguredSources`. */
+export function resolveActiveConfiguredSources(config: AkmConfig): ConfiguredSource[] {
+  return resolveConfiguredSources(config).filter((source) => source.enabled !== false);
 }
 
 function toConfiguredSource(persisted: SourceConfigEntry, isPrimary: boolean): ConfiguredSource | undefined {

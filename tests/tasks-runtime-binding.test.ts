@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDoctor, akmTasksSync } from "../src/commands/tasks/tasks";
+import { bundleSourceId } from "../src/core/config/config-sources";
+import type { AkmConfig } from "../src/core/config/config-types";
 import type { SchedulerBackend, SchedulerInstallOptions } from "../src/tasks/backends/types";
 import { schedulerContextDescriptor, writeSchedulerContextDescriptor } from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -52,10 +54,15 @@ function writeTask(stashDir: string): void {
 }
 
 function configureStash(stashDir: string): void {
-  writeSandboxConfig({
+  const base = {
+    configVersion: "0.9.0",
+    semanticSearchMode: "off",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/ping" }] },
+  } as AkmConfig;
+  writeSandboxConfig({
+    ...base,
+    scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/ping", sourceId: bundleSourceId(base, "stash") }] },
   });
 }
 

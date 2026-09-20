@@ -827,13 +827,13 @@ async function auditPreparedUpdate(
   prepared: PreparedUpdate,
   id: string,
   ref: string,
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
 ): Promise<void> {
   updateTransactionHook("staged", id);
   const decision = await auditStashForDangerousKeys({
     stashRoot: prepared.auditRoot,
     ref,
-    allowDangerousKeys: allowInsecure,
+    allowDangerousKeys: allowDangerousEnvKeys,
     isTTY: process.stdin.isTTY === true,
     operation: "update",
     renderBlockedError: false,
@@ -1013,12 +1013,12 @@ async function publishPreparedPlainUpdate(
   ref: string,
   prepared: PreparedUpdate,
   stashDir: string,
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
   full: boolean,
   expectedConfigGeneration: string,
 ): Promise<Awaited<ReturnType<typeof akmIndex>>> {
   try {
-    await auditPreparedUpdate(prepared, id, ref, allowInsecure);
+    await auditPreparedUpdate(prepared, id, ref, allowDangerousEnvKeys);
     return await withAssetMutationLease("source-update", async () => {
       let transaction: UnifiedUpdateTransaction | undefined;
       let releaseConfigFence: (() => void) | undefined;
@@ -1171,7 +1171,7 @@ async function prepareGitPlainUpdate(
 async function syncGitPlainSource(
   gitSource: ReturnType<typeof getSources>[number],
   stashDir: string,
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
 ): Promise<{ item: UpdatePlainSyncedItem; index: Awaited<ReturnType<typeof akmIndex>> }> {
   const id = gitSource.name ?? gitSource.url ?? "";
   const currentConfig = loadConfig();
@@ -1179,7 +1179,15 @@ async function syncGitPlainSource(
   const ref = currentSource.url ?? "";
   const fence = bundleAuditFence(currentConfig, id);
   const prepared = await prepareGitPlainUpdate(currentSource, fence.componentRoot, fence.writable);
-  const index = await publishPreparedPlainUpdate(id, ref, prepared, stashDir, allowInsecure, true, fence.generation);
+  const index = await publishPreparedPlainUpdate(
+    id,
+    ref,
+    prepared,
+    stashDir,
+    allowDangerousEnvKeys,
+    true,
+    fence.generation,
+  );
   return { item: { id, kind: "git", ref }, index };
 }
 
@@ -1217,7 +1225,7 @@ async function prepareWebsitePlainUpdate(
 async function syncWebsitePlainSource(
   websiteSource: ReturnType<typeof getSources>[number],
   stashDir: string,
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
 ): Promise<{ item: UpdatePlainSyncedItem; index: Awaited<ReturnType<typeof akmIndex>> }> {
   const id = websiteSource.name ?? websiteSource.url ?? "";
   const currentConfig = loadConfig();
@@ -1225,7 +1233,15 @@ async function syncWebsitePlainSource(
   const ref = currentSource.url ?? "";
   const fence = bundleAuditFence(currentConfig, id);
   const prepared = await prepareWebsitePlainUpdate(currentSource, fence.componentRoot);
-  const index = await publishPreparedPlainUpdate(id, ref, prepared, stashDir, allowInsecure, true, fence.generation);
+  const index = await publishPreparedPlainUpdate(
+    id,
+    ref,
+    prepared,
+    stashDir,
+    allowDangerousEnvKeys,
+    true,
+    fence.generation,
+  );
   return { item: { id, kind: "website", ref }, index };
 }
 
@@ -1235,9 +1251,9 @@ async function updateGitSource(
   target: string,
   all: boolean,
   gitSource: ReturnType<typeof getSources>[number],
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
 ): Promise<UpdateResponse> {
-  const synced = await syncGitPlainSource(gitSource, stashDir, allowInsecure);
+  const synced = await syncGitPlainSource(gitSource, stashDir, allowDangerousEnvKeys);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -1247,9 +1263,9 @@ async function updateWebsiteSource(
   target: string,
   all: boolean,
   websiteSource: ReturnType<typeof getSources>[number],
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
 ): Promise<UpdateResponse> {
-  const synced = await syncWebsitePlainSource(websiteSource, stashDir, allowInsecure);
+  const synced = await syncWebsitePlainSource(websiteSource, stashDir, allowDangerousEnvKeys);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -1325,7 +1341,7 @@ async function updateManagedInstall(
   force: boolean,
   yes: boolean,
   stashDir: string,
-  allowInsecure: boolean,
+  allowDangerousEnvKeys: boolean,
 ): Promise<{ item: UpdateResultItem; index: Awaited<ReturnType<typeof akmIndex>> }> {
   // No pre-cleanup of the old root, even under --force: the providers already
   // re-materialize staging-first (git clones into a `.tmp-*` sibling and swaps
@@ -1335,7 +1351,7 @@ async function updateManagedInstall(
   // config/lock publication and reindexing both succeed.
   const prepared = await prepareManagedUpdate(managed, force);
   try {
-    await auditPreparedUpdate(prepared, managed.installId, managed.ref, allowInsecure);
+    await auditPreparedUpdate(prepared, managed.installId, managed.ref, allowDangerousEnvKeys);
     const synced = prepared.synced;
 
     const installedEntry: InstalledBundle = {
@@ -1563,14 +1579,14 @@ export async function akmUpdate(input?: {
    */
   yes?: boolean;
   /** Explicitly permit staged dangerous environment keys after warning. */
-  allowInsecure?: boolean;
+  allowDangerousEnvKeys?: boolean;
 }): Promise<UpdateResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const target = input?.target?.trim();
   const all = input?.all === true;
   const force = input?.force === true;
   const yes = input?.yes === true;
-  const allowInsecure = input?.allowInsecure === true;
+  const allowDangerousEnvKeys = input?.allowDangerousEnvKeys === true;
   const config = loadConfig();
   const managedInstalls = listManagedInstalls(config);
 
@@ -1578,7 +1594,7 @@ export async function akmUpdate(input?: {
     // Registry-managed install (lock-backed) — re-download from its locator.
     const managed = resolveManagedTarget(config, target);
     if (managed) {
-      const updated = await updateManagedInstall(managed, force, yes, stashDir, allowInsecure);
+      const updated = await updateManagedInstall(managed, force, yes, stashDir, allowDangerousEnvKeys);
       return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
     }
 
@@ -1601,7 +1617,7 @@ export async function akmUpdate(input?: {
       }
       return false;
     });
-    if (gitMatch) return updateGitSource(stashDir, target, all, gitMatch, allowInsecure);
+    if (gitMatch) return updateGitSource(stashDir, target, all, gitMatch, allowDangerousEnvKeys);
 
     const websiteMatch = stashes.find((s) => {
       if (s.type !== "website") return false;
@@ -1610,7 +1626,7 @@ export async function akmUpdate(input?: {
       if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
       return false;
     });
-    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch, allowInsecure);
+    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch, allowDangerousEnvKeys);
 
     // Plain npm source (bundle without a lock) — sync via the registry
     // pipeline and promote to a managed install (see
@@ -1628,7 +1644,7 @@ export async function akmUpdate(input?: {
         force,
         yes,
         stashDir,
-        allowInsecure,
+        allowDangerousEnvKeys,
       );
       return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
     }
@@ -1651,7 +1667,7 @@ export async function akmUpdate(input?: {
   let latestIndex: Awaited<ReturnType<typeof akmIndex>> | undefined;
   for (const managed of selected) {
     try {
-      const updated = await updateManagedInstall(managed, force, yes, stashDir, allowInsecure);
+      const updated = await updateManagedInstall(managed, force, yes, stashDir, allowDangerousEnvKeys);
       processed.push(updated.item);
       latestIndex = updated.index;
     } catch (error) {
@@ -1677,7 +1693,7 @@ export async function akmUpdate(input?: {
       const id = plain.name ?? plain.path ?? plain.url ?? "";
       try {
         if (plain.type === "git") {
-          const updated = await syncGitPlainSource(plain, stashDir, allowInsecure);
+          const updated = await syncGitPlainSource(plain, stashDir, allowDangerousEnvKeys);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "npm") {
@@ -1686,12 +1702,12 @@ export async function akmUpdate(input?: {
             force,
             yes,
             stashDir,
-            allowInsecure,
+            allowDangerousEnvKeys,
           );
           processed.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "website") {
-          const updated = await syncWebsitePlainSource(plain, stashDir, allowInsecure);
+          const updated = await syncWebsitePlainSource(plain, stashDir, allowDangerousEnvKeys);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else {

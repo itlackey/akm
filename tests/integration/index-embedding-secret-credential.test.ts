@@ -14,8 +14,9 @@
  * not as a resolution error. This suite reproduces the standalone `akm
  * index` materializer path in-process AND as a real CLI child process
  * (since the field failure was specifically the CLI), plus every other path
- * that reaches `RemoteEmbedder`: an `extends`-inherited apiKey with adapter
- * detection persisting mid-run (#945); `akm bundle update`'s post-commit
+ * that reaches `RemoteEmbedder`: an inherited credential that must not cross
+ * the host-local config boundary while adapter detection persists mid-run;
+ * `akm bundle update`'s post-commit
  * embedding pass (`runPostCommitEmbeddingPass`, reached via `akmUpdate`);
  * the `remember` write path (`indexWrittenAssets`, which calls
  * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the
@@ -161,7 +162,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
     void stderr; // available for debugging on failure; not asserted on
   }, 60_000);
 
-  test("an apiKey inherited via `extends`, with adapter detection persisting mid-run (#945), still resolves", async () => {
+  test("an inherited apiKey cannot authorize a locally configured embedding endpoint", async () => {
     setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("extends-store-secret-value"));
 
     const capture = createAuthCapturingEmbeddingServer();
@@ -194,6 +195,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });
     resetConfigCache();
 
@@ -201,12 +203,14 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
 
     expect(result.configUpdated?.detectedAdapters).toEqual({ stash: "akm" });
     expect(result.verification.ok).toBe(true);
-    expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer extends-store-secret-value");
+    expect(capture.authHeaders.length).toBeGreaterThan(0);
+    expect(capture.authHeaders.every((header) => header === null)).toBe(true);
 
-    // #945: the local file must still not have baked in the inherited
-    // `embedding` block just because a run happened to touch config.json.
+    // #945: adapter persistence must retain the local connection without
+    // baking the inherited credential into config.json.
     const localRaw = JSON.parse(fs.readFileSync(path.join(xdgConfigHome, "akm", "config.json"), "utf8"));
-    expect(localRaw.embedding).toBeUndefined();
+    expect(localRaw.embedding).toMatchObject({ endpoint: capture.url, model: "mock", dimension: 8 });
+    expect(localRaw.embedding.apiKey).toBeUndefined();
   });
 });
 

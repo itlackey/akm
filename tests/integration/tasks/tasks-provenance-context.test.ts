@@ -25,6 +25,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+import { bundleSourceId } from "../../../src/core/config/config-sources";
+import type { AkmConfig } from "../../../src/core/config/config-types";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { AgentRunResult } from "../../../src/integrations/agent";
@@ -289,13 +291,19 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
     const id = `cli-prompt-${extraArgs.length > 0 ? "scheduled" : "unscheduled"}`;
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
     writeTask(id, ["version: 4", `uses: commands/${id}`, "engine: cli-audit", ""].join("\n"));
-    writeSandboxConfig({
+    const base = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",
-      semanticSearchMode: "off",
+    } as AkmConfig;
+    writeSandboxConfig({
+      ...base,
       engines: { "cli-audit": { kind: "agent", platform: "aider", bin: "/bin/true" } },
       defaults: { engine: "cli-audit" },
-      scheduler: { enabled: [{ kind: "task", ref: `fixture//tasks/${id}` }] },
+      scheduler: {
+        enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
+      },
     });
     const indexed = await runCliCapture(["index", "--full"]);
     expect(indexed.code, indexed.stderr).toBe(0);

@@ -50,7 +50,13 @@ scheduling grammar. A definition cannot enable itself: this host's exact
 activated refs live separately in `config.json` under `scheduler.enabled`.
 Use `akm task enable <bundle>//tasks/<id>` or `akm task disable <ref>` to
 change that local grant without editing bundle content. An unscoped `akm task
-sync` reconciles activated refs from every enabled configured bundle.
+sync` reconciles activated refs from every enabled configured bundle and
+removes installed bindings owned by bundles that are now disabled.
+
+Each local grant also records the configured source identity. Renaming or
+repointing a bundle does not transfer execution authority to the replacement;
+enable the task again after reviewing the new source. Removing a bundle revokes
+its grants, and disabling a bundle makes them inert.
 
 Native scheduler entries are separate OS state. Activation captures the
 installed akm runtime so scheduled execution does not silently switch to a

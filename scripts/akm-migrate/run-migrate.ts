@@ -23,6 +23,12 @@ import {
   type ConfigExtraParamsLiftResult,
   findConfigExtraParamsLift,
 } from "./migrate/config-extra-params";
+import {
+  applyConfigSchedulerSourceIdMigration,
+  type ConfigSchedulerSourceIdPlan,
+  type ConfigSchedulerSourceIdResult,
+  findConfigSchedulerSourceIdMigration,
+} from "./migrate/config-scheduler-source-ids";
 import { type DeadResidueEntry, type DeadResidueRemoval, findDeadResidueEntries, removeDeadResidue } from "./migrate/dead-residue";
 import { findStaleTxnEntries, recoverStaleTxns, type StaleTxnEntry } from "./migrate/stale-txn";
 import {
@@ -53,6 +59,7 @@ export interface CombinedMigrationPlan {
   status: MigrationStatus;
   blockers: string[];
   configExtraParams: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
+  configSchedulerSourceIds?: ConfigSchedulerSourceIdResult | { pending: ConfigSchedulerSourceIdPlan };
   stateMigrations: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
@@ -144,6 +151,28 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     };
   }
 
+  const configSchedulerSourceIds = apply
+    ? applyConfigSchedulerSourceIdMigration(configPath)
+    : { pending: findConfigSchedulerSourceIdMigration(configPath) };
+  if (apply && (configSchedulerSourceIds as ConfigSchedulerSourceIdResult).applied) resetConfigCache();
+  const pendingSchedulerBindings = apply
+    ? undefined
+    : (configSchedulerSourceIds as { pending: ConfigSchedulerSourceIdPlan }).pending;
+  if (pendingSchedulerBindings && pendingSchedulerBindings.changes.length > 0) {
+    return {
+      schemaVersion: 1,
+      status: "blocked",
+      blockers: pendingSchedulerBindings.changes.map(
+        (change) =>
+          `${change.kind === "bind" ? "bind" : "drop"} scheduler activation ${change.ref}` +
+          (change.reason ? `: ${change.reason}` : ""),
+      ),
+      configExtraParams,
+      configSchedulerSourceIds,
+      stateMigrations: { pending: listPendingStateMigrations() },
+    };
+  }
+
   // State next, and before the task migrators: they open state.db themselves,
   // and an ordinary open refuses a historical-destructive migration by design.
   // This and `akm upgrade` (which runs this) are the only routes that admit
@@ -185,6 +214,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     status: worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
     blockers: [...taskV3.blockers, ...taskV4.blockers],
     configExtraParams,
+    configSchedulerSourceIds,
     stateMigrations,
     schedulerActivation,
     taskV3Migration: taskV3.taskV3Migration,

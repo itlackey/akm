@@ -218,6 +218,51 @@ describe("common command invocation preparation", () => {
     expect(authorized).toHaveLength(1);
   });
 
+  test("uses the host-local execution allowlist when callers do not inject an authorizer", async () => {
+    const allowed = rendered("command", "fixture//commands/allowed", "Read it.", { tools: ["read"] });
+    const allowedPrepared = await prepareCommandInvocation({
+      action: { ref: "fixture//commands/allowed" },
+      config: { ...config, execution: { allowedTools: ["read"] } },
+      modelMap,
+      sourceLoader: loaderFor(allowed).loader,
+    });
+    expect(allowedPrepared.request.authorization).toMatchObject({
+      status: "allowed",
+      policy: { id: "config-execution-allowed-tools" },
+    });
+
+    const denied = rendered("command", "fixture//commands/denied-by-config", "Run it.", { tools: ["shell"] });
+    const deniedPrepared = await prepareCommandInvocation({
+      action: { ref: "fixture//commands/denied-by-config" },
+      config: { ...config, execution: { allowedTools: ["read"] } },
+      modelMap,
+      sourceLoader: loaderFor(denied).loader,
+    });
+    expect(deniedPrepared.request.authorization.status).toBe("denied");
+
+    const booleanMap = rendered("command", "fixture//commands/boolean-tools", "Read it.", {
+      tools: { read: true, shell: false },
+    });
+    const booleanMapPrepared = await prepareCommandInvocation({
+      action: { ref: "fixture//commands/boolean-tools" },
+      config: { ...config, execution: { allowedTools: ["read"] } },
+      modelMap,
+      sourceLoader: loaderFor(booleanMap).loader,
+    });
+    expect(booleanMapPrepared.request.authorization.status).toBe("allowed");
+
+    const opaquePolicy = rendered("command", "fixture//commands/opaque-tools", "Read it.", {
+      tools: { allow: ["read"] },
+    });
+    const opaquePrepared = await prepareCommandInvocation({
+      action: { ref: "fixture//commands/opaque-tools" },
+      config: { ...config, execution: { allowedTools: ["read"] } },
+      modelMap,
+      sourceLoader: loaderFor(opaquePolicy).loader,
+    });
+    expect(opaquePrepared.request.authorization.status).toBe("denied");
+  });
+
   test("stored and inline actions converge when effective inputs match apart from intentional source identity", async () => {
     const command = rendered("command", "fixture//commands/plain", "Review $ARGUMENTS.");
     const { loader } = loaderFor(command);

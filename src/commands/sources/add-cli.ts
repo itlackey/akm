@@ -110,17 +110,21 @@ export const addCommand = defineJsonCommand({
     },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
-    "allow-insecure": {
+    "allow-insecure-transport": {
       type: "boolean",
-      description:
-        "Allow a plain HTTP source URL and skip confirmation for dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the bundle.",
+      description: "Allow a plain HTTP source URL after explicitly accepting transport substitution risk.",
+      default: false,
+    },
+    "allow-dangerous-env-keys": {
+      type: "boolean",
+      description: "Allow reviewed process-hijacking env keys (e.g. LD_PRELOAD, PATH) in the installed bundle.",
       default: false,
     },
   },
   async run({ args }) {
     const ref = args.ref.trim();
-    const allowInsecure = args["allow-insecure"];
-    const allowDangerousKeys = allowInsecure;
+    const allowInsecureTransport = args["allow-insecure-transport"];
+    const allowDangerousKeys = args["allow-dangerous-env-keys"];
     if (args.before && args.after) throw new UsageError("Only one of --before or --after may be used.");
 
     // --provider → declarative bundle source (URL for git/website; bare
@@ -128,16 +132,16 @@ export const addCommand = defineJsonCommand({
     // other providers remain declarative until bundle update.
     if (args.provider) {
       if (shouldWarnOnPlainHttp(ref)) {
-        if (!allowInsecure) {
+        if (!allowInsecureTransport) {
           throw new UsageError(
             "Source URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious payload. " +
-              "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+              "Use https:// or pass --allow-insecure-transport if you have explicitly accepted the risk.",
             "INVALID_FLAG_VALUE",
-            "Re-run with `--allow-insecure` only after confirming the URL is trusted.",
+            "Re-run with `--allow-insecure-transport` only after confirming the URL is trusted.",
           );
         }
         warn(
-          "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
+          "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure-transport was set; an on-path attacker could substitute a malicious payload.",
         );
       }
       let parsedOptions: Record<string, unknown> | undefined;
@@ -169,7 +173,7 @@ export const addCommand = defineJsonCommand({
       if (args.provider === "git" && result.added && result.entry?.name) {
         let updated: Awaited<ReturnType<typeof akmUpdate>>;
         try {
-          updated = await akmUpdate({ target: result.entry.name, allowInsecure });
+          updated = await akmUpdate({ target: result.entry.name, allowDangerousEnvKeys: allowDangerousKeys });
         } catch (error) {
           removeStash(result.entry.name);
           throw error;
@@ -195,16 +199,16 @@ export const addCommand = defineJsonCommand({
     }
 
     if (shouldWarnOnPlainHttp(ref)) {
-      if (!allowInsecure) {
+      if (!allowInsecureTransport) {
         throw new UsageError(
           "Source URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious payload. " +
-            "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+            "Use https:// or pass --allow-insecure-transport if you have explicitly accepted the risk.",
           "INVALID_FLAG_VALUE",
-          "Re-run with `--allow-insecure` only after confirming the URL is trusted.",
+          "Re-run with `--allow-insecure-transport` only after confirming the URL is trusted.",
         );
       }
       warn(
-        "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
+        "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure-transport was set; an on-path attacker could substitute a malicious payload.",
       );
     }
     const websiteOptions = buildWebsiteOptions(args);
@@ -232,8 +236,8 @@ export const addCommand = defineJsonCommand({
     // Resolve the stash root from the install result and scan any env files
     // for dangerous env var keys.  When findings are present the install is
     // gated: TTY → interactive confirmation prompt; non-TTY without
-    // --allow-insecure → hard failure (exit 1).  Pass
-    // --allow-insecure to skip the prompt non-interactively.
+    // --allow-dangerous-env-keys → hard failure (exit 1). Pass the dedicated
+    // flag to skip the prompt non-interactively.
     const installedStashRoot =
       result.installed?.stashRoot ??
       (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);

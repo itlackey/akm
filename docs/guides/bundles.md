@@ -124,7 +124,7 @@ akm bundle update @scope/bundle          # One managed bundle
 akm bundle update --all                 # All managed bundles
 akm bundle update --all --force         # Force fresh download even if version unchanged
 akm bundle update --all --skip-if-locked # Scheduled refresh: exit 0 on DB contention
-akm bundle update @scope/bundle --allow-insecure  # Approve reviewed dangerous env keys
+akm bundle update @scope/bundle --allow-dangerous-env-keys  # Approve reviewed dangerous env keys
 
 # Remove
 akm bundle remove @scope/bundle          # By npm id
@@ -134,7 +134,7 @@ akm bundle remove my-provider           # By name
 ```
 
 Dangerous keys prompt in a terminal (default: No) and block non-interactive
-updates unless `--allow-insecure` is explicit. `--yes` only approves deletion
+updates unless `--allow-dangerous-env-keys` is explicit. `--yes` only approves deletion
 of an obsolete moved install directory; it never approves security findings.
 For `--all`, blocked and failed bundles are reported separately and later
 bundles continue. A rejected or failed bundle keeps its prior bytes, lock/config

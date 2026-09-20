@@ -102,12 +102,29 @@ describe("resolveWorkingStashTarget (issue #870 part 1, AKM_BUNDLE_DIR path)", (
       storage.cleanup();
     }
   });
+
+  test("a symlink spelling cannot reactivate a disabled configured bundle", () => {
+    const storage = withIsolatedAkmStorage();
+    const alias = path.join(path.dirname(storage.stashDir), `${path.basename(storage.stashDir)}-alias`);
+    try {
+      fs.symlinkSync(storage.stashDir, alias, "dir");
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        bundles: { dormant: { path: alias, enabled: false } },
+      };
+      expect(() => resolveWorkingStashTarget(config, { requireWritable: false })).toThrow(/disabled/i);
+    } finally {
+      fs.rmSync(alias, { force: true });
+      storage.cleanup();
+    }
+  });
 });
 
 // ── Parts 2 & 3: migrate enumeration reconciles / fails clearly ─────────────
 
 describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
-  test("two bundle ids resolving to the same directory enumerate each task file once, not twice", () => {
+  test("two bundle ids resolving to the same directory are rejected before migration enumeration", () => {
     const storage = withIsolatedAkmStorage();
     try {
       writeV2Task(path.join(storage.stashDir, "tasks"), "demo.yml");
@@ -127,12 +144,7 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
         },
       });
 
-      const plan = inspectMigrationPlan();
-      // Reconciled: the same file must be reported once, not once per
-      // duplicate bundle id, and migrate must not throw
-      // `duplicate task migration file path`.
-      expect(plan.taskV3Migration.files).toHaveLength(1);
-      expect(plan.taskV3Migration.files[0]?.filePath).toBe(path.join(storage.stashDir, "tasks", "demo.yml"));
+      expect(() => inspectMigrationPlan()).toThrow(/bundle-a.*bundle-b.*same physical content root/i);
     } finally {
       storage.cleanup();
     }

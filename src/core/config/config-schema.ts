@@ -30,14 +30,12 @@
  *   typo in an optional section.
  * - Unsupported top-level source shapes and provider kinds are hard-rejected;
  *   silently dropping them would mask user data loss.
- * - UNKNOWN-KEY POLICY: object schemas use passthrough (unknown keys are
- *   preserved and ignored, NOT rejected). akm runs across multiple installed
- *   versions sharing one config.json; a newer version writes keys an older
- *   version's schema doesn't know yet, so hard-rejecting unknown keys turned
- *   benign version skew into `INVALID_CONFIG_FILE` failures. Known keys are
- *   still type-checked; passthrough preserves unknown keys across a
- *   load→save round trip so an older reader never strips a newer writer's
- *   settings. (Replaced the prior strict-mode object walls.)
+ * - UNKNOWN-KEY POLICY: portable descriptive sections generally use
+ *   passthrough so version skew round-trips newer settings. Small finite
+ *   authority/toggle sections (`scheduler`, `execution`, `experimental`, and
+ *   reranker policy) are strict: a misspelling there must not silently turn a
+ *   safety decision off. The top level remains passthrough and warns on
+ *   unknown keys.
  * - `defaultWriteTarget` resolution and similar cross-field invariants are
  *   enforced at save time via `superRefine` on the top-level schema.
  */
@@ -47,6 +45,7 @@ import { warnOnce } from "../warn";
 import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
+import { ExecutionPolicyConfigSchema } from "./schema/execution";
 import { ExperimentalConfigSchema } from "./schema/experimental";
 import { FeedbackConfigSchema } from "./schema/feedback";
 import { ImproveConfigSchema } from "./schema/improve";
@@ -134,6 +133,8 @@ export const AkmConfigShape = {
   defaults: DefaultsSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
+  // Host-local execution authority. Inherited layers are stripped.
+  execution: ExecutionPolicyConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
@@ -203,6 +204,28 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: ["defaultBundle"],
         message: `defaultBundle "${config.defaultBundle}" does not name a configured bundle`,
+      });
+    } else if (config.bundles[config.defaultBundle]?.enabled === false) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultBundle"],
+        message: `defaultBundle "${config.defaultBundle}" is disabled`,
+      });
+    }
+  }
+  if (config.defaultWriteTarget !== undefined) {
+    const target = config.bundles?.[config.defaultWriteTarget];
+    if (!target) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultWriteTarget"],
+        message: `defaultWriteTarget "${config.defaultWriteTarget}" does not name a configured bundle`,
+      });
+    } else if (target.enabled === false) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultWriteTarget"],
+        message: `defaultWriteTarget "${config.defaultWriteTarget}" is disabled`,
       });
     }
   }

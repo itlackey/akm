@@ -171,7 +171,9 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(enabled).toMatchObject({ ref: "work//tasks/foo", enabled: true, changed: true });
     expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
-    expect(schedulerActivations(loadConfig())).toContainEqual({ kind: "task", ref: "work//tasks/foo" });
+    expect(schedulerActivations(loadConfig())).toContainEqual(
+      expect.objectContaining({ kind: "task", ref: "work//tasks/foo", sourceId: expect.stringMatching(/^sha256:/) }),
+    );
 
     const disabled = await akmTasksDisable("work//tasks/foo", {}, { backend: cron() });
     expect(disabled).toMatchObject({ ref: "work//tasks/foo", enabled: false, changed: true });
@@ -201,6 +203,50 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(result.installed).toEqual(["primary", "secondary"]);
     expect(cronBody(exec.current(), "primary")).toContain("--bundle stash");
     expect(cronBody(exec.current(), "secondary")).toContain("--bundle work");
+  });
+
+  test("plain sync removes installed bindings when every configured bundle is disabled", async () => {
+    writeTaskFile(work.dir, "secondary", taskYaml());
+    await akmTasksSync({ backend: cron() });
+    expect(cronBody(exec.current(), "secondary")).toContain("--bundle work");
+
+    const current = loadConfig();
+    saveConfig({
+      ...current,
+      defaultBundle: undefined,
+      defaultWriteTarget: undefined,
+      bundles: Object.fromEntries(
+        Object.entries(current.bundles ?? {}).map(([id, bundle]) => [id, { ...bundle, enabled: false }]),
+      ),
+    });
+
+    const result = await akmTasksSync({ backend: cron() });
+
+    expect(result.removed).toEqual(["secondary"]);
+    expect(cronBody(exec.current(), "secondary")).toBeUndefined();
+  });
+
+  test("plain sync removes a disabled bundle while reconciling bundles that remain active", async () => {
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeTaskFile(iso.stashDir, "primary", taskYaml());
+    writeTaskFile(work.dir, "secondary", taskYaml());
+    await akmTasksSync({ backend: cronRealContext() });
+
+    const current = loadConfig();
+    saveConfig({
+      ...current,
+      bundles: {
+        ...current.bundles,
+        work: { ...current.bundles?.work, path: work.dir, enabled: false },
+      },
+    });
+
+    const result = await akmTasksSync({ backend: cronRealContext() });
+
+    expect(result.removed).toEqual(["secondary"]);
+    expect(result.unchanged).toEqual(["primary"]);
+    expect(cronBody(exec.current(), "primary")).toBeDefined();
+    expect(cronBody(exec.current(), "secondary")).toBeUndefined();
   });
 
   test("plain sync rejects cross-bundle native-id collisions before mutation", async () => {

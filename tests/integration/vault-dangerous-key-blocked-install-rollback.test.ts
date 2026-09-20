@@ -107,7 +107,7 @@ function materializeSafeBundle(): string {
 
 /**
  * Run `akm bundle add <ref>` with `syncFromRef` resolving to `contentRoot`, as
- * a non-TTY stdin and without `--allow-insecure` — the fail-closed
+ * a non-TTY stdin and without `--allow-dangerous-env-keys` — the fail-closed
  * configuration the gate is specified for.
  *
  * stdin's TTY-ness is forced rather than inherited: on a TTY the audit takes

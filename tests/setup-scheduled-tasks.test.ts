@@ -337,7 +337,9 @@ describe("task definition preparation", () => {
       expect(updated).not.toContain("enabled:");
       expect(updated).toContain("cron: '0 1 * * *'");
       expect(updated).toContain("cron: '30 13 * * 1,2,3,4,5'");
-      expect(schedulerActivations(loadConfig())).toContainEqual({ kind: "task", ref: "stash//tasks/improve" });
+      expect(schedulerActivations(loadConfig())).toContainEqual(
+        expect.objectContaining({ kind: "task", ref: "stash//tasks/improve", sourceId: expect.any(String) }),
+      );
     } finally {
       storage.cleanup();
     }

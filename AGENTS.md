@@ -18,6 +18,11 @@
 - All write-target branching by `source.kind` belongs in `src/core/write-source.ts`.
 - Write-target resolution order is `--target` -> `defaultWriteTarget` -> working stash (`defaultBundle`); there is no fallback to the first writable source.
 - `writable` defaults to `true` on `filesystem` and `false` on `git` / `website` / `npm`; `writable: true` on `website` or `npm` is rejected at config load.
+- Treat `enabled: false` as inert across content reads, writes, indexing, and execution. Explicit bundle lifecycle commands may still update a named disabled bundle without activating it. Never infer the default/trusted bundle from array position; carry bundle identity and default status explicitly.
+- Scheduler grants are host-local `{kind, ref, sourceId}` entries. `sourceId` binds authority to the configured origin, bundle removal revokes its entries, and old grant shapes are rewritten only by `akm-migrate`.
+- `extends` may share portable policy, but host authority stays local: sources/defaults, registries, scheduler/execution/experimental state, credentials, executable argv/workspace, publication policy, and credential-bearing network connections must not be inherited. Bundle-relative chains require physical (realpath) containment.
+- Executable asset frontmatter may request a tool subset but cannot set child `workspace`, `environment`, or opaque `runtime`; tool requests are capped by local `execution.allowedTools` and must be enforceable by the selected lowerer.
+- Unsafe CLI overrides name one risk. Use `--allow-insecure-transport` only for plain HTTP and `--allow-dangerous-env-keys` only for reviewed process-hijacking environment keys; do not add a combined bypass.
 
 ## Tests
 - **Two test targets**: `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under `tests/` except `tests/integration/` — that includes the top-level `tests/commands/` and `tests/workflows/` directories (59 files combined, verified 2026-07-27). Do not confuse those with the separate `tests/integration/commands/` and `tests/integration/workflows/` directories, which belong to `bun run test:integration` (`scripts/test-integration.sh`, `tests/integration/**` only). Both scripts shard their target across up to `min(nproc, 8)` concurrent `bun test` processes. `bun run check` runs both targets in sequence after lint and typecheck.
@@ -76,6 +81,12 @@ Machinery that prevents **data loss or corruption** passes test 2 on its own mer
 ### Reading persisted data
 
 A reader must tolerate data that older releases wrote. Deterministic transforms are the tool's job, not the user's — convert in memory, warn once, and keep the migrator as the on-disk rewrite path rather than a precondition for reading. See `src/tasks/source/parse-task-source.ts` (task v2/v3 → v4) and `src/core/config/config-version-shim.ts` for the established pattern. Every schema bump must add its old shape to `tests/integration/previous-release-corpus.test.ts` *before* shipping; that suite failing means an upgrade break was about to go out.
+
+Authority-bearing records are the narrow exception: if migration requires a
+new trust decision or binds approval to an identity older data never recorded,
+ordinary runtime code must not invent it. Report the required `akm migrate
+apply` step and let the standalone migrator make the explicit, backed-up
+rewrite. Source-bound `scheduler.enabled[].sourceId` is the canonical example.
 
 ### Worked examples
 

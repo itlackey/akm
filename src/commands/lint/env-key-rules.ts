@@ -12,7 +12,7 @@
  *
  * Enforcement scope:
  *   - `akm lint` reports findings as `dangerous-env-key` (non-blocking warn).
- *   - `akm bundle add` BLOCKS install unless `--allow-insecure` is set (or, on TTY,
+ *   - `akm bundle add` BLOCKS install unless `--allow-dangerous-env-keys` is set (or, on TTY,
  *     the user explicitly confirms at the prompt).
  *   - Local env writes do NOT consult this list — by design, the operator may
  *     legitimately store any key locally. The gate exists only for third-party
@@ -23,7 +23,7 @@
  *   invoked by many interactive tools and are a documented RCE vector when
  *   sourced from untrusted environments. They will also flag on benign files
  *   where the operator legitimately wants to set their editor — accept the
- *   FP and bypass with `--allow-insecure` after review.
+ *   FP and bypass with `--allow-dangerous-env-keys` after review.
  */
 
 import fs from "node:fs";

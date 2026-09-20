@@ -53,7 +53,7 @@ import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { deriveBundleId } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
-import { bundleContentRoot, resolveConfiguredSources } from "./config/config";
+import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
 import { warn, warnOnce } from "./warn";
@@ -1164,13 +1164,17 @@ export function resolveWriteTarget(
   explicitTarget?: string,
   options: { requireWritable?: boolean } = {},
 ): ResolvedWriteTarget {
-  const configuredSources = resolveConfiguredSources(akmConfig);
+  const allConfiguredSources = resolveConfiguredSources(akmConfig);
+  const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
 
   // 1. Explicit --target wins.
   if (explicitTarget) {
     const match = configuredSources.find((s) => s.name === explicitTarget);
     if (!match) {
+      if (allConfiguredSources.some((source) => source.name === explicitTarget)) {
+        throw new UsageError(`Bundle "${explicitTarget}" is disabled.`, "INVALID_FLAG_VALUE");
+      }
       throw new UsageError(
         `--target must reference a source name from your config. No source named "${explicitTarget}" is configured. Run \`akm bundle list\` to see available sources.`,
         "INVALID_FLAG_VALUE",
@@ -1228,21 +1232,22 @@ export function resolveWorkingStashTarget(
   akmConfig: AkmConfig,
   options: { requireWritable?: boolean } = {},
 ): ResolvedWriteTarget {
-  const configuredSources = resolveConfiguredSources(akmConfig);
+  const allConfiguredSources = resolveConfiguredSources(akmConfig);
+  const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
   if (process.env.AKM_BUNDLE_DIR?.trim()) {
     const stashDir = resolveStashDir();
-    const resolvedStashDir = path.resolve(stashDir);
-    const configured = configuredSources.find((source) => {
-      const sourcePath = source.source.type === "filesystem" ? source.source.path : undefined;
-      return sourcePath !== undefined && bundleContentRoot(sourcePath, source.componentRoot) === resolvedStashDir;
-    });
+    const configuredBundleId = bundleKeyForContentRoot(akmConfig, stashDir);
+    const configured = configuredSources.find((source) => source.name === configuredBundleId);
     if (configured) {
       const target = adaptConfiguredSource(configured);
       if (requireWritable && !resolveWritable(target.config)) {
         throw new ConfigError(`Bundle "${configured.name}" is not writable.`, "INVALID_CONFIG_FILE");
       }
       return { ...target, selector: undefined };
+    }
+    if (allConfiguredSources.some((source) => source.name === configuredBundleId)) {
+      throw new ConfigError("The AKM_BUNDLE_DIR source is disabled in config.", "INVALID_CONFIG_FILE");
     }
     const bundleId = deriveBundleId(undefined, stashDir, new Set(Object.keys(akmConfig.bundles ?? {})));
     return {

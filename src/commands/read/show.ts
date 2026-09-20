@@ -400,8 +400,7 @@ export async function showLocal(input: {
       }
 
       const renderBundle = indexedEntry.bundleId;
-      const renderDefaultBundle =
-        config.defaultBundle ?? (source?.path === allSources[0]?.path ? renderBundle : undefined);
+      const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
       if (parsed.fragment !== undefined) {
@@ -419,7 +418,7 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  const isPrimaryStash = source !== undefined && source.path === allSources[0]?.path;
+  const isPrimaryStash = source?.isDefault === true;
   const canonicalRef = displayRef(
     {
       type: indexedEntry.type,

@@ -143,7 +143,7 @@ const updateCommand = defineJsonCommand({
       description: "Exit successfully when index/state database contention shows another akm operation is active",
       default: false,
     },
-    "allow-insecure": {
+    "allow-dangerous-env-keys": {
       type: "boolean",
       description:
         "Allow an update containing dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the staged bundle.",
@@ -169,7 +169,7 @@ const updateCommand = defineJsonCommand({
         all: args.all,
         force: args.force,
         yes: args.yes,
-        allowInsecure: args["allow-insecure"],
+        allowDangerousEnvKeys: args["allow-dangerous-env-keys"],
       });
     } catch (error) {
       const skippable = isSkippableBundleUpdateLock(error);
@@ -184,7 +184,7 @@ const updateCommand = defineJsonCommand({
         target: args.target ?? null,
         all: args.all === true,
         force: args.force === true,
-        allowInsecure: args["allow-insecure"] === true,
+        allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
         processed: Array.isArray((result as { processed?: unknown[] }).processed)
           ? (result as { processed: unknown[] }).processed.length
           : 0,

@@ -1042,7 +1042,8 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
-| `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous env key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) env keys that can hijack process execution. Use only after reviewing the bundle manually |
+| `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
+| `--allow-dangerous-env-keys` | Allow reviewed process-hijacking env keys in the installed bundle; does not permit plain HTTP |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 
@@ -1070,7 +1071,7 @@ config override injection).
 
 When dangerous keys are found, `akm bundle add` pauses and prompts for
 confirmation (default: No). In non-interactive mode (CI, scripts) the
-install fails with **exit 1** unless `--allow-insecure` is passed, and the
+install fails with **exit 1** unless `--allow-dangerous-env-keys` is passed, and the
 freshly-installed bundle is rolled back before the process exits.
 
 ```sh
@@ -1078,7 +1079,7 @@ freshly-installed bundle is rolled back before the process exits.
 akm bundle add github:owner/repo-with-sensitive-env
 
 # Non-interactive: fails unless bypassed
-akm bundle add github:owner/repo-with-sensitive-env --allow-insecure
+akm bundle add github:owner/repo-with-sensitive-env --allow-dangerous-env-keys
 ```
 
 Bundle publishers: see the [Author Bundles guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-bundles.md#env-security)
@@ -1155,14 +1156,14 @@ akm bundle update npm:@scope/pkg
 akm bundle update --all
 akm bundle update --all --force   # Force fresh download even if version is unchanged
 akm bundle update --all --yes     # Skip confirmation when an update needs to delete a moved install dir
-akm bundle update npm:@scope/pkg --allow-insecure  # Explicitly approve reviewed dangerous env keys
+akm bundle update npm:@scope/pkg --allow-dangerous-env-keys  # Explicitly approve reviewed dangerous env keys
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--all` | Update all managed sources |
 | `--force` | Delete cached extraction before re-downloading |
-| `--allow-insecure` | Permit a staged update containing dangerous environment keys after warning. Without it, an interactive terminal prompts with a default of No; non-interactive use fails closed. This is independent of `--yes`. |
+| `--allow-dangerous-env-keys` | Permit a staged update containing dangerous environment keys after warning. Without it, an interactive terminal prompts with a default of No; non-interactive use fails closed. This is independent of `--yes`. |
 | `-y`, `--yes` | Skip the confirmation prompt for the rare branch where the resolved content location moved and the previous install directory must be deleted. No effect on a normal refresh, which deletes nothing. |
 
 The audit examines key names in `.env`-suffixed files under the staged
@@ -1644,7 +1645,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
 | `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
-| `--allow-insecure` | Allow a plain HTTP registry URL (rejected by default) |
+| `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
 
@@ -1907,6 +1908,7 @@ akm env run env/prod --only A,B -- cmd  # inject only A and B
 akm env run env/prod --except DEBUG -- cmd
 akm env run env/prod --clean -- cmd
 akm env run env/prod --clean --inherit SSH_AUTH_SOCK -- cmd
+akm env run third-party//env/prod --allow-dangerous-env-keys -- cmd
 ```
 
 Runs the command with the env file's values injected **directly into the child
@@ -1919,7 +1921,8 @@ environment (PATH/HOME/locale/terminal basics) instead of inheriting the full
 parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode. Before spawning, the injected key names are scanned for
 known process-hijacking variables (`LD_PRELOAD`, `PATH`, `GIT_CONFIG_*`, ...):
-a first-party bundle warns and proceeds; a third-party-sourced bundle is refused.
+a first-party bundle warns and proceeds; a third-party-sourced bundle is refused
+unless the reviewed run explicitly passes `--allow-dangerous-env-keys`.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
 > as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
@@ -2889,7 +2892,8 @@ time. Each run is recorded as a row in the durable `task_history` table
 no `task_invoked`/`task_completed` event type on the `akm log` stream.
 
 Task source cannot enable itself. `akm task enable <fully-qualified-ref>` adds
-an exact `{kind, ref}` grant to this host's `scheduler.enabled` config and
+an exact source-bound `{kind, ref, sourceId}` grant to this host's
+`scheduler.enabled` config and
 syncs that bundle; `akm task disable` removes it and unschedules the task.
 Manual `akm task run` remains available. To remove a task, delete its file
 (`<bundle>/tasks/<id>.yml`) and run `akm task sync` — sync uninstalls the

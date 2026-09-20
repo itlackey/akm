@@ -183,6 +183,9 @@ export function saveGitStash(
     // NotFoundError (exit 1), not UsageError (exit 2): the argument is
     // well-formed, the bundle just isn't configured.
     if (!stash) throw new NotFoundError(`No git-backed bundle found with name "${name}"`, "SOURCE_NOT_FOUND");
+    if (stash.enabled === false) {
+      throw new UsageError(`Bundle "${name}" is disabled and cannot be synced.`, "INVALID_FLAG_VALUE");
+    }
     if (stash.type === "filesystem") {
       if (!stash.path) throw new UsageError(`Filesystem bundle "${name}" has no path configured.`);
       const contentRoot = path.resolve(stash.path);

@@ -6,7 +6,7 @@
 
 import { makeBundleRef } from "../../../src/core/asset/asset-ref";
 import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../../../src/core/config/config";
-import { bundleComponentConfig } from "../../../src/core/config/config-sources";
+import { bundleComponentConfig, bundleSourceId, isBundleEnabled } from "../../../src/core/config/config-sources";
 import { selectBackend } from "../../../src/tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../../../src/tasks/scheduler-binding";
 import {
@@ -35,7 +35,14 @@ function activationFromInstalled(
     const ref = invocation[2];
     if (!ref) return undefined;
     try {
-      return Object.freeze({ kind: "workflow" as const, ref: canonicalSchedulerActivationRef(ref) });
+      const canonicalRef = canonicalSchedulerActivationRef(ref);
+      const bundle = canonicalRef.slice(0, canonicalRef.indexOf("//"));
+      if (!isBundleEnabled(config, bundle)) return undefined;
+      return Object.freeze({
+        kind: "workflow" as const,
+        ref: canonicalRef,
+        sourceId: bundleSourceId(config, bundle),
+      });
     } catch {
       return undefined;
     }
@@ -44,12 +51,14 @@ function activationFromInstalled(
   const bundleIndex = invocation.indexOf("--bundle", 3);
   const bundle = bundleIndex === -1 ? config.defaultBundle : invocation[bundleIndex + 1];
   if (!bundle) return undefined;
+  if (!isBundleEnabled(config, bundle)) return undefined;
   const adapter = config.bundles?.[bundle] ? (bundleComponentConfig(config.bundles[bundle])?.adapter ?? "akm") : "akm";
   const conceptId = adapter === "akm-task" ? invocation[2] : `tasks/${invocation[2]}`;
   try {
     return Object.freeze({
       kind: "task" as const,
       ref: canonicalSchedulerActivationRef(makeBundleRef(bundle, conceptId)),
+      sourceId: bundleSourceId(config, bundle),
     });
   } catch {
     return undefined;
@@ -57,7 +66,7 @@ function activationFromInstalled(
 }
 
 function activationKey(activation: SchedulerActivation): string {
-  return `${activation.kind}\0${activation.ref}`;
+  return `${activation.kind}\0${activation.ref}\0${activation.sourceId}`;
 }
 
 export async function inspectSchedulerActivationMigration(

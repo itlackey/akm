@@ -8,6 +8,7 @@ import {
   inspectSchedulerActivationMigration,
 } from "../../scripts/akm-migrate/migrate/scheduler-activation";
 import { loadConfig } from "../../src/core/config/config";
+import { bundleSourceId } from "../../src/core/config/config-sources";
 import { schedulerActivations } from "../../src/tasks/activation-config";
 import type { SchedulerBackend } from "../../src/tasks/scheduler-binding";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -70,21 +71,23 @@ function backend(): SchedulerBackend {
 describe("scheduler activation migration", () => {
   test("status is read-only and reports only proven, natively enabled bindings", async () => {
     const plan = await inspectSchedulerActivationMigration(backend());
+    const sourceId = bundleSourceId(loadConfig(), "team");
 
     expect(plan.pending).toEqual([
-      { kind: "task", ref: "team//tasks/nightly" },
-      { kind: "workflow", ref: "team//workflows/release" },
+      { kind: "task", ref: "team//tasks/nightly", sourceId },
+      { kind: "workflow", ref: "team//workflows/release", sourceId },
     ]);
     expect(schedulerActivations(loadConfig())).toEqual([]);
   });
 
   test("apply seeds host-local activation and converges", async () => {
     const result = await applySchedulerActivationMigration(backend());
+    const sourceId = bundleSourceId(loadConfig(), "team");
 
     expect(result.applied).toHaveLength(2);
     expect(schedulerActivations(loadConfig())).toEqual([
-      { kind: "task", ref: "team//tasks/nightly" },
-      { kind: "workflow", ref: "team//workflows/release" },
+      { kind: "task", ref: "team//tasks/nightly", sourceId },
+      { kind: "workflow", ref: "team//workflows/release", sourceId },
     ]);
     expect((await inspectSchedulerActivationMigration(backend())).pending).toEqual([]);
   });

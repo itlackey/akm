@@ -10,12 +10,14 @@ export const SchedulerActivationSchema = z
   .object({
     kind: z.enum(["task", "workflow"]),
     ref: nonEmptyString,
+    /** Identity of the configured source this host approved, not merely its mutable bundle name. */
+    sourceId: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   })
-  .passthrough();
+  .strict();
 
 /** Absence from this allow-list means disabled. */
 export const SchedulerConfigSchema = z
   .object({
     enabled: z.array(SchedulerActivationSchema).default([]),
   })
-  .passthrough();
+  .strict();

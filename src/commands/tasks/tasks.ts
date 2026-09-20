@@ -20,7 +20,12 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { resolveConfiguredSources } from "../../core/config/config-sources";
+import {
+  bundleComponentConfig,
+  bundleKeyForContentRoot,
+  resolveActiveConfiguredSources,
+  resolveConfiguredSources,
+} from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -38,7 +43,11 @@ import {
 import type { InputFlag } from "../../execution/input-contract";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
-import { isSchedulerRefEnabled, schedulerActivations, setSchedulerRefEnabled } from "../../tasks/activation-config";
+import {
+  activeSchedulerActivations,
+  isSchedulerRefEnabled,
+  setSchedulerRefEnabled,
+} from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, RebindSchedulerBinding, SchedulerBackend } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
@@ -71,6 +80,7 @@ import {
   writeSchedulerContextDescriptor,
 } from "../../tasks/scheduler-invocation";
 import {
+  assertSchedulerBackendInspection,
   assertSchedulerNativeArtifactOwnership,
   assertSchedulerSourceSnapshot,
   buildSchedulerRemoveOperation,
@@ -618,13 +628,19 @@ async function buildSchedulerSyncPlan(
     };
   });
   const nativeArtifacts = inspection.artifacts;
-  const sourceNames = bundleTarget
-    ? [bundleTarget]
-    : resolveConfiguredSources(config)
-        .filter((source) => source.enabled !== false)
-        .map((source) => source.name);
+  const configuredSources = resolveConfiguredSources(config);
+  const activeSources = resolveActiveConfiguredSources(config);
+  const sourceNames = bundleTarget ? [bundleTarget] : activeSources.map((source) => source.name);
+  const inactiveOperations = bundleTarget
+    ? []
+    : inactiveBundleRemovalOperations(config, configuredSources, allEntries, nativeArtifacts);
+  if (!bundleTarget && sourceNames.length === 0 && configuredSources.length > 0) {
+    assertSchedulerBackendInspection({ installed: allEntries, artifacts: nativeArtifacts });
+    const plan = emptySchedulerSyncPlan(inactiveOperations);
+    return { sched, plan, sourceSnapshots: Object.freeze([]), prepared: undefined, warnings: [] };
+  }
   const selectedNames = sourceNames.length > 0 ? sourceNames : [undefined];
-  const enabled = schedulerActivations(config);
+  const enabled = activeSchedulerActivations(config);
   const enabledActivations = new Set(enabled.map((activation) => `${activation.kind}\0${activation.ref}`));
   const preparedSets: Array<{
     common: Parameters<typeof finalizeSchedulerSyncPlan>[0];
@@ -718,14 +734,82 @@ async function buildSchedulerSyncPlan(
     desired: Object.freeze(plans.flatMap((candidate) => candidate.desired)),
     installed: Object.freeze(plans.flatMap((candidate) => candidate.installed)),
     updated: Object.freeze(plans.flatMap((candidate) => candidate.updated)),
-    removed: Object.freeze(plans.flatMap((candidate) => candidate.removed)),
+    removed: Object.freeze([
+      ...plans.flatMap((candidate) => candidate.removed),
+      ...inactiveOperations.map((operation) => operation.id),
+    ]),
     unchanged: Object.freeze(plans.flatMap((candidate) => candidate.unchanged)),
-    operations: Object.freeze(plans.flatMap((candidate) => candidate.operations)),
+    operations: Object.freeze([...plans.flatMap((candidate) => candidate.operations), ...inactiveOperations]),
     sourceSnapshot: first.sourceSnapshot,
     failures: Object.freeze([...plans.flatMap((candidate) => candidate.failures), ...missingActivationFailures]),
   });
 
   return { sched, plan, sourceSnapshots: plans.map((candidate) => candidate.sourceSnapshot), prepared, warnings };
+}
+
+function inactiveBundleRemovalOperations(
+  config: AkmConfig,
+  configuredSources: ReturnType<typeof resolveConfiguredSources>,
+  installed: readonly InstalledSchedulerBinding[],
+  artifacts: Parameters<typeof buildSchedulerRemoveOperation>[2],
+): Extract<SchedulerSyncOperation, { kind: "remove" }>[] {
+  const inactive = new Set(configuredSources.filter((source) => source.enabled === false).map((source) => source.name));
+  if (inactive.size === 0) return [];
+  return installed
+    .map((entry) => ({ entry, bundleName: installedSchedulerBundle(config, entry) }))
+    .filter(
+      (candidate): candidate is { entry: InstalledSchedulerBinding; bundleName: string } =>
+        candidate.bundleName !== undefined && inactive.has(candidate.bundleName),
+    )
+    .sort((left, right) => left.entry.id.localeCompare(right.entry.id))
+    .map(({ entry, bundleName }) => {
+      const adapterId = bundleComponentConfig(config.bundles?.[bundleName])?.adapter ?? "akm";
+      return buildSchedulerRemoveOperation(entry.id, entry, artifacts, { adapterId, bundleName });
+    });
+}
+
+function installedSchedulerBundle(config: AkmConfig, entry: InstalledSchedulerBinding): string | undefined {
+  const direct = entry.target ?? (entry.invocation ? scheduledInvocationBundle(entry.invocation) : undefined);
+  if (direct !== undefined) return direct;
+  if (entry.ownerBundlePath === undefined) return undefined;
+  return bundleKeyForContentRoot(config, entry.ownerBundlePath);
+}
+
+function emptySchedulerSyncPlan(
+  operations: readonly Extract<SchedulerSyncOperation, { kind: "remove" }>[],
+): SchedulerSyncPlan {
+  const sourceSnapshot: SchedulerSyncPlan["sourceSnapshot"] = Object.freeze({
+    adapterId: "akm",
+    sourceRoot: "",
+    sourceRealPath: "",
+    sourcePhysicalIdentity: "inactive",
+    sourceDirectoryVersion: "inactive",
+    files: Object.freeze([]),
+    directoryManifests: Object.freeze([]),
+  });
+  return Object.freeze({
+    desired: Object.freeze([]),
+    installed: Object.freeze([]),
+    updated: Object.freeze([]),
+    removed: Object.freeze(operations.map((operation) => operation.id)),
+    unchanged: Object.freeze([]),
+    operations: Object.freeze([...operations]),
+    sourceSnapshot,
+    failures: Object.freeze([]),
+  });
+}
+
+function scheduledInvocationBundle(invocation: readonly string[]): string | undefined {
+  const bundleIndex = invocation.indexOf("--bundle");
+  if (bundleIndex >= 0) return invocation[bundleIndex + 1];
+  if (invocation[0] === "workflow" && invocation[1] === "run" && invocation[2]) {
+    try {
+      return parseBundleRef(invocation[2]).bundle;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function assertNoCrossBundleSchedulerCollisions(plans: readonly SchedulerSyncPlan[]): void {
@@ -1717,7 +1801,7 @@ export function resolveTaskReadBundle(
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    const configured = resolveConfiguredSources(config).some((source) => source.name === selector);
+    const configured = resolveActiveConfiguredSources(config).some((source) => source.name === selector);
     const implicit = configured ? undefined : resolveImplicitScheduledBundleTarget(config, selector);
     resolved = implicit ?? resolveWriteTarget(config, selector, { requireWritable: false });
   }

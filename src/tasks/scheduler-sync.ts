@@ -212,10 +212,8 @@ export function finalizeSchedulerSyncPlan(
   };
   const desired = prepared.desired;
   assertUniqueDesiredIds(desired);
-  assertCoherentInspection(inspection, input.inspection !== undefined);
-  assertUniqueInstalledIds(coherentInput.installed);
+  assertSchedulerBackendInspection(inspection, desired, input.inspection !== undefined);
   assertNoForeignIds(desired, coherentInput);
-  assertSchedulerNativeArtifactOwnership(desired, inspection.artifacts);
 
   const scopedInstalled = coherentInput.installed.filter((entry) => belongsToBundle(entry, coherentInput));
   const present = new Map(scopedInstalled.map((entry) => [entry.id, entry] as const));
@@ -285,6 +283,17 @@ export function finalizeSchedulerSyncPlan(
     sourceSnapshot: prepared.sourceSnapshot,
     failures: prepared.failures,
   });
+}
+
+/** Validate one coherent whole-backend read before deriving any mutation plan. */
+export function assertSchedulerBackendInspection(
+  inspection: SchedulerBackendInspection,
+  desired: readonly SchedulerBinding[] = [],
+  requireCompleteFingerprint = true,
+): void {
+  assertCoherentInspection(inspection, requireCompleteFingerprint);
+  assertUniqueInstalledIds(inspection.installed);
+  assertSchedulerNativeArtifactOwnership(desired, inspection.artifacts);
 }
 
 /**

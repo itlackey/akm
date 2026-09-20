@@ -411,8 +411,11 @@ expands as defaults at the layer that selected it; explicit sibling and nearer
 fields then win. The request records the exact final model ID. Lowering calls
 `resolveEngine()` once for symbolic transport/profile material and projects
 that request-owned exact model into it; transports never resolve aliases.
-Tool selection uses the same nearest-explicit rule, while
-operator authorization remains a separate pre-lowering decision.
+Tool selection uses the same nearest-explicit rule. Production preparation
+authorizes a nonempty request against the host-local
+`execution.allowedTools` ceiling before lowering; no asset grants itself a
+tool. Command/persona frontmatter cannot supply workspace, environment, or
+opaque runtime fields.
 
 Agent lowerers are a structural implementation registry derived from
 `HARNESS_REGISTRY`: OpenCode, Claude, OpenCode SDK, Codex, Copilot, Pi, Gemini,
@@ -420,8 +423,9 @@ Aider, Amazon Q, and OpenHands each register a lowerer, and direct LLM is the
 remaining lowering arm. This is not a model/provider capability matrix. Each
 lowerer translates what its transport actually implements, returns sorted
 translated/untranslated field paths, emits a stable structured notice for
-every selected field it does not translate, and still dispatches
-optimistically. A provider or harness rejection is a runtime failure; invalid
+every ordinary selected field it does not translate. A tool policy that the
+chosen transport cannot enforce is a pre-dispatch configuration error; other
+notices may still dispatch optimistically. A provider or harness rejection is a runtime failure; invalid
 configuration and authorization denial remain pre-dispatch failures.
 
 Lowering notices are fixed, secret-free records (`code`, `severity`,

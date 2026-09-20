@@ -172,7 +172,12 @@ export function createAgentRequestLowerer(
     if (own(request, "tools")) {
       const tools = request.tools as ToolSelection;
       if (translatesTools(options.tools, tools)) translated.add("tools");
-      else reject("tools");
+      else {
+        throw new ConfigError(
+          `The ${options.adapter} transport cannot enforce the resolved tool policy.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
       dispatch.tools = tools;
     }
     if (own(request.runtime, "settings")) {

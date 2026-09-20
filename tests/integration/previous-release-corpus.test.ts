@@ -488,13 +488,11 @@ describe("previous-release corpus — upgrade must not break reads", () => {
 // Fixed by matching registration on the resolved content root
 // (`bundleContentRoot`/`bundleKeyForContentRoot` in
 // `src/core/config/config-sources.ts`) instead of the bare configured
-// `path`; `scripts/akm-migrate/task-migrate.ts`'s `taskRoots` reconciles the
-// two ids on the read/enumeration side. See
-// `tests/migrate/duplicate-bundle-registration.test.ts` for the mechanism's
-// full unit coverage — this corpus entry proves the exact real-shaped,
-// on-disk `config.json` (both bundle ids literally named `openpalm`/`stash`,
-// `defaultBundle: "stash"`) converges through `akm migrate`'s inspection
-// instead of throwing `duplicate task migration file path`.
+// `path`. The current architecture rejects aliases at config load because
+// source ownership and grants cannot depend on which id a caller used. This
+// corpus entry proves the exact old shape fails with actionable identities,
+// rather than reaching the former opaque `duplicate task migration file
+// path` error.
 describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#870)", () => {
   let storage: IsolatedAkmStorage;
 
@@ -506,7 +504,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
     storage.cleanup();
   });
 
-  test("a home with a pre-#870 duplicate 'stash' bundle entry converges instead of throwing", () => {
+  test("a home with a pre-#870 duplicate 'stash' bundle entry names both aliases and their shared root", () => {
     fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
     fs.writeFileSync(
       path.join(storage.stashDir, "tasks", "demo.yml"),
@@ -521,14 +519,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
       },
     });
 
-    let plan: ReturnType<typeof inspectMigrationPlan> | undefined;
-    expect(() => {
-      plan = inspectMigrationPlan();
-    }).not.toThrow();
-    // Reconciled: the shared task file is enumerated once, not once per
-    // duplicate bundle id.
-    expect(plan?.taskV3Migration.files).toHaveLength(1);
-    expect(plan?.taskV3Migration.files[0]?.filePath).toBe(path.join(storage.stashDir, "tasks", "demo.yml"));
+    expect(() => inspectMigrationPlan()).toThrow(/openpalm.*stash.*same physical content root/i);
   });
 });
 
@@ -572,10 +563,10 @@ describe("previous-release corpus — retired 0.8 source-config keys (configVers
     // `stashDir` becomes the `stash` bundle and the default write target.
     expect(config.defaultBundle).toBe("stash");
     expect(config.bundles?.stash).toMatchObject({ path: "/home/user/.akm-stash", writable: true });
-    // The duplicate `sources[]` entry (the same directory, under its own
-    // `primary` name) also converts — one bundle per legacy entry, even when
-    // it overlaps with `stashDir`'s.
-    expect(config.bundles?.primary).toMatchObject({ path: "/home/user/.akm-stash", writable: true });
+    // The duplicate `sources[]` entry is folded into the canonical stash
+    // entry so the compatibility shim cannot synthesize a config the current
+    // physical-owner invariant rejects.
+    expect(config.bundles?.primary).toBeUndefined();
     // `installed[]` has no 0.9 equivalent (the index tracks installed assets
     // now) and is dropped rather than guessed at.
     expect((config as unknown as Record<string, unknown>).installed).toBeUndefined();
@@ -721,7 +712,9 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       );
       const defaultBundle = path.basename(stash.dir).toLowerCase();
       setSchedulerRefEnabled("task", `${defaultBundle}//tasks/ping`, true);
-      expect(loadConfig().scheduler?.enabled).toEqual([{ kind: "task", ref: `${defaultBundle}//tasks/ping` }]);
+      expect(loadConfig().scheduler?.enabled).toEqual([
+        expect.objectContaining({ kind: "task", ref: `${defaultBundle}//tasks/ping`, sourceId: expect.any(String) }),
+      ]);
 
       // Matches the `backendFor` setup in tasks-sync.test.ts: this backend
       // never routes through the real launcher-eligibility path, so install

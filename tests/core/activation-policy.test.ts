@@ -54,32 +54,38 @@ describe("activation-policy — rule 1: dangerous env-key injection", () => {
     expect(decideDangerousEnvInjection({ dangerousKeys: ["EDITOR", "LD_PRELOAD"], thirdParty: true })).toBe("block");
   });
 
-  test("--allow-insecure downgrades a third-party RCE-class block to warn", () => {
-    expect(decideDangerousEnvInjection({ dangerousKeys: ["LD_PRELOAD"], thirdParty: true, allowInsecure: true })).toBe(
-      "warn",
-    );
+  test("--allow-dangerous-env-keys downgrades a third-party RCE-class block to warn", () => {
+    expect(
+      decideDangerousEnvInjection({
+        dangerousKeys: ["LD_PRELOAD"],
+        thirdParty: true,
+        allowDangerousEnvKeys: true,
+      }),
+    ).toBe("warn");
   });
 
-  test("--allow-insecure is irrelevant to a first-party stash (already warn) or an allow-list", () => {
+  test("the override is irrelevant to a first-party stash (already warn) or an allow-list", () => {
     expect(
-      decideDangerousEnvInjection({ dangerousKeys: ["LD_PRELOAD"], thirdParty: false, allowInsecure: false }),
+      decideDangerousEnvInjection({ dangerousKeys: ["LD_PRELOAD"], thirdParty: false, allowDangerousEnvKeys: false }),
     ).toBe("warn");
-    expect(decideDangerousEnvInjection({ dangerousKeys: [], thirdParty: true, allowInsecure: true })).toBe("allow");
+    expect(decideDangerousEnvInjection({ dangerousKeys: [], thirdParty: true, allowDangerousEnvKeys: true })).toBe(
+      "allow",
+    );
   });
 });
 
 describe("activation-policy — rule 2: freshly-installed stash dangerous-key scan", () => {
   test("no findings → allow", () => {
-    expect(decideDangerousKeyInstall({ findingsPresent: false, allowInsecure: false })).toBe("allow");
-    expect(decideDangerousKeyInstall({ findingsPresent: false, allowInsecure: true })).toBe("allow");
+    expect(decideDangerousKeyInstall({ findingsPresent: false, allowDangerousEnvKeys: false })).toBe("allow");
+    expect(decideDangerousKeyInstall({ findingsPresent: false, allowDangerousEnvKeys: true })).toBe("allow");
   });
 
   test("findings present, no bypass → gate (install blocked pending confirm)", () => {
-    expect(decideDangerousKeyInstall({ findingsPresent: true, allowInsecure: false })).toBe("gate");
+    expect(decideDangerousKeyInstall({ findingsPresent: true, allowDangerousEnvKeys: false })).toBe("gate");
   });
 
-  test("findings present with --allow-insecure → warn-allow", () => {
-    expect(decideDangerousKeyInstall({ findingsPresent: true, allowInsecure: true })).toBe("warn-allow");
+  test("findings present with --allow-dangerous-env-keys → warn-allow", () => {
+    expect(decideDangerousKeyInstall({ findingsPresent: true, allowDangerousEnvKeys: true })).toBe("warn-allow");
   });
 });
 
@@ -100,7 +106,7 @@ describe("activation-policy — install grants nothing until an explicit enable"
     // blocked, its dangerous-key install is gated, and its cache is not
     // writable — nothing is granted.
     expect(decideDangerousEnvInjection({ dangerousKeys: ["PATH"], thirdParty: true })).toBe("block");
-    expect(decideDangerousKeyInstall({ findingsPresent: true, allowInsecure: false })).toBe("gate");
+    expect(decideDangerousKeyInstall({ findingsPresent: true, allowDangerousEnvKeys: false })).toBe("gate");
     expect(isSourceWriteActivated({ writable: false })).toBe(false);
   });
 });

@@ -350,7 +350,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
     expect(indexedRows().some((row) => row.filePath.startsWith(dangerousRoot))).toBe(false);
   });
 
-  test("--allow-insecure explicitly approves a staged dangerous same-version npm promotion", async () => {
+  test("--allow-dangerous-env-keys explicitly approves a staged dangerous same-version npm promotion", async () => {
     const live = await configureCanonicalManagedBundle({
       id: "approved",
       env: "API_TOKEN=old\n",
@@ -375,7 +375,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
           stashDir: storage.stashDir,
           force: true,
           yes: true,
-          allowInsecure: true,
+          allowDangerousEnvKeys: true,
         }),
       );
       expect(result.processed[0]?.changed.any).toBe(false);

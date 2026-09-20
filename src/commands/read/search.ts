@@ -443,10 +443,17 @@ function logSearchEvent(
  */
 function assertNamedSourceExists(config: AkmConfig, namedSourceName: string): void {
   const configSources = getSources(config);
-  const foundInConfig =
-    configSources.some((s) => s.name === namedSourceName) || configSources.some((s) => s.path === namedSourceName);
+  const foundInConfig = configSources.find(
+    (source) => source.name === namedSourceName || source.path === namedSourceName,
+  );
+  if (foundInConfig?.enabled === false) {
+    throw new UsageError(`Source "${namedSourceName}" is disabled.`, "INVALID_SOURCE_VALUE");
+  }
   if (!foundInConfig) {
-    const validNames = configSources.map((s) => s.name).filter((n): n is string => Boolean(n));
+    const validNames = configSources
+      .filter((source) => source.enabled !== false)
+      .map((source) => source.name)
+      .filter((name): name is string => Boolean(name));
     const hint =
       validNames.length > 0
         ? `Known source names: ${validNames.join(", ")}`

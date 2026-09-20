@@ -20,7 +20,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import { schedulerActivations } from "../../tasks/activation-config";
+import { schedulerActivationSourceId, schedulerActivations } from "../../tasks/activation-config";
 import { backendNameForPlatform } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
@@ -237,13 +237,13 @@ export async function prepareSetupTaskDefinitions(
   const managed = new Set(tasks.map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)));
   mutateConfig((current) => {
     const existing = schedulerActivations(current);
-    const next = existing.filter(
-      (activation) => activation.kind !== "task" || !managed.has(activation.ref) || selected.has(activation.ref),
-    );
+    const next = existing.filter((activation) => activation.kind !== "task" || !managed.has(activation.ref));
+    const sourceId = schedulerActivationSourceId(current, target.source.name);
+    if (selected.size > 0 && !sourceId) {
+      throw new UsageError(`Cannot activate setup tasks from disabled bundle ${JSON.stringify(target.source.name)}.`);
+    }
     for (const ref of selected) {
-      if (!next.some((activation) => activation.kind === "task" && activation.ref === ref)) {
-        next.push({ kind: "task", ref });
-      }
+      next.push({ kind: "task", ref, sourceId: sourceId! });
     }
     next.sort((left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind));
     if (JSON.stringify(existing) === JSON.stringify(next)) return current;

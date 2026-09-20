@@ -8,6 +8,7 @@ import { isRemoteUrl } from "../../core/common";
 import type { BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import { bundleEntryToSourceEntry, bundlesToSourceEntries, getSources, mutateConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
+import { revokeSchedulerActivationsForBundle } from "../../tasks/activation-config";
 import {
   type BundleInsertPosition,
   bundleKeyForPath,
@@ -181,7 +182,15 @@ export function removeStash(target: string): SourceRemoveResult {
     }
     const removed = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
     delete bundles[key];
-    const next = { ...config, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
+    const next = revokeSchedulerActivationsForBundle(
+      {
+        ...config,
+        bundles: Object.keys(bundles).length > 0 ? bundles : undefined,
+        ...(config.defaultBundle === key ? { defaultBundle: undefined } : {}),
+        ...(config.defaultWriteTarget === key ? { defaultWriteTarget: undefined } : {}),
+      },
+      key,
+    );
     result = { sources: bundlesToSourceEntries(next) ?? [], removed: true, entry: removed };
     return next;
   });

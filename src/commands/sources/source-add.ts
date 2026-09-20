@@ -31,6 +31,7 @@ import {
   validateWebsiteInputUrl,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import type { AddResponse } from "../../sources/types";
+import { revokeSchedulerActivationsForBundle } from "../../tasks/activation-config";
 import {
   type BundleInsertPosition,
   bundleKeyForPath,
@@ -388,7 +389,15 @@ export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfi
     if (!key) return current;
     removedKey = key;
     delete bundles[key];
-    return { ...current, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
+    return revokeSchedulerActivationsForBundle(
+      {
+        ...current,
+        bundles: Object.keys(bundles).length > 0 ? bundles : undefined,
+        ...(current.defaultBundle === key ? { defaultBundle: undefined } : {}),
+        ...(current.defaultWriteTarget === key ? { defaultWriteTarget: undefined } : {}),
+      },
+      key,
+    );
   }).config;
   if (removedKey) await removeLockEntry(removedKey);
   return config;

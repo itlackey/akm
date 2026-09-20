@@ -183,6 +183,12 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
+  test("warns when an unknown top-level key has no defined behavior", () => {
+    writeCurrentConfig({ defualtBundle: "typo" });
+    const warnings = captureWarnings(() => loadConfig());
+    expect(warnings.join("\n")).toMatch(/unknown config key.*defualtBundle/i);
+  });
+
   test("ignores stash-root config.json files", () => {
     const stashDir = makeTmpDir();
     try {
@@ -763,6 +769,29 @@ describe("primary stash config", () => {
     updateConfig({ bundles: { main: { path: "/custom/stash", writable: true } }, defaultBundle: "main" });
     expect(primaryBundlePath(loadConfig())).toBe("/custom/stash");
   });
+
+  test("rejects disabled read and write defaults", () => {
+    writeCurrentConfig({
+      bundles: { off: { path: "/custom/stash", enabled: false } },
+      defaultBundle: "off",
+      defaultWriteTarget: "off",
+    });
+    expect(() => loadConfig()).toThrow(/defaultBundle.*disabled|defaultWriteTarget.*disabled/i);
+  });
+
+  test("rejects two bundle ids that alias one physical directory through a symlink", () => {
+    const root = makeTmpDir();
+    const real = path.join(root, "real");
+    const alias = path.join(root, "alias");
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, alias, "dir");
+    try {
+      writeCurrentConfig({ bundles: { first: { path: real }, second: { path: alias } }, defaultBundle: "first" });
+      expect(() => loadConfig()).toThrow(/same physical content root/i);
+    } finally {
+      cleanup(root);
+    }
+  });
 });
 
 // ── search config ────────────────────────────────────────────────────────────
@@ -1119,6 +1148,65 @@ describe("extends inheritance (#945)", () => {
     }
   });
 
+  test("rejects a bundle config symlink that physically escapes its content root", () => {
+    const fleetDir = makeTmpDir();
+    const outsideDir = makeTmpDir();
+    try {
+      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
+      fs.writeFileSync(
+        path.join(outsideDir, "shared.json"),
+        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 99 }),
+      );
+      fs.symlinkSync(path.join(outsideDir, "shared.json"), path.join(fleetDir, "config", "shared.json"));
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          bundles: { fleet: { path: fleetDir } },
+          extends: "fleet//config/shared.json",
+        }),
+      );
+      expect(() => loadConfig()).toThrow(/symbolic link outside/i);
+    } finally {
+      cleanup(fleetDir);
+      cleanup(outsideDir);
+    }
+  });
+
+  test("strips inherited host authority while retaining portable engine settings", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(
+      path.join(dir, "base.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          inherited: {
+            kind: "agent",
+            platform: "claude",
+            model: "portable-model",
+            bin: "/untrusted/bin",
+            args: ["--dangerous"],
+            workspace: "/untrusted/workspace",
+          },
+        },
+        execution: { allowedTools: ["*"] },
+        experimental: { improveAutonomy: true },
+      }),
+    );
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+
+    const config = loadConfig();
+    expect(config.engines?.inherited).toMatchObject({ kind: "agent", platform: "claude", model: "portable-model" });
+    expect(config.engines?.inherited).not.toHaveProperty("bin");
+    expect(config.engines?.inherited).not.toHaveProperty("args");
+    expect(config.engines?.inherited).not.toHaveProperty("workspace");
+    expect(config.execution).toBeUndefined();
+    expect(config.experimental).toBeUndefined();
+    expect(getConfigValueSource("engines.inherited.model")).toBe("extends:./base.json");
+    expect(getConfigValueSource("engines.inherited.bin")).toBe("default");
+    expect(getConfigValueSource("execution.allowedTools")).toBe("default");
+  });
+
   test("config get extends returns the locally configured ref (not silently dropped)", () => {
     // Deliberate deviation from a literal "strip extends before validation"
     // reading: `mutateConfig` (config set/unset) reads the EFFECTIVE config as
@@ -1150,23 +1238,27 @@ describe("extends inheritance (#945)", () => {
       JSON.stringify({
         configVersion: "0.9.0",
         extends: "./base.json",
-        scheduler: { enabled: [{ kind: "task", ref: "local//tasks/nightly" }] },
+        scheduler: {
+          enabled: [{ kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
+        },
       }),
     );
 
     const warnings = captureWarnings(() => {
-      expect(loadConfig().scheduler?.enabled).toEqual([{ kind: "task", ref: "local//tasks/nightly" }]);
+      expect(loadConfig().scheduler?.enabled).toEqual([
+        { kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
+      ]);
     });
-    expect(warnings.join("\n")).toMatch(/ignoring inherited scheduler activation/i);
+    expect(warnings.join("\n")).toMatch(/ignoring inherited config key "scheduler"/i);
   });
 
   test("scheduler activation rejects non-canonical and duplicate grants", () => {
     writeCurrentConfig({
       scheduler: {
         enabled: [
-          { kind: "task", ref: "tasks/nightly" },
-          { kind: "task", ref: "team//tasks/nightly" },
-          { kind: "task", ref: "team//tasks/nightly" },
+          { kind: "task", ref: "tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
+          { kind: "task", ref: "team//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
+          { kind: "task", ref: "team//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
         ],
       },
     });
