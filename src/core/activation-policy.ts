@@ -36,14 +36,11 @@
  *      only the primary stash and sources explicitly marked `writable: true`
  *      are write-activated. → {@link isSourceWriteActivated}
  *
- * A fourth rule — task activation (installing a task registered it disabled;
- * the scheduler skipped it at fire time until the operator set `enabled:
- * true`) — was retired in P4 (spec docs/plans/specs/p4-deletions-closeout.md
- * §3.2.7, P4-N6): task source v4 has no document-level `enabled` to gate at
- * fire time — enablement is per schedule binding, decided once at
- * `scheduler-sync.ts` sync time (a disabled binding is simply never
- * installed with the OS scheduler), not re-checked when the scheduler fires
- * it.
+ * Scheduler activation is now a separate host-local allow-list
+ * (`scheduler.enabled`) rather than a predicate in this module. Authored
+ * task/workflow sources cannot grant it. Sync installs only allow-listed refs,
+ * and scheduled task fire re-checks the same local grant so a stale native
+ * entry cannot bypass a later disable.
  *
  * These are behavior-preserving PORTS of the pre-0.9.0 rules. This module ships
  * **no new trust / approval / security machinery** (2026-07-14 decision, §1.3):

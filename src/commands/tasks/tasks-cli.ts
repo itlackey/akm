@@ -13,13 +13,11 @@
  * that would skip pending cleanup).
  *
  * 0.9 CLI overhaul (S6): the group was renamed from the plural `tasks` to the
- * singular `task` — hard break, no alias. `init`/`enable`/`disable` are
- * dropped: the default improve-schedule task set now ships as embedded
+ * singular `task` — hard break, no alias. `init` was dropped: the default improve-schedule task set now ships as embedded
  * templates under src/assets/tasks/improve/ (see src/tasks/embedded.ts),
  * seeded through the interactive `akm setup` task-review step instead of a
- * separate CLI command, and toggling a task's enabled state is a file edit +
- * `task sync` (tasks-sync.test.ts already proves the flip path). Every
- * subcommand (`add`/`run`/`history`/`sync`) shares one `--bundle <bundle>`
+ * separate CLI command. `enable`/`disable` mutate the host-local scheduler
+ * allow-list, never the task source. Every subcommand shares one `--bundle <bundle>`
  * axis (S8.4 ratified `task add`'s `--target` → `--bundle`; a later Gate-1
  * fix reverted it to match `import`/`proposal accept`, splitting the
  * write-target axis three-vs-one against `remember`/`clone`/`improve` — the
@@ -48,7 +46,9 @@ import { rejectRetiredSourceFlag } from "../read/search-cli";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
+  akmTasksDisable,
   akmTasksDoctor,
+  akmTasksEnable,
   akmTasksHistory,
   akmTasksPrune,
   akmTasksRun,
@@ -319,6 +319,30 @@ const tasksRunCommand = defineCommand({
   },
 });
 
+const tasksEnableCommand = defineJsonCommand({
+  meta: { name: "enable", description: "Enable a task in this host's scheduler configuration and sync it" },
+  args: {
+    ref: { type: "positional", description: "Task ref or id", required: true },
+    ...bundleArg,
+  },
+  async run({ args }) {
+    rejectRetiredTaskTargetFlag();
+    output("task-enable", await akmTasksEnable(args.ref, { target: args.bundle }));
+  },
+});
+
+const tasksDisableCommand = defineJsonCommand({
+  meta: { name: "disable", description: "Disable a task in this host's scheduler configuration and sync it" },
+  args: {
+    ref: { type: "positional", description: "Task ref or id", required: true },
+    ...bundleArg,
+  },
+  async run({ args }) {
+    rejectRetiredTaskTargetFlag();
+    output("task-disable", await akmTasksDisable(args.ref, { target: args.bundle }));
+  },
+});
+
 /**
  * #911: `task run <id>` and `task explain <ref>` take the id positionally, so
  * `task history <id>` is the natural thing to write — and it used to be
@@ -455,8 +479,8 @@ const tasksDoctorCommand = defineJsonCommand({
 });
 
 /**
- * #907: `akm task validate`'s exit-code contract — `valid`/`converts` are
- * successful outcomes (exit 0); `blocked`/`invalid`/`not-a-task` are
+ * #907: `akm task validate`'s exit-code contract — only current-schema
+ * `valid` is successful (exit 0); `blocked`/`invalid`/`not-a-task` are
  * diagnosed defects the caller must act on (exit 1, mirroring `task sync`'s
  * own `failures.length > 0 -> EXIT_CODES.GENERAL`). A missing path or an
  * unreadable file never reaches this function at all — `akmTaskValidate`
@@ -464,7 +488,7 @@ const tasksDoctorCommand = defineJsonCommand({
  * already maps to exit 2.
  */
 export function taskValidateExitCode(result: { outcome: string }): number | undefined {
-  return result.outcome === "valid" || result.outcome === "converts" ? undefined : EXIT_CODES.GENERAL;
+  return result.outcome === "valid" ? undefined : EXIT_CODES.GENERAL;
 }
 
 const tasksValidateCommand = defineJsonCommand({
@@ -579,6 +603,8 @@ export const taskCommand = defineGroupCommand({
   },
   subCommands: {
     add: tasksAddCommand,
+    enable: tasksEnableCommand,
+    disable: tasksDisableCommand,
     run: tasksRunCommand,
     explain: tasksExplainCommand,
     validate: tasksValidateCommand,

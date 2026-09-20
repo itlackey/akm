@@ -59,6 +59,7 @@ export type {
   LlmProfileConfig,
   OutputConfig,
   RegistryConfigEntry,
+  SchedulerConfig,
   SourceConfigEntry,
   SourceSpec,
 } from "./config-types";
@@ -373,9 +374,22 @@ function resolveExtendsChain(
   const layers = collectExtendsLayers(localRaw, configPath);
   let merged: Record<string, unknown> = {};
   for (let i = layers.length - 1; i >= 0; i--) {
-    merged = deepMergeConfig(merged, layers[i]!.raw);
+    const layer = layers[i]!;
+    if (i > 0 && Object.hasOwn(layer.raw, "scheduler")) {
+      warnOnce(
+        `config:inherited-scheduler:${layer.ref ?? i}`,
+        `Ignoring inherited scheduler activation from ${layer.ref ?? "a base config"}; scheduler.enabled is host-local and must be declared in the top-level config file.`,
+      );
+    }
+    merged = deepMergeConfig(merged, i > 0 ? omitSchedulerConfig(layer.raw) : layer.raw);
   }
   return merged;
+}
+
+function omitSchedulerConfig(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.hasOwn(raw, "scheduler")) return raw;
+  const { scheduler: _scheduler, ...rest } = raw;
+  return rest;
 }
 
 /** `~` expands to the home directory, mirroring `apiKeyFile`'s resolution (engine-resolution.ts). */

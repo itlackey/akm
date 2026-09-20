@@ -185,7 +185,6 @@ describe("cron backend helpers", () => {
     expect(block.split("\n")).toEqual([
       "# akm:task ping BEGIN",
       "* * * * * /bin/akm tasks run ping",
-      "# akm:source-enabled true",
       "# akm:task ping END",
     ]);
   });
@@ -251,10 +250,8 @@ describe("cron backend helpers", () => {
   });
 
   test("cronBlockBody comments only when disabled", () => {
-    expect(cronBlockBody("* * * * * X", true)).toBe("* * * * * X\n# akm:source-enabled true");
-    expect(cronBlockBody("* * * * * X", false)).toBe(
-      "# akm:disabled * * * * * X\n# akm:disabled # akm:source-enabled false",
-    );
+    expect(cronBlockBody("* * * * * X", true)).toBe("* * * * * X");
+    expect(cronBlockBody("* * * * * X", false)).toBe("# akm:disabled * * * * * X");
   });
 
   test("listBlocks parses id and body between markers", () => {

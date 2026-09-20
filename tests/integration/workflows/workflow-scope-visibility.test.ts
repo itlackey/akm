@@ -19,7 +19,6 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../../../src/workflows/authoring/scope-key";
@@ -89,23 +88,25 @@ describe("#942 — active runs are visible across scopes", () => {
     expect(started.run.status).toBe("active");
     const runIdA = started.run.id;
 
-    // Scope B: cwd well outside the stash (os.tmpdir() is an ancestor of
-    // storage.root, never of storage.stashDir, so it never resolves as "inside
-    // the stash" — see resolveWorkflowScopeAnchor).
-    const scopeB = await withCwd(os.tmpdir(), async () => getCurrentWorkflowScopeKey());
+    // Scope B: the filesystem root is outside the temp-backed stash and
+    // cannot inherit an incidental `.git` marker from the temp directory.
+    // Some CI/container hosts mount `/tmp/.git`; using os.tmpdir() here would
+    // then collapse both scopes to that same accidental repository root.
+    const scopeBDir = path.parse(storage.root).root;
+    const scopeB = await withCwd(scopeBDir, async () => getCurrentWorkflowScopeKey());
     expect(scopeB).not.toBe(scopeA);
 
     // `list` from scope B sees nothing for the default (scope-local) view —
     // but now names WHICH scope it searched, so this is distinguishable from
     // "nothing anywhere".
-    const emptyFromB = await withCwd(os.tmpdir(), () => listWorkflowRuns());
+    const emptyFromB = await withCwd(scopeBDir, () => listWorkflowRuns());
     expect(emptyFromB.runs).toEqual([]);
     expect(emptyFromB.scopeKey).toBe(scopeB);
 
     // `list --all-scopes` from scope B finds the run started in scope A, and
     // reports `scopeKey: null` (searched every scope) on the envelope while
     // the run's own per-row `scopeKey` still names where it actually started.
-    const allScopes = await withCwd(os.tmpdir(), () => listWorkflowRuns({ allScopes: true }));
+    const allScopes = await withCwd(scopeBDir, () => listWorkflowRuns({ allScopes: true }));
     expect(allScopes.scopeKey).toBeNull();
     expect(allScopes.runs.map((r) => r.id)).toContain(runIdA);
     expect(allScopes.runs.find((r) => r.id === runIdA)?.scopeKey).toBe(scopeA);
@@ -115,7 +116,7 @@ describe("#942 — active runs are visible across scopes", () => {
     // deliberate per-project partition) — it starts a genuinely separate
     // run — but warns, naming scope A's run id and scope, instead of
     // silently leaving two stalled "active" answers for the same ref.
-    const startedFromB = await withCwd(os.tmpdir(), () =>
+    const startedFromB = await withCwd(scopeBDir, () =>
       runWorkflowSteps({ target: "workflows/cross-scope", maxSteps: 1, dispatcher: okDispatcher }),
     );
     expect(startedFromB.run.id).not.toBe(runIdA);
@@ -125,11 +126,11 @@ describe("#942 — active runs are visible across scopes", () => {
 
     // `abandon <id>` still works from any scope (#919) — pinned here for the
     // scope B run started above, called from scope B itself.
-    const abandoned = await withCwd(os.tmpdir(), () => abandonWorkflowRun(startedFromB.run.id));
+    const abandoned = await withCwd(scopeBDir, () => abandonWorkflowRun(startedFromB.run.id));
     expect(abandoned.run.status).toBe("failed");
 
     // And from scope B against the ORIGINAL scope-A run too.
-    const abandonedA = await withCwd(os.tmpdir(), () => abandonWorkflowRun(runIdA));
+    const abandonedA = await withCwd(scopeBDir, () => abandonWorkflowRun(runIdA));
     expect(abandonedA.run.status).toBe("failed");
   });
 

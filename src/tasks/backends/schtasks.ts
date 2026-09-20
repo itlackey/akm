@@ -373,8 +373,10 @@ function inspectSchtasksState(
     artifacts.push(artifact);
     const parsed = extractSchtasksInvocation(query.stdout);
     if (!parsed) continue;
+    const enabled = taskXmlEnabled(query.stdout);
     const ref: InstalledSchedulerBinding = {
       id: schedulerLogicalBindingId(nativeId, parsed.invocation),
+      ...(enabled !== undefined ? { enabled } : {}),
       ...(artifact.fingerprint !== undefined ? { signature: artifact.fingerprint } : {}),
       ...(parsed.target !== undefined ? { target: parsed.target } : {}),
       binding: parsed.binding,

@@ -262,6 +262,19 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
 });
 
 describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { eventSource: "task", scheduled }', () => {
+  test("manual execution remains available while a scheduled invocation requires host-local activation", async () => {
+    const id = "cli-local-activation";
+    writeTask(id, "version: 4\nrun: 'true'\nschedule: '@daily'\n");
+
+    const manual = await runCliCapture(["task", "run", id]);
+    expect(manual.code, manual.stderr).toBe(0);
+
+    const scheduled = await runCliCapture(["task", "run", id, "--scheduled"]);
+    expect(scheduled.code).toBe(2);
+    expect(scheduled.stderr).toContain("INVALID_FLAG_VALUE");
+    expect(scheduled.stderr).toContain("not enabled in local scheduler config");
+  });
+
   // §1.6 D5-N1's binding resolution, exercised through the REAL CLI entry
   // point (src/commands/tasks/tasks.ts's akmTasksRun) rather than a direct
   // runTask() call: `--scheduled` toggles `context.scheduled` only.
@@ -282,6 +295,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
       semanticSearchMode: "off",
       engines: { "cli-audit": { kind: "agent", platform: "aider", bin: "/bin/true" } },
       defaults: { engine: "cli-audit" },
+      scheduler: { enabled: [{ kind: "task", ref: `fixture//tasks/${id}` }] },
     });
     const indexed = await runCliCapture(["index", "--full"]);
     expect(indexed.code, indexed.stderr).toBe(0);

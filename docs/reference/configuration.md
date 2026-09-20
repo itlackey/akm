@@ -16,14 +16,13 @@ auto-upgrade in memory (see "Version read shim" below). Missing, newer,
 numeric, and any other unrecognized version are rejected by ordinary
 commands without rewriting the file — an older binary never guesses at a
 newer, unknown shape. Pre-0.9 config and database layouts are not runtime
-inputs and are not migrated by `akm upgrade`. Configure the current schema
-directly. The standalone migrator exists only for explicit task migration:
-task v2 to task v3, then task v3 to task source v4, in one pass.
+inputs. Historical task sources and scheduler activation are handled by the
+standalone `akm-migrate` executable, also invoked by `akm migrate` / `akm
+upgrade`; ordinary runtime code reads only the current shape.
 
 ### Version read shim
 
-Like the task-source v2/v3 auto-shim (`akm migrate apply`'s in-memory
-counterpart, documented under Migration below), a known older `configVersion`
+For config only, a known older `configVersion`
 is converted to the current shape in memory on load — with a one-line stderr
 deprecation warning — rather than hard-failing every command. Nothing is
 written back to disk by the shim itself; the very next config-mutating
@@ -64,6 +63,12 @@ the first bump that will need it, per #863.
     "maxConcurrency": 8,
     "judgeEngine": "reviewer"
   },
+  "scheduler": {
+    "enabled": [
+      { "kind": "task", "ref": "personal//tasks/nightly" },
+      { "kind": "workflow", "ref": "team//workflows/weekly-review" }
+    ]
+  },
   "improve": {
     "strategies": {
       "nightly": {
@@ -77,6 +82,21 @@ the first bump that will need it, per #863.
   }
 }
 ```
+
+## Scheduler activation
+
+`scheduler.enabled` is this host's explicit scheduling allow-list. Each entry
+has a `kind` (`task` or `workflow`) and a canonical fully qualified `ref` with
+no fragment. Absence means disabled. Authored task/workflow files may describe
+schedules but cannot grant themselves authority to create native scheduler
+entries.
+
+This key is deliberately local: if a config uses `extends`, any `scheduler`
+section in the base is ignored with a warning. Only the top-level local config
+can activate schedules. Prefer `akm task enable <ref>` and `akm task disable
+<ref>` over editing the JSON by hand; both update the allow-list and sync the
+affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
+enabled configured bundles.
 
 ## Engines
 

@@ -362,7 +362,9 @@ file plus one `sync` is a complete workflow.
 ```sh
 akm task add nightly-improve --schedule "@daily" --command "akm improve --strategy default"
 akm task add briefing --schedule "0 9 * * *" --prompt "Draft the morning briefing"  # Inline command task
-akm task sync                                  # Reconcile task files with the OS scheduler
+akm task enable <bundle>//tasks/<id>           # Enable locally and sync that bundle
+akm task disable <bundle>//tasks/<id>          # Disable locally and unschedule it
+akm task sync                                  # Reconcile activated refs from every enabled configured bundle
 akm task sync --rebind                         # Also re-pin the scheduler's akm binary/spelling
 akm task doctor                                # Scheduler binding + runtime eligibility diagnosis
 akm task history                               # Recent run rows (status, timing)
@@ -375,10 +377,10 @@ Task files use task source v4 (`version: 4`). There is no `akm:` options bag
 or `on:` block — every control (`schedule`, `timeout`, `engine`, `model`,
 `redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
-workflow's (`output:` replaces v3's `akm.outputSchema`). To disable one
-schedule entry, set that entry's `enabled: false` under `schedule:` and run
-`akm task sync` (the cron line stays, commented); to remove one, delete the
-YAML and run `akm task sync` — the scheduler entry is unbound. Top-level
+workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
+controls activation: use `akm task enable` / `disable`, which update the
+host-local config allow-list and sync. To remove one, delete the YAML and run
+`akm task sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
 overriding the selected engine invocation timeout. Preview old task-v2/v3
 conversion with `akm migrate apply --dry-run`.

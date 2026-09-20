@@ -119,9 +119,7 @@ describe("task runner mutation boundary", () => {
       expect(failure).toBeInstanceOf(Error);
       expect((failure as Error).message).toContain(message);
       if (label === "v2" || label === "v3") {
-        expect((failure as Error & { hint(): string }).hint()).toContain(
-          "Review the file and resolve the ambiguity by hand",
-        );
+        expect((failure as Error & { hint(): string }).hint()).toContain("akm migrate apply --dry-run");
       }
       expect(readTaskHistory({ id: "blocked" })).toEqual([]);
       expect(logFiles()).toEqual([]);

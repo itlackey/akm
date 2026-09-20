@@ -48,7 +48,7 @@
  *
  * Reason-code strings (`"task-converted"`, `"already-v4"`,
  * `"github-action-target-removed"`, `"with-on-non-command-target"`,
- * `"enabled-false-has-no-schedule-entry"`, `"unsupported-task-version"`) are
+ * `"source-enablement-removed"`, `"unsupported-task-version"`) are
  * this file's own invented, pinned vocabulary — the spec states the FACTS a
  * blocked/changed outcome must carry (§5.3, B-60..B-69), never exact bytes,
  * exactly as p2a's task-to-v3.ts precedent established
@@ -294,30 +294,24 @@ describe("pure task v3 to v4 migration planner", () => {
     expect(outcome.notice).toBeUndefined();
   });
 
-  test("distributes akm.enabled: false onto every compiled schedule entry — the single-cron shorthand and the on.schedule list alike", () => {
+  test("drops retired source-owned akm.enabled while preserving schedules", () => {
     const singleCron = fixtureOutcome("enabled-false-akm-schedule");
     const list = fixtureOutcome("enabled-false-on-schedule");
     for (const outcome of [singleCron, list]) {
       if (outcome.status !== "changed") throw new Error(`expected changed: ${outcome.filePath}`);
     }
 
-    // A bare enabled:false cannot round-trip through the string-shorthand
-    // schedule: form (schedule-v4.ts always compiles the string form as
-    // enabled: true) — Implement must widen to the one-entry list form.
     expect(parseYaml((singleCron as { after: Buffer }).after.toString("utf8"))).toEqual({
       version: 4,
       name: "v3 to v4 fixture - enabled false with akm.schedule",
       uses: "commands/publish-report",
-      schedule: [{ cron: "@daily", enabled: false }],
+      schedule: "@daily",
     });
     expect(parseYaml((list as { after: Buffer }).after.toString("utf8"))).toEqual({
       version: 4,
       name: "v3 to v4 fixture - enabled false with on.schedule",
       uses: "commands/publish-report",
-      schedule: [
-        { cron: "30 9 * * 2", enabled: false },
-        { cron: "0 0 1 * *", enabled: false },
-      ],
+      schedule: [{ cron: "30 9 * * 2" }, { cron: "0 0 1 * *" }],
     });
   });
 
@@ -408,6 +402,17 @@ describe("pure task v3 to v4 migration planner", () => {
     const outcome = planTaskToV4File(memoryInput("version: 4\nuses: commands/publish-report\nschedule: '@daily'\n"));
     expect(outcome.status).toBe("skipped");
     expect(outcome.reason).toBe("already-v4");
+  });
+
+  test("a version: 4 document with source-owned schedule enablement is rewritten for the strict runtime", () => {
+    const outcome = planTaskToV4File(
+      memoryInput("version: 4\nuses: commands/publish-report\nschedule:\n  - cron: '@daily'\n    enabled: true\n"),
+    );
+    expect(outcome.status).toBe("changed");
+    expect(outcome.reason).toBe("source-enablement-removed");
+    if (outcome.status !== "changed") throw new Error("expected changed migration outcome");
+    expect(outcome.after.toString("utf8")).not.toContain("enabled:");
+    expect(outcome.after.toString("utf8")).toContain("cron: '@daily'");
   });
 
   test("classifies changed, skipped, and blocked files in stable path order with a deterministic generation", () => {

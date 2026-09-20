@@ -7,13 +7,11 @@
  *
  * POLICY: a schema bump (task source v2/v3/v4, the proposals `metadata_json`
  * envelope, or anything else a prior release wrote to disk/state.db) must
- * NEVER turn into a headless upgrade break — a user's real, already-scheduled
- * artifact reading successfully today must keep reading successfully after
- * `npm i -g akm@latest` (or the container image bump), even if the release
- * notes say "run the migrator." Deterministic transforms are the tool's job,
- * not the user's; the migrator (`akm migrate apply`) stays available to
- * rewrite the file on disk and silence the resulting deprecation warning,
- * but it must never be REQUIRED just to keep reading.
+ * have an explicit upgrade path backed by real-shaped fixtures. Persisted
+ * state normally remains read-compatible. Task source is the deliberate
+ * exception: runtime accepts only the current grammar so untrusted source
+ * cannot carry obsolete activation semantics; `akm migrate apply` owns the
+ * deterministic v2/v3 -> v4 rewrite and removal of v4 source enablement.
  *
  * Every fixture below is a REAL-SHAPED artifact from a prior release — not a
  * synthetic minimal case. When a future schema bump lands, add the OLD shape
@@ -24,10 +22,10 @@
  * spelled out in the commit message.
  *
  * Current coverage:
- *   - task source v2 (`fixtures/task-v2.yml`) — read via the in-memory
- *     v2->v3->v4 migration shim in `src/tasks/source/parse-task-source.ts`.
- *   - task source v3 (`fixtures/task-v3.yml`) — read via the in-memory v3->v4
- *     migration shim, same file.
+ *   - task source v2 (`fixtures/task-v2.yml`) — rejected by runtime and
+ *     converted through the explicit v2->v3->v4 migrator.
+ *   - task source v3 (`fixtures/task-v3.yml`) — rejected by runtime and
+ *     converted through the explicit v3->v4 migrator.
  *   - pre-envelope proposal rows (`metadata_json` missing `changes`,
  *     `proposedTarget`, `beforeHash`, `eligibilitySource`, `backupContent` —
  *     the REAL shape pulled from a live 24,358-row archive during the #859
@@ -85,7 +83,7 @@ import path from "node:path";
 import { inspectMigrationPlan } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl, isProposalSkipped } from "../../src/commands/proposal/repository";
-import { akmTasksSync } from "../../src/commands/tasks/tasks";
+import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
 import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -98,6 +96,7 @@ import { getMeta } from "../../src/storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
+import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import { readTaskHistory } from "../../src/tasks/run/task-history";
 import {
@@ -106,6 +105,8 @@ import {
   writeSchedulerContextDescriptor,
 } from "../../src/tasks/scheduler-invocation";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
+import { planTaskToV3File } from "../../src/tasks/source/task-to-v3";
+import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   type IsolatedAkmStorage,
   sandboxStashDir,
@@ -120,6 +121,17 @@ const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-rele
 
 function readFixture(name: string): string {
   return fs.readFileSync(path.join(FIXTURES_DIR, name), "utf8");
+}
+
+function migrateLegacyTask(filePath: string, yaml: string) {
+  const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
+  const v3 = planTaskToV3File(input);
+  const v3Bytes = v3.status === "changed" ? v3.after : input.bytes;
+  expect(v3.status === "changed" || v3.reason === "already-v3").toBe(true);
+  const v4 = planTaskToV4File({ ...input, bytes: v3Bytes });
+  expect(v4.status).toBe("changed");
+  if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
+  return parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
@@ -216,42 +228,25 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     }
   });
 
-  describe("task source v2/v3 (auto-shimmed to v4)", () => {
-    let warnSpy: ReturnType<typeof spyOn>;
-
-    beforeEach(() => {
-      // The harness sets quiet=true by default (tests/_preload.ts); opt into
-      // real warn() output so the spy actually observes the deprecation line.
-      setQuiet(false);
-      warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      warnSpy.mockRestore();
-      resetQuiet();
-    });
-
-    test("a real-shaped task v2 file (schedule/command/enabled/timeoutMs/tags) reads without error", () => {
+  describe("task source v2/v3 (explicitly migrated to v4)", () => {
+    test("a real-shaped task v2 file is rejected by runtime and converted by akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2.yml");
       const yaml = readFixture("task-v2.yml");
-      const result = parseTaskSource({ yaml, filePath });
+      expect(() => parseTaskSource({ yaml, filePath })).toThrow(/TASK_SCHEMA_VERSION_UNSUPPORTED/);
+      const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("run");
-      // Deprecation warning on stderr, never on the return value / stdout path.
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("schema v2");
     });
 
-    test("a real-shaped task v3 file (akm.schedule/akm/command/with) reads without error", () => {
+    test("a real-shaped task v3 file is rejected by runtime and converted by akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v3.yml");
       const yaml = readFixture("task-v3.yml");
-      const result = parseTaskSource({ yaml, filePath });
+      expect(() => parseTaskSource({ yaml, filePath })).toThrow(/TASK_SCHEMA_VERSION_UNSUPPORTED/);
+      const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("uses");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("schema v3");
     });
   });
 
@@ -468,31 +463,18 @@ describe("previous-release corpus — upgrade must not break reads", () => {
   // plain `command: /path/to/akm ...` shape. On a real 0.9.4 install, every
   // v2 task whose `command:` started with `env NAME=value... cmd args...`
   // (a common, ordinary way to write a cron command) hit
-  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being auto-shimmed — this is
-  // exactly the gap that shipped in 0.9.4. Kept as its own block per #867's
-  // instructions (other agents may be editing the describes above).
+  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable — this is
+  // exactly the gap that shipped in 0.9.4. Runtime rejection is now intended,
+  // while the explicit migrator must continue to convert this real shape.
   describe("task source v2 — env-prefixed command (#867)", () => {
-    let warnSpy: ReturnType<typeof spyOn>;
-
-    beforeEach(() => {
-      setQuiet(false);
-      warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      warnSpy.mockRestore();
-      resetQuiet();
-    });
-
-    test("a real-shaped task v2 file whose command starts with `env NAME=value...` reads without error", () => {
+    test("a real-shaped env-prefixed task is rejected by runtime and converted by akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2-env-prefixed.yml");
       const yaml = readFixture("task-v2-env-prefixed.yml");
-      const result = parseTaskSource({ yaml, filePath });
+      expect(() => parseTaskSource({ yaml, filePath })).toThrow(/TASK_SCHEMA_VERSION_UNSUPPORTED/);
+      const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("run");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("schema v2");
     });
   });
 });
@@ -734,9 +716,12 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(
         path.join(tasksDir, "ping.yml"),
-        'version: 4\nrun: echo ping\nname: ping\nschedule:\n  - cron: "*/15 * * * *"\n    enabled: true\n',
+        'version: 4\nrun: echo ping\nname: ping\nschedule:\n  - cron: "*/15 * * * *"\n',
         "utf8",
       );
+      const defaultBundle = path.basename(stash.dir).toLowerCase();
+      setSchedulerRefEnabled("task", `${defaultBundle}//tasks/ping`, true);
+      expect(loadConfig().scheduler?.enabled).toEqual([{ kind: "task", ref: `${defaultBundle}//tasks/ping` }]);
 
       // Matches the `backendFor` setup in tasks-sync.test.ts: this backend
       // never routes through the real launcher-eligibility path, so install
@@ -765,6 +750,13 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       const inspected = await backend.inspectBindings?.({});
       expect(inspected?.installed.map((entry) => entry.id)).toEqual(["ping"]);
 
+      const preview = await akmTasksSyncPlan({ backend });
+      expect(preview).toMatchObject({
+        adds: [],
+        updates: [{ id: "ping", kind: "update" }],
+        removes: [],
+        failures: [],
+      });
       const result = await akmTasksSync({ backend });
       expect(result.installed).toEqual([]);
       expect(result.updated).toEqual(["ping"]);

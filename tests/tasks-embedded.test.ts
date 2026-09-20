@@ -82,8 +82,7 @@ describe("embedded task registry", () => {
         filePath: `embedded:${embedded.id}`,
         yaml: embedded.yaml,
       });
-      const scheduleDisabled = task.schedule.length > 0 && task.schedule.every((entry) => !entry.enabled);
-      if (scheduleDisabled || task.target.kind !== "run") continue;
+      if (!embedded.enabled || task.target.kind !== "run") continue;
 
       const [executable, ...args] = task.target.run.split(" ");
       expect(executable, `${embedded.id} must invoke akm`).toBe("akm");

@@ -1948,7 +1948,7 @@ akm task history --id manual-failure --limit 1
 - [ ] **LOCAL** Source/dist scheduler write without rebind rejects ineligible executable before task/scheduler mutation.
 - [ ] **LOCAL** Explicit rebind records reviewed invocation and warns not release-eligible.
 - [ ] **PLATFORM** Use installed npm/standalone candidate in disposable account.
-- [ ] **PLATFORM** Add disabled command/prompt/workflow; inspect native entry; edit enabled/schedule/target + sync; execute; inspect history/log; delete YAML + sync removes entry.
+- [ ] **PLATFORM** Add a disabled command/prompt/workflow; confirm no native entry exists; use `akm task enable` and inspect the native entry; edit schedule/target + sync; execute; inspect history/log; use `akm task disable` and confirm removal; delete YAML + sync remains converged.
 - [ ] **PLATFORM** Existing binding remains unless rebind; upgrade behavior is explicit.
 
 | Platform | Evidence |

@@ -166,7 +166,7 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
   });
 });
 
-describe("whole-set task source v4 scheduler sync planning — scheduled bindings and per-entry enabled (B-08..B-10)", () => {
+describe("whole-set task source v4 scheduler sync planning — locally activated scheduled bindings (B-08..B-10)", () => {
   test("a scheduled version: 4 task compiles exactly one binding via the SAME compileTaskSchedulerBindings seam as v3", async () => {
     const bundleRoot = root();
     write(
@@ -546,7 +546,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     const existing = compileTaskSchedulerBindings({
       id: "update",
       qualifiedRef: "team//tasks/update",
-      enabled: true,
       schedules: [{ cron: "30 2 * * *", source: "schedule", ordinal: 0 }],
     })[0]!;
     const installed = {
@@ -610,7 +609,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     const [desired] = compileTaskSchedulerBindings({
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
-      enabled: true,
       schedules: [{ cron: "0 1 * * *", source: "schedule", ordinal: 0 }],
     });
     if (!desired) throw new Error("missing binding");
@@ -654,7 +652,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     const [desired] = compileTaskSchedulerBindings({
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
-      enabled: true,
       schedules: [{ cron: "0 1 * * *", source: "schedule", ordinal: 0 }],
     });
     if (!desired) throw new Error("missing binding");
@@ -1101,7 +1098,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(plan.desired.map((binding) => binding.id)).toEqual(["a-valid"]);
     expect(plan.failures).toHaveLength(1);
     expect(plan.failures[0]?.path).toContain("b-invalid.yml");
-    expect(plan.failures[0]?.reason).toContain("needs a human decision");
+    expect(plan.failures[0]?.reason).toContain("akm migrate apply --dry-run");
     expect(signatures).toBe(1);
   });
 

@@ -304,6 +304,7 @@ describe("a scheduled run's compiled invocation tail delivers schedule-supplied 
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",
       semanticSearchMode: "off",
+      scheduler: { enabled: [{ kind: "task", ref: "fixture//tasks/delegate-scheduled" }] },
     });
   }
 

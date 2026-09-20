@@ -1136,6 +1136,44 @@ describe("extends inheritance (#945)", () => {
     expect((config as unknown as Record<string, unknown>).extends).toBe("./base.json");
   });
 
+  test("scheduler activation is host-local and never inherited through extends", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(
+      path.join(dir, "base.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        scheduler: { enabled: [{ kind: "task", ref: "fleet//tasks/untrusted" }] },
+      }),
+    );
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        extends: "./base.json",
+        scheduler: { enabled: [{ kind: "task", ref: "local//tasks/nightly" }] },
+      }),
+    );
+
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().scheduler?.enabled).toEqual([{ kind: "task", ref: "local//tasks/nightly" }]);
+    });
+    expect(warnings.join("\n")).toMatch(/ignoring inherited scheduler activation/i);
+  });
+
+  test("scheduler activation rejects non-canonical and duplicate grants", () => {
+    writeCurrentConfig({
+      scheduler: {
+        enabled: [
+          { kind: "task", ref: "tasks/nightly" },
+          { kind: "task", ref: "team//tasks/nightly" },
+          { kind: "task", ref: "team//tasks/nightly" },
+        ],
+      },
+    });
+
+    expect(() => loadConfig()).toThrow(/canonical fully-qualified ref|duplicates/i);
+  });
+
   test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
     // Round-1 review finding: mutateConfig used to write the entire
     // extends-merged EFFECTIVE config back to the local file on any

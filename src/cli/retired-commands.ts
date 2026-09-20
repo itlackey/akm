@@ -79,9 +79,6 @@ const RETIRED_COMMAND_HINTS: Record<string, string> = {
     "`akm workflow report` was removed — the external-driver protocol is gone; `akm workflow run <target>` dispatches and records units itself.",
   "config show": "`akm config show` was removed in 0.9 — use `akm config list`.",
   "config validate": "`akm config validate` was removed in 0.9 — the config file is validated on every load.",
-  "task enable": "`akm task enable` was removed in 0.9 — set `enabled: true` in the task YAML, then `akm task sync`.",
-  "task disable":
-    "`akm task disable` was removed in 0.9 — set `enabled: false` in the task YAML, then `akm task sync`.",
   "task init": "`akm task init` was removed in 0.9 — `akm setup` seeds the default schedules.",
   "task show": "there is no `task show` — task files are indexed assets; use `akm show <ref>`.",
   "task remove": "there is no `task remove` — delete the task YAML, then run `akm task sync` to unbind it.",

@@ -52,7 +52,11 @@ function writeTask(stashDir: string): void {
 }
 
 function configureStash(stashDir: string): void {
-  writeSandboxConfig({ bundles: { stash: { path: stashDir, writable: true } }, defaultBundle: "stash" });
+  writeSandboxConfig({
+    bundles: { stash: { path: stashDir, writable: true } },
+    defaultBundle: "stash",
+    scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/ping" }] },
+  });
 }
 
 describe("scheduler runtime binding", () => {
@@ -266,16 +270,14 @@ describe("scheduler runtime binding", () => {
     }
   });
 
-  test("a file-edit reinstall uses the current binding and descriptor", async () => {
+  test("a schedule edit reinstall uses the current binding and descriptor", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       configureStash(storage.stashDir);
       writeTask(storage.stashDir);
-      // The enable/disable mutation API was removed in 0.9 (S6.3) — flipping a
-      // task's `enabled:` field is now a plain file edit, reconciled by sync.
       fs.writeFileSync(
         path.join(storage.stashDir, "tasks", "ping.yml"),
-        'version: 4\nrun: echo ping\nschedule:\n  - cron: "@daily"\n    enabled: false\n',
+        'version: 4\nrun: echo ping\nschedule: "@hourly"\n',
       );
       const installs: Array<SchedulerInstallOptions | undefined> = [];
       const backend = completeSchedulerBackend({

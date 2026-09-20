@@ -13,7 +13,6 @@ import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_TIMEOUT_MS } from "../../wo
 import { validateTaskId } from "../task-id";
 import { assertBoundedTaskYamlDocument, TASK_V3_MAX_REDACT_NAMES } from "./bounded-document";
 import { classifyTaskV3Uses, parseTaskV3Yaml, type TaskV3UsesTarget } from "./task-source-v3-frozen";
-import { parseTaskSourceV4 } from "./task-source-v4";
 
 export interface TaskToV3FileInput {
   readonly filePath: string;
@@ -495,16 +494,10 @@ export function planTaskToV3File(input: TaskToV3FileInput): TaskToV3FileOutcome 
     }
   }
   if (data.version === 4) {
-    try {
-      parseTaskSourceV4({
-        yaml: source,
-        filePath: input.filePath,
-        ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
-      });
-      return Object.freeze({ status: "skipped" as const, ...base(input), reason: "already-v4" as const });
-    } catch (cause) {
-      return blocked(input, "invalid-v4-task", cause instanceof Error ? cause.message : String(cause));
-    }
+    // Generation 1 owns v2 only. Do not validate v4 here: generation 2 must
+    // be allowed to recognize and remove the retired schedule[].enabled field
+    // before the current runtime parser sees those bytes.
+    return Object.freeze({ status: "skipped" as const, ...base(input), reason: "already-v4" as const });
   }
   if (data.version !== 2) {
     return blocked(input, "unsupported-task-version", `expected version 2, 3, or 4, got ${String(data.version)}`);

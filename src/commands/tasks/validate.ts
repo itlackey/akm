@@ -10,23 +10,18 @@
  * a bundle/adapter/concept id at all — it reads exactly the path it was
  * given and classifies it.
  *
- * Reuses the exact version-routing shim `parseTaskSource`
- * (`src/tasks/source/parse-task-source.ts`) already applies for every other
- * task-source reader (`akm task sync`'s `compileTaskSources` included) —
- * this module never forks a second parser or a second v2/v3 migration
- * planner. `readBoundedTaskSourceYaml` / `peekTaskSourceVersion` / `own` are
- * the SAME front-end helpers that shim itself calls first; they are used
- * here only to recover the file's ORIGINALLY DECLARED schema version for
- * the report, because `parseTaskSource`'s own `ParsedTaskSource.version` is
- * always `4` post-shim — it cannot answer "was this a v2/v3/v4 file?" on
- * its own once a v2/v3 source has been converted in memory.
+ * Reuses the exact current-schema router `parseTaskSource`
+ * (`src/tasks/source/parse-task-source.ts`) used by every other task-source
+ * reader. Historical v2/v3 documents are deliberately rejected here and
+ * point to `akm migrate apply`; validation does not embed a second legacy
+ * parser or perform an in-memory migration.
  *
  * Beyond parsing, this module also runs the SAME two per-source gates
  * `akm task sync`'s `compileTaskSources` runs before it ever installs a
  * schedule — `assertTaskScheduleInputsSatisfyContract` and
  * `assertTaskScheduleCronValid` (both extracted from `scheduler-sync.ts` for
  * exactly this reuse) — so a file `sync` would reject can never
- * be reported `valid`/`converts` here. Cron dialect is checked against
+ * be reported `valid` here. Cron dialect is checked against
  * `backendNameForPlatform()`, the same platform default `sync` falls back
  * to whenever it has no injected/native-inspected backend to hand (see
  * `akmTasksAdd`, `src/commands/tasks/tasks.ts`); a bare file was never
@@ -49,19 +44,12 @@
  * table in its header, extended for the two gates above):
  *   - `valid`       — parses as task source v4 directly (declared `version: 4`)
  *                      and passes both sync gates.
- *   - `converts`    — declared `version: 2` or `3`; the deterministic
- *                      in-memory migrator produced a valid v4 document that
- *                      passes both sync gates.
- *   - `blocked`     — declared `version: 2` or `3`; the migrator itself
- *                      could not convert it (an ambiguous/unmigratable
- *                      shape) — the ONLY way `parseTaskSource` ever throws
- *                      for those two version numbers, so no message-text
- *                      sniffing is needed to tell this apart from `invalid`.
+ *   - `blocked`     — declared `version: 2` or `3`; runtime does not accept
+ *                      it and the explicit migrator must rewrite it first.
  *   - `invalid`     — the document declares SOME version (`4`, or anything
  *                      other than 2/3/4) but fails to parse/validate, OR it
- *                      parsed (directly or via a SUCCESSFUL v2/v3
- *                      conversion) but fails one of the two sync gates
- *                      above, OR the YAML itself does not parse at all
+ *                      parsed but fails one of the two sync gates above, OR
+ *                      the YAML itself does not parse at all
  *                      (a genuine syntax error, not merely a non-task
  *                      shape) — reported with the parser's own reason.
  *   - `not-a-task`  — the document parses as YAML but never declares a
@@ -84,7 +72,7 @@ import type {
   TaskSourceV4Target,
 } from "../../tasks/source/task-source-v4";
 
-export type TaskValidateOutcome = "valid" | "converts" | "blocked" | "invalid" | "not-a-task";
+export type TaskValidateOutcome = "valid" | "blocked" | "invalid" | "not-a-task";
 
 /**
  * The compiled task shape `akm task sync` would build a scheduler binding
@@ -119,9 +107,9 @@ export interface TaskValidateResult {
    */
   readonly sourceVersion?: number;
   readonly outcome: TaskValidateOutcome;
-  /** Present only when `outcome` is not `valid`/`converts` — the diagnostic `akm task sync` would report for this source. */
+  /** Present only when `outcome` is not `valid` — the diagnostic `akm task sync` would report for this source. */
   readonly reason?: string;
-  /** The compiled task shape sync produces (this file's header) — present only on `valid`/`converts`. */
+  /** The compiled task shape sync produces (this file's header) — present only on `valid`. */
   readonly resolved?: TaskValidateResolved;
 }
 
@@ -190,11 +178,14 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
   } catch (cause) {
     if (!(cause instanceof UsageError)) throw cause;
     const reason = cause.message;
-    // `parseTaskSource` only ever throws for a declared version 2/3 via the
-    // unmigratable-conversion branch (see this file's header) — no separate
-    // message check needed to recognize "blocked" here.
     if (declaredVersion === 2 || declaredVersion === 3) {
-      return { ok: false, path: resolvedPath, sourceVersion: declaredVersion, outcome: "blocked", reason };
+      return {
+        ok: false,
+        path: resolvedPath,
+        sourceVersion: declaredVersion,
+        outcome: "blocked",
+        reason: `${reason} Run \`akm migrate apply --dry-run\`, review the plan, then run \`akm migrate apply\`.`,
+      };
     }
     if (peekFailed) {
       return { ok: false, path: resolvedPath, outcome: "invalid", reason };
@@ -215,11 +206,8 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
   // undefined — the router requires a numeric 2/3/4 version to reach here.
   const sourceVersion = declaredVersion ?? 4;
 
-  // The document itself parsed (directly, or via a successful v2/v3
-  // conversion) — now the two gates `compileTaskSources` runs before
-  // accepting it. A violation here is `invalid`, never `blocked`: the
-  // migrator already succeeded, so this is the same kind of defect a
-  // native v4 document with the identical schedule would have.
+  // The current document parsed; now run the two gates `compileTaskSources`
+  // applies before accepting it.
   try {
     assertTaskScheduleInputsSatisfyContract(parsed.v4, resolvedPath);
     assertTaskScheduleCronValid(parsed.v4, backend);
@@ -233,7 +221,7 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
     ok: true,
     path: resolvedPath,
     sourceVersion,
-    outcome: sourceVersion === 2 || sourceVersion === 3 ? "converts" : "valid",
+    outcome: "valid",
     resolved: buildResolved(id, parsed.v4),
   };
 }

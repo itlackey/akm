@@ -46,10 +46,16 @@ changed. Run interactive `akm setup` to review, prepare, and activate tasks.
 
 Task definitions live under `<bundle>/tasks/` as task source v4 `.yml` sources;
 the [task source reference](../reference/tasks.md) defines their executable and
-scheduling grammar. Scheduler entries are separate OS state. Activation captures the installed akm runtime so scheduled
-execution does not silently switch to a different checkout or package.
-Editing definitions and running ordinary `akm task sync` preserves that
-captured runtime.
+scheduling grammar. A definition cannot enable itself: this host's exact
+activated refs live separately in `config.json` under `scheduler.enabled`.
+Use `akm task enable <bundle>//tasks/<id>` or `akm task disable <ref>` to
+change that local grant without editing bundle content. An unscoped `akm task
+sync` reconciles activated refs from every enabled configured bundle.
+
+Native scheduler entries are separate OS state. Activation captures the
+installed akm runtime so scheduled execution does not silently switch to a
+different checkout or package. Editing definitions and running ordinary `akm
+task sync` preserves that captured runtime.
 
 A scheduled fire re-reads the guarded current source and creates a fresh
 durable-v4-family freeze at executable `irVersion: 5`.
@@ -83,6 +89,7 @@ never silently rebinds existing entries on your behalf.
 - [Getting Started](getting-started.md) — the first-run path this guide was
   split out of
 - [CLI Reference: task](../reference/cli.md#task) — the full `task` command
-  group, including `add`, `run`, `sync`, `doctor`, and `history`
-- [Task v3 source reference](../reference/tasks.md) — exact file grammar,
+  group, including `add`, `enable`, `disable`, `run`, `sync`, `doctor`, and
+  `history`
+- [Task source reference](../reference/tasks.md) — exact file grammar,
   targets, triggers, and migration

@@ -4,8 +4,9 @@
 
 /**
  * The whole migration, in order, as one plan: legacy config lift, pending
- * state.db migrations, task v2 -> v3, task v3 -> task source v4, then the
- * stash-scoped residue sweeps. `akm-migrate status` / `apply [--dry-run]`
+ * state.db migrations, native scheduler activation capture, task v2 -> v3,
+ * task v3 -> task source v4, then the stash-scoped residue sweeps.
+ * `akm-migrate status` / `apply [--dry-run]`
  * print exactly this; `akm migrate` and `akm upgrade` spawn that executable
  * and re-emit it. Every historical shape lives here or under `./migrate/`,
  * so the CLI proper only ever reads current schemas.
@@ -31,6 +32,12 @@ import {
   type WriterRelocationPlan,
 } from "./migrate/writer-relocation";
 import {
+  applySchedulerActivationMigration,
+  inspectSchedulerActivationMigration,
+  type SchedulerActivationMigrationPlan,
+  type SchedulerActivationMigrationResult,
+} from "./migrate/scheduler-activation";
+import {
   applyTaskV3Migration,
   applyTaskV4Migration,
   inspectMigrationPlan,
@@ -47,6 +54,7 @@ export interface CombinedMigrationPlan {
   blockers: string[];
   configExtraParams: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
   stateMigrations: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
+  schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
   taskV4Migration?: TaskV4MigrationStatus["taskV4Migration"];
   backupPath?: string;
@@ -142,6 +150,12 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   // one, always with the verified safety copy.
   const stateMigrations = apply ? applyStateMigrations() : { pending: listPendingStateMigrations() };
 
+  // Capture activation from the host's proven native scheduler state before
+  // task source migration removes the retired bundle-authored enabled flags.
+  const schedulerActivation = apply
+    ? await applySchedulerActivationMigration()
+    : await inspectSchedulerActivationMigration();
+
   const stashDir = stashDirIfConfigured();
   const taskV3 = apply ? applyTaskV3Migration() : inspectMigrationPlan();
   const taskV4 = apply ? applyTaskV4Migration() : inspectTaskV4MigrationStatus();
@@ -164,12 +178,15 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus = "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
+  const schedulerStatus: MigrationStatus =
+    "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
   return {
     schemaVersion: 1,
-    status: worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus),
+    status: worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
     blockers: [...taskV3.blockers, ...taskV4.blockers],
     configExtraParams,
     stateMigrations,
+    schedulerActivation,
     taskV3Migration: taskV3.taskV3Migration,
     taskV4Migration: taskV4.taskV4Migration,
     ...(taskV3.backupPath !== undefined ? { backupPath: taskV3.backupPath } : {}),

@@ -8,6 +8,7 @@ import path from "node:path";
 import { akmTasksAdd, akmTasksSync } from "../src/commands/tasks/tasks";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
+import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import type { SchedulerBackend } from "../src/tasks/backends/types";
 import type { ScheduleBackend } from "../src/tasks/schedule";
 import {
@@ -43,13 +44,13 @@ function writeTask(id: string, run: string, schedule: string): void {
   const file = path.join(storage.stashDir, "tasks", `${id}.yml`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, taskYaml(run, schedule));
+  setSchedulerRefEnabled("task", `stash//tasks/${id}`, true);
 }
 
 function binding(id: string, schedule: string): SchedulerBinding {
   const [compiled] = compileTaskSchedulerBindings({
     id,
     qualifiedRef: `stash//tasks/${id}`,
-    enabled: true,
     schedules: [{ cron: schedule, source: "akm.schedule", ordinal: 0 }],
   });
   if (!compiled) throw new Error("missing compiled binding");
@@ -528,6 +529,7 @@ describe("whole-set scheduler transaction and coherent inspection", () => {
   ] as const)("task sync %s revalidates a multi-schedule source after its successful middle install", async (name) => {
     const file = path.join(storage.stashDir, "tasks", "alpha.yml");
     fs.writeFileSync(file, 'version: 4\nrun: echo alpha\nschedule:\n  - cron: "0 1 * * *"\n  - cron: "0 2 * * *"\n');
+    setSchedulerRefEnabled("task", "stash//tasks/alpha", true);
     const backend = fakeBackend(name);
     const raced = taskYaml("echo raced", "59 23 * * *");
     const install = backend.install.bind(backend);
@@ -583,7 +585,6 @@ describe("whole-set scheduler transaction and coherent inspection", () => {
     const previous = compileTaskSchedulerBindings({
       id: "alpha",
       qualifiedRef: "stash//tasks/alpha",
-      enabled: true,
       schedules: [
         { cron: "0 1 * * *", source: "akm.schedule[0]", ordinal: 0 },
         { cron: "0 2 * * *", source: "akm.schedule[1]", ordinal: 1 },
@@ -690,6 +691,7 @@ describe("whole-set scheduler transaction and coherent inspection", () => {
       path.join(storage.stashDir, "tasks", "alpha.yml"),
       'version: 4\nuses: scripts/owned.sh\nschedule: "0 1 * * *"\n',
     );
+    setSchedulerRefEnabled("task", "stash//tasks/alpha", true);
     const backend = fakeBackend("cron");
 
     await expect(
@@ -724,6 +726,7 @@ describe("whole-set scheduler transaction and coherent inspection", () => {
       path.join(storage.stashDir, "tasks", "alpha.yml"),
       'version: 4\nuses: workflows/owned\nschedule: "0 1 * * *"\n',
     );
+    setSchedulerRefEnabled("task", "stash//tasks/alpha", true);
     const backend = fakeBackend("cron");
 
     await expect(
@@ -765,6 +768,7 @@ describe("whole-set scheduler transaction and coherent inspection", () => {
         "",
       ].join("\n"),
     );
+    setSchedulerRefEnabled("task", "stash//tasks/alpha", true);
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const backend = fakeBackend("cron");
     const raced = kind === "command" ? command : persona;

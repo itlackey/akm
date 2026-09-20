@@ -452,6 +452,7 @@ describe("schtasks backend signatures", () => {
     expect(listSync(backend)).toEqual([
       {
         id: "ping",
+        enabled: true,
         signature: backend.expectedSignature?.(task),
         binding: ["C:/akm.exe"],
         contextPath: expect.any(String),

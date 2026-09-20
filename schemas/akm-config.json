@@ -1714,6 +1714,37 @@
       },
       "additionalProperties": true
     },
+    "scheduler": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "workflow"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "additionalProperties": true
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": true
+    },
     "setup": {
       "type": "object",
       "properties": {},
@@ -3442,6 +3473,37 @@
               "type": "string",
               "maxLength": 63,
               "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            }
+          },
+          "additionalProperties": true
+        },
+        "scheduler": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "task",
+                      "workflow"
+                    ]
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "ref"
+                ],
+                "additionalProperties": true
+              },
+              "default": []
             }
           },
           "additionalProperties": true

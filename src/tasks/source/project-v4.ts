@@ -20,10 +20,6 @@
  *
  * The projection is DELIBERATELY LOSSY relative to the parsed document:
  *
- *   - per-schedule-binding `enabled` is NOT projected into `akm.enabled`
- *     (D2-N5) — it is carried separately to the scheduler seam
- *     (`scheduler-sync.ts`, `src/commands/tasks/tasks.ts`'s `akmTasksAdd`),
- *     not this function.
  *   - `inputs` (the document's typed input declarations) is NOT projected
  *     anywhere — input delivery reads the ORIGINAL parsed document directly
  *     (`src/tasks/run/load-task.ts`), not this projection.
@@ -50,8 +46,8 @@ import type { TaskSourceV4Document } from "./task-source-v4";
 /**
  * Map every top-level task source v4 execution control and D2-N7 survivor
  * into v3's `akm.*` shape, one field at a time (never a whole-object copy,
- * so a field task source v4 does not represent — `inputs`, per-binding
- * `enabled` — can never leak in by accident). Returns `undefined` when
+ * so a field task source v4 does not represent — such as `inputs` — can
+ * never leak in by accident). Returns `undefined` when
  * nothing maps, matching v3's own
  * convention of omitting the `akm` key entirely rather than emitting an
  * always-present empty object (`source-v3.ts:789`).

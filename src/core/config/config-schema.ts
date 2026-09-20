@@ -42,6 +42,7 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
+import { bundleRefToString, parseBundleRef } from "../asset/asset-ref";
 import { warnOnce } from "../warn";
 import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
@@ -52,6 +53,7 @@ import { ImproveConfigSchema } from "./schema/improve";
 import { IndexConfigSchema } from "./schema/index-config";
 import { OutputConfigSchema } from "./schema/output";
 import { CURRENT_CONFIG_VERSION, engineName, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
+import { SchedulerConfigSchema } from "./schema/scheduler";
 import { SearchConfigSchema } from "./schema/search";
 import { SetupConfigSchema } from "./schema/setup";
 import { BundlesConfigSchema, RegistryConfigEntrySchema } from "./schema/sources-bundles";
@@ -80,6 +82,7 @@ export {
 export { IndexConfigSchema, IndexPassConfigSchema } from "./schema/index-config";
 export { OutputConfigSchema } from "./schema/output";
 export { CURRENT_CONFIG_VERSION, LlmInvocationOverridesSchema } from "./schema/primitives";
+export { SchedulerActivationSchema, SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
 export { SetupConfigSchema } from "./schema/setup";
 export {
@@ -146,6 +149,9 @@ export const AkmConfigShape = {
   archiveRetentionDays: nonNegativeNumber.optional(),
   improve: ImproveConfigSchema.optional(),
   workflow: WorkflowConfigSchema.optional(),
+  // Host-local scheduler grants. Inherited layers are stripped by
+  // `resolveExtendsChain`; bundle-provided config never activates code.
+  scheduler: SchedulerConfigSchema.optional(),
   setup: SetupConfigSchema.optional(),
   // D8 — explicit opt-ins for behaviour outside the stability contract. Every
   // key defaults to OFF; see `src/core/config/experimental.ts` for the readers.
@@ -197,6 +203,30 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: ["defaultBundle"],
         message: `defaultBundle "${config.defaultBundle}" does not name a configured bundle`,
+      });
+    }
+  }
+  const activationKeys = new Set<string>();
+  for (const [index, activation] of (config.scheduler?.enabled ?? []).entries()) {
+    try {
+      const parsed = parseBundleRef(activation.ref);
+      if (!parsed.bundle || parsed.fragment !== undefined || bundleRefToString(parsed) !== activation.ref) {
+        throw new Error("not canonical");
+      }
+      const key = `${activation.kind}\0${activation.ref}`;
+      if (activationKeys.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduler", "enabled", index],
+          message: "duplicates an earlier scheduler activation",
+        });
+      }
+      activationKeys.add(key);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduler", "enabled", index, "ref"],
+        message: "must be one canonical fully-qualified ref without a fragment",
       });
     }
   }

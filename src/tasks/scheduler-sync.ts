@@ -81,6 +81,8 @@ export interface SchedulerSyncPlanInput {
   readonly config?: AkmConfig;
   /** Bundle-aware local asset resolver used while freezing workflow/script targets. */
   readonly resolveAsset?: PrepareTaskV3ExecutionContext["resolveAsset"];
+  /** Exact host-local activation allow-list, keyed by kind and canonical ref. */
+  readonly enabledActivations?: ReadonlySet<string>;
   readonly installOptions?: SchedulerInstallOptions;
   readonly rebind?: boolean;
   readonly expectedSignature?: (binding: SchedulerBinding, options?: SchedulerInstallOptions) => string;
@@ -194,6 +196,10 @@ export async function prepareSchedulerSyncSourceSet(
   });
 }
 
+function schedulerActivationKey(kind: SchedulerBinding["logicalSource"]["kind"], ref: string): string {
+  return `${kind}\0${ref}`;
+}
+
 export function finalizeSchedulerSyncPlan(
   input: SchedulerSyncPlanInput,
   prepared: PreparedSchedulerSourceSet,
@@ -220,7 +226,7 @@ export function finalizeSchedulerSyncPlan(
 
   for (const binding of desired) {
     const current = present.get(binding.id);
-    const options = installOptionsFor(coherentInput, current, binding);
+    const options = installOptionsFor(coherentInput, current);
     const resultFingerprint = coherentInput.expectedSignature?.(binding, options);
     if (!current) {
       installed.push(binding.id);
@@ -235,16 +241,7 @@ export function finalizeSchedulerSyncPlan(
       );
       continue;
     }
-    const sourceIntentChanged =
-      current.sourceEnabled !== undefined
-        ? current.sourceEnabled !== binding.enabled
-        : binding.enabled === false && current.manuallyDisabled === true;
-    if (
-      current.signature !== undefined &&
-      resultFingerprint !== undefined &&
-      current.signature === resultFingerprint &&
-      !sourceIntentChanged
-    ) {
+    if (current.signature !== undefined && resultFingerprint !== undefined && current.signature === resultFingerprint) {
       unchanged.push(binding.id);
       continue;
     }
@@ -543,6 +540,12 @@ async function compileTaskSources(
     const conceptId = relative.slice(0, -4);
     const id = input.adapterId === "akm-task" ? conceptId : path.basename(sourcePath, ".yml");
     const qualifiedRefForFailure = makeBundleRef(input.bundleName, conceptId);
+    if (
+      input.enabledActivations &&
+      !input.enabledActivations.has(schedulerActivationKey("task", qualifiedRefForFailure))
+    ) {
+      continue;
+    }
     try {
       const physicalIdentity = guarded.physicalIdentity;
       const priorOwner = physicalOwners.get(physicalIdentity);
@@ -555,14 +558,11 @@ async function compileTaskSources(
       physicalOwners.set(physicalIdentity, sourcePath);
       // Project BEFORE prepareTaskV3Execution so projectability is checked —
       // but build the scheduler bindings from the ORIGINAL task source v4
-      // document, not the projection, which deliberately drops per-entry
-      // `enabled` and `schedule[i].inputs` (D2-N5, project-v4.ts) —
+      // document, not the projection, which deliberately drops
+      // `schedule[i].inputs` (project-v4.ts) —
       // schedule-supplied inputs are delivered through the scheduler
       // binding's own compiled invocation tail (P2b Lane B, spec §4.4,
       // B-N3), not through the prepare-seam projection. A task source v4
-      // document has no document-level `akm.enabled`, so `enabled: true` is
-      // passed at the document level and every entry's own `enabled`
-      // (always present, defaulted at parse time) decides.
       const parsed = parseTaskSource({
         yaml: guarded.content,
         filePath: sourcePath,
@@ -596,11 +596,9 @@ async function compileTaskSources(
         id,
         qualifiedRef,
         ...(input.bundleTarget ? { bundleTarget: input.bundleTarget } : {}),
-        enabled: true,
         schedules: parsed.v4.schedule.map((schedule) => ({
           cron: schedule.cron,
           ordinal: schedule.ordinal,
-          enabled: schedule.enabled,
           source: `${relSource}:${schedule.source}`,
           // P2b Lane B (spec §4.4, B-N3): delivered through the compiled
           // binding's own invocation tail below — the F-B2 flip that closes
@@ -689,6 +687,9 @@ async function compileWorkflowSources(
       input.bundleName,
       input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName,
     );
+    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("workflow", failureRef))) {
+      continue;
+    }
     try {
       if (sources.length > 1) {
         throw new WorkflowSourceCollisionError(
@@ -815,14 +816,12 @@ function enumerateWorkflowLookups(
 function installOptionsFor(
   input: SchedulerSyncPlanInput,
   current: InstalledSchedulerBinding | undefined,
-  desired: SchedulerBinding,
 ): SchedulerInstallOptions | undefined {
   if (current && !input.rebind) {
     return Object.freeze({
       ...(input.bundleTarget ? { target: input.bundleTarget } : {}),
       binding: Object.freeze([...current.binding]),
       contextPath: current.contextPath,
-      ...(current.manuallyDisabled === true && desired.enabled ? { preserveDisabled: true } : {}),
     });
   }
   return input.installOptions ? Object.freeze({ ...input.installOptions }) : undefined;
