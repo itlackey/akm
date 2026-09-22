@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Result documents larger than 64 KiB are no longer truncated on a piped
+  stdout.** `akm show`/`search`/`config get … | python3 -c …` (or `| head`, or
+  any other pipe) returned exactly 65,536 bytes — the Linux pipe-buffer size —
+  producing unparseable JSON, while the same command with `--output <file>`
+  wrote the complete document. The two stdout writers (`deliverRendered` for
+  json/yaml/text/md/html, `outputJsonl` for jsonl) used `console.log`, and on
+  Bun `console.log` issues a single `write(2)` against a non-blocking fd 1 and
+  silently discards whatever the kernel did not accept; a pipe accepts at most
+  one buffer's worth. Both now go through `writeStdout`
+  (`src/output/stdout.ts`), which uses `process.stdout.write` — that handles
+  the short write correctly, and the queued remainder keeps the process alive
+  until it drains. Byte-for-byte output is unchanged on every format; only the
+  transport moved.
+
 ## [0.9.16-alpha.2] - 2026-09-21
 
 ### Added
