@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.16] - 2026-09-22
+
 ### Fixed
 
 - **Result documents larger than 64 KiB are no longer truncated on a piped
@@ -21,8 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the short write correctly, and the queued remainder keeps the process alive
   until it drains. Byte-for-byte output is unchanged on every format; only the
   transport moved.
-
-## [0.9.16-alpha.2] - 2026-09-21
 
 ### Added
 
