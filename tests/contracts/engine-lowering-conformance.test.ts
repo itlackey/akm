@@ -126,8 +126,8 @@ function requestFor(
     model: { input: "balanced", interpretation: "alias", resolved: "provider/exact-model" },
     inference: { effort: "high", temperature: 0, extraParams: {}, supportsJsonSchema: true },
     outputSchema: { type: "object", properties: {}, additionalProperties: false },
-    tools: ["Read", "Grep"],
-    authorization: { status: "allowed", policy: { id: "fixture-policy" } },
+    tools: [],
+    authorization: { status: "not-required" },
     runtime: { timeoutMs: 0, workspace: "/fixture/workspace", environment: {} },
     notices: [],
     ...overrides,
@@ -429,6 +429,7 @@ describe("resolved execution lowerer registry", () => {
       },
     });
     let serverValue: string | undefined;
+    await closeOpencodeSdkServer();
     __setServerFactory(((options: { env: Record<string, string> }) => {
       serverValue = options.env[name];
       return Promise.resolve({
@@ -729,7 +730,7 @@ describe("resolved execution lowerer registry", () => {
       extraParams: {},
       supportsJsonSchema: true,
     });
-    expect(lowered.dispatch.tools).toEqual(["Read", "Grep"]);
+    expect(lowered.dispatch.tools).toEqual([]);
     expect(lowered.dispatch.schema).toEqual({
       type: "object",
       properties: {},
@@ -752,10 +753,12 @@ describe("resolved execution lowerer registry", () => {
     expect(lowered.notices.every((notice) => !JSON.stringify(notice).includes("Review the exact target"))).toBe(true);
   });
 
-  test("direct LLM lowers exact transport values and reports untranslated tools optimistically", () => {
+  test("direct LLM lowers exact transport values when no tool policy is selected", () => {
     const lowered = lowerResolvedExecutionRequest(
       requestFor("fixture-llm", "llm", {
         inference: { effort: "high", temperature: 0, contextLength: 4096, supportsJsonSchema: true },
+        tools: [],
+        authorization: { status: "not-required" },
       }),
       configFor("fixture-llm", "llm"),
     );
@@ -773,8 +776,21 @@ describe("resolved execution lowerer registry", () => {
       timeoutMs: 0,
       responseSchema: { type: "object", properties: {}, additionalProperties: false },
     });
-    expect(lowered.untranslatedFields).toContain("tools");
-    expect(lowered.notices.some((notice) => notice.field === "tools")).toBe(true);
+    expect(lowered.translatedFields).toContain("tools");
+    expect(lowered.notices.some((notice) => notice.field === "tools")).toBe(false);
+  });
+
+  test("a transport that cannot enforce selected tools fails before dispatch", () => {
+    const selectedTools = {
+      tools: ["Read", "Grep"],
+      authorization: { status: "allowed" as const, policy: { id: "fixture-policy" } },
+    };
+    expect(() =>
+      lowerResolvedExecutionRequest(requestFor("fixture-llm", "llm", selectedTools), configFor("fixture-llm", "llm")),
+    ).toThrow(/cannot enforce the resolved tool policy/);
+    expect(() =>
+      lowerResolvedExecutionRequest(requestFor("codex", "agent", selectedTools), configFor("codex")),
+    ).toThrow(/cannot enforce the resolved tool policy/);
   });
 
   test.each([
@@ -901,6 +917,7 @@ describe("optimistic lowering safety", () => {
 
   test("authorization denial happens before config access, lowerer selection, credentials, or dispatch", () => {
     const denied = requestFor("claude", "agent", {
+      tools: ["Read"],
       authorization: { status: "denied", reason: "fixture denial", policy: { id: "deny" } },
     });
     let touched = false;
@@ -1623,6 +1640,7 @@ describe("optimistic lowering safety", () => {
 
   test("frozen-runner lowering validates authorization before touching hostile runner material", () => {
     const denied = requestFor("claude", "agent", {
+      tools: ["Read"],
       authorization: { status: "denied", reason: "runner must stay untouched", policy: { id: "deny" } },
     });
     let touched = false;
@@ -1669,11 +1687,11 @@ describe("optimistic lowering safety", () => {
     try {
       const request = requestFor("fixture-llm", "llm", {
         inference: { vendorUnknown: { enabled: true } },
-        tools: { allow: ["Read"] },
+        tools: [],
+        authorization: { status: "not-required" },
       });
       const lowered = lowerResolvedExecutionRequest(request, configFor("fixture-llm", "llm"));
       expect(lowered.untranslatedFields).toContain("inference.vendorUnknown");
-      expect(lowered.untranslatedFields).toContain("tools");
       expect(JSON.stringify(lowered.notices)).not.toContain("wp5-super-secret");
 
       let calls = 0;

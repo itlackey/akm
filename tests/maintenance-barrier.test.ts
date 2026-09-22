@@ -59,7 +59,7 @@ describe("maintenance barrier staleness (#9)", () => {
 describe("maintenance barrier busy contention is transient, not a config error (#956 field follow-up, G1)", () => {
   test("acquireMaintenanceBarrier throws TransientError with code MAINTENANCE_BARRIER_BUSY, never ConfigError/INVALID_CONFIG_FILE, when a live holder never frees the barrier", () => {
     plantLiveHolderBarrier(1_000);
-    // Skip the real ~1.5s busy-retry window — this test only cares about the
+    // Skip the real ~5s busy-retry window — this test only cares about the
     // shape of the failure once retries are exhausted, not the timing.
     overrideSeam(_setMaintenanceBarrierBusyRetryBoundMsForTests, 20);
 

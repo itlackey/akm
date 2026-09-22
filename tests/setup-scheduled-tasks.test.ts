@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
 import type { TasksSyncResult } from "../src/commands/tasks/tasks";
+import { loadConfig } from "../src/core/config/config";
 import { deleteAssetFromSource, writeAssetToSource } from "../src/core/write-source";
 import { buildSetupSteps } from "../src/setup/setup";
 import {
@@ -16,6 +17,7 @@ import {
   prepareSetupTaskDefinitions,
   stepScheduledTasks,
 } from "../src/setup/steps/tasks";
+import { schedulerActivations } from "../src/tasks/activation-config";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
@@ -302,9 +304,7 @@ describe("task definition preparation", () => {
         "run: akm improve",
         "schedule:",
         "  - cron: '0 1 * * *'",
-        "    enabled: false",
         "  - cron: '30 13 * * 1,2,3,4,5'",
-        "    enabled: false",
         "",
       ].join("\n");
       fs.mkdirSync(taskDir, { recursive: true });
@@ -333,9 +333,13 @@ describe("task definition preparation", () => {
       );
 
       const updated = fs.readFileSync(filePath, "utf8");
-      expect(updated).toContain("enabled: true");
-      expect(updated).toContain("cron: 0 1 * * *");
-      expect(updated).toContain("cron: 30 13 * * 1,2,3,4,5");
+      expect(updated).toBe(original);
+      expect(updated).not.toContain("enabled:");
+      expect(updated).toContain("cron: '0 1 * * *'");
+      expect(updated).toContain("cron: '30 13 * * 1,2,3,4,5'");
+      expect(schedulerActivations(loadConfig())).toContainEqual(
+        expect.objectContaining({ kind: "task", ref: "stash//tasks/improve", sourceId: expect.any(String) }),
+      );
     } finally {
       storage.cleanup();
     }
@@ -392,7 +396,7 @@ describe("task definition preparation", () => {
       const taskDir = path.join(storage.stashDir, "tasks");
       const improvePath = path.join(taskDir, "improve.yml");
       const syncPath = path.join(taskDir, "sync.yml");
-      const original = "version: 4\nrun: akm improve\nschedule:\n  - cron: '0 1 * * *'\n    enabled: false\n";
+      const original = "version: 4\nrun: akm improve\nschedule:\n  - cron: '0 1 * * *'\n";
       fs.mkdirSync(taskDir, { recursive: true });
       fs.writeFileSync(improvePath, original, "utf8");
       let commits = 0;

@@ -831,6 +831,7 @@ function inspectStableLaunchdNamespace(
       withInstalledInvocation(
         {
           id: schedulerLogicalBindingId(entry.nativeId, parsed.invocation),
+          enabled: entry.enabled && entry.loaded,
           ...(entry.loaded ? { signature: entry.artifact.fingerprint } : {}),
           ...(parsed.target !== undefined ? { target: parsed.target } : {}),
           binding: parsed.binding,

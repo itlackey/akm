@@ -280,14 +280,15 @@ vault:prod`. Use `--sensitive` to reduce noise, not to enforce secrecy.
 execution when the vault is loaded via `akm vault run`. `akm add` and
 `akm lint` both scan for these names. During install, `akm add` pauses and
 asks for confirmation when dangerous keys are found (non-interactive mode fails
-unless `--allow-insecure` is passed). The full list of 23 flagged key names is
+unless `--allow-dangerous-env-keys` is passed). The full list of 23 flagged key names is
 documented in the [CLI reference](https://github.com/itlackey/akm/blob/main/docs/cli.md#dangerous-vault-key-audit).
 
-**When to use `--allow-insecure`.** Pass `--allow-insecure` to `akm add` when
-you have reviewed a stash manually and confirmed that a dangerous vault key is
-legitimate (for example, a hermetic toolchain that overrides `PATH`). The flag
-also bypasses plain-HTTP source rejection. It is not a global config setting —
-it applies only to the single install invocation.
+**When to use `--allow-dangerous-env-keys`.** Pass it to `akm bundle add` when
+you have reviewed a bundle manually and confirmed that a dangerous environment
+key is legitimate (for example, a hermetic toolchain that overrides `PATH`).
+Plain-HTTP transport is a separate decision and requires
+`--allow-insecure-transport`. Neither flag is a global config setting; each
+applies only to the single invocation.
 
 ## Getting Started
 

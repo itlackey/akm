@@ -63,35 +63,30 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved.id).toBe("nightly");
     expect(env.resolved.version).toBe(4);
     expect(env.resolved.target).toEqual({ kind: "run", run: "echo yes", shell: "sh" });
-    expect(env.resolved.schedule).toEqual([
-      { cron: "@daily", enabled: true, inputs: {}, source: "schedule", ordinal: 0 },
-    ]);
+    expect(env.resolved.schedule).toEqual([{ cron: "@daily", inputs: {}, source: "schedule", ordinal: 0 }]);
     // #907 review: never the file's own directory (an absolute path) — this
     // shape has no bundleName field at all, since validate never resolves one.
     expect(env.resolved.bundleName).toBeUndefined();
   });
 
-  test("a task v2 file the deterministic migrator converts -> outcome 'converts', exit 0, no engine required", async () => {
+  test("a task v2 file is left to akm-migrate -> outcome 'blocked', exit 1", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
-    // Same v2 fixture proven convertible by tests/migrate-format.test.ts. A
-    // `prompt:` task converts to a command-kind (`uses: akm/command`) target
-    // — #907 review: validate must not require a configured engine to
-    // report this `valid`/`converts` (no execution lowering runs at all), so
-    // this test deliberately configures NO engine.
+    // The production validator does not embed the historical parser. The
+    // standalone migrator owns conversion, including this deterministic case.
     const filePath = writeFixture(scratch, "legacy.yml", 'version: 2\nschedule: "@daily"\nprompt: Say hello\n');
 
     const { stdout, status } = await runCli(["task", "validate", filePath], stash);
-    expect(status).toBe(0);
+    expect(status).toBe(1);
     const env = JSON.parse(stdout);
-    expect(env.ok).toBe(true);
-    expect(env.outcome).toBe("converts");
+    expect(env.ok).toBe(false);
+    expect(env.outcome).toBe("blocked");
     expect(env.sourceVersion).toBe(2);
-    expect(env.resolved).toBeDefined();
-    expect(env.resolved.target.kind).toBe("uses");
+    expect(env.reason).toContain("akm migrate apply");
+    expect(env.resolved).toBeUndefined();
   });
 
-  test("a task v2 file the migrator cannot convert -> outcome 'blocked', exit 1, reason names the human-decision case", async () => {
+  test("an ambiguous task v2 file is also deferred to akm-migrate", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
     // Same unmigratable v2 fixture as tests/tasks-scheduler-sync-v4.test.ts's
@@ -105,7 +100,7 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.ok).toBe(false);
     expect(env.outcome).toBe("blocked");
     expect(env.sourceVersion).toBe(2);
-    expect(env.reason).toContain("needs a human decision");
+    expect(env.reason).toContain("akm migrate apply");
     expect(env.resolved).toBeUndefined();
   });
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NotFoundError, UsageError } from "../src/core/errors";
 import {
+  gitCredentialEnvironment,
   npmArtifactNetworkPolicy,
   parseRegistryRef,
   resolveRegistryArtifact,
@@ -10,7 +11,7 @@ import {
   validateGitUrl,
   validateNpmTarballUrl,
 } from "../src/registry/resolve";
-import { withMockedFetch } from "./_helpers/sandbox";
+import { withEnvSync, withMockedFetch } from "./_helpers/sandbox";
 
 // ── validateGitUrl ───────────────────────────────────────────────────────────
 
@@ -61,6 +62,40 @@ describe("validateGitUrl", () => {
 
   test("accepts git@ SSH shorthand with subdomain", () => {
     expect(() => validateGitUrl("git@gitlab.example.com:group/subgroup/repo.git")).not.toThrow();
+  });
+});
+
+describe("gitCredentialEnvironment", () => {
+  test("passes bearer credentials through child-process config instead of a URL or argv (#977)", () => {
+    const env = withEnvSync(
+      { GIT_CONFIG_COUNT: undefined, GIT_CONFIG_KEY_0: undefined, GIT_CONFIG_VALUE_0: undefined },
+      () => gitCredentialEnvironment("secret-value"),
+    );
+
+    expect(env.GIT_CONFIG_COUNT).toBe("1");
+    expect(env.GIT_CONFIG_KEY_0).toBe("http.extraHeader");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("Authorization: Bearer secret-value");
+  });
+
+  test("appends to existing process-scoped Git config instead of replacing it", () => {
+    const env = withEnvSync(
+      {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "url.file:///fixture/.insteadOf",
+        GIT_CONFIG_VALUE_0: "https://fixture.invalid/repo.git",
+      },
+      () => gitCredentialEnvironment("secret-value"),
+    );
+
+    expect(env.GIT_CONFIG_COUNT).toBe("2");
+    expect(env.GIT_CONFIG_KEY_0).toBe("url.file:///fixture/.insteadOf");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("https://fixture.invalid/repo.git");
+    expect(env.GIT_CONFIG_KEY_1).toBe("http.extraHeader");
+    expect(env.GIT_CONFIG_VALUE_1).toBe("Authorization: Bearer secret-value");
+  });
+
+  test("rejects control characters in resolved credentials", () => {
+    expect(() => gitCredentialEnvironment("secret\nextra-header: injected")).toThrow(UsageError);
   });
 });
 

@@ -240,9 +240,11 @@ test.skipIf(!ENABLED)("the compiled binary runs its embedded migrator exactly on
   const sandbox = makeSandboxDir("akm-linux-standalone-migrate");
   const configHome = path.join(sandbox.dir, "config");
   const stashDir = path.join(sandbox.dir, "stash");
+  const fakeBin = path.join(sandbox.dir, "fake-bin");
   for (const dir of [
     path.join(configHome, "akm"),
     stashDir,
+    fakeBin,
     path.join(sandbox.dir, "data"),
     path.join(sandbox.dir, "cache"),
     path.join(sandbox.dir, "state"),
@@ -254,8 +256,18 @@ test.skipIf(!ENABLED)("the compiled binary runs its embedded migrator exactly on
     `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
     { mode: 0o600 },
   );
+  fs.writeFileSync(
+    path.join(fakeBin, "crontab"),
+    ["#!/bin/sh", `if [ "\${1:-}" = "-l" ]; then echo "no crontab for sandbox" >&2; exit 1; fi`, "exit 2", ""].join(
+      "\n",
+    ),
+    { mode: 0o755 },
+  );
   const env: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH,
+    // Migrator status now inspects native scheduler activation. Keep this
+    // acceptance hermetic instead of reading the developer/CI user's real
+    // crontab, which may legitimately contain enabled akm bindings.
+    PATH: [fakeBin, "/usr/bin", "/bin"].join(path.delimiter),
     HOME: path.join(sandbox.dir, "home"),
     XDG_CONFIG_HOME: configHome,
     XDG_DATA_HOME: path.join(sandbox.dir, "data"),

@@ -16,14 +16,13 @@ auto-upgrade in memory (see "Version read shim" below). Missing, newer,
 numeric, and any other unrecognized version are rejected by ordinary
 commands without rewriting the file — an older binary never guesses at a
 newer, unknown shape. Pre-0.9 config and database layouts are not runtime
-inputs and are not migrated by `akm upgrade`. Configure the current schema
-directly. The standalone migrator exists only for explicit task migration:
-task v2 to task v3, then task v3 to task source v4, in one pass.
+inputs. Historical task sources and scheduler activation are handled by the
+standalone `akm-migrate` executable, also invoked by `akm migrate` / `akm
+upgrade`; ordinary runtime code reads only the current shape.
 
 ### Version read shim
 
-Like the task-source v2/v3 auto-shim (`akm migrate apply`'s in-memory
-counterpart, documented under Migration below), a known older `configVersion`
+For config only, a known older `configVersion`
 is converted to the current shape in memory on load — with a one-line stderr
 deprecation warning — rather than hard-failing every command. Nothing is
 written back to disk by the shim itself; the very next config-mutating
@@ -64,6 +63,9 @@ the first bump that will need it, per #863.
     "maxConcurrency": 8,
     "judgeEngine": "reviewer"
   },
+  "execution": {
+    "allowedTools": ["read_file", "search"]
+  },
   "improve": {
     "strategies": {
       "nightly": {
@@ -77,6 +79,25 @@ the first bump that will need it, per #863.
   }
 }
 ```
+
+## Scheduler activation
+
+`scheduler.enabled` is this host's explicit scheduling allow-list. Each entry
+has a `kind` (`task` or `workflow`), a canonical fully qualified `ref`, and a
+`sourceId` binding the grant to the configured source installation that was
+approved. Absence means disabled. Replacing a bundle's path or locator under
+the same name invalidates the old grant; ordinary updates from the same origin
+do not. Authored task/workflow files may describe schedules but cannot grant
+themselves authority to create native scheduler entries. Do not edit
+`sourceId` manually: `akm task enable` writes it, and `akm migrate apply`
+upgrades grants written by older releases.
+
+This key is deliberately local: if a config uses `extends`, any `scheduler`
+section in the base is ignored with a warning. Only the top-level local config
+can activate schedules. Prefer `akm task enable <ref>` and `akm task disable
+<ref>` over editing the JSON by hand; both update the allow-list and sync the
+affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
+enabled configured bundles.
 
 ## Engines
 
@@ -111,6 +132,12 @@ settable via `extraParams`. A response with reasoning tokens despite
 An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
 Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection.
+
+Executable assets may request tools, but the request is not authority. Configure
+the host-local `execution.allowedTools` list to define the ceiling; `"*"` is an
+explicit allow-all. The default is an empty list. Asset frontmatter cannot set
+`workspace`, `environment`, or opaque `runtime` values; those belong to local
+engine configuration or workflow environment bindings.
 
 `platform: "opencode-sdk"` needs the **`opencode` binary** on PATH (or a `bin`
 pointing at it). akm bundles `@opencode-ai/sdk`, but that package is an HTTP
@@ -551,6 +578,12 @@ bundle's `components.<id>.adapter` key pins it to a specific format adapter
 instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.
 
+Each physical content root has one bundle id. Duplicate paths and symbolic-link
+aliases are rejected because source ownership, scheduler authority, and default
+selection must not depend on which spelling a caller used. If an older config
+contains aliases, choose the id whose durable refs should survive and remove
+the other entry before running ordinary commands.
+
 ### defaultWriteTarget
 
 `defaultWriteTarget` names the bundle that write commands (`akm remember`,
@@ -699,6 +732,16 @@ one file, and have each host's local config extend it.
   `extends` source; sync a `git`/`website` bundle with `akm bundle
   add`/`akm sync` first so the file is materialized locally, then point
   `extends` at it.
+
+Shared layers carry portable policy, not host authority. `bundles`, source and
+write defaults, registries, embedding connections, scheduler grants,
+`execution`, `experimental`, and setup state are ignored when inherited.
+Engine definitions may be shared, but credentials and executable authority
+(`apiKey`, `apiKeyFile`, `bin`, `args`, and `workspace`) must be supplied by
+the local file. Improve publication (`strategies.*.sync`) and reranker network
+configuration are local as well. Bundle-relative chains stay physically inside
+the bundle root for every hop; lexical `..` paths and symlink escapes are both
+rejected before a referenced file is read.
 
 There is no `extends: <url>` form: config load is synchronous and runs on
 every invocation, and akm deliberately does not fetch network resources at

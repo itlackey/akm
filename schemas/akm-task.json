@@ -179,13 +179,12 @@
       "pattern": "^(?:[^\\s:.#/]+//)?commands/(?!\\.{1,2}(?:/|$))[^\\s#\\\\/\\u0000]+(?:/(?!\\.{1,2}(?:/|$))[^\\s#\\\\/\\u0000]+)*$"
     },
     "taskSourceV4ScheduleEntry": {
-      "description": "One schedule: list entry (D2-N5: per-entry enabled defaults true; inputs are validated against inputs: at parse time and delivered to the scheduled run's own invocation, P2b).",
+      "description": "One schedule: list entry. Activation is host-local scheduler configuration, never task source; inputs are validated against inputs: at parse time and delivered to the scheduled run's own invocation.",
       "type": "object",
       "required": ["cron"],
       "additionalProperties": false,
       "properties": {
         "cron": { "$ref": "#/definitions/nonemptyLiteral" },
-        "enabled": { "type": "boolean" },
         "inputs": { "$ref": "#/definitions/taskSourceV4ScheduleInputs" }
       }
     },

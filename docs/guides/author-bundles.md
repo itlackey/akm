@@ -252,8 +252,9 @@ keys total), plus two pattern-based families (`BASH_FUNC_*`, Shellshock-class
 injection; `GIT_CONFIG_*`, git config override injection). When these keys
 are found, `akm bundle add` pauses in interactive mode and asks the user to confirm
 before continuing. In non-interactive (CI) mode the install fails unless the
-user passes `--allow-insecure`. `akm env run` applies the same scan at run time:
-a third-party-sourced bundle is refused outright; a first-party bundle warns and
+user passes `--allow-dangerous-env-keys`. `akm env run` applies the same scan at
+run time: a third-party-sourced bundle is refused unless that reviewed run
+explicitly passes `--allow-dangerous-env-keys`; a first-party bundle warns and
 proceeds.
 
 This is not a ban — it is a speed bump. If your bundle legitimately needs one

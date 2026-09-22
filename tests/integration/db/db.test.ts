@@ -33,6 +33,7 @@ import {
   isVecAvailable,
   isVecFastPathComplete,
   isVecFastPathReady,
+  repairVecFastPath,
   searchVec,
   setVecFastPathReady,
   upsertEmbedding,
@@ -899,6 +900,64 @@ describe("Vector / Embedding integration", () => {
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 2 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 2 });
       expect(isVecFastPathComplete(db)).toBe(false);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("targeted vec repair backfills missing rows and removes orphans from durable BLOBs", () => {
+    const db = openIndexDatabase(tmpDbPath("vec-repair"), { embeddingDim: 4 });
+    try {
+      const firstId = insertTestEntry(db, "vec-repair-first");
+      const secondId = insertTestEntry(db, "vec-repair-second");
+      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
+      expect(upsertEmbedding(db, secondId, [0, 1, 0, 0]).vec).toBe("ok");
+      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(secondId);
+      const orphanId = secondId + 100_000;
+      db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(
+        orphanId,
+        Buffer.from(new Float32Array([0, 0, 1, 0]).buffer),
+      );
+      setVecFastPathReady(db, false);
+
+      expect(repairVecFastPath(db, 4)).toEqual({
+        available: true,
+        repaired: 1,
+        removedOrphans: 1,
+        rejected: 0,
+        complete: true,
+      });
+      expect(isVecFastPathReady(db)).toBe(true);
+      expect(isVecFastPathComplete(db)).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("vec repair rejects malformed BLOBs and never promotes a partial repair", () => {
+    const db = openIndexDatabase(tmpDbPath("vec-repair-reject"), { embeddingDim: 4 });
+    try {
+      const validId = insertTestEntry(db, "vec-repair-valid");
+      const corruptId = insertTestEntry(db, "vec-repair-corrupt");
+      expect(upsertEmbedding(db, validId, [1, 0, 0, 0]).vec).toBe("ok");
+      expect(upsertEmbedding(db, corruptId, [0, 1, 0, 0]).vec).toBe("ok");
+      db.prepare("DELETE FROM entries_vec").run();
+      db.prepare("UPDATE embeddings SET embedding = ? WHERE id = ?").run(Buffer.alloc(3), corruptId);
+      setVecFastPathReady(db, false);
+
+      expect(repairVecFastPath(db, 4)).toEqual({
+        available: true,
+        repaired: 1,
+        removedOrphans: 0,
+        rejected: 1,
+        complete: false,
+      });
+      expect(isVecFastPathReady(db)).toBe(false);
+      expect(isVecFastPathComplete(db)).toBe(false);
+      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec WHERE id = ?").get(corruptId)).toEqual({
+        count: 0,
+      });
+      expect(searchVec(db, [1, 0, 0, 0], 10).map(({ id }) => id)).toEqual([validId]);
     } finally {
       closeDatabase(db);
     }

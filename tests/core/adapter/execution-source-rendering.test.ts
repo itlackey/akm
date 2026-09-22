@@ -395,7 +395,7 @@ describe("adapter-rendered execution sources", () => {
       /frontmatter\.akm\.timeout|timeout.*string.*number/i,
     );
     expect(() => renderDefaults("workspace: here\nakm:\n  environment: false", "persona")).toThrow(
-      /frontmatter\.akm\.environment|environment.*object/i,
+      /frontmatter\.workspace.*host-controlled/i,
     );
   });
 

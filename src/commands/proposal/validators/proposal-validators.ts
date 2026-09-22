@@ -154,14 +154,15 @@ export const defaultProposalValidators: ProposalValidator[] = [
  * and was previously safe to run in full there because every quality
  * validator was advisory (`advisory()` downgrades findings to `severity:
  * "warn"`, which {@link runProposalValidators}'s `ok` never treats as
- * failing). #952's `reflect-truncation-marker` validator is deliberately
- * NOT advisory (it guards against data loss), so running the full
- * {@link defaultProposalValidators} list at mint time would throw
+ * failing). Blocking durable-content validators (the #952 truncation marker,
+ * #962 redaction marker, and #963 reflected prompt scaffolding) deliberately
+ * remain outside this subset, so running the full
+ * {@link defaultProposalValidators} list at mint time could throw
  * `invalid_canonical_structure` for any lesson/task/workflow reflect
  * proposal whose body leaks the truncation marker — instead of letting
  * `sanitizeReflectPayload` mint the proposal and defer it with
  * `reflect-truncation-leak`, per the #952 design. Quality validators (prose
- * shape, reflect size ratio, the truncation-marker guard) belong at
+ * shape, reflect size ratio, and durable-content guards) belong at
  * `proposal accept` / drain-promotion time, which already calls
  * {@link validateProposal} (the full list) via `preflightProposalPromotion`
  * / `promoteProposalWithLease`.

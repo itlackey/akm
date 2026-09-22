@@ -20,7 +20,12 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { resolveConfiguredSources } from "../../core/config/config-sources";
+import {
+  bundleComponentConfig,
+  bundleKeyForContentRoot,
+  resolveActiveConfiguredSources,
+  resolveConfiguredSources,
+} from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -38,6 +43,11 @@ import {
 import type { InputFlag } from "../../execution/input-contract";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
+import {
+  activeSchedulerActivations,
+  isSchedulerRefEnabled,
+  setSchedulerRefEnabled,
+} from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, RebindSchedulerBinding, SchedulerBackend } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
@@ -70,6 +80,7 @@ import {
   writeSchedulerContextDescriptor,
 } from "../../tasks/scheduler-invocation";
 import {
+  assertSchedulerBackendInspection,
   assertSchedulerNativeArtifactOwnership,
   assertSchedulerSourceSnapshot,
   buildSchedulerRemoveOperation,
@@ -196,7 +207,6 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     description: input.description,
     when_to_use: input.when_to_use,
     tags: input.tags,
-    enabled: input.disabled !== true,
   });
 
   const parsedTask = parseTaskSource({ yaml, filePath: assetPath, workspaceRoot: stashDir });
@@ -210,24 +220,15 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     config: bundle.config,
     resolveAsset: taskProjectionAssetResolver(bundle.config, bundle.bundleName, stashDir),
   });
-  // Bindings are compiled from the ORIGINAL parsed document, not the
-  // `task`/`projectTaskSourceV4` projection above — mirroring
-  // scheduler-sync.ts's compileTaskSources (spec §3.2.7's project-v4.ts
-  // header): the projection deliberately drops each schedule entry's own
-  // `enabled` (P4-N6), so building bindings from it would silently ignore
-  // `--disabled`. A task source v4 document has no document-level
-  // `akm.enabled`, so `enabled: true` is passed at the document level and
-  // every entry's own `enabled` (always present, defaulted at parse time)
-  // decides.
+  // Bindings are compiled from the original parsed document so each
+  // schedule entry's inputs reach the generated invocation.
   const taskBindings = compileTaskSchedulerBindings({
     id,
     qualifiedRef,
     ...(bundle.installTarget ? { bundleTarget: bundle.installTarget } : {}),
-    enabled: true,
     schedules: parsedTask.v4.schedule.map((schedule) => ({
       cron: schedule.cron,
       ordinal: schedule.ordinal,
-      enabled: schedule.enabled,
       source: schedule.source,
       inputs: schedule.inputs,
     })),
@@ -240,6 +241,25 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const writeAsset = deps.writeAsset ?? writeAssetToSource;
   const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
+  if (input.disabled) {
+    // Revoke before publishing replacement bytes. If a write/commit/sync
+    // fails, the safe partial state is an inert task, never an activated new
+    // source (or a stale native binding that can still dispatch it).
+    setSchedulerRefEnabled("task", qualifiedRef, false);
+    await writeAsset(writeTarget.source, writeTarget.config, ref, yaml);
+    commitBoundary(writeTarget, `Update tasks/${id}`);
+    await akmTasksSync(deps, bundle.bundleName);
+    return {
+      id,
+      ref: conceptIdFromTypeName("task", id),
+      path: assetPath,
+      bundleDir: stashDir,
+      schedule: taskBinding.cron,
+      enabled: false,
+      backend,
+      target: task.target,
+    };
+  }
   const transaction = await prepareTaskAddSchedulerTransaction({
     id,
     installTarget: bundle.installTarget,
@@ -329,6 +349,10 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     suppressNativeRollbackWhenExternalFails: true,
     allowNativeRollbackAfterExternalFailure: (error) => error instanceof TaskSourceRestoredBoundaryError,
   });
+  // Publish the host-local grant only after source and native state commit.
+  // A failure before this point therefore leaves any new binding inert at
+  // its scheduled-fire gate instead of authorizing partially committed code.
+  setSchedulerRefEnabled("task", qualifiedRef, true);
 
   return {
     id,
@@ -336,7 +360,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     path: assetPath,
     bundleDir: stashDir,
     schedule: taskBinding.cron,
-    enabled: taskBinding.enabled,
+    enabled: true,
     backend,
     target: task.target,
   };
@@ -384,6 +408,14 @@ export async function akmTasksRun(
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
+  const conceptId = adapterId === "akm" ? `tasks/${resolvedId}` : resolvedId;
+  const qualifiedRef = makeBundleRef(bundle.source.name, conceptId);
+  if (scheduled && !isSchedulerRefEnabled(loadConfig(), "task", qualifiedRef)) {
+    throw new UsageError(
+      `Scheduled task ${JSON.stringify(qualifiedRef)} is not enabled in local scheduler config; run \`akm task enable ${qualifiedRef}\`.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   // D5 "Construction" (spec docs/plans/specs/p1b-model-extraction.md §1.2/
   // §5.2): built ONCE at this invocation boundary. eventSource is "task"
   // whether or not --scheduled was passed (§1.6 D5-N1) — scheduled stays a
@@ -435,6 +467,69 @@ export async function akmTasksRun(
   };
 }
 
+export interface TasksActivationResult {
+  readonly ref: string;
+  readonly enabled: boolean;
+  readonly changed: boolean;
+  readonly sync: TasksSyncResult;
+}
+
+function resolveTaskActivation(
+  ref: string,
+  target: string | undefined,
+  requireSchedulable: boolean,
+): {
+  qualifiedRef: string;
+  sourcePath: string;
+  bundleName: string;
+} {
+  const parsed = parseTaskRef(ref);
+  const bundle = resolveTaskReadBundle(parsed.bundle, target);
+  const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+  const id = taskIdForAdapter(parsed.id, adapterId);
+  const conceptId = adapterId === "akm" ? `tasks/${id}` : id;
+  const sourcePath =
+    adapterId === "akm"
+      ? path.join(bundle.source.path, "tasks", `${id}.yml`)
+      : path.join(bundle.source.path, `${id}.yml`);
+  if (requireSchedulable && !fs.existsSync(sourcePath)) {
+    throw new NotFoundError(`Task ${JSON.stringify(makeBundleRef(bundle.source.name, conceptId))} was not found.`);
+  }
+  if (requireSchedulable) {
+    const parsedSource = parseTaskSource({
+      yaml: fs.readFileSync(sourcePath, "utf8"),
+      filePath: sourcePath,
+      workspaceRoot: bundle.source.path,
+    });
+    if (parsedSource.v4.schedule.length === 0) {
+      throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
+    }
+  }
+  return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
+}
+
+export async function akmTasksEnable(
+  ref: string,
+  options: { target?: string } = {},
+  deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
+): Promise<TasksActivationResult> {
+  const resolved = resolveTaskActivation(ref, options.target, true);
+  const activation = setSchedulerRefEnabled("task", resolved.qualifiedRef, true);
+  const sync = await akmTasksSync(deps, resolved.bundleName);
+  return { ref: resolved.qualifiedRef, enabled: true, changed: activation.changed, sync };
+}
+
+export async function akmTasksDisable(
+  ref: string,
+  options: { target?: string } = {},
+  deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
+): Promise<TasksActivationResult> {
+  const resolved = resolveTaskActivation(ref, options.target, false);
+  const activation = setSchedulerRefEnabled("task", resolved.qualifiedRef, false);
+  const sync = await akmTasksSync(deps, resolved.bundleName);
+  return { ref: resolved.qualifiedRef, enabled: false, changed: activation.changed, sync };
+}
+
 export interface TasksHistoryResult {
   rows: TaskRunResult[];
 }
@@ -455,7 +550,7 @@ export async function akmTasksHistory(input: {
 
 export interface TasksSyncResult {
   installed: string[];
-  /** Tasks whose installed schedule/enabled state drifted from the .yml and were reinstalled. */
+  /** Bindings whose installed schedule/runtime state drifted from the enabled source and were reinstalled. */
   updated: string[];
   removed: string[];
   unchanged: string[];
@@ -475,23 +570,15 @@ export interface TasksSyncResult {
 }
 
 /**
- * Reconcile the on-disk task files of ONE bundle with the OS scheduler.
- *   • compile and runtime-project the complete desired task/workflow set;
- *     one invalid source rejects the sync before descriptor/backend mutation
+ * Reconcile host-local scheduler activation with authored tasks/workflows.
+ *   • without --bundle, scan every enabled configured bundle in one transaction
+ *   • with --bundle, reconcile only that bundle
+ *   • only refs present in scheduler.enabled enter the desired set
  *   • install missing bindings only after that whole-set preflight succeeds
- *   • reinstall tasks whose schedule or enabled state changed in the .yml
+ *   • reinstall bindings whose authored schedule or runtime state changed
  *     (drift detected by comparing the backend's installed signature against
  *     the signature the current definition would produce)
  *   • remove orphan scheduler entries that no longer have a backing file
- *
- * `--bundle <bundle>` scopes the reconciliation to that bundle: the file set is
- * the bundle's `tasks/*.yml` and — crucially — the scheduler entries considered
- * are ONLY those attributed to the same bundle (parsed from the installed
- * `--bundle` token; absent ⇒ primary). This is the security boundary that keeps
- * "registering a bundle never activates code": a plain (primary) sync never
- * installs from, updates, or removes another bundle's entries, and sync never
- * scans all bundles. Activation happens only through explicit `add --bundle`
- * (or `sync --bundle` on a bundle whose task files are already present).
  */
 /**
  * Compute (but never apply) a scheduler sync plan: everything through
@@ -509,13 +596,11 @@ async function buildSchedulerSyncPlan(
 ): Promise<{
   sched: SchedulerBackend;
   plan: SchedulerSyncPlan;
+  sourceSnapshots: readonly SchedulerSyncPlan["sourceSnapshot"][];
   prepared: ReturnType<typeof prepareSchedulerSyncRuntime> | undefined;
   warnings: string[];
 }> {
-  const resolved = resolveTaskReadBundle(undefined, bundleTarget);
   const config = loadConfig();
-  const stashDir = resolved.source.path;
-  const syncTarget = bundleTarget !== undefined && !isPrimaryStashPath(stashDir) ? bundleTarget : undefined;
   const sched = deps.backend ?? selectBackend();
   if (!sched.inspectBindings) {
     throw new ConfigError(
@@ -543,58 +628,205 @@ async function buildSchedulerSyncPlan(
     };
   });
   const nativeArtifacts = inspection.artifacts;
-  const common = {
-    sourceRoot: stashDir,
-    adapterId: resolved.source.adapterId ?? detectAdapterId(stashDir),
-    bundleName: resolved.source.name,
-    // #846: only meaningful for a primary/unconfigured-bundle sync. A
-    // `--bundle <target>` entry's scheduler-context descriptor records the
-    // invoking process's OWN primary AKM_BUNDLE_DIR, not the targeted
-    // bundle's directory, so path-scoping stays gated on the case it's
-    // actually valid for (see belongsToBundle).
-    ...(syncTarget === undefined ? { bundlePath: path.resolve(stashDir) } : {}),
-    ...(syncTarget ? { bundleTarget: syncTarget } : {}),
-    backend: sched.name,
-    installed: allEntries,
-    nativeArtifacts,
-    inspection: Object.freeze({ installed: allEntries, artifacts: nativeArtifacts }),
-    rebind: options.rebind === true,
-    config,
-    resolveAsset: taskProjectionAssetResolver(config, resolved.source.name, stashDir),
-  } as const;
+  const configuredSources = resolveConfiguredSources(config);
+  const activeSources = resolveActiveConfiguredSources(config);
+  const sourceNames = bundleTarget ? [bundleTarget] : activeSources.map((source) => source.name);
+  const inactiveOperations = bundleTarget
+    ? []
+    : inactiveBundleRemovalOperations(config, configuredSources, allEntries, nativeArtifacts);
+  if (!bundleTarget && sourceNames.length === 0 && configuredSources.length > 0) {
+    assertSchedulerBackendInspection({ installed: allEntries, artifacts: nativeArtifacts });
+    const plan = emptySchedulerSyncPlan(inactiveOperations);
+    return { sched, plan, sourceSnapshots: Object.freeze([]), prepared: undefined, warnings: [] };
+  }
+  const selectedNames = sourceNames.length > 0 ? sourceNames : [undefined];
+  const enabled = activeSchedulerActivations(config);
+  const enabledActivations = new Set(enabled.map((activation) => `${activation.kind}\0${activation.ref}`));
+  const preparedSets: Array<{
+    common: Parameters<typeof finalizeSchedulerSyncPlan>[0];
+    preparedSources: Awaited<ReturnType<typeof prepareSchedulerSyncSourceSet>>;
+    syncTarget?: string;
+  }> = [];
+  for (const sourceName of selectedNames) {
+    const resolved = resolveTaskReadBundle(undefined, sourceName);
+    const stashDir = resolved.source.path;
+    const syncTarget = sourceName !== undefined && !isPrimaryStashPath(stashDir) ? sourceName : undefined;
+    const common = {
+      sourceRoot: stashDir,
+      adapterId: resolved.source.adapterId ?? detectAdapterId(stashDir),
+      bundleName: resolved.source.name,
+      ...(syncTarget === undefined ? { bundlePath: path.resolve(stashDir) } : {}),
+      ...(syncTarget ? { bundleTarget: syncTarget } : {}),
+      backend: sched.name,
+      installed: allEntries,
+      nativeArtifacts,
+      inspection: Object.freeze({ installed: allEntries, artifacts: nativeArtifacts }),
+      enabledActivations,
+      rebind: options.rebind === true,
+      config,
+      resolveAsset: taskProjectionAssetResolver(config, resolved.source.name, stashDir),
+    } as const;
+    preparedSets.push({
+      common,
+      preparedSources: await prepareSchedulerSyncSourceSet(common),
+      ...(syncTarget ? { syncTarget } : {}),
+    });
+  }
 
-  // Pass one validates every desired source, ownership domain, schedule, and
-  // installed-id collision before runtime descriptor preparation is possible.
-  const preparedSources = await prepareSchedulerSyncSourceSet(common);
-  const preflight = finalizeSchedulerSyncPlan(common, preparedSources);
+  // Pass one validates every selected bundle and computes whether any desired
+  // activation needs a new runtime descriptor before native mutation begins.
+  const preflights = preparedSets.map(({ common, preparedSources }) =>
+    finalizeSchedulerSyncPlan(common, preparedSources),
+  );
   const warnings: string[] = [];
   const expectedSignature = sched.expectedSignature?.bind(sched);
-  const needsRuntime = preflight.operations.some(
-    (operation) => operation.kind !== "remove" && operation.options?.binding === undefined,
+  const needsRuntime = preflights.some((preflight) =>
+    preflight.operations.some((operation) => operation.kind !== "remove" && operation.options?.binding === undefined),
   );
   const prepared = needsRuntime
     ? prepareSchedulerSyncRuntime(
-        syncTarget ? { target: syncTarget } : undefined,
+        undefined,
         deps,
         warnings,
         allEntries.map((entry) => entry.binding),
       )
     : undefined;
-  const plan = finalizeSchedulerSyncPlan(
-    {
-      ...common,
-      ...(prepared?.options ? { installOptions: prepared.options } : {}),
-      ...(expectedSignature
-        ? {
-            expectedSignature: (binding: SchedulerBinding, install?: SchedulerInstallOptions) =>
-              expectedSignature(binding, install),
-          }
-        : {}),
-    },
-    preparedSources,
+  const plans = preparedSets.map(({ common, preparedSources, syncTarget }) =>
+    finalizeSchedulerSyncPlan(
+      {
+        ...common,
+        ...(prepared?.options
+          ? { installOptions: { ...prepared.options, ...(syncTarget ? { target: syncTarget } : {}) } }
+          : syncTarget
+            ? { installOptions: { target: syncTarget } }
+            : {}),
+        ...(expectedSignature
+          ? {
+              expectedSignature: (binding: SchedulerBinding, install?: SchedulerInstallOptions) =>
+                expectedSignature(binding, install),
+            }
+          : {}),
+      },
+      preparedSources,
+    ),
   );
+  assertNoCrossBundleSchedulerCollisions(plans);
+  const representedRefs = new Set(
+    plans.flatMap((candidate) => [
+      ...candidate.desired.map((binding) => binding.logicalSource.ref),
+      ...candidate.failures.flatMap((failure) => (failure.ref ? [failure.ref] : [])),
+    ]),
+  );
+  const selectedBundleNames = new Set(preparedSets.map(({ common }) => common.bundleName));
+  const missingActivationFailures = enabled
+    .filter((activation) => {
+      const bundle = parseBundleRef(activation.ref).bundle;
+      return bundle !== undefined && selectedBundleNames.has(bundle) && !representedRefs.has(activation.ref);
+    })
+    .map((activation) => ({
+      path: activation.ref,
+      ref: activation.ref,
+      reason: `Enabled ${activation.kind} ${JSON.stringify(activation.ref)} was not found or has no schedule.`,
+    }));
+  const first = plans[0];
+  if (!first) throw new ConfigError("No configured bundle is available for scheduler sync.", "INVALID_CONFIG_FILE");
+  const plan: SchedulerSyncPlan = Object.freeze({
+    desired: Object.freeze(plans.flatMap((candidate) => candidate.desired)),
+    installed: Object.freeze(plans.flatMap((candidate) => candidate.installed)),
+    updated: Object.freeze(plans.flatMap((candidate) => candidate.updated)),
+    removed: Object.freeze([
+      ...plans.flatMap((candidate) => candidate.removed),
+      ...inactiveOperations.map((operation) => operation.id),
+    ]),
+    unchanged: Object.freeze(plans.flatMap((candidate) => candidate.unchanged)),
+    operations: Object.freeze([...plans.flatMap((candidate) => candidate.operations), ...inactiveOperations]),
+    sourceSnapshot: first.sourceSnapshot,
+    failures: Object.freeze([...plans.flatMap((candidate) => candidate.failures), ...missingActivationFailures]),
+  });
 
-  return { sched, plan, prepared, warnings };
+  return { sched, plan, sourceSnapshots: plans.map((candidate) => candidate.sourceSnapshot), prepared, warnings };
+}
+
+function inactiveBundleRemovalOperations(
+  config: AkmConfig,
+  configuredSources: ReturnType<typeof resolveConfiguredSources>,
+  installed: readonly InstalledSchedulerBinding[],
+  artifacts: Parameters<typeof buildSchedulerRemoveOperation>[2],
+): Extract<SchedulerSyncOperation, { kind: "remove" }>[] {
+  const inactive = new Set(configuredSources.filter((source) => source.enabled === false).map((source) => source.name));
+  if (inactive.size === 0) return [];
+  return installed
+    .map((entry) => ({ entry, bundleName: installedSchedulerBundle(config, entry) }))
+    .filter(
+      (candidate): candidate is { entry: InstalledSchedulerBinding; bundleName: string } =>
+        candidate.bundleName !== undefined && inactive.has(candidate.bundleName),
+    )
+    .sort((left, right) => left.entry.id.localeCompare(right.entry.id))
+    .map(({ entry, bundleName }) => {
+      const adapterId = bundleComponentConfig(config.bundles?.[bundleName])?.adapter ?? "akm";
+      return buildSchedulerRemoveOperation(entry.id, entry, artifacts, { adapterId, bundleName });
+    });
+}
+
+function installedSchedulerBundle(config: AkmConfig, entry: InstalledSchedulerBinding): string | undefined {
+  const direct = entry.target ?? (entry.invocation ? scheduledInvocationBundle(entry.invocation) : undefined);
+  if (direct !== undefined) return direct;
+  if (entry.ownerBundlePath === undefined) return undefined;
+  return bundleKeyForContentRoot(config, entry.ownerBundlePath);
+}
+
+function emptySchedulerSyncPlan(
+  operations: readonly Extract<SchedulerSyncOperation, { kind: "remove" }>[],
+): SchedulerSyncPlan {
+  const sourceSnapshot: SchedulerSyncPlan["sourceSnapshot"] = Object.freeze({
+    adapterId: "akm",
+    sourceRoot: "",
+    sourceRealPath: "",
+    sourcePhysicalIdentity: "inactive",
+    sourceDirectoryVersion: "inactive",
+    files: Object.freeze([]),
+    directoryManifests: Object.freeze([]),
+  });
+  return Object.freeze({
+    desired: Object.freeze([]),
+    installed: Object.freeze([]),
+    updated: Object.freeze([]),
+    removed: Object.freeze(operations.map((operation) => operation.id)),
+    unchanged: Object.freeze([]),
+    operations: Object.freeze([...operations]),
+    sourceSnapshot,
+    failures: Object.freeze([]),
+  });
+}
+
+function scheduledInvocationBundle(invocation: readonly string[]): string | undefined {
+  const bundleIndex = invocation.indexOf("--bundle");
+  if (bundleIndex >= 0) return invocation[bundleIndex + 1];
+  if (invocation[0] === "workflow" && invocation[1] === "run" && invocation[2]) {
+    try {
+      return parseBundleRef(invocation[2]).bundle;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function assertNoCrossBundleSchedulerCollisions(plans: readonly SchedulerSyncPlan[]): void {
+  const owners = new Map<string, SchedulerBinding>();
+  for (const binding of plans.flatMap((plan) => plan.desired)) {
+    const key = schedulerNativeArtifactKey(schedulerBindingNativeId(binding));
+    const existing = owners.get(key);
+    if (existing && existing.logicalSource.ref !== binding.logicalSource.ref) {
+      throw new UsageError(
+        `Scheduler native id ${JSON.stringify(schedulerBindingNativeId(binding))} is claimed by both ` +
+          `${JSON.stringify(existing.logicalSource.ref)} and ${JSON.stringify(binding.logicalSource.ref)}. ` +
+          "Rename one task before enabling both.",
+        "RESOURCE_ALREADY_EXISTS",
+      );
+    }
+    owners.set(key, binding);
+  }
 }
 
 export async function akmTasksSync(
@@ -602,13 +834,18 @@ export async function akmTasksSync(
   bundleTarget?: string,
   options: { rebind?: boolean } = {},
 ): Promise<TasksSyncResult> {
-  const { sched, plan, prepared, warnings } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
+  const { sched, plan, sourceSnapshots, prepared, warnings } = await buildSchedulerSyncPlan(
+    deps,
+    bundleTarget,
+    options,
+  );
   await applySchedulerSyncPlan(
     sched,
     plan,
     prepared?.publish && plan.operations.some((operation) => operation.kind !== "remove")
       ? prepared.publish
       : undefined,
+    sourceSnapshots,
   );
   return {
     installed: [...plan.installed],
@@ -886,10 +1123,13 @@ async function applySchedulerSyncPlan(
   backend: SchedulerBackend,
   plan: SchedulerSyncPlan,
   publish?: () => void,
+  sourceSnapshots: readonly SchedulerSyncPlan["sourceSnapshot"][] = [plan.sourceSnapshot],
 ): Promise<void> {
   await applySchedulerTransaction(backend, plan.operations, {
     initialExpectations: plan.operations.map((operation) => operation.expected as SchedulerMutationExpectation),
-    assertReadSet: () => assertSchedulerSourceSnapshot(plan.sourceSnapshot),
+    assertReadSet: () => {
+      for (const snapshot of sourceSnapshots) assertSchedulerSourceSnapshot(snapshot);
+    },
     beforeOperation: (_operation, index) => {
       if (index === 0) publish?.();
     },
@@ -1561,7 +1801,7 @@ export function resolveTaskReadBundle(
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    const configured = resolveConfiguredSources(config).some((source) => source.name === selector);
+    const configured = resolveActiveConfiguredSources(config).some((source) => source.name === selector);
     const implicit = configured ? undefined : resolveImplicitScheduledBundleTarget(config, selector);
     resolved = implicit ?? resolveWriteTarget(config, selector, { requireWritable: false });
   }
@@ -1653,7 +1893,6 @@ interface RenderInput {
   description?: string;
   when_to_use?: string;
   tags?: string[];
-  enabled: boolean;
 }
 
 /**
@@ -1711,21 +1950,7 @@ function renderTaskYaml(input: RenderInput): string {
   if (input.engine !== undefined) obj.engine = input.engine;
   if (input.model !== undefined) obj.model = input.model;
   if (input.timeoutMs !== undefined) obj.timeout = input.timeoutMs;
-  // Task source v4's `enabled` is per schedule-binding, not document-level
-  // (P4-N6, row B-21): `--disabled` writes a one-entry schedule[] list
-  // carrying `enabled: false` rather than the v3 `akm.enabled: false` flag.
-  // `TasksAddInput.schedule`/the `add` CLI's `--schedule` are both still
-  // required, so the "no schedule to disable" usage error B-21 also
-  // describes is unreachable through this call site today; the check below
-  // still guards `renderTaskYaml` itself against ever being called with an
-  // empty schedule string.
-  if (input.schedule.length === 0) {
-    if (!input.enabled) {
-      throw new UsageError("--disabled requires --schedule; a task with no schedule is already manual-only.");
-    }
-  } else {
-    obj.schedule = input.enabled ? input.schedule : [{ cron: input.schedule, enabled: false }];
-  }
+  if (input.schedule.length > 0) obj.schedule = input.schedule;
   return yamlStringify(obj);
 }
 
@@ -1751,120 +1976,6 @@ function parseJsonObjectArg(raw: string): Record<string, unknown> {
     throw new UsageError("--params must be a JSON object.", "INVALID_JSON_ARGUMENT");
   }
   return parsed as Record<string, unknown>;
-}
-
-/**
- * Toggle a task source v4 YAML file's `enabled` state without a full
- * parse/render round-trip (which would reformat the file). Task source v4
- * has no document-level `enabled` flag — it lives on each `schedule[]` entry
- * instead (D2-N5, P4-N6) — so this walks the top-level `schedule:` block,
- * finds every list entry in it (each line starting with `-` at the block's
- * item indent), and toggles that entry's own `enabled:` key, the closest v4
- * equivalent of v3's single document-level flag broadcasting to every
- * trigger. Each entry is handled independently — one entry already carrying
- * `enabled:` and a sibling entry with no such key (D2-N3's `schedule[i]`
- * shape: `{cron, enabled?, inputs?}`) toggles the first and inserts into the
- * second, rather than one entry's existing key short-circuiting the other's
- * insertion.
- *
- * A bare string-shorthand schedule (`schedule: "0 9 * * *"`) has nowhere for
- * `enabled:` to live and is rewritten to the one-entry list form. A list
- * entry with no explicit `enabled:` key (defaulting to `true` at parse) gets
- * one inserted rather than being silently left unaffected. A document with
- * no `schedule:` key at all throws — there is no trigger to enable or
- * disable (mirrors `renderTaskYaml`'s `--disabled`-with-no-`--schedule`
- * usage error, row B-21).
- *
- * Each entry's own key indent is taken from its `-` line (the indent before
- * `-`, plus two spaces for the conventional single space after it), so a
- * nested mapping inside an entry — e.g. `schedule[i].inputs` — sits deeper
- * and is never mistaken for the entry's own `enabled:` key.
- *
- * Preserves inline comments (e.g. `enabled: true # important`) and uses
- * case-sensitive matching (YAML keys are case-sensitive).
- */
-export function setEnabledInYaml(yaml: string, enabled: boolean): string {
-  const lines = yaml.replace(/\r\n/g, "\n").split("\n");
-
-  const scalarLine = lines.findIndex((line) => /^schedule:[ \t]+\S/.test(line));
-  if (scalarLine >= 0) {
-    const line = lines[scalarLine];
-    const match = line?.match(/^schedule:[ \t]+([^\r\n]+?)[ \t]*(#[^\r\n]*)?$/);
-    const cron = match?.[1] ?? "";
-    const comment = match?.[2] ? ` ${match[2]}` : "";
-    lines.splice(scalarLine, 1, "schedule:", `  - cron: ${cron}${comment}`, `    enabled: ${enabled}`);
-    return `${lines.join("\n").trimEnd()}\n`;
-  }
-
-  const blockLine = lines.findIndex((line) => /^schedule:\s*(?:#.*)?$/.test(line));
-  if (blockLine < 0) {
-    throw new UsageError("Task source v4 must declare a schedule before its enabled state can be toggled.");
-  }
-
-  // Find the block's extent and every top-level list item (`-`) within it.
-  // Only items at the *first* item's own indent count as entries — anything
-  // deeper belongs to a nested mapping/list inside an entry (e.g. an array
-  // input under `inputs:`) and must not be treated as a sibling entry.
-  let blockEnd = lines.length;
-  const itemStarts: number[] = [];
-  let topIndent: string | null = null;
-  for (let index = blockLine + 1; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line === undefined) {
-      blockEnd = index;
-      break;
-    }
-    if (line !== "" && !/^[ \t]/.test(line)) {
-      blockEnd = index;
-      break;
-    }
-    const itemMatch = line.match(/^([ \t]*)-(?=[ \t]|$)/);
-    if (itemMatch) {
-      const itemIndent = itemMatch[1] ?? "";
-      if (topIndent === null) topIndent = itemIndent;
-      if (itemIndent === topIndent) itemStarts.push(index);
-    }
-  }
-  if (itemStarts.length === 0) {
-    throw new UsageError("Task source v4's schedule: block has no entries to toggle enabled on.");
-  }
-
-  // Walk entries back-to-front: inserting a missing `enabled:` line shifts
-  // every later line index by one, but never touches `itemStarts[j]` for
-  // j <= i (an insertion for entry i lands at `itemStarts[i] + 1`, which is
-  // at or after entry i's own start), so already-computed start/end bounds
-  // for entries processed later in this loop (earlier in the list) stay valid.
-  for (let i = itemStarts.length - 1; i >= 0; i -= 1) {
-    const start = itemStarts[i]!;
-    const end = i + 1 < itemStarts.length ? itemStarts[i + 1]! : blockEnd;
-    const dashLead = lines[start]?.match(/^([ \t]*)-/)?.[1] ?? "";
-    const keyIndent = `${dashLead}  `;
-    let found = false;
-    for (let index = start; index < end; index += 1) {
-      const line = lines[index];
-      if (line === undefined) continue;
-      const isStart = index === start;
-      const prefixMatch = isStart ? line.match(/^([ \t]*-[ \t]*)(.*)$/) : line.match(/^([ \t]*)(.*)$/);
-      const prefix = prefixMatch?.[1] ?? "";
-      const content = prefixMatch?.[2] ?? "";
-      if (prefix.length !== keyIndent.length) continue;
-      const withValue = content.match(/^(enabled:[ \t]*)([^\s#\r\n][^\r\n]*?)([ \t]*(?:#[^\r\n]*))?$/);
-      if (withValue) {
-        lines[index] = `${prefix}${withValue[1]}${enabled}${withValue[3] ?? ""}`;
-        found = true;
-        continue;
-      }
-      const bare = content.match(/^(enabled:)[ \t]*$/);
-      if (bare) {
-        lines[index] = `${prefix}${bare[1]} ${enabled}`;
-        found = true;
-      }
-    }
-    if (!found) {
-      lines.splice(start + 1, 0, `${keyIndent}enabled: ${enabled}`);
-    }
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
 }
 
 // Re-exported so tests can verify the validator path directly.

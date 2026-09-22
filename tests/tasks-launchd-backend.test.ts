@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTasksSync } from "../src/commands/tasks/tasks";
+import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import type { LaunchdExec, LaunchdFs } from "../src/tasks/backends/launchd";
 import { buildPlistXml, LAUNCHD_BACKEND } from "../src/tasks/backends/launchd";
 import {
@@ -44,6 +45,10 @@ function makeTask(schedule: string, id = "ping"): SchedulerBinding {
     enabled: true,
     invocation: ["task", "run", id, "--scheduled"],
   };
+}
+
+function activateTask(stashDir: string, id = "ping"): void {
+  setSchedulerRefEnabled("task", `${path.basename(stashDir).toLowerCase()}//tasks/${id}`, true);
 }
 
 describe("buildPlistXml", () => {
@@ -1055,6 +1060,7 @@ describe("LAUNCHD_BACKEND lifecycle", () => {
       const tasksDir = path.join(stash.dir, "tasks");
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(path.join(tasksDir, "ping.yml"), 'version: 4\nrun: echo ping\nschedule: "0 9 * * *"\n', "utf8");
+      activateTask(stash.dir);
       const { backend, exec, fs: launchdFs } = makeBackend();
       exec.loadedLabels.add("com.akm.task.ping");
       exec.calls.length = 0;
@@ -1622,7 +1628,9 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
     exec.loadedLabels.delete("com.akm.task.ping");
     exec.calls.length = 0;
 
-    expect(backend.list()).toEqual([{ id: "ping", binding: ["/abs/akm"], contextPath: expect.any(String) }]);
+    expect(backend.list()).toMatchObject([
+      { id: "ping", enabled: false, nativeId: "ping", binding: ["/abs/akm"], contextPath: expect.any(String) },
+    ]);
     expect(exec.calls).toEqual([
       ["launchctl", "print", "gui/501"],
       ["launchctl", "print-disabled", "gui/501"],
@@ -1635,6 +1643,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       const tasksDir = path.join(stash.dir, "tasks");
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(path.join(tasksDir, "ping.yml"), 'version: 4\nrun: echo ping\nschedule: "0 9 * * *"\n', "utf8");
+      activateTask(stash.dir);
       // #846: this describe block's default SCHEDULED_CONTEXT points at an
       // intentionally unwritable fake path (exercising special-character
       // handling), so belongsToBundle's owning-path check could never
@@ -1668,6 +1677,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       const tasksDir = path.join(stash.dir, "tasks");
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(path.join(tasksDir, "ping.yml"), 'version: 4\nrun: echo ping\nschedule: "0 9 * * *"\n', "utf8");
+      activateTask(stash.dir);
       // #846: same rationale as the previous test — this describe block's
       // default SCHEDULED_CONTEXT can't back a resolvable owning path, so
       // use the real, writable sandboxed context instead.
@@ -1685,15 +1695,19 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       };
       const drifted = backend.list() as Array<{
         id: string;
+        enabled?: boolean;
+        nativeId?: string;
         signature?: string;
         target?: string;
         binding?: string[];
         contextPath?: string;
       }>;
 
-      expect(drifted).toEqual([
+      expect(drifted).toMatchObject([
         {
           id: "ping",
+          enabled: false,
+          nativeId: "ping",
           signature: backend.expectedSignature?.({ ...qualifiedTask, enabled: false }),
           target: bundleName,
           binding: ["/abs/akm"],
@@ -1734,9 +1748,11 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       exec.printDisabledResult = printDisabledResult;
       exec.calls.length = 0;
 
-      expect(backend.list()).toEqual([
+      expect(backend.list()).toMatchObject([
         {
           id: "ping",
+          enabled: true,
+          nativeId: "ping",
           signature: backend.expectedSignature?.(task),
           binding: ["/abs/akm"],
           contextPath: expect.any(String),
@@ -1763,9 +1779,11 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       stderr: "",
     };
 
-    expect(backend.list()).toEqual([
+    expect(backend.list()).toMatchObject([
       {
         id: "ping",
+        enabled: false,
+        nativeId: "ping",
         signature: backend.expectedSignature?.({ ...task, enabled: false }),
         binding: ["/abs/akm"],
         contextPath: expect.any(String),
@@ -1784,9 +1802,11 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       stderr: "",
     };
 
-    expect(backend.list()).toEqual([
+    expect(backend.list()).toMatchObject([
       {
         id: "ping",
+        enabled: false,
+        nativeId: "ping",
         signature: backend.expectedSignature?.({ ...task, enabled: false }),
         binding: ["/abs/akm"],
         contextPath: expect.any(String),

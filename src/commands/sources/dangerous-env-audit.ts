@@ -120,14 +120,14 @@ export async function auditStashForDangerousKeys(opts: {
 
   const stance = decideDangerousKeyInstall({
     findingsPresent: allFindings.length > 0,
-    allowInsecure: opts.allowDangerousKeys,
+    allowDangerousEnvKeys: opts.allowDangerousKeys,
   });
   if (stance === "allow") return { blocked: false, findings: allFindings };
 
   if (stance === "warn-allow") {
     for (const finding of allFindings) {
       warn(
-        `[dangerous-env-key] ${finding.relPath}: key \`${finding.keyName}\` in ${finding.envRef} can hijack process execution via \`akm env run\`. Proceeding because --allow-insecure was set.`,
+        `[dangerous-env-key] ${finding.relPath}: key \`${finding.keyName}\` in ${finding.envRef} can hijack process execution via \`akm env run\`. Proceeding because --allow-dangerous-env-keys was set.`,
       );
     }
     return { blocked: false, findings: allFindings };
@@ -151,10 +151,10 @@ export async function auditStashForDangerousKeys(opts: {
     }
     const confirmed = await p.confirm({ message: `${operationTitle} anyway?`, initialValue: false });
     if (!p.isCancel(confirmed) && confirmed === true) return { blocked: false, findings: allFindings };
-    error = `${operationTitle} aborted: stash contains dangerous env keys. Remove the keys or re-run with --allow-insecure to bypass.`;
+    error = `${operationTitle} aborted: stash contains dangerous env keys. Remove the keys or re-run with --allow-dangerous-env-keys to bypass.`;
   } else {
     const keyList = allFindings.map((finding) => `  - ${finding.keyName} (${finding.envRef})`).join("\n");
-    error = `${operationTitle} blocked: stash "${opts.ref}" contains dangerous env keys that can hijack process execution via \`akm env run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the env file.`;
+    error = `${operationTitle} blocked: stash "${opts.ref}" contains dangerous env keys that can hijack process execution via \`akm env run\`:\n${keyList}\nRe-run with --allow-dangerous-env-keys to bypass this check after reviewing the env file.`;
   }
 
   const rollbackWarning = await opts.rollback?.();

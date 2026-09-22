@@ -222,7 +222,7 @@ akm bundle add file:///absolute/path/to/bundle
    hooks (`BASH_ENV`, `PROMPT_COMMAND`, `NODE_OPTIONS`, `PYTHONSTARTUP`, ...),
    and interactive-tool overrides (`EDITOR`, `PAGER`, `GIT_SSH_COMMAND`, ...).
    `akm bundle add` **blocks the install** when a dangerous key is present unless
-   `--allow-insecure` is set (or you confirm at an interactive prompt).
+   `--allow-dangerous-env-keys` is set (or you confirm at an interactive prompt).
    This is a **key-name audit only** (plus the path-traversal rejection in step
    3) -- akm does **not** scan source files, prompts, metadata, or install
    scripts for prompt-injection phrases, shell pipes, or lifecycle hooks.

@@ -9,7 +9,6 @@ inputs:
 schedule:
   - cron: "0 6 * * *"
   - cron: "30 18 * * 1-5"
-    enabled: false
   - cron: "0 9 * * 1"
     inputs:
       scope: all

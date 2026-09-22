@@ -130,7 +130,6 @@ function higherOrdinalBinding(): SchedulerBinding {
   const bindings = compileTaskSchedulerBindings({
     id: "ping",
     qualifiedRef: "stash//tasks/ping",
-    enabled: true,
     schedules: [
       { cron: "0 1 * * *", source: "akm.schedule[0]", ordinal: 0 },
       { cron: "0 2 * * *", source: "akm.schedule[1]", ordinal: 1 },

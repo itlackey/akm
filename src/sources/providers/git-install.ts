@@ -10,7 +10,13 @@ import path from "node:path";
 import { isWithin } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { getRegistryCacheDir } from "../../core/paths";
-import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../../registry/resolve";
+import {
+  gitCredentialEnvironment,
+  parseRegistryRef,
+  resolveRegistryArtifact,
+  validateGitRef,
+  validateGitUrl,
+} from "../../registry/resolve";
 import type { ParsedGitRef } from "../../registry/types";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { applyAkmIncludeConfig, buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
@@ -38,12 +44,15 @@ export interface GitUpstreamState {
 }
 
 /** Fetch and classify the current branch against its upstream without changing the worktree. */
-export function inspectGitUpstream(repoDir: string): GitUpstreamState {
+export function inspectGitUpstream(repoDir: string, credential?: string): GitUpstreamState {
   const remotes = runGit(["-C", repoDir, "remote"]);
   if (remotes.status !== 0) throw new UsageError(`Cannot inspect Git remotes at ${repoDir}: ${remotes.stderr.trim()}`);
   if (!remotes.stdout.trim()) return { hasRemote: false, ahead: 0, behind: 0 };
 
-  const fetch = runGit(["-C", repoDir, "fetch", "--prune"], { timeout: 120_000 });
+  const fetch = runGit(["-C", repoDir, "fetch", "--prune"], {
+    timeout: 120_000,
+    env: gitCredentialEnvironment(credential),
+  });
   if (fetch.status !== 0) throw new UsageError(`Cannot refresh Git target at ${repoDir}: ${fetch.stderr.trim()}`);
   const upstream = runGit(["-C", repoDir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
   if (upstream.status !== 0 || !upstream.stdout.trim()) {
@@ -185,7 +194,7 @@ export async function syncGitRef(ref: string, options?: SyncOptions): Promise<So
 async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<SourceLockData> {
   validateGitUrl(parsed.url);
   if (parsed.requestedRef) validateGitRef(parsed.requestedRef);
-  const resolved = await resolveRegistryArtifact(parsed);
+  const resolved = await resolveRegistryArtifact(parsed, { gitCredential: options?.credential });
   const syncedAt = (options?.now ?? new Date()).toISOString();
   if (options?.writable && options.writableRoot) {
     return syncExistingWritableCheckout(
@@ -194,6 +203,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       options.writableRoot,
       syncedAt,
       options.writableRequiredRoots,
+      options.credential,
     );
   }
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
@@ -221,6 +231,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
         detectStashRoot(installRoot),
         syncedAt,
         options.writableRequiredRoots,
+        options.credential,
       );
     }
     try {
@@ -272,7 +283,10 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
     }
     cloneArgs.push(parsed.url, cloneDir);
 
-    const cloneResult = runGit(cloneArgs, { timeout: 120_000 });
+    const cloneResult = runGit(cloneArgs, {
+      timeout: 120_000,
+      env: gitCredentialEnvironment(options?.credential),
+    });
     if (cloneResult.status !== 0) {
       throw new Error(classifyCloneFailure(parsed.url, cloneResult.stderr, cloneResult.error));
     }
@@ -346,6 +360,7 @@ export function syncExistingWritableCheckout(
   contentRoot: string,
   syncedAt: string,
   requiredRoots: readonly string[] = [],
+  credential?: string,
 ): SourceLockData {
   const root = path.resolve(contentRoot);
   const repoResult = runGit(["-C", root, "rev-parse", "--show-toplevel"]);
@@ -388,7 +403,7 @@ export function syncExistingWritableCheckout(
   if (shallow.status === 0 && shallow.stdout.trim() === "true") fetchArgs.push("--unshallow");
   fetchArgs.push("origin");
   if (parsed.requestedRef) fetchArgs.push(parsed.requestedRef);
-  const fetch = runGit(fetchArgs, { timeout: 120_000 });
+  const fetch = runGit(fetchArgs, { timeout: 120_000, env: gitCredentialEnvironment(credential) });
   if (fetch.status !== 0) {
     throw new UsageError(
       `Writable Git install at ${root} could not fetch its expected origin; local work was preserved. ${fetch.stderr.trim()}`,
@@ -481,7 +496,13 @@ export function syncExistingWritableCheckout(
   };
 }
 
-export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string, writable = false): void {
+export function cloneRepo(
+  cloneUrl: string,
+  ref: string | null,
+  destDir: string,
+  writable = false,
+  credential?: string,
+): void {
   // Stage the clone into a sibling temp dir so that a failed clone never
   // destroys a previously-valid destDir (e.g. when the remote is temporarily
   // unreachable and we have a valid cached copy).
@@ -492,7 +513,7 @@ export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string,
   if (ref) args.push("--branch", ref);
   args.push(cloneUrl, tmpDir);
 
-  const result = runGit(args, { timeout: 120_000 });
+  const result = runGit(args, { timeout: 120_000, env: gitCredentialEnvironment(credential) });
   if (result.status !== 0) {
     // Clean up the (possibly partial) temp dir but leave destDir untouched.
     fs.rmSync(tmpDir, { recursive: true, force: true });

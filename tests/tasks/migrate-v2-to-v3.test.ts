@@ -127,6 +127,14 @@ describe("pure task v2 to v3 migration planner", () => {
     assertFixtureBytesUnchanged(ROOT, before);
   });
 
+  test("leaves every v4 document to the v4 migration generation, including retired source enablement", () => {
+    const outcome = planTaskToV3File(
+      memoryInput("version: 4\nrun: echo ok\nschedule:\n  - cron: '@daily'\n    enabled: true\n"),
+    );
+    expect(outcome.status).toBe("skipped");
+    expect(outcome.reason).toBe("already-v4");
+  });
+
   // #902: the reason code alone ("argv-array-has-no-portable-shell-string")
   // names a cause, not a remedy — the blocked outcome must also carry an
   // actionable `detail` telling the operator manual conversion is required

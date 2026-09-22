@@ -25,6 +25,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+import { bundleSourceId } from "../../../src/core/config/config-sources";
+import type { AkmConfig } from "../../../src/core/config/config-types";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { AgentRunResult } from "../../../src/integrations/agent";
@@ -262,6 +264,19 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
 });
 
 describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { eventSource: "task", scheduled }', () => {
+  test("manual execution remains available while a scheduled invocation requires host-local activation", async () => {
+    const id = "cli-local-activation";
+    writeTask(id, "version: 4\nrun: 'true'\nschedule: '@daily'\n");
+
+    const manual = await runCliCapture(["task", "run", id]);
+    expect(manual.code, manual.stderr).toBe(0);
+
+    const scheduled = await runCliCapture(["task", "run", id, "--scheduled"]);
+    expect(scheduled.code).toBe(2);
+    expect(scheduled.stderr).toContain("INVALID_FLAG_VALUE");
+    expect(scheduled.stderr).toContain("not enabled in local scheduler config");
+  });
+
   // §1.6 D5-N1's binding resolution, exercised through the REAL CLI entry
   // point (src/commands/tasks/tasks.ts's akmTasksRun) rather than a direct
   // runTask() call: `--scheduled` toggles `context.scheduled` only.
@@ -276,12 +291,19 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
     const id = `cli-prompt-${extraArgs.length > 0 ? "scheduled" : "unscheduled"}`;
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
     writeTask(id, ["version: 4", `uses: commands/${id}`, "engine: cli-audit", ""].join("\n"));
-    writeSandboxConfig({
+    const base = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",
-      semanticSearchMode: "off",
+    } as AkmConfig;
+    writeSandboxConfig({
+      ...base,
       engines: { "cli-audit": { kind: "agent", platform: "aider", bin: "/bin/true" } },
       defaults: { engine: "cli-audit" },
+      scheduler: {
+        enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
+      },
     });
     const indexed = await runCliCapture(["index", "--full"]);
     expect(indexed.code, indexed.stderr).toBe(0);

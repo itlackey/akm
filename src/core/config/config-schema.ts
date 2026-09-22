@@ -30,28 +30,29 @@
  *   typo in an optional section.
  * - Unsupported top-level source shapes and provider kinds are hard-rejected;
  *   silently dropping them would mask user data loss.
- * - UNKNOWN-KEY POLICY: object schemas use passthrough (unknown keys are
- *   preserved and ignored, NOT rejected). akm runs across multiple installed
- *   versions sharing one config.json; a newer version writes keys an older
- *   version's schema doesn't know yet, so hard-rejecting unknown keys turned
- *   benign version skew into `INVALID_CONFIG_FILE` failures. Known keys are
- *   still type-checked; passthrough preserves unknown keys across a
- *   load→save round trip so an older reader never strips a newer writer's
- *   settings. (Replaced the prior strict-mode object walls.)
+ * - UNKNOWN-KEY POLICY: portable descriptive sections generally use
+ *   passthrough so version skew round-trips newer settings. Small finite
+ *   authority/toggle sections (`scheduler`, `execution`, `experimental`, and
+ *   reranker policy) are strict: a misspelling there must not silently turn a
+ *   safety decision off. The top level remains passthrough and warns on
+ *   unknown keys.
  * - `defaultWriteTarget` resolution and similar cross-field invariants are
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
+import { bundleRefToString, parseBundleRef } from "../asset/asset-ref";
 import { warnOnce } from "../warn";
 import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
+import { ExecutionPolicyConfigSchema } from "./schema/execution";
 import { ExperimentalConfigSchema } from "./schema/experimental";
 import { FeedbackConfigSchema } from "./schema/feedback";
 import { ImproveConfigSchema } from "./schema/improve";
 import { IndexConfigSchema } from "./schema/index-config";
 import { OutputConfigSchema } from "./schema/output";
 import { CURRENT_CONFIG_VERSION, engineName, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
+import { SchedulerConfigSchema } from "./schema/scheduler";
 import { SearchConfigSchema } from "./schema/search";
 import { SetupConfigSchema } from "./schema/setup";
 import { BundlesConfigSchema, RegistryConfigEntrySchema } from "./schema/sources-bundles";
@@ -80,6 +81,7 @@ export {
 export { IndexConfigSchema, IndexPassConfigSchema } from "./schema/index-config";
 export { OutputConfigSchema } from "./schema/output";
 export { CURRENT_CONFIG_VERSION, LlmInvocationOverridesSchema } from "./schema/primitives";
+export { SchedulerActivationSchema, SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
 export { SetupConfigSchema } from "./schema/setup";
 export {
@@ -131,6 +133,8 @@ export const AkmConfigShape = {
   defaults: DefaultsSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
+  // Host-local execution authority. Inherited layers are stripped.
+  execution: ExecutionPolicyConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
@@ -146,6 +150,9 @@ export const AkmConfigShape = {
   archiveRetentionDays: nonNegativeNumber.optional(),
   improve: ImproveConfigSchema.optional(),
   workflow: WorkflowConfigSchema.optional(),
+  // Host-local scheduler grants. Inherited layers are stripped by
+  // `resolveExtendsChain`; bundle-provided config never activates code.
+  scheduler: SchedulerConfigSchema.optional(),
   setup: SetupConfigSchema.optional(),
   // D8 — explicit opt-ins for behaviour outside the stability contract. Every
   // key defaults to OFF; see `src/core/config/experimental.ts` for the readers.
@@ -197,6 +204,52 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: ["defaultBundle"],
         message: `defaultBundle "${config.defaultBundle}" does not name a configured bundle`,
+      });
+    } else if (config.bundles[config.defaultBundle]?.enabled === false) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultBundle"],
+        message: `defaultBundle "${config.defaultBundle}" is disabled`,
+      });
+    }
+  }
+  if (config.defaultWriteTarget !== undefined) {
+    const target = config.bundles?.[config.defaultWriteTarget];
+    if (!target) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultWriteTarget"],
+        message: `defaultWriteTarget "${config.defaultWriteTarget}" does not name a configured bundle`,
+      });
+    } else if (target.enabled === false) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultWriteTarget"],
+        message: `defaultWriteTarget "${config.defaultWriteTarget}" is disabled`,
+      });
+    }
+  }
+  const activationKeys = new Set<string>();
+  for (const [index, activation] of (config.scheduler?.enabled ?? []).entries()) {
+    try {
+      const parsed = parseBundleRef(activation.ref);
+      if (!parsed.bundle || parsed.fragment !== undefined || bundleRefToString(parsed) !== activation.ref) {
+        throw new Error("not canonical");
+      }
+      const key = `${activation.kind}\0${activation.ref}`;
+      if (activationKeys.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduler", "enabled", index],
+          message: "duplicates an earlier scheduler activation",
+        });
+      }
+      activationKeys.add(key);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduler", "enabled", index, "ref"],
+        message: "must be one canonical fully-qualified ref without a fragment",
       });
     }
   }

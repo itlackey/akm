@@ -19,6 +19,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
+import { setSchedulerRefEnabled } from "../../../src/tasks/activation-config";
 import { runCliStatusWithBundleDir as runCli, runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -35,17 +36,14 @@ function makeStashDir(): string {
   return d.dir;
 }
 
-function writeDisabledCommandTask(stashDir: string): void {
+function writeLocallyDisabledCommandTask(stashDir: string): void {
   // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.18)
   // DELETED run-task.ts's shouldSkipUnactivatedTask entirely — task source v4
-  // has no document-level enabled/disabled concept, and manual dispatch was
-  // never gated by schedule[i].enabled either way (that flag only decides
-  // whether scheduler-sync installs a binding, row B-21). Converted to task
-  // source v4: a schedule-disabled task still runs fine on a manual `akm task
-  // run` (no --scheduled).
+  // has no document-level enabled/disabled concept. Scheduling activation is
+  // host-local config, and its absence must not prevent manual dispatch.
   fs.writeFileSync(
     path.join(stashDir, "tasks", "disabled-command.yml"),
-    ["version: 4", "run: exit 0", "schedule:", "  - cron: '@daily'", "    enabled: false", ""].join("\n"),
+    ["version: 4", "run: exit 0", "schedule:", "  - cron: '@daily'", ""].join("\n"),
   );
 }
 
@@ -85,7 +83,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
 
   test("tasks run manually executes a schedule-disabled task", async () => {
     const stash = makeStashDir();
-    writeDisabledCommandTask(stash);
+    writeLocallyDisabledCommandTask(stash);
 
     const { stdout, status } = await runCli(["task", "run", "disabled-command"], stash);
 
@@ -161,6 +159,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
+      setSchedulerRefEnabled("task", "scheduled//standalone", true);
 
       const { code, stdout, stderr } = await runCliCapture([
         "task",
@@ -203,6 +202,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
+      setSchedulerRefEnabled("task", `scheduled//${taskId}`, true);
 
       const run = await runCliCapture(["task", "run", taskId, "--bundle", "scheduled", "--scheduled"]);
       expect(run.code, run.stderr).toBe(0);
@@ -249,6 +249,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
+      setSchedulerRefEnabled("task", `scheduled//${taskId}`, true);
 
       const run = await runCliCapture(["task", "run", taskId, "--bundle", "scheduled", "--scheduled"]);
       expect(run.code, run.stderr).toBe(0);
@@ -289,6 +290,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
+      setSchedulerRefEnabled("task", `scheduled//${taskId}`, true);
 
       const run = await runCliCapture(["task", "run", taskId, "--bundle", "scheduled", "--scheduled"]);
       expect(run.code, run.stderr).toBe(0);

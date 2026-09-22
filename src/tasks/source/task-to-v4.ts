@@ -19,7 +19,7 @@
 
 import crypto from "node:crypto";
 import path from "node:path";
-import { LineCounter, parseDocument, stringify as stringifyYaml } from "yaml";
+import { isMap, isSeq, LineCounter, parseDocument, stringify as stringifyYaml } from "yaml";
 import { assertBoundedTaskYamlDocument } from "./bounded-document";
 import { classifyTaskV3Uses, type TaskV3UsesTarget } from "./task-source-v3-frozen";
 import { parseTaskSourceV4 } from "./task-source-v4";
@@ -49,7 +49,7 @@ interface TaskToV4OutcomeBase {
 
 export interface TaskToV4Changed extends TaskToV4OutcomeBase {
   readonly status: "changed";
-  readonly reason: "task-converted";
+  readonly reason: "task-converted" | "source-enablement-removed";
   readonly after: Buffer;
   readonly afterHash: string;
   /** Set only when a v3 trigger was dropped without a v4 equivalent (manual-only, B-62). */
@@ -207,7 +207,7 @@ function parseV3RawYaml(input: TaskToV4FileInput): { data: Record<string, unknow
   return { data: plainRecord(document.toJS({ maxAliasCount: 0 }), "task YAML"), source };
 }
 
-type ScheduleEntry = Readonly<{ cron: string; enabled?: false }>;
+type ScheduleEntry = Readonly<{ cron: string }>;
 
 /** Convert one already-validated v3 raw record to final task source v4 bytes. */
 function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>): TaskToV4FileOutcome {
@@ -332,7 +332,6 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
     );
   }
 
-  const enabledFalse = akm !== undefined && akm.enabled === false;
   let scheduleField: string | ScheduleEntry[] | undefined;
   // Several independent translation facts can need reporting on the SAME
   // file (a manual-only trigger AND a dropped output schema, say), so
@@ -342,7 +341,7 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
 
   if (hasAkmSchedule) {
     const cron = (akm as Record<string, unknown>).schedule as string;
-    scheduleField = enabledFalse ? [{ cron, enabled: false as const }] : cron;
+    scheduleField = cron;
   } else {
     const rawSchedule = onRecord !== undefined && Object.hasOwn(onRecord, "schedule") ? onRecord.schedule : undefined;
     if (rawSchedule !== undefined) {
@@ -363,13 +362,7 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
         }
         crons.push(record.cron);
       }
-      scheduleField = crons.map((cron): ScheduleEntry => (enabledFalse ? { cron, enabled: false } : { cron }));
-    } else if (enabledFalse) {
-      return blocked(
-        input,
-        "enabled-false-has-no-schedule-entry",
-        "akm.enabled: false has no schedule entry to attach to (the only trigger is on.workflow_dispatch); task source v4 has no top-level enabled flag.",
-      );
+      scheduleField = crons.map((cron): ScheduleEntry => ({ cron }));
     } else {
       notices.push(
         "schedule: is absent from the migrated document — the source's only trigger was on.workflow_dispatch (manual dispatch); task source v4 tasks are always runnable manually via `akm task run`, so no schedule: entry was emitted.",
@@ -454,6 +447,45 @@ export function planTaskToV4File(input: TaskToV4FileInput): TaskToV4FileOutcome 
   }
 
   if (data.version === 4) {
+    const document = parseDocument(source, { uniqueKeys: true });
+    const schedule = document.get("schedule", true);
+    let removed = false;
+    if (isSeq(schedule)) {
+      for (const entry of schedule.items) {
+        if (!isMap(entry) || !entry.has("enabled")) continue;
+        entry.delete("enabled");
+        removed = true;
+      }
+    }
+    if (removed) {
+      if (!input.writable || input.onDiskWritable === false) {
+        return blocked(
+          input,
+          "read-only-source",
+          !input.writable
+            ? "the owning source is not writable"
+            : "the source file or publication directory is read-only",
+        );
+      }
+      const after = Buffer.from(document.toString(), "utf8");
+      try {
+        parseTaskSourceV4({
+          yaml: after.toString("utf8"),
+          filePath: input.filePath,
+          ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
+        });
+      } catch (cause) {
+        return blocked(input, "generated-v4-validation-failed", causeMessage(cause));
+      }
+      return Object.freeze({
+        status: "changed" as const,
+        ...base(input),
+        reason: "source-enablement-removed" as const,
+        after,
+        afterHash: hash(after),
+        notice: "Removed source-owned schedule enablement; scheduler activation is now host-local config.",
+      });
+    }
     try {
       parseTaskSourceV4({
         yaml: source,

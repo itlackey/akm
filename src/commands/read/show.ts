@@ -122,6 +122,14 @@ export async function akmShowUnified(input: {
     if (metaRef) return showStashMeta(metaRef);
   }
 
+  const legacyReplacement = legacyColonRefReplacement(ref);
+  if (legacyReplacement) {
+    throw new NotFoundError(
+      `The legacy colon ref "${ref}" was removed in 0.9.0. Use the slash form instead: ` +
+        `akm show ${legacyReplacement}`,
+    );
+  }
+
   // Env/secret bodies have no safe fragment surface, and a fragment cannot
   // widen what the env/secret renderers expose: both always omit the body
   // (env — key names only; secret — never rendered), fragment or not. Warn
@@ -158,6 +166,19 @@ export async function akmShowUnified(input: {
     }
   }
   return result;
+}
+
+/** Actionable migration guidance for the retired `[bundle//]type:name` spelling. */
+function legacyColonRefReplacement(ref: string): string | undefined {
+  const match = /^(?:(?<bundle>[^/#]+)\/\/)?(?<type>[a-z][a-z0-9-]*):(?<name>[^#]+)(?<fragment>#.*)?$/i.exec(ref);
+  const type = match?.groups?.type?.toLowerCase();
+  const name = match?.groups?.name;
+  if (!type || !name) return undefined;
+  const stashDir = stashDirFor(type);
+  if (!stashDir) return undefined;
+  const bundle = match?.groups?.bundle;
+  const fragment = match?.groups?.fragment ?? "";
+  return `${bundle ? `${bundle}//` : ""}${stashDir}/${name}${fragment}`;
 }
 
 /**
@@ -379,8 +400,7 @@ export async function showLocal(input: {
       }
 
       const renderBundle = indexedEntry.bundleId;
-      const renderDefaultBundle =
-        config.defaultBundle ?? (source?.path === allSources[0]?.path ? renderBundle : undefined);
+      const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
       if (parsed.fragment !== undefined) {
@@ -398,7 +418,7 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  const isPrimaryStash = source !== undefined && source.path === allSources[0]?.path;
+  const isPrimaryStash = source?.isDefault === true;
   const canonicalRef = displayRef(
     {
       type: indexedEntry.type,

@@ -47,6 +47,7 @@ import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
+import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
 import { findFenceRegions } from "./markdown-insertion";
 import type { LintContext, LintIssue } from "./types";
 
@@ -618,6 +619,15 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     .map((v) => String(v).trim())
     .filter(Boolean);
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
+
+  if (shouldRun("redacted-content") && containsRedactedContent(currentRaw)) {
+    issues.push({
+      file: ctx.relPath,
+      issue: "redacted-content",
+      detail: `asset contains ${REDACTED_CONTENT_MARKER}; restore the original non-secret prose from version history`,
+      fixed: false,
+    });
+  }
 
   // ── 1. unquoted-colon ──────────────────────────────────────────────────
   if (shouldRun("unquoted-colon")) {

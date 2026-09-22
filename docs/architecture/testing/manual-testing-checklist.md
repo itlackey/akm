@@ -994,19 +994,19 @@ Production must reject loopback/private hosts:
 
 ```sh
 expect_error 78 INVALID_CONFIG_FILE \
-  bundle add "$AKM_QA_WEBSITE_URL" --name private-site --allow-insecure
+  bundle add "$AKM_QA_WEBSITE_URL" --name private-site --allow-insecure-transport
 ```
 
 Protocol-only fixture:
 
 ```sh
 NODE_ENV=test akm bundle add "$AKM_QA_WEBSITE_URL" \
-  --name qa-site --allow-insecure --max-pages 2 --max-depth 1
+  --name qa-site --allow-insecure-transport --max-pages 2 --max-depth 1
 NODE_ENV=test akm search qa-site --from qa-site --no-track-usage
 ```
 
 - [ ] **[SERVICE]** Production blocks private start/redirect hosts;
-      `--allow-insecure` accepts transport risk only, not SSRF.
+      `--allow-insecure-transport` accepts transport risk only, not SSRF.
 - [ ] **[SERVICE]** Test-seam crawl respects page/depth/robots; request log proves
       private path not fetched.
 - [ ] **[SERVICE]** Change site version to `v2`, named-update, and prove v2 bytes.
@@ -1023,14 +1023,14 @@ NODE_ENV=test akm search qa-site --from qa-site --no-track-usage
 
 ```sh
 expect_error 2 INVALID_FLAG_VALUE registry add "$AKM_QA_REGISTRY_URL" --name qa-registry
-akm registry add "$AKM_QA_REGISTRY_URL" --name qa-registry --allow-insecure
+akm registry add "$AKM_QA_REGISTRY_URL" --name qa-registry --allow-insecure-transport
 akm registry list | jq -e '.registries[] | select(.name == "qa-registry")'
 akm search kubernetes --from registry --detail full
 akm search kubernetes --from registry --assets --detail full
 akm registry remove qa-registry --yes
 ```
 
-- [ ] **[SERVICE]** HTTP requires allow-insecure and warns.
+- [ ] **[SERVICE]** HTTP requires `--allow-insecure-transport` and warns.
 - [ ] **[SERVICE]** Duplicate URL is idempotent `added:false`; unknown remove is
       exit `1`, `SOURCE_NOT_FOUND`.
 - [ ] **[SERVICE]** Registry hits remain `registryHits`, not local `hits`.
@@ -1372,7 +1372,7 @@ akm env remove env/qa-export --yes
 - [ ] **[LOCAL]** First-party env activation warns and proceeds; third-party
       activation blocks exit `2`. Excluding all dangerous keys permits the safe
       subset.
-- [ ] **[LOCAL]** `--allow-insecure` can authorize reviewed installation but
+- [ ] **[LOCAL]** `--allow-dangerous-env-keys` can authorize reviewed installation but
       never authorizes later dangerous activation.
 - [ ] **[LOCAL REGRESSION]** Lint suppression cannot authorize untrusted install;
       declarative first materialization and every update receive the same audit.
@@ -1948,7 +1948,7 @@ akm task history --id manual-failure --limit 1
 - [ ] **LOCAL** Source/dist scheduler write without rebind rejects ineligible executable before task/scheduler mutation.
 - [ ] **LOCAL** Explicit rebind records reviewed invocation and warns not release-eligible.
 - [ ] **PLATFORM** Use installed npm/standalone candidate in disposable account.
-- [ ] **PLATFORM** Add disabled command/prompt/workflow; inspect native entry; edit enabled/schedule/target + sync; execute; inspect history/log; delete YAML + sync removes entry.
+- [ ] **PLATFORM** Add a disabled command/prompt/workflow; confirm no native entry exists; use `akm task enable` and inspect the native entry; edit schedule/target + sync; execute; inspect history/log; use `akm task disable` and confirm removal; delete YAML + sync remains converged.
 - [ ] **PLATFORM** Existing binding remains unless rebind; upgrade behavior is explicit.
 
 | Platform | Evidence |
@@ -2627,7 +2627,7 @@ installed CLI cannot activate that seam merely through ambient environment:
 before_requests="$(wc -l <"$AKM_QA_SERVICE_LOG")"
 set +e
 NODE_ENV=test akm bundle add "$AKM_QA_WEBSITE_URL" \
-  --name qa-ambient-bypass --allow-insecure \
+  --name qa-ambient-bypass --allow-insecure-transport \
   >"$AKM_SANDBOX/ambient-bypass.stdout" \
   2>"$AKM_SANDBOX/ambient-bypass.stderr" </dev/null
 ambient_status=$?
@@ -3232,7 +3232,7 @@ remaining gaps carry approved waivers with the expiries recorded below.
     It drives the real `akm bundle add` CLI end-to-end against a materialized
     copy of `tests/fixtures/manual-qa/dangerous-bundle/` (whose
     `env/runtime.env` carries `NODE_OPTIONS`), non-TTY and without
-    `--allow-insecure`, and asserts every lifecycle surface after the block:
+    `--allow-dangerous-env-keys`, and asserts every lifecycle surface after the block:
     **byte-level** parity of `config.json` and `akm.lock`, no surviving content
     root, and no orphaned index row. Three workspace states are covered —
     pristine, pre-existing operator config, and a bundle already installed —

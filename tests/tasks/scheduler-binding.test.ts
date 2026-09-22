@@ -17,7 +17,6 @@ describe("secret-free scheduler binding compiler", () => {
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
       bundleTarget: "team",
-      enabled: false,
       schedules: [{ cron: "0 2 * * *", source: "akm.schedule", ordinal: 0 }],
     });
 
@@ -28,7 +27,7 @@ describe("secret-free scheduler binding compiler", () => {
       cron: "0 2 * * *",
       source: "akm.schedule",
       ordinal: 0,
-      enabled: false,
+      enabled: true,
       invocation: ["task", "run", "nightly", "--bundle", "team", "--scheduled"],
     });
   });
@@ -37,7 +36,6 @@ describe("secret-free scheduler binding compiler", () => {
     const bindings = compileTaskSchedulerBindings({
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
-      enabled: true,
       schedules: [
         { cron: "0 2 * * *", source: "on.schedule[0].cron", ordinal: 0 },
         { cron: "0 3 * * *", source: "on.schedule[1].cron", ordinal: 1 },
@@ -56,7 +54,6 @@ describe("secret-free scheduler binding compiler", () => {
     const [binding] = compileTaskSchedulerBindings({
       id: "nightly",
       qualifiedRef: "team//nightly",
-      enabled: true,
       schedules: [{ cron: "@daily", source: "nightly.yml:akm.schedule", ordinal: 0 }],
     });
     expect(binding?.logicalSource.ref).toBe("team//nightly");
@@ -68,7 +65,6 @@ describe("secret-free scheduler binding compiler", () => {
       id: "sub/deep/nightly",
       qualifiedRef: "team//sub/deep/nightly",
       bundleTarget: "team",
-      enabled: true,
       schedules: [{ cron: "@daily", source: "sub/deep/nightly.yml:akm.schedule", ordinal: 0 }],
     });
     expect(binding).toMatchObject({
@@ -134,7 +130,6 @@ describe("secret-free scheduler binding compiler", () => {
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
       bundleTarget: "team",
-      enabled: true,
       schedules: [{ cron: "@daily", source: "akm.schedule", ordinal: 0 }],
     });
     if (!binding) throw new Error("missing binding");
@@ -172,7 +167,6 @@ describe("secret-free scheduler binding compiler", () => {
     const [binding] = compileTaskSchedulerBindings({
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
-      enabled: true,
       schedules: [{ cron: "0 2 * * *", source: "akm.schedule", ordinal: 0 }],
     });
     if (!binding) throw new Error("missing binding");

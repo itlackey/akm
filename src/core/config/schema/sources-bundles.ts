@@ -14,7 +14,7 @@ import { z } from "zod";
 // and, transitively, the indexer modules they delegate to).
 import { VALID_ADAPTER_IDS } from "../../adapter/adapter-ids";
 import { isBundleSlug } from "../../asset/asset-ref";
-import { httpUrl, nonEmptyString, positiveInt } from "./primitives";
+import { httpUrl, isApiKeyReference, nonEmptyString, positiveInt } from "./primitives";
 
 const VALID_ADAPTER_IDS_SET: ReadonlySet<string> = new Set(VALID_ADAPTER_IDS);
 
@@ -30,6 +30,7 @@ export const SourceConfigEntrySchema = z
     name: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
     writable: z.boolean().optional(),
+    credential: z.string().min(1).optional(),
     primary: z.boolean().optional(),
     options: SourceConfigEntryOptionsSchema.optional(),
   })
@@ -56,6 +57,20 @@ export const SourceConfigEntrySchema = z
           `writable: true is only supported on filesystem and git sources (got "${entry.type}"` +
           (entry.name ? ` on source "${entry.name}"` : "") +
           ").",
+      });
+    }
+    if (entry.credential !== undefined && entry.type !== "git") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["credential"],
+        message: "credential is only supported on git sources",
+      });
+    }
+    if (entry.credential !== undefined && !isApiKeyReference(entry.credential)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["credential"],
+        message: "git credential must be a $VAR or secret://<name> reference",
       });
     }
   });
@@ -121,6 +136,8 @@ export const BundleConfigEntrySchema = z
     git: z.string().min(1).optional(),
     website: BundleWebsiteDescriptorSchema.optional(),
     npm: z.string().min(1).optional(),
+    /** Symbolic HTTPS bearer credential; resolved only at the Git subprocess boundary. */
+    credential: z.string().min(1).optional(),
     writable: z.boolean().optional(),
     // Opt a bundle out of indexing, search, refresh, and write targeting
     // without deleting it. The runtime honors the derived value in write and
@@ -158,6 +175,20 @@ export const BundleConfigEntrySchema = z
         code: z.ZodIssueCode.custom,
         path: ["writable"],
         message: "writable: true is only supported on path and git bundle sources",
+      });
+    }
+    if (entry.credential !== undefined && entry.git === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["credential"],
+        message: "credential is only supported on git bundle sources",
+      });
+    }
+    if (entry.credential !== undefined && !isApiKeyReference(entry.credential)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["credential"],
+        message: "git credential must be a $VAR or secret://<name> reference",
       });
     }
     const componentEntries = entry.components ? Object.entries(entry.components) : [];

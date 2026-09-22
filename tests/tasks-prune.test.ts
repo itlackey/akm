@@ -30,6 +30,7 @@ import path from "node:path";
 import { akmTasksPrune, akmTasksSync } from "../src/commands/tasks/tasks";
 import { taskPruneExitCode } from "../src/commands/tasks/tasks-cli";
 import { makeBundleRef } from "../src/core/asset/asset-ref";
+import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { compileTaskSchedulerBindings } from "../src/tasks/scheduler-binding";
 import {
@@ -63,12 +64,13 @@ function spyingMemoryExec(initial = ""): CronExec & { current: () => string; wri
   };
 }
 
-function writeTask(id: string, schedule: string, enabled = true): void {
+function writeTask(id: string, schedule: string): void {
   fs.writeFileSync(
     path.join(tasksDir, `${id}.yml`),
-    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n    enabled: ${enabled}\n`,
+    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
+  setSchedulerRefEnabled("task", makeBundleRef(path.basename(stashDir).toLowerCase(), `tasks/${id}`), true);
 }
 
 beforeEach(() => {
@@ -110,7 +112,6 @@ async function installOrphan(backend: ReturnType<typeof CRON_BACKEND>, id: strin
   const bindings = compileTaskSchedulerBindings({
     id,
     qualifiedRef: makeBundleRef(bundleName, `tasks/${id}`),
-    enabled: true,
     schedules: [{ cron: "0 3 * * *", source: `${id}.yml:0`, ordinal: 0 }],
   });
   const binding = bindings[0];

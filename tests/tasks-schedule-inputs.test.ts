@@ -49,6 +49,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { bundleSourceId } from "../src/core/config/config-sources";
+import type { AkmConfig } from "../src/core/config/config-types";
 import { ConfigError } from "../src/core/errors";
 import { buildScheduledBindingInvocation, parseScheduledBindingArgv } from "../src/tasks/scheduler-invocation";
 import {
@@ -300,10 +302,23 @@ describe("a scheduled run's compiled invocation tail delivers schedule-supplied 
 
   function setUp(): void {
     storage = withIsolatedAkmStorage();
-    writeSandboxConfig({
+    const base = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",
-      semanticSearchMode: "off",
+    } as AkmConfig;
+    writeSandboxConfig({
+      ...base,
+      scheduler: {
+        enabled: [
+          {
+            kind: "task",
+            ref: "fixture//tasks/delegate-scheduled",
+            sourceId: bundleSourceId(base, "fixture"),
+          },
+        ],
+      },
     });
   }
 

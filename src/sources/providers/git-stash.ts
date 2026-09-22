@@ -179,27 +179,39 @@ export function saveGitStash(
 
   if (name) {
     const config = loadConfig();
-    const stash = findGitStashByTarget(getSources(config), name);
+    const stash = findSyncStashByTarget(getSources(config), name);
     // NotFoundError (exit 1), not UsageError (exit 2): the argument is
     // well-formed, the bundle just isn't configured.
-    if (!stash) throw new NotFoundError(`No git bundle found with name "${name}"`, "SOURCE_NOT_FOUND");
-    if (stash.type !== "git") {
-      throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
+    if (!stash) throw new NotFoundError(`No git-backed bundle found with name "${name}"`, "SOURCE_NOT_FOUND");
+    if (stash.enabled === false) {
+      throw new UsageError(`Bundle "${name}" is disabled and cannot be synced.`, "INVALID_FLAG_VALUE");
     }
-    const lockedRoot = lockContentRootFor(stash.name, stash.type);
-    if (lockedRoot) {
-      const topLevel = runGit(["-C", lockedRoot, "rev-parse", "--show-toplevel"]);
+    if (stash.type === "filesystem") {
+      if (!stash.path) throw new UsageError(`Filesystem bundle "${name}" has no path configured.`);
+      const contentRoot = path.resolve(stash.path);
+      const topLevel = runGit(["-C", contentRoot, "rev-parse", "--show-toplevel"]);
       if (topLevel.status !== 0 || !topLevel.stdout.trim()) {
-        throw new UsageError(`Managed Git stash "${name}" is not a checkout at ${lockedRoot}`);
+        throw new UsageError(`Filesystem bundle "${name}" is not a Git working tree at ${contentRoot}.`);
       }
       repoDir = path.resolve(topLevel.stdout.trim());
-      managedContentRoot = path.resolve(lockedRoot);
+      managedContentRoot = contentRoot;
+      writable = stash.writable !== false;
     } else {
-      if (!stash.url) throw new UsageError(`Stash "${name}" has no URL configured`);
-      const repo = parseGitRepoUrl(stash.url);
-      repoDir = getCachePaths(repo.canonicalUrl).repoDir;
+      const lockedRoot = lockContentRootFor(stash.name, stash.type);
+      if (lockedRoot) {
+        const topLevel = runGit(["-C", lockedRoot, "rev-parse", "--show-toplevel"]);
+        if (topLevel.status !== 0 || !topLevel.stdout.trim()) {
+          throw new UsageError(`Managed Git stash "${name}" is not a checkout at ${lockedRoot}`);
+        }
+        repoDir = path.resolve(topLevel.stdout.trim());
+        managedContentRoot = path.resolve(lockedRoot);
+      } else {
+        if (!stash.url) throw new UsageError(`Stash "${name}" has no URL configured`);
+        const repo = parseGitRepoUrl(stash.url);
+        repoDir = getCachePaths(repo.canonicalUrl).repoDir;
+      }
+      writable = stash.writable === true;
     }
-    writable = stash.writable === true;
   } else {
     // Honour an explicit primary-stash dir override (keeps the improve gate and
     // the commit on the same directory); otherwise resolve the default.
@@ -699,8 +711,13 @@ function createExactPathCommit(
   }
 }
 
-function findGitStashByTarget(stashes: SourceConfigEntry[], target: string): SourceConfigEntry | undefined {
-  return stashes.find((stash) => matchesGitStashTarget(stash, target));
+function findSyncStashByTarget(stashes: SourceConfigEntry[], target: string): SourceConfigEntry | undefined {
+  return stashes.find((stash) => {
+    if (stash.type === "git") return matchesGitStashTarget(stash, target);
+    if (stash.type !== "filesystem") return false;
+    if (stash.name === target || stash.path === target) return true;
+    return stash.path !== undefined && path.resolve(stash.path) === path.resolve(target);
+  });
 }
 
 function matchesGitStashTarget(stash: SourceConfigEntry, target: string): boolean {

@@ -804,6 +804,43 @@ describe("Reflect positive control — markdown assets still flow through", () =
     expect(content).toContain("## Verification steps");
     expect(listProposals(stash).length).toBe(1);
   });
+
+  test('strips an echoed mid-document "Avoid These Patterns" block and preserves the next section (#963)', async () => {
+    const stash = makeStashDir();
+    const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
+    const improved = LONG_SOURCE_BODY.replace(
+      "## Verification",
+      [
+        "## Avoid These Patterns",
+        "Previous assets in this run produced these errors — do not repeat them:",
+        "- Reflect rejected: unrelated run diagnostic.",
+        "",
+        "## Verification steps",
+      ].join("\n"),
+    );
+    const payload = JSON.stringify({ ref: "knowledge/scaffolding", content: improved });
+    let prompt = "";
+    const spawn: SpawnFn = (cmd, opts) => {
+      prompt = cmd.at(-1) ?? "";
+      return fakeSpawn(payload, "", 0)(cmd, opts);
+    };
+
+    const result = await akmReflect({
+      ref: "knowledge/scaffolding",
+      stashDir: stash,
+      config: quietQualityGateConfig(),
+      assetContent: sourceContent,
+      avoidPatterns: ["Reflect rejected: unrelated run diagnostic."],
+      runAgentOptions: { spawn },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(prompt).toContain("Run-only guidance: do not copy this heading");
+    expect(result.proposal.payload.content).not.toContain("## Avoid These Patterns");
+    expect(result.proposal.payload.content).not.toContain("unrelated run diagnostic");
+    expect(result.proposal.payload.content).toContain("## Verification steps");
+  });
 });
 
 // ── 6. Feedback framing — feedback is a signal, not ground truth (#952) ────────

@@ -1347,11 +1347,10 @@ describe("runTask — prompt target", () => {
 
 // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.17)
 // DELETED src/tasks/run/run-task.ts's shouldSkipUnactivatedTask call and the
-// helper itself, along with prepare-support.ts's `enabled:
-// document.akm?.enabled !== false` derivation — task source v4 has no
-// document-level `enabled` at all (P4-N6: `enabled` is per-schedule-binding,
-// enforced once at sync time by scheduler-sync.ts, never re-checked at fire
-// time). The "runTask — disabled tasks" describe block this comment used to
+// helper itself, along with prepare-support.ts's source-owned `enabled`
+// derivation — task source v4 has no enablement field. Host-local
+// `scheduler.enabled` is checked both while reconciling bindings and when a
+// scheduled invocation fires. The "runTask — disabled tasks" describe block this comment used to
 // introduce (manual dispatch of an intentionally disabled task; a
 // scheduler-generated invocation recorded but not dispatched, asserting
 // `result.status === "disabled"`) tested exactly that now-deleted runtime

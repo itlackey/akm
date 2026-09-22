@@ -26,6 +26,7 @@ import path from "node:path";
 import { akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
 import { taskSyncDryRunExitCode, taskValidateExitCode } from "../src/commands/tasks/tasks-cli";
 import { shapeForCommand } from "../src/output/shapes";
+import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import {
   resolveScheduledTaskContext,
@@ -33,7 +34,7 @@ import {
   writeSchedulerContextDescriptor,
 } from "../src/tasks/scheduler-invocation";
 import type { Cleanup } from "./_helpers/sandbox";
-import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome } from "./_helpers/sandbox";
+import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome, writeSandboxConfig } from "./_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
 let stashDir = "";
@@ -60,9 +61,10 @@ function spyingMemoryExec(initial = ""): CronExec & { current: () => string; wri
 function writeTask(id: string, schedule: string, enabled = true): void {
   fs.writeFileSync(
     path.join(tasksDir, `${id}.yml`),
-    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n    enabled: ${enabled}\n`,
+    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
+  setSchedulerRefEnabled("task", `stash//tasks/${id}`, enabled);
 }
 
 beforeEach(() => {
@@ -74,6 +76,7 @@ beforeEach(() => {
   cleanup = stash.cleanup;
   tasksDir = path.join(stashDir, "tasks");
   fs.mkdirSync(tasksDir, { recursive: true });
+  writeSandboxConfig({ bundles: { stash: { path: stashDir, writable: true } }, defaultBundle: "stash" });
 });
 
 afterEach(() => {
@@ -131,6 +134,9 @@ describe("akmTasksSyncPlan — dry-run", () => {
 
     expect(preview.adds).toEqual([]);
     expect(preview.updates.map((op) => op.id)).toEqual(["alpha"]);
+    expect(preview.updates[0]?.installedFingerprint).toContain("*/15 * * * *");
+    expect(preview.updates[0]?.expectedFingerprint).toContain("45 */6 * * *");
+    expect(preview.updates[0]?.installedFingerprint).not.toBe(preview.updates[0]?.expectedFingerprint);
     expect(preview.removes).toEqual([]);
     expect(preview.hasRemovals).toBe(false);
 
@@ -261,16 +267,11 @@ describe("taskSyncDryRunExitCode — CLI exit-code contract", () => {
   });
 });
 
-// #907: `akm task validate`'s exit-code contract — `valid`/`converts` are
-// successful outcomes, `blocked`/`invalid`/`not-a-task` are diagnosed
-// defects the caller must act on.
+// #907: `akm task validate`'s exit-code contract — only current-schema
+// `valid` succeeds; migration-required and invalid inputs are non-zero.
 describe("taskValidateExitCode — CLI exit-code contract", () => {
   test("is undefined (leaves the default success exit code) for 'valid'", () => {
     expect(taskValidateExitCode({ outcome: "valid" })).toBeUndefined();
-  });
-
-  test("is undefined (leaves the default success exit code) for 'converts'", () => {
-    expect(taskValidateExitCode({ outcome: "converts" })).toBeUndefined();
   });
 
   test("is EXIT_CODES.GENERAL (non-zero) for 'blocked'", () => {
@@ -298,6 +299,7 @@ describe("akmTasksSync / akmTasksSyncPlan — degrade on a bad source (#867)", (
       `version: 2\nschedule: '*/15 * * * *'\ncommand: echo unconvertible\n`,
       "utf8",
     );
+    setSchedulerRefEnabled("task", `stash//tasks/${id}`, true);
   }
 
   test("akmTasksSyncPlan --dry-run reconciles the tasks that parse and reports the one that doesn't", async () => {

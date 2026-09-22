@@ -135,7 +135,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     label: "Task",
     renderer: "task-yaml",
     action: (ref) =>
-      `akm show ${ref} -> inspect; akm task run <id> -> run now; edit the file + akm task sync -> unschedule`,
+      `akm show ${ref} -> inspect; akm task run <id> -> run now; akm task enable|disable ${ref} -> change local scheduling`,
     fragmentRef: false,
   },
   session: {

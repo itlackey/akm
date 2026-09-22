@@ -17,7 +17,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { probeEndpointOnce, probeLlmEndpoint } from "../../llm/client";
+import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import { akmImprove, resolveImproveReadSource } from "./improve";
@@ -159,25 +159,31 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
  * `--require-engines` field re-test (#957): the static check above only
  * proves an engine is configured and credentialed — it cannot see a dead
  * endpoint. A field run against an unreachable engine sat silent for
- * minutes instead of hitting the documented exit-78 path. Reuse the SAME
- * bounded reachability probe `akm health`'s `default-llm-engine` /
- * `configured-engines` checks already run (`probeLlmEndpoint`, a single
- * `/models` GET bounded by its own default timeout) once per distinct
- * endpoint (via the shared `probeEndpointOnce` memoization health/checks.ts
- * also uses), so a dead engine is caught here instead of during dispatch.
+ * minutes instead of hitting the documented exit-78 path. Exercise the real
+ * model completion path with a tiny response and a three-second bound. The
+ * `/models` endpoint used by the lightweight health check is deliberately
+ * insufficient here: a gateway can list a model while its upstream completion
+ * route is dead (#980). Deduplicate by endpoint + model, not endpoint alone,
+ * because model backends behind one gateway can fail independently.
  */
 async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
-  probeReachable: typeof probeLlmEndpoint = probeLlmEndpoint,
+  probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
+    probeLlmReachable(connection, 3_000),
 ): Promise<void> {
   const targets = collectRequiredEngineTargets(plan);
   if (targets.length === 0) return;
-  const probesByEndpoint = new Map<string, ReturnType<typeof probeReachable>>();
+  const probesByConnection = new Map<string, ReturnType<typeof probeReachable>>();
   const probed = await Promise.all(
-    targets.map(async (target) => ({
-      ...target,
-      reach: await probeEndpointOnce(target.connection, probesByEndpoint, probeReachable),
-    })),
+    targets.map(async (target) => {
+      const key = `${target.connection.endpoint.replace(/\/+$/, "")}|${target.connection.model}`;
+      let pending = probesByConnection.get(key);
+      if (!pending) {
+        pending = probeReachable(target.connection);
+        probesByConnection.set(key, pending);
+      }
+      return { ...target, reach: await pending };
+    }),
   );
   const unreachable = probed.filter((item) => !item.reach.reachable);
   if (unreachable.length === 0) return;
@@ -186,7 +192,7 @@ async function assertRequiredEnginesReachable(
       `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
   );
   throw new ConfigError(
-    `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine endpoint is not reachable:\n${lines.join("\n")}`,
+    `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
     "LLM_NOT_CONFIGURED",
   );
 }

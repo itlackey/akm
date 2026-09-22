@@ -264,6 +264,7 @@ akm bundle add @scope/pkg                            # From npm (managed)
 akm bundle add owner/repo                            # From GitHub (managed)
 akm bundle add ./path/to/local/bundle                   # Local directory
 akm bundle add git@github.com:org/repo.git --provider git --name my-skills --writable
+akm bundle add https://github.com/org/private.git --provider git --credential '$GIT_READ_TOKEN'
 akm registry add https://skills.sh --name skills.sh --provider skills-sh  # Add the skills.sh registry
 akm registry remove skills.sh                 # Remove the skills.sh registry
 akm bundle list                                      # List all sources
@@ -271,8 +272,12 @@ akm bundle list --kind git                           # Filter by provider (files
 akm bundle remove <target>                           # Remove by id, ref, path, or name
 akm bundle update --all                              # Update all managed sources
 akm bundle update <target> --force                   # Force re-download
-akm bundle update <target> --allow-insecure          # Approve reviewed dangerous env keys
+akm bundle update <target> --allow-dangerous-env-keys # Approve reviewed dangerous env keys
+akm bundle update --all --skip-if-locked             # Scheduled refresh; exit 0 on DB contention
 ```
+
+Git bundles refresh only when `akm bundle update` runs. Schedule that command
+when automatic refresh is desired.
 
 ## Registries
 
@@ -357,7 +362,9 @@ file plus one `sync` is a complete workflow.
 ```sh
 akm task add nightly-improve --schedule "@daily" --command "akm improve --strategy default"
 akm task add briefing --schedule "0 9 * * *" --prompt "Draft the morning briefing"  # Inline command task
-akm task sync                                  # Reconcile task files with the OS scheduler
+akm task enable <bundle>//tasks/<id>           # Enable locally and sync that bundle
+akm task disable <bundle>//tasks/<id>          # Disable locally and unschedule it
+akm task sync                                  # Reconcile activated refs from every enabled configured bundle
 akm task sync --rebind                         # Also re-pin the scheduler's akm binary/spelling
 akm task doctor                                # Scheduler binding + runtime eligibility diagnosis
 akm task history                               # Recent run rows (status, timing)
@@ -370,10 +377,10 @@ Task files use task source v4 (`version: 4`). There is no `akm:` options bag
 or `on:` block — every control (`schedule`, `timeout`, `engine`, `model`,
 `redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
-workflow's (`output:` replaces v3's `akm.outputSchema`). To disable one
-schedule entry, set that entry's `enabled: false` under `schedule:` and run
-`akm task sync` (the cron line stays, commented); to remove one, delete the
-YAML and run `akm task sync` — the scheduler entry is unbound. Top-level
+workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
+controls activation: use `akm task enable` / `disable`, which update the
+host-local config allow-list and sync. To remove one, delete the YAML and run
+`akm task sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
 overriding the selected engine invocation timeout. Preview old task-v2/v3
 conversion with `akm migrate apply --dry-run`.

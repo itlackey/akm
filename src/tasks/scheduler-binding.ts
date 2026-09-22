@@ -44,18 +44,8 @@ export interface SchedulerSourceSchedule {
   readonly source: string;
   readonly ordinal: number;
   /**
-   * Per-entry override of the document-level `enabled` (D2-N5, spec
-   * docs/plans/specs/p2a-task-source-v4.md §1.5). v3 sources never set this
-   * — every v3 projection keeps resolving to the document-level `enabled`
-   * unchanged. A task source v4 document's `schedule[i].enabled` carries it
-   * through so `compileTaskSchedulerBindings` can disable one binding
-   * without touching its siblings.
-   */
-  readonly enabled?: boolean;
-  /**
    * P2b Lane B (spec docs/plans/specs/p2b-input-bindings.md §4.4, §1.7 B-N3):
-   * a v4 `schedule[i].inputs` literal override, additive exactly as `enabled`
-   * above — v3 never sets this, so its compiled invocation tail gains not a
+   * a v4 `schedule[i].inputs` literal override. v3 never sets this, so its compiled invocation tail gains not a
    * single byte (B-03). When present and non-empty,
    * {@link compileTaskSchedulerBindings} appends a canonically-sorted
    * `--<name> <value>` flag tail after `--scheduled`.
@@ -67,7 +57,6 @@ export interface CompileTaskSchedulerBindingsInput {
   readonly id: string;
   readonly qualifiedRef: string;
   readonly bundleTarget?: string;
-  readonly enabled: boolean;
   readonly schedules: readonly SchedulerSourceSchedule[];
 }
 
@@ -80,6 +69,8 @@ export interface CompileWorkflowSchedulerBindingsInput {
 /** Existing native definition as exposed to the whole-set planner. */
 export interface InstalledSchedulerBinding {
   readonly id: string;
+  /** Native scheduler activation state, when the backend can prove it. */
+  readonly enabled?: boolean;
   /** Exact backend artifact spelling enumerated from the native scheduler. */
   readonly nativeId?: string;
   readonly binding: readonly string[];
@@ -217,7 +208,7 @@ export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindings
         cron: schedule.cron,
         source: schedule.source,
         ordinal: schedule.ordinal,
-        enabled: schedule.enabled ?? input.enabled,
+        enabled: true,
         invocation,
       });
     }),
@@ -541,7 +532,7 @@ export function canonicalSchedulerIdentity(
   const canonicalInvocation = ["task", "run", taskId, "--bundle", parsed.bundle, "--scheduled"];
   if (!sameInvocation(invocation, canonicalInvocation)) {
     throw new UsageError(
-      "Task scheduler expectation invocation does not match its qualified source.",
+      `Task scheduler expectation invocation does not match its qualified source: expected ${JSON.stringify(canonicalInvocation)}, got ${JSON.stringify(invocation)}.`,
       "INVALID_FLAG_VALUE",
     );
   }

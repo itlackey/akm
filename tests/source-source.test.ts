@@ -208,6 +208,20 @@ describe("resolveSourceEntries", () => {
     }
   });
 
+  test("a symlink spelling cannot index a disabled configured bundle", () => {
+    const alias = `${stashDir}-disabled-alias`;
+    try {
+      fs.symlinkSync(stashDir, alias, "dir");
+      saveConfig({
+        semanticSearchMode: "off",
+        bundles: { dormant: { path: alias, enabled: false } },
+      });
+      expect(() => resolveSourceEntries()).toThrow(/disabled.*dormant/i);
+    } finally {
+      fs.rmSync(alias, { force: true });
+    }
+  });
+
   test("keeps an explicit stash override ahead of env and default bundle", () => {
     const configuredDefault = fs.mkdtempSync(path.join(os.tmpdir(), "akm-configured-default-"));
     const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-explicit-override-"));

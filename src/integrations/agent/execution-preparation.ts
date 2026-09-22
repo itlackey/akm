@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig } from "../../core/config/config-types";
-import { cloneExecutionJsonObject } from "../../execution/json";
+import { cloneExecutionJsonObject, type ExecutionJsonObject } from "../../execution/json";
 import type {
   ResolvedCommandContent,
   ResolvedConversationMessage,
   ResolvedExecutionRequestV1,
   ResolvedPersonaContent,
 } from "../../execution/resolved-request";
-import type { UnresolvedExecutionDefaults } from "../../execution/source";
+import type { ToolSelection, UnresolvedExecutionDefaults } from "../../execution/source";
 import { withEngineFallback } from "./engine-fallback";
 import {
   type ExecutionEngineDefinition,
@@ -67,6 +67,38 @@ function own(value: object, key: PropertyKey): boolean {
   return Object.hasOwn(value, key);
 }
 
+function requestedToolNames(tools: ToolSelection): readonly string[] | undefined {
+  if (tools === null) return Object.freeze([]);
+  if (typeof tools === "string") {
+    return Object.freeze(
+      tools
+        .split(",")
+        .map((tool) => tool.trim())
+        .filter(Boolean),
+    );
+  }
+  if (Array.isArray(tools)) return Object.freeze(tools.map((tool) => tool.trim()).filter(Boolean));
+  const structured = tools as ExecutionJsonObject;
+  // The portable structured spelling is a boolean allow/deny map. Opaque or
+  // nested provider policy cannot be reduced to tool names without guessing,
+  // so a host name allowlist must deny it (an explicit "*" may still allow it).
+  if (Object.values(structured).some((value) => typeof value !== "boolean")) return undefined;
+  return Object.freeze(Object.keys(structured).filter((tool) => structured[tool] === true));
+}
+
+/** The production authorizer: executable assets may only narrow a host-owned ceiling. */
+export function toolAuthorizerFromConfig(config: AkmConfig): ToolAuthorizer {
+  const allowed = new Set(config.execution?.allowedTools ?? []);
+  return (input) => {
+    const requested = requestedToolNames(input.tools);
+    const permitted = allowed.has("*") || requested?.every((tool) => allowed.has(tool)) === true;
+    return Object.freeze({
+      status: permitted ? ("allowed" as const) : ("denied" as const),
+      policy: "config-execution-allowed-tools",
+    });
+  };
+}
+
 /** Pure common cascade composition once caller-specific sources are rendered. */
 export function planPreparedExecution(options: PlanPreparedExecutionOptions): ResolvedExecutionPlanV1 {
   return planExecutionCascade({
@@ -115,7 +147,7 @@ export function prepareResolvedExecution(options: PrepareResolvedExecutionOption
     engines: executionEngineDefinitionsFromConfig(config),
     modelMap: options.modelMap ?? loadModelMap({ engines: config.engines }).map,
     invocationKind: options.invocationKind,
-    ...(options.authorizeTools ? { authorizeTools: options.authorizeTools } : {}),
+    authorizeTools: options.authorizeTools ?? toolAuthorizerFromConfig(config),
   });
   return Object.freeze({
     plan,

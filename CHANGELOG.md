@@ -22,6 +22,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   until it drains. Byte-for-byte output is unchanged on every format; only the
   transport moved.
 
+## [0.9.16-alpha.2] - 2026-09-21
+
+### Added
+
+- **Scheduled execution is now granted by host-local config and bound to the
+  approved source installation.** `scheduler.enabled` records
+  `{kind, ref, sourceId}` entries written by `akm task enable`; authored task
+  frontmatter cannot enable itself. `akm migrate apply` performs the explicit,
+  backed-up conversion of older grants, and runtime config points unmigrated
+  installations to that command instead of silently inventing authority.
+- **Executable assets now run beneath a host-owned tool ceiling.** Local
+  `execution.allowedTools` config caps asset tool requests. Workspace,
+  environment, and opaque runtime selection are no longer accepted from asset
+  frontmatter, and a transport that cannot enforce a non-empty resolved tool
+  policy fails before dispatch.
+
+### Changed
+
+- **Unscoped `akm task sync` reconciles every enabled bundle.** It refreshes
+  the native scheduler from the latest locally enabled task/workflow sources
+  and removes attributable bindings for bundles that have been disabled.
+  Removing a bundle also revokes its scheduler grants.
+- **Bundle activation and identity are consistent across the CLI.** A disabled
+  bundle is inert for reads, writes, indexing, execution, and scheduling;
+  explicit lifecycle updates remain available. Physical-root identity rejects
+  duplicate or symlink-aliased bundle registrations and prevents an
+  `AKM_BUNDLE_DIR` alias from reactivating disabled content.
+- **Shared config inheritance now separates portable policy from host
+  authority.** Source/default ownership, registries, scheduler and execution
+  grants, credentials, executable arguments/workspace, setup/experimental
+  state, reranker connections, and publication hooks stay local. Every
+  bundle-relative `extends` hop is checked by real path containment.
+- **Unsafe overrides now name one risk each.** Use
+  `--allow-insecure-transport` for reviewed plain HTTP and
+  `--allow-dangerous-env-keys` for reviewed process-hijacking environment
+  keys; the former combined `--allow-insecure` switch is removed.
+- **Bundle/source resolution carries explicit default and priority state.**
+  Search, show, write targeting, registry installation, and configuration
+  mutation no longer infer ownership or trust from array position.
+
+### Fixed
+
+- Protected generated improve content from credential echoes, redacted bodies,
+  and run-only scaffolding, while exercising the real bounded engine probe.
+- Repaired degraded sqlite-vec mirrors, preserved scheduler intent across
+  synchronization, kept explicit setup choices and rollback serialization
+  stable, and tolerated valid sharded startup contention.
+- Made git, website, npm, and filesystem bundle add/update/remove workflows
+  converge on the same lifecycle and dangerous-environment audit behavior.
+
 ## [0.9.15] - 2026-09-10
 
 ### Added

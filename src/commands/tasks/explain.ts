@@ -79,6 +79,7 @@
 
 import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { makeBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError } from "../../core/errors";
 import {
@@ -91,6 +92,7 @@ import {
 import { createInlineResolvedCommand } from "../../execution/resolved-request";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { prepareResolvedExecution } from "../../integrations/agent/execution-preparation";
+import { isSchedulerRefEnabled } from "../../tasks/activation-config";
 import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
@@ -353,11 +355,12 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const defaultedInputs = applyInputDefaults(inputContract, materializedInputs);
 
   const document: PreparableTaskDocument = projectTaskSourceV4(parsed.v4);
+  const enabled = isSchedulerRefEnabled(loadConfig(), "task", makeBundleRef(bundle.source.name, taskConceptId));
 
   const schedule: ScheduleBindingRow[] = parsed.v4.schedule.map((entry) => ({
     ordinal: entry.ordinal,
     cron: entry.cron,
-    enabled: entry.enabled,
+    enabled,
     source: entry.source,
     inputs: Object.fromEntries(
       Object.entries(entry.inputs).map(([name, value]) => {

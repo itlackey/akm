@@ -340,11 +340,8 @@ describe("workflow v4 fail-closed source targets", () => {
       "      - id: one\n        uses: shared//commands/same\n      - id: two\n        uses: alias//commands/same",
       primary,
     );
-    await akmIndex({ stashDir: primary, full: true });
     const before = await establishStateBaseline();
-    await expect(startWorkflowRun("primary//workflows/aliased-command")).rejects.toThrow(
-      /same physical|physical (?:file|source)|logical (?:owner|ref)/i,
-    );
+    await expect(akmIndex({ stashDir: primary, full: true })).rejects.toThrow(/same physical content root/i);
     expect(mutationCounts()).toEqual(before);
   });
 });

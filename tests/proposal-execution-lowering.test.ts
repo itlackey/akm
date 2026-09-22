@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { type AkmProposeOptions, akmPropose } from "../src/commands/proposal/propose";
+import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { buildProposePrompt } from "../src/integrations/agent/prompts";
 import { __setTestServer, closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
@@ -216,7 +217,7 @@ describe("proposal consumers lower resolved execution requests", () => {
     expect(JSON.stringify(result)).not.toContain(replacement);
   });
 
-  test("file-written SDK drafts redact a symbolic fallback credential before persistence or output", async () => {
+  test("file-written SDK drafts reject a symbolic fallback credential instead of persisting redacted text", async () => {
     const stashDir = proposalStash();
     const secret = "proposal-sdk-fallback-secret-092";
     __setTestServer({
@@ -252,10 +253,12 @@ describe("proposal consumers lower resolved execution requests", () => {
       }),
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.error);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected unsafe content rejection");
     expect(result.engine).toBe("sdk");
-    expect(result.proposal.payload.content).toContain("[REDACTED]");
+    expect(result.reason).toBe("parse_error");
+    expect(result.error).toContain("configured credential");
     expect(JSON.stringify(result)).not.toContain(secret);
+    expect(listProposals(stashDir)).toEqual([]);
   });
 });

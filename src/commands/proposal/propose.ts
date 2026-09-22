@@ -19,6 +19,7 @@ import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
+import { generatedContentRejection } from "../../core/content-safety";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
@@ -326,7 +327,23 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       }
     }
 
-    payload = { ...payload, content: redactWithLoweredExecutionDispatchLease(lease, payload.content) };
+    const unsafeContent = generatedContentRejection(
+      payload.content,
+      redactWithLoweredExecutionDispatchLease(lease, payload.content),
+    );
+    if (unsafeContent) {
+      return {
+        schemaVersion: 2,
+        ok: false,
+        reason: "parse_error",
+        error: unsafeContent,
+        type: options.type,
+        name: options.name,
+        engine: engineName,
+        exitCode: result.exitCode,
+        ...noticeFields(notices),
+      };
+    }
 
     // 6. Insert the proposal. Note: we allow the agent's `ref` to normalise the
     // asset name (e.g. path-cleanup), but only after validating that the ref is

@@ -249,6 +249,20 @@
       },
       "additionalProperties": true
     },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "allowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
     "index": {
       "type": "object",
       "properties": {
@@ -473,6 +487,10 @@
             "type": "string",
             "minLength": 1
           },
+          "credential": {
+            "type": "string",
+            "minLength": 1
+          },
           "writable": {
             "type": "boolean"
           },
@@ -623,7 +641,7 @@
               "maximum": 50
             }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         }
       },
       "additionalProperties": true
@@ -1710,6 +1728,42 @@
       },
       "additionalProperties": true
     },
+    "scheduler": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "workflow"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceId": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "kind",
+              "ref",
+              "sourceId"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
     "setup": {
       "type": "object",
       "properties": {},
@@ -1722,7 +1776,7 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     }
   },
   "required": [
@@ -1977,6 +2031,20 @@
           },
           "additionalProperties": true
         },
+        "execution": {
+          "type": "object",
+          "properties": {
+            "allowedTools": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            }
+          },
+          "additionalProperties": false
+        },
         "index": {
           "type": "object",
           "properties": {
@@ -2201,6 +2269,10 @@
                 "type": "string",
                 "minLength": 1
               },
+              "credential": {
+                "type": "string",
+                "minLength": 1
+              },
               "writable": {
                 "type": "boolean"
               },
@@ -2351,7 +2423,7 @@
                   "maximum": 50
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           },
           "additionalProperties": true
@@ -3438,6 +3510,42 @@
           },
           "additionalProperties": true
         },
+        "scheduler": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "task",
+                      "workflow"
+                    ]
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sourceId": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "ref",
+                  "sourceId"
+                ],
+                "additionalProperties": false
+              },
+              "default": []
+            }
+          },
+          "additionalProperties": false
+        },
         "setup": {
           "type": "object",
           "properties": {},
@@ -3450,7 +3558,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         }
       },
       "required": [

@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTasksSync } from "../src/commands/tasks/tasks";
+import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import {
   resolveScheduledTaskContext,
@@ -23,7 +24,7 @@ import {
   writeSchedulerContextDescriptor,
 } from "../src/tasks/scheduler-invocation";
 import type { Cleanup } from "./_helpers/sandbox";
-import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome } from "./_helpers/sandbox";
+import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome, writeSandboxConfig } from "./_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
 let stashDir = "";
@@ -44,9 +45,10 @@ function memoryExec(initial = ""): CronExec & { current: () => string } {
 function writeTask(id: string, schedule: string, enabled = true): void {
   fs.writeFileSync(
     path.join(tasksDir, `${id}.yml`),
-    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n    enabled: ${enabled}\n`,
+    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
+  setSchedulerRefEnabled("task", `stash//tasks/${id}`, enabled);
 }
 
 beforeEach(() => {
@@ -58,6 +60,7 @@ beforeEach(() => {
   cleanup = stash.cleanup;
   tasksDir = path.join(stashDir, "tasks");
   fs.mkdirSync(tasksDir, { recursive: true });
+  writeSandboxConfig({ bundles: { stash: { path: stashDir, writable: true } }, defaultBundle: "stash" });
 });
 
 afterEach(() => {
@@ -85,6 +88,17 @@ describe("akmTasksSync — schedule drift", () => {
     });
   };
 
+  const backendForPath = (exec: CronExec, envPath: string) => {
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), envPath));
+    return CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath,
+    });
+  };
+
   test("installs missing, then reports unchanged on a no-op re-sync", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
@@ -99,9 +113,39 @@ describe("akmTasksSync — schedule drift", () => {
     expect(second.installed).toEqual([]);
     expect(second.updated).toEqual([]);
     expect(second.unchanged.sort()).toEqual(["alpha", "beta"]);
-    const bundleName = path.basename(stashDir).toLowerCase();
-    expect(exec.current()).toContain(`task run alpha --bundle ${bundleName} --scheduled`);
-    expect(exec.current()).toContain(`task run beta --bundle ${bundleName} --scheduled`);
+    expect(exec.current()).toContain("task run alpha --bundle stash --scheduled");
+    expect(exec.current()).toContain("task run beta --bundle stash --scheduled");
+  });
+
+  test("adding one task preserves existing bindings captured under a different ambient PATH", async () => {
+    const exec = memoryExec();
+    writeTask("alpha", "*/15 * * * *");
+    await akmTasksSync({ backend: backendForPath(exec, "/captured/bin:/usr/bin") });
+    const alphaBefore = exec.current().match(/# akm:task alpha BEGIN[\s\S]*?# akm:task alpha END/)?.[0];
+
+    writeTask("beta", "0 2 * * *");
+    const result = await akmTasksSync({ backend: backendForPath(exec, "/ambient/bin:/usr/bin") });
+
+    expect(result.installed).toEqual(["beta"]);
+    expect(result.updated).toEqual([]);
+    expect(result.unchanged).toEqual(["alpha"]);
+    expect(exec.current().match(/# akm:task alpha BEGIN[\s\S]*?# akm:task alpha END/)?.[0]).toBe(alphaBefore);
+  });
+
+  test("sync restores a locally enabled task that was manually disabled in crontab", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    exec.write(exec.current().replace(/^([^#\n].*task run alpha.*)$/m, "# akm:disabled $1"));
+
+    writeTask("beta", "0 2 * * *");
+    const result = await akmTasksSync({ backend });
+
+    expect(result.installed).toEqual(["beta"]);
+    expect(result.updated).toEqual(["alpha"]);
+    expect(result.unchanged).toEqual([]);
+    expect(exec.current()).not.toContain("# akm:disabled */15 * * * *");
   });
 
   test("detects a changed schedule and reinstalls it (the bug fix)", async () => {
@@ -124,7 +168,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("0 2 * * * /usr/local/bin/akm");
   });
 
-  test("detects an enabled→disabled flip and reinstalls commented", async () => {
+  test("removing local activation unschedules the task without editing source", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *", true);
@@ -133,9 +177,8 @@ describe("akmTasksSync — schedule drift", () => {
 
     writeTask("alpha", "*/15 * * * *", false);
     const result = await akmTasksSync({ backend });
-    expect(result.updated).toEqual(["alpha"]);
-    expect(exec.current()).toContain("# akm:disabled */15 * * * * /usr/local/bin/akm --scheduler-context");
-    expect(exec.current()).toContain("task run alpha --bundle");
+    expect(result.removed).toEqual(["alpha"]);
+    expect(exec.current()).not.toContain("task run alpha --bundle");
   });
 
   test("removes orphaned scheduler entries with no backing file", async () => {
@@ -162,6 +205,7 @@ describe("akmTasksSync — schedule drift", () => {
       'schedule: "@hourly"\ncommand: akm improve --profile quick --auto-accept safe\nenabled: true\n',
       "utf8",
     );
+    setSchedulerRefEnabled("task", "stash//tasks/legacy", true);
 
     const result = await akmTasksSync({ backend });
     expect(result.installed).toEqual([]);
@@ -182,7 +226,7 @@ describe("akmTasksSync — schedule drift", () => {
       ].join("\n"),
     );
     const backend = backendFor(exec);
-    writeTask("alpha", "*/15 * * * *", false);
+    writeTask("alpha", "*/15 * * * *", true);
     const prior = exec.current();
 
     await expect(akmTasksSync({ backend })).rejects.toThrow(/native scheduler artifact|unproven owner/i);

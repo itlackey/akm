@@ -81,6 +81,8 @@ export interface SchedulerSyncPlanInput {
   readonly config?: AkmConfig;
   /** Bundle-aware local asset resolver used while freezing workflow/script targets. */
   readonly resolveAsset?: PrepareTaskV3ExecutionContext["resolveAsset"];
+  /** Exact host-local activation allow-list, keyed by kind and canonical ref. */
+  readonly enabledActivations?: ReadonlySet<string>;
   readonly installOptions?: SchedulerInstallOptions;
   readonly rebind?: boolean;
   readonly expectedSignature?: (binding: SchedulerBinding, options?: SchedulerInstallOptions) => string;
@@ -194,6 +196,10 @@ export async function prepareSchedulerSyncSourceSet(
   });
 }
 
+function schedulerActivationKey(kind: SchedulerBinding["logicalSource"]["kind"], ref: string): string {
+  return `${kind}\0${ref}`;
+}
+
 export function finalizeSchedulerSyncPlan(
   input: SchedulerSyncPlanInput,
   prepared: PreparedSchedulerSourceSet,
@@ -206,10 +212,8 @@ export function finalizeSchedulerSyncPlan(
   };
   const desired = prepared.desired;
   assertUniqueDesiredIds(desired);
-  assertCoherentInspection(inspection, input.inspection !== undefined);
-  assertUniqueInstalledIds(coherentInput.installed);
+  assertSchedulerBackendInspection(inspection, desired, input.inspection !== undefined);
   assertNoForeignIds(desired, coherentInput);
-  assertSchedulerNativeArtifactOwnership(desired, inspection.artifacts);
 
   const scopedInstalled = coherentInput.installed.filter((entry) => belongsToBundle(entry, coherentInput));
   const present = new Map(scopedInstalled.map((entry) => [entry.id, entry] as const));
@@ -279,6 +283,17 @@ export function finalizeSchedulerSyncPlan(
     sourceSnapshot: prepared.sourceSnapshot,
     failures: prepared.failures,
   });
+}
+
+/** Validate one coherent whole-backend read before deriving any mutation plan. */
+export function assertSchedulerBackendInspection(
+  inspection: SchedulerBackendInspection,
+  desired: readonly SchedulerBinding[] = [],
+  requireCompleteFingerprint = true,
+): void {
+  assertCoherentInspection(inspection, requireCompleteFingerprint);
+  assertUniqueInstalledIds(inspection.installed);
+  assertSchedulerNativeArtifactOwnership(desired, inspection.artifacts);
 }
 
 /**
@@ -534,6 +549,12 @@ async function compileTaskSources(
     const conceptId = relative.slice(0, -4);
     const id = input.adapterId === "akm-task" ? conceptId : path.basename(sourcePath, ".yml");
     const qualifiedRefForFailure = makeBundleRef(input.bundleName, conceptId);
+    if (
+      input.enabledActivations &&
+      !input.enabledActivations.has(schedulerActivationKey("task", qualifiedRefForFailure))
+    ) {
+      continue;
+    }
     try {
       const physicalIdentity = guarded.physicalIdentity;
       const priorOwner = physicalOwners.get(physicalIdentity);
@@ -546,14 +567,11 @@ async function compileTaskSources(
       physicalOwners.set(physicalIdentity, sourcePath);
       // Project BEFORE prepareTaskV3Execution so projectability is checked —
       // but build the scheduler bindings from the ORIGINAL task source v4
-      // document, not the projection, which deliberately drops per-entry
-      // `enabled` and `schedule[i].inputs` (D2-N5, project-v4.ts) —
+      // document, not the projection, which deliberately drops
+      // `schedule[i].inputs` (project-v4.ts) —
       // schedule-supplied inputs are delivered through the scheduler
       // binding's own compiled invocation tail (P2b Lane B, spec §4.4,
       // B-N3), not through the prepare-seam projection. A task source v4
-      // document has no document-level `akm.enabled`, so `enabled: true` is
-      // passed at the document level and every entry's own `enabled`
-      // (always present, defaulted at parse time) decides.
       const parsed = parseTaskSource({
         yaml: guarded.content,
         filePath: sourcePath,
@@ -587,11 +605,9 @@ async function compileTaskSources(
         id,
         qualifiedRef,
         ...(input.bundleTarget ? { bundleTarget: input.bundleTarget } : {}),
-        enabled: true,
         schedules: parsed.v4.schedule.map((schedule) => ({
           cron: schedule.cron,
           ordinal: schedule.ordinal,
-          enabled: schedule.enabled,
           source: `${relSource}:${schedule.source}`,
           // P2b Lane B (spec §4.4, B-N3): delivered through the compiled
           // binding's own invocation tail below — the F-B2 flip that closes
@@ -680,6 +696,9 @@ async function compileWorkflowSources(
       input.bundleName,
       input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName,
     );
+    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("workflow", failureRef))) {
+      continue;
+    }
     try {
       if (sources.length > 1) {
         throw new WorkflowSourceCollisionError(

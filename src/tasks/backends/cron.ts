@@ -103,6 +103,7 @@ export interface CronBackendOptions {
 const BEGIN = (id: string) => `# akm:task ${assertCronValue(id)} BEGIN`;
 const END = (id: string) => `# akm:task ${assertCronValue(id)} END`;
 const DISABLED_PREFIX = "# akm:disabled ";
+const SOURCE_ENABLED_PREFIX = "# akm:source-enabled ";
 const BLOCK_RE = /^# akm:task ([\w.@:_-]+) BEGIN$/;
 const BLOCK_END_RE = /^# akm:task ([\w.@:_-]+) END$/;
 export const PORTABLE_CRON_LINE_LIMIT = 1000;
@@ -312,6 +313,7 @@ function inspectCronState(crontab: string, fallbackContextPath: string): Schedul
     if (!parsed) continue;
     const ref: InstalledSchedulerBinding = {
       id: schedulerLogicalBindingId(id, parsed.invocation),
+      enabled: !cronIsDisabled(body),
       signature: fingerprint,
       ...(parsed.target !== undefined ? { target: parsed.target } : {}),
       binding: parsed.binding,
@@ -574,8 +576,17 @@ function normalizeSignature(body: string): string {
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
+    .filter((l) => !stripDisabledPrefix(l).startsWith(SOURCE_ENABLED_PREFIX))
     .filter((l) => l.length > 0)
     .join("\n");
+}
+
+function stripDisabledPrefix(line: string): string {
+  return line.startsWith(DISABLED_PREFIX) ? line.slice(DISABLED_PREFIX.length) : line;
+}
+
+function cronIsDisabled(body: string): boolean {
+  return body.trimStart().startsWith(DISABLED_PREFIX);
 }
 
 export function upsertBlock(existing: string, id: string, block: string): string {

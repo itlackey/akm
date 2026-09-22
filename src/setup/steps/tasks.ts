@@ -10,7 +10,8 @@ import path from "node:path";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
-import { loadConfig } from "../../core/config/config";
+import { makeBundleRef } from "../../core/asset/asset-ref";
+import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,
@@ -19,6 +20,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
+import { schedulerActivationSourceId, schedulerActivations } from "../../tasks/activation-config";
 import { backendNameForPlatform } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
@@ -90,31 +92,6 @@ function normaliseTaskIdForMatch(raw: string): string {
   return raw.trim().replace(/\.(yml|md)$/, "");
 }
 
-/**
- * Toggle a task source v4 file's enabled state via a full parse/render
- * round-trip (setup's own edits are infrequent and not comment-preservation-
- * sensitive, unlike `commands/tasks/tasks.ts`'s `setEnabledInYaml` line
- * splice). Broadcasts `enabled` across every `schedule[]` entry — the
- * closest v4 equivalent of v3's single document-level flag. `src` no longer
- * accepts a task v3 file at all (P4 §3.2) — `listSetupTaskDefinitions` below
- * already fails closed on one before this function is ever reached, so
- * there is no legacy `akm.enabled` shape left to handle here.
- */
-function setTaskEnabledInYaml(yaml: string, enabled: boolean): string {
-  const document = yamlParse(yaml) as Record<string, unknown>;
-  const schedule = document.schedule;
-  if (typeof schedule === "string") {
-    document.schedule = [{ cron: schedule, enabled }];
-  } else if (Array.isArray(schedule) && schedule.length > 0) {
-    document.schedule = schedule.map((entry) =>
-      entry && typeof entry === "object" && !Array.isArray(entry) ? { ...entry, enabled } : entry,
-    );
-  } else {
-    throw new UsageError("Task source v4 must declare a schedule before setup can change enabled state.");
-  }
-  return yamlStringify(document);
-}
-
 export interface SetupTaskDefinition {
   id: string;
   schedule: string;
@@ -141,6 +118,11 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
   const config = loadConfig();
   const target = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false });
   const taskDir = path.join(target.source.path, "tasks");
+  const enabledRefs = new Set(
+    schedulerActivations(config)
+      .filter((activation) => activation.kind === "task")
+      .map((activation) => activation.ref),
+  );
   if (!fs.existsSync(taskDir)) return [];
 
   const tasks: SetupTaskDefinition[] = [];
@@ -161,10 +143,7 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
         id,
         schedule: schedules[0]!,
         schedules: Object.freeze(schedules),
-        // task source v4 has no document-level enabled (P4-N6) — a task is
-        // considered enabled for review purposes when at least one of its
-        // schedule bindings will actually fire.
-        enabled: document.schedule.some((entry) => entry.enabled),
+        enabled: enabledRefs.has(makeBundleRef(target.source.name, `tasks/${id}`)),
         ...(document.description !== undefined ? { description: document.description } : {}),
       });
     } catch (error) {
@@ -203,10 +182,10 @@ export async function prepareSetupTaskDefinitions(
     const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : undefined;
     let yaml: string;
     if (original !== undefined) {
-      yaml = setTaskEnabledInYaml(original, plan.enabled);
+      yaml = original;
     } else {
       const document = yamlParse(plan.task.yaml) as Record<string, unknown>;
-      document.schedule = plan.enabled ? plan.schedule : [{ cron: plan.schedule, enabled: false }];
+      document.schedule = plan.schedule;
       yaml = yamlStringify(document);
     }
 
@@ -217,8 +196,6 @@ export async function prepareSetupTaskDefinitions(
     return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };
   });
   const changed = prepared.filter((entry) => entry.original !== entry.yaml);
-  if (changed.length === 0) return 0;
-
   const attempted: typeof changed = [];
   try {
     for (const entry of changed) {
@@ -254,6 +231,25 @@ export async function prepareSetupTaskDefinitions(
     throw error;
   }
 
+  const selected = new Set(
+    tasks.filter((plan) => plan.enabled).map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)),
+  );
+  const managed = new Set(tasks.map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)));
+  mutateConfig((current) => {
+    const existing = schedulerActivations(current);
+    const next = existing.filter((activation) => activation.kind !== "task" || !managed.has(activation.ref));
+    const sourceId = schedulerActivationSourceId(current, target.source.name);
+    if (selected.size > 0 && !sourceId) {
+      throw new UsageError(`Cannot activate setup tasks from disabled bundle ${JSON.stringify(target.source.name)}.`);
+    }
+    for (const ref of selected) {
+      next.push({ kind: "task", ref, sourceId: sourceId! });
+    }
+    next.sort((left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind));
+    if (JSON.stringify(existing) === JSON.stringify(next)) return current;
+    return { ...current, scheduler: { ...current.scheduler, enabled: next } };
+  });
+
   return changed.length;
 }
 
@@ -275,9 +271,9 @@ export async function stepScheduledTasks(
   }
 
   // ALL templates are offered, including ships-disabled ones (e.g. the
-  // manual-recovery catchup task): an unselected template is still PREPARED
-  // with `enabled: false`, so its YAML exists for `akm task run <id>` while
-  // nothing lands in the scheduler uncommented. Filtering on `task.enabled`
+  // manual-recovery catchup task): an unselected template is still PREPARED,
+  // so its YAML exists for `akm task run <id>` while its ref remains absent
+  // from local scheduler activation. Filtering on `task.enabled`
   // here would make ships-disabled templates invisible and unpreparable.
   const embedded = listEmbeddedTasks();
   if (embedded.length === 0) return;

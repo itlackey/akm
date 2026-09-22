@@ -69,6 +69,46 @@ async function spawnImprove(
 }
 
 describe("akm improve --require-engines — reachability probe (#957)", () => {
+  test("a healthy models route cannot hide a dead completion upstream (#980)", async () => {
+    let modelsRequests = 0;
+    let completionRequests = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const pathname = new URL(request.url).pathname;
+        if (pathname.endsWith("/models")) {
+          modelsRequests += 1;
+          return Response.json({ data: [{ id: "gateway-model" }] });
+        }
+        completionRequests += 1;
+        return Response.json({ error: { message: "upstream model is unavailable" } }, { status: 502 });
+      },
+    });
+    try {
+      saveConfig({
+        semanticSearchMode: "off",
+        engines: {
+          gateway: {
+            kind: "llm",
+            endpoint: `http://localhost:${server.port}/v1/chat/completions`,
+            model: "gateway-model",
+          },
+        },
+        defaults: { llmEngine: "gateway" },
+      });
+
+      const result = await spawnImprove(["--require-engines"]);
+
+      expect(result.code).toBe(78);
+      expect(modelsRequests).toBe(0);
+      expect(completionRequests).toBeGreaterThan(0);
+      expect(result.stderr).toContain("completion path");
+      expect(result.stderr).toContain("upstream model is unavailable");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("a refusing endpoint aborts fast with exit 78, naming the engine and endpoint", async () => {
     saveConfig({
       semanticSearchMode: "off",

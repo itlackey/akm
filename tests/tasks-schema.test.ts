@@ -243,7 +243,6 @@ test("published task schema's schedule: bounds at TASK_V3_MAX_SCHEDULES and clos
 
   // Every TASK_SOURCE_V4_SCHEDULE_KEYS key is accepted on one entry...
   const fullEntry: Record<string, unknown> = { cron: "0 8 * * 1" };
-  if (TASK_SOURCE_V4_SCHEDULE_KEYS.includes("enabled")) fullEntry.enabled = false;
   if (TASK_SOURCE_V4_SCHEDULE_KEYS.includes("inputs")) fullEntry.inputs = { scope: "all" };
   expect(Object.keys(fullEntry).sort()).toEqual([...TASK_SOURCE_V4_SCHEDULE_KEYS].sort());
   expect(validate({ ...base, schedule: [fullEntry] }), JSON.stringify(validate.errors)).toBe(true);

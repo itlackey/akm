@@ -1,3 +1,4 @@
+import path from "node:path";
 import { isBundleSlug } from "../asset/asset-ref";
 import { warnOnce } from "../warn";
 
@@ -46,6 +47,11 @@ function bundleFromLegacySource(entry: unknown, index: number): [string, Record<
   return [key, bundle];
 }
 
+function filesystemLocator(bundle: unknown): string | undefined {
+  if (!isPlainRecord(bundle) || typeof bundle.path !== "string" || bundle.path.length === 0) return undefined;
+  return path.resolve(bundle.path);
+}
+
 export function migrateLegacySourceShape(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   const hasStashDir = typeof raw.stashDir === "string" && raw.stashDir.trim().length > 0;
   const hasSources = Array.isArray(raw.sources) && raw.sources.length > 0;
@@ -65,6 +71,8 @@ export function migrateLegacySourceShape(raw: Record<string, unknown>, sourcePat
       const converted = bundleFromLegacySource(entry, index);
       if (!converted) return;
       const [key, bundle] = converted;
+      const locator = filesystemLocator(bundle);
+      if (locator && Object.values(bundles).some((candidate) => filesystemLocator(candidate) === locator)) return;
       bundles[key] = bundle;
       defaultBundle ??= key;
     });

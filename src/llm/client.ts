@@ -617,11 +617,15 @@ async function chatCompletionAttemptOnce(
  * attempts the schema request fresh every time and falls back once per call
  * on a 4xx — see the in-memory tracker below.
  */
-export async function probeLlmReachable(config: LlmConnectionConfig): Promise<{ reachable: boolean; error?: string }> {
+export async function probeLlmReachable(
+  config: LlmConnectionConfig,
+  timeoutMs?: number,
+): Promise<{ reachable: boolean; error?: string }> {
   try {
     const raw = await chatCompletion(config, [{ role: "user", content: "Respond with just the word: ok" }], {
       maxTokens: 16,
       temperature: 0,
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
     return raw.length > 0 ? { reachable: true } : { reachable: false, error: "empty response" };
   } catch (err) {

@@ -765,7 +765,9 @@ function lowerLlm(
       (Array.isArray(tools) && tools.length === 0) ||
       (typeof tools === "object" && tools !== null && !Array.isArray(tools) && Object.keys(tools).length === 0);
     if (empty) translated.add("tools");
-    else reject("tools");
+    else {
+      throw new ConfigError("The direct LLM transport cannot enforce the resolved tool policy.", "INVALID_CONFIG_FILE");
+    }
   }
   if (own(request.runtime, "workspace")) {
     if (request.runtime.workspace === null || request.runtime.workspace === "") translated.add("runtime.workspace");

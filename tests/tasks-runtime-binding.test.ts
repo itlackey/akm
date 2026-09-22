@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDoctor, akmTasksSync } from "../src/commands/tasks/tasks";
+import { bundleSourceId } from "../src/core/config/config-sources";
+import type { AkmConfig } from "../src/core/config/config-types";
 import type { SchedulerBackend, SchedulerInstallOptions } from "../src/tasks/backends/types";
 import { schedulerContextDescriptor, writeSchedulerContextDescriptor } from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -52,7 +54,16 @@ function writeTask(stashDir: string): void {
 }
 
 function configureStash(stashDir: string): void {
-  writeSandboxConfig({ bundles: { stash: { path: stashDir, writable: true } }, defaultBundle: "stash" });
+  const base = {
+    configVersion: "0.9.0",
+    semanticSearchMode: "off",
+    bundles: { stash: { path: stashDir, writable: true } },
+    defaultBundle: "stash",
+  } as AkmConfig;
+  writeSandboxConfig({
+    ...base,
+    scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/ping", sourceId: bundleSourceId(base, "stash") }] },
+  });
 }
 
 describe("scheduler runtime binding", () => {
@@ -266,16 +277,14 @@ describe("scheduler runtime binding", () => {
     }
   });
 
-  test("a file-edit reinstall uses the current binding and descriptor", async () => {
+  test("a schedule edit reinstall uses the current binding and descriptor", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       configureStash(storage.stashDir);
       writeTask(storage.stashDir);
-      // The enable/disable mutation API was removed in 0.9 (S6.3) — flipping a
-      // task's `enabled:` field is now a plain file edit, reconciled by sync.
       fs.writeFileSync(
         path.join(storage.stashDir, "tasks", "ping.yml"),
-        'version: 4\nrun: echo ping\nschedule:\n  - cron: "@daily"\n    enabled: false\n',
+        'version: 4\nrun: echo ping\nschedule: "@hourly"\n',
       );
       const installs: Array<SchedulerInstallOptions | undefined> = [];
       const backend = completeSchedulerBackend({
