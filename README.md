@@ -117,6 +117,7 @@ AKM is local-first: it stores its index and state on disk and has no remote tele
 | [itlackey/akm-registry](https://github.com/itlackey/akm-registry) | Official registry index — pre-configured in every akm install |
 | [itlackey/akm-bench](https://github.com/itlackey/akm-bench) | Benchmark harness for measuring agent performance with akm |
 | [itlackey/akm-eval](https://github.com/itlackey/akm-eval) | Eval framework and tools for akm asset quality |
+| [itlackey/akm-model-eval](https://github.com/itlackey/akm-model-eval) | Public deterministic benchmark for comparing models on AKM-shaped tasks |
 
 ## License
 
