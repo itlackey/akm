@@ -144,6 +144,14 @@ export interface AkmConsolidateOptions {
    * Absent = `estimatedBudgetFractionUsed` is omitted from perf telemetry.
    */
   runBudgetMs?: number;
+  /**
+   * Pre-computed `loadExistingKnowledgeBodyHashes(stashDir)` result (R2-1/R3-1).
+   * When the caller (runConsolidationPass) already walked knowledge/ for the
+   * pool preview, it passes the same set here so akmConsolidateInner reuses
+   * it instead of walking knowledge/ a second time. Absent (standalone
+   * `akm consolidate`) computes it internally as before.
+   */
+  existingKnowledgeBodyHashes?: Set<string>;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -1425,8 +1433,10 @@ async function akmConsolidateInner(
   // Loaded once and shared with the pre-filter (narrowConsolidationPool) and
   // the post-LLM promote-dedup check (shouldSkipPromotionBodyDuplicate) below
   // — knowledge/ can hold thousands of files, so walking it twice per run
-  // would double that cost for no benefit.
-  const existingKnowledgeBodyHashes = loadExistingKnowledgeBodyHashes(stashDir);
+  // would double that cost for no benefit. When the caller already walked
+  // knowledge/ for the pool preview (runConsolidationPass, R2-1/R3-1), reuse
+  // that set instead of walking it again here.
+  const existingKnowledgeBodyHashes = opts.existingKnowledgeBodyHashes ?? loadExistingKnowledgeBodyHashes(stashDir);
 
   // -- Pass 1: narrow the memory pool (may early-return an envelope) ----------
   const narrowed = await narrowConsolidationPool(opts, stashDir, startMs, warnings, existingKnowledgeBodyHashes);

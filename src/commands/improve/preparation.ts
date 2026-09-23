@@ -335,6 +335,13 @@ function planConsolidationPass(args: {
   improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
+  /**
+   * Pre-computed hash set (R2-1/R3-1). When the caller already walked
+   * knowledge/ (e.g. runConsolidationPass, which reuses it for the live
+   * akmConsolidate call), pass it here so this preview does not walk the
+   * tree a second time. Absent (the planOnly preview path) computes its own.
+   */
+  existingKnowledgeBodyHashes?: Set<string>;
 }): { eligibility: ConsolidationEligibility; plan: ImproveExecutionPlan["consolidation"] } {
   const { options, primaryStashDir, memorySummary, improveProfile, resolvedPlan, eventsCtx } = args;
   const processConfig = improveProfile?.processes?.consolidate;
@@ -359,12 +366,14 @@ function planConsolidationPass(args: {
   const poolWarnings: string[] = [];
   // Same hash set the live run's pre-filter uses (R2-1), so the preview's
   // candidate pool and eligibility gate agree with what the run will act on.
+  // Reuse the caller's set when given one (runConsolidationPass) instead of
+  // walking knowledge/ again here.
   const pool = primaryStashDir
     ? inspectConsolidationPool(
         effectiveOptions,
         primaryStashDir,
         poolWarnings,
-        loadExistingKnowledgeBodyHashes(primaryStashDir),
+        args.existingKnowledgeBodyHashes ?? loadExistingKnowledgeBodyHashes(primaryStashDir),
         { readOnly: eventsCtx?.readOnly === true },
       )
     : { poolSize: 0, candidatePoolSize: 0, dedupPoolSize: 0, memories: [], prefilteredAlreadyPromoted: 0 };
@@ -467,6 +476,11 @@ export async function runConsolidationPass(args: {
   const baseConfig = options.config ?? loadConfig();
   const consolidationConfig = baseConfig;
 
+  // Computed once here and reused by both the pool preview below and the
+  // akmConsolidate call further down (R2-1/R3-1) — knowledge/ can hold
+  // thousands of files, so walking it twice per run would double that cost.
+  const existingKnowledgeBodyHashes = primaryStashDir ? loadExistingKnowledgeBodyHashes(primaryStashDir) : undefined;
+
   const planned = planConsolidationPass({
     options,
     primaryStashDir,
@@ -474,6 +488,7 @@ export async function runConsolidationPass(args: {
     improveProfile,
     resolvedPlan,
     eventsCtx,
+    existingKnowledgeBodyHashes,
   });
   const {
     volumeTriggered,
@@ -534,6 +549,9 @@ export async function runConsolidationPass(args: {
           improveProfile,
           llmRunner: resolvedPlan.processes.consolidate.runner,
           autoTriggered: volumeTriggered,
+          // Reuse the hash set computed above instead of a second knowledge/
+          // walk inside akmConsolidateInner (R2-1/R3-1).
+          existingKnowledgeBodyHashes,
           // Tie consolidate proposals back to this improve invocation so
           // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
           sourceRun: `consolidate-${Date.now()}`,
