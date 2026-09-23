@@ -187,13 +187,10 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     expect(prompt).toContain("memories/hot-dup (captureMode: hot; already queued)");
   });
 
-  it("emits a top-of-prompt protection block listing hot refs (2026-05-27 diagnostic)", () => {
-    // Diagnostic at /tmp/akm-health-investigations/ministral-prompt-annotation-diagnostic.md
-    // measured ministral-3-3b's compliance with inline parens at 40% for
-    // captureMode:hot. Adding a prominent top-block jumps it to 100% in
-    // controlled tests. Block uses neutral phrasing (no op-words like
-    // "promote"/"merge"/"contradict") so the model doesn't accidentally
-    // treat the warning as a hint to use those ops on other memories.
+  it("does not emit a top-of-prompt protection block for hot refs (delete retired from the op set)", () => {
+    // The block used to warn against proposing `delete` for hot refs. `delete`
+    // is no longer a valid op, so hot refs need no protection — only the
+    // inline `(captureMode: hot)` annotation remains.
     const f1 = path.join(tempDir, "hot-1.md");
     const f2 = path.join(tempDir, "hot-2.md");
     const f3 = path.join(tempDir, "plain.md");
@@ -213,22 +210,12 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
       500,
     );
 
-    // Block exists, mentions delete (the targeted op), and lists both hot refs.
-    expect(prompt).toMatch(/⛔ DO NOT propose any `delete` operation for these refs/);
-    expect(prompt).toContain("  - memories/hot-1");
-    expect(prompt).toContain("  - memories/hot-2");
-    // Inline annotation is preserved — the top-block is additive, not a
-    // replacement.
+    expect(prompt).not.toContain("⛔");
+    expect(prompt).not.toContain("  - memories/hot-1");
+    expect(prompt).not.toContain("  - memories/hot-2");
+    // Inline annotation is still emitted per memory.
     expect(prompt).toContain("memories/hot-1 (captureMode: hot)");
-    // Block must precede the per-memory section so the model encounters
-    // the warning first.
-    expect(prompt.indexOf("⛔")).toBeLessThan(prompt.indexOf("[1] memories/hot-1"));
-    // Neutral phrasing: block must NOT contain op-words that could leak
-    // into the model's op-selection for control memories.
-    const block = prompt.slice(prompt.indexOf("⛔"), prompt.indexOf("[1]"));
-    expect(block).not.toMatch(/\bpromote\b/i);
-    expect(block).not.toMatch(/\bmerge\b/i);
-    expect(block).not.toMatch(/\bcontradict\b/i);
+    expect(prompt).toContain("memories/hot-2 (captureMode: hot)");
   });
 
   it("omits the top-of-prompt block when no hot refs are present", () => {
