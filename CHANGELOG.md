@@ -99,6 +99,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `promote-memory.ts`'s comment always claimed, but never did). The cursor
   now also advances on both outcomes (still excluding `llm_failed`, where no
   real attempt produced anything).
+- **`writeQualityRejection` could throw instead of returning a rejection
+  result.** Minting the proposal row above runs the mint-time canonical
+  validator (`createProposal` → `rejectProposal`,
+  `src/commands/proposal/repository.ts`), which throws `UsageError` for
+  structurally-invalid content — e.g. a `lessons/` ref whose body lacks
+  `description`/`when_to_use`. `writeQualityRejection` is the terminal,
+  non-throwing rejection path and none of its callers handled a throw. The
+  proposal row is bookkeeping for backoff/Reflexion, never the authoritative
+  record of the rejection, so a validator throw now degrades to "no row
+  minted" — the envelope file and `distill_invoked` event are still written,
+  matching the existing fingerprint/backoff skip behavior.
 
 ### Removed
 
