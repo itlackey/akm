@@ -138,7 +138,7 @@ export interface MemoryInferenceResult {
    * (`writeAssetToSource`) and every parent whose frontmatter was stamped
    * `inferenceProcessed: true` (`markParentProcessed`). Lets the caller index
    * exactly these files (`indexWrittenAssets`) instead of a full reindex
-   * (#R78) — sourced from the run-scoped write-provenance journal
+   * (R78, tier1-0917) — sourced from the run-scoped write-provenance journal
    * (`core/write-provenance.ts`), so it can never drift from what actually
    * hit disk.
    */
@@ -377,7 +377,7 @@ async function inferPendingMemoryRecord(
  * short-circuits to a no-op result.
  */
 export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): Promise<MemoryInferenceResult> {
-  // #R78: owns the write-provenance journal end-to-end so it closes on every
+  // R78 (tier1-0917): owns the write-provenance journal end-to-end so it closes on every
   // exit path, including a throw out of the body below — an unclosed journal
   // would keep reporting every later write in this process as this call's own.
   const provenance = beginWriteProvenance();
