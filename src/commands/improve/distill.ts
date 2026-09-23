@@ -1641,6 +1641,7 @@ async function applyDistillQualityGate(args: {
           judgeResult.reason,
           {
             reviewNeeded: true,
+            ...(judgeResult.criteria ? { criteria: judgeResult.criteria } : {}),
             ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
           },
           options.eligibilitySource,
@@ -1656,7 +1657,10 @@ async function applyDistillQualityGate(args: {
         content,
         judgeResult.score,
         judgeResult.reason,
-        exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
+        {
+          ...(judgeResult.criteria ? { criteria: judgeResult.criteria } : {}),
+          ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+        },
         options.eligibilitySource,
         options.eventsCtx,
       ),
