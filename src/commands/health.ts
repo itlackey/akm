@@ -20,6 +20,7 @@ import { countImproveRunsSince } from "../storage/repositories/improve-runs-repo
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
+import { getStateDbFreelistInfo, runStateDbQuickCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectImproveAdvisories } from "./health/advisories";
 import {
@@ -160,6 +161,8 @@ interface TaskHistoryPhase {
   tableNames: string[];
   missingTables: string[];
   probe: ReturnType<typeof probeStateDbRoundTrip>;
+  stateDbIntegrity: ReturnType<typeof runStateDbQuickCheck>;
+  stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
   taskRowCount: number;
   taskRowsWithLogsCount: number;
   existingLogRowsCount: number;
@@ -238,6 +241,11 @@ function gatherTaskHistoryPhase(
   const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
 
   const probe = probeStateDbRoundTrip(stateDbPath);
+  // R0: read-only, independent of the round-trip probe above — quick_check
+  // catches corruption a successful append/read cannot (out-of-order rowids,
+  // bad index entry counts), and the freelist reading is purely informational.
+  const stateDbIntegrity = runStateDbQuickCheck(stateDbPath);
+  const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
   const taskRows = queryTaskHistory(db, { since });
   const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
@@ -261,6 +269,8 @@ function gatherTaskHistoryPhase(
     tableNames,
     missingTables,
     probe,
+    stateDbIntegrity,
+    stateDbFreelist,
     taskRowCount: taskRows.length,
     taskRowsWithLogsCount: taskRowsWithLogs.length,
     existingLogRowsCount: existingLogRows.length,
@@ -760,6 +770,8 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       tableNames,
       missingTables,
       probe,
+      stateDbIntegrity: taskHistory.stateDbIntegrity,
+      stateDbFreelist: taskHistory.stateDbFreelist,
       taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       taskRowsWithLogsCount: taskHistory.taskRowsWithLogsCount,

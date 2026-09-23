@@ -30,6 +30,11 @@ import {
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
+import {
+  STATE_DB_FREELIST_WARN_RATIO,
+  type StateDbFreelistInfo,
+  type StateDbQuickCheckResult,
+} from "../../storage/state-db-integrity";
 import { listKeys } from "../env/env";
 import { type ImproveProcessName, resolveImprovePlan } from "../improve/improve-strategies";
 import type { EngineLastUsed } from "./engine-usage";
@@ -59,6 +64,10 @@ export interface HealthCheckContext {
   missingTables: string[];
   /** Result of the append/read round-trip probe. */
   probe: { ok: boolean; durationMs: number | null; error?: string };
+  /** R0: `PRAGMA quick_check` result, read-only, computed once for `state-db-integrity`. */
+  stateDbIntegrity: StateDbQuickCheckResult;
+  /** R0: freelist/page-count reading, computed once for `state-db-integrity`'s reclaimable-space report. */
+  stateDbFreelist: StateDbFreelistInfo;
   /** Total task_history rows read in the window. */
   taskRowCount: number;
   /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
@@ -1213,6 +1222,50 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         : `state.db round-trip failed: ${ctx.probe.error}`,
       evidence: { path: ctx.stateDbPath, durationMs: ctx.probe.durationMs },
     }),
+  },
+  {
+    // R0: nothing looked at state.db's own SQLite-level integrity before
+    // this — the round-trip probe above only proves one row can be appended
+    // and read back, which stays true on a database that fails
+    // `PRAGMA quick_check` elsewhere (corrupt indexes, out-of-order rowids).
+    // Also reports the freelist ratio (fraction of pages VACUUM could
+    // reclaim) so a bloated-but-uncorrupted file is visible as a warning
+    // rather than silence.
+    name: "state-db-integrity",
+    channel: "hard",
+    run: (ctx) => {
+      const { ok, lines, error } = ctx.stateDbIntegrity;
+      const freelistRatio = ctx.stateDbFreelist.ratio;
+      if (!ok) {
+        const detail = error ?? lines.join("; ");
+        return {
+          name: "state-db-integrity",
+          kind: "deterministic",
+          status: "fail",
+          confidence: "high",
+          message:
+            `state.db failed PRAGMA quick_check: ${detail}. Repair: back up state.db, then run ` +
+            `sqlite3 state.db ".dump" | sqlite3 state.new.db, verify state.new.db passes quick_check, and swap it in.`,
+          evidence: { path: ctx.stateDbPath, lines, freelistRatio },
+        };
+      }
+      const freelistWarn = freelistRatio > STATE_DB_FREELIST_WARN_RATIO;
+      return {
+        name: "state-db-integrity",
+        kind: "deterministic",
+        status: freelistWarn ? "warn" : "pass",
+        confidence: "high",
+        message: freelistWarn
+          ? `state.db passed PRAGMA quick_check, but ${(freelistRatio * 100).toFixed(1)}% of its pages are free (reclaimable by VACUUM).`
+          : "state.db passed PRAGMA quick_check.",
+        evidence: {
+          path: ctx.stateDbPath,
+          freelistCount: ctx.stateDbFreelist.freelistCount,
+          pageCount: ctx.stateDbFreelist.pageCount,
+          freelistRatio,
+        },
+      };
+    },
   },
   {
     name: "state-db-migrations",
