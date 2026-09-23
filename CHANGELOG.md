@@ -41,10 +41,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   returns a parse failure — routed to review, exactly as a malformed response
   is today — when any expected key is missing from `scores`.
 - **The reflect pre-generation proposal-guard skip (R9) emitted `reflect_invoked` with no paired `reflect_completed`.** `runLoopReflectPass`'s guard-skip branch in `loop-stages.ts` appended a synthetic `reflect_invoked` event to advance the signal-delta cursor, but never called `reflectFn`, so `reflect.ts`'s own `reflect_completed` emission never ran either — a new, permanent source of unpaired `reflect_invoked` rows for every fingerprint/backoff hit, violating the invoke/complete pairing invariant `buildReflectEventEmitters` documents. The branch now also appends a matching `reflect_completed` (`ok:false`, `reason:"cooldown"`, `subreason:"pre_generation_guard"`), mirroring `emitFailed`'s shape.
-- **The reflect pre-generation proposal-guard skip (R9) emitted `reflect_invoked` with no paired `reflect_completed`.** `runLoopReflectPass`'s guard-skip branch in `loop-stages.ts` appended a synthetic `reflect_invoked` event to advance the signal-delta cursor, but never called `reflectFn`, so `reflect.ts`'s own `reflect_completed` emission never ran either — a new, permanent source of unpaired `reflect_invoked` rows for every fingerprint/backoff hit, violating the invoke/complete pairing invariant `buildReflectEventEmitters` documents. The branch now also appends a matching `reflect_completed` (`ok:false`, `reason:"cooldown"`, `subreason:"pre_generation_guard"`), mirroring `emitFailed`'s shape.
 - **R9's pre-generation proposal guard covered reflect only — distill paid for a full generation + judge call before the same fingerprint/backoff guard could reject it.** `runLoopDistillPass` had no equivalent of `runLoopReflectPass`'s pre-check, even though `createProposal`'s post-generation guard (and every rejected row R10 now mints under `source: "distill"`) applies to distill just as much. `runLoopDistillPass` now calls `checkProposalGuard` against the derived lesson/knowledge ref (distill's real `createProposal` call never targets the input ref) before dispatching `distillFn`; a hit routes to the pass's existing `distill-skipped` bucket and emits `distill_invoked` with a `skipped` outcome so `buildLatestProposalTsMap`'s signal cursor still advances.
 - **The `akm improve` triage pre-pass drain's judgment LLM calls were unattributed in the usage report.** `runTriagePrePass`'s `drainProposalsFn` call dispatched judgment calls with no `withLlmStage` wrapper, unlike the standalone `akm proposal drain` CLI path, so they landed in `byProcessEngineModel` as unattributed (5 calls, 24s per run) instead of under a `triage` stage. The pre-pass drain is now wrapped in `withLlmStage("triage", …, { engine, process: "triage.judgment" })`, mirroring the CLI path.
-
 - **The batch graph-extraction provider-storm guard only recognized one error
   code.** After a failed batch call, `extractGraphFromBodies` skipped the
   per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
@@ -126,24 +124,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   record of the rejection, so a validator throw now degrades to "no row
   minted" — the envelope file and `distill_invoked` event are still written,
   matching the existing fingerprint/backoff skip behavior.
-
-### Removed
-
-- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
-  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
-  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
-  `countEvalCases` reported a cumulative on-disk file count as if it were a
-  per-run number (surfaced as `evalCasesWritten` on the improve result and in
-  `akm health`'s improve metrics). A rejected proposal row (see above) now
-  carries the same information through a path something actually reads.
-  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
-  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
-  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
-  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
-  on an envelope an older release wrote, and existing eval-case files on disk
-  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
-  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
-  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
 - **Consolidate's post-LLM promote-dedup hash double-stripped frontmatter.**
   `shouldSkipPromotionBodyDuplicate`'s `bodyHash` was computed as
   `cacheHash(parseFrontmatter(memoryContent).content.trim())` — the body was
@@ -167,12 +147,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   down to the same 32-entity/32-relation limit anyway** (one file spent 21 of
   27 calls and 12.9k completion tokens this way). The single-asset extraction
   call (`extractGraphFromBody`) now sends a `responseSchema` (entities/
-  relations capped at 32 each, `additionalProperties: false` otherwise) and a
-  bounded `maxTokens`, via the same `supportsJsonSchema`-gated request path
-  memory-infer.ts uses. A body chunked beyond the new
-  relations capped at 32 each, `additionalProperties: false` forbidding the
-  unprompted `confidence` field the prompt never asks for), via the same
-  `supportsJsonSchema`-gated request path memory-infer.ts uses — no
+  relations capped at 32 each, `additionalProperties: false` otherwise), via
+  the same `supportsJsonSchema`-gated request path memory-infer.ts uses — no
   `maxTokens` is sent; cost is bounded by the schema's `maxItems` caps alone,
   per AGENTS.md's "LLM Defaults" (a hardcoded cap risked silent truncation
   with zero headroom for JSON punctuation or reasoning tokens). A body
@@ -194,6 +170,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   turning the confidence filter into dead code on exactly the providers the
   schema targets. `confidence: {"type": "number"}` is now allowed at both
   levels; `additionalProperties: false` still forbids anything else.
+
+### Removed
+
+- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
+  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
+  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
+  `countEvalCases` reported a cumulative on-disk file count as if it were a
+  per-run number (surfaced as `evalCasesWritten` on the improve result and in
+  `akm health`'s improve metrics). A rejected proposal row (see above) now
+  carries the same information through a path something actually reads.
+  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
+  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
+  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
+  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
+  on an envelope an older release wrote, and existing eval-case files on disk
+  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
+  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
+  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
 
 ### Changed
 
