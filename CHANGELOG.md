@@ -89,6 +89,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one op that does execute — promote — writes a proposal to state.db, not to
   the stash. Consolidation therefore cannot change a file the index reads,
   so the reindex had no precondition it could ever satisfy.
+- **`improve-maintenance-passes.test.ts` moved under `tests/integration/`.**
+  The suite opens a real `state.db` via `openStateDatabase`, which AGENTS.md's
+  ORG-03..06 rule places under `tests/integration/`, not `tests/`; no content
+  change. Also corrected
+  `docs/architecture/specs/improve-collapse-churn-detector-design.md` §2.5,
+  which described the post-loop collapse-detector gate as `consolidationRan
+  OR recombination.processed > 0` — no `recombination` value is plumbed into
+  `runImprovePostLoopStage` and no recombine pass exists in the codebase, so
+  the spec now matches the shipped `consolidationRan`-only gate and notes
+  that the recombine-triggered pass is not implemented.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 
