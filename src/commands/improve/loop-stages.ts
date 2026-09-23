@@ -380,6 +380,27 @@ async function runLoopReflectPass(
           },
           eventsCtx,
         );
+        // Mirror reflect.ts's buildReflectEventEmitters().emitFailed(): every
+        // reflect_invoked must be paired with a reflect_completed so observers
+        // building closed-loop telemetry see balanced invoke/complete pairs.
+        // reflectFn is never called on this path, so reflect.ts's own
+        // emitFailed (fired from its post-generation cooldown branch) never
+        // runs either — this is the pre-generation guard's own pairing.
+        appendEvent(
+          {
+            eventType: "reflect_completed",
+            ref: planned.itemRef ?? durableImproveRef(planned.ref),
+            metadata: {
+              source: "reflect",
+              ok: false,
+              reason: "cooldown",
+              subreason: "pre_generation_guard",
+              proposalSkipReason: guardSkip.reason,
+              ...(guardSkip.existingProposalId ? { existingProposalId: guardSkip.existingProposalId } : {}),
+            },
+          },
+          eventsCtx,
+        );
         reflectResult = {
           schemaVersion: 2,
           ok: false,
