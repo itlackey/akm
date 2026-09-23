@@ -21,6 +21,7 @@ import type { AkmDistillResult, DistillOutcome } from "../../../core/improve-typ
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { getDistillRejectedDir } from "../../../core/paths";
 import { withStateDb } from "../../../core/state-db";
+import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
 import type { LoweringNotice } from "../../../execution/resolved-request";
 import type { LoweredExecutionDispatchLease } from "../../../integrations/agent/execution-lowering";
@@ -430,6 +431,8 @@ export function writeQualityRejection(
   // bookkeeping for backoff/Reflexion, never the authoritative record of the
   // rejection, so a validator throw degrades to "no row minted" — the same
   // bucket as the fingerprint/backoff skip below, not a caller-visible error.
+  // r3-1: the archiveProposal call below is guarded the same way, for the
+  // same reason.
   let mintedProposal: ReturnType<typeof emitProposal> | undefined;
   try {
     mintedProposal = emitProposal(
@@ -448,10 +451,17 @@ export function writeQualityRejection(
   }
   let proposal: Proposal | undefined;
   if (mintedProposal && !isProposalSkipped(mintedProposal)) {
-    proposal =
-      outcome === "quality_rejected"
-        ? archiveProposal(stash, mintedProposal.id, "rejected", reason, proposalOpts.proposalsCtx)
-        : mintedProposal;
+    if (outcome === "quality_rejected") {
+      try {
+        proposal = archiveProposal(stash, mintedProposal.id, "rejected", reason, proposalOpts.proposalsCtx);
+      } catch (error) {
+        warn(
+          `[akm] writeQualityRejection: failed to archive proposal ${mintedProposal.id} as rejected: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } else {
+      proposal = mintedProposal;
+    }
   }
 
   const rejectDir = getDistillRejectedDir(stash);
