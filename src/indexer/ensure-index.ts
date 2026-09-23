@@ -27,7 +27,7 @@ import { hashContent } from "../core/adapter/adapters/shared";
 import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
-import { info } from "../core/warn";
+import { warnVerbose } from "../core/warn";
 import { assertIndexPathReadable, closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {
   getEntryCount,
@@ -250,7 +250,7 @@ async function runInlineReindex(
   // to a wall-clock measurement when the response carries no `timing` block.
   const durationMs = response.timing?.totalMs ?? Date.now() - startedMs;
   const timing = response.timing;
-  info(
+  warnVerbose(
     `[ensure-index] implicit reindex completed in ${durationMs}ms` +
       (timing
         ? ` (walk=${timing.walkMs}ms llm=${timing.llmMs}ms embed=${timing.embedMs}ms finalize=${timing.finalizeMs}ms)`
