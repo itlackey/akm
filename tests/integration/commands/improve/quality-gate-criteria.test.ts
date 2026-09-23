@@ -80,3 +80,34 @@ describe("writeQualityRejection — per-criterion scores (R16)", () => {
     expect(envelope).not.toContain("criteria:");
   });
 });
+
+describe("writeQualityRejection — r2-1: mint-time canonical validator rejection is not fatal", () => {
+  test("structurally-invalid quality_rejected content returns a normal result with no proposalId, still writes the envelope and event, and does not throw", () => {
+    // No `description`/`when_to_use` frontmatter — the mint-time canonical
+    // validator (proposal/repository.ts rejectProposal) throws UsageError for
+    // this. writeQualityRejection must swallow that throw: the proposal row
+    // is bookkeeping for backoff/Reflexion, never the authoritative record of
+    // the rejection.
+    const result = writeQualityRejection(
+      stashDir,
+      "memories/source-ref",
+      "lessons/proposed-ref-invalid-structure",
+      "body with no description or when_to_use frontmatter",
+      2.0,
+      "structural finding",
+      {},
+    );
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect((result as unknown as { proposalId?: string }).proposalId).toBeUndefined();
+
+    const rows = readEvents().events.filter((e) => e.eventType === "distill_invoked");
+    expect(rows.length).toBeGreaterThan(0);
+    const metadata = rows[rows.length - 1]?.metadata as Record<string, unknown> | undefined;
+    expect(metadata?.outcome).toBe("quality_rejected");
+
+    const rejectDir = getDistillRejectedDir(stashDir);
+    const file = fs.readdirSync(rejectDir).find((f) => f.includes("proposed-ref-invalid-structure"));
+    expect(file).toBeDefined();
+  });
+});

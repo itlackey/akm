@@ -411,19 +411,30 @@ export function writeQualityRejection(
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
 
-  const mintedProposal = emitProposal(
-    { stashDir: stash, ...(proposalOpts.proposalsCtx ? { proposalsCtx: proposalOpts.proposalsCtx } : {}) },
-    {
-      ref: proposalRef,
-      source: "distill",
-      ...(proposalOpts.sourceRun !== undefined ? { sourceRun: proposalOpts.sourceRun } : {}),
-      ...(proposalOpts.modelId !== undefined ? { modelId: proposalOpts.modelId } : {}),
-      payload: { content },
-      ...(eligibilitySource ? { eligibilitySource } : {}),
-    },
-  );
+  // r2-1: the mint-time canonical validator inside createProposal (via
+  // emitProposal) throws UsageError for structurally-invalid content (e.g. a
+  // lessons/ ref missing description/when_to_use). The proposal row here is
+  // bookkeeping for backoff/Reflexion, never the authoritative record of the
+  // rejection, so a validator throw degrades to "no row minted" — the same
+  // bucket as the fingerprint/backoff skip below, not a caller-visible error.
+  let mintedProposal: ReturnType<typeof emitProposal> | undefined;
+  try {
+    mintedProposal = emitProposal(
+      { stashDir: stash, ...(proposalOpts.proposalsCtx ? { proposalsCtx: proposalOpts.proposalsCtx } : {}) },
+      {
+        ref: proposalRef,
+        source: "distill",
+        ...(proposalOpts.sourceRun !== undefined ? { sourceRun: proposalOpts.sourceRun } : {}),
+        ...(proposalOpts.modelId !== undefined ? { modelId: proposalOpts.modelId } : {}),
+        payload: { content },
+        ...(eligibilitySource ? { eligibilitySource } : {}),
+      },
+    );
+  } catch {
+    mintedProposal = undefined;
+  }
   let proposal: Proposal | undefined;
-  if (!isProposalSkipped(mintedProposal)) {
+  if (mintedProposal && !isProposalSkipped(mintedProposal)) {
     proposal =
       outcome === "quality_rejected"
         ? archiveProposal(stash, mintedProposal.id, "rejected", reason, proposalOpts.proposalsCtx)
