@@ -124,6 +124,16 @@ describe("getStateDbFreelistInfo (R0)", () => {
     expect(info.freelistCount).toBeGreaterThan(0);
     expect(info.ratio).toBeGreaterThan(0);
   });
+
+  test("A3: reports a zeroed info with error (not a throw) when the file cannot be opened at all", () => {
+    const dbPath = getStateDbPath();
+    // No file at this path — never created.
+    const info = getStateDbFreelistInfo(dbPath);
+    expect(info.freelistCount).toBe(0);
+    expect(info.pageCount).toBe(0);
+    expect(info.ratio).toBe(0);
+    expect(info.error).toBeDefined();
+  });
 });
 
 describe("vacuumStateDbIfReclaimable (R0)", () => {

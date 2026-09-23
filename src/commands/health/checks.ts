@@ -1235,7 +1235,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     channel: "hard",
     run: (ctx) => {
       const { ok, lines, error } = ctx.stateDbIntegrity;
-      const freelistRatio = ctx.stateDbFreelist.ratio;
+      const { ratio: freelistRatio, error: freelistError } = ctx.stateDbFreelist;
       if (!ok) {
         const detail = error ?? lines.join("; ");
         return {
@@ -1247,6 +1247,16 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
             `state.db failed PRAGMA quick_check: ${detail}. Repair: back up state.db, then run ` +
             `sqlite3 state.db ".dump" | sqlite3 state.new.db, verify state.new.db passes quick_check, and swap it in.`,
           evidence: { path: ctx.stateDbPath, lines, freelistRatio },
+        };
+      }
+      if (freelistError) {
+        return {
+          name: "state-db-integrity",
+          kind: "deterministic",
+          status: "fail",
+          confidence: "high",
+          message: `state.db passed PRAGMA quick_check, but reading its freelist/page-count failed: ${freelistError}.`,
+          evidence: { path: ctx.stateDbPath, lines, freelistError },
         };
       }
       const freelistWarn = freelistRatio > STATE_DB_FREELIST_WARN_RATIO;

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm health`'s `state-db-integrity` check no longer crashes when the freelist/page-count read fails.** `getStateDbFreelistInfo` had a `finally` but no `catch` around its read-only open and pragma reads, unlike its sibling `runStateDbQuickCheck` — a throw there (e.g. an unopenable state.db) escaped `akm health` as an unclassified exit 70 on exactly the damaged database the check exists to report. It now returns a zeroed `StateDbFreelistInfo` with an `error` field, and the check renders that as a failed check instead of throwing.
+
 ## [0.9.17-alpha.1] - 2026-09-22
 
 ### Fixed

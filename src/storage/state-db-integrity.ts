@@ -48,6 +48,8 @@ export interface StateDbFreelistInfo {
   pageCount: number;
   /** `freelistCount / pageCount`, `0` when `pageCount` is `0`. */
   ratio: number;
+  /** Set only when the probe itself could not run (e.g. the file could not be opened). */
+  error?: string;
 }
 
 export interface StateDbVacuumOutcome {
@@ -114,6 +116,8 @@ export function getStateDbFreelistInfo(dbPath: string): StateDbFreelistInfo {
   try {
     db = openReadonlyStateDb(dbPath);
     return readFreelistInfo(db);
+  } catch (err) {
+    return { freelistCount: 0, pageCount: 0, ratio: 0, error: err instanceof Error ? err.message : String(err) };
   } finally {
     db?.close();
   }
