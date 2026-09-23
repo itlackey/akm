@@ -23,18 +23,32 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { hashContent } from "../core/adapter/adapters/shared";
 import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
+import { info } from "../core/warn";
 import { assertIndexPathReadable, closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
-import { getEntryCount, getIndexedFilePaths } from "../storage/repositories/index-entries-repository";
+import {
+  getEntryCount,
+  getIndexedFileHashes,
+  getIndexedFilePaths,
+} from "../storage/repositories/index-entries-repository";
 import { isCanonicalIndexGeneration } from "../storage/repositories/index-entry-schema";
 import { getMeta } from "../storage/repositories/index-meta-repository";
 import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
+import type { IndexResponse } from "./indexer";
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
   signal?: AbortSignal;
+  /**
+   * R6: called with the inline reindex's timing when `ensureIndex` actually
+   * runs one, so a blocking caller (improve) can surface the implicit
+   * reindex's cost instead of it being silently discarded. Never called when
+   * no rebuild was needed.
+   */
+  onReindexTiming?: (info: { durationMs: number; timing: IndexResponse["timing"] }) => void;
 }
 
 function getIndexableFiles(root: string, spec: AssetSpec): string[] {
@@ -82,11 +96,25 @@ function getIndexableFiles(root: string, spec: AssetSpec): string[] {
  *      millisecond-truncated), so the mtime test alone silently misses
  *      additions made within ~a millisecond of the previous build.
  *
+ * A file whose mtime is newer than `builtAt` is NOT automatically stale
+ * (R6): `indexWrittenAssets` upserts a fresh `content_hash` without bumping
+ * `builtAt`, so a file `ensureIndex` itself just incrementally re-indexed
+ * (for example a proposal triage just promoted into `knowledge/`) would
+ * otherwise keep tripping this check on every subsequent call, forcing the
+ * full rescan the write-path fast path exists to avoid. Only files newer
+ * than `builtAt` are hashed here, so this stays cheap — the common case is
+ * zero or a handful of such files.
+ *
  * `getIndexableFiles` applies each asset type's own relevance filter, so
  * non-indexed companion files (e.g. `package.json` next to a knowledge doc) are
  * never considered and do not produce false "new file" positives.
  */
-function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined, indexedPaths: Set<string>): boolean {
+function hasNewerIndexableFiles(
+  stashDir: string,
+  builtAt: string | undefined,
+  indexedPaths: Set<string>,
+  indexedHashes: ReadonlyMap<string, string>,
+): boolean {
   const builtAtMs = builtAt ? new Date(builtAt).getTime() : Number.NaN;
   const builtAtUsable = Number.isFinite(builtAtMs);
 
@@ -96,11 +124,26 @@ function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined, i
     for (const file of files) {
       if (!indexedPaths.has(file)) return true;
       if (!builtAtUsable) return true;
+      let mtimeMs: number;
       try {
-        if (fs.statSync(file).mtimeMs > builtAtMs) return true;
+        mtimeMs = fs.statSync(file).mtimeMs;
       } catch {
         return true;
       }
+      if (mtimeMs <= builtAtMs) continue;
+      // Newer than the last full build — only stale if its current content
+      // actually differs from what is indexed. No stored hash means the row
+      // predates content-hash tracking (or a hash-less enrichment pass), so
+      // fall back to the conservative mtime-stale answer.
+      const indexedHash = indexedHashes.get(file);
+      if (indexedHash === undefined) return true;
+      let currentHash: string;
+      try {
+        currentHash = hashContent(fs.readFileSync(file, "utf8"));
+      } catch {
+        return true;
+      }
+      if (currentHash !== indexedHash) return true;
     }
   }
 
@@ -128,7 +171,7 @@ export function isIndexStale(stashDir: string): boolean {
     if (entryCount === 0) return true;
 
     const builtAt = getMeta(db, "builtAt");
-    if (hasNewerIndexableFiles(stashDir, builtAt, getIndexedFilePaths(db))) return true;
+    if (hasNewerIndexableFiles(stashDir, builtAt, getIndexedFilePaths(db), getIndexedFileHashes(db))) return true;
 
     const storedStashDir = getMeta(db, "stashDir");
     if (storedStashDir !== stashDir) {
@@ -187,15 +230,33 @@ function indexCanServeStash(stashDir: string): boolean {
 
 async function runInlineReindex(
   stashDir: string,
-  options: { signal?: AbortSignal; hydrateSources?: boolean } = {},
+  options: {
+    signal?: AbortSignal;
+    hydrateSources?: boolean;
+    onReindexTiming?: EnsureIndexOptions["onReindexTiming"];
+  } = {},
 ): Promise<boolean> {
   const { akmIndex } = await import("./indexer.js");
-  await akmIndex({
+  const startedMs = Date.now();
+  const response = await akmIndex({
     stashDir,
     implicit: true,
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.hydrateSources === false ? { hydrateSources: false } : {}),
   });
+  // R6: the implicit reindex's cost was previously discarded entirely
+  // (`await akmIndex(...)` and nothing else), making a 27-minute blocking
+  // rebuild invisible to both the operator and the improve result. Fall back
+  // to a wall-clock measurement when the response carries no `timing` block.
+  const durationMs = response.timing?.totalMs ?? Date.now() - startedMs;
+  const timing = response.timing;
+  info(
+    `[ensure-index] implicit reindex completed in ${durationMs}ms` +
+      (timing
+        ? ` (walk=${timing.walkMs}ms llm=${timing.llmMs}ms embed=${timing.embedMs}ms finalize=${timing.finalizeMs}ms)`
+        : ""),
+  );
+  options.onReindexTiming?.({ durationMs, timing });
   return true;
 }
 
@@ -223,7 +284,10 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
     // Blocking callers (improve's planning preflight) are a sanctioned
     // materialization point — hydrate cache-backed sources as usual.
     if (!isIndexStale(stashDir)) return false;
-    return runInlineReindex(stashDir, { ...(options.signal ? { signal: options.signal } : {}) });
+    return runInlineReindex(stashDir, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.onReindexTiming ? { onReindexTiming: options.onReindexTiming } : {}),
+    });
   }
   // Background = the READ path (`show` auto-index): query time must never clone/
   // pull/fetch (spec §14.3 / D11). Build from already-materialized content only;
@@ -232,5 +296,6 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
   return runInlineReindex(stashDir, {
     ...(options.signal ? { signal: options.signal } : {}),
     hydrateSources: false,
+    ...(options.onReindexTiming ? { onReindexTiming: options.onReindexTiming } : {}),
   });
 }

@@ -21,7 +21,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../../src/core/errors";
 import { getDbPath } from "../../../src/core/paths";
-import { ensureIndex } from "../../../src/indexer/ensure-index";
+import { ensureIndex, isIndexStale } from "../../../src/indexer/ensure-index";
+import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
@@ -162,5 +163,57 @@ describe("ensureIndex blocking mode (improve)", () => {
 
   test("fresh index: no-op", async () => {
     expect(await ensureIndex(stashDir, { mode: "blocking" })).toBe(false);
+  });
+
+  test("onReindexTiming fires with a duration when a rebuild runs, and not when it is a no-op", async () => {
+    writeMemory("second");
+    const timings: Array<{ durationMs: number }> = [];
+    expect(await ensureIndex(stashDir, { mode: "blocking", onReindexTiming: (t) => timings.push(t) })).toBe(true);
+    expect(timings).toHaveLength(1);
+    expect(timings[0]?.durationMs).toBeGreaterThanOrEqual(0);
+
+    // Fresh now — a second call is a no-op and must not fire the callback.
+    const timingsAfterNoop: Array<{ durationMs: number }> = [];
+    expect(await ensureIndex(stashDir, { mode: "blocking", onReindexTiming: (t) => timingsAfterNoop.push(t) })).toBe(
+      false,
+    );
+    expect(timingsAfterNoop).toHaveLength(0);
+  });
+});
+
+/** Deterministic staleness regardless of filesystem mtime resolution (mirrors dir-staleness-precheck.test.ts). */
+function bumpMtimeIntoFuture(filePath: string): void {
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(filePath, future, future);
+}
+
+describe("ensureIndex blocking mode: per-file staleness (R6)", () => {
+  test("a brand-new file that was never indexed is stale", () => {
+    writeMemory("second");
+    expect(isIndexStale(stashDir)).toBe(true);
+  });
+
+  test(
+    "a file indexed incrementally after being written is NOT stale, even though its mtime " +
+      "is newer than builtAt (indexWrittenAssets does not bump builtAt)",
+    async () => {
+      const added = writeMemory("second");
+      bumpMtimeIntoFuture(added);
+      await indexWrittenAssets(stashDir, [added]);
+      expect(indexedPaths().has(added)).toBe(true);
+
+      // Acceptance test: without the R6 per-file staleness check this would
+      // still report stale purely from mtime > builtAt, forcing a full
+      // rescan on every subsequent call even though the content is current.
+      expect(isIndexStale(stashDir)).toBe(false);
+    },
+  );
+
+  test("a file edited in place after the last build IS stale, even though it was already indexed", () => {
+    const filePath = path.join(stashDir, "memories", "first.md");
+    fs.writeFileSync(filePath, "---\ndescription: first\n---\n\n# first\n\nEdited body.\n", "utf8");
+    bumpMtimeIntoFuture(filePath);
+
+    expect(isIndexStale(stashDir)).toBe(true);
   });
 });

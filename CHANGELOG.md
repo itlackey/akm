@@ -36,6 +36,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cacheHash` domain with the post-LLM check so the two cannot disagree. The
   dropped count is reported as `prefilteredAlreadyPromoted` on the
   consolidate result and in a warning line.
+- **`improve`'s start-of-run index rescan ran after triage dirtied the stash,
+  not before it.** Proposal triage promotes accepted proposals straight into
+  the flat `knowledge/` root, and the blocking `ensureIndex` call that is
+  supposed to give the run a current index ran only afterward (inside
+  `collectEligibleRefs`'s setup), so every triage promotion guaranteed the
+  very full rescan it should have preceded — up to ~27 minutes, holding the
+  index lock against co-scheduled writers. `ensureIndex` now runs before the
+  triage pre-pass, and triage's own writes are indexed incrementally
+  (`indexWrittenAssets`) so `collectEligibleRefs` still sees them without a
+  second full walk. Because `indexWrittenAssets` upserts a file's
+  `content_hash` without bumping `builtAt`, index staleness detection
+  (`ensure-index.ts`) is now per-file: a file newer than the last build is
+  only treated as stale when its current content actually differs from what
+  is indexed, so incrementally-reindexed content stops re-triggering the
+  same full rescan on every subsequent run. The implicit reindex's timing
+  breakdown (walk/llm/embed/finalize), previously discarded, is now logged
+  and surfaced on the improve result as `ensureIndexDurationMs`.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 

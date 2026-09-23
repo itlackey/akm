@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { akmImprove } from "../../../src/commands/improve/improve";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -126,6 +127,80 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
 
     expect(result.ok).toBe(true);
     expect(entryCountAtCollect).toBe(2);
+  });
+
+  test("R6: ensureIndexDurationMs is surfaced on the result only when an implicit reindex actually ran", async () => {
+    const stashDir = makeTempDir("akm-improve-ensure-duration-");
+    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
+
+    writeLesson(stashDir, "prefer-ripgrep", "Prefer ripgrep over grep", "Searching large repos");
+    await akmIndex({ stashDir, full: true });
+
+    // Same staleness-forcing setup as the ordering test above: wipe entries
+    // and builtAt so the run's ensureIndex call must rebuild inline.
+    {
+      const db = openExistingDatabase();
+      try {
+        db.exec("DELETE FROM entries");
+        db.prepare("DELETE FROM index_meta WHERE key = 'builtAt'").run();
+      } finally {
+        closeDatabase(db);
+      }
+    }
+
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      improve: {
+        strategies: {
+          "duration-order": {
+            processes: {
+              reflect: { enabled: false },
+              distill: { enabled: false },
+              consolidate: { enabled: false },
+              memoryInference: { enabled: false },
+              graphExtraction: { enabled: false },
+              extract: { enabled: false },
+              validation: { enabled: false },
+              triage: { enabled: false },
+              proactiveMaintenance: { enabled: false },
+              recombine: { enabled: false },
+              procedural: { enabled: false },
+            },
+          },
+        },
+      },
+    };
+    const collectEligibleRefsFn = (async () => ({
+      plannedRefs: [],
+      memorySummary: { eligible: 0, derived: 0 },
+      strategyFilteredRefs: [],
+    })) as never;
+
+    const rebuiltResult = await akmImprove({
+      stashDir,
+      strategy: "duration-order",
+      repairValidationFailures: false,
+      config,
+      collectEligibleRefsFn,
+    });
+    expect(rebuiltResult.ok).toBe(true);
+    expect(rebuiltResult.ensureIndexDurationMs).toBeGreaterThanOrEqual(0);
+
+    // Second run: the index left behind by the first run is already fresh, so
+    // ensureIndex is a no-op and the field must be OMITTED, not reported as 0.
+    const freshResult = await akmImprove({
+      stashDir,
+      strategy: "duration-order",
+      repairValidationFailures: false,
+      config,
+      collectEligibleRefsFn,
+    });
+    expect(freshResult.ok).toBe(true);
+    expect(freshResult.ensureIndexDurationMs).toBeUndefined();
   });
 
   test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
