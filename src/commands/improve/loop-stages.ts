@@ -1555,7 +1555,7 @@ export const STATE_GC_GRACE_MS = daysToMs(7);
  * bundles — but against a prebuilt {@link LiveRefSnapshot}
  * (`getLiveRefSnapshot`) instead of a database round trip per row: with up to
  * a few thousand pending rows per run, one probe per row was the dominant
- * cost (R78, tier1-0917).
+ * cost R78 (tier1-0917).
  *
  * On top of that, falls back to the BARE conceptId form (`bareImproveRef` —
  * the same primitive `preparation.ts`'s `normalizeStoredKey` map is built
