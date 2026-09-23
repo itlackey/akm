@@ -31,7 +31,7 @@ import type { EnsureIndexOptions } from "../../../../src/indexer/ensure-index";
 import { ensureIndex } from "../../../../src/indexer/ensure-index";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { LLM_USAGE_EVENT, LLM_USAGE_SUMMARY_EVENT } from "../../../../src/llm/usage-persist";
-import { emitLlmUsage, hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
+import { currentLlmStage, emitLlmUsage, hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
 import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { getIndexedFilePaths } from "../../../../src/storage/repositories/index-entries-repository";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
@@ -121,6 +121,35 @@ describe("akm improve — triage pre-pass", () => {
       // Decision #2: no fresh ids exist pre-improve, so excludeIds is empty.
       expect(opts?.excludeIds?.size).toBe(0);
       expect(opts?.applyMode).toBe("queue");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "R17: the pre-pass drain runs under withLlmStage, attributed to triage.judgment",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+
+      let stageDuringDrain: string | undefined;
+      const drainProposalsFn = mock(async () => {
+        stageDuringDrain = currentLlmStage();
+        emitLlmUsage({ outcome: "success", modelSource: "configured", durationMs: 1, model: "prepass" });
+        return emptyDrainResult();
+      });
+
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        drainProposalsFn: drainProposalsFn as never,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(stageDuringDrain).toBe("triage");
+      const usageEvents = readEvents({ type: LLM_USAGE_EVENT }).events;
+      const prepassEvent = usageEvents.find((event) => event.metadata?.model === "prepass");
+      expect(prepassEvent?.metadata?.process).toBe("triage.judgment");
     },
     TIMEOUT_MS,
   );
