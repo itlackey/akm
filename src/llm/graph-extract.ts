@@ -79,8 +79,11 @@ const USER_PROMPT_PREFIX = userPromptTemplate
  * `DERIVED_MEMORY_JSON_SCHEMA`); the client silently drops it otherwise.
  * `maxItems` mirrors MAX_ENTITIES_PER_ASSET/MAX_RELATIONS_PER_ASSET so a
  * compliant provider cannot pay for output beyond what parseGraphExtraction
- * keeps, and `additionalProperties: false` forbids the `confidence` field the
- * prompt never asks for.
+ * keeps. `confidence` is allowed (not prompted for, but optional) at both
+ * levels because parseGraphExtraction reads it — the extraction-level value
+ * feeds the merged confidence, and the relation-level value is filtered
+ * against MIN_RELATION_CONFIDENCE; `additionalProperties: false` forbids
+ * anything else.
  */
 const GRAPH_EXTRACTION_JSON_SCHEMA = {
   type: "object",
@@ -95,11 +98,13 @@ const GRAPH_EXTRACTION_JSON_SCHEMA = {
           from: { type: "string" },
           to: { type: "string" },
           type: { type: "string" },
+          confidence: { type: "number" },
         },
         required: ["from", "to"],
         additionalProperties: false,
       },
     },
+    confidence: { type: "number" },
   },
   required: ["entities", "relations"],
   additionalProperties: false,

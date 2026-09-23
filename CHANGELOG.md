@@ -67,9 +67,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   down to the same 32-entity/32-relation limit anyway** (one file spent 21 of
   27 calls and 12.9k completion tokens this way). The single-asset extraction
   call (`extractGraphFromBody`) now sends a `responseSchema` (entities/
-  relations capped at 32 each, `additionalProperties: false` forbidding the
-  unprompted `confidence` field the prompt never asks for) and a bounded
-  `maxTokens`, via the same `supportsJsonSchema`-gated request path
+  relations capped at 32 each, `additionalProperties: false` otherwise) and a
+  bounded `maxTokens`, via the same `supportsJsonSchema`-gated request path
   memory-infer.ts uses. A body chunked beyond the new
   `processes.graphExtraction.maxChunksPerAsset` (default 8) now stops after
   the first N chunks instead of processing every one; the skipped chunks are
@@ -79,6 +78,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `maxChunksPerAsset` to the extraction call, mirroring the existing
   `topN`/`batchSize` wiring — without this the config key had no effect in a
   real `akm improve` run and the default of 8 always applied.
+- **The graph-extraction `responseSchema` forbade the `confidence` field the
+  parser itself reads.** `additionalProperties: false` on both the root
+  object and each relation item made `confidence` impossible on a
+  `supportsJsonSchema` provider, even though `parseGraphExtraction` uses
+  `rel.confidence` to drop relations below `MIN_RELATION_CONFIDENCE` and
+  `item.confidence` to feed the merged extraction confidence — silently
+  turning the confidence filter into dead code on exactly the providers the
+  schema targets. `confidence: {"type": "number"}` is now allowed at both
+  levels; `additionalProperties: false` still forbids anything else.
 
 ### Changed
 

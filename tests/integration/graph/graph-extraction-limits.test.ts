@@ -111,9 +111,16 @@ describe("extractGraphFromBody — bounded output (R12b + R20)", () => {
         },
       },
     });
-    // additionalProperties: false forbids the unprompted `confidence` field.
+    // `confidence` is explicitly allowed at both levels — parseGraphExtraction
+    // reads rel.confidence (MIN_RELATION_CONFIDENCE filtering) and
+    // item.confidence (merged extraction confidence), so a schema that
+    // forbade it would make both silently dead on a supportsJsonSchema
+    // provider. additionalProperties: false still forbids anything else.
     const schema = (request.response_format as { json_schema: { schema: Record<string, unknown> } }).json_schema.schema;
-    expect(Object.keys(schema.properties as Record<string, unknown>)).toEqual(["entities", "relations"]);
+    expect(Object.keys(schema.properties as Record<string, unknown>)).toEqual(["entities", "relations", "confidence"]);
+    const relationItemSchema = (schema.properties as { relations: { items: { properties: Record<string, unknown> } } })
+      .relations.items;
+    expect(Object.keys(relationItemSchema.properties)).toEqual(["from", "to", "type", "confidence"]);
     expect(typeof request.max_tokens).toBe("number");
     expect(request.max_tokens as number).toBeGreaterThan(0);
     // Bounded — well under an unbounded/runaway completion, not a specific pin.
@@ -165,6 +172,28 @@ describe("extractGraphFromBody — bounded output (R12b + R20)", () => {
 
     expect(chatCallCount).toBe(1);
     expect(result.truncatedChunks).toBeUndefined();
+  });
+
+  test("(5) a relation carrying confidence below MIN_RELATION_CONFIDENCE is filtered and counted", async () => {
+    rawQueue.push(
+      JSON.stringify({
+        entities: ["Alpha", "Beta", "Gamma"],
+        relations: [
+          { from: "Alpha", to: "Beta", confidence: 0.2 },
+          { from: "Alpha", to: "Gamma", confidence: 0.9 },
+        ],
+      }),
+    );
+
+    const result = await extractGraphFromBody(
+      SAMPLE_LLM,
+      "Alpha references Beta and Gamma.",
+      undefined,
+      AKM_CFG_WITH_GATE,
+    );
+
+    expect(result.relations).toEqual([{ from: "Alpha", to: "Gamma", confidence: 0.9 }]);
+    expect(result.filteredLowConfidenceRelations).toBe(1);
   });
 });
 
