@@ -1069,6 +1069,72 @@ describe("#800 effective dry-run planner", () => {
     });
   });
 
+  // (tier0-0917 r2-3) R4.3 — the consolidation plan's `gates.delta.reason` must
+  // distinguish bootstrap (no consolidate_completed event ever recorded) from a
+  // real pool delta, rather than reporting "memory pool has work" for both.
+  describe("consolidation preview gates.delta reason", () => {
+    test("no consolidate_completed event ever recorded → bootstrap reason", async () => {
+      const { stashDir } = isolatedStorage();
+      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      writeMemory(stashDir, "memory-0");
+      saveConfig(config);
+      await akmIndex({ stashDir, full: true });
+
+      const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
+
+      expect(result.plan?.consolidation.gates.delta).toEqual({
+        passed: true,
+        reason: "no completed consolidation recorded yet (bootstrap)",
+      });
+    });
+
+    test("memory updated after the last completed consolidation → real-delta reason", async () => {
+      const { stashDir } = isolatedStorage();
+      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      appendEvent(
+        {
+          eventType: "consolidate_completed",
+          ref: "memories/_consolidation",
+          metadata: { processed: 1, source: "stash" },
+        },
+        { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
+      );
+      // Written after the consolidate_completed event above, so its natural
+      // mtime is strictly newer.
+      writeMemory(stashDir, "memory-0");
+      saveConfig(config);
+      await akmIndex({ stashDir, full: true });
+
+      const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
+
+      expect(result.plan?.consolidation.gates.delta).toEqual({ passed: true, reason: "memory pool has work" });
+    });
+
+    test("no memory updates since the last completed consolidation → cooldown reason", async () => {
+      const { stashDir } = isolatedStorage();
+      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      writeMemory(stashDir, "memory-0");
+      saveConfig(config);
+      await akmIndex({ stashDir, full: true });
+      // Far-future completion ts: nothing on disk is newer than this.
+      appendEvent(
+        {
+          eventType: "consolidate_completed",
+          ref: "memories/_consolidation",
+          metadata: { processed: 1, source: "stash" },
+        },
+        { now: () => new Date("2099-01-01T00:00:00.000Z").getTime() },
+      );
+
+      const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
+
+      expect(result.plan?.consolidation.gates.delta).toEqual({
+        passed: false,
+        reason: "no updates since the last completed consolidation",
+      });
+    });
+  });
+
   // #800/#957 — once the shared "planner" engine's credential is unavailable,
   // the enabled "consolidate" override loses its runner (folded into
   // `engineUnavailable`), which used to trip the "no improve process can run"
