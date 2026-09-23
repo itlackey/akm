@@ -22,15 +22,15 @@ import {
   runGraphExtractionMaintenancePass,
   runMemoryInferenceMaintenancePass,
   runRetentionPurgePass,
-} from "../../../src/commands/improve/loop-stages";
-import type { AkmConfig } from "../../../src/core/config/config";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
-import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
-import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
-import type { Database } from "../../../src/storage/database";
-import { insertEventStrict } from "../../../src/storage/repositories/events-repository";
-import { STATE_DB_VACUUMED_EVENT } from "../../../src/storage/state-db-integrity";
-import { makeStashDir, type SandboxedDir, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
+} from "../../../../src/commands/improve/loop-stages";
+import type { AkmConfig } from "../../../../src/core/config/config";
+import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
+import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
+import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
+import type { Database } from "../../../../src/storage/database";
+import { insertEventStrict } from "../../../../src/storage/repositories/events-repository";
+import { STATE_DB_VACUUMED_EVENT } from "../../../../src/storage/state-db-integrity";
+import { makeStashDir, type SandboxedDir, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
@@ -245,7 +245,7 @@ describe("runRetentionPurgePass", () => {
     const stash = freshStash();
     const cacheSb = sandboxXdgCacheHome();
     disposers.push(cacheSb);
-    const { getTaskLogDir } = await import("../../../src/core/paths");
+    const { getTaskLogDir } = await import("../../../../src/core/paths");
 
     const logDir = getTaskLogDir();
     const taskDir = path.join(logDir, "daily-improve");
