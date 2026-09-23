@@ -1042,6 +1042,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       eligMeta,
       eventsCtx: options.eventsCtx,
       stash,
+      ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
+      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
     });
     if ("rejection" in assembled) return withNotices(assembled.rejection);
     const { content, descriptionSwapped } = assembled;
@@ -1168,6 +1170,11 @@ async function emitDistillLessonProposal(args: {
           },
           options.eligibilitySource,
           options.eventsCtx,
+          {
+            ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
+            ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+            ...(distillRunner?.connection.model ? { modelId: distillRunner.connection.model } : {}),
+          },
         );
       }
     } catch {
@@ -1302,6 +1309,9 @@ function assembleAndValidateDistillContent(args: {
   eligMeta: { eligibilitySource?: EligibilitySource };
   eventsCtx?: EventsContext;
   stash: string;
+  /** Test seam / attribution passthrough for a minted quality-rejection proposal row. */
+  proposalsCtx?: ProposalsContext;
+  sourceRun?: string;
 }): { content: string; descriptionSwapped: number } | { rejection: AkmDistillResult } {
   const {
     raw,
@@ -1315,6 +1325,8 @@ function assembleAndValidateDistillContent(args: {
     eligMeta,
     eventsCtx,
     stash,
+    proposalsCtx,
+    sourceRun,
   } = args;
   // Structured-output path: when the provider honoured the JSON schema, `raw`
   // is a JSON object string (not a markdown blob). Try to parse it and assemble
@@ -1414,6 +1426,10 @@ function assembleAndValidateDistillContent(args: {
         },
         eligMeta.eligibilitySource,
         eventsCtx,
+        {
+          ...(proposalsCtx ? { proposalsCtx } : {}),
+          ...(sourceRun !== undefined ? { sourceRun } : {}),
+        },
       ),
     };
   }
@@ -1630,6 +1646,11 @@ async function applyDistillQualityGate(args: {
     onNotices,
   });
   if (!judgeResult.pass) {
+    const proposalOpts = {
+      ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
+      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+      ...(distillRunner?.connection.model ? { modelId: distillRunner.connection.model } : {}),
+    };
     if (judgeResult.reviewNeeded) {
       return {
         rejection: writeQualityRejection(
@@ -1646,6 +1667,7 @@ async function applyDistillQualityGate(args: {
           },
           options.eligibilitySource,
           options.eventsCtx,
+          proposalOpts,
         ),
       };
     }
@@ -1663,6 +1685,7 @@ async function applyDistillQualityGate(args: {
         },
         options.eligibilitySource,
         options.eventsCtx,
+        proposalOpts,
       ),
     };
   }

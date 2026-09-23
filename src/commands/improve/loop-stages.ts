@@ -67,7 +67,6 @@ import { deriveLessonRef } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import { findAssetFilePath, isDistillCandidateRef } from "./eligibility";
-import { writeEvalCase } from "./eval-cases";
 import type {
   AkmImproveOptions,
   ImproveLoopResult,
@@ -80,7 +79,7 @@ import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { AkmReflectOptions } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
-import { errMessage, refSlug } from "./shared";
+import { errMessage } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
 
 // ── improve loop / post-loop / maintenance stages ───────────────────
@@ -593,8 +592,7 @@ async function runLoopDistillPass(
 
 /**
  * The distill invocation for one ref that passed every gate: the `distillFn`
- * call, memory-inference queueing, plasticity counters, and the
- * quality-rejected / proposal-rejected eval-case writes.
+ * call, memory-inference queueing, and plasticity counters.
  */
 async function invokeDistillAndRecord(
   planned: ImproveEligibleRef,
@@ -646,30 +644,6 @@ async function invokeDistillAndRecord(
     } catch {
       // best-effort: plasticity counter failure never blocks the run
     }
-  }
-  if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
-    const slug = refSlug(planned.ref);
-    writeEvalCase(primaryStashDir, {
-      ref: planned.ref,
-      failureReason: distillResult.reason ?? "quality gate rejected",
-      assetType: parseRefInput(planned.ref).type ?? "unknown",
-      rejectedAt: Date.now(),
-      source: "distill_quality_rejected",
-      slug: `${slug}-${Date.now()}`,
-    });
-  }
-  // D6: use pre-loaded map instead of per-iteration DB query
-  const rejectedProposalEvent = env.rejectedProposalsByRef.get(planned.ref);
-  if (rejectedProposalEvent && primaryStashDir) {
-    const slug = refSlug(planned.ref);
-    writeEvalCase(primaryStashDir, {
-      ref: planned.ref,
-      failureReason: (rejectedProposalEvent.metadata?.reason as string | undefined) ?? "proposal rejected",
-      assetType: parseRefInput(planned.ref).type ?? "unknown",
-      rejectedAt: new Date(rejectedProposalEvent.ts).getTime(),
-      source: "proposal_rejected",
-      slug: `${slug}-rejected`,
-    });
   }
 }
 

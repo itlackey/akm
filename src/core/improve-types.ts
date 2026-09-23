@@ -498,7 +498,10 @@ export interface AkmDistillResult {
   proposalRef: string;
   /** Type of proposal the invocation targeted or queued. */
   proposalKind?: "lesson" | "knowledge";
-  /** Proposal id when `outcome === "queued"`. */
+  /**
+   * Proposal id when `outcome === "queued"`, or (R10) when a `proposals` row
+   * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
+   */
   proposalId?: string;
   /** Human-readable hint surfaced when the call was skipped. */
   message?: string;
@@ -506,7 +509,11 @@ export interface AkmDistillResult {
   skipReason?: string;
   /** Validation findings when `outcome === "validation_failed"`. */
   findings?: { kind: string; field: string; message: string }[];
-  /** The full proposal object when `outcome === "queued"`. */
+  /**
+   * The full proposal object when `outcome === "queued"`, or (R10) when a
+   * `proposals` row was minted for `outcome === "quality_rejected"` (status
+   * `rejected`) / `"review_needed"` (status `pending`).
+   */
   proposal?: Proposal;
   /**
    * Diagnostic — number of feedback events filtered out by
@@ -865,7 +872,6 @@ export interface AkmImproveResult {
   lintSummary?: { fixed: number; flagged: number };
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
   coverageGaps?: string[];
-  evalCasesWritten?: number;
   deadUrls?: DeadUrl[];
   /**
    * Coverage of the dead-link check (#892): present whenever `checkDeadUrls`

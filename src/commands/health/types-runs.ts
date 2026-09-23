@@ -37,7 +37,6 @@ export interface ImproveRunSummary {
   memoryInference: ImproveHealthMetrics["memoryInference"];
   graphExtraction: ImproveHealthMetrics["graphExtraction"];
   reflectsWithErrorContext: number;
-  evalCasesWritten: number;
   orphansPurged: number;
   lintFixed: number;
   lintFlagged: number;

@@ -83,6 +83,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same full rescan on every subsequent run. The implicit reindex's timing
   breakdown (walk/llm/embed/finalize), previously discarded, is now logged
   at verbose level and surfaced on the improve result as `ensureIndexDurationMs`.
+- **Distill quality rejections vanished instead of persisting, so backoff and
+  Reflexion never saw them and the same ref was re-selected and re-rejected
+  on every run** (two refs were rejected 11× and 10×). `writeQualityRejection`
+  wrote only a `$STATE`-side file and an event, never a `proposals` row, so
+  `rejection_backoff`/`fingerprint_match` (proposal/repository.ts) and the
+  Reflexion "previously rejected" context had nothing to find; the distill
+  signal-delta cursor (`buildLatestProposalTsMap`) also only advanced for
+  `queued`/`skipped`/`validation_failed` outcomes, so a rejected ref stayed
+  eligible forever. `writeQualityRejection` now mints a real proposal through
+  the same `createProposal`/`archiveProposal` path every other proposal
+  source uses: a `quality_rejected` outcome is minted pending then archived
+  to `rejected` carrying the judge's reason; a `review_needed` outcome stays
+  `pending` in the normal queue for a human to triage (what
+  `promote-memory.ts`'s comment always claimed, but never did). The cursor
+  now also advances on both outcomes (still excluding `llm_failed`, where no
+  real attempt produced anything).
+
+### Removed
+
+- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
+  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
+  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
+  `countEvalCases` reported a cumulative on-disk file count as if it were a
+  per-run number (surfaced as `evalCasesWritten` on the improve result and in
+  `akm health`'s improve metrics). A rejected proposal row (see above) now
+  carries the same information through a path something actually reads.
+  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
+  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
+  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
+  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
+  on an envelope an older release wrote, and existing eval-case files on disk
+  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
+  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
+  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
 
 ### Changed
 

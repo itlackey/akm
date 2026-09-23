@@ -113,7 +113,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     autoAccept: { promoted: 0, validationFailed: 0 },
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
-    evalCasesWritten: 0,
     deadUrlCount: 0,
     deadUrlsChecked: 0,
     deadUrlsTotal: 0,
@@ -369,13 +368,12 @@ function applyDistillSkippedAggregate(metrics: ImproveHealthMetrics, result: Rec
   }
 }
 
-/** autoAccept + the small envelope-level counters (reflectsWithErrorContext, coverageGaps, evalCasesWritten, deadUrls). */
+/** autoAccept + the small envelope-level counters (reflectsWithErrorContext, coverageGaps, deadUrls). */
 function applyMiscCounters(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   metrics.autoAccept.promoted += toFiniteNumber(result.gateAutoAcceptedCount);
   metrics.autoAccept.validationFailed += toFiniteNumber(result.gateAutoAcceptFailedCount);
   metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
   if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
-  metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
   if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
   const deadUrlCoverage = result.deadUrlCoverage as
     | { checked?: unknown; total?: unknown; skipped?: unknown }
@@ -620,7 +618,6 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.autoAccept.validationFailed += src.autoAccept.validationFailed;
   dst.reflectsWithErrorContext += src.reflectsWithErrorContext;
   dst.coverageGapCount += src.coverageGapCount;
-  dst.evalCasesWritten += src.evalCasesWritten;
   dst.deadUrlCount += src.deadUrlCount;
   dst.deadUrlsChecked += src.deadUrlsChecked;
   dst.deadUrlsTotal += src.deadUrlsTotal;
@@ -845,7 +842,6 @@ export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number,
     memoryInference: perRow.memoryInference,
     graphExtraction: perRow.graphExtraction,
     reflectsWithErrorContext: perRow.reflectsWithErrorContext,
-    evalCasesWritten: perRow.evalCasesWritten,
     orphansPurged,
     lintFixed,
     lintFlagged,
