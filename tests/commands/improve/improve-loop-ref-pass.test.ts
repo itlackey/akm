@@ -229,6 +229,19 @@ describe("processImproveLoopRef — reflect pre-generation guard (R9, tier2-0917
     // though reflectFn was never invoked.
     const { events } = readEvents({ type: "reflect_invoked" });
     expect(events.some((e) => e.ref === "knowledge/guide.md")).toBe(true);
+
+    // Fix #3's invariant (observability 0.8.0): every reflect_invoked pairs
+    // with a reflect_completed. reflectFn is never called on this path, so
+    // reflect.ts's own emitFailed never runs — the guard-skip branch must
+    // emit the pairing event itself.
+    const { events: completedEvents } = readEvents({ type: "reflect_completed" });
+    const completed = completedEvents.find((e) => e.ref === "knowledge/guide.md");
+    expect(completed?.metadata).toMatchObject({
+      source: "reflect",
+      ok: false,
+      reason: "cooldown",
+      subreason: "pre_generation_guard",
+    });
   });
 
   test("no guard hit falls through to the real reflectFn call as before", async () => {

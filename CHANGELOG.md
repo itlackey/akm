@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The reflect pre-generation proposal-guard skip (R9) emitted `reflect_invoked` with no paired `reflect_completed`.** `runLoopReflectPass`'s guard-skip branch in `loop-stages.ts` appended a synthetic `reflect_invoked` event to advance the signal-delta cursor, but never called `reflectFn`, so `reflect.ts`'s own `reflect_completed` emission never ran either — a new, permanent source of unpaired `reflect_invoked` rows for every fingerprint/backoff hit, violating the invoke/complete pairing invariant `buildReflectEventEmitters` documents. The branch now also appends a matching `reflect_completed` (`ok:false`, `reason:"cooldown"`, `subreason:"pre_generation_guard"`), mirroring `emitFailed`'s shape.
 - **The batch graph-extraction provider-storm guard only recognized one error
   code.** After a failed batch call, `extractGraphFromBodies` skipped the
   per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
