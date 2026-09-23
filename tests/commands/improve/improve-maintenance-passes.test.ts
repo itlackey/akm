@@ -25,9 +25,12 @@ import {
   runRetentionPurgePass,
 } from "../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../src/storage/database";
+import { insertEventStrict } from "../../../src/storage/repositories/events-repository";
+import { STATE_DB_VACUUMED_EVENT } from "../../../src/storage/state-db-integrity";
 import { makeStashDir, type SandboxedDir, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -315,5 +318,67 @@ describe("runRetentionPurgePass", () => {
     expect(out.warnings).toEqual([]);
     expect(fs.existsSync(oldFile)).toBe(false);
     expect(fs.existsSync(newFile)).toBe(true);
+  });
+
+  // r2-1 (tier0-0917): R0 step 3 wires vacuumStateDbIfReclaimable into the
+  // purge callback, reading the freelist off the same connection the purge
+  // just used. Recipe (bulk-insert-then-delete) reused from
+  // tests/integration/storage/state-db-integrity.test.ts:140-160, except the
+  // "delete" here is the retention purge itself.
+  test("VACUUMs state.db and appends state_db_vacuumed when the purge frees enough pages", () => {
+    const stash = freshStash();
+    const dbPath = getStateDbPath();
+    const seedDb = openStateDatabase(dbPath);
+    try {
+      const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
+      const bigMetadata = { blob: "x".repeat(2000) };
+      for (let i = 0; i < 3000; i++) {
+        insertEventStrict(seedDb, {
+          eventType: "reflect_invoked",
+          ts: oldTs,
+          ref: `lessons/note-${i}`,
+          metadata: bigMetadata,
+        });
+      }
+    } finally {
+      seedDb.close();
+    }
+
+    const ctx = makeCtx(stash, {
+      config: { improve: { eventRetentionDays: 1 } } as AkmConfig,
+    });
+    const out = runRetentionPurgePass(ctx);
+
+    expect(out.warnings).toEqual([]);
+    const checkDb = openStateDatabase(dbPath);
+    try {
+      const event = checkDb
+        .prepare("SELECT metadata_json FROM events WHERE event_type = ? ORDER BY id DESC LIMIT 1")
+        .get(STATE_DB_VACUUMED_EVENT) as { metadata_json: string } | undefined;
+      expect(event).toBeDefined();
+      const metadata = JSON.parse(event?.metadata_json ?? "{}") as { pagesBefore: number; pagesAfter: number };
+      expect(metadata.pagesAfter).toBeLessThan(metadata.pagesBefore);
+    } finally {
+      checkDb.close();
+    }
+  });
+
+  test("does not VACUUM or append state_db_vacuumed when reclaimable space stays below threshold", () => {
+    const stash = freshStash();
+    const dbPath = getStateDbPath();
+    // A fresh sandboxed state.db has nothing to purge, so its freelist ratio
+    // never crosses STATE_DB_FREELIST_WARN_RATIO.
+    const ctx = makeCtx(stash); // default config → 90d window
+
+    const out = runRetentionPurgePass(ctx);
+
+    expect(out.warnings).toEqual([]);
+    const checkDb = openStateDatabase(dbPath);
+    try {
+      const event = checkDb.prepare("SELECT 1 FROM events WHERE event_type = ?").get(STATE_DB_VACUUMED_EVENT);
+      expect(event).toBeNull();
+    } finally {
+      checkDb.close();
+    }
   });
 });

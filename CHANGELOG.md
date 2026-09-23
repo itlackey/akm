@@ -70,12 +70,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   above 50%. Previously nothing in `akm health` looked past a successful
   append/read round trip, which stays true on a database that is corrupt at
   the SQLite level.
-- **`vacuumStateDbIfReclaimable` (`src/storage/state-db-integrity.ts`)**: a
-  reusable helper that `VACUUM`s state.db when its freelist ratio exceeds
-  50%, recording a `state_db_vacuumed` event with pages before/after, and
-  never throws — a locked/busy database is reported, not raised. Not yet
-  called from the retention purge pass; see the R0 (tier0-0917) scope note
-  for why that wiring was left for a follow-up.
+- **The retention purge (`akm improve`) now VACUUMs state.db when more than
+  half its pages are free**, immediately after the events/improve_runs/
+  cycle-metrics purge, recording a `state_db_vacuumed` event with pages
+  before/after. Opportunistic: a locked/busy database is skipped, not
+  raised, so it never fails the purge pass it follows.
 
 ## [0.9.16] - 2026-09-22
 
