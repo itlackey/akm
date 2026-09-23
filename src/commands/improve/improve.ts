@@ -36,6 +36,7 @@ import { collectPendingMemories } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { installLlmUsagePersistence, LLM_USAGE_EVENT } from "../../llm/usage-persist";
+import { withLlmStage } from "../../llm/usage-telemetry";
 import {
   isGitBackedStash,
   listGitChangedPaths,
@@ -1185,18 +1186,23 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
         const policy = resolveDrainPolicy(triageConfig?.policy);
         const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
         const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
-        triageDrain = await drainProposalsFn({
-          stashDir: primaryStashDir,
-          ...(options.target ? { target: options.target } : {}),
-          config: options.config,
-          policy,
-          applyMode,
-          maxAccepts,
-          dryRun: false,
-          excludeIds: new Set<string>(),
-          ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
-          judgment: resolvedPlan.triageJudgment,
-        });
+        triageDrain = await withLlmStage(
+          "triage",
+          () =>
+            drainProposalsFn({
+              stashDir: primaryStashDir,
+              ...(options.target ? { target: options.target } : {}),
+              config: options.config,
+              policy,
+              applyMode,
+              maxAccepts,
+              dryRun: false,
+              excludeIds: new Set<string>(),
+              ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
+              judgment: resolvedPlan.triageJudgment,
+            }),
+          { engine: resolvedPlan.triageJudgment?.engine, process: "triage.judgment" },
+        );
       } catch (err) {
         warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
       }

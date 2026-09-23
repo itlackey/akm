@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The `akm improve` triage pre-pass drain's judgment LLM calls were unattributed in the usage report.** `runTriagePrePass`'s `drainProposalsFn` call dispatched judgment calls with no `withLlmStage` wrapper, unlike the standalone `akm proposal drain` CLI path, so they landed in `byProcessEngineModel` as unattributed (5 calls, 24s per run) instead of under a `triage` stage. The pre-pass drain is now wrapped in `withLlmStage("triage", …, { engine, process: "triage.judgment" })`, mirroring the CLI path.
+
 - **The batch graph-extraction provider-storm guard only recognized one error
   code.** After a failed batch call, `extractGraphFromBodies` skipped the
   per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
