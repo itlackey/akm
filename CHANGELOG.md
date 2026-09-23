@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The distill/reflect LLM-as-judge quality gate inherited the generation
+  runner's temperature, and its averaged score hid which criterion actually
+  failed.** `runQualityJudge`'s request only pinned `enableThinking: false`,
+  so the judge ran at whatever temperature generation used — measured at 0.3,
+  the verdict flipped on 10/16 identical inputs, vs. 0/16 at temperature 0.
+  The request now also pins `temperature: 0`, for both the distill and
+  reflect judges that share this function, independent of the runner's
+  configured temperature. Separately, both judge prompts asked for one
+  averaged float, so a criterion carrying no signal was invisible in
+  production. They now ask for per-criterion integer scores
+  (`buildJudgePrompt`: novelty/actionability/nonRedundancy;
+  `buildReflectJudgePrompt`: feedbackAlignment/preservation/quality), averaged
+  in code to the same `score` the unchanged 3.5/2.5 thresholds gate on. The
+  parser accepts this new `{"scores": {...}, "reason"}` shape and still
+  accepts the old `{"score": <float>, "reason"}` shape a model may return;
+  each criterion (or the bare score) must be a finite number in 1..5 or the
+  response routes to review exactly as a parse failure does today. The
+  per-criterion scores, when present, are now carried through
+  `QualityJudgeResult.criteria` into the `distill_invoked` event metadata and
+  rejection-envelope frontmatter `writeQualityRejection` writes, and into
+  reflect's `reflect_completed` rejection event as `qualityCriteria`.
 - **The batch graph-extraction provider-storm guard only recognized one error
   code.** After a failed batch call, `extractGraphFromBodies` skipped the
   per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
