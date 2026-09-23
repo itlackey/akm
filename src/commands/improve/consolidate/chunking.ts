@@ -75,10 +75,8 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
  * Build the per-chunk user prompt fed to the consolidate LLM.
  *
  * Each memory is annotated with two flags:
- *   - `(captureMode: hot)` — user-explicit memory; also called out in a
- *     top-of-prompt protection block (below) telling the model not to
- *     propose an op against these refs. ~60 wasted LLM verdicts/4h on this
- *     user's stack before this annotation.
+ *   - `(captureMode: hot)` — user-explicit memory, surfaced to the model as
+ *     provenance context.
  *   - `(already queued)` — the memory's body hash matches a pending
  *     consolidate proposal; the system prompt's PROMOTE rule forbids
  *     proposing promote for these. ~107/4h before this annotation.
@@ -100,18 +98,14 @@ export function buildChunkPrompt(
   const lastMemory = memories[memories.length - 1];
   const end = lastMemory ? `memories/${lastMemory.name}` : "";
 
-  // First pass: classify each memory's annotations + collect hot refs so a
-  // prominent top-of-prompt list can be emitted. 2026-05-27 controlled
+  // First pass: classify each memory's annotations. 2026-05-27 controlled
   // diagnostic (/tmp/akm-health-investigations/ministral-prompt-annotation-diagnostic.md)
-  // measured ministral-3-3b compliance:
-  //   - inline `(captureMode: hot)` only → 40% honored
-  //   - inline parens + top-of-prompt explicit list → 100% honored
-  // The `(already queued)` annotation tops out at ~60% regardless of
-  // format, so it stays inline-only here — a separate chunk-filter is
-  // the right approach for queued refs (deferred per user direction).
+  // found the `(already queued)` annotation honored ~60% of the time
+  // regardless of format, so it stays inline-only here — a separate
+  // chunk-filter is the right approach for queued refs (deferred per user
+  // direction).
   type MemoryAnnotation = { isHot: boolean; isAlreadyQueued: boolean; excerpt: string };
   const annotationsByIndex: MemoryAnnotation[] = [];
-  const hotRefs: string[] = [];
   for (const m of memories) {
     let body = "";
     try {
@@ -134,7 +128,6 @@ export function buildChunkPrompt(
     // no-op for the "(unreadable)" placeholder.
     const excerpt = stripFrontmatterBody(body);
     annotationsByIndex.push({ isHot, isAlreadyQueued, excerpt });
-    if (isHot) hotRefs.push(`memories/${m.name}`);
   }
 
   const lines: string[] = [
@@ -146,19 +139,6 @@ export function buildChunkPrompt(
   if (standardsContext.trim()) {
     lines.push("Standards to follow (the rulebook for this target):");
     lines.push(standardsContext.trim());
-    lines.push("");
-  }
-
-  // Top-of-prompt protection block for hot refs. Neutral phrasing — avoid
-  // op-words like "promote", "merge", "contradict" so the model doesn't
-  // accidentally treat the warning as a hint to use that op elsewhere
-  // (variant B leaked the word "contradict" into the control sample
-  // during the diagnostic).
-  if (hotRefs.length > 0) {
-    lines.push(
-      "⛔ DO NOT propose any `delete` operation for these refs — they are user-explicit (captureMode: hot) and the downstream guard refuses them regardless. Proposing delete for any of these only wastes tokens.",
-    );
-    for (const ref of hotRefs) lines.push(`  - ${ref}`);
     lines.push("");
   }
 

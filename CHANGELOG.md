@@ -151,6 +151,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   use for a source memory body that begins with its own `---` block. The
   check now hashes `cacheHash(memoryContent)` directly, so the two sides of
   the dedup comparison agree.
+- **Consolidate's per-chunk prompt still warned against proposing `delete`
+  for `(captureMode: hot)` memories.** The consolidate op schema and system
+  prompt dropped `delete` (along with `merge`/`contradict`), leaving
+  `buildChunkPrompt`'s top-of-prompt hot-ref block as the only remaining
+  mention of `delete` anywhere in the prompt — a retired op name that
+  `isValidOp` now rejects if the model echoes it back, wasting tokens on
+  "skipping invalid operation" warnings. The block and the `hotRefs`
+  collection that fed it are removed; the inline `(captureMode: hot)`
+  annotation on each memory line is unchanged.
 
 ### Changed
 
