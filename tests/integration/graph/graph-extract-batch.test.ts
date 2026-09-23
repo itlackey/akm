@@ -16,6 +16,10 @@
  *   (e) All-whitespace bodies return all-empty extractions without LLM calls.
  *   (f) LLM returns non-array JSON → falls back to individual calls for all assets.
  *   (i) A provider_error (5xx) on the batch call does not fall back per-asset (R2).
+ *   (i2) A network_error (unreachable endpoint) does not fall back per-asset either.
+ *   (i3) Nor does a provider_html_error (5xx with an HTML body).
+ *   (i4) A parse_error (malformed JSON envelope) DOES still fall back per-asset —
+ *        it is not part of the transport-failure family.
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
@@ -38,6 +42,10 @@ const batchRawQueue: string[] = [];
 const singleRawQueue: string[] = [];
 /** Queue of HTTP status codes to return instead of a 200, for provider-error tests. */
 const errorStatusQueue: number[] = [];
+/** Queue of HTTP status codes to return with an HTML body, for provider_html_error tests. */
+const htmlErrorStatusQueue: number[] = [];
+/** When true, the next 200 response has a body that is not valid JSON (parse_error). */
+let malformedJsonNext = false;
 
 const llmServer = Bun.serve({
   port: 0,
@@ -46,6 +54,14 @@ const llmServer = Bun.serve({
     if (errorStatusQueue.length > 0) {
       const status = errorStatusQueue.shift() as number;
       return new Response("simulated provider error", { status });
+    }
+    if (htmlErrorStatusQueue.length > 0) {
+      const status = htmlErrorStatusQueue.shift() as number;
+      return new Response("<html><body>Service Unavailable</body></html>", { status });
+    }
+    if (malformedJsonNext) {
+      malformedJsonNext = false;
+      return new Response("not valid json", { status: 200 });
     }
     const body = (await request.json()) as {
       messages?: Array<{ role?: string; content?: string }>;
@@ -76,6 +92,36 @@ const SAMPLE_CONNECTION: LlmConnectionConfig = {
 };
 const SAMPLE_LLM = testLlmRunner(SAMPLE_CONNECTION, "test-graph-extraction");
 
+/**
+ * A raw TCP listener that accepts every connection and immediately closes it
+ * without sending a response. `fetch` sees this as a mid-flight socket drop
+ * ("The socket connection was closed unexpectedly."), which
+ * `chatCompletionReal` maps to a `network_error` `LlmCallError` — used to
+ * prove the storm guard covers unreachable/dying endpoints, not just non-2xx
+ * responses from a live one. `deadConnAttempts` counts accepted connections,
+ * standing in for `chatCallCount` against a server that can never send a real
+ * HTTP response.
+ */
+let deadConnAttempts = 0;
+const deadServer = Bun.listen({
+  hostname: "127.0.0.1",
+  port: 0,
+  socket: {
+    open(socket) {
+      deadConnAttempts++;
+      socket.end();
+    },
+    data() {},
+    close() {},
+    error() {},
+  },
+});
+const DEAD_CONNECTION: LlmConnectionConfig = {
+  endpoint: `http://127.0.0.1:${deadServer.port}/v1/chat/completions`,
+  model: "llama3.2",
+};
+const DEAD_LLM = testLlmRunner(DEAD_CONNECTION, "test-graph-extraction");
+
 const AKM_CFG_WITH_GATE: AkmConfig = {
   configVersion: "0.9.0",
   semanticSearchMode: "auto" as const,
@@ -86,15 +132,26 @@ const AKM_CFG_WITH_GATE: AkmConfig = {
   index: { defaults: { engine: "test" } },
 };
 
+const AKM_CFG_DEAD: AkmConfig = {
+  ...AKM_CFG_WITH_GATE,
+  engines: {
+    test: { kind: "llm", ...DEAD_CONNECTION },
+  },
+};
+
 beforeEach(() => {
   chatCallCount = 0;
   batchRawQueue.length = 0;
   singleRawQueue.length = 0;
   errorStatusQueue.length = 0;
+  htmlErrorStatusQueue.length = 0;
+  malformedJsonNext = false;
+  deadConnAttempts = 0;
 });
 
 afterAll(() => {
   llmServer.stop(true);
+  deadServer.stop(true);
 });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -332,6 +389,53 @@ describe("extractGraphFromBodies — unit", () => {
     expect(results[1]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
     // 1 initial attempt + 1 built-in transient retry = 2. No per-asset fallback.
     expect(chatCallCount).toBe(2);
+  });
+
+  test("(i2) network_error (dropped connection) on the batch call does not fall back per-asset", async () => {
+    const bodies = ["Alpha body.", "Beta body."];
+
+    const results = await extractGraphFromBodies(DEAD_LLM, bodies, undefined, AKM_CFG_DEAD);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    expect(results[1]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    // The dropped-connection message matches client.ts's connection-drop
+    // heuristic, so the batch call itself pays one built-in transient retry
+    // (2 accepted connections). If the fallback ran too, each of the 2
+    // per-asset calls would add its own retry pair, for 6 total.
+    expect(deadConnAttempts).toBe(2);
+  });
+
+  test("(i3) provider_html_error (5xx with an HTML body) on the batch call does not fall back per-asset", async () => {
+    const bodies = ["Alpha body.", "Beta body."];
+    // provider_html_error is not in client.ts's isRetryable set, so only the
+    // single batch attempt is made — no built-in transient retry.
+    htmlErrorStatusQueue.push(503);
+
+    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    expect(results[1]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    // 1 initial attempt only. No per-asset fallback.
+    expect(chatCallCount).toBe(1);
+  });
+
+  test("(i4) parse_error (malformed JSON envelope) on the batch call DOES fall back per-asset", async () => {
+    const bodies = ["Alpha body.", "Beta body."];
+    // The outer HTTP response body itself is not valid JSON — not a transport
+    // failure, so the per-asset fallback must still run.
+    malformedJsonNext = true;
+    singleRawQueue.push(JSON.stringify({ entities: ["Alpha"], relations: [] }));
+    singleRawQueue.push(JSON.stringify({ entities: ["Beta"], relations: [] }));
+
+    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.entities).toEqual(["Alpha"]);
+    expect(results[1]?.entities).toEqual(["Beta"]);
+    // 1 batch call + 2 per-asset fallback calls = 3.
+    expect(chatCallCount).toBe(3);
   });
 
   test("normalizes entities/relation types and keeps confidence when provided", async () => {

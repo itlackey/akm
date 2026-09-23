@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The batch graph-extraction provider-storm guard only recognized one error
+  code.** After a failed batch call, `extractGraphFromBodies` skipped the
+  per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
+  but a dead endpoint more often raises `network_error` (a dropped
+  connection) or `provider_html_error` (a provider serving an HTML error
+  page), both of which still paid the full per-asset fallback storm the
+  guard exists to prevent. The predicate is now `isTransportFailure`
+  (`src/llm/client.ts`), shared with `chatCompletion`'s retry classifier so
+  the two cannot drift apart, and covers `provider_error`, `network_error`,
+  and `provider_html_error`.
+
 ## [0.9.17-alpha.1] - 2026-09-22
 
 ### Fixed

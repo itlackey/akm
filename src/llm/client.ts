@@ -201,11 +201,24 @@ export function isContextSizeError(message: string): boolean {
 }
 
 /**
+ * Codes describing a failure to reach or get a usable response from the
+ * provider transport itself, as opposed to a malformed-but-received response
+ * (`parse_error`) or a request-shape rejection (`rate_limited`). Shared by
+ * {@link isRetryable} (which additionally requires evidence the failure is
+ * transient) and the batch graph-extraction storm guard in `graph-extract.ts`
+ * (which treats any of these as "the provider is down, stop retrying
+ * per-asset") so the two classifications cannot drift apart.
+ */
+export function isTransportFailure(err: LlmCallError): boolean {
+  return err.code === "provider_error" || err.code === "network_error" || err.code === "provider_html_error";
+}
+
+/**
  * Decide whether a first-attempt {@link LlmCallError} is eligible for a single
  * retry. Retryable: HTTP 5xx (`provider_error` with statusCode >= 500) and
  * `network_error` whose message looks like a transient connection drop.
- * NOT retryable: 4xx, `rate_limited` (429), `timeout`, `parse_error`, and
- * context-overflow-classified errors.
+ * NOT retryable: 4xx, `rate_limited` (429), `timeout`, `parse_error`,
+ * `provider_html_error`, and context-overflow-classified errors.
  *
  * The connection-drop heuristic covers the substrings emitted across runtimes
  * for a mid-flight socket close:
@@ -223,6 +236,7 @@ export function isContextSizeError(message: string): boolean {
  */
 function isRetryable(err: LlmCallError): boolean {
   if (isContextSizeError(err.message)) return false;
+  if (!isTransportFailure(err)) return false;
   if (err.code === "provider_error") {
     return typeof err.statusCode === "number" && err.statusCode >= 500;
   }
