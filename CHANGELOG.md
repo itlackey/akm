@@ -62,6 +62,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same full rescan on every subsequent run. The implicit reindex's timing
   breakdown (walk/llm/embed/finalize), previously discarded, is now logged
   at verbose level and surfaced on the improve result as `ensureIndexDurationMs`.
+- **Graph extraction sent no `json_schema` and no per-asset chunk cap, so a
+  long file could pay for dozens of LLM calls whose output was then sliced
+  down to the same 32-entity/32-relation limit anyway** (one file spent 21 of
+  27 calls and 12.9k completion tokens this way). The single-asset extraction
+  call (`extractGraphFromBody`) now sends a `responseSchema` (entities/
+  relations capped at 32 each, `additionalProperties: false` forbidding the
+  unprompted `confidence` field the prompt never asks for) and a bounded
+  `maxTokens`, via the same `supportsJsonSchema`-gated request path
+  memory-infer.ts uses. A body chunked beyond the new
+  `processes.graphExtraction.maxChunksPerAsset` (default 8) now stops after
+  the first N chunks instead of processing every one; the skipped chunks are
+  reported as `truncatedChunks` in the run's graph-extraction telemetry so
+  the coverage loss is visible rather than silently absorbed.
 
 ### Changed
 

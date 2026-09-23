@@ -423,11 +423,20 @@ describe("runGraphExtractionPass — standalone index engine gating", () => {
       runGraphExtractionPass({ config: cfg, sources: sources(), db }),
     );
 
+    // GRAPH (R12b + R20): extraction requests now carry a responseSchema; the
+    // test connection doesn't opt into `supportsJsonSchema: true`, so the
+    // lowerer also reports outputSchema as untranslated (same pattern as
+    // memory-infer.ts — see tests/llm/memory-infer.test.ts).
     expect(result.notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
         adapter: "llm",
         field: "inference.effort",
+      }),
+      expect.objectContaining({
+        code: "untranslated-field",
+        adapter: "llm",
+        field: "outputSchema",
       }),
     ]);
   });

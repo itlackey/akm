@@ -1207,6 +1207,10 @@
                       },
                       "fullScan": {
                         "type": "boolean"
+                      },
+                      "maxChunksPerAsset": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": true
@@ -2989,6 +2993,10 @@
                           },
                           "fullScan": {
                             "type": "boolean"
+                          },
+                          "maxChunksPerAsset": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": true
@@ -3883,6 +3891,10 @@
         "fullScan": {
           "type": "boolean"
         },
+        "maxChunksPerAsset": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
         "defaultSince": {
           "type": "string",
           "minLength": 1
@@ -4559,6 +4571,10 @@
                 },
                 "fullScan": {
                   "type": "boolean"
+                },
+                "maxChunksPerAsset": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": true
