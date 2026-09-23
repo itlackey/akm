@@ -29,9 +29,11 @@ import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import type { LlmFeatureKey } from "../../../llm/feature-gate";
 import { callStructured } from "../../../llm/structured-call";
 import type { EligibilitySource } from "../../proposal/proposal-types";
+import { archiveProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
 import { akmSearch } from "../../read/search";
 import { scoreEncodingSalience } from "../encoding-salience";
 import { resolveImproveLlmExecution } from "../execution";
+import { emitProposal } from "../proposal-envelope";
 import { computeSalience, upsertAssetSalience } from "../salience";
 
 // ── D-4 / #390: Top-3 similar lessons retrieval ──────────────────────────────
@@ -324,8 +326,24 @@ export async function runReflectQualityJudge(
 
 /**
  * Write a rejected lesson to `$STATE/improve/distill-rejected/<stash>/`
- * (itlackey/akm#890), append a `distill_invoked` quality-rejected event, and
- * return the `quality_rejected` envelope.
+ * (itlackey/akm#890), persist it as a real `proposals` row, append a
+ * `distill_invoked` quality-rejected event, and return the `quality_rejected`
+ * envelope.
+ *
+ * R10: the proposal row is minted through the same `createProposal`
+ * (`emitProposal`) path every other distill proposal takes, so `source:
+ * "distill"` fingerprint/backoff bookkeeping (proposal/repository.ts
+ * `checkFingerprintAndBackoff`) and the Reflexion "previously rejected"
+ * context (distill.ts's `buildDistillMessages`, reflect.ts's
+ * `readRejectedProposals`) can see it — before this, a quality rejection
+ * left only an event and a `$STATE`-side file nothing read, so the same ref
+ * was re-selected and re-rejected on every run. `review_needed` stays
+ * `pending` for a human to triage in the normal queue (matching what
+ * promote-memory.ts's comment always claimed); `quality_rejected` is minted
+ * pending, then immediately archived to `rejected` with the judge's reason.
+ * A fingerprint/backoff guard hit here (rare pre-R9; the pre-generation
+ * guard is item R9) just means no new row — the envelope + event below are
+ * written either way.
  *
  * @param stash     - Root stash directory.
  * @param inputRef  - The original input ref (for the event).
@@ -335,6 +353,7 @@ export async function runReflectQualityJudge(
  * @param reason    - Human-readable rejection reason.
  * @param extraMeta - Optional additional metadata for the event.
  * @param eventsCtx - Events context so the emit takes appendEvent's fast path (R25).
+ * @param proposalOpts - Test seam / attribution passthrough for the minted proposal row.
  */
 export function writeQualityRejection(
   stash: string,
@@ -346,9 +365,30 @@ export function writeQualityRejection(
   extraMeta: Record<string, unknown> = {},
   eligibilitySource?: EligibilitySource,
   eventsCtx?: EventsContext,
+  proposalOpts: { proposalsCtx?: ProposalsContext; sourceRun?: string; modelId?: string } = {},
 ): AkmDistillResult {
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
+
+  const mintedProposal = emitProposal(
+    { stashDir: stash, ...(proposalOpts.proposalsCtx ? { proposalsCtx: proposalOpts.proposalsCtx } : {}) },
+    {
+      ref: proposalRef,
+      source: "distill",
+      ...(proposalOpts.sourceRun !== undefined ? { sourceRun: proposalOpts.sourceRun } : {}),
+      ...(proposalOpts.modelId !== undefined ? { modelId: proposalOpts.modelId } : {}),
+      payload: { content },
+      ...(eligibilitySource ? { eligibilitySource } : {}),
+    },
+  );
+  let proposal: Proposal | undefined;
+  if (!isProposalSkipped(mintedProposal)) {
+    proposal =
+      outcome === "quality_rejected"
+        ? archiveProposal(stash, mintedProposal.id, "rejected", reason, proposalOpts.proposalsCtx)
+        : mintedProposal;
+  }
+
   const rejectDir = getDistillRejectedDir(stash);
   fs.mkdirSync(rejectDir, { recursive: true });
   const ts = timestampForFilename();
@@ -392,6 +432,7 @@ export function writeQualityRejection(
     proposalRef,
     score,
     reason,
+    ...(proposal ? { proposalId: proposal.id, proposal } : {}),
     ...extraMeta,
   };
 }

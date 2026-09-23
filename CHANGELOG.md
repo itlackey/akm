@@ -62,6 +62,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same full rescan on every subsequent run. The implicit reindex's timing
   breakdown (walk/llm/embed/finalize), previously discarded, is now logged
   at verbose level and surfaced on the improve result as `ensureIndexDurationMs`.
+- **Distill quality rejections vanished instead of persisting, so backoff and
+  Reflexion never saw them and the same ref was re-selected and re-rejected
+  on every run** (two refs were rejected 11× and 10×). `writeQualityRejection`
+  wrote only a `$STATE`-side file and an event, never a `proposals` row, so
+  `rejection_backoff`/`fingerprint_match` (proposal/repository.ts) and the
+  Reflexion "previously rejected" context had nothing to find; the distill
+  signal-delta cursor (`buildLatestProposalTsMap`) also only advanced for
+  `queued`/`skipped`/`validation_failed` outcomes, so a rejected ref stayed
+  eligible forever. `writeQualityRejection` now mints a real proposal through
+  the same `createProposal`/`archiveProposal` path every other proposal
+  source uses: a `quality_rejected` outcome is minted pending then archived
+  to `rejected` carrying the judge's reason; a `review_needed` outcome stays
+  `pending` in the normal queue for a human to triage (what
+  `promote-memory.ts`'s comment always claimed, but never did). The cursor
+  now also advances on both outcomes (still excluding `llm_failed`, where no
+  real attempt produced anything).
 
 ### Changed
 

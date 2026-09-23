@@ -283,6 +283,34 @@ describe("durable eligibility keys", () => {
       new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
     );
   });
+
+  // R10: quality_rejected and review_needed now mint a real proposal row (see
+  // quality-gate.ts's writeQualityRejection), so — like queued — the distill
+  // signal-delta cursor must advance for them too, or the same ref is
+  // re-selected and re-rejected on every run. llm_failed stays excluded: no
+  // real attempt (and no proposal) resulted.
+  test.each([
+    "quality_rejected",
+    "review_needed",
+  ] as const)("distill_invoked outcome %s advances the signal-delta cursor", (outcome) => {
+    appendEvent(
+      { eventType: "distill_invoked", ref: "memories/auth-tips", metadata: { outcome } },
+      { now: () => NEWER_MS },
+    );
+
+    expect(buildLatestProposalTsMap(["memories/auth-tips"], "distill")).toEqual(
+      new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
+    );
+  });
+
+  test("distill_invoked outcome llm_failed does not advance the signal-delta cursor", () => {
+    appendEvent(
+      { eventType: "distill_invoked", ref: "memories/auth-tips", metadata: { outcome: "llm_failed" } },
+      { now: () => NEWER_MS },
+    );
+
+    expect(buildLatestProposalTsMap(["memories/auth-tips"], "distill")).toEqual(new Map());
+  });
 });
 
 describe("reflect signal-delta eligibility", () => {

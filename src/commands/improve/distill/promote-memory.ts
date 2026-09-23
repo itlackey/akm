@@ -311,6 +311,11 @@ export async function promoteMemoryToKnowledge(
       ...(ctx.onNotices ? { onNotices: ctx.onNotices } : {}),
     });
     if (!judgeResult.pass) {
+      const proposalOpts = {
+        ...(ctx.proposalsCtx ? { proposalsCtx: ctx.proposalsCtx } : {}),
+        ...(ctx.sourceRun !== undefined ? { sourceRun: ctx.sourceRun } : {}),
+        ...(ctx.llmRunner?.connection.model ? { modelId: ctx.llmRunner.connection.model } : {}),
+      };
       if (judgeResult.reviewNeeded) {
         // Uncertainty band (2.5–3.5): queue as review_needed instead of rejecting.
         return writeQualityRejection(
@@ -323,6 +328,7 @@ export async function promoteMemoryToKnowledge(
           { reviewNeeded: true },
           ctx.eligibilitySource,
           ctx.eventsCtx,
+          proposalOpts,
         );
       }
       return writeQualityRejection(
@@ -335,6 +341,7 @@ export async function promoteMemoryToKnowledge(
         {},
         ctx.eligibilitySource,
         ctx.eventsCtx,
+        proposalOpts,
       );
     }
     // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict reaches

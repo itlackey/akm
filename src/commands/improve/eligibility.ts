@@ -526,11 +526,24 @@ export function buildLatestProposalTsMap(
     const ref = e.ref ? refByDurableKey.get(e.ref) : undefined;
     if (!ref) continue;
     // For distill_invoked we only count attempts that produced (or attempted
-    // to produce) a real proposal — config_disabled / parse-error outcomes
-    // should not move the signal-delta cursor forward.
+    // to produce) a real proposal — config_disabled outcomes (no LLM work was
+    // actually invoked) and llm_failed (transport/timeout — nothing to show
+    // for the attempt) should not move the signal-delta cursor forward.
+    // R10: quality_rejected and review_needed now also mint a real proposal
+    // row (see quality-gate.ts's `writeQualityRejection`), so — like queued —
+    // a real attempt was made and the cursor must advance, or the same
+    // already-rejected ref is re-selected and re-rejected on every run.
     if (eventType === "distill_invoked") {
       const outcome = (e.metadata as { outcome?: unknown } | undefined)?.outcome;
-      if (outcome !== "queued" && outcome !== "skipped" && outcome !== "validation_failed") continue;
+      if (
+        outcome !== "queued" &&
+        outcome !== "skipped" &&
+        outcome !== "validation_failed" &&
+        outcome !== "quality_rejected" &&
+        outcome !== "review_needed"
+      ) {
+        continue;
+      }
     }
     const ts = e.ts ?? "";
     if (ts > (out.get(ref) ?? "")) out.set(ref, ts);
