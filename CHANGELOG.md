@@ -74,7 +74,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `processes.graphExtraction.maxChunksPerAsset` (default 8) now stops after
   the first N chunks instead of processing every one; the skipped chunks are
   reported as `truncatedChunks` in the run's graph-extraction telemetry so
-  the coverage loss is visible rather than silently absorbed.
+  the coverage loss is visible rather than silently absorbed. The `improve`
+  loop's dispatch (`loop-stages.ts`) now also forwards a configured
+  `maxChunksPerAsset` to the extraction call, mirroring the existing
+  `topN`/`batchSize` wiring — without this the config key had no effect in a
+  real `akm improve` run and the default of 8 always applied.
 
 ### Changed
 

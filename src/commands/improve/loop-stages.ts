@@ -1209,6 +1209,7 @@ export async function runGraphExtractionMaintenancePass(
   ];
   const graphExtractionBatchSize =
     improveProfile?.processes?.graphExtraction?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
+  const graphExtractionMaxChunksPerAsset = improveProfile?.processes?.graphExtraction?.maxChunksPerAsset;
   // Build the set of refs actually touched this run.
   const touchedRefs = new Set<string>();
   for (const r of args.actionableRefs) touchedRefs.add(r.ref);
@@ -1269,6 +1270,9 @@ export async function runGraphExtractionMaintenancePass(
               includeTypes: graphExtractionIncludeTypes,
               batchSize: graphExtractionBatchSize,
               ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}),
+              ...(graphExtractionMaxChunksPerAsset != null
+                ? { maxChunksPerAsset: graphExtractionMaxChunksPerAsset }
+                : {}),
             },
           }),
         { engine: resolvedPlan?.processes.graphExtraction.runner?.engine, process: "graphExtraction" },
