@@ -217,17 +217,26 @@ export interface QualityJudgeOptions {
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }
 
+/** Criterion keys `buildJudgePrompt` asks the lesson judge to score. */
+const LESSON_JUDGE_CRITERIA_KEYS = ["novelty", "actionability", "nonRedundancy"] as const;
+/** Criterion keys `buildReflectJudgePrompt` asks the reflect judge to score. */
+const REFLECT_JUDGE_CRITERIA_KEYS = ["feedbackAlignment", "preservation", "quality"] as const;
+
 /**
- * R16: parse the judge's JSON response, accepting either the current
+ * R16 / r2-2: parse the judge's JSON response, accepting either the current
  * per-criterion shape (`{"scores": {...}, "reason"}`, averaged in code) or
  * the old averaged-float shape (`{"score": 1-5, "reason"}`) a model may still
  * return. Each criterion (or the bare score) must be a finite number in 1..5;
- * anything else — a missing key, an out-of-range or non-finite value, an
- * empty `scores` object, a non-string `reason` — is a parse failure so the
- * caller routes to review exactly as before.
+ * anything else — an out-of-range or non-finite value, an empty `scores`
+ * object, a non-string `reason` — is a parse failure so the caller routes to
+ * review exactly as before. `expectedCriteriaKeys` names the criteria this
+ * judge's prompt asked for; a `scores` object missing any of them is a parse
+ * failure too, so a truncated or partial response can't auto-pass on
+ * whatever keys happened to arrive.
  */
 function parseJudgeResponse(
   raw: string,
+  expectedCriteriaKeys: readonly string[],
 ): { score: number; reason: string; criteria?: Record<string, number> } | undefined {
   const parsed = parseEmbeddedJsonResponse<{ score?: unknown; scores?: unknown; reason?: unknown }>(raw);
   if (!parsed || typeof parsed.reason !== "string") return undefined;
@@ -242,6 +251,7 @@ function parseJudgeResponse(
       if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || value > 5) return undefined;
       criteria[key] = value;
     }
+    if (expectedCriteriaKeys.some((key) => !Object.hasOwn(criteria, key))) return undefined;
     const score = entries.reduce((sum, [, value]) => sum + (value as number), 0) / entries.length;
     return { score, reason, criteria };
   }
@@ -257,6 +267,7 @@ async function runQualityJudge(
   feature: LlmFeatureKey,
   config: AkmConfig,
   prompt: string,
+  expectedCriteriaKeys: readonly string[],
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
@@ -297,7 +308,7 @@ async function runQualityJudge(
       fallback: "",
       ...(options.onNotices ? { onNotices: options.onNotices } : {}),
     });
-    const parsed = parseJudgeResponse(raw);
+    const parsed = parseJudgeResponse(raw, expectedCriteriaKeys);
     if (!parsed) {
       return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
     }
@@ -340,6 +351,7 @@ export async function runLessonQualityJudge(
     "lesson_quality_gate",
     config,
     buildJudgePrompt(lessonContent, sourceContent, options.similarLessons),
+    LESSON_JUDGE_CRITERIA_KEYS,
     chat,
     options,
   );
@@ -358,6 +370,7 @@ export async function runReflectQualityJudge(
     "proposal_quality_gate",
     config,
     buildReflectJudgePrompt(candidateContent, sourceContent, feedback),
+    REFLECT_JUDGE_CRITERIA_KEYS,
     chat,
     options,
   );
