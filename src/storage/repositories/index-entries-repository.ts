@@ -920,6 +920,51 @@ export function getEntryByRef(db: Database, ref: string): { id: number } | null 
 }
 
 /**
+ * A snapshot of every `item_ref` currently in `entries`, for batched liveness
+ * checks against many candidate refs — one query instead of one
+ * `getEntryByRef` round trip per candidate (the orphan-state GC pass,
+ * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`, used to probe each
+ * pending row individually). `conceptIds` holds the part of each `item_ref`
+ * after its bundle prefix, for the bare-conceptId suffix match
+ * `findEntryIdByBundleRef` does when a ref carries no bundle — bundle slugs
+ * never contain `/` (`BUNDLE_SLUG_RE`), so an `item_ref` has exactly one
+ * `bundle//conceptId` split and "ends with `//conceptId`" collapses to plain
+ * set membership.
+ */
+export interface LiveRefSnapshot {
+  itemRefs: ReadonlySet<string>;
+  conceptIds: ReadonlySet<string>;
+}
+
+/** Build a {@link LiveRefSnapshot} from the current `entries` table. */
+export function getLiveRefSnapshot(db: Database): LiveRefSnapshot {
+  const rows = db.prepare("SELECT item_ref FROM entries").all() as { item_ref: string }[];
+  const itemRefs = new Set<string>();
+  const conceptIds = new Set<string>();
+  for (const { item_ref } of rows) {
+    itemRefs.add(item_ref);
+    const boundary = item_ref.indexOf("//");
+    if (boundary >= 0) conceptIds.add(item_ref.slice(boundary + 2));
+  }
+  return { itemRefs, conceptIds };
+}
+
+/**
+ * `getEntryByRef`'s liveness check (bundle-qualified exact match, or bare
+ * `//conceptId` suffix match across bundles, each tried with the `.md`
+ * toggle {@link withMdVariants} applies) against a prebuilt
+ * {@link LiveRefSnapshot} instead of the database — no query per call.
+ */
+export function isRefLiveInSnapshot(snapshot: LiveRefSnapshot, ref: string): boolean {
+  const parsed = parseBundleRef(ref);
+  const conceptVariants = withMdVariants(parsed.conceptId);
+  if (parsed.bundle !== undefined) {
+    return conceptVariants.some((conceptId) => snapshot.itemRefs.has(`${parsed.bundle}//${conceptId}`));
+  }
+  return conceptVariants.some((conceptId) => snapshot.conceptIds.has(conceptId));
+}
+
+/**
  * The fully-qualified `item_ref` (`<bundle>//<conceptId>`, the durable stored
  * spelling — spec §11.1 D-R3) for an entry `id`, or `null` when the row is gone
  * The usage-event / salience / feedback writers derive the durable

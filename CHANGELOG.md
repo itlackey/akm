@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The orphan-state GC pass no longer probes index.db once per pending
+  row.** `runOrphanStateGcPass` used to call `getEntryByRef` (up to two
+  statements each, via its bare-ref fallback) for every pending
+  `asset_salience` / `asset_outcome` row — 2,101 pending rows cost 83–100s
+  per run. It now builds one snapshot of every live `item_ref` in index.db up
+  front and matches every pending row against it in memory: O(1) index.db
+  queries per run instead of one probe per row, with the same live/orphan
+  resolution (including the bundle-qualified-exact and bare-conceptId-suffix
+  fallback) as before.
+
 ## [0.9.17-alpha.1] - 2026-09-22
 
 ### Fixed

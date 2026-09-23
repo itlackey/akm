@@ -38,7 +38,11 @@ import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/reposi
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
-import { getEntryByRef } from "../../storage/repositories/index-entries-repository";
+import {
+  getLiveRefSnapshot,
+  isRefLiveInSnapshot,
+  type LiveRefSnapshot,
+} from "../../storage/repositories/index-entries-repository";
 import {
   clearAssetOutcomeMissing,
   countAssetOutcomeMissing,
@@ -1583,12 +1587,13 @@ export const STATE_GC_GRACE_MS = daysToMs(7);
  * Resolve one state-table's stored `asset_ref` against the live index.
  *
  * "ref not present in entries.item_ref" is the authoritative-deletion
- * predicate (see the pass doc comment below), so this is a thin wrapper
- * around the same single-ref probe the rest of improve uses
- * (`getEntryByRef`, index-entries-repository.ts) — which already resolves
- * both storage spellings a write can produce (`salienceWriteKey`/
- * `outcomeWriteKey` = `itemRef ?? ref`): an exact bundle-qualified item_ref,
- * or a bare conceptId matched by suffix across all bundles.
+ * predicate (see the pass doc comment below), so this checks the same two
+ * spellings `getEntryByRef` (index-entries-repository.ts) resolves — an exact
+ * bundle-qualified item_ref, or a bare conceptId matched by suffix across all
+ * bundles — but against a prebuilt {@link LiveRefSnapshot}
+ * (`getLiveRefSnapshot`) instead of a database round trip per row: with up to
+ * a few thousand pending rows per run, one probe per row was the dominant
+ * cost (#R78).
  *
  * On top of that, falls back to the BARE conceptId form (`bareImproveRef` —
  * the same primitive `preparation.ts`'s `normalizeStoredKey` map is built
@@ -1600,10 +1605,10 @@ export const STATE_GC_GRACE_MS = daysToMs(7);
  * "never delete a live row" over "never miss a genuinely dead one" mirrors
  * `getEntryByRef`'s own bare-conceptId suffix-match trade-off.
  */
-function isStateRefLive(indexDb: Database, storedRef: string): boolean {
-  if (getEntryByRef(indexDb, storedRef) !== null) return true;
+function isStateRefLive(snapshot: LiveRefSnapshot, storedRef: string): boolean {
+  if (isRefLiveInSnapshot(snapshot, storedRef)) return true;
   const bare = bareImproveRef(storedRef);
-  return bare !== storedRef && getEntryByRef(indexDb, bare) !== null;
+  return bare !== storedRef && isRefLiveInSnapshot(snapshot, bare);
 }
 
 /** Per-table sweep result — the {pending, collected} shape the event and pass summary report. */
@@ -1631,13 +1636,13 @@ interface StateGcTableOps {
  * proof" (close-out plan, Workstream C).
  */
 function gcOneStateTable(
-  args: { indexDb: Database; now: number; collect: boolean } & StateGcTableOps,
+  args: { liveRefs: LiveRefSnapshot; now: number; collect: boolean } & StateGcTableOps,
 ): StateGcTableResult {
-  const { refRows, indexDb, now, collect, stamp, clear, deleteOlderThan, countPending } = args;
+  const { refRows, liveRefs, now, collect, stamp, clear, deleteOlderThan, countPending } = args;
   const toStamp: string[] = [];
   const toClear: string[] = [];
   for (const row of refRows) {
-    const live = isStateRefLive(indexDb, row.asset_ref);
+    const live = isStateRefLive(liveRefs, row.asset_ref);
     if (!live && row.missing_since == null) toStamp.push(row.asset_ref);
     else if (live && row.missing_since != null) toClear.push(row.asset_ref);
   }
@@ -1694,13 +1699,16 @@ export function runOrphanStateGcPass(
   const now = Date.now();
   let pending = 0;
   let collected = 0;
+  // #R78: one query for every live item_ref, shared by both tables' sweeps
+  // below — replaces a `getEntryByRef` round trip per pending row.
+  const liveRefs = getLiveRefSnapshot(indexDb);
 
   try {
     withStateDb(
       (stateDb) => {
         const salienceResult = gcOneStateTable({
           refRows: listAssetSalienceMissingState(stateDb),
-          indexDb,
+          liveRefs,
           now,
           collect,
           stamp: (refs, ts) => stampAssetSalienceMissing(stateDb, refs, ts),
@@ -1711,7 +1719,7 @@ export function runOrphanStateGcPass(
 
         const outcomeResult = gcOneStateTable({
           refRows: listAssetOutcomeMissingState(stateDb),
-          indexDb,
+          liveRefs,
           now,
           collect,
           stamp: (refs, ts) => stampAssetOutcomeMissing(stateDb, refs, ts),
