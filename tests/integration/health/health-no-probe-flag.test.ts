@@ -19,6 +19,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
@@ -28,6 +31,35 @@ import {
 } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
+
+/**
+ * `--probe` also gates the unrelated `scheduler-binary` advisory
+ * (`src/commands/health/scheduler-binary.ts`), which shells out to the
+ * REAL platform scheduler (`crontab -l` on Linux) regardless of the
+ * HOME/XDG sandboxing `withIsolatedAkmStorage` provides — crontab is keyed
+ * to the OS user, not `$HOME`. On a host that actually has akm entries
+ * scheduled (e.g. a dogfooding dev machine), that leaks a real "scheduled
+ * tasks are bound to an old akm version" warning into this test and flips
+ * the overall exit code to 4, unrelated to the reachability probe under
+ * test here. Prepend a fake `crontab` that reports an empty schedule so the
+ * advisory resolves to its "no scheduled task" `unknown` status, same as a
+ * clean CI runner, instead of depending on whatever happens to be in the
+ * real user crontab.
+ */
+async function withNoRealCrontab<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-no-crontab-"));
+  const fakeCrontab = path.join(dir, "crontab");
+  fs.writeFileSync(fakeCrontab, "#!/usr/bin/env sh\nexit 1\n");
+  fs.chmodSync(fakeCrontab, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}${path.delimiter}${originalPath ?? ""}`;
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
@@ -53,12 +85,14 @@ function chatCompletionResponse(): Response {
 describe("akm health --no-probe (#914)", () => {
   test("without --no-probe, the reachability probe actually fires (a real fetch)", async () => {
     let fetchCalls = 0;
-    const { code, stdout } = await withMockedFetch(
-      () => runCliCapture(["health", "--format", "json"]),
-      () => {
-        fetchCalls += 1;
-        return chatCompletionResponse();
-      },
+    const { code, stdout } = await withNoRealCrontab(() =>
+      withMockedFetch(
+        () => runCliCapture(["health", "--format", "json"]),
+        () => {
+          fetchCalls += 1;
+          return chatCompletionResponse();
+        },
+      ),
     );
     expect(fetchCalls).toBeGreaterThan(0);
     const parsed = JSON.parse(stdout) as { hardChecks: Array<{ name: string; status: string; message: string }> };
