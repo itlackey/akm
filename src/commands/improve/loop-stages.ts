@@ -60,7 +60,7 @@ import {
 } from "../../storage/repositories/salience-repository";
 import { readFreelistInfo, vacuumStateDbIfReclaimable } from "../../storage/state-db-integrity";
 import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
-import { expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
+import { checkProposalGuard, expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
 import { deriveLessonRef } from "./distill";
@@ -313,6 +313,9 @@ async function runLoopReflectPass(
       // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
       // bounded by the wall-clock deadline rather than the default per-profile timeout.
       const reflectBudgetMs = env.remainingBudgetMs();
+      const reflectEngine = resolvedPlan.processes.reflect.runner?.engine;
+      const reflectTarget =
+        options.sourceName && primaryStashDir ? { source: options.sourceName, root: primaryStashDir } : undefined;
       // Re-enter canonical named-engine lowering with the config snapshot and
       // process profile frozen into the invocation plan. The loop never injects
       // a RunnerSpec seam or observes later caller-config mutations.
@@ -326,9 +329,7 @@ async function runLoopReflectPass(
         ...(improveProfile ? { improveProfile } : {}),
         config: resolvedPlan.config as AkmConfig,
         ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
-        ...(options.sourceName && primaryStashDir
-          ? { target: { source: options.sourceName, root: primaryStashDir } }
-          : {}),
+        ...(reflectTarget ? { target: reflectTarget } : {}),
         ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
         eventSource: "improve" as const,
         // #639 — resolve the low-value filter from the ACTIVE improve profile
@@ -342,10 +343,78 @@ async function runLoopReflectPass(
         // the reflect_invoked event and the persisted proposal.
         ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
       } satisfies AkmReflectOptions;
-      const reflectResult: AkmReflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
-        engine: resolvedPlan.processes.reflect.runner?.engine,
-        process: "reflect",
-      });
+      // R9 (tier2-0917): the fingerprint/rejection-backoff guard `createProposal`
+      // runs AFTER reflect's ~39s generation + judge is computable from inputs
+      // available before dispatch. Check it here first — on a hit, skip the LLM
+      // call entirely and synthesize the same "cooldown" envelope reflect.ts's
+      // createProposal-skip branch returns, so everything below (mode
+      // classification, improve_reflect_outcome, plasticity) is unchanged. This
+      // pre-check is an optimisation only — createProposal's post-generation
+      // check stays authoritative (see checkProposalGuard's doc comment).
+      const guardStash = primaryStashDir ?? options.stashDir;
+      const guardSkip = guardStash
+        ? checkProposalGuard({
+            stash: guardStash,
+            ref: planned.ref,
+            source: "reflect",
+            ...(reflectTarget ? { target: reflectTarget } : {}),
+            ...(reflectEngine ? { modelId: reflectEngine } : {}),
+          })
+        : undefined;
+      let reflectResult: AkmReflectResult;
+      if (guardSkip) {
+        // Mirror reflect.ts's buildReflectEventEmitters().emitInvoked(): the
+        // signal-delta cursor (buildLatestProposalTsMap) reads `reflect_invoked`
+        // events regardless of outcome, so it must still advance for this ref
+        // even though reflectFn was never called.
+        appendEvent(
+          {
+            eventType: "reflect_invoked",
+            ref: planned.itemRef ?? durableImproveRef(planned.ref),
+            metadata: {
+              ...(options.task ? { task: options.task } : {}),
+              ...(reflectEngine ? { engine: reflectEngine } : {}),
+              ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+            },
+          },
+          eventsCtx,
+        );
+        // Mirror reflect.ts's buildReflectEventEmitters().emitFailed(): every
+        // reflect_invoked must be paired with a reflect_completed so observers
+        // building closed-loop telemetry see balanced invoke/complete pairs.
+        // reflectFn is never called on this path, so reflect.ts's own
+        // emitFailed (fired from its post-generation cooldown branch) never
+        // runs either — this is the pre-generation guard's own pairing.
+        appendEvent(
+          {
+            eventType: "reflect_completed",
+            ref: planned.itemRef ?? durableImproveRef(planned.ref),
+            metadata: {
+              source: "reflect",
+              ok: false,
+              reason: "cooldown",
+              subreason: "pre_generation_guard",
+              proposalSkipReason: guardSkip.reason,
+              ...(guardSkip.existingProposalId ? { existingProposalId: guardSkip.existingProposalId } : {}),
+            },
+          },
+          eventsCtx,
+        );
+        reflectResult = {
+          schemaVersion: 2,
+          ok: false,
+          reason: "cooldown",
+          error: `Proposal skipped (${guardSkip.reason}): ${guardSkip.message}`,
+          ref: planned.ref,
+          ...(reflectEngine ? { engine: reflectEngine } : {}),
+          exitCode: null,
+        };
+      } else {
+        reflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
+          engine: reflectEngine,
+          process: "reflect",
+        });
+      }
       const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
       // Content-policy guard hits (reflect size-rail rejections) are NOT
       // LLM faults — the agent responded fine, the downstream guard

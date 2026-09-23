@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   feedbackAlignment/preservation/quality) down to `parseJudgeResponse`, which
   returns a parse failure — routed to review, exactly as a malformed response
   is today — when any expected key is missing from `scores`.
+- **The reflect pre-generation proposal-guard skip (R9) emitted `reflect_invoked` with no paired `reflect_completed`.** `runLoopReflectPass`'s guard-skip branch in `loop-stages.ts` appended a synthetic `reflect_invoked` event to advance the signal-delta cursor, but never called `reflectFn`, so `reflect.ts`'s own `reflect_completed` emission never ran either — a new, permanent source of unpaired `reflect_invoked` rows for every fingerprint/backoff hit, violating the invoke/complete pairing invariant `buildReflectEventEmitters` documents. The branch now also appends a matching `reflect_completed` (`ok:false`, `reason:"cooldown"`, `subreason:"pre_generation_guard"`), mirroring `emitFailed`'s shape.
 - **The batch graph-extraction provider-storm guard only recognized one error
   code.** After a failed batch call, `extractGraphFromBodies` skipped the
   per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
@@ -166,6 +167,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one op that does execute — promote — writes a proposal to state.db, not to
   the stash. Consolidation therefore cannot change a file the index reads,
   so the reindex had no precondition it could ever satisfy.
+- **The improve loop's reflect dispatch now checks the proposal
+  fingerprint/rejection-backoff guard *before* calling reflect, not just
+  after.** `fingerprint_match` and `rejection_backoff` were evaluated only
+  inside `createProposal`, which runs after reflect's full generation and
+  quality-judge call — so a ref already guaranteed to be skipped still paid
+  the LLM cost (measured: 2–16% of reflect LLM seconds spent on refs the
+  guard then discarded). The guard's fingerprint is an input fingerprint
+  (target ref, source, before-hash, model id), computable before dispatch, so
+  `checkProposalGuard` (`src/commands/proposal/repository.ts`) exposes the
+  identical check `createProposal` runs post-generation — the two share one
+  implementation and can never disagree. `runLoopReflectPass`
+  (`src/commands/improve/loop-stages.ts`) now calls it first; a hit skips
+  `reflectFn` entirely and lands in the existing `reflect-cooldown` bucket
+  with the same `reflect_invoked` event the signal-delta cursor
+  (`buildLatestProposalTsMap`) reads, so cursor advancement and run-result
+  classification are unchanged. `createProposal`'s post-generation check
+  remains the authoritative gate.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 

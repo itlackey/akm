@@ -14,6 +14,7 @@ import {
 import {
   AUTOMATED_PROPOSAL_SOURCES,
   archiveProposal,
+  checkProposalGuard,
   createProposal as createProposalImpl,
   diffProposal,
   expireStaleProposals,
@@ -753,6 +754,87 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     expect(isProposalSkipped(distillResult)).toBe(false);
     const queue = listProposals(stash);
     expect(queue.length).toBe(2);
+  });
+});
+
+// ── R9 (tier2-0917) — pre-generation guard check ────────────────────────────
+
+describe("checkProposalGuard — pre-generation fingerprint/backoff check (R9, tier2-0917)", () => {
+  test("fingerprint_match: fires on the exact inputs a second createProposal mint would also reject", () => {
+    const stash = makeStashDir();
+    const target = { source: "stash", root: path.resolve(stash) };
+
+    // No proposal exists yet — the guard must not fire.
+    expect(checkProposalGuard({ stash, ref: "lessons/guard-fp-test", source: "reflect", target })).toBeUndefined();
+
+    const first = createProposal(stash, {
+      ref: "lessons/guard-fp-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(first)).toBe(false);
+
+    // Same target, source, and (absent) model — the differing content is not
+    // a fingerprint term (§23.6: INPUT fingerprint), same as createProposal.
+    const skip = checkProposalGuard({ stash, ref: "lessons/guard-fp-test", source: "reflect", target });
+    expect(skip?.reason).toBe("fingerprint_match");
+  });
+
+  test("rejection_backoff: fires for a ref+source rejected within the backoff window", () => {
+    const stash = makeStashDir();
+    const target = { source: "stash", root: path.resolve(stash) };
+    const first = createProposal(stash, {
+      ref: "lessons/guard-backoff-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(first)) throw new Error("unexpected skip");
+    archiveProposal(stash, first.id, "rejected", "Test rejection for guard backoff");
+
+    // Change the target so the check is a genuinely new fingerprint — the
+    // retained backoff (not the fingerprint guard) must be what fires.
+    fs.writeFileSync(path.join(stash, "lessons", "guard-backoff-test.md"), "On-disk target content.\n", "utf8");
+
+    const skip = checkProposalGuard({ stash, ref: "lessons/guard-backoff-test", source: "reflect", target });
+    expect(skip?.reason).toBe("rejection_backoff");
+  });
+
+  test("a changed source (new before-hash) is not skipped — dispatch may proceed", () => {
+    const stash = makeStashDir();
+    const target = { source: "stash", root: path.resolve(stash) };
+    const first = createProposal(stash, {
+      ref: "lessons/guard-hash-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(first)).toBe(false);
+
+    // Materialise the target so the before-hash fingerprint term changes.
+    fs.writeFileSync(path.join(stash, "lessons", "guard-hash-test.md"), "On-disk target content.\n", "utf8");
+
+    const skip = checkProposalGuard({ stash, ref: "lessons/guard-hash-test", source: "reflect", target });
+    expect(skip).toBeUndefined();
+  });
+
+  test("agrees with createProposal's own post-generation check on the same fixture", () => {
+    const stash = makeStashDir();
+    const target = { source: "stash", root: path.resolve(stash) };
+    const first = createProposal(stash, {
+      ref: "lessons/guard-agree-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(first)).toBe(false);
+
+    const preCheck = checkProposalGuard({ stash, ref: "lessons/guard-agree-test", source: "reflect", target });
+    const secondMint = createProposal(stash, {
+      ref: "lessons/guard-agree-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON.replace("Prefer rg", "Prefer fd") },
+    });
+    expect(isProposalSkipped(secondMint)).toBe(true);
+    if (!isProposalSkipped(secondMint)) throw new Error("type guard");
+    expect(preCheck?.reason).toBe(secondMint.reason);
   });
 });
 
