@@ -536,7 +536,7 @@ async function runLoopDistillPass(
   env: ImproveLoopEnv,
   tally: LoopRefTally,
 ): Promise<void> {
-  const { options, primaryStashDir, eventsCtx, improveProfile } = env;
+  const { options, primaryStashDir, eventsCtx, improveProfile, resolvedPlan } = env;
   const hasRecentFeedbackSignal = env.signalBearingSet.has(planned.ref);
   const explicitRefScope = env.scope.mode === "ref";
   // Profile gate: apply the full type-filter / raw-wiki / disabled rules to
@@ -638,6 +638,64 @@ async function runLoopDistillPass(
           );
           return;
         }
+      }
+
+      // R9 extension (r2-6, tier2-0917): the fingerprint/rejection-backoff
+      // guard `createProposal` runs AFTER distill's ~generation + judge is
+      // computable from inputs available before dispatch — mirror the
+      // reflect pre-check above so a guard hit skips the LLM call entirely.
+      // Distill's real `createProposal` call always targets the derived
+      // lesson/knowledge ref (`effectiveLessonRef` in distill.ts), never the
+      // input ref, so the guard is checked against the same lessonRef /
+      // knowledgeRef pair the pending-proposal dedup above already computes
+      // — which one distill actually mints is decided at dispatch time
+      // (memory promotion), so both are checked, same as B2 above.
+      // §23.6 fingerprint model-id term: distill resolves models, not
+      // engines (unlike reflect), so this must match `distillRunner?.
+      // connection.model` in distill.ts, not the engine name.
+      const distillModelId = resolvedPlan.processes.distill.runner?.connection.model;
+      let guardSkip: ReturnType<typeof checkProposalGuard>;
+      let guardSkipRef = lessonRef;
+      for (const candidateRef of [lessonRef, knowledgeRef]) {
+        guardSkip = checkProposalGuard({
+          stash: dedupeStashDir,
+          ref: candidateRef,
+          source: "distill",
+          ...(distillModelId ? { modelId: distillModelId } : {}),
+        });
+        if (guardSkip) {
+          guardSkipRef = candidateRef;
+          break;
+        }
+      }
+      if (guardSkip) {
+        tally.actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: guardSkip.reason },
+        });
+        // Mirror distill.ts's own proposal-skip branch (the post-generation
+        // guard `createProposal` hits): emit `distill_invoked` with a
+        // `skipped` outcome so the signal-delta cursor
+        // (buildLatestProposalTsMap, eligibility.ts) advances for this ref
+        // even though distillFn was never called.
+        appendEvent(
+          {
+            eventType: "distill_invoked",
+            // Use item_ref when resolved, otherwise the input conceptId —
+            // matches distill.ts's own distill_invoked key.
+            ref: planned.itemRef ?? durableImproveRef(planned.ref),
+            metadata: {
+              outcome: "skipped" as const,
+              proposalRef: guardSkipRef,
+              message: guardSkip.message,
+              skipReason: guardSkip.reason,
+              ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+            },
+          },
+          eventsCtx,
+        );
+        return;
       }
     }
 
