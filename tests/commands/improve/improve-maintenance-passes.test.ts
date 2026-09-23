@@ -143,7 +143,6 @@ describe("runGraphExtractionMaintenancePass", () => {
   const baseArgs = {
     actionableRefs: [],
     memoryRefsForInference: new Set<string>(),
-    reindexedAfterInference: false,
   };
 
   test("profile-disabled gate skips without invoking the seam", async () => {
@@ -205,28 +204,13 @@ describe("runGraphExtractionMaintenancePass", () => {
     });
   });
 
-  test("reindexedAfterInference=true suppresses the D9 reindex", async () => {
-    const stash = freshStash();
-    const calls: string[] = [];
-    const ctx = makeCtx(stash, {
-      resolvedPlan: {
-        processes: { graphExtraction: { runner: null }, memoryInference: { runner: null } },
-      } as unknown as MaintenanceCtx["resolvedPlan"],
-      reindexWithIndexDbReleased: (dir) => {
-        calls.push(dir);
-        return Promise.resolve();
-      },
-      graphExtractionFn: () => Promise.resolve(graphResult()),
-    });
-
-    await runGraphExtractionMaintenancePass(
-      ctx,
-      { current: fakeDb },
-      { ...baseArgs, consolidationRan: true, reindexedAfterInference: true },
-    );
-
-    expect(calls).toEqual([]);
-  });
+  // r3-1: the `reindexedAfterInference=true suppresses the D9 reindex` case
+  // this described is gone along with the parameter — `reindexedAfterInference`
+  // was a single-caller seam whose only caller (loop-stages.ts) always passed
+  // `false`, so it is now a function-local `let` with no external input. The
+  // "D9: consolidationRan without a prior reindex triggers..." test above
+  // already covers the reachable behavior (reindex fires when consolidationRan
+  // is true).
 
   test("profile knobs (fullScan/topN/batchSize/includeTypes) reach the extraction options", async () => {
     const stash = freshStash();
