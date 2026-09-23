@@ -130,6 +130,7 @@ describe("processImproveLoopRef — reflect half", () => {
     ["content_policy_reject", "reflect-guard-rejected", true],
     ["unsupported_type", "reflect-skipped", false],
     ["no_change", "reflect-skipped", false],
+    ["quality_rejected", "reflect-failed", false],
     ["agent_error", "reflect-failed", true],
   ] as const)("reflect failure reason %s → mode %s (error push: %p)", async (reason, mode, pushed) => {
     const { stashDir } = freshSandbox();

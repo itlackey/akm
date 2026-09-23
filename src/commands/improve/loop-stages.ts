@@ -362,6 +362,13 @@ async function runLoopReflectPass(
       // fault — so it routes to the `reflect-skipped` bucket and stays
       // out of recentErrors/avoidPatterns.
       const isNoChange = !reflectResult.ok && reflectResult.reason === "no_change";
+      // Quality-gate rejection (R3): the judge rejected an otherwise
+      // well-parsed proposal. Stays in the `reflect-failed` bucket for
+      // metrics continuity, but — like the deterministic skips above —
+      // must not be injected into recentErrors/avoidPatterns: the judge's
+      // rejection text is not a reusable "avoid this pattern" lesson, and
+      // feeding it back in poisoned later prompts in the same run.
+      const isQualityRejected = !reflectResult.ok && reflectResult.reason === "quality_rejected";
       tally.actions.push({
         ref: planned.ref,
         mode: reflectResult.ok
@@ -375,14 +382,15 @@ async function runLoopReflectPass(
                 : "reflect-failed",
         result: reflectResult,
       });
-      // Cooldown skips, guard rejects, type-refused skips, and noise-gate
-      // skips are not failures — do not pollute recentErrors with them
-      // (those get injected as `avoidPatterns` into the next reflect
-      // prompt). Guard rejects ARE worth showing the LLM as a learn-signal
-      // so the next iteration sees "your last expansion was too large";
-      // type-refused and no-change are deterministic and add no learning
+      // Cooldown skips, guard rejects, type-refused skips, noise-gate
+      // skips, and quality-gate rejections are not failures — do not
+      // pollute recentErrors with them (those get injected as
+      // `avoidPatterns` into the next reflect prompt). Guard rejects ARE
+      // worth showing the LLM as a learn-signal so the next iteration sees
+      // "your last expansion was too large"; type-refused, no-change, and
+      // quality-rejected are deterministic/judge-side and add no learning
       // signal.
-      if (!reflectResult.ok && !isCooldown && !isTypeRefused && !isNoChange) {
+      if (!reflectResult.ok && !isCooldown && !isTypeRefused && !isNoChange && !isQualityRejected) {
         const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
         tally.recentErrorPushes.push({ originator: "reflect", message: errMsg });
       }
