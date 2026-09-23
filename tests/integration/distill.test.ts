@@ -1973,8 +1973,13 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
 // ── R10: quality rejections persist as real proposal rows ────────────────────
 
 describe("akmDistill — R10: quality rejections persist as proposals", () => {
-  test("quality_rejected mints a rejected proposal carrying the judge's reason; a same-ref+source retry is skipped by rejection_backoff", async () => {
+  test("quality_rejected mints a rejected proposal carrying the judge's reason; a same-ref+source+model retry hits fingerprint_match, a different-model retry hits rejection_backoff", async () => {
     const stash = makeStashDir();
+    // configJudgeEnabled's single engine ("test-model") is what
+    // applyDistillQualityGate resolves as distillRunner and passes through
+    // writeQualityRejection's proposalOpts.modelId at mint — the same §23.6
+    // fingerprint term computeProposalFingerprint hashes (repository.ts).
+    const modelId = "test-model";
     const result = await akmDistill({
       ref: "skills/deploy",
       config: configJudgeEnabled(stash),
@@ -2010,16 +2015,30 @@ describe("akmDistill — R10: quality rejections persist as proposals", () => {
       listProposalsReadOnly(stash, { ref: result.proposalRef, status: "rejected", includeArchive: true }),
     ).toHaveLength(1);
 
-    // A same ref+source mint attempt inside the 30d distill backoff window is
-    // skipped before it would even reach generation — createProposal alone
-    // (no LLM call) already refuses it.
-    const retry = createProposal(stash, {
+    // A retry for the SAME ref, source, and model reproduces the mint's
+    // §23.6 input fingerprint exactly (repository.ts computeProposalFingerprint),
+    // and checkFingerprintAndBackoff tests the fingerprint FIRST — so this is
+    // skipped by fingerprint_match, not rejection_backoff.
+    const sameModelRetry = createProposal(stash, {
       ref: deriveLessonRef("skills/deploy"),
       source: "distill",
+      modelId,
       payload: { content: VALID_LESSON },
     });
-    expect(isProposalSkipped(retry)).toBe(true);
-    if (isProposalSkipped(retry)) expect(retry.reason).toBe("rejection_backoff");
+    expect(isProposalSkipped(sameModelRetry)).toBe(true);
+    if (isProposalSkipped(sameModelRetry)) expect(sameModelRetry.reason).toBe("fingerprint_match");
+
+    // A retry with a DIFFERENT model changes the fingerprint, so
+    // fingerprint_match no longer fires; the 30d rejection_backoff window is
+    // what suppresses it instead.
+    const differentModelRetry = createProposal(stash, {
+      ref: deriveLessonRef("skills/deploy"),
+      source: "distill",
+      modelId: "other-model",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(differentModelRetry)).toBe(true);
+    if (isProposalSkipped(differentModelRetry)) expect(differentModelRetry.reason).toBe("rejection_backoff");
   });
 
   test("review_needed mints a pending proposal (queued for human triage, not silently discarded)", async () => {

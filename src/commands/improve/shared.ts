@@ -22,14 +22,3 @@ export const MAX_REJECTED_PROPOSALS = 3;
 export function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
-
-/**
- * Slugify an asset ref for use in eval-case / rejection filenames: lowercase,
- * non-alphanumerics collapsed to `-`, capped at 60 characters.
- */
-export function refSlug(ref: string): string {
-  return ref
-    .replace(/[^a-z0-9]/gi, "-")
-    .toLowerCase()
-    .slice(0, 60);
-}

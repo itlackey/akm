@@ -109,10 +109,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the same `createProposal`/`archiveProposal` path every other proposal
   source uses: a `quality_rejected` outcome is minted pending then archived
   to `rejected` carrying the judge's reason; a `review_needed` outcome stays
-  `pending` in the normal queue for a human to triage (what
-  `promote-memory.ts`'s comment always claimed, but never did). The cursor
-  now also advances on both outcomes (still excluding `llm_failed`, where no
-  real attempt produced anything).
+  `pending` in the normal queue, where triage — a human, or the drain's
+  judgment tier when one is configured — decides, the same path every other
+  pending distill proposal (including quality-gate passes) already takes.
+  The cursor now also advances on both outcomes (still excluding
+  `llm_failed`, where no real attempt produced anything). A retry for the
+  same target, source, and model is skipped by `fingerprint_match` (the
+  input fingerprint recorded at mint, retained `archiveRetentionDays`,
+  default 90 days); the 30-day `rejection_backoff` window only applies once
+  the target's before-hash or the model differs. Because these machine
+  rejections are now real `rejected` rows under `source: "distill"`, `akm
+  health`'s distill accept rate (`computeAcceptRateBySource`,
+  src/commands/health/accept-rate.ts) drops relative to earlier releases and
+  no longer measures reviewer acceptance alone. Nothing gates on that
+  metric.
 - **`writeQualityRejection` could throw instead of returning a rejection
   result.** Minting the proposal row above runs the mint-time canonical
   validator (`createProposal` → `rejectProposal`,

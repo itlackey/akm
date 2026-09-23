@@ -14,7 +14,7 @@
  *
  * Coverage:
  *   (1) The single-asset extraction request carries a `response_format`
- *       json_schema and a bounded `max_tokens`.
+ *       json_schema bounded by `maxItems` and no `max_tokens`.
  *   (2) A body chunked into 20 chunks with maxChunksPerAsset unset makes only
  *       8 calls (the default cap) and reports `truncatedChunks: 12`.
  *   (3) The same body with an explicit `maxChunksPerAsset: 3` makes only 3
@@ -200,14 +200,11 @@ describe("extractGraphFromBody — bounded output (R12b + R20)", () => {
 });
 
 describe("getGraphExtractorId — unaffected by this item", () => {
-  test("(5) is deterministic for the same inputs and does not depend on maxChunksPerAsset", () => {
-    const config = { model: "llama3.2", batchSize: 4, includeTypes: ["memory", "knowledge"] };
-    const first = getGraphExtractorId(config);
-    const second = getGraphExtractorId(config);
-    expect(second).toBe(first);
-    expect(first).toStartWith("graph-extraction:");
+  test("(6) is deterministic for the same inputs and does not depend on maxChunksPerAsset", () => {
     // getGraphExtractorId takes no maxChunksPerAsset parameter — the cache
     // key (and therefore the LLM cache) is unaffected by this item.
-    expect(Object.keys(config)).toEqual(["model", "batchSize", "includeTypes"]);
+    expect(getGraphExtractorId({ model: "llama3.2", batchSize: 4, includeTypes: ["memory", "knowledge"] })).toBe(
+      "graph-extraction:v2:llama3.2:fd95c873f8b72020",
+    );
   });
 });
