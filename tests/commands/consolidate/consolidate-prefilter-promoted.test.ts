@@ -16,7 +16,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { akmConsolidate, loadExistingKnowledgeBodyHashes } from "../../../src/commands/improve/consolidate";
+import {
+  akmConsolidate,
+  inspectConsolidationPool,
+  loadExistingKnowledgeBodyHashes,
+} from "../../../src/commands/improve/consolidate";
 import { cacheHash } from "../../../src/commands/improve/content-hash";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -32,10 +36,11 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-function writeMemory(name: string, body: string): void {
+function writeMemory(name: string, body: string, mtime?: Date): void {
   const filePath = path.join(stashDir, "memories", `${name}.md`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `---\ndescription: ${name} memory\n---\n\n${body}\n`, "utf8");
+  if (mtime) fs.utimesSync(filePath, mtime, mtime);
 }
 
 function writeKnowledge(name: string, body: string): void {
@@ -81,6 +86,55 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     expect(result.ok).toBe(true);
     expect(result.prefilteredAlreadyPromoted).toBe(0);
     expect(result.processed).toBe(2);
+  });
+
+  test("the limit cap selects from the pre-filtered pool, not the unfiltered one (R2-1)", async () => {
+    // Oldest two memories are already promoted verbatim into knowledge/; a
+    // limit-1 run must reach the one fresh memory instead of re-selecting and
+    // dropping an already-promoted one every time.
+    writeMemory("dup-oldest", "Oldest duplicate body content that is long enough to matter.", new Date(2020, 0, 1));
+    writeMemory(
+      "dup-second-oldest",
+      "Second oldest duplicate body content that is long enough to matter.",
+      new Date(2020, 0, 2),
+    );
+    writeMemory("fresh-newest", "Fresh newest body content that is long enough to matter.", new Date(2020, 0, 3));
+    writeKnowledge(
+      "already-promoted-1",
+      "---\ndescription: already promoted copy\ntags: [x]\n---\n\nOldest duplicate body content that is long enough to matter.\n",
+    );
+    writeKnowledge(
+      "already-promoted-2",
+      "---\ndescription: already promoted copy\ntags: [x]\n---\n\nSecond oldest duplicate body content that is long enough to matter.\n",
+    );
+
+    const result = await akmConsolidate({ stashDir, config: CONFIG, limit: 1 });
+
+    expect(result.ok).toBe(true);
+    expect(result.prefilteredAlreadyPromoted).toBe(2);
+    // The surviving fresh memory reaches chunking; the two duplicates never do.
+    expect(result.processed).toBe(1);
+    expect(result.failedChunkMemories).toBe(1);
+  });
+
+  test("the preview/eligibility pool (inspectConsolidationPool) excludes already-promoted memories the same way", () => {
+    writeMemory("dup-oldest", "Oldest duplicate body content that is long enough to matter.", new Date(2020, 0, 1));
+    writeMemory("fresh-newest", "Fresh newest body content that is long enough to matter.", new Date(2020, 0, 2));
+    writeKnowledge(
+      "already-promoted",
+      "---\ndescription: already promoted copy\ntags: [x]\n---\n\nOldest duplicate body content that is long enough to matter.\n",
+    );
+
+    const pool = inspectConsolidationPool(
+      { config: CONFIG, limit: 1 },
+      stashDir,
+      [],
+      loadExistingKnowledgeBodyHashes(stashDir),
+    );
+
+    expect(pool.prefilteredAlreadyPromoted).toBe(1);
+    expect(pool.candidatePoolSize).toBe(1);
+    expect(pool.memories.map((memory) => memory.name)).toEqual(["fresh-newest"]);
   });
 
   test("loadExistingKnowledgeBodyHashes and cacheHash agree on the same body despite frontmatter/whitespace differences", () => {

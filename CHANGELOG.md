@@ -31,11 +31,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   LLM (`shouldSkipPromotionBodyDuplicate`), so a pool where the large
   majority of memories were already-promoted duplicates still paid the full
   chunk/LLM cost on all of them before being skipped.
-  `narrowConsolidationPool` now drops those memories before any chunking or
+  `inspectConsolidationPool` now drops those memories before any chunking or
   LLM work, sharing one `loadExistingKnowledgeBodyHashes` call and the same
   `cacheHash` domain with the post-LLM check so the two cannot disagree. The
   dropped count is reported as `prefilteredAlreadyPromoted` on the
-  consolidate result and in a warning line.
+  consolidate result and in a warning line. The pre-filter also now runs
+  *before* the `consolidate.limit` cap (previously after), so a run with a
+  limit set selects its oldest-modified window from the pre-filtered pool
+  instead of re-selecting and re-dropping the same permanently-undeletable
+  duplicates every run while fresh memories past the cap went unreached; the
+  preview/eligibility path (`preparation.ts`) computes and passes the same
+  hash set so the reported candidate pool agrees with what the run will act
+  on. A live (non-preview) `akm improve` run reuses that same hash set for
+  the actual `akmConsolidate` call instead of recomputing it, so a run still
+  walks `knowledge/` only once.
 - **`improve`'s start-of-run index rescan ran after triage dirtied the stash,
   not before it.** Proposal triage promotes accepted proposals straight into
   the flat `knowledge/` root, and the blocking `ensureIndex` call that is

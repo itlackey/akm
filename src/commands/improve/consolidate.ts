@@ -144,6 +144,14 @@ export interface AkmConsolidateOptions {
    * Absent = `estimatedBudgetFractionUsed` is omitted from perf telemetry.
    */
   runBudgetMs?: number;
+  /**
+   * Pre-computed `loadExistingKnowledgeBodyHashes(stashDir)` result (R2-1/R3-1).
+   * When the caller (runConsolidationPass) already walked knowledge/ for the
+   * pool preview, it passes the same set here so akmConsolidateInner reuses
+   * it instead of walking knowledge/ a second time. Absent (standalone
+   * `akm consolidate`) computes it internally as before.
+   */
+  existingKnowledgeBodyHashes?: Set<string>;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -769,6 +777,8 @@ export interface ConsolidationPoolSnapshot {
   /** Pool after incremental narrowing but before the configured limit. */
   dedupPoolSize: number;
   memories: MemoryEntry[];
+  /** Memories dropped because their body already exists verbatim in `knowledge/`. */
+  prefilteredAlreadyPromoted: number;
 }
 
 interface ConsolidationSourceOwner {
@@ -811,6 +821,7 @@ export function inspectConsolidationPool(
   opts: AkmConsolidateOptions,
   stashDir: string,
   warnings: string[],
+  existingKnowledgeBodyHashes: Set<string> = new Set(),
   access?: { readOnly?: boolean },
 ): ConsolidationPoolSnapshot {
   const readOnly = access?.readOnly === true;
@@ -842,6 +853,17 @@ export function inspectConsolidationPool(
     );
   }
 
+  // Drop already-promoted memories before the limit cap selects its window,
+  // so the cap picks from memories the run can actually act on (R2-1: with
+  // the pre-filter applied afterward, the cap's oldest-modified-first window
+  // was drawn from the unfiltered pool, re-selecting and re-dropping the same
+  // permanently-undeletable duplicates on every run).
+  const { memories: prefiltered, prefilteredAlreadyPromoted } = prefilterAlreadyPromotedMemories(
+    memories,
+    existingKnowledgeBodyHashes,
+  );
+  memories = prefiltered;
+
   if (opts.limit !== undefined && memories.length > opts.limit) {
     const mtimeOf = (memory: MemoryEntry): number => {
       try {
@@ -858,7 +880,7 @@ export function inspectConsolidationPool(
     memories = memories.slice(0, opts.limit);
   }
 
-  return { poolSize, candidatePoolSize: memories.length, dedupPoolSize, memories };
+  return { poolSize, candidatePoolSize: memories.length, dedupPoolSize, memories, prefilteredAlreadyPromoted };
 }
 
 /**
@@ -896,12 +918,13 @@ function prefilterAlreadyPromotedMemories(
 
 /**
  * Pass 1 — narrow the memory pool before any LLM work: drop stale DB entries,
- * apply incremental-since narrowing, cap to `opts.limit` (oldest-modified
- * first), and pre-filter memories already promoted verbatim into
- * `knowledge/` (R5 (b) — discovered previously only after the LLM chunk call,
- * paying for the judgement on ~84% of the pool just to skip it). Returns an
- * early envelope when the pool empties at any stage; otherwise returns the
- * narrowed pool and the state the plan/apply passes consume.
+ * apply incremental-since narrowing, pre-filter memories already promoted
+ * verbatim into `knowledge/` (R5 (b) — discovered previously only after the
+ * LLM chunk call, paying for the judgement on ~84% of the pool just to skip
+ * it), and cap to `opts.limit` (oldest-modified first, drawn from the
+ * pre-filtered pool — R2-1). Returns an early envelope when the pool empties
+ * at any stage; otherwise returns the narrowed pool and the state the
+ * plan/apply passes consume.
  */
 async function narrowConsolidationPool(
   opts: AkmConsolidateOptions,
@@ -910,11 +933,8 @@ async function narrowConsolidationPool(
   warnings: string[],
   existingKnowledgeBodyHashes: Set<string>,
 ): Promise<NarrowPoolResult> {
-  const snapshot = inspectConsolidationPool(opts, stashDir, warnings);
-  const { memories, prefilteredAlreadyPromoted } = prefilterAlreadyPromotedMemories(
-    snapshot.memories,
-    existingKnowledgeBodyHashes,
-  );
+  const snapshot = inspectConsolidationPool(opts, stashDir, warnings, existingKnowledgeBodyHashes);
+  const { memories, prefilteredAlreadyPromoted } = snapshot;
   if (prefilteredAlreadyPromoted > 0) {
     warnings.push(
       `Consolidation: pre-filtered ${prefilteredAlreadyPromoted} memor${
@@ -1413,8 +1433,10 @@ async function akmConsolidateInner(
   // Loaded once and shared with the pre-filter (narrowConsolidationPool) and
   // the post-LLM promote-dedup check (shouldSkipPromotionBodyDuplicate) below
   // — knowledge/ can hold thousands of files, so walking it twice per run
-  // would double that cost for no benefit.
-  const existingKnowledgeBodyHashes = loadExistingKnowledgeBodyHashes(stashDir);
+  // would double that cost for no benefit. When the caller already walked
+  // knowledge/ for the pool preview (runConsolidationPass, R2-1/R3-1), reuse
+  // that set instead of walking it again here.
+  const existingKnowledgeBodyHashes = opts.existingKnowledgeBodyHashes ?? loadExistingKnowledgeBodyHashes(stashDir);
 
   // -- Pass 1: narrow the memory pool (may early-return an envelope) ----------
   const narrowed = await narrowConsolidationPool(opts, stashDir, startMs, warnings, existingKnowledgeBodyHashes);
