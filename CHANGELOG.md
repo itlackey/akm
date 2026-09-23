@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.1] - 2026-09-22
+
 ### Fixed
 
 - **Reflect quality-gate rejections were mislabelled `parse_error` and fed
