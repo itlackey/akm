@@ -208,6 +208,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `events_purged` | Old events deleted by improve maintenance (90-day default retention) | `purgedCount`, `retentionDays` |
 | `improve_runs_purged` | Old `improve_runs` rows deleted by improve maintenance (same retention window as events) | `purgedCount`, `retentionDays` |
 | `improve_cycle_metrics_purged` | Old `improve_cycle_metrics` rows (365-day retention) deleted by improve maintenance | `purgedCount`, `retentionDays` |
+| `state_db_vacuumed` | state.db was VACUUMed after the retention purge because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `task_logs_purged` | Old scheduled-task log files purged by improve maintenance | |
 
 *Workflows*

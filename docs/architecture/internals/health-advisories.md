@@ -18,7 +18,7 @@ changes.
 |---|---|---|
 | `state-db-schema` | state.db is missing required tables. | Re-run `akm bundle create`; a fresh/older DB was opened. |
 | `state-db-round-trip` | Append/read probe against state.db failed. | Check disk/permissions on the state.db path; the store is unwritable. |
-| `state-db-integrity` | state.db failed `PRAGMA quick_check`, or more than half its pages are free (reclaimable by VACUUM). | Back up state.db, then run `sqlite3 state.db ".dump" \| sqlite3 state.new.db`, verify `state.new.db` passes `quick_check`, and swap it in; the freelist warning clears on its own on the next improve retention purge once r2-1 lands. |
+| `state-db-integrity` | state.db failed `PRAGMA quick_check`, or more than half its pages are free (reclaimable by VACUUM). | Back up state.db, then run `sqlite3 state.db ".dump" \| sqlite3 state.new.db`, verify `state.new.db` passes `quick_check`, and swap it in; the freelist warning clears on its own on the next `akm improve` retention purge, which VACUUMs state.db above the same 50% threshold. |
 | `task-log-backing` | task_history rows reference log files missing on disk. | Logs were pruned/moved out from under the DB; safe to ignore if intentional, else restore the log dir. |
 | `active-runs` | A task run has exceeded the stale threshold (>15 min). | Inspect with `akm task history`; a lane is likely wedged — kill/re-run it. |
 | `default-engine` | The configured general default agent, SDK, or LLM engine is missing or incomplete. | Correct `defaults.engine`; SDK operation requires the `opencode` binary on PATH (the npm SDK is an HTTP client and spawns `opencode serve`), while a fallback LLM is checked only when configured. |
