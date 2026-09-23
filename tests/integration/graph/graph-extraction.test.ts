@@ -40,6 +40,8 @@ let extractor: (body: string) => {
 });
 let extractorCallCount = 0;
 let onLlmRequest: ((request: Request) => void) | undefined;
+/** Queue of HTTP status codes to return instead of a 200, for provider-error/failure tests (R2). */
+const errorStatusQueue: number[] = [];
 
 /**
  * Detect a batched graph-extract prompt and split it back into per-asset bodies.
@@ -70,6 +72,10 @@ const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
     onLlmRequest?.(request);
+    if (errorStatusQueue.length > 0) {
+      const status = errorStatusQueue.shift() as number;
+      return new Response("simulated provider error", { status });
+    }
     const payload = (await request.json()) as {
       messages?: Array<{ role?: string; content?: string }>;
     };
@@ -126,6 +132,7 @@ beforeEach(() => {
   extractor = () => ({ entities: [], relations: [] });
   extractorCallCount = 0;
   onLlmRequest = undefined;
+  errorStatusQueue.length = 0;
 });
 
 afterEach(() => {
@@ -1131,5 +1138,97 @@ describe("runGraphExtractionPass — enabled", () => {
       files: Array<{ entities: string[] }>;
     };
     expect(repaired.files[0]?.entities).toContain("ServiceC");
+  });
+});
+
+// ── runGraphExtractionPass — R2: failed extractions must not become
+//    permanent cache hits, and a systemically dead provider must not be
+//    hammered indefinitely ────────────────────────────────────────────────
+
+describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
+  test("a failed llm_enrichment_cache row and a failed graph node are treated as a miss and retried", async () => {
+    const filePath = writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    extractor = () => ({ entities: ["ServiceA"], relations: [] });
+
+    await withGraphDb("failed-cache-seed", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
+    expect(extractorCallCount).toBe(1);
+
+    // Simulate the R2 outage: poison both the cache row and the persisted
+    // graph node for the SAME body hash with a `status:"failed"` result —
+    // exactly what a dead provider wrote for ~30,900 files on 2026-09-13.
+    // Existing rows are left on disk (not deleted), only overwritten in place.
+    await withGraphDb("failed-cache-poison", (db) => {
+      const failedJson = JSON.stringify({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+      db.prepare("UPDATE llm_enrichment_cache SET result_json = ? WHERE asset_ref = ?").run(failedJson, filePath);
+      db.prepare("UPDATE graph_files SET status = 'failed', reason = 'llm_error' WHERE file_path = ?").run(filePath);
+      db.prepare("DELETE FROM graph_file_entities WHERE file_path = ?").run(filePath);
+    });
+
+    extractor = () => ({ entities: ["ServiceA2"], relations: [] });
+    const second = await withGraphDb("failed-cache-retry", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
+
+    // A failed cached result must never be reused — the file is re-extracted,
+    // and the FRESH successful result (not the poisoned one) lands in the
+    // cache. (graph_files itself skips rewriting entities when the body hash
+    // is unchanged — a pre-existing, unrelated optimization — so the cache
+    // table, which always overwrites, is what this asserts on.)
+    expect(extractorCallCount).toBe(2);
+    expect(second.extracted).toBe(1);
+    await withGraphDb("failed-cache-read", (db) => {
+      const row = db.prepare("SELECT result_json FROM llm_enrichment_cache WHERE asset_ref = ?").get(filePath) as
+        | { result_json: string }
+        | undefined;
+      expect(row).toBeDefined();
+      const cached = JSON.parse(row?.result_json ?? "{}");
+      expect(cached.status).toBe("extracted");
+      expect(cached.entities).toEqual(["ServiceA2"]);
+    });
+  });
+
+  test("a failed extraction is not written to llm_enrichment_cache", async () => {
+    writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    // Provider dies for this call: first attempt + client.ts's single
+    // built-in retry both return 500.
+    errorStatusQueue.push(500, 500);
+
+    const result = await withGraphDb("no-cache-on-failure", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
+    expect(result.considered).toBe(1);
+    // The failed result IS still persisted as a graph row (existing rows are
+    // never deleted/hidden) but must NOT be written into the cache table.
+    await withGraphDb("no-cache-on-failure-read", (db) => {
+      const cacheCount = (db.prepare("SELECT COUNT(*) AS cnt FROM llm_enrichment_cache").get() as { cnt: number }).cnt;
+      expect(cacheCount).toBe(0);
+    });
+    const graph = (await withGraphDb("no-cache-on-failure-graph", (db) => loadStoredGraphSnapshot(tmpStash, db))) as {
+      files: Array<{ status?: string; reason?: string }>;
+    };
+    expect(graph.files[0]?.status).toBe("failed");
+  });
+
+  test("a failure-rate abort stops the run early, keeps successful partial results, and reports it in telemetry", async () => {
+    for (const name of ["m1", "m2", "m3", "m4", "m5"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
+    extractor = () => ({ entities: ["Never"], relations: [] });
+    // The first 4 (of 5) eligible files fail: each attempt is a provider
+    // error, and client.ts's single built-in retry also fails — 2 queued
+    // statuses per file, 8 total. The 5th file must never be dispatched.
+    errorStatusQueue.push(500, 500, 500, 500, 500, 500, 500, 500);
+
+    const result = await withGraphDb("failure-rate-abort", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
+
+    expect(result.considered).toBe(5);
+    // Only the 4 attempted-and-failed files were processed; the 5th was
+    // never dispatched to the real (would-succeed) extractor.
+    expect(extractorCallCount).toBe(0);
+    expect(result.extracted).toBe(0);
+    expect(result.telemetry?.aborted).toBe(true);
+    expect(result.warnings?.some((w) => /aborted.*failure rate/i.test(w))).toBe(true);
   });
 });
