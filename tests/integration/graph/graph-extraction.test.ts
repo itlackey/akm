@@ -1214,13 +1214,22 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
   test("a failure-rate abort stops the run early, keeps successful partial results, and reports it in telemetry", async () => {
     for (const name of ["m1", "m2", "m3", "m4", "m5"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
     extractor = () => ({ entities: ["Never"], relations: [] });
-    // The first 4 (of 5) eligible files fail: each attempt is a provider
-    // error, and client.ts's single built-in retry also fails — 2 queued
-    // statuses per file, 8 total. The 5th file must never be dispatched.
+    // batchSize:1 so each file is its own `extractGraphFromBodies` dispatch —
+    // the abort counts one attempt per dispatch, not per file inside a
+    // shared batch (a single batched provider_error must not itself trip
+    // the guard). The first 4 (of 5) eligible files fail: each dispatch is a
+    // provider error, and client.ts's single built-in retry also fails — 2
+    // queued statuses per file, 8 total. The 5th file must never be dispatched.
     errorStatusQueue.push(500, 500, 500, 500, 500, 500, 500, 500);
 
     const result = await withGraphDb("failure-rate-abort", (db) =>
-      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+      runGraphExtractionPass({
+        config: configWithLlm({
+          index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 1 } },
+        }),
+        sources: sources(),
+        db,
+      }),
     );
 
     expect(result.considered).toBe(5);

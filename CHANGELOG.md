@@ -21,7 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   each asset in that batch is recorded as failed directly. Graph extraction
   now aborts the rest of the run (returning the partial results already
   extracted) once the failure rate crosses 50% over at least 4 attempted
-  files, mirroring consolidate's existing failure-rate guard.
+  extraction dispatches, mirroring consolidate's existing failure-rate guard.
+  The abort counts one attempt per `extractGraphFromBodies` dispatch, not per
+  file inside its batch — per-file counting let a single batched
+  `provider_error` trip the guard after one HTTP failure whenever
+  `graphExtractionBatchSize` was at its default of 4.
 
 ## [0.9.16] - 2026-09-22
 

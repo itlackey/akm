@@ -593,6 +593,8 @@ async function extractGraphBatches(args: {
       }
 
       let llmIndex = 0;
+      let dispatchHadResult = false;
+      let dispatchAllFailed = true;
       for (let index = 0; index < chunk.length; index++) {
         const plan = chunk[index];
         if (!plan || plan.kind !== "model") continue;
@@ -605,7 +607,8 @@ async function extractGraphBatches(args: {
           ...(extraction.status ? { status: extraction.status } : {}),
           ...(extraction.reason ? { reason: extraction.reason } : {}),
         };
-        recordGraphExtractionAttempt(abortState, isFailedExtractionStatus(cacheShape.status));
+        dispatchHadResult = true;
+        if (!isFailedExtractionStatus(cacheShape.status)) dispatchAllFailed = false;
         if (db && !isFailedExtractionStatus(cacheShape.status)) {
           upsertLlmCacheEntry(db, plan.candidate.absPath, plan.bodyHash, JSON.stringify(cacheShape), cacheVariant);
         }
@@ -616,6 +619,13 @@ async function extractGraphBatches(args: {
           ...cacheShape,
         };
       }
+      // One attempt per `extractGraphFromBodies` dispatch (this chunk's batch
+      // call), not one per file it covers — mirrors consolidate.ts's
+      // totalChunksProcessed++/totalChunksFailed, which count once per chunk
+      // regardless of how many memories are in it. Counting per file let a
+      // single batched provider_error satisfy GRAPH_EXTRACTION_ABORT_MIN_ATTEMPTS
+      // after one HTTP failure whenever graphExtractionBatchSize >= 4.
+      if (dispatchHadResult) recordGraphExtractionAttempt(abortState, dispatchAllFailed);
       reportChunkProgress();
     },
     llmRunner.connection.concurrency ?? 1,
