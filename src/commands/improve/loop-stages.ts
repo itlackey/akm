@@ -1036,7 +1036,6 @@ async function runMaintenancePassesUnderLease(
 ): Promise<MaintenanceUnderLeaseResult> {
   const { allWarnings } = args;
   const actions: ImproveActionResult[] = [];
-  const reindexedAfterInference = false;
   try {
     dbCell.current = args.openIndexDb();
 
@@ -1047,11 +1046,10 @@ async function runMaintenancePassesUnderLease(
 
     // #R78: index exactly the files memory inference wrote (derived children
     // + rewritten parents) instead of a full reindex — typically one written
-    // fact per run, which used to pay a full-corpus reindex regardless.
-    // `reindexedAfterInference` is deliberately left false: this is not a
-    // full reindex, so the consolidation branch below still runs its own
-    // full reindex when consolidation wrote something this incremental step
-    // never touched.
+    // fact per run, which used to pay a full-corpus reindex regardless. This
+    // is not a full reindex, so the consolidation branch below still runs its
+    // own full reindex when consolidation wrote something this incremental
+    // step never touched.
     if (memoryInference && memoryInference.writtenPaths.length > 0) {
       info(`[improve] indexing ${memoryInference.writtenPaths.length} file(s) written by memory inference`);
       try {
@@ -1078,7 +1076,6 @@ async function runMaintenancePassesUnderLease(
       actionableRefs: args.actionableRefs,
       memoryRefsForInference: args.memoryRefsForInference,
       consolidationRan: args.consolidationRan,
-      reindexedAfterInference,
     });
     if (graph.action) actions.push(graph.action);
     allWarnings.push(...graph.warnings);
@@ -1230,8 +1227,6 @@ export async function runGraphExtractionMaintenancePass(
     memoryRefsForInference: Set<string>;
     /** D9: true when consolidation ran and wrote at least one record this improve run. */
     consolidationRan?: boolean;
-    /** True when the memory-inference reindex already refreshed the handle. */
-    reindexedAfterInference: boolean;
   },
 ): Promise<{
   graphExtraction?: GraphExtractionResult;
@@ -1244,7 +1239,10 @@ export async function runGraphExtractionMaintenancePass(
   let graphExtraction: GraphExtractionResult | undefined;
   let durationMs = 0;
   let action: ImproveActionResult | undefined;
-  let reindexedAfterInference = args.reindexedAfterInference;
+  // The caller's own incremental step (indexWrittenAssets, above) is not a
+  // full reindex, so this always starts false — the consolidation branch
+  // below still gets its own chance to run reindexWithIndexDbReleased.
+  let reindexedAfterInference = false;
 
   const graphEnabled = resolvedPlan ? true : isProcessEnabled("index", "graph_extraction", config);
   const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
