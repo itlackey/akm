@@ -30,7 +30,7 @@ import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn, warnVerbose } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { LoweredExecutionDispatchLease } from "../integrations/agent/execution-lowering";
-import { type ChatMessage, isContextSizeError } from "./client";
+import { type ChatMessage, isContextSizeError, LlmCallError } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 import { type CallStructuredRequest, callStructured, type StructuredLlmRunner } from "./structured-call";
 
@@ -644,6 +644,13 @@ export async function extractGraphFromBodies(
   }
   let batchContextError = false;
   let nonArrayResponse = false;
+  // R2: a dead/erroring provider must not be hammered with a per-asset
+  // fallback retry for every body in the batch — that is what turned one
+  // outage into 15,453 additional retry attempts. `provider_error` (the
+  // transport already retried once, per client.ts's isRetryable) means the
+  // provider itself is failing, not that this particular response was
+  // malformed; skip the fallback and record every asset as failed instead.
+  let batchProviderError = false;
 
   const batchOutcome = await tryLlmFeature<
     { kind: "value"; value: unknown[] | null } | { kind: "config-error"; error: ConfigError }
@@ -716,6 +723,13 @@ export async function extractGraphFromBodies(
             `graph extraction (batch): context size exceeded for ${nonEmptyBodies.length} asset(s); ` +
               `skipping batch. promptChars=${userPrompt.length}${formatContextHint(llmRunner)}`,
           );
+        } else if (err instanceof LlmCallError && err.code === "provider_error") {
+          batchProviderError = true;
+          bumpTelemetry(options.telemetry, "failureCount", nonEmptyBodies.length);
+          warn(
+            `graph extraction (batch): provider error for ${nonEmptyBodies.length} asset(s); ` +
+              `skipping per-asset fallback retries. promptChars=${userPrompt.length}${formatContextHint(llmRunner)}: ${errMsg}`,
+          );
         } else {
           warn(
             `graph extraction (batch) failed for ${nonEmptyBodies.length} asset(s); ` +
@@ -737,6 +751,12 @@ export async function extractGraphFromBodies(
   // Map successful batch results back to their original indices.
   if (batchResult !== null) {
     applySuccessfulBatchResults(results, batchResult, nonEmptyBodies, nonEmptyIndices, batchState);
+  } else if (batchProviderError) {
+    // No per-asset fallback against a failing provider — record every asset
+    // in this batch as a genuine failure so it is neither silently empty nor
+    // retried again below.
+    for (const origIdx of nonEmptyIndices)
+      results[origIdx] = { entities: [], relations: [], status: "failed", reason: "llm_error" };
   }
 
   if (batchContextError && nonEmptyBodies.length > 1) {
@@ -772,6 +792,7 @@ export async function extractGraphFromBodies(
   // due to context size, in which case individual calls would also fail.
   const fallbackIndices = nonEmptyIndices.filter((_origIdx, j) => {
     if (batchContextError) return false; // skip individual retries on context error
+    if (batchProviderError) return false; // skip individual retries against a failing provider
     // Result is still empty → needs a fallback call.
     if (batchResult === null) return true;
     // batchResult was shorter than the number of non-empty bodies.

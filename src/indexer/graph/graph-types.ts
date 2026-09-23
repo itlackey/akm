@@ -66,6 +66,12 @@ export interface GraphExtractionTelemetry {
    * observable instead of silent (#635).
    */
   nonArrayBatchFailures?: number;
+  /**
+   * Set when the run stopped early because the failure rate crossed the
+   * threshold (R2) — the eligible set was only partially processed; files not
+   * yet attempted were left untouched rather than written as empty/failed.
+   */
+  aborted?: boolean;
 }
 
 /** Persisted graph shape loaded from SQLite. */

@@ -284,6 +284,41 @@ function buildLowQualityWarnings(quality: GraphQualityTelemetry, telemetry: Grap
   return warnings;
 }
 
+/**
+ * Failure-rate abort for the extraction run (R2), modelled on consolidate's
+ * chunk-level guard (`ABORT_MIN_CHUNKS`/`ABORT_FAILURE_RATE` in
+ * consolidate.ts, C-6/#392): rate-based over a minimum sample so a couple of
+ * transient per-file failures cannot abort a run that would otherwise
+ * recover, while a systemically dead provider stops burning through the
+ * rest of the eligible set. The existing "one failure must not abort the
+ * rest" behaviour for individual files is untouched — this only stops
+ * further model calls once the failure rate itself is the signal.
+ */
+const GRAPH_EXTRACTION_ABORT_MIN_ATTEMPTS = 4;
+const GRAPH_EXTRACTION_ABORT_FAILURE_RATE = 0.5;
+
+interface GraphExtractionAbortState {
+  attempts: number;
+  failures: number;
+  aborted: boolean;
+  message?: string;
+}
+
+/** Records one attempted (non-cache-hit) model call and flips `aborted` once the failure-rate threshold is crossed. */
+function recordGraphExtractionAttempt(state: GraphExtractionAbortState, failed: boolean): void {
+  if (state.aborted) return;
+  state.attempts += 1;
+  if (failed) state.failures += 1;
+  if (state.attempts < GRAPH_EXTRACTION_ABORT_MIN_ATTEMPTS) return;
+  const failureRate = state.failures / state.attempts;
+  if (failureRate < GRAPH_EXTRACTION_ABORT_FAILURE_RATE) return;
+  state.aborted = true;
+  state.message =
+    `graph extraction aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${state.attempts} ` +
+    `attempt(s) (>= ${GRAPH_EXTRACTION_ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable.`;
+  warn(state.message);
+}
+
 export function getGraphExtractionIncludeTypes(config: AkmConfig): string[] {
   const configured = getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes;
   if (!configured || configured.length === 0) return [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES];
@@ -328,6 +363,21 @@ function validateGraphCacheShape(raw: unknown): GraphCacheShape | undefined {
     ...(typeof obj.status === "string" ? { status: obj.status as GraphExtractionStatus } : {}),
     ...(typeof obj.reason === "string" ? { reason: obj.reason as GraphExtractionReason } : {}),
   };
+}
+
+/**
+ * A `"failed"` extraction (provider error, invalid JSON, context overflow —
+ * see {@link GraphExtractionStatus}) must never be reused as a cache hit or
+ * re-persisted as one. R2: a dead provider upserted ~30,900 rows shaped
+ * `{"entities":[],"relations":[],"status":"failed","reason":"llm_error"}`,
+ * and both hit paths (the `llm_enrichment_cache` lookup and `reuseGraphNode`
+ * over the previous graph) validated the shape without checking `status`, so
+ * 92% of the persisted graph became a permanent hit that never retried. A
+ * failed result becomes a miss naturally and is overwritten on the next
+ * successful extraction; existing failed rows are left on disk untouched.
+ */
+function isFailedExtractionStatus(status: GraphExtractionStatus | undefined): boolean {
+  return status === "failed";
 }
 
 function loadGraphFile(stashRoot: string, db?: Database): LoadedGraphFile {
@@ -382,6 +432,7 @@ function reuseGraphNode(
   if (node.type !== candidate.type) return undefined;
   if (typeof node.bodyHash !== "string" || node.bodyHash.length === 0) return undefined;
   if (node.bodyHash !== bodyHash) return undefined;
+  if (isFailedExtractionStatus(node.status)) return undefined;
   const validated = validateGraphCacheShape({ entities: node.entities, relations: node.relations });
   if (!validated) return undefined;
   return {
@@ -419,7 +470,9 @@ function planEligibleGraphExtractions(args: {
       if (entry?.bodyHash === bodyHash) {
         try {
           const cached = validateGraphCacheShape(JSON.parse(entry.resultJson));
-          if (cached) return { kind: "cache-hit", candidate, bodyHash, cached, persistCache: false };
+          if (cached && !isFailedExtractionStatus(cached.status)) {
+            return { kind: "cache-hit", candidate, bodyHash, cached, persistCache: false };
+          }
         } catch {
           // Corrupt cache rows are immutable model plans for this pass.
         }
@@ -460,6 +513,7 @@ async function extractGraphBatches(args: {
   onFallback: (event: { feature: string; reason: string }) => void;
   batchState: graphExtract.GraphBatchState;
   runtimeTelemetry: graphExtract.GraphRuntimeTelemetry;
+  abortState: GraphExtractionAbortState;
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
   reportProgress: (currentPath: string | undefined, result: ExtractionRecord | undefined) => void;
 }): Promise<{ results: Array<ExtractionRecord | undefined>; configFailure?: ConfigError }> {
@@ -474,6 +528,7 @@ async function extractGraphBatches(args: {
     lease,
     featureConfig,
     onFallback,
+    abortState,
     batchState,
     runtimeTelemetry,
     onNotices,
@@ -501,7 +556,7 @@ async function extractGraphBatches(args: {
         if (!plan || plan.kind !== "cache-hit") continue;
         telemetry.cacheHits += 1;
         results[start + index] = graphRecordFromCachePlan(plan);
-        if (db && plan.persistCache) {
+        if (db && plan.persistCache && !isFailedExtractionStatus(plan.cached.status)) {
           upsertLlmCacheEntry(db, plan.candidate.absPath, plan.bodyHash, JSON.stringify(plan.cached), cacheVariant);
         }
       }
@@ -509,7 +564,7 @@ async function extractGraphBatches(args: {
       const modelPlans = chunk.filter(
         (plan): plan is Extract<EligibleGraphPlan, { kind: "model" }> => plan.kind === "model",
       );
-      if (modelPlans.length === 0) {
+      if (modelPlans.length === 0 || abortState.aborted) {
         reportChunkProgress();
         return;
       }
@@ -538,6 +593,8 @@ async function extractGraphBatches(args: {
       }
 
       let llmIndex = 0;
+      let dispatchHadResult = false;
+      let dispatchAllFailed = true;
       for (let index = 0; index < chunk.length; index++) {
         const plan = chunk[index];
         if (!plan || plan.kind !== "model") continue;
@@ -550,7 +607,9 @@ async function extractGraphBatches(args: {
           ...(extraction.status ? { status: extraction.status } : {}),
           ...(extraction.reason ? { reason: extraction.reason } : {}),
         };
-        if (db) {
+        dispatchHadResult = true;
+        if (!isFailedExtractionStatus(cacheShape.status)) dispatchAllFailed = false;
+        if (db && !isFailedExtractionStatus(cacheShape.status)) {
           upsertLlmCacheEntry(db, plan.candidate.absPath, plan.bodyHash, JSON.stringify(cacheShape), cacheVariant);
         }
         results[start + index] = {
@@ -560,6 +619,13 @@ async function extractGraphBatches(args: {
           ...cacheShape,
         };
       }
+      // One attempt per `extractGraphFromBodies` dispatch (this chunk's batch
+      // call), not one per file it covers — mirrors consolidate.ts's
+      // totalChunksProcessed++/totalChunksFailed, which count once per chunk
+      // regardless of how many memories are in it. Counting per file let a
+      // single batched provider_error satisfy GRAPH_EXTRACTION_ABORT_MIN_ATTEMPTS
+      // after one HTTP failure whenever graphExtractionBatchSize >= 4.
+      if (dispatchHadResult) recordGraphExtractionAttempt(abortState, dispatchAllFailed);
       reportChunkProgress();
     },
     llmRunner.connection.concurrency ?? 1,
@@ -896,6 +962,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
       batchingDisabled: false,
       nonArrayBatchFailures: 0,
     };
+    const abortState: GraphExtractionAbortState = { attempts: 0, failures: 0, aborted: false };
     warnVerbose(
       `graph extraction: starting for ${considered} eligible file(s) under ${primary.path}; ` +
         `includeTypes=${includeTypes.join(",")}, batchSize=${batchSize}, concurrency=${llmRunner.connection.concurrency ?? 1}, ` +
@@ -923,10 +990,14 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
           if (plan.kind === "cache-hit") {
             telemetry.cacheHits += 1;
             cached = plan.cached;
-            if (db && plan.persistCache) {
+            if (db && plan.persistCache && !isFailedExtractionStatus(cached.status)) {
               upsertLlmCacheEntry(db, candidate.absPath, bodyHash, JSON.stringify(cached), cacheVariant);
             }
           } else {
+            if (abortState.aborted) {
+              reportProgress(candidate.absPath, undefined);
+              return undefined;
+            }
             telemetry.cacheMisses += 1;
             let extraction: Awaited<ReturnType<typeof graphExtract.extractGraphFromBody>>;
             try {
@@ -957,7 +1028,8 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
               ...(extraction.status ? { status: extraction.status } : {}),
               ...(extraction.reason ? { reason: extraction.reason } : {}),
             };
-            if (db) {
+            recordGraphExtractionAttempt(abortState, isFailedExtractionStatus(cached.status));
+            if (db && !isFailedExtractionStatus(cached.status)) {
               upsertLlmCacheEntry(db, candidate.absPath, bodyHash, JSON.stringify(cached), cacheVariant);
             }
           }
@@ -993,6 +1065,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
         onFallback,
         batchState,
         runtimeTelemetry,
+        abortState,
         onNotices,
         reportProgress,
       });
@@ -1047,6 +1120,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
     telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
     telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
+    telemetry.aborted = abortState.aborted;
 
     const qualityConsidered = mergedNodes.length;
     const qualityExtracted = mergedNodes.filter(
@@ -1059,6 +1133,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
       deduped.relations.length,
     );
     const warnings = buildLowQualityWarnings(quality, telemetry);
+    if (abortState.message) warnings.push(abortState.message);
     for (const warning of warnings) warnVerbose(`graph extraction quality: ${warning}`);
 
     const graph: GraphFile = {

@@ -19,6 +19,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   every run instead of ever completing. Both call sites now read the preview
   from `payload.content`, which is populated for every row regardless of
   its `changes` shape.
+- **Failed graph extractions are no longer cached as permanent hits.** A
+  provider outage upserted thousands of `{"entities":[],"status":"failed"}`
+  results into `llm_enrichment_cache` and the persisted graph, and both
+  cache-hit paths (the DB lookup and reuse from the previous graph) treated
+  them as valid hits forever after — the affected files never retried.
+  `status: "failed"` results are now treated as a miss and are never written
+  to the cache; existing rows are left on disk and are overwritten naturally
+  on the next successful extraction. `src/llm/graph-extract.ts` also no
+  longer falls back to a per-asset retry for every body in a batch after a
+  `provider_error` — the provider has already demonstrated it is failing, so
+  each asset in that batch is recorded as failed directly. Graph extraction
+  now aborts the rest of the run (returning the partial results already
+  extracted) once the failure rate crosses 50% over at least 4 attempted
+  extraction dispatches, mirroring consolidate's existing failure-rate guard.
+  The abort counts one attempt per `extractGraphFromBodies` dispatch, not per
+  file inside its batch — per-file counting let a single batched
+  `provider_error` trip the guard after one HTTP failure whenever
+  `graphExtractionBatchSize` was at its default of 4.
 
 ## [0.9.16] - 2026-09-22
 
