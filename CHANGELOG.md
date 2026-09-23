@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Reflect quality-gate rejections were mislabelled `parse_error` and fed
+  back into later prompts as learned "avoid" patterns.** When the reflect
+  quality judge rejected an otherwise well-parsed proposal, the result
+  carried `reason: "parse_error"` — a real parse failure and a judge
+  rejection were indistinguishable. The improve loop injects non-excluded
+  reflect failures into the next reflect prompt's "Avoid These Patterns"
+  block, so a single gate rejection could poison every subsequent candidate
+  in the run. Judge rejections now carry a distinct `quality_rejected`
+  reason, stay in the `reflect-failed` metrics bucket, and are excluded from
+  that avoid-patterns injection like the existing deterministic skips.
 - **Legacy rejected proposals no longer throw before reflect/distill prompt
   dispatch.** `readRejectedProposals` (reflect.ts) and the equivalent mapper
   in distill.ts built their "previously rejected" context via
