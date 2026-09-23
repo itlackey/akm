@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exceeded the excerpt length was judged on metadata only and never showed
   its own body text. The excerpt now truncates `stripFrontmatterBody(body)`;
   hot/queued detection is unchanged and still reads the raw body.
+- **Consolidate re-judged memories that were already promoted verbatim into
+  `knowledge/`.** That duplication was previously discovered only after the
+  LLM (`shouldSkipPromotionBodyDuplicate`), so a pool where the large
+  majority of memories were already-promoted duplicates still paid the full
+  chunk/LLM cost on all of them before being skipped.
+  `narrowConsolidationPool` now drops those memories before any chunking or
+  LLM work, sharing one `loadExistingKnowledgeBodyHashes` call and the same
+  `cacheHash` domain with the post-LLM check so the two cannot disagree. The
+  dropped count is reported as `prefilteredAlreadyPromoted` on the
+  consolidate result and in a warning line.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 
