@@ -14,7 +14,12 @@ import path from "node:path";
 import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../../src/commands/improve/salience";
-import { listProposals } from "../../src/commands/proposal/repository";
+import {
+  archiveProposal,
+  createProposal,
+  isProposalSkipped,
+  listProposals,
+} from "../../src/commands/proposal/repository";
 import {
   detectDoubleFrontmatter,
   isValidDescription,
@@ -362,6 +367,58 @@ describe("buildDistillPrompt", () => {
   test("omits rejected proposals section when none provided", () => {
     const prompt = buildDistillPrompt({ inputRef: "skills/deploy", assetContent: null, feedback: [] });
     expect(prompt).not.toContain("Previously rejected proposals");
+  });
+});
+
+// (tier0-0917 R1) A legacy rejected proposal (metadata_json has no `changes`
+// key at all — the pre-#858/#859 archive shape) must not throw before the
+// distill prompt is built. The Reflexion-context mapper used
+// `proposalContent(p)`, which throws when `changes[0]?.after` is undefined;
+// `storedToChanges` deliberately returns `[]` for these rows. Reading the
+// preview from `p.payload.content` instead (always populated) fixes it.
+describe("akmDistill — rejected proposals tolerate legacy rows with no persisted changes (tier0-0917 R1)", () => {
+  test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
+    const stash = makeStashDir();
+    const sourceFile = path.join(stash, "skills", "duplicate.md");
+    fs.writeFileSync(sourceFile, "---\ndescription: Source skill\n---\n\nSource skill body.\n", "utf8");
+
+    const rejected = createProposal(stash, {
+      ref: "skills/duplicate",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(rejected)) throw new Error("unexpected skip seeding rejected proposal");
+    archiveProposal(stash, rejected.id, "rejected", "not a real improvement");
+
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = db.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(rejected.id) as {
+        metadata_json: string;
+      };
+      const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+      delete metadata.changes;
+      db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), rejected.id);
+    } finally {
+      db.close();
+    }
+
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skills/duplicate",
+      stashDir: stash,
+      config: configEnabled(stash),
+      lookupFn: async () => sourceFile,
+      readEventsFn: emptyEvents,
+      chat: async (_config, messages) => {
+        receivedPrompt = messages.map((message) => message.content).join("\n");
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).not.toBe("llm_failed");
+    expect(receivedPrompt).toContain("Previously rejected proposals");
+    expect(receivedPrompt).toContain("not a real improvement");
   });
 });
 

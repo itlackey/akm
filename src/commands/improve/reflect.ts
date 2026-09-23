@@ -83,7 +83,6 @@ import {
   listProposalsReadOnly,
   type Proposal,
   type ProposalsContext,
-  proposalContent,
   recordGateDecision,
 } from "../proposal/repository";
 import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
@@ -309,7 +308,11 @@ function readRejectedProposals(
     .map((p) => ({
       ref: p.ref,
       reason: p.review?.reason ?? "no reason given",
-      contentPreview: proposalContent(p).slice(0, 500),
+      // #legacy: `changes` is empty for pre-existing rows (storedToChanges),
+      // which makes `proposalContent` throw before reflect dispatch even
+      // runs. `payload.content` is populated for every row regardless, so
+      // read the preview from there instead.
+      contentPreview: p.payload.content.slice(0, 500),
     }));
 }
 

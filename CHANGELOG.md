@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Legacy rejected proposals no longer throw before reflect/distill prompt
+  dispatch.** `readRejectedProposals` (reflect.ts) and the equivalent mapper
+  in distill.ts built their "previously rejected" context via
+  `proposalContent(p)`, which throws when a proposal's `changes[0]?.after` is
+  undefined — the shape `storedToChanges` deliberately returns for rows
+  archived before the `changes` field existed (the large majority of
+  real-world rejected-proposal history). The throw happened before the
+  signal cursor advanced, so a ref with any such legacy rejection errored on
+  every run instead of ever completing. Both call sites now read the preview
+  from `payload.content`, which is populated for every row regardless of
+  its `changes` shape.
+
 ## [0.9.16] - 2026-09-22
 
 ### Fixed
