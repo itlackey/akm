@@ -151,6 +151,27 @@ describe("runOrphanStateGcPass", () => {
     }
   });
 
+  // r3-1: getLiveRefSnapshot's `SELECT item_ref FROM entries` used to run
+  // OUTSIDE this pass's try/catch, so a schema mismatch (e.g. a DB version
+  // upgrade that dropped `entries` — the case improve.ts's #339 comment
+  // names) escaped as a throw instead of degrading to the same
+  // "orphan state GC failed: …" warning every other failure in this pass
+  // produces.
+  test("a missing entries table degrades to a warning instead of throwing", () => {
+    withStateDb((db) => upsertAssetSalience(db, "memories/gone", FIXTURE_VECTOR));
+    const indexDb = openIndex();
+    indexDb.exec("DROP TABLE entries");
+    try {
+      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      expect(out.pending).toBe(0);
+      expect(out.collected).toBe(0);
+      expect(out.warnings).toHaveLength(1);
+      expect(out.warnings[0]).toContain("orphan state GC failed");
+    } finally {
+      closeDatabase(indexDb);
+    }
+  });
+
   test("a stamped orphan is deleted only after the grace window elapses AND collect is true", () => {
     const ref = "memories/gone-stale";
     withStateDb((db) => {

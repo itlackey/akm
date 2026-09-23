@@ -1716,11 +1716,14 @@ export function runOrphanStateGcPass(
   const now = Date.now();
   let pending = 0;
   let collected = 0;
-  // #R78: one query for every live item_ref, shared by both tables' sweeps
-  // below — replaces a `getEntryByRef` round trip per pending row.
-  const liveRefs = getLiveRefSnapshot(indexDb);
 
   try {
+    // #R78: one query for every live item_ref, shared by both tables' sweeps
+    // below — replaces a `getEntryByRef` round trip per pending row. Inside
+    // the try so a schema mismatch (e.g. a DB version upgrade that dropped
+    // `entries`) degrades to the "orphan state GC failed" warning below
+    // instead of escaping this pass and failing the whole maintenance run.
+    const liveRefs = getLiveRefSnapshot(indexDb);
     withStateDb(
       (stateDb) => {
         const salienceResult = gcOneStateTable({
