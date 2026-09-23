@@ -754,7 +754,6 @@ export async function runImprovePostLoopStage(args: {
   appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
   cleanupWarnings: string[];
   memoryRefsForInference: Set<string>;
-  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   eventsCtx?: EventsContext;
   /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
   budgetSignal?: AbortSignal;
@@ -763,9 +762,9 @@ export async function runImprovePostLoopStage(args: {
   resolvedPlan?: ResolvedImprovePlan;
   /**
    * #551: whether the consolidation pass (now run in the preparation stage,
-   * before extract) actually processed memories. Drives the graph-extraction
-   * reindex below — graph extraction must re-read the index if consolidation
-   * mutated the memory pool.
+   * before extract) actually processed memories. Drives R5's longitudinal
+   * collapse detector below: one snapshot per cycle where consolidate
+   * processed work.
    */
   consolidationRan: boolean;
   /** R5: this run's advisory merge-information-floor violation count (consolidate pass). */
@@ -779,7 +778,6 @@ export async function runImprovePostLoopStage(args: {
     appliedCleanup,
     cleanupWarnings,
     memoryRefsForInference,
-    reindexFn,
     eventsCtx,
     budgetSignal,
     improveProfile,
@@ -794,7 +792,6 @@ export async function runImprovePostLoopStage(args: {
     actionableRefs,
     memoryRefsForInference,
     allWarnings,
-    reindexFn,
     // O-1 (#364): forward the budget signal to memory inference + graph extraction.
     budgetSignal,
     eventsCtx,
@@ -850,8 +847,7 @@ export async function runImprovePostLoopStage(args: {
   }
 
   // ── R5: collapse/churn detector ────────────────────────────────────────────
-  // One snapshot per QUALIFYING cycle: consolidate processed work. Runs AFTER
-  // the maintenance reindex so FTS sees the post-merge index. Deterministic,
+  // One snapshot per QUALIFYING cycle: consolidate processed work. Deterministic,
   // observe-only, fail-open (the orchestrator catches everything) — and inert
   // on the ~9-in-10 default-profile runs that touch no merges.
   let cycleMetrics: CycleMetricsRow | undefined;
@@ -920,7 +916,6 @@ export async function runImproveMaintenancePasses(args: {
   actionableRefs: ImproveEligibleRef[];
   memoryRefsForInference: Set<string>;
   allWarnings: string[];
-  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
   budgetSignal?: AbortSignal;
   eventsCtx?: EventsContext;

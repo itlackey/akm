@@ -377,7 +377,6 @@ describe("improve engine-plan boundaries", () => {
         actionableRefs: [],
         memoryRefsForInference: new Set(),
         allWarnings: [],
-        reindexFn: async () => undefined,
         improveProfile: plan.strategy.config,
         resolvedPlan: plan,
       });
@@ -408,7 +407,6 @@ describe("improve engine-plan boundaries", () => {
         actionableRefs: [],
         memoryRefsForInference: new Set(),
         allWarnings: [],
-        reindexFn: async () => undefined,
         budgetSignal: controller.signal,
         improveProfile: plan.strategy.config,
         resolvedPlan: plan,

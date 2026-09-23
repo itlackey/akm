@@ -1416,7 +1416,6 @@ async function runPostLoopStageOrSkip(args: {
   primaryStashDir?: string;
   preparation: ImprovePreparationResult;
   memoryRefsForInference: Set<string>;
-  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   eventsCtx: EventsContext;
   improveProfile: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
@@ -1429,7 +1428,6 @@ async function runPostLoopStageOrSkip(args: {
     primaryStashDir,
     preparation,
     memoryRefsForInference,
-    reindexFn,
     eventsCtx,
     improveProfile,
     resolvedPlan,
@@ -1455,7 +1453,6 @@ async function runPostLoopStageOrSkip(args: {
     appliedCleanup: preparation.appliedCleanup,
     cleanupWarnings: preparation.cleanupWarnings,
     memoryRefsForInference,
-    reindexFn,
     eventsCtx,
     budgetSignal: budgetAbortController.signal,
     improveProfile,
@@ -1650,7 +1647,6 @@ async function runImproveStageSequence(args: {
       primaryStashDir,
       preparation,
       memoryRefsForInference,
-      reindexFn,
       eventsCtx,
       improveProfile,
       resolvedPlan,

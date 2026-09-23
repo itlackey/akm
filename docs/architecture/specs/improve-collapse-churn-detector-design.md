@@ -204,9 +204,8 @@ Once per qualifying improve cycle, in the **post-loop stage after the recombine 
 after the procedural block ends at ~line 833, before the return at ~line 835), gated
 on: detector enabled AND (`consolidationRan === true` OR
 `recombination.processed > 0`) AND not `options.dryRun`. Rationale for one hook rather
-than one inside `akmConsolidate` and one inside `akmRecombine`: the post-loop point is
-after `reindexWithIndexDbReleased`, so FTS sees the post-merge index, and one call site
-covers both passes with the pass attribution recorded in the row (`pass` column takes
+than one inside `akmConsolidate` and one inside `akmRecombine`: one call site covers
+both passes with the pass attribution recorded in the row (`pass` column takes
 `"consolidate"`, `"recombine"`, or `"both"`). On non-qualifying runs (the ~93% of
 default-profile runs that touch no merges) the detector does nothing — zero cost on the
 20–30-min hot path.

@@ -259,7 +259,6 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
         actionableRefs: [],
         memoryRefsForInference: new Set<string>(),
         allWarnings,
-        reindexFn: async () => undefined,
         eventsCtx: { db: eventsDb },
       });
 
@@ -311,7 +310,6 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
       actionableRefs: [],
       memoryRefsForInference: new Set<string>(),
       allWarnings,
-      reindexFn: async () => undefined,
       eventsCtx: { dbPath: stateDbPath },
     });
 
