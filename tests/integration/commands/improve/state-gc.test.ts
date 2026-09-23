@@ -118,9 +118,6 @@ function makeCtx(overrides: Partial<MaintenanceCtx> = {}): MaintenanceCtx {
     graphExtractionFn: () => {
       throw new Error("graphExtractionFn not expected in this scenario");
     },
-    reindexWithIndexDbReleased: () => {
-      throw new Error("reindex not expected in this scenario");
-    },
     ...overrides,
   };
 }

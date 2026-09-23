@@ -621,20 +621,22 @@ export async function runConsolidationPass(args: {
     info("[improve] consolidation skipped (no memory updates since last run)");
   }
 
-  // D9: track whether consolidation wrote any data so graph extraction can reindex if needed.
-  // `processed` counts memories the LLM JUDGED, not files consolidation WROTE — R4's advisory
-  // gate (consolidate.ts) means merge/delete/contradict ops are never auto-applied (always 0
-  // here), and the only op that does execute, promote, calls emitProposal → createProposal,
-  // which persists to the `proposals` table in state.db, not to any file under the stash
-  // (src/commands/proposal/repository.ts) — so `promoted` is proposal-only too and is excluded
-  // here for the same reason. `merged`/`deleted`/`contradicted` stay in the OR below so this
-  // keeps working the day one of those advisory ops is wired up to an actual write.
+  // D9: track whether this was a qualifying consolidation cycle for R5's longitudinal collapse
+  // detector (loop-stages.ts, gated on this flag). `processed` counts memories the LLM JUDGED,
+  // not files consolidation WROTE — R4's advisory gate (consolidate.ts) means merge/delete/
+  // contradict ops are never auto-applied, and the only op that does execute, promote, calls
+  // emitProposal → createProposal, which persists to the `proposals` table in state.db, not to
+  // any file under the stash (src/commands/proposal/repository.ts). So `processed > 0` is the
+  // right gate here: the detector needs one snapshot per cycle where consolidate did work,
+  // regardless of whether that work produced a write. It would be the wrong gate for anything
+  // that needs to know whether a stash file changed, since promote/merge/delete/contradict never
+  // write one.
   const consolidationRan =
     !consolidateDisabledByProfile &&
     !poolBelowMinSize &&
     !consolidationOnCooldown &&
     !consolidation.previewOnly &&
-    (consolidation.merged > 0 || consolidation.deleted > 0 || consolidation.contradicted > 0);
+    consolidation.processed > 0;
 
   return { consolidation, consolidationRan, plan: planned.plan };
 }

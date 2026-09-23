@@ -218,7 +218,7 @@ export interface ImprovePreparationResult {
    * current run do not exist yet when the pool-delta gate is evaluated.
    */
   consolidation: ConsolidateResult;
-  /** Whether the consolidation pass actually ran (vs profile-disabled / pool-delta skip). Drives graph-extraction reindex. */
+  /** Whether the consolidation pass actually ran (vs profile-disabled / pool-delta skip). Drives R5's collapse detector. */
   consolidationRan: boolean;
   /**
    * Layer 2 proactive-maintenance selector outcome, when the process ran.
@@ -279,7 +279,7 @@ export interface ImproveMaintenanceResult {
  */
 export interface ConsolidationPassResult {
   consolidation: ConsolidateResult;
-  /** True iff consolidation actually processed memories this run (drives graph reindex). */
+  /** True iff consolidation actually processed memories this run (drives R5's collapse detector). */
   consolidationRan: boolean;
   /** Pre-dispatch gate/pool/chunk projection shared with dry-run. */
   plan: ImproveExecutionPlan["consolidation"];

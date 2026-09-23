@@ -8,17 +8,16 @@
  * decomposition, testability requirement).
  *
  * Each pass is driven directly with injected `memoryInferenceFn` /
- * `graphExtractionFn` / `reindexWithIndexDbReleased` seams — no LLM, no real
- * index.db — and its returned result object is asserted instead of the old
- * shared closure state. The #584/#585 db-handle and borrowed-connection
- * contracts keep their own integration suite (`improve-db-locking.test.ts`).
+ * `graphExtractionFn` seams — no LLM, no real index.db — and its returned
+ * result object is asserted instead of the old shared closure state. The
+ * #584/#585 db-handle and borrowed-connection contracts keep their own
+ * integration suite (`improve-db-locking.test.ts`).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  type IndexDbCell,
   type MaintenanceCtx,
   runGraphExtractionMaintenancePass,
   runMemoryInferenceMaintenancePass,
@@ -69,9 +68,6 @@ function makeCtx(stashDir: string, overrides: Partial<MaintenanceCtx> = {}): Mai
     },
     graphExtractionFn: () => {
       throw new Error("graphExtractionFn not expected in this scenario");
-    },
-    reindexWithIndexDbReleased: () => {
-      throw new Error("reindex not expected in this scenario");
     },
     ...overrides,
   };
@@ -170,47 +166,12 @@ describe("runGraphExtractionMaintenancePass", () => {
     expect(out.warnings).toEqual([]);
   });
 
-  test("D9: consolidationRan without a prior reindex triggers the released-handle reindex", async () => {
-    const stash = freshStash();
-    const calls: string[] = [];
-    const cell: IndexDbCell = { current: fakeDb };
-    const freshHandle = { __fake: "post-reindex" } as unknown as Database;
-    let dbAtInvoke: unknown;
-    const ctx = makeCtx(stash, {
-      resolvedPlan: {
-        processes: { graphExtraction: { runner: null }, memoryInference: { runner: null } },
-      } as unknown as MaintenanceCtx["resolvedPlan"],
-      reindexWithIndexDbReleased: (dir) => {
-        calls.push(dir);
-        cell.current = freshHandle; // the helper swaps in a fresh handle
-        return Promise.resolve();
-      },
-      graphExtractionFn: (args) => {
-        dbAtInvoke = (args as { db?: unknown }).db;
-        return Promise.resolve(graphResult());
-      },
-    });
-
-    const out = await runGraphExtractionMaintenancePass(ctx, cell, { ...baseArgs, consolidationRan: true });
-
-    expect(calls).toEqual([stash]);
-    // The extraction call must see the POST-reindex handle, not the stale one.
-    expect(dbAtInvoke).toBe(freshHandle);
-    expect(out.graphExtraction).toBeDefined();
-    expect(out.action).toEqual({
-      ref: "graph/_artifact",
-      mode: "graph-extraction",
-      result: out.graphExtraction as GraphExtractionResult,
-    });
-  });
-
-  // r3-1: the `reindexedAfterInference=true suppresses the D9 reindex` case
-  // this described is gone along with the parameter — `reindexedAfterInference`
-  // was a single-caller seam whose only caller (loop-stages.ts) always passed
-  // `false`, so it is now a function-local `let` with no external input. The
-  // "D9: consolidationRan without a prior reindex triggers..." test above
-  // already covers the reachable behavior (reindex fires when consolidationRan
-  // is true).
+  // D9/r2-2 (tier1-0917): the post-consolidation reindex this pass used to run
+  // (`consolidationRan && !reindexedAfterInference` → `reindexWithIndexDbReleased`)
+  // is deleted along with the seam it called — consolidation's only executed op
+  // (promote) writes a proposal row to state.db, never a stash file, so the
+  // reindex had no precondition it could ever satisfy. This is a deletion of
+  // coverage for deleted code, not a weakening of coverage for code that remains.
 
   test("profile knobs (fullScan/topN/batchSize/includeTypes) reach the extraction options", async () => {
     const stash = freshStash();
