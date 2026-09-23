@@ -758,6 +758,7 @@ type NarrowPoolResult =
       done: false;
       memories: MemoryEntry[];
       dedupPoolSize: number;
+      prefilteredAlreadyPromoted: number;
     };
 
 export interface ConsolidationPoolSnapshot {
@@ -861,20 +862,66 @@ export function inspectConsolidationPool(
 }
 
 /**
+ * Drop memories whose body already exists verbatim in `knowledge/` before any
+ * chunking or LLM work. Uses `cacheHash` (case-preserving stripped body) —
+ * the exact domain `shouldSkipPromotionBodyDuplicate`'s post-LLM check hashes
+ * (`cacheHash(parseFrontmatter(memoryContent).content.trim())`, equivalent to
+ * `cacheHash(memoryContent)` since `cacheHash` strips frontmatter itself) —
+ * so the pre-filter and the post-LLM check cannot disagree. An unreadable
+ * memory is kept (fail-safe: let the later passes surface the read error).
+ */
+function prefilterAlreadyPromotedMemories(
+  memories: MemoryEntry[],
+  existingKnowledgeBodyHashes: Set<string>,
+): { memories: MemoryEntry[]; prefilteredAlreadyPromoted: number } {
+  if (existingKnowledgeBodyHashes.size === 0) return { memories, prefilteredAlreadyPromoted: 0 };
+  const kept: MemoryEntry[] = [];
+  let prefilteredAlreadyPromoted = 0;
+  for (const memory of memories) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(memory.filePath, "utf8");
+    } catch {
+      kept.push(memory);
+      continue;
+    }
+    if (existingKnowledgeBodyHashes.has(cacheHash(raw))) {
+      prefilteredAlreadyPromoted++;
+    } else {
+      kept.push(memory);
+    }
+  }
+  return { memories: kept, prefilteredAlreadyPromoted };
+}
+
+/**
  * Pass 1 — narrow the memory pool before any LLM work: drop stale DB entries,
- * apply incremental-since narrowing, and cap to `opts.limit` (oldest-modified
- * first). Returns an early envelope when the pool empties at any stage;
- * otherwise returns the narrowed pool and the state the plan/apply passes
- * consume. Behavior-identical to the former inlined narrowing block.
+ * apply incremental-since narrowing, cap to `opts.limit` (oldest-modified
+ * first), and pre-filter memories already promoted verbatim into
+ * `knowledge/` (R5 (b) — discovered previously only after the LLM chunk call,
+ * paying for the judgement on ~84% of the pool just to skip it). Returns an
+ * early envelope when the pool empties at any stage; otherwise returns the
+ * narrowed pool and the state the plan/apply passes consume.
  */
 async function narrowConsolidationPool(
   opts: AkmConsolidateOptions,
   stashDir: string,
   startMs: number,
   warnings: string[],
+  existingKnowledgeBodyHashes: Set<string>,
 ): Promise<NarrowPoolResult> {
   const snapshot = inspectConsolidationPool(opts, stashDir, warnings);
-  const memories = snapshot.memories;
+  const { memories, prefilteredAlreadyPromoted } = prefilterAlreadyPromotedMemories(
+    snapshot.memories,
+    existingKnowledgeBodyHashes,
+  );
+  if (prefilteredAlreadyPromoted > 0) {
+    warnings.push(
+      `Consolidation: pre-filtered ${prefilteredAlreadyPromoted} memor${
+        prefilteredAlreadyPromoted === 1 ? "y" : "ies"
+      } whose body already exists verbatim in knowledge/ before chunking.`,
+    );
+  }
 
   // (The former WS-3b Step 0a homeostatic demotion pass was removed — R4:
   // it was default-off and self-undoing (the next salience recompute
@@ -889,11 +936,12 @@ async function narrowConsolidationPool(
         target: opts.target ?? stashDir,
         warnings,
         durationMs: Date.now() - startMs,
+        prefilteredAlreadyPromoted,
       }),
     };
   }
 
-  return { done: false, memories, dedupPoolSize: snapshot.dedupPoolSize };
+  return { done: false, memories, dedupPoolSize: snapshot.dedupPoolSize, prefilteredAlreadyPromoted };
 }
 
 /**
@@ -1362,10 +1410,16 @@ async function akmConsolidateInner(
   warnings: string[],
   sharedStateDb: Database | undefined,
 ): Promise<ConsolidateResult> {
+  // Loaded once and shared with the pre-filter (narrowConsolidationPool) and
+  // the post-LLM promote-dedup check (shouldSkipPromotionBodyDuplicate) below
+  // — knowledge/ can hold thousands of files, so walking it twice per run
+  // would double that cost for no benefit.
+  const existingKnowledgeBodyHashes = loadExistingKnowledgeBodyHashes(stashDir);
+
   // -- Pass 1: narrow the memory pool (may early-return an envelope) ----------
-  const narrowed = await narrowConsolidationPool(opts, stashDir, startMs, warnings);
+  const narrowed = await narrowConsolidationPool(opts, stashDir, startMs, warnings, existingKnowledgeBodyHashes);
   if (narrowed.done) return narrowed.result;
-  const { memories, dedupPoolSize } = narrowed;
+  const { memories, dedupPoolSize, prefilteredAlreadyPromoted } = narrowed;
 
   // -- Pass 2: build the LLM plan (populates the shared accounting counters) ---
   const accounting = createConsolidateAccounting();
@@ -1399,6 +1453,7 @@ async function akmConsolidateInner(
       planned: allOps,
       warnings,
       durationMs: Date.now() - startMs,
+      prefilteredAlreadyPromoted,
     });
   }
 
@@ -1418,7 +1473,7 @@ async function akmConsolidateInner(
     memoryByRef,
     promoted,
     promotedSourceRefs: new Set<string>(),
-    existingKnowledgeBodyHashes: loadExistingKnowledgeBodyHashes((opts.writeTarget as ResolvedWriteTarget).source.path),
+    existingKnowledgeBodyHashes,
     promotionFailures,
     warnings,
     pushSkipReason: accounting.pushSkipReason,
@@ -1443,6 +1498,7 @@ async function akmConsolidateInner(
     planned: allOps,
     warnings,
     durationMs: Date.now() - startMs,
+    prefilteredAlreadyPromoted,
     perfTelemetry: {
       dedupPoolSize,
       llmPoolSize,

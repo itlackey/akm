@@ -20,6 +20,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and `provider_html_error`.
 - **`akm health`'s `state-db-integrity` check no longer crashes when the freelist/page-count read fails.** `getStateDbFreelistInfo` had a `finally` but no `catch` around its read-only open and pragma reads, unlike its sibling `runStateDbQuickCheck` — a throw there (e.g. an unopenable state.db) escaped `akm health` as an unclassified exit 70 on exactly the damaged database the check exists to report. It now returns a zeroed `StateDbFreelistInfo` with an `error` field, and the check renders that as a failed check instead of throwing.
 - **The post-purge VACUUM's `state_db_vacuumed` event now honors the caller's `EventsContext`.** `vacuumStateDbIfReclaimable` appended its event with a direct `insertEvent` call, bypassing `EventsContext.readOnly` and the injectable clock its sibling purge events (`events_purged`, `improve_runs_purged`, `improve_cycle_metrics_purged`) use in the same `runRetentionPurgePass` callback. It now appends the event via `appendEvent` with the caller's `EventsContext` plumbed through.
+- **Consolidate's per-chunk prompt excerpt truncated the raw file (frontmatter
+  + body) instead of the body.** `buildChunkPrompt` sliced `body.slice(0,
+  bodyTruncation)` off the unstripped file; a memory whose frontmatter alone
+  exceeded the excerpt length was judged on metadata only and never showed
+  its own body text. The excerpt now truncates `stripFrontmatterBody(body)`;
+  hot/queued detection is unchanged and still reads the raw body.
+- **Consolidate re-judged memories that were already promoted verbatim into
+  `knowledge/`.** That duplication was previously discovered only after the
+  LLM (`shouldSkipPromotionBodyDuplicate`), so a pool where the large
+  majority of memories were already-promoted duplicates still paid the full
+  chunk/LLM cost on all of them before being skipped.
+  `narrowConsolidationPool` now drops those memories before any chunking or
+  LLM work, sharing one `loadExistingKnowledgeBodyHashes` call and the same
+  `cacheHash` domain with the post-LLM check so the two cannot disagree. The
+  dropped count is reported as `prefilteredAlreadyPromoted` on the
+  consolidate result and in a warning line.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 

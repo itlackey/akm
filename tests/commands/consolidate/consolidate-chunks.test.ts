@@ -514,6 +514,28 @@ describe("body truncation", () => {
     // All 500 Z chars should be present
     expect(prompt).toContain("Z".repeat(500));
   });
+
+  // R5 (d) tier1-0917: the excerpt truncates the BODY, not the raw file
+  // (frontmatter + body). Before the fix, `body.slice(0, bodyTruncation)`
+  // sliced the raw file, so a memory whose frontmatter alone exceeds
+  // bodyTruncation (~21% of the pool) was judged on metadata only.
+  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5 tier1-0917)", () => {
+    const longFrontmatter = `---\ndescription: ${"F".repeat(600)}\n---\n`;
+    const body = `${longFrontmatter}Actual body text that must appear.`;
+    const entry = makeMemoryEntry(tempDir, "long-frontmatter", body);
+    const prompt = buildChunkPrompt("/stash", [entry], 0, 1, 500);
+
+    expect(prompt).toContain("Actual body text that must appear.");
+  });
+
+  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5 tier1-0917)", () => {
+    const longFrontmatter = `---\ncaptureMode: hot\ndescription: ${"F".repeat(600)}\n---\n`;
+    const body = `${longFrontmatter}Body text.`;
+    const entry = makeMemoryEntry(tempDir, "hot-long-frontmatter", body);
+    const prompt = buildChunkPrompt("/stash", [entry], 0, 1, 500);
+
+    expect(prompt).toContain("memories/hot-long-frontmatter (captureMode: hot)");
+  });
 });
 
 describe("consolidation memory eligibility", () => {

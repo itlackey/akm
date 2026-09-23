@@ -394,6 +394,14 @@ export interface ConsolidateResult {
   /** Memories deferred by the pre-embedding budget cap. Deferred runs do not advance the completion watermark. */
   deferredMemories?: number;
   /**
+   * Memories dropped before chunking because their body already exists
+   * verbatim in `knowledge/` (R5 (b)). Distinct from the post-LLM
+   * `promote_superseded`/duplicate skip reasons — this is a pre-LLM pool
+   * narrowing count, so `processed` no longer includes these memories at
+   * all. Surfaced so health/report readers see why `processed` dropped.
+   */
+  prefilteredAlreadyPromoted?: number;
+  /**
    * Planned consolidate ops. Only the op-kind discriminant is used by core
    * consumers (e.g. the `op !== "promote"` advisory-op check in
    * `preparation.ts`); the full `ConsolidateOperation` shape lives in
