@@ -37,6 +37,10 @@ const COMMON_FIELDS = [
   "lintSummary",
   "memoryIndexHealth",
   "coverageGaps",
+  // R10: no longer written (the write-only eval-cases path was removed),
+  // but kept in the allow-list so `decodeImproveResult` still reads
+  // improve-result envelopes a prior release wrote with this field —
+  // AGENTS.md "Reading persisted data".
   "evalCasesWritten",
   "deadUrls",
   "deadUrlCoverage",
@@ -448,6 +452,7 @@ function validateCommon(value: Record<string, unknown>): void {
   }
   for (const field of [
     "cyclesRun",
+    // R10: retired write, kept readable — see the COMMON_FIELDS comment above.
     "evalCasesWritten",
     "reflectsWithErrorContext",
     "memoryInferenceDurationMs",

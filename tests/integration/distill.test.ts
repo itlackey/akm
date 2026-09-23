@@ -19,6 +19,7 @@ import {
   createProposal,
   isProposalSkipped,
   listProposals,
+  listProposalsReadOnly,
 } from "../../src/commands/proposal/repository";
 import {
   detectDoubleFrontmatter,
@@ -1799,7 +1800,11 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.outcome).toBe("review_needed");
     expect(result.score).toBe(2.0);
     expect(result.reason).toMatch(/description|when_to_use|frontmatter/);
-    expect(listProposals(stash)).toEqual([]);
+    // R10: review_needed now mints a pending proposal so a human can triage
+    // it in the normal queue.
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.status).toBe("pending");
     const rejectedDir = getDistillRejectedDir(stash);
     const rejectedFiles = fs.readdirSync(rejectedDir);
     expect(rejectedFiles).toHaveLength(1);
@@ -1835,7 +1840,8 @@ describe("akmDistill — pipeline-fix integration", () => {
     });
 
     expect(result.outcome).toBe("review_needed");
-    expect(listProposals(stash)).toEqual([]);
+    // R10: review_needed now mints a pending proposal for human triage.
+    expect(listProposals(stash)).toHaveLength(1);
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)?.metadata?.outcome).toBe("review_needed");
   });
@@ -1956,6 +1962,88 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     });
     expect(result.outcome).toBe("review_needed");
     expect(result.score).toBe(-1);
-    expect(listProposals(stash).length).toBe(0);
+    // R10: review_needed mints a pending proposal (for human triage) — the
+    // point of this test is that it is never auto-QUEUED as accepted content.
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.status).toBe("pending");
+  });
+});
+
+// ── R10: quality rejections persist as real proposal rows ────────────────────
+
+describe("akmDistill — R10: quality rejections persist as proposals", () => {
+  test("quality_rejected mints a rejected proposal carrying the judge's reason; a same-ref+source retry is skipped by rejection_backoff", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({ score: 1.5, reason: "adds nothing new" });
+        }
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.score).toBe(1.5);
+    expect(result.proposalId).toBeDefined();
+
+    // Not in the live (pending) queue…
+    expect(listProposals(stash)).toEqual([]);
+    // …but archived as `rejected`, carrying the judge's reason — through the
+    // same createProposal/archiveProposal path every other proposal takes, so
+    // fingerprint + backoff bookkeeping (repository.ts) ran for it too.
+    const rejected = listProposals(stash, { includeArchive: true, status: "rejected" });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.status).toBe("rejected");
+    expect(rejected[0]!.source).toBe("distill");
+    expect(rejected[0]!.review?.reason).toBe("adds nothing new");
+    // The read-only path (used by buildDistillMessages' / reflect's Reflexion
+    // "previously rejected" context) sees the same row.
+    expect(
+      listProposalsReadOnly(stash, { ref: result.proposalRef, status: "rejected", includeArchive: true }),
+    ).toHaveLength(1);
+
+    // A same ref+source mint attempt inside the 30d distill backoff window is
+    // skipped before it would even reach generation — createProposal alone
+    // (no LLM call) already refuses it.
+    const retry = createProposal(stash, {
+      ref: deriveLessonRef("skills/deploy"),
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(retry)).toBe(true);
+    if (isProposalSkipped(retry)) expect(retry.reason).toBe("rejection_backoff");
+  });
+
+  test("review_needed mints a pending proposal (queued for human triage, not silently discarded)", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({ score: 3.0, reason: "uncertain, could go either way" });
+        }
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("review_needed");
+    expect(result.proposalId).toBeDefined();
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.status).toBe("pending");
+    expect(proposals[0]!.source).toBe("distill");
   });
 });

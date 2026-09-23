@@ -60,7 +60,6 @@ import {
   resolveImproveScope,
   shouldAnalyzeMemoryCleanup,
 } from "./eligibility";
-import { countEvalCases } from "./eval-cases";
 // Shared improve option/result types live in the dependency-leaf
 // ./improve-run-types (severs the improve ↔ loop-stages ↔ preparation import
 // cycle, SCC #8 — anchors.md D.3). Re-exported below for external importers.
@@ -1729,7 +1728,7 @@ function finalizeImproveResult(args: {
     ensureIndexDurationMs,
     eventsCtx,
   } = args;
-  const { selectedStrategy, scope, options, primaryStashDir, startMs, resolvedPlan } = args.run;
+  const { selectedStrategy, scope, options, startMs, resolvedPlan } = args.run;
   const {
     preparation,
     consolidation,
@@ -1834,7 +1833,6 @@ function finalizeImproveResult(args: {
     ...(preparation.memoryIndexHealth !== undefined ? { memoryIndexHealth: preparation.memoryIndexHealth } : {}),
     ...(preparation.coverageGaps.length > 0 ? { coverageGaps: preparation.coverageGaps } : {}),
     ...(preparation.extract && preparation.extract.length > 0 ? { extract: preparation.extract } : {}),
-    ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
     ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
     // Present whenever the check ran, unlike `deadUrls` above — a clean run
     // (zero dead links) still needs to tell the health report how much of
@@ -2045,7 +2043,6 @@ function emitImproveCompletedEvent(
         noopActions: classCounts.noop,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,
-        evalCasesWritten: result.evalCasesWritten ?? 0,
         deadUrlCount: result.deadUrls?.length ?? 0,
         deadUrlsChecked: result.deadUrlCoverage?.checked ?? 0,
         deadUrlsTotal: result.deadUrlCoverage?.total ?? 0,
