@@ -67,7 +67,12 @@ for (const item of ITEMS) {
   if (!item.key || !item.title) throw new Error(`every item needs key and title: ${JSON.stringify(item)}`)
 }
 
-const BATCH_BRANCH = `wt/${BATCH}`
+// Item branches live at `wt/<batch>/<key>`, so the batch branch must not sit at
+// `wt/<batch>` itself — a ref cannot be both a file (the batch branch) and a
+// directory (the `wt/<batch>/` prefix the item branches need) at the same
+// path. Keep it outside that prefix, alongside the item worktrees' own
+// `<batch>-<key>` naming.
+const BATCH_BRANCH = `wt/${BATCH}-integration`
 const BATCH_WORKTREE = `${REPO}/.claude/worktrees/${BATCH}`
 const BRIEF_DIR = BRIEF.slice(0, BRIEF.lastIndexOf('/'))
 const itemBranch = (key) => `wt/${BATCH}/${key}`
