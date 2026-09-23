@@ -30,7 +30,7 @@ import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn, warnVerbose } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { LoweredExecutionDispatchLease } from "../integrations/agent/execution-lowering";
-import { type ChatMessage, isContextSizeError, LlmCallError } from "./client";
+import { type ChatMessage, isContextSizeError, isTransportFailure, LlmCallError } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 import { type CallStructuredRequest, callStructured, type StructuredLlmRunner } from "./structured-call";
 
@@ -646,10 +646,13 @@ export async function extractGraphFromBodies(
   let nonArrayResponse = false;
   // R2: a dead/erroring provider must not be hammered with a per-asset
   // fallback retry for every body in the batch — that is what turned one
-  // outage into 15,453 additional retry attempts. `provider_error` (the
-  // transport already retried once, per client.ts's isRetryable) means the
-  // provider itself is failing, not that this particular response was
-  // malformed; skip the fallback and record every asset as failed instead.
+  // outage into 15,453 additional retry attempts. `isTransportFailure`
+  // (shared with client.ts's `isRetryable` — see its definition) covers
+  // `provider_error`, `network_error`, and `provider_html_error`: the
+  // provider itself is failing (a dead endpoint more often raises
+  // `network_error` or `provider_html_error` than a plain 5xx), not that this
+  // particular response was malformed; skip the fallback and record every
+  // asset as failed instead.
   let batchProviderError = false;
 
   const batchOutcome = await tryLlmFeature<
@@ -723,11 +726,11 @@ export async function extractGraphFromBodies(
             `graph extraction (batch): context size exceeded for ${nonEmptyBodies.length} asset(s); ` +
               `skipping batch. promptChars=${userPrompt.length}${formatContextHint(llmRunner)}`,
           );
-        } else if (err instanceof LlmCallError && err.code === "provider_error") {
+        } else if (err instanceof LlmCallError && isTransportFailure(err)) {
           batchProviderError = true;
           bumpTelemetry(options.telemetry, "failureCount", nonEmptyBodies.length);
           warn(
-            `graph extraction (batch): provider error for ${nonEmptyBodies.length} asset(s); ` +
+            `graph extraction (batch): provider error (${err.code}) for ${nonEmptyBodies.length} asset(s); ` +
               `skipping per-asset fallback retries. promptChars=${userPrompt.length}${formatContextHint(llmRunner)}: ${errMsg}`,
           );
         } else {
