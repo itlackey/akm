@@ -1362,7 +1362,7 @@ async function finalizeReflectProposal(args: {
       return {
         schemaVersion: 2,
         ok: false,
-        reason: "parse_error" as const,
+        reason: "quality_rejected" as const,
         error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
         ...(options.ref ? { ref: options.ref } : {}),
         engine: engineName,

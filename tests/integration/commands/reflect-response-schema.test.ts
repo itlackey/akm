@@ -930,6 +930,10 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected quality rejection");
     expect(result.error).toContain("quality gate rejected");
+    // R3: judge rejection is a distinct reason from `parse_error` — the LLM
+    // output parsed fine, the judge rejected it. Not injected into later
+    // reflect prompts as an "avoid these patterns" LLM fault.
+    expect(result.reason).toBe("quality_rejected");
     expect(reflectCalls).toBe(1);
     expect(judgeCalls).toBe(1);
     const completed = readEvents({ type: "reflect_completed" }).events.at(-1);

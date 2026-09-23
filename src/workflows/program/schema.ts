@@ -71,6 +71,7 @@ const RETRY_REASON_SET = {
   content_policy_reject: true,
   unsupported_type: true,
   no_change: true,
+  quality_rejected: true,
   aborted: true,
 } as const satisfies Record<AgentFailureReason, true>;
 

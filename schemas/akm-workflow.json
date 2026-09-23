@@ -154,6 +154,7 @@
         "content_policy_reject",
         "unsupported_type",
         "no_change",
+        "quality_rejected",
         "aborted"
       ]
     },
