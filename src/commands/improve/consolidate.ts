@@ -885,12 +885,16 @@ export function inspectConsolidationPool(
 
 /**
  * Drop memories whose body already exists verbatim in `knowledge/` before any
- * chunking or LLM work. Uses `cacheHash` (case-preserving stripped body) —
- * the exact domain `shouldSkipPromotionBodyDuplicate`'s post-LLM check hashes
- * (`cacheHash(parseFrontmatter(memoryContent).content.trim())`, equivalent to
- * `cacheHash(memoryContent)` since `cacheHash` strips frontmatter itself) —
- * so the pre-filter and the post-LLM check cannot disagree. An unreadable
- * memory is kept (fail-safe: let the later passes surface the read error).
+ * chunking or LLM work. Hashes the raw file with `cacheHash` (case-preserving
+ * stripped body), the same way `loadExistingKnowledgeBodyHashes` built
+ * `existingKnowledgeBodyHashes` — so the two sides of the comparison are
+ * computed identically. This is *not* the same hash the post-LLM check
+ * (`shouldSkipPromotionBodyDuplicate`) uses: that one hashes
+ * `cacheHash(parseFrontmatter(memoryContent).content.trim())`, which strips
+ * frontmatter twice (`cacheHash` strips it again internally) — a
+ * pre-existing divergence from this pre-filter that only bites a memory body
+ * starting with its own `---` block. An unreadable memory is kept (fail-safe:
+ * let the later passes surface the read error).
  */
 function prefilterAlreadyPromotedMemories(
   memories: MemoryEntry[],

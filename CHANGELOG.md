@@ -61,7 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is indexed, so incrementally-reindexed content stops re-triggering the
   same full rescan on every subsequent run. The implicit reindex's timing
   breakdown (walk/llm/embed/finalize), previously discarded, is now logged
-  and surfaced on the improve result as `ensureIndexDurationMs`.
+  at verbose level and surfaced on the improve result as `ensureIndexDurationMs`.
 
 ### Changed
 

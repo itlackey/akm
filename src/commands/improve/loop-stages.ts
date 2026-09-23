@@ -1045,7 +1045,7 @@ async function runMaintenancePassesUnderLease(
     allWarnings.push(...inference.warnings);
     const memoryInference = inference.memoryInference;
 
-    // #R78: index exactly the files memory inference wrote (derived children
+    // R78 (tier1-0917): index exactly the files memory inference wrote (derived children
     // + rewritten parents) instead of a full reindex — typically one written
     // fact per run, which used to pay a full-corpus reindex regardless.
     // `reindexedAfterInference` is deliberately left false: this is not a
@@ -1612,7 +1612,7 @@ export const STATE_GC_GRACE_MS = daysToMs(7);
  * bundles — but against a prebuilt {@link LiveRefSnapshot}
  * (`getLiveRefSnapshot`) instead of a database round trip per row: with up to
  * a few thousand pending rows per run, one probe per row was the dominant
- * cost (#R78).
+ * cost (R78, tier1-0917).
  *
  * On top of that, falls back to the BARE conceptId form (`bareImproveRef` —
  * the same primitive `preparation.ts`'s `normalizeStoredKey` map is built
@@ -1718,7 +1718,7 @@ export function runOrphanStateGcPass(
   const now = Date.now();
   let pending = 0;
   let collected = 0;
-  // #R78: one query for every live item_ref, shared by both tables' sweeps
+  // R78 (tier1-0917): one query for every live item_ref, shared by both tables' sweeps
   // below — replaces a `getEntryByRef` round trip per pending row.
   const liveRefs = getLiveRefSnapshot(indexDb);
 
