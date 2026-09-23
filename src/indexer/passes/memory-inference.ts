@@ -49,7 +49,7 @@ import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
-import { recordWrittenPath } from "../../core/write-provenance";
+import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import {
@@ -133,6 +133,16 @@ export interface MemoryInferenceResult {
   htmlErrorCount: number;
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
+  /**
+   * Absolute paths this call actually wrote or rewrote — every derived child
+   * (`writeAssetToSource`) and every parent whose frontmatter was stamped
+   * `inferenceProcessed: true` (`markParentProcessed`). Lets the caller index
+   * exactly these files (`indexWrittenAssets`) instead of a full reindex
+   * (#R78) — sourced from the run-scoped write-provenance journal
+   * (`core/write-provenance.ts`), so it can never drift from what actually
+   * hit disk.
+   */
+  writtenPaths: string[];
 }
 
 export interface MemoryInferencePassOptions {
@@ -367,6 +377,21 @@ async function inferPendingMemoryRecord(
  * short-circuits to a no-op result.
  */
 export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): Promise<MemoryInferenceResult> {
+  // #R78: owns the write-provenance journal end-to-end so it closes on every
+  // exit path, including a throw out of the body below — an unclosed journal
+  // would keep reporting every later write in this process as this call's own.
+  const provenance = beginWriteProvenance();
+  try {
+    return await runMemoryInferencePassBody(ctx, provenance);
+  } finally {
+    provenance.end();
+  }
+}
+
+async function runMemoryInferencePassBody(
+  ctx: MemoryInferencePassContext,
+  provenance: WriteProvenanceJournal,
+): Promise<MemoryInferenceResult> {
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
   const invocationOwnsRunner = Object.hasOwn(ctx, "llmRunner");
   const compressMemoryToDerivedMemory =
@@ -382,6 +407,7 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
     skippedAborted: 0,
     unaccounted: 0,
     htmlErrorCount: 0,
+    writtenPaths: [],
   };
 
   // Mutable sink threaded into compressMemoryToDerivedMemory so the per-call
@@ -394,6 +420,8 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
   };
   const completeResult = (): MemoryInferenceResult => {
     if (noticesByKey.size > 0) result.notices = Object.freeze([...noticesByKey.values()]);
+    // Non-destructive read — the wrapper's `finally` owns closing the journal.
+    result.writtenPaths = provenance.writtenPaths();
     return result;
   };
 

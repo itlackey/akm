@@ -26,7 +26,7 @@
  * dependency.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import {
   type IndexDbCell,
@@ -347,6 +347,48 @@ describe("runOrphanStateGcPass", () => {
     expect(out.warnings.length).toBeGreaterThan(0);
     expect(out.pending).toBe(0);
     expect(out.collected).toBe(0);
+  });
+
+  // #R78: the pass used to call `getEntryByRef` (two indexDb statements, with
+  // the bare-ref fallback) once per pending row — O(N) round trips against
+  // index.db for N pending rows. It now builds one live-ref snapshot up front
+  // and matches every row against it in memory.
+  test("a GC pass over N pending rows performs O(1) indexDb queries, not O(N)", () => {
+    const orphanCount = 40;
+    withStateDb((db) => {
+      for (let i = 0; i < orphanCount; i++) {
+        upsertAssetSalience(db, `memories/orphan-${i}`, FIXTURE_VECTOR);
+      }
+    });
+    const indexDb = openIndex(); // empty — every pending ref is a genuine orphan
+    try {
+      let indexDbQueries = 0;
+      const realPrepare = indexDb.prepare.bind(indexDb);
+      const prepareSpy = spyOn(indexDb, "prepare").mockImplementation((sql: string) => {
+        indexDbQueries++;
+        return realPrepare(sql);
+      });
+
+      try {
+        const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+        expect(out.pending).toBe(orphanCount);
+      } finally {
+        prepareSpy.mockRestore();
+      }
+
+      // One query total for the whole pass (both state tables share it) — NOT
+      // one per pending row.
+      expect(indexDbQueries).toBe(1);
+
+      withStateDb((db) => {
+        const rows = listAssetSalienceMissingState(db);
+        expect(rows).toHaveLength(orphanCount);
+        // Every absent ref still received its missing_since stamp.
+        expect(rows.every((r) => r.missing_since != null)).toBe(true);
+      });
+    } finally {
+      closeDatabase(indexDb);
+    }
   });
 });
 

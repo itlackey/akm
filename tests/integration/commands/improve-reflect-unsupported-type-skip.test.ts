@@ -351,6 +351,7 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           skippedChildExists: 0,
           skippedAborted: 0,
           warnings: [],
+          writtenPaths: [],
         };
       },
       graphExtractionFn: async () => {

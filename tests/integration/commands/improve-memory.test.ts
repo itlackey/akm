@@ -6,11 +6,14 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
+import { getDbPath } from "../../../src/core/paths";
 import { setQuiet } from "../../../src/core/warn";
 import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { getEntryByRef } from "../../../src/storage/repositories/index-entries-repository";
 import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-config";
@@ -1150,6 +1153,7 @@ describe("akm improve memory cleanup", () => {
           htmlErrorCount: 0,
           cacheHits: 0,
           retryAttempts: 0,
+          writtenPaths: [],
         } satisfies MemoryInferenceResult;
       },
       graphExtractionFn: async () => {
@@ -1189,20 +1193,49 @@ describe("akm improve memory cleanup", () => {
       htmlErrorCount: 0,
       cacheHits: 0,
       retryAttempts: 0,
+      writtenPaths: [],
     });
     expect(result.graphExtraction?.written).toBe(true);
   });
 
-  test("improve reindexes after memory inference before refreshing the graph", async () => {
+  // #R78: this used to assert a full reindex ("reindex" in callOrder) ran
+  // between memory inference and graph extraction. It now indexes exactly
+  // the files memory inference wrote (indexWrittenAssets) instead, so
+  // reindexFn is never called for this reason and the derived file lands in
+  // index.db without one.
+  test("improve indexes memory inference's written paths incrementally, without a full reindex", async () => {
     const stashDir = makeTempDir("akm-improve-memory-reindex-order-");
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
     await buildIndex(stashDir);
+    // Isolate the incremental-index path under test from the D9 consolidation
+    // reindex (a genuinely separate, still-full reindex this run would
+    // otherwise also trigger and make "no full reindex" unprovable here).
+    saveConfig(
+      withImproveAutonomy(
+        withTestImproveLlm({
+          semanticSearchMode: "off",
+          bundles: { stash: { path: stashDir, writable: true } },
+          defaultBundle: "stash",
+          defaultWriteTarget: "stash",
+          improve: {
+            strategies: { default: { processes: { extract: { enabled: false }, consolidate: { enabled: false } } } },
+          },
+        }),
+      ),
+    );
 
     appendEvent({
       eventType: "feedback",
       ref: durableRef("memories/vpn"),
       metadata: { signal: "positive", note: "good" },
     });
+
+    // A real derived file on disk — the incremental index call needs a real
+    // path to upsert, and its presence in index.db afterwards is the proof
+    // that graph extraction (which resolves candidatePaths against index.db)
+    // can still find it without a full reindex.
+    const derivedPath = path.join(stashDir, "memories", "vpn.derived.md");
+    fs.writeFileSync(derivedPath, "---\ninferred: true\ndescription: derived vpn\n---\n\nDerived vpn fact.\n", "utf8");
 
     const callOrder: string[] = [];
 
@@ -1243,6 +1276,7 @@ describe("akm improve memory cleanup", () => {
           htmlErrorCount: 0,
           cacheHits: 0,
           retryAttempts: 0,
+          writtenPaths: [derivedPath],
         } satisfies MemoryInferenceResult;
       },
       graphExtractionFn: async ({ options }) => {
@@ -1271,9 +1305,16 @@ describe("akm improve memory cleanup", () => {
       },
     });
 
-    expect(callOrder).toEqual(["memoryInference", "reindex", "graphExtraction"]);
+    expect(callOrder).toEqual(["memoryInference", "graphExtraction"]);
     expect(result.memoryInference?.writtenFacts).toBe(1);
     expect(result.graphExtraction?.written).toBe(true);
+
+    const checkDb = openIndexDatabase(getDbPath());
+    try {
+      expect(getEntryByRef(checkDb, "memories/vpn.derived")).not.toBeNull();
+    } finally {
+      closeDatabase(checkDb);
+    }
   });
 
   test("improve emits incremental graph extraction progress lines", async () => {
@@ -1412,6 +1453,7 @@ describe("akm improve memory cleanup", () => {
         htmlErrorCount: 0,
         cacheHits: 0,
         retryAttempts: 0,
+        writtenPaths: [],
       }),
       graphExtractionFn: async () => ({
         considered: 1,
