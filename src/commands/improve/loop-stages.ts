@@ -1491,7 +1491,7 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
           // R0 step 3: opportunistic post-purge VACUUM. Reads the freelist
           // off this same connection (no second state.db handle) and only
           // runs when reclaimable space crosses STATE_DB_FREELIST_WARN_RATIO.
-          const vacuumOutcome = vacuumStateDbIfReclaimable(stateDb, readFreelistInfo(stateDb));
+          const vacuumOutcome = vacuumStateDbIfReclaimable(stateDb, readFreelistInfo(stateDb), eventsCtx);
           if (vacuumOutcome.ran) {
             info(`[improve] state.db vacuum: ${vacuumOutcome.pagesBefore} -> ${vacuumOutcome.pagesAfter} pages`);
           }

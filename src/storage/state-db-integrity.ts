@@ -22,8 +22,8 @@
  * @module storage/state-db-integrity
  */
 
+import { appendEvent, type EventsContext } from "../core/events";
 import { type Database, openDatabase } from "./database";
-import { insertEvent } from "./repositories/events-repository";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-pragmas";
 
 /** How many corruption errors `PRAGMA quick_check` collects before it stops scanning and returns. */
@@ -131,8 +131,17 @@ export function getStateDbFreelistInfo(dbPath: string): StateDbFreelistInfo {
  * database (another writer holds the file right now) is reported via
  * `reason: "busy"` rather than raised, since this is opportunistic
  * maintenance and must not fail the purge pass it follows.
+ *
+ * The event is appended via `appendEvent` (not a direct `insertEvent` on
+ * `db`) so it honors the caller's `EventsContext` — `readOnly` suppresses
+ * the write and an injected `now` is used for `ts` — the same as every
+ * other event `runRetentionPurgePass` appends in this callback.
  */
-export function vacuumStateDbIfReclaimable(db: Database, freelist: StateDbFreelistInfo): StateDbVacuumOutcome {
+export function vacuumStateDbIfReclaimable(
+  db: Database,
+  freelist: StateDbFreelistInfo,
+  eventsCtx?: EventsContext,
+): StateDbVacuumOutcome {
   if (freelist.ratio <= STATE_DB_FREELIST_WARN_RATIO) {
     return { ran: false, reason: "below-threshold", pagesBefore: freelist.pageCount };
   }
@@ -144,10 +153,12 @@ export function vacuumStateDbIfReclaimable(db: Database, freelist: StateDbFreeli
     return { ran: false, reason: busy ? "busy" : "error", pagesBefore: freelist.pageCount, error: message };
   }
   const pagesAfter = Number(firstColumn(db.prepare("PRAGMA page_count").get() as Record<string, unknown>) ?? 0);
-  insertEvent(db, {
-    eventType: STATE_DB_VACUUMED_EVENT,
-    ts: new Date().toISOString(),
-    metadata: { pagesBefore: freelist.pageCount, pagesAfter, freelistRatioBefore: freelist.ratio },
-  });
+  appendEvent(
+    {
+      eventType: STATE_DB_VACUUMED_EVENT,
+      metadata: { pagesBefore: freelist.pageCount, pagesAfter, freelistRatioBefore: freelist.ratio },
+    },
+    eventsCtx,
+  );
   return { ran: true, pagesBefore: freelist.pageCount, pagesAfter };
 }
