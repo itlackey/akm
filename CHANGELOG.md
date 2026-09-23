@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/llm/client.ts`), shared with `chatCompletion`'s retry classifier so
   the two cannot drift apart, and covers `provider_error`, `network_error`,
   and `provider_html_error`.
+- **`akm health`'s `state-db-integrity` check no longer crashes when the freelist/page-count read fails.** `getStateDbFreelistInfo` had a `finally` but no `catch` around its read-only open and pragma reads, unlike its sibling `runStateDbQuickCheck` — a throw there (e.g. an unopenable state.db) escaped `akm health` as an unclassified exit 70 on exactly the damaged database the check exists to report. It now returns a zeroed `StateDbFreelistInfo` with an `error` field, and the check renders that as a failed check instead of throwing.
+- **The post-purge VACUUM's `state_db_vacuumed` event now honors the caller's `EventsContext`.** `vacuumStateDbIfReclaimable` appended its event with a direct `insertEvent` call, bypassing `EventsContext.readOnly` and the injectable clock its sibling purge events (`events_purged`, `improve_runs_purged`, `improve_cycle_metrics_purged`) use in the same `runRetentionPurgePass` callback. It now appends the event via `appendEvent` with the caller's `EventsContext` plumbed through.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 

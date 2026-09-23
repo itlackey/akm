@@ -80,4 +80,16 @@ describe("state-db-integrity check (R0)", () => {
     const r = run({ ok: true, lines: ["ok"] }, { freelistCount: 500, pageCount: 1000, ratio: 0.5 });
     expect(r.status).toBe("pass");
   });
+
+  // A3: getStateDbFreelistInfo can fail independently of quick_check (e.g. the
+  // read-only handle it opens itself hits an error the quick_check probe did
+  // not). That must render as a failed check, not a thrown exception.
+  test("fails with the freelist probe's own error when quick_check passed but the freelist read could not run", () => {
+    const r = run(
+      { ok: true, lines: ["ok"] },
+      { freelistCount: 0, pageCount: 0, ratio: 0, error: "unable to open database file" },
+    );
+    expect(r.status).toBe("fail");
+    expect(r.message).toContain("unable to open database file");
+  });
 });

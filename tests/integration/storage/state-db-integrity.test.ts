@@ -124,6 +124,16 @@ describe("getStateDbFreelistInfo (R0)", () => {
     expect(info.freelistCount).toBeGreaterThan(0);
     expect(info.ratio).toBeGreaterThan(0);
   });
+
+  test("A3: reports a zeroed info with error (not a throw) when the file cannot be opened at all", () => {
+    const dbPath = getStateDbPath();
+    // No file at this path — never created.
+    const info = getStateDbFreelistInfo(dbPath);
+    expect(info.freelistCount).toBe(0);
+    expect(info.pageCount).toBe(0);
+    expect(info.ratio).toBe(0);
+    expect(info.error).toBeDefined();
+  });
 });
 
 describe("vacuumStateDbIfReclaimable (R0)", () => {
@@ -176,6 +186,67 @@ describe("vacuumStateDbIfReclaimable (R0)", () => {
       const metadata = JSON.parse(event?.metadata_json ?? "{}") as { pagesBefore: number; pagesAfter: number };
       expect(metadata.pagesBefore).toBe(before.pageCount);
       expect(metadata.pagesAfter).toBe(pagesAfter);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("A3: honors a readOnly EventsContext — VACUUMs but does not append the event", () => {
+    const dbPath = getStateDbPath();
+    const db = openStateDatabase(dbPath);
+    try {
+      const ts = new Date().toISOString();
+      const ids: number[] = [];
+      const bigMetadata = { blob: "x".repeat(2000) };
+      for (let i = 0; i < 3000; i++) {
+        ids.push(
+          insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
+        );
+      }
+      for (const id of ids) {
+        db.prepare("DELETE FROM events WHERE id = ?").run(id);
+      }
+      const before = getStateDbFreelistInfo(dbPath);
+      expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
+
+      const outcome = vacuumStateDbIfReclaimable(db, before, { readOnly: true, db });
+      expect(outcome.ran).toBe(true);
+
+      const event = db
+        .prepare("SELECT metadata_json FROM events WHERE event_type = ? ORDER BY id DESC LIMIT 1")
+        .get(STATE_DB_VACUUMED_EVENT) as { metadata_json: string } | null;
+      expect(event).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("A3: uses the injected clock from EventsContext for the event's ts", () => {
+    const dbPath = getStateDbPath();
+    const db = openStateDatabase(dbPath);
+    try {
+      const ts = new Date().toISOString();
+      const ids: number[] = [];
+      const bigMetadata = { blob: "x".repeat(2000) };
+      for (let i = 0; i < 3000; i++) {
+        ids.push(
+          insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
+        );
+      }
+      for (const id of ids) {
+        db.prepare("DELETE FROM events WHERE id = ?").run(id);
+      }
+      const before = getStateDbFreelistInfo(dbPath);
+      expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
+
+      const injectedMs = new Date("2020-01-02T03:04:05.000Z").getTime();
+      const outcome = vacuumStateDbIfReclaimable(db, before, { db, now: () => injectedMs });
+      expect(outcome.ran).toBe(true);
+
+      const event = db
+        .prepare("SELECT ts FROM events WHERE event_type = ? ORDER BY id DESC LIMIT 1")
+        .get(STATE_DB_VACUUMED_EVENT) as { ts: string } | undefined;
+      expect(event?.ts).toBe("2020-01-02T03:04:05.000Z");
     } finally {
       db.close();
     }
