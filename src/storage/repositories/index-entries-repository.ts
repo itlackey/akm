@@ -867,6 +867,25 @@ export function getIndexedFilePaths(db: Database): Set<string> {
 }
 
 /**
+ * `entries.file_path -> content_hash` for every currently-indexed file that
+ * carries a stored hash. Used by per-file staleness detection
+ * (`hasNewerIndexableFiles`, R6) to tell "edited after the last build" apart
+ * from "already re-indexed with this exact content after the last build" —
+ * `indexWrittenAssets` upserts a fresh row (and its `content_hash`) without
+ * bumping `builtAt`, so mtime alone cannot distinguish the two cases.
+ */
+export function getIndexedFileHashes(db: Database): Map<string, string> {
+  const rows = db
+    .prepare(
+      `SELECT file_path, content_hash FROM entries
+        WHERE file_path IS NOT NULL AND file_path <> ''
+          AND content_hash IS NOT NULL`,
+    )
+    .all() as Array<{ file_path: string; content_hash: string }>;
+  return new Map(rows.map((r) => [r.file_path, r.content_hash]));
+}
+
+/**
  * Resolve a single `entries.file_path` by primary key, or `undefined` if no
  * row matches.
  *
