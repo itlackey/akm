@@ -105,15 +105,6 @@ const GRAPH_EXTRACTION_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/**
- * Hard output-token cap for the single-asset extraction call (R20), derived
- * from the caps above so a compliant provider cannot pay for output beyond
- * what parseGraphExtraction ever keeps. ~12 tokens covers a short quoted
- * entity plus its array separator; a relation costs roughly 2x that for its
- * two entity refs and `type` field, plus headroom for JSON punctuation.
- */
-const MAX_GRAPH_EXTRACTION_TOKENS = MAX_ENTITIES_PER_ASSET * 12 + MAX_RELATIONS_PER_ASSET * 24;
-
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
 export interface GraphRelation {
   from: string;
@@ -976,7 +967,6 @@ export async function extractGraphFromBody(
       timeoutMs: llmRunner.timeoutMs,
       signal,
       responseSchema: GRAPH_EXTRACTION_JSON_SCHEMA as unknown as Record<string, unknown>,
-      maxTokens: MAX_GRAPH_EXTRACTION_TOKENS,
       onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
     },
     onNotices: options.onNotices,

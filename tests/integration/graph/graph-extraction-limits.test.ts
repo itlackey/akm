@@ -94,7 +94,7 @@ function makeChunkedBody(paragraphs: number): string {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("extractGraphFromBody — bounded output (R12b + R20)", () => {
-  test("(1) the request carries a json_schema response_format and a bounded max_tokens", async () => {
+  test("(1) the request carries a json_schema response_format bounded by maxItems, and no maxTokens", async () => {
     rawQueue.push(JSON.stringify({ entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta" }] }));
 
     await extractGraphFromBody(SAMPLE_LLM, "Alpha references Beta.", undefined, AKM_CFG_WITH_GATE);
@@ -114,10 +114,12 @@ describe("extractGraphFromBody — bounded output (R12b + R20)", () => {
     // additionalProperties: false forbids the unprompted `confidence` field.
     const schema = (request.response_format as { json_schema: { schema: Record<string, unknown> } }).json_schema.schema;
     expect(Object.keys(schema.properties as Record<string, unknown>)).toEqual(["entities", "relations"]);
-    expect(typeof request.max_tokens).toBe("number");
-    expect(request.max_tokens as number).toBeGreaterThan(0);
-    // Bounded — well under an unbounded/runaway completion, not a specific pin.
-    expect(request.max_tokens as number).toBeLessThan(4000);
+    // Cost is bounded by the schema's maxItems caps (matching memory-infer's
+    // pattern), not by a hardcoded maxTokens — see AGENTS.md "LLM Defaults".
+    const properties = schema.properties as Record<string, { maxItems?: number }>;
+    expect(properties.entities?.maxItems).toBe(32);
+    expect(properties.relations?.maxItems).toBe(32);
+    expect(request.max_tokens).toBeUndefined();
   });
 
   test("(2) 20 chunks with maxChunksPerAsset unset makes 8 calls (default cap) and reports truncatedChunks: 12", async () => {
