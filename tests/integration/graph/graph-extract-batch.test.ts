@@ -15,6 +15,7 @@
  *   (d) Empty bodies array returns an empty array without calling the LLM.
  *   (e) All-whitespace bodies return all-empty extractions without LLM calls.
  *   (f) LLM returns non-array JSON → falls back to individual calls for all assets.
+ *   (i) A provider_error (5xx) on the batch call does not fall back per-asset (R2).
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
@@ -35,11 +36,17 @@ let chatCallCount = 0;
 const batchRawQueue: string[] = [];
 /** Queue of raw strings for individual (single-asset fallback) calls. */
 const singleRawQueue: string[] = [];
+/** Queue of HTTP status codes to return instead of a 200, for provider-error tests. */
+const errorStatusQueue: number[] = [];
 
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
     chatCallCount++;
+    if (errorStatusQueue.length > 0) {
+      const status = errorStatusQueue.shift() as number;
+      return new Response("simulated provider error", { status });
+    }
     const body = (await request.json()) as {
       messages?: Array<{ role?: string; content?: string }>;
     };
@@ -83,6 +90,7 @@ beforeEach(() => {
   chatCallCount = 0;
   batchRawQueue.length = 0;
   singleRawQueue.length = 0;
+  errorStatusQueue.length = 0;
 });
 
 afterAll(() => {
@@ -308,6 +316,22 @@ describe("extractGraphFromBodies — unit", () => {
     expect(telemetry.retryAttempts).toBe(1);
     // The retry recovered the batch → no surfaced non-array failure.
     expect(telemetry.nonArrayBatchFailures ?? 0).toBe(0);
+  });
+
+  test("(i) provider_error (5xx) on the batch call does not fall back per-asset (R2)", async () => {
+    const bodies = ["Alpha body.", "Beta body."];
+    // Provider is dead: both the first attempt and client.ts's single
+    // built-in retry (5xx is retryable) return 500. No per-asset fallback
+    // calls, and no stricter-reprompt retry, should follow.
+    errorStatusQueue.push(500, 500);
+
+    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    expect(results[1]).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    // 1 initial attempt + 1 built-in transient retry = 2. No per-asset fallback.
+    expect(chatCallCount).toBe(2);
   });
 
   test("normalizes entities/relation types and keeps confidence when provided", async () => {
