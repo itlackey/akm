@@ -256,7 +256,7 @@ describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
     expect(result.reviewNeeded).toBe(true);
   });
 
-  test("a missing criterion key routes to review exactly as a parse failure does today", async () => {
+  test("an empty scores object routes to review exactly as a parse failure does today", async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
       // `scores` present but empty — no usable criteria at all.
       JSON.stringify({ scores: {}, reason: "bad" }),
@@ -265,6 +265,19 @@ describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
     expect(result.reviewNeeded).toBe(true);
+  });
+
+  test("a partial scores object (missing criterion key) routes to review exactly as a parse failure does today", async () => {
+    // Only `novelty` present — `actionability` and `nonRedundancy` are missing.
+    // A truncated or partial judge response must not auto-average over whatever arrived.
+    const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
+      JSON.stringify({ scores: { novelty: 5 }, reason: "partial" }),
+    );
+
+    expect(result.pass).toBe(false);
+    expect(result.score).toBe(-1);
+    expect(result.reviewNeeded).toBe(true);
+    expect(result.criteria).toBeUndefined();
   });
 
   test("the review-needed and auto-reject thresholds (3.5 / 2.5) are unchanged for the averaged criteria score", async () => {
@@ -296,5 +309,17 @@ describe("runReflectQualityJudge — per-criterion scores (R16)", () => {
     expect(result.pass).toBe(true);
     expect(result.score).toBeCloseTo((4 + 5 + 4) / 3, 9);
     expect(result.criteria).toEqual({ feedbackAlignment: 4, preservation: 5, quality: 4 });
+  });
+
+  test("a partial scores object (missing criterion key) routes to review, using its own key set", async () => {
+    // Only `feedbackAlignment` present — `preservation` and `quality` are missing.
+    const result = await runReflectQualityJudge(configWithLlm(), "candidate content", "source content", [], async () =>
+      JSON.stringify({ scores: { feedbackAlignment: 5 }, reason: "partial" }),
+    );
+
+    expect(result.pass).toBe(false);
+    expect(result.score).toBe(-1);
+    expect(result.reviewNeeded).toBe(true);
+    expect(result.criteria).toBeUndefined();
   });
 });

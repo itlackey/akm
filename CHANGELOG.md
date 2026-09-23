@@ -29,6 +29,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `QualityJudgeResult.criteria` into the `distill_invoked` event metadata and
   rejection-envelope frontmatter `writeQualityRejection` writes, and into
   reflect's `reflect_completed` rejection event as `qualityCriteria`.
+- **The judge parser accepted a partial `scores` object and auto-passed it.**
+  `parseJudgeResponse` validated only that whatever criterion keys arrived
+  held finite 1-5 values, then averaged over those keys alone — so a
+  truncated judge response like `{"scores": {"novelty": 5}, "reason": "…"}`
+  parsed to `score: 5.0` and `pass: true`, promoting content the judge never
+  finished evaluating on its other criteria. `runQualityJudge` now passes the
+  criterion key set its prompt asked for (`buildJudgePrompt`:
+  novelty/actionability/nonRedundancy; `buildReflectJudgePrompt`:
+  feedbackAlignment/preservation/quality) down to `parseJudgeResponse`, which
+  returns a parse failure — routed to review, exactly as a malformed response
+  is today — when any expected key is missing from `scores`.
 - **The batch graph-extraction provider-storm guard only recognized one error
   code.** After a failed batch call, `extractGraphFromBodies` skipped the
   per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
