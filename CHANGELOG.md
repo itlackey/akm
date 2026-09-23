@@ -62,6 +62,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same full rescan on every subsequent run. The implicit reindex's timing
   breakdown (walk/llm/embed/finalize), previously discarded, is now logged
   at verbose level and surfaced on the improve result as `ensureIndexDurationMs`.
+- **Consolidate's post-LLM promote-dedup hash double-stripped frontmatter.**
+  `shouldSkipPromotionBodyDuplicate`'s `bodyHash` was computed as
+  `cacheHash(parseFrontmatter(memoryContent).content.trim())` — the body was
+  already frontmatter-stripped before being handed to `cacheHash`, which
+  strips it again internally — diverging from the single-strip
+  `cacheHash(raw)` domain `loadExistingKnowledgeBodyHashes` and the pre-filter
+  use for a source memory body that begins with its own `---` block. The
+  check now hashes `cacheHash(memoryContent)` directly, so the two sides of
+  the dedup comparison agree.
 
 ### Changed
 

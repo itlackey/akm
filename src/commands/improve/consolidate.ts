@@ -842,13 +842,13 @@ export function inspectConsolidationPool(
  * chunking or LLM work. Hashes the raw file with `cacheHash` (case-preserving
  * stripped body), the same way `loadExistingKnowledgeBodyHashes` built
  * `existingKnowledgeBodyHashes` — so the two sides of the comparison are
- * computed identically. This is *not* the same hash the post-LLM check
- * (`shouldSkipPromotionBodyDuplicate`) uses: that one hashes
- * `cacheHash(parseFrontmatter(memoryContent).content.trim())`, which strips
- * frontmatter twice (`cacheHash` strips it again internally) — a
- * pre-existing divergence from this pre-filter that only bites a memory body
- * starting with its own `---` block. An unreadable memory is kept (fail-safe:
- * let the later passes surface the read error).
+ * computed identically. (H1: the post-LLM check, `shouldSkipPromotionBody-
+ * Duplicate`, used to hash `cacheHash(parseFrontmatter(memoryContent).content
+ * .trim())` — double-stripping frontmatter and diverging from this pre-filter
+ * for a memory body starting with its own `---` block. It now hashes
+ * `cacheHash(memoryContent)` directly, matching this single-strip domain.)
+ * An unreadable memory is kept (fail-safe: let the later passes surface the
+ * read error).
  */
 function prefilterAlreadyPromotedMemories(
   memories: MemoryEntry[],
@@ -1649,7 +1649,13 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
   //       different knowledgeRef slug.
   // Use cacheHash (case-preserving stripped body) to match the canonical
   // hash domain used by the body-embedding cache and pending-proposal set.
-  const bodyHash = cacheHash(sourceBody);
+  // H1: hash `memoryContent` (one frontmatter strip, inside cacheHash)
+  // rather than the already-stripped `sourceBody` — hashing sourceBody here
+  // double-stripped (parseFrontmatter ran once above to produce sourceBody,
+  // then cacheHash's internal stripFrontmatterBody ran again), diverging from
+  // the single-strip domain `loadExistingKnowledgeBodyHashes` and the
+  // pre-filter use whenever a body starts with its own `---` block.
+  const bodyHash = cacheHash(memoryContent);
   if (shouldSkipPromotionBodyDuplicate({ bodyHash, op, knowledgeRef, ctx })) return;
 
   try {

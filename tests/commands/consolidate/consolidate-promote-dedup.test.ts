@@ -365,4 +365,58 @@ describe("existing knowledge body dedup", () => {
     expect(skips).toEqual([{ op: "promote", ref: "memories/source", reason: "dedup_existing_knowledge" }]);
     expect(warnings.some((warning) => warning.includes("identical body already exists in knowledge"))).toBe(true);
   });
+
+  it("detects a duplicate whose body starts with its own --- block (H1)", async () => {
+    // Regression for H1: the post-LLM dedup hash used to be computed as
+    // cacheHash(parseFrontmatter(memoryContent).content.trim()) — an already-
+    // stripped body run through cacheHash's own internal strip a second time.
+    // A body that begins with its own `---`…`---` divider pair only diverges
+    // from the single-strip domain (loadExistingKnowledgeBodyHashes / the
+    // pre-filter) under that double strip, so this fixture is the minimal
+    // reproduction: with the bug, the dedup guard misses the match and a
+    // promote for duplicate content goes through uncaught.
+    const stash = makeStashDir();
+    const sourceBody =
+      "---\nexample: not real frontmatter\n---\n\n" +
+      "This body deliberately starts with its own --- divider pair so the duplicate-detection hash must not " +
+      "re-strip it a second time. The text continues long enough to clear the promotion size gate.";
+    const memoryPath = path.join(stash, "memories", "source.md");
+    fs.writeFileSync(memoryPath, `---\ndescription: Source memory\n---\n\n${sourceBody}\n`);
+    fs.writeFileSync(
+      path.join(stash, "knowledge", "already-accepted.md"),
+      `---\ntype: knowledge\ndescription: Different accepted title\n---\n\n${sourceBody}\n`,
+    );
+    const config = {
+      semanticSearchMode: "off",
+      bundles: { stash: { path: stash, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: "stash",
+    } as AkmConfig;
+    const promoted: string[] = [];
+    const warnings: string[] = [];
+    const skips: Array<{ op: string; ref: string; reason: string }> = [];
+
+    await emitPromotionProposal(makePromoteOp("memories/source", "knowledge/new-slug"), {
+      config,
+      stashDir: stash,
+      sourceRun: "consolidate-test",
+      target: resolveWriteTarget(config),
+      memoryByRef: new Map([
+        [
+          "memories/source",
+          { name: "source", filePath: memoryPath, description: "Source memory", tags: [], stashDir: stash },
+        ],
+      ]),
+      promoted,
+      promotedSourceRefs: new Set(),
+      existingKnowledgeBodyHashes: loadExistingKnowledgeBodyHashes(stash),
+      promotionFailures: { count: 0 },
+      warnings,
+      pushSkipReason: (op, ref, reason) => skips.push({ op, ref, reason }),
+    });
+
+    expect(listProposals(stash, { status: "pending" })).toHaveLength(0);
+    expect(promoted).toEqual([]);
+    expect(skips).toEqual([{ op: "promote", ref: "memories/source", reason: "dedup_existing_knowledge" }]);
+  });
 });
