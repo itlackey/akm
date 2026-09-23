@@ -387,7 +387,7 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-migrations`, `task-log-backing`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `task-log-backing`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
 | `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
