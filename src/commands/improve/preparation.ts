@@ -35,7 +35,7 @@ import { akmLint } from "../lint/index";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import { runSchemaRepairPass } from "../sources/schema-repair";
 import { isAutonomyLaneAllowed } from "./autonomy-gate";
-import { akmConsolidate, inspectConsolidationPool } from "./consolidate";
+import { akmConsolidate, inspectConsolidationPool, loadExistingKnowledgeBodyHashes } from "./consolidate";
 import { computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
@@ -357,11 +357,17 @@ function planConsolidationPass(args: {
     maxChunkSize: processConfig?.maxChunkSize,
   };
   const poolWarnings: string[] = [];
+  // Same hash set the live run's pre-filter uses (R2-1), so the preview's
+  // candidate pool and eligibility gate agree with what the run will act on.
   const pool = primaryStashDir
-    ? inspectConsolidationPool(effectiveOptions, primaryStashDir, poolWarnings, {
-        readOnly: eventsCtx?.readOnly === true,
-      })
-    : { poolSize: 0, candidatePoolSize: 0, dedupPoolSize: 0, memories: [] };
+    ? inspectConsolidationPool(
+        effectiveOptions,
+        primaryStashDir,
+        poolWarnings,
+        loadExistingKnowledgeBodyHashes(primaryStashDir),
+        { readOnly: eventsCtx?.readOnly === true },
+      )
+    : { poolSize: 0, candidatePoolSize: 0, dedupPoolSize: 0, memories: [], prefilteredAlreadyPromoted: 0 };
   // #800/#957 round 3 — a credential-unavailable consolidate engine still
   // resolved a context length structurally; read it off the `engineUnavailable`
   // entry instead of falling back to the generic default, so a dry-run
