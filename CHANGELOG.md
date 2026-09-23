@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm health` now checks state.db's own SQLite integrity.** A new hard
+  `state-db-integrity` check runs a read-only `PRAGMA quick_check` against
+  `state.db` and fails, naming the returned diagnostic lines and the repair
+  steps (back up, dump/restore via `sqlite3`, verify, swap in), when it
+  reports anything other than `ok`. The same check reports state.db's
+  freelist ratio (the fraction of pages `VACUUM` could reclaim) and warns
+  above 50%. Previously nothing in `akm health` looked past a successful
+  append/read round trip, which stays true on a database that is corrupt at
+  the SQLite level.
+- **`vacuumStateDbIfReclaimable` (`src/storage/state-db-integrity.ts`)**: a
+  reusable helper that `VACUUM`s state.db when its freelist ratio exceeds
+  50%, recording a `state_db_vacuumed` event with pages before/after, and
+  never throws — a locked/busy database is reported, not raised. Not yet
+  called from the retention purge pass; see the R0 (tier0-0917) scope note
+  for why that wiring was left for a follow-up.
+
 ## [0.9.16] - 2026-09-22
 
 ### Fixed
