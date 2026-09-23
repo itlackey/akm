@@ -795,7 +795,6 @@ export async function runImprovePostLoopStage(args: {
     memoryRefsForInference,
     allWarnings,
     reindexFn,
-    consolidationRan,
     // O-1 (#364): forward the budget signal to memory inference + graph extraction.
     budgetSignal,
     eventsCtx,
@@ -888,11 +887,11 @@ export async function runImprovePostLoopStage(args: {
 
 /**
  * The one irreducible mutable seam of the maintenance stage: the index.db
- * handle. `reindexWithIndexDbReleased` must close the CURRENT handle before a
- * reindex and reopen a fresh one in `finally` even when the reindex throws
- * (#584), and the lease-scoped `finally` must close whatever handle is current
- * — neither can be expressed as a pure return value, so the passes share this
- * cell instead of a closure-mutated `let`.
+ * handle. A reindex-like operation (e.g. indexWrittenAssets) must close the
+ * CURRENT handle before running and reopen a fresh one in `finally` even when
+ * it throws (#584), and the lease-scoped `finally` must close whatever handle
+ * is current — neither can be expressed as a pure return value, so the passes
+ * share this cell instead of a closure-mutated `let`.
  */
 export interface IndexDbCell {
   current?: Database;
@@ -911,15 +910,6 @@ export interface MaintenanceCtx {
   resolvedPlan?: ResolvedImprovePlan;
   memoryInferenceFn: typeof runMemoryInferencePass;
   graphExtractionFn: typeof runGraphExtractionPass;
-  /**
-   * #584: reindexFn opens its own write handle on the same index.db WAL file.
-   * Holding our handle across that call produced SQLITE_BUSY / "database is
-   * locked" failures in production, so the handle is closed BEFORE every
-   * reindex and reopened after — the fresh handle also sees the post-reindex
-   * state that graph extraction relies on. The reopen runs in `finally` so a
-   * failed reindex still leaves a usable handle.
-   */
-  reindexWithIndexDbReleased: (stashDir: string) => Promise<void>;
 }
 
 // Exported for tests (#584/#585 DB-locking regression coverage); production
@@ -931,8 +921,6 @@ export async function runImproveMaintenancePasses(args: {
   memoryRefsForInference: Set<string>;
   allWarnings: string[];
   reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
-  /** D9: true when consolidation ran and wrote at least one record this improve run. */
-  consolidationRan?: boolean;
   /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
   budgetSignal?: AbortSignal;
   eventsCtx?: EventsContext;
@@ -940,7 +928,7 @@ export async function runImproveMaintenancePasses(args: {
   improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
 }): Promise<ImproveMaintenanceResult> {
-  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, budgetSignal, eventsCtx } = args;
+  const { options, primaryStashDir, memoryRefsForInference, allWarnings, budgetSignal, eventsCtx } = args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
   if (budgetSignal?.aborted) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
@@ -957,21 +945,6 @@ export async function runImproveMaintenancePasses(args: {
 
   const dbCell: IndexDbCell = {};
 
-  // #584: see the MaintenanceCtx.reindexWithIndexDbReleased doc — close before
-  // every reindex, reopen in `finally` so a failed reindex still leaves a
-  // usable handle in the cell.
-  const reindexWithIndexDbReleased = async (stashDir: string): Promise<void> => {
-    if (dbCell.current) {
-      closeDatabase(dbCell.current);
-      dbCell.current = undefined;
-    }
-    try {
-      await reindexFn({ stashDir, signal: budgetSignal });
-    } finally {
-      dbCell.current = openIndexDb();
-    }
-  };
-
   const ctx: MaintenanceCtx = {
     config,
     sources,
@@ -982,13 +955,11 @@ export async function runImproveMaintenancePasses(args: {
     resolvedPlan: args.resolvedPlan,
     memoryInferenceFn,
     graphExtractionFn,
-    reindexWithIndexDbReleased,
   };
 
   const collected = await runMaintenancePassesUnderLease(ctx, dbCell, {
     actionableRefs: args.actionableRefs,
     memoryRefsForInference,
-    consolidationRan: args.consolidationRan,
     allWarnings,
     openIndexDb,
   });
@@ -1029,7 +1000,6 @@ async function runMaintenancePassesUnderLease(
   args: {
     actionableRefs: ImproveEligibleRef[];
     memoryRefsForInference: Set<string>;
-    consolidationRan?: boolean;
     allWarnings: string[];
     openIndexDb: () => Database;
   },
@@ -1046,17 +1016,13 @@ async function runMaintenancePassesUnderLease(
 
     // R78 (tier1-0917): index exactly the files memory inference wrote (derived children
     // + rewritten parents) instead of a full reindex — typically one written
-    // fact per run, which used to pay a full-corpus reindex regardless. This
-    // is not a full reindex, so the consolidation branch below still runs its
-    // own full reindex when consolidation wrote something this incremental
-    // step never touched.
+    // fact per run, which used to pay a full-corpus reindex regardless.
     if (memoryInference && memoryInference.writtenPaths.length > 0) {
       info(`[improve] indexing ${memoryInference.writtenPaths.length} file(s) written by memory inference`);
       try {
-        // Same #584 discipline as reindexWithIndexDbReleased: indexWrittenAssets
-        // opens its own write handle on the same index.db WAL file, so the
-        // maintenance handle must be closed first and a fresh one reopened after,
-        // even on failure.
+        // #584: indexWrittenAssets opens its own write handle on the same
+        // index.db WAL file, so the maintenance handle must be closed first
+        // and a fresh one reopened after, even on failure.
         if (dbCell.current) {
           closeDatabase(dbCell.current);
           dbCell.current = undefined;
@@ -1075,7 +1041,6 @@ async function runMaintenancePassesUnderLease(
     const graph = await runGraphExtractionMaintenancePass(ctx, dbCell, {
       actionableRefs: args.actionableRefs,
       memoryRefsForInference: args.memoryRefsForInference,
-      consolidationRan: args.consolidationRan,
     });
     if (graph.action) actions.push(graph.action);
     allWarnings.push(...graph.warnings);
@@ -1225,8 +1190,6 @@ export async function runGraphExtractionMaintenancePass(
   args: {
     actionableRefs: ImproveEligibleRef[];
     memoryRefsForInference: Set<string>;
-    /** D9: true when consolidation ran and wrote at least one record this improve run. */
-    consolidationRan?: boolean;
   },
 ): Promise<{
   graphExtraction?: GraphExtractionResult;
@@ -1239,10 +1202,6 @@ export async function runGraphExtractionMaintenancePass(
   let graphExtraction: GraphExtractionResult | undefined;
   let durationMs = 0;
   let action: ImproveActionResult | undefined;
-  // The caller's own incremental step (indexWrittenAssets, above) is not a
-  // full reindex, so this always starts false — the consolidation branch
-  // below still gets its own chance to run reindexWithIndexDbReleased.
-  let reindexedAfterInference = false;
 
   const graphEnabled = resolvedPlan ? true : isProcessEnabled("index", "graph_extraction", config);
   const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
@@ -1266,20 +1225,6 @@ export async function runGraphExtractionMaintenancePass(
     info(`[improve] graph extraction starting${graphExtractionFullScan ? " (full-corpus scan)" : ""}`);
     const extractionStart = Date.now();
     try {
-      // D9: if consolidation ran but memory inference did not reindex, force a reindex
-      // so graph extraction sees current DB state after consolidation writes.
-      if (args.consolidationRan && !reindexedAfterInference) {
-        info("[improve] reindexing after consolidation (graph extraction needs current state)");
-        try {
-          await ctx.reindexWithIndexDbReleased(primaryStashDir);
-          reindexedAfterInference = true;
-          info("[improve] reindex after consolidation complete");
-        } catch (err) {
-          warnings.push(`reindex after consolidation failed: ${errMessage(err)}`);
-        }
-      }
-      // #584: no close/reopen needed here — reindexWithIndexDbReleased
-      // already swapped in a fresh post-reindex handle.
       // Resolve touched refs to absolute file paths. Skipped for fullScan
       // (candidatePaths stays undefined → extractor processes all files).
       let candidatePaths: Set<string> | undefined;
@@ -1610,7 +1555,7 @@ export const STATE_GC_GRACE_MS = daysToMs(7);
  * bundles — but against a prebuilt {@link LiveRefSnapshot}
  * (`getLiveRefSnapshot`) instead of a database round trip per row: with up to
  * a few thousand pending rows per run, one probe per row was the dominant
- * cost (R78, tier1-0917).
+ * cost R78 (tier1-0917).
  *
  * On top of that, falls back to the BARE conceptId form (`bareImproveRef` —
  * the same primitive `preparation.ts`'s `normalizeStoredKey` map is built

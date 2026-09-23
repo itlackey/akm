@@ -138,7 +138,7 @@ export interface MemoryInferenceResult {
    * (`writeAssetToSource`) and every parent whose frontmatter was stamped
    * `inferenceProcessed: true` (`markParentProcessed`). Lets the caller index
    * exactly these files (`indexWrittenAssets`) instead of a full reindex
-   * (R78, tier1-0917) — sourced from the run-scoped write-provenance journal
+   * R78 (tier1-0917) — sourced from the run-scoped write-provenance journal
    * (`core/write-provenance.ts`), so it can never drift from what actually
    * hit disk.
    */

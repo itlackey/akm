@@ -332,24 +332,25 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
   });
 });
 
-/** Config with consolidate enabled (default-off gates: minPoolSize 0, no cooldown on a fresh stash). */
+/** Config with consolidate enabled (default-off gates: minPoolSize 0 set explicitly, no cooldown on a fresh stash). */
 function consolidateEnabledConfig(): AkmConfig {
   return withImproveAutonomy(
     withTestImproveLlm({
       semanticSearchMode: "off",
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: {
+        strategies: { default: { processes: { consolidate: { enabled: true, minPoolSize: 0 } } } },
+      },
     } as unknown as AkmConfig),
   );
 }
 
-describe("r3-1: post-consolidation reindex requires an actual mutation, not just processed > 0", () => {
-  test("consolidation judges a memory but proposes no ops — reindexFn is not called", async () => {
+describe("r2-1 (tier1-0917-r4): consolidationRan gates R5's collapse detector on processed > 0", () => {
+  test("consolidation judges a memory but writes nothing — cycle metrics are still recorded", async () => {
     const stash = storage.stashDir;
     writeMemory(stash, "alpha");
     saveConfig(consolidateEnabledConfig());
     await akmIndex({ stashDir: stash, full: true });
 
-    let reindexCalls = 0;
     overrideSeam(_setChatCompletionForTests, async () => JSON.stringify({ operations: [] }));
 
     const result = await akmImprove({
@@ -358,51 +359,37 @@ describe("r3-1: post-consolidation reindex requires an actual mutation, not just
       ensureIndexFn: async () => undefined,
       memoryInferenceFn: async () => stubMemoryInferenceResult(),
       graphExtractionFn: async () => stubGraphExtractionResult,
-      reindexFn: async () => {
-        reindexCalls += 1;
-      },
+      reindexFn: async () => undefined,
     });
 
+    // Fixture shape: `processed > 0`, `merged === 0`, `deleted === 0`,
+    // `promoted.length === 0`, `contradicted === 0` — the LLM judged the pool
+    // and proposed nothing.
     expect(result.consolidation?.processed).toBeGreaterThan(0);
     expect(result.consolidation?.merged).toBe(0);
     expect(result.consolidation?.deleted).toBe(0);
     expect(result.consolidation?.promoted).toEqual([]);
     expect(result.consolidation?.contradicted).toBe(0);
-    expect(reindexCalls).toBe(0);
+    // R5's collapse detector is the only production consumer of
+    // consolidationRan (loop-stages.ts:859) — a qualifying cycle (consolidate
+    // did work) must produce a snapshot even though nothing was written.
+    expect(result.cycleMetrics).toBeDefined();
   });
 
-  // A promotion is a proposal written to state.db (createProposal — see
-  // src/commands/proposal/repository.ts), not a stash file write, so it must
-  // NOT count as a mutation either — verified against the apply pass in
-  // consolidate.ts, where `akmConsolidateInner`'s op-execution loop only ever
-  // handles `op.op === "promote"`; merge/delete/contradict stay advisory.
-  test("consolidation emits only a promotion proposal — reindexFn is still not called", async () => {
+  test("consolidation is skipped (pool below minPoolSize) — no cycle metrics are recorded", async () => {
     const stash = storage.stashDir;
-    const filePath = path.join(stash, "memories", "alpha.md");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(
-      filePath,
-      "---\ndescription: alpha memory\n---\n\n" +
-        "A substantive memory body long enough to clear the promote minimum length guard so the promotion actually emits a proposal.\n",
-      "utf8",
-    );
-    saveConfig(consolidateEnabledConfig());
-    await akmIndex({ stashDir: stash, full: true });
-
-    let reindexCalls = 0;
-    overrideSeam(_setChatCompletionForTests, async () =>
-      JSON.stringify({
-        operations: [
-          {
-            op: "promote",
-            ref: "memories/alpha",
-            knowledgeRef: "knowledge/alpha-guidance",
-            reason: "Stable guidance worth promoting.",
-            description: "Stable alpha guidance awaiting review.",
+    writeMemory(stash, "alpha");
+    saveConfig(
+      withImproveAutonomy(
+        withTestImproveLlm({
+          semanticSearchMode: "off",
+          improve: {
+            strategies: { default: { processes: { consolidate: { enabled: true, minPoolSize: 5 } } } },
           },
-        ],
-      }),
+        } as unknown as AkmConfig),
+      ),
     );
+    await akmIndex({ stashDir: stash, full: true });
 
     const result = await akmImprove({
       stashDir: stash,
@@ -410,15 +397,13 @@ describe("r3-1: post-consolidation reindex requires an actual mutation, not just
       ensureIndexFn: async () => undefined,
       memoryInferenceFn: async () => stubMemoryInferenceResult(),
       graphExtractionFn: async () => stubGraphExtractionResult,
-      reindexFn: async () => {
-        reindexCalls += 1;
-      },
+      reindexFn: async () => undefined,
     });
 
-    expect(result.consolidation?.promoted).toHaveLength(1);
-    expect(result.consolidation?.merged).toBe(0);
-    expect(result.consolidation?.deleted).toBe(0);
-    expect(result.consolidation?.contradicted).toBe(0);
-    expect(reindexCalls).toBe(0);
+    // The single-memory pool is below minPoolSize 5, so consolidation never
+    // judges anything — the negative case: without it, a do-nothing gate
+    // (e.g. one that fires unconditionally) would still pass the test above.
+    expect(result.consolidation?.processed ?? 0).toBe(0);
+    expect(result.cycleMetrics).toBeUndefined();
   });
 });
