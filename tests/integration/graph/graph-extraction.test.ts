@@ -1214,10 +1214,12 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
   test("a failure-rate abort stops the run early, keeps successful partial results, and reports it in telemetry", async () => {
     for (const name of ["m1", "m2", "m3", "m4", "m5"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
     extractor = () => ({ entities: ["Never"], relations: [] });
-    // batchSize:1 so each file is its own `extractGraphFromBodies` dispatch —
-    // the abort counts one attempt per dispatch, not per file inside a
-    // shared batch (a single batched provider_error must not itself trip
-    // the guard). The first 4 (of 5) eligible files fail: each dispatch is a
+    // batchSize:1, so each file is its own `extractGraphFromBodies` dispatch
+    // and "one attempt per dispatch" is indistinguishable from "one attempt
+    // per file" here. This test only pins the MIN_ATTEMPTS/failure-rate
+    // threshold math at that 1:1 granularity; it does NOT exercise a shared
+    // multi-file batch — see "a failure-rate abort with batching..." below
+    // for that. The first 4 (of 5) eligible files fail: each dispatch is a
     // provider error, and client.ts's single built-in retry also fails — 2
     // queued statuses per file, 8 total. The 5th file must never be dispatched.
     errorStatusQueue.push(500, 500, 500, 500, 500, 500, 500, 500);
@@ -1239,5 +1241,50 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
     expect(result.extracted).toBe(0);
     expect(result.telemetry?.aborted).toBe(true);
     expect(result.warnings?.some((w) => /aborted.*failure rate/i.test(w))).toBe(true);
+  });
+
+  test("a failure-rate abort with batching counts one attempt per dispatch, not per file in the batch", async () => {
+    // 20 files at graphExtractionBatchSize:4 => 5 dispatches of 4 files each.
+    // recordGraphExtractionAttempt is called once per `extractGraphFromBodies`
+    // dispatch (graph-extraction.ts's `if (dispatchHadResult)
+    // recordGraphExtractionAttempt(...)` below the batch call), not once per
+    // file the dispatch covers. If it were counted per file, the very first
+    // dispatch (4 files, all failed) would alone reach
+    // GRAPH_EXTRACTION_ABORT_MIN_ATTEMPTS (4) and abort after just one
+    // dispatch (2 HTTP requests: the provider error + client.ts's single
+    // built-in retry). Counted per dispatch, it instead takes 4 full
+    // dispatches (8 HTTP requests) to reach the threshold, and the 5th
+    // dispatch must never fire.
+    const names = Array.from({ length: 20 }, (_, i) => `m${i + 1}`);
+    for (const name of names) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
+    extractor = () => ({ entities: ["Never"], relations: [] });
+    let requestCount = 0;
+    onLlmRequest = () => {
+      requestCount++;
+    };
+    // 4 dispatches x (provider error + built-in retry) = 8 queued failures.
+    errorStatusQueue.push(500, 500, 500, 500, 500, 500, 500, 500);
+
+    const result = await withGraphDb("failure-rate-abort-batched", (db) =>
+      runGraphExtractionPass({
+        config: configWithLlm({
+          index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 4 } },
+        }),
+        sources: sources(),
+        db,
+      }),
+    );
+
+    expect(result.considered).toBe(20);
+    // Exactly 4 dispatches (8 requests) fired before the abort tripped; the
+    // 5th dispatch (files 17-20) was never sent, and the real (would-succeed)
+    // extractor was never reached.
+    expect(requestCount).toBe(8);
+    expect(extractorCallCount).toBe(0);
+    expect(result.extracted).toBe(0);
+    expect(result.telemetry?.aborted).toBe(true);
+    // "4 attempt(s)" proves the threshold was reached by dispatch count, not
+    // by the 20 files considered or the 16 files covered by 4 dispatches.
+    expect(result.warnings?.some((w) => /aborted.*failure rate.*4 attempt/i.test(w))).toBe(true);
   });
 });
