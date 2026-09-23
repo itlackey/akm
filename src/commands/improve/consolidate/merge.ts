@@ -14,20 +14,17 @@ import type {
   ConsolidatePromoteOp,
 } from "./types";
 
+// R12a: merge/delete/contradict are no longer requested (see
+// CONSOLIDATE_PLAN_JSON_SCHEMA / consolidate-system.md) — only promote is
+// ever executed. An op of one of those retired shapes — e.g. from a model
+// that ignores the schema — is rejected here so it degrades to the generic
+// "skipping invalid operation" warning in the chunk-judge loop rather than
+// being treated as an actionable (if advisory) plan entry.
 export function isValidOp(op: unknown): op is ConsolidateOperation {
   if (typeof op !== "object" || op === null) return false;
   const o = op as Record<string, unknown>;
-  if (o.op === "merge") {
-    return typeof o.primary === "string" && Array.isArray(o.secondaries);
-  }
-  if (o.op === "delete") {
-    return typeof o.ref === "string";
-  }
   if (o.op === "promote") {
     return typeof o.ref === "string" && typeof o.knowledgeRef === "string";
-  }
-  if (o.op === "contradict") {
-    return typeof o.ref === "string" && typeof o.contradictedByRef === "string";
   }
   return false;
 }

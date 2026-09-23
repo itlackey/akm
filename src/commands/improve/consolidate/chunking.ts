@@ -74,14 +74,14 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
 /**
  * Build the per-chunk user prompt fed to the consolidate LLM.
  *
- * Each memory is annotated with two flags that drive the system-prompt
- * rules at lines 181-186:
- *   - `(captureMode: hot)` — user-explicit memory; system prompt rule 2
- *     forbids proposing delete. ~60 wasted LLM verdicts/4h on this user's
- *     stack before this annotation.
+ * Each memory is annotated with two flags:
+ *   - `(captureMode: hot)` — user-explicit memory; also called out in a
+ *     top-of-prompt protection block (below) telling the model not to
+ *     propose an op against these refs. ~60 wasted LLM verdicts/4h on this
+ *     user's stack before this annotation.
  *   - `(already queued)` — the memory's body hash matches a pending
- *     consolidate proposal; system prompt rule 3 forbids proposing
- *     promote/merge/contradict. ~107/4h before this annotation.
+ *     consolidate proposal; the system prompt's PROMOTE rule forbids
+ *     proposing promote for these. ~107/4h before this annotation.
  *
  * Both annotations are visible to the LLM. `pendingProposalBodyHashes`
  * is precomputed once per run by `loadPendingConsolidateProposalHashes`

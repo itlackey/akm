@@ -161,15 +161,18 @@ const CONSOLIDATE_SYSTEM_PROMPT = consolidateSystemPrompt;
 /**
  * JSON Schema for structured consolidate plans (PR 1 of the asset-writers
  * decision — see knowledge/projects/akm/asset-writers-investigation/00-synthesis).
- * Mirrors the {ops[], warnings?[]} shape currently described in
- * CONSOLIDATE_SYSTEM_PROMPT. Providers with `supportsJsonSchema: true` enforce
- * the shape upstream so the chunk-level "invalid plan from AI — skipping"
- * branch in `runConsolidate` becomes unreachable on schema-honouring providers.
+ * Mirrors the {ops[]} shape currently described in CONSOLIDATE_SYSTEM_PROMPT.
+ * Providers with `supportsJsonSchema: true` enforce the shape upstream so the
+ * chunk-level "invalid plan from AI — skipping" branch in `runConsolidate`
+ * becomes unreachable on schema-honouring providers.
  *
- * The four operation variants (merge / delete / promote / contradict) are
- * modeled as a oneOf so a structured-output provider can still tell them apart
- * by the required `op` discriminator. `parseEmbeddedJsonResponse` keeps
- * working as a fallback parser for providers that ignore the schema.
+ * Promote-only (R12a): `merge`/`delete`/`contradict` were advisory-only — the
+ * apply loop only ever executed `promote` — and cost 21-30k completion tokens
+ * per run for output nothing acted on. `warnings` is dropped for the same
+ * reason. `parseEmbeddedJsonResponse` keeps working as a fallback parser for
+ * providers that ignore the schema; `isValidOp` rejects any op shape other
+ * than `promote` so a non-compliant response degrades to a skipped-op warning
+ * rather than being treated as an actionable plan.
  */
 export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -178,69 +181,20 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     operations: {
       type: "array",
-      description: "Ordered list of consolidate operations the planner proposes.",
+      description: "Ordered list of promote operations the planner proposes.",
       items: {
-        oneOf: [
-          {
-            type: "object",
-            required: ["op", "primary", "secondaries", "mergeStrategy"],
-            additionalProperties: false,
-            properties: {
-              op: { type: "string", enum: ["merge"] },
-              primary: { type: "string", minLength: 1 },
-              secondaries: {
-                type: "array",
-                minItems: 1,
-                maxItems: 1,
-                items: { type: "string", minLength: 1 },
-              },
-              mergeStrategy: { type: "string", minLength: 1 },
-              confidence: { type: "number", minimum: 0, maximum: 1 },
-            },
-          },
-          {
-            type: "object",
-            required: ["op", "ref", "reason"],
-            additionalProperties: false,
-            properties: {
-              op: { type: "string", enum: ["delete"] },
-              ref: { type: "string", minLength: 1 },
-              reason: { type: "string", minLength: 1 },
-              confidence: { type: "number", minimum: 0, maximum: 1 },
-            },
-          },
-          {
-            type: "object",
-            required: ["op", "ref", "knowledgeRef", "reason"],
-            additionalProperties: false,
-            properties: {
-              op: { type: "string", enum: ["promote"] },
-              ref: { type: "string", minLength: 1 },
-              knowledgeRef: { type: "string", minLength: 1 },
-              reason: { type: "string", minLength: 1 },
-              description: { type: "string" },
-              confidence: { type: "number", minimum: 0, maximum: 1 },
-            },
-          },
-          {
-            type: "object",
-            required: ["op", "ref", "contradictedByRef", "reason"],
-            additionalProperties: false,
-            properties: {
-              op: { type: "string", enum: ["contradict"] },
-              ref: { type: "string", minLength: 1 },
-              contradictedByRef: { type: "string", minLength: 1 },
-              reason: { type: "string", minLength: 1 },
-              confidence: { type: "number", minimum: 0, maximum: 1 },
-            },
-          },
-        ],
+        type: "object",
+        required: ["op", "ref", "knowledgeRef", "reason"],
+        additionalProperties: false,
+        properties: {
+          op: { type: "string", enum: ["promote"] },
+          ref: { type: "string", minLength: 1 },
+          knowledgeRef: { type: "string", minLength: 1 },
+          reason: { type: "string", minLength: 1, maxLength: 200 },
+          description: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
       },
-    },
-    warnings: {
-      type: "array",
-      description: "Optional list of human-readable concerns the planner wants to surface.",
-      items: { type: "string" },
     },
   },
 };
@@ -888,13 +842,13 @@ export function inspectConsolidationPool(
  * chunking or LLM work. Hashes the raw file with `cacheHash` (case-preserving
  * stripped body), the same way `loadExistingKnowledgeBodyHashes` built
  * `existingKnowledgeBodyHashes` — so the two sides of the comparison are
- * computed identically. This is *not* the same hash the post-LLM check
- * (`shouldSkipPromotionBodyDuplicate`) uses: that one hashes
- * `cacheHash(parseFrontmatter(memoryContent).content.trim())`, which strips
- * frontmatter twice (`cacheHash` strips it again internally) — a
- * pre-existing divergence from this pre-filter that only bites a memory body
- * starting with its own `---` block. An unreadable memory is kept (fail-safe:
- * let the later passes surface the read error).
+ * computed identically. (H1: the post-LLM check, `shouldSkipPromotionBody-
+ * Duplicate`, used to hash `cacheHash(parseFrontmatter(memoryContent).content
+ * .trim())` — double-stripping frontmatter and diverging from this pre-filter
+ * for a memory body starting with its own `---` block. It now hashes
+ * `cacheHash(memoryContent)` directly, matching this single-strip domain.)
+ * An unreadable memory is kept (fail-safe: let the later passes surface the
+ * read error).
  */
 function prefilterAlreadyPromotedMemories(
   memories: MemoryEntry[],
@@ -1695,7 +1649,13 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
   //       different knowledgeRef slug.
   // Use cacheHash (case-preserving stripped body) to match the canonical
   // hash domain used by the body-embedding cache and pending-proposal set.
-  const bodyHash = cacheHash(sourceBody);
+  // H1: hash `memoryContent` (one frontmatter strip, inside cacheHash)
+  // rather than the already-stripped `sourceBody` — hashing sourceBody here
+  // double-stripped (parseFrontmatter ran once above to produce sourceBody,
+  // then cacheHash's internal stripFrontmatterBody ran again), diverging from
+  // the single-strip domain `loadExistingKnowledgeBodyHashes` and the
+  // pre-filter use whenever a body starts with its own `---` block.
+  const bodyHash = cacheHash(memoryContent);
   if (shouldSkipPromotionBodyDuplicate({ bodyHash, op, knowledgeRef, ctx })) return;
 
   try {
