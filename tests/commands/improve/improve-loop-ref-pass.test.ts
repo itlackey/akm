@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 import { deriveLessonRef } from "../../../src/commands/improve/distill";
 import type { AkmImproveOptions, ImproveLoopState } from "../../../src/commands/improve/improve-run-types";
@@ -22,7 +23,12 @@ import {
   processImproveLoopRef,
 } from "../../../src/commands/improve/loop-stages";
 import { createRunContext } from "../../../src/commands/improve/run-context";
-import { createProposal, isProposalSkipped, type Proposal } from "../../../src/commands/proposal/repository";
+import {
+  archiveProposal,
+  createProposal,
+  isProposalSkipped,
+  type Proposal,
+} from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
@@ -62,6 +68,11 @@ function reflectOk(ref: string): AkmReflectResult {
 function reflectFail(reason: string, error = `${reason} error`): AkmReflectResult {
   return { schemaVersion: 2, ok: false, reason: reason as never, error, exitCode: null };
 }
+
+// Minimal content the canonical lesson validator accepts (description +
+// when_to_use) — mint-time proposal fixtures for the distill guard tests.
+const VALID_LESSON =
+  "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep.\n";
 
 function distillQueued(ref: string, proposalKind: "lesson" | "knowledge") {
   return {
@@ -358,6 +369,120 @@ describe("processImproveLoopRef — distill half", () => {
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["error"]);
     expect(tally.actions[0]!.result).toEqual({ ok: false, error: "engine crashed" });
+  });
+});
+
+describe("processImproveLoopRef — distill pre-generation guard (r2-6, tier2-0917)", () => {
+  const memoryRef = "memories/finding-1";
+
+  test("a fingerprint match on the derived lesson ref skips distillFn and advances the signal cursor", async () => {
+    const { stashDir } = freshSandbox();
+    const lessonRef = deriveLessonRef(memoryRef);
+    // A real proposal in state.db for this exact derived ref/source/model —
+    // the guard's fingerprint lookup needs something to match against.
+    const existing = createProposal(stashDir, {
+      ref: lessonRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([memoryRef]),
+      signalBearingSet: new Set([memoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.reject(new Error("distillFn must not be called on a guard hit"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(distillCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+    expect(tally.actions[0]!.result).toMatchObject({ ok: true, reason: "fingerprint_match" });
+
+    // buildLatestProposalTsMap (the signal-delta cursor, eligibility.ts)
+    // reads `distill_invoked` events with a queued/skipped/validation_failed
+    // outcome — it must still see one for this ref even though distillFn was
+    // never invoked.
+    const { events } = readEvents({ type: "distill_invoked" });
+    const skipEvent = events.find((e) => e.ref === memoryRef);
+    expect(skipEvent?.metadata).toMatchObject({ outcome: "skipped", skipReason: "fingerprint_match" });
+  });
+
+  test("a rejection-backoff hit on the derived lesson ref skips distillFn likewise", async () => {
+    const { stashDir } = freshSandbox();
+    const lessonRef = deriveLessonRef(memoryRef);
+    const first = createProposal(stashDir, {
+      ref: lessonRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(first)) throw new Error("unexpected skip setting up the fixture");
+    archiveProposal(stashDir, first.id, "rejected", "Test rejection for r2-6 backoff");
+
+    // Materialize the target so the second check is a genuinely new
+    // fingerprint — the retained backoff (not the fingerprint guard) must be
+    // what fires, mirroring proposals.test.ts's rejection_backoff coverage.
+    fs.mkdirSync(path.join(stashDir, "lessons"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "lessons", `${lessonRef.split("/")[1]}.md`),
+      "On-disk target content.\n",
+      "utf8",
+    );
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([memoryRef]),
+      signalBearingSet: new Set([memoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.reject(new Error("distillFn must not be called on a guard hit"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(distillCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+    expect(tally.actions[0]!.result).toMatchObject({ ok: true, reason: "rejection_backoff" });
+  });
+
+  test("an existing proposal from a different source does not block distill — dispatches normally", async () => {
+    const { stashDir } = freshSandbox();
+    const lessonRef = deriveLessonRef(memoryRef);
+    // A proposal already exists for the same derived ref, but minted by
+    // "reflect" — cross-source independence (proposals.test.ts) means the
+    // distill guard must not fire against it.
+    const existing = createProposal(stashDir, {
+      ref: lessonRef,
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([memoryRef]),
+      signalBearingSet: new Set([memoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.resolve(distillQueued(memoryRef, "lesson"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(distillCalled).toBe(true);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
   });
 });
 
