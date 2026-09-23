@@ -592,6 +592,71 @@ describe("consolidate pool-delta eligibility", () => {
   });
 });
 
+// ── R4: volume override is bootstrap-only ────────────────────────────────────
+
+describe("R4 consolidation volume override is bootstrap-only", () => {
+  // (b) Once a consolidate_completed event exists, a large eligible pool must
+  // NOT bypass the pool-delta gate — only actual memory updates since that
+  // event should. Before the fix, `volumeTriggered` forced the run regardless
+  // of `lastConsolidateTs`, so this cooldown skip never fired once the pool
+  // grew past the threshold.
+  test("prior consolidate_completed + no memory updates → cooldown even when eligible pool exceeds volume threshold", async () => {
+    const stash = makeTempDir("akm-r4-volume-cooldown-");
+    writeMemory(stash, "mem-a", "Stable content A.");
+    writeMemory(stash, "mem-b", "Stable content B.");
+    await buildIndex(stash);
+    // Far-future completion ts: nothing on disk is newer, so the pool-delta
+    // gate alone would put this on cooldown.
+    const farFutureMs = new Date("2099-01-01T00:00:00.000Z").getTime();
+    appendEvent(
+      {
+        eventType: "consolidate_completed",
+        ref: "memories/_consolidation",
+        metadata: { processed: 1, source: "stash" },
+      },
+      { now: () => farFutureMs },
+    );
+
+    await akmImprove({
+      scope: "memory",
+      config: configWithoutPoolGuard(stash),
+      stashDir: stash,
+      memoryVolumeConsolidationThreshold: 1, // eligible pool (2) exceeds this
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
+    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
+  });
+
+  // (c) With no prior consolidate_completed event at all, the volume override
+  // still forces the bootstrap run — this is the "fresh stash, consolidate
+  // once" behaviour the override exists for, and stays intact.
+  test("no prior consolidate_completed + eligible pool exceeds volume threshold → bootstrap runs (not cooldown)", async () => {
+    const stash = makeTempDir("akm-r4-volume-bootstrap-");
+    writeMemory(stash, "mem-a", "Stable content A.");
+    writeMemory(stash, "mem-b", "Stable content B.");
+    await buildIndex(stash);
+
+    await akmImprove({
+      scope: "memory",
+      config: configWithoutPoolGuard(stash),
+      stashDir: stash,
+      memoryVolumeConsolidationThreshold: 1, // eligible pool (2) exceeds this
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
+    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
+  });
+});
+
 // ── #551: consolidation runs before extract + smarter pool-delta gate ────────
 
 describe("#551 consolidation reorder + adjacent-run promotion gate", () => {

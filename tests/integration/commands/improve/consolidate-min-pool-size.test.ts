@@ -182,7 +182,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     TIMEOUT_MS,
   );
 
-  test("advisory actionable operations do not advance the consolidation watermark", async () => {
+  test("advisory actionable operations still complete the pass and record the unapplied count (R4)", async () => {
     writeMemory(
       "primary",
       "A substantive primary memory that remains unchanged while its proposed merge awaits review. Its promotion proposal may succeed, but that cannot complete the pending merge.",
@@ -215,7 +215,13 @@ describe("#553 consolidate minPoolSize guard", () => {
     const result = await runImprove(configWithMinPoolSize(0));
 
     expect(result.consolidation?.promoted).toHaveLength(1);
-    expect(readEvents({ type: "consolidate_completed" }).events).toEqual([]);
+    // R4: merge/delete/contradict ops are advisory and never auto-applied, so
+    // gating the completion event on "zero advisory ops" meant it was never
+    // emitted in practice. The pass still completed — the event fires, with
+    // the unapplied advisory op recorded for reporting.
+    const completed = readEvents({ type: "consolidate_completed" }).events;
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.metadata?.advisoryOpsUnapplied).toBe(1);
   });
 
   test("failed promotion proposal emission does not advance the consolidation watermark", async () => {

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Memory consolidation's cooldown could never engage.** `consolidate_completed`
+  was only emitted when a run planned zero merge/delete/contradict operations —
+  advisory ops the model plans daily and that are never auto-applied — so the
+  event had, in practice, never fired and the pool-delta gate stayed
+  permanently in its bootstrap "run every time" state. The event now fires
+  whenever the LLM pass itself completes, recording the unapplied advisory op
+  count (`advisoryOpsUnapplied`) instead of withholding the event. Separately,
+  the memory-volume override (`memoryVolumeConsolidationThreshold`, forcing a
+  run when the eligible pool exceeds the threshold) is now bootstrap-only: once
+  a `consolidate_completed` event exists for the source, the pool-delta gate
+  governs on its own, even when the pool is large.
+
 ## [0.9.16] - 2026-09-22
 
 ### Fixed

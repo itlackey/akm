@@ -252,9 +252,14 @@ function evaluateConsolidationEligibility(args: {
   // Bootstrap: when no successful consolidate_completed event has ever been
   // recorded, we cannot evaluate the pool-delta — treat as eligible so a
   // fresh stash runs consolidate once before the steady-state gate kicks in.
+  //
+  // R4: the volume override is bootstrap-only — it exists to force that same
+  // "fresh stash, consolidate once" run when the pool is already large enough
+  // that waiting for the steady-state gate would be wasteful. Once a
+  // consolidate_completed event exists, the pool-delta gate below governs on
+  // its own; a large eligible pool no longer bypasses it.
   const memoryUpdatedAfterLastConsolidate = (() => {
-    if (volumeTriggered) return true; // volume override forces the run regardless.
-    if (!lastConsolidateTs) return true; // bootstrap path: never consolidated.
+    if (!lastConsolidateTs) return true; // bootstrap path: never consolidated (volume override included).
     if (!primaryStashDir) return false;
     const memoriesDir = path.join(primaryStashDir, "memories");
     if (!fs.existsSync(memoriesDir)) return false;
@@ -283,7 +288,10 @@ function evaluateConsolidationEligibility(args: {
     }
   })();
 
-  const consolidationOnCooldown = !volumeTriggered && !memoryUpdatedAfterLastConsolidate;
+  // R4: no longer `!volumeTriggered && ...` — the volume override only ever
+  // applies at bootstrap (see `memoryUpdatedAfterLastConsolidate` above), so
+  // the pool-delta result alone determines cooldown post-bootstrap.
+  const consolidationOnCooldown = !memoryUpdatedAfterLastConsolidate;
 
   // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
   const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
@@ -543,14 +551,14 @@ export async function runConsolidationPass(args: {
       (consolidation.failedChunkMemories ?? 0) === 0 &&
       (consolidation.failedPromotions ?? 0) === 0 &&
       (consolidation.deferredMemories ?? 0) === 0;
-    const hasUnappliedAdvisoryOperations = consolidation.planned?.some((op) => op.op !== "promote") ?? false;
-    if (
-      consolidation.ok &&
-      !consolidation.dryRun &&
-      complete &&
-      !hasUnappliedAdvisoryOperations &&
-      consolidation.processed > 0
-    ) {
+    // R4: advisory ops (merge/delete/contradict) are never auto-applied — see
+    // consolidate.ts — so a run that plans some is still a completed pass over
+    // the pool, not an incomplete one. Gating the event on zero advisory ops
+    // meant it was never emitted in practice, which kept the pool-delta gate
+    // permanently bootstrapped. Record the unapplied count for reporting
+    // instead of withholding the event.
+    const advisoryOpsUnapplied = consolidation.planned?.filter((op) => op.op !== "promote").length ?? 0;
+    if (consolidation.ok && !consolidation.dryRun && complete && consolidation.processed > 0) {
       appendEvent(
         {
           eventType: "consolidate_completed",
@@ -564,6 +572,7 @@ export async function runConsolidationPass(args: {
             contradicted: consolidation.contradicted,
             failedChunks: consolidation.failedChunks ?? 0,
             durationMs: consolidation.durationMs,
+            advisoryOpsUnapplied,
           },
         },
         eventsCtx,
