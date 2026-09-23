@@ -123,7 +123,9 @@ export function buildJudgePrompt(
   lines.push(lessonContent.slice(0, 1000));
   lines.push("```");
   lines.push("");
-  lines.push('Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}');
+  lines.push(
+    'Return ONLY valid JSON, no prose: {"scores": {"novelty": <1-5 integer>, "actionability": <1-5 integer>, "nonRedundancy": <1-5 integer>}, "reason": "<one sentence>"}',
+  );
   return lines.join("\n");
 }
 
@@ -183,11 +185,18 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
     buildChangedRegion(sourceContent, candidateContent),
     "```",
     "",
-    'Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}',
+    'Return ONLY valid JSON, no prose: {"scores": {"feedbackAlignment": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
   ].join("\n");
 }
 
-type QualityJudgeResult = { pass: boolean; score: number; reason: string; reviewNeeded?: boolean };
+type QualityJudgeResult = {
+  pass: boolean;
+  score: number;
+  reason: string;
+  reviewNeeded?: boolean;
+  /** Per-criterion 1-5 scores the average was computed from. Absent for the old `{"score": float}` shape. */
+  criteria?: Record<string, number>;
+};
 type QualityJudgeChat = (
   connection: LlmConnectionConfig,
   messages: ChatMessage[],
@@ -204,6 +213,42 @@ export interface QualityJudgeOptions {
   timeoutMs?: number | null;
   signal?: AbortSignal;
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
+}
+
+/**
+ * R16: parse the judge's JSON response, accepting either the current
+ * per-criterion shape (`{"scores": {...}, "reason"}`, averaged in code) or
+ * the old averaged-float shape (`{"score": 1-5, "reason"}`) a model may still
+ * return. Each criterion (or the bare score) must be a finite number in 1..5;
+ * anything else — a missing key, an out-of-range or non-finite value, an
+ * empty `scores` object, a non-string `reason` — is a parse failure so the
+ * caller routes to review exactly as before.
+ */
+function parseJudgeResponse(
+  raw: string,
+): { score: number; reason: string; criteria?: Record<string, number> } | undefined {
+  const parsed = parseEmbeddedJsonResponse<{ score?: unknown; scores?: unknown; reason?: unknown }>(raw);
+  if (!parsed || typeof parsed.reason !== "string") return undefined;
+  const reason = parsed.reason;
+
+  if (parsed.scores !== undefined) {
+    if (typeof parsed.scores !== "object" || parsed.scores === null || Array.isArray(parsed.scores)) return undefined;
+    const entries = Object.entries(parsed.scores as Record<string, unknown>);
+    if (entries.length === 0) return undefined;
+    const criteria: Record<string, number> = {};
+    for (const [key, value] of entries) {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || value > 5) return undefined;
+      criteria[key] = value;
+    }
+    const score = entries.reduce((sum, [, value]) => sum + (value as number), 0) / entries.length;
+    return { score, reason, criteria };
+  }
+
+  if (typeof parsed.score === "number" && Number.isFinite(parsed.score) && parsed.score >= 1 && parsed.score <= 5) {
+    return { score: parsed.score, reason };
+  }
+
+  return undefined;
 }
 
 async function runQualityJudge(
@@ -236,6 +281,10 @@ async function runQualityJudge(
       ],
       request: {
         enableThinking: false,
+        // R13: the judge must not inherit the generation runner's temperature
+        // (measured: 10/16 verdict flips at 0.3, 0/16 at 0). Pinned regardless
+        // of what `engines.<name>.temperature` the runner resolves.
+        temperature: 0,
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(chat ? { chat } : {}),
@@ -246,26 +295,18 @@ async function runQualityJudge(
       fallback: "",
       ...(options.onNotices ? { onNotices: options.onNotices } : {}),
     });
-    const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
-    if (
-      !parsed ||
-      typeof parsed.score !== "number" ||
-      !Number.isFinite(parsed.score) ||
-      parsed.score < 1 ||
-      parsed.score > 5 ||
-      typeof parsed.reason !== "string"
-    ) {
+    const parsed = parseJudgeResponse(raw);
+    if (!parsed) {
       return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
     }
     // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
     //   >= 3.5: auto-queue as pending (pass: true)
     //   2.5–3.5: review-needed band — uncertain, escalate to human (reviewNeeded: true)
     //   < 2.5: auto-reject (pass: false)
-    const score = parsed.score;
-    const reason = parsed.reason ?? "";
-    if (score >= 3.5) return { pass: true, score, reason };
-    if (score >= 2.5) return { pass: false, score, reason, reviewNeeded: true };
-    return { pass: false, score, reason };
+    const { score, reason, criteria } = parsed;
+    if (score >= 3.5) return { pass: true, score, reason, ...(criteria ? { criteria } : {}) };
+    if (score >= 2.5) return { pass: false, score, reason, reviewNeeded: true, ...(criteria ? { criteria } : {}) };
+    return { pass: false, score, reason, ...(criteria ? { criteria } : {}) };
   } catch (error) {
     // Invalid symbolic credentials are configuration failures, not a negative
     // content verdict. Provider/runtime failures retain the fail-closed result.
@@ -353,9 +394,20 @@ export function writeQualityRejection(
   fs.mkdirSync(rejectDir, { recursive: true });
   const ts = timestampForFilename();
   const rejectPath = path.join(rejectDir, `${ts}-${proposalRef.replace(/[:/\\]/g, "-")}.md`);
+  // R16: surface the judge's per-criterion scores in the envelope frontmatter
+  // when the caller supplied them (a judge-based rejection), same as the event.
+  const criteria =
+    extraMeta.criteria && typeof extraMeta.criteria === "object" && !Array.isArray(extraMeta.criteria)
+      ? (extraMeta.criteria as Record<string, number>)
+      : undefined;
+  const criteriaFrontmatter = criteria
+    ? `criteria:\n${Object.entries(criteria)
+        .map(([key, value]) => `  ${key}: ${value}`)
+        .join("\n")}\n`
+    : "";
   fs.writeFileSync(
     rejectPath,
-    `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n---\n\n${content}`,
+    `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n${criteriaFrontmatter}---\n\n${content}`,
     "utf8",
   );
   // #652 / itlackey/akm#890: journal it even though it now lands under

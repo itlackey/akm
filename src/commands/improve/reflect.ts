@@ -1357,6 +1357,7 @@ async function finalizeReflectProposal(args: {
             qualityRejected: true,
             qualityScore: judgeResult.score,
             qualityReason: judgeResult.reason,
+            ...(judgeResult.criteria ? { qualityCriteria: judgeResult.criteria } : {}),
             ...(outputTelemetry ?? {}),
           },
         },

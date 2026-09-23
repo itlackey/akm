@@ -320,7 +320,7 @@ export async function promoteMemoryToKnowledge(
           resolvedPromotionContent,
           judgeResult.score,
           judgeResult.reason,
-          { reviewNeeded: true },
+          { reviewNeeded: true, ...(judgeResult.criteria ? { criteria: judgeResult.criteria } : {}) },
           ctx.eligibilitySource,
           ctx.eventsCtx,
         );
@@ -332,7 +332,7 @@ export async function promoteMemoryToKnowledge(
         resolvedPromotionContent,
         judgeResult.score,
         judgeResult.reason,
-        {},
+        judgeResult.criteria ? { criteria: judgeResult.criteria } : {},
         ctx.eligibilitySource,
         ctx.eventsCtx,
       );
