@@ -27,12 +27,15 @@ import path from "node:path";
 import { akmImprove, runImproveMaintenancePasses } from "../../../../src/commands/improve/improve";
 import { loadConfig, saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
+import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
 import { insertEvent } from "../../../../src/storage/repositories/events-repository";
+import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import { getEntryByRef } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -49,7 +52,17 @@ afterEach(() => {
 });
 
 async function indexStash(stashDir: string): Promise<void> {
-  saveConfig(withImproveAutonomy(withTestImproveLlm({ semanticSearchMode: "off" })));
+  saveConfig(
+    withImproveAutonomy(
+      withTestImproveLlm({
+        semanticSearchMode: "off",
+        // Consolidation is a separate, still-full-reindex trigger (D9) —
+        // disabled so these DB-locking tests exercise exactly the reindex
+        // site each one names, not whichever one consolidation also fires.
+        improve: { strategies: { default: { processes: { consolidate: { enabled: false } } } } },
+      }),
+    ),
+  );
   await akmIndex({ stashDir, full: true });
 }
 
@@ -89,6 +102,7 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
     skippedAborted: 0,
     unaccounted: 0,
     htmlErrorCount: 0,
+    writtenPaths: [],
     ...overrides,
   };
 }
@@ -112,14 +126,24 @@ const stubGraphExtractionResult: GraphExtractionResult = {
 };
 
 describe("#584: index.db handle is closed before reindexFn runs", () => {
-  test("maintenance handle is closed during reindex and a fresh handle is used afterwards", async () => {
+  // #R78: memory inference's writes used to trigger a FULL reindex through
+  // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
+  // over exactly the paths the pass wrote. `indexWrittenAssets` opens its own
+  // write handle on the same index.db WAL file, so the #584 discipline (close
+  // the maintenance handle first, reopen a fresh one after, even on failure)
+  // still applies — just around the incremental call instead of `reindexFn`.
+  test("maintenance handle is closed during the post-inference index update and a fresh handle is used afterwards", async () => {
     const stash = storage.stashDir;
     writeMemory(stash, "alpha");
     await indexStash(stash);
 
+    // A real file for indexWrittenAssets to upsert — the derived child memory
+    // inference would have written.
+    const derivedPath = path.join(stash, "memories", "alpha.derived.md");
+    fs.writeFileSync(derivedPath, "---\ninferred: true\ndescription: derived alpha\n---\n\nDerived fact.\n", "utf8");
+
     let capturedInferenceDb: Database | undefined;
     let reindexCalls = 0;
-    let handleOpenDuringReindex: boolean | undefined;
     let handleOpenDuringGraphExtraction: boolean | undefined;
     let graphDb: Database | undefined;
 
@@ -151,21 +175,22 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
         inputRef: o.ref,
         proposalRef: "lessons/stub",
       }),
-      // Report written facts so the maintenance pass triggers the
-      // post-inference reindex (#584 call site 1).
+      // Report a written path so the maintenance pass triggers the
+      // post-inference incremental index (#584 call site 1, now indexWrittenAssets).
       memoryInferenceFn: async (ctx) => {
         capturedInferenceDb = ctx.db;
-        return stubMemoryInferenceResult({ considered: 1, splitParents: 1, writtenFacts: 1 });
+        return stubMemoryInferenceResult({
+          considered: 1,
+          splitParents: 1,
+          writtenFacts: 1,
+          writtenPaths: [derivedPath],
+        });
       },
       reindexFn: async () => {
         reindexCalls += 1;
-        // The maintenance pass's index.db handle (captured above) must be
-        // CLOSED while reindex runs — reindex opens its own write handle on
-        // the same WAL file and a still-open sibling caused SQLITE_BUSY.
-        handleOpenDuringReindex = isHandleOpen(capturedInferenceDb);
       },
-      // Graph extraction runs after the reindex sites and receives the
-      // maintenance handle — it must be a fresh, usable post-reindex handle.
+      // Graph extraction runs after the incremental index and receives the
+      // maintenance handle — it must be a fresh, usable handle.
       graphExtractionFn: async (ctx) => {
         graphDb = ctx.db;
         handleOpenDuringGraphExtraction = isHandleOpen(ctx.db);
@@ -174,12 +199,24 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(reindexCalls).toBeGreaterThanOrEqual(1);
-    expect(handleOpenDuringReindex).toBe(false);
+    // The incremental index path never calls the full-reindex seam.
+    expect(reindexCalls).toBe(0);
+    // The maintenance pass's index.db handle (captured above) must be CLOSED
+    // by the time indexWrittenAssets ran — it opens its own write handle on
+    // the same WAL file and a still-open sibling caused SQLITE_BUSY (#584).
+    expect(isHandleOpen(capturedInferenceDb)).toBe(false);
     expect(handleOpenDuringGraphExtraction).toBe(true);
-    // The post-reindex handle is a NEW connection, not the closed original.
+    // The post-index handle is a NEW connection, not the closed original.
     expect(graphDb).toBeDefined();
     expect(graphDb).not.toBe(capturedInferenceDb);
+
+    // The derived file is indexed without a full reindex.
+    const checkDb = openIndexDatabase(getDbPath());
+    try {
+      expect(getEntryByRef(checkDb, "memories/alpha.derived")).not.toBeNull();
+    } finally {
+      closeDatabase(checkDb);
+    }
   });
 });
 

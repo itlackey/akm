@@ -24,6 +24,7 @@ import {
   type GraphExtractionResult,
   runGraphExtractionPass,
 } from "../../indexer/graph/graph-extraction";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveWritableBundleIds } from "../../indexer/installations";
 import {
   collectPendingMemories,
@@ -1035,7 +1036,7 @@ async function runMaintenancePassesUnderLease(
 ): Promise<MaintenanceUnderLeaseResult> {
   const { allWarnings } = args;
   const actions: ImproveActionResult[] = [];
-  let reindexedAfterInference = false;
+  const reindexedAfterInference = false;
   try {
     dbCell.current = args.openIndexDb();
 
@@ -1044,14 +1045,32 @@ async function runMaintenancePassesUnderLease(
     allWarnings.push(...inference.warnings);
     const memoryInference = inference.memoryInference;
 
-    if (memoryInference && (memoryInference.splitParents > 0 || memoryInference.writtenFacts > 0)) {
-      info("[improve] reindexing after memory inference writes");
+    // #R78: index exactly the files memory inference wrote (derived children
+    // + rewritten parents) instead of a full reindex — typically one written
+    // fact per run, which used to pay a full-corpus reindex regardless.
+    // `reindexedAfterInference` is deliberately left false: this is not a
+    // full reindex, so the consolidation branch below still runs its own
+    // full reindex when consolidation wrote something this incremental step
+    // never touched.
+    if (memoryInference && memoryInference.writtenPaths.length > 0) {
+      info(`[improve] indexing ${memoryInference.writtenPaths.length} file(s) written by memory inference`);
       try {
-        await ctx.reindexWithIndexDbReleased(ctx.primaryStashDir);
-        reindexedAfterInference = true;
-        info("[improve] reindex after memory inference complete");
+        // Same #584 discipline as reindexWithIndexDbReleased: indexWrittenAssets
+        // opens its own write handle on the same index.db WAL file, so the
+        // maintenance handle must be closed first and a fresh one reopened after,
+        // even on failure.
+        if (dbCell.current) {
+          closeDatabase(dbCell.current);
+          dbCell.current = undefined;
+        }
+        try {
+          await indexWrittenAssets(ctx.primaryStashDir, memoryInference.writtenPaths);
+        } finally {
+          dbCell.current = args.openIndexDb();
+        }
+        info("[improve] indexing after memory inference complete");
       } catch (err) {
-        allWarnings.push(`reindex after memory inference failed: ${errMessage(err)}`);
+        allWarnings.push(`indexing after memory inference failed: ${errMessage(err)}`);
       }
     }
 

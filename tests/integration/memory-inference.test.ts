@@ -199,6 +199,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      writtenPaths: [],
     });
   });
 
@@ -271,6 +272,7 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      writtenPaths: [],
     });
     expect(invocations).toBe(0);
     // Parent is not mutated when the feature gate blocks.
@@ -675,7 +677,7 @@ describe("runMemoryInferencePass — enabled", () => {
   });
 
   test("writes one derived memory with rich metadata, `inferred: true`, and `source:` backref", async () => {
-    writeMemory("parent", { description: "before" }, "Two facts in one body.");
+    const parentPath = writeMemory("parent", { description: "before" }, "Two facts in one body.");
     compressor = () => ({
       title: "Compressed Parent Insight",
       description: "A higher-signal summary of the parent.",
@@ -685,6 +687,7 @@ describe("runMemoryInferencePass — enabled", () => {
     });
 
     const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+    const derivedPath = path.join(tmpStash, "memories", "parent.derived.md");
 
     expect(result).toEqual({
       considered: 1,
@@ -697,9 +700,12 @@ describe("runMemoryInferencePass — enabled", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      // #R78: derived child + rewritten parent, the two files
+      // indexWrittenAssets indexes afterwards instead of a full reindex.
+      writtenPaths: [derivedPath, parentPath].sort(),
     });
 
-    const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));
+    const derived = parseFrontmatter(fs.readFileSync(derivedPath, "utf8"));
     expect(derived.data.inferred).toBe(true);
     // Phase 1B / Rec 7: derived memories must be tagged as background-captured
     // so ranking does not give them the hot-capture boost reserved for the

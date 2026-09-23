@@ -17,6 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   queries per run instead of one probe per row, with the same live/orphan
   resolution (including the bundle-qualified-exact and bare-conceptId-suffix
   fallback) as before.
+- **Memory inference no longer forces a full reindex for the file(s) it
+  writes.** The post-inference maintenance step used to call the full
+  `reindexFn` (42–220s per run, typically for one written derived fact)
+  whenever memory inference split a parent. `runMemoryInferencePass` now
+  reports the exact paths it wrote or rewrote (`writtenPaths`, sourced from
+  the run's write-provenance journal), and the maintenance pass indexes just
+  those files with `indexWrittenAssets` instead — closing and reopening the
+  shared index.db handle around the call with the same discipline the full
+  reindex used (#584). A reindex triggered separately by consolidation is
+  unaffected.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 
