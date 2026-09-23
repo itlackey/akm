@@ -510,6 +510,51 @@ export function resolveProposalQueueTarget(
   return { source: bundleId, root };
 }
 
+/** Mint-time target resolution shared by {@link createProposal} and {@link checkProposalGuard}. */
+interface ProposalTargetInfo {
+  proposalTarget: NonNullable<CreateProposalInput["target"]>;
+  normalizedRef: string;
+  targetRoot: string;
+  targetRelPath: string;
+  beforeHash?: string;
+}
+
+/**
+ * Resolve the durable target ref, target root/rel-path, and current
+ * before-hash for a parsed proposal ref (WI-6.2). This is the exact
+ * computation `createProposal` uses to derive its mint-time `beforeHash`
+ * fingerprint term; {@link checkProposalGuard} (R9) calls it too, so a
+ * pre-generation guard check and `createProposal`'s post-generation check
+ * always agree on what "these inputs" means for the same ref/target.
+ */
+function resolveProposalTargetInfo(
+  stashDir: string,
+  parsedRef: ReturnType<typeof parseRefInput>,
+  explicitTarget: CreateProposalInput["target"] | undefined,
+): ProposalTargetInfo {
+  const proposalTarget = resolveCreateProposalTarget(stashDir, explicitTarget, parsedRef.origin);
+  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
+  const targetRoot = path.resolve(proposalTarget.root);
+  let targetRelPath: string;
+  let mintBeforeContent: string | undefined;
+  try {
+    const typeRoot = path.join(targetRoot, stashDirFor(parsedRef.type) as string);
+    const targetAbs = assetPathForName(parsedRef.type, typeRoot, parsedRef.name);
+    targetRelPath = path.relative(targetRoot, targetAbs);
+    if (fs.existsSync(targetAbs)) mintBeforeContent = fs.readFileSync(targetAbs, "utf8");
+  } catch {
+    // Resolution failure degrades to a best-effort create — never blocks the mint.
+    targetRelPath = path.join(stashDirFor(parsedRef.type) as string, parsedRef.name);
+  }
+  return {
+    proposalTarget,
+    normalizedRef,
+    targetRoot,
+    targetRelPath,
+    beforeHash: mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined,
+  };
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -601,26 +646,18 @@ export function createProposal(
     }
   }
 
-  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
-  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
-  const targetRoot = path.resolve(proposalTarget.root);
-
   // WI-6.2: derive the FileChange[] envelope + mint-time beforeHash. The
   // target is resolved against the proposal's OWN stash (a local snapshot —
   // accept re-resolves the write target from config at apply time), and only
   // the before-state's HASH is kept: the change's `before` body is a
   // transaction-time capture that does not exist at mint time.
-  let targetRelPath: string;
-  let mintBeforeContent: string | undefined;
-  try {
-    const typeRoot = path.join(targetRoot, stashDirFor(parsedRef.type) as string);
-    const targetAbs = assetPathForName(parsedRef.type, typeRoot, parsedRef.name);
-    targetRelPath = path.relative(targetRoot, targetAbs);
-    if (fs.existsSync(targetAbs)) mintBeforeContent = fs.readFileSync(targetAbs, "utf8");
-  } catch {
-    // Resolution failure degrades to a best-effort create — never blocks the mint.
-    targetRelPath = path.join(stashDirFor(parsedRef.type) as string, parsedRef.name);
-  }
+  const {
+    proposalTarget,
+    normalizedRef,
+    targetRoot,
+    targetRelPath,
+    beforeHash: mintedBeforeHash,
+  } = resolveProposalTargetInfo(stashDir, parsedRef, input.target);
   const proposalContent = targetRelPath.toLowerCase().endsWith(".md")
     ? ensureAkmMarkdownType(input.payload.content, parsedRef.type)
     : input.payload.content;
@@ -628,10 +665,9 @@ export function createProposal(
     {
       path: targetRelPath,
       after: proposalContent,
-      op: mintBeforeContent !== undefined ? "update" : "create",
+      op: mintedBeforeHash !== undefined ? "update" : "create",
     },
   ];
-  const mintedBeforeHash = mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined;
 
   if (hasCanonicalProposalValidator(parsedRef.type)) {
     // Mint-time gate: structural shape only (generic + canonical-per-type),
@@ -673,7 +709,7 @@ export function createProposal(
   return withProposalsDb(stashDir, ctx, (db) => {
     return withImmediateTransaction(db, () => {
       if (!input.force) {
-        const skip = checkFingerprintAndBackoff(db, stashDir, normalizedRef, input, fingerprint, ctx);
+        const skip = checkFingerprintAndBackoff(db, stashDir, normalizedRef, input.source, fingerprint, ctx);
         if (skip) return skip;
       }
 
@@ -783,12 +819,12 @@ function checkFingerprintAndBackoff(
   db: Database,
   stashDir: string,
   normalizedRef: string,
-  input: CreateProposalInput,
+  source: string,
   fingerprint: string,
   ctx: ProposalsContext | undefined,
 ): CreateProposalSkipped | undefined {
   const nowMs = (ctx?.now ?? Date.now)();
-  const backoffMs = cooldownMsForSource(input.source);
+  const backoffMs = cooldownMsForSource(source);
 
   // §23.6: an already-processed fingerprint skips another model call's output
   // unless explicitly forced. The row survives the proposal's lifecycle —
@@ -809,7 +845,7 @@ function checkFingerprintAndBackoff(
   // Rejection backoff (RETAINED cooldown semantics): a recent rejection for
   // this ref+source suppresses new proposals until the window expires.
   const rejected = listStateProposals(db, { stashDir, ref: normalizedRef, status: "rejected" })
-    .filter((p) => p.source === input.source)
+    .filter((p) => p.source === source)
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
 
   const mostRecent = rejected[0];
@@ -822,7 +858,7 @@ function checkFingerprintAndBackoff(
         skipped: true,
         reason: "rejection_backoff",
         message:
-          `Proposal for ${normalizedRef} from source "${input.source}" is in rejection backoff ` +
+          `Proposal for ${normalizedRef} from source "${source}" is in rejection backoff ` +
           `(${backoffDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
         existingProposalId: mostRecent.id,
       };
@@ -830,6 +866,54 @@ function checkFingerprintAndBackoff(
   }
 
   return undefined;
+}
+
+/** Input to {@link checkProposalGuard}. */
+export interface CheckProposalGuardInput {
+  /** Stash directory to check against (the run's primary stash). */
+  stash: string;
+  /** Asset ref the generation call would target. */
+  ref: string;
+  /** Proposal source the generation call would use (e.g. `"reflect"`). */
+  source: string;
+  /** Explicit proposal target, when the caller would pass one to `createProposal`. */
+  target?: CreateProposalInput["target"];
+  /** Engine/model id the generation call would use (the §23.6 model-id fingerprint term). */
+  modelId?: string;
+}
+
+/**
+ * R9 (tier2-0917): pure pre-generation check of the fingerprint-match /
+ * rejection-backoff guard — the same computation `createProposal` runs AFTER
+ * generation (`checkFingerprintAndBackoff`), exposed so a caller can skip an
+ * expensive LLM call BEFORE making it. Shares {@link resolveProposalTargetInfo}
+ * and {@link checkFingerprintAndBackoff} verbatim with `createProposal`, so
+ * the two can never disagree about what "these inputs" means for the same
+ * ref/source/target/model. `createProposal`'s post-generation check remains
+ * the authoritative gate: this is a best-effort optimisation that fails open
+ * (returns `undefined`, i.e. "not skipped") on any resolution error — an
+ * unresolvable target here must never block the real dispatch.
+ */
+export function checkProposalGuard(
+  input: CheckProposalGuardInput,
+  ctx?: ProposalsContext,
+): CreateProposalSkipped | undefined {
+  try {
+    const parsedRef = parseRefInput(input.ref);
+    if (!stashDirFor(parsedRef.type)) return undefined;
+    const { normalizedRef, beforeHash } = resolveProposalTargetInfo(input.stash, parsedRef, input.target);
+    const fingerprint = computeProposalFingerprint({
+      ref: normalizedRef,
+      source: input.source,
+      ...(beforeHash !== undefined ? { beforeHash } : {}),
+      ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+    });
+    return withProposalsDb(input.stash, ctx, (db) =>
+      checkFingerprintAndBackoff(db, input.stash, normalizedRef, input.source, fingerprint, ctx),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /**
