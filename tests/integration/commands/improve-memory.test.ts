@@ -1198,7 +1198,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.graphExtraction?.written).toBe(true);
   });
 
-  // #R78: this used to assert a full reindex ("reindex" in callOrder) ran
+  // R78 (tier1-0917): this used to assert a full reindex ("reindex" in callOrder) ran
   // between memory inference and graph extraction. It now indexes exactly
   // the files memory inference wrote (indexWrittenAssets) instead, so
   // reindexFn is never called for this reason and the derived file lands in

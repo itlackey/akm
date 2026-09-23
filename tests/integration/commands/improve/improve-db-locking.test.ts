@@ -139,7 +139,7 @@ const stubGraphExtractionResult: GraphExtractionResult = {
 };
 
 describe("#584: index.db handle is closed before reindexFn runs", () => {
-  // #R78: memory inference's writes used to trigger a FULL reindex through
+  // R78 (tier1-0917): memory inference's writes used to trigger a FULL reindex through
   // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
   // over exactly the paths the pass wrote. `indexWrittenAssets` opens its own
   // write handle on the same index.db WAL file, so the #584 discipline (close

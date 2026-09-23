@@ -370,7 +370,7 @@ describe("runOrphanStateGcPass", () => {
     expect(out.collected).toBe(0);
   });
 
-  // #R78: the pass used to call `getEntryByRef` (two indexDb statements, with
+  // R78 (tier1-0917): the pass used to call `getEntryByRef` (two indexDb statements, with
   // the bare-ref fallback) once per pending row — O(N) round trips against
   // index.db for N pending rows. It now builds one live-ref snapshot up front
   // and matches every row against it in memory.
