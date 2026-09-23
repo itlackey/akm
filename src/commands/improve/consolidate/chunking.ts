@@ -8,7 +8,7 @@
 
 import fs from "node:fs";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { cacheHash } from "../content-hash";
+import { cacheHash, stripFrontmatterBody } from "../content-hash";
 import type { MemoryEntry } from "./types";
 
 /**
@@ -109,7 +109,7 @@ export function buildChunkPrompt(
   // The `(already queued)` annotation tops out at ~60% regardless of
   // format, so it stays inline-only here — a separate chunk-filter is
   // the right approach for queued refs (deferred per user direction).
-  type MemoryAnnotation = { isHot: boolean; isAlreadyQueued: boolean; body: string };
+  type MemoryAnnotation = { isHot: boolean; isAlreadyQueued: boolean; excerpt: string };
   const annotationsByIndex: MemoryAnnotation[] = [];
   const hotRefs: string[] = [];
   for (const m of memories) {
@@ -119,13 +119,21 @@ export function buildChunkPrompt(
     } catch {
       body = "(unreadable)";
     }
+    // Hot/queued detection stays on the raw body — frontmatter is exactly
+    // what parseFrontmatter and the pending-proposal hash domain need.
     const parsed = parseFrontmatter(body);
     const isHot = parsed.data.captureMode === "hot";
     // Use cacheHash (case-preserving stripped body) to match the domain used
     // by loadPendingConsolidateProposalHashes and the body-embedding cache.
     const bodyHash = cacheHash(body);
     const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
-    annotationsByIndex.push({ isHot, isAlreadyQueued, body });
+    // The excerpt shown to the LLM is the body ONLY — frontmatter can run
+    // longer than bodyTruncation (~21% of memories), which used to leave the
+    // model judging metadata instead of content. stripFrontmatterBody falls
+    // back to raw.trim() on unparseable/absent frontmatter, so this is a
+    // no-op for the "(unreadable)" placeholder.
+    const excerpt = stripFrontmatterBody(body);
+    annotationsByIndex.push({ isHot, isAlreadyQueued, excerpt });
     if (isHot) hotRefs.push(`memories/${m.name}`);
   }
 
@@ -157,7 +165,7 @@ export function buildChunkPrompt(
   for (let i = 0; i < memories.length; i++) {
     const m = memories[i]!;
     // `annotationsByIndex` has exactly one entry per memory (built in the loop above).
-    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i]!;
+    const { isHot, isAlreadyQueued, excerpt } = annotationsByIndex[i]!;
 
     const annotations: string[] = [];
     if (isHot) annotations.push("captureMode: hot");
@@ -168,7 +176,7 @@ export function buildChunkPrompt(
     lines.push(`Description: ${m.description || "(none)"}`);
     lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
     lines.push("---");
-    lines.push(body.slice(0, bodyTruncation));
+    lines.push(excerpt.slice(0, bodyTruncation));
     lines.push("");
   }
   return lines.join("\n");

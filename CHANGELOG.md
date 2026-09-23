@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Consolidate's per-chunk prompt excerpt truncated the raw file (frontmatter
+  + body) instead of the body.** `buildChunkPrompt` sliced `body.slice(0,
+  bodyTruncation)` off the unstripped file; a memory whose frontmatter alone
+  exceeded the excerpt length was judged on metadata only and never showed
+  its own body text. The excerpt now truncates `stripFrontmatterBody(body)`;
+  hot/queued detection is unchanged and still reads the raw body.
+
 ## [0.9.17-alpha.1] - 2026-09-22
 
 ### Fixed
