@@ -53,6 +53,7 @@ import {
   listAssetSalienceMissingState,
   stampAssetSalienceMissing,
 } from "../../storage/repositories/salience-repository";
+import { readFreelistInfo, vacuumStateDbIfReclaimable } from "../../storage/state-db-integrity";
 import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
@@ -1485,6 +1486,14 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
               },
               eventsCtx,
             );
+          }
+
+          // R0 step 3: opportunistic post-purge VACUUM. Reads the freelist
+          // off this same connection (no second state.db handle) and only
+          // runs when reclaimable space crosses STATE_DB_FREELIST_WARN_RATIO.
+          const vacuumOutcome = vacuumStateDbIfReclaimable(stateDb, readFreelistInfo(stateDb));
+          if (vacuumOutcome.ran) {
+            info(`[improve] state.db vacuum: ${vacuumOutcome.pagesBefore} -> ${vacuumOutcome.pagesAfter} pages`);
           }
         },
         { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },

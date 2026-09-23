@@ -95,16 +95,25 @@ export function runStateDbQuickCheck(dbPath: string): StateDbQuickCheckResult {
   }
 }
 
+/**
+ * Read `PRAGMA freelist_count` / `PRAGMA page_count` off an already-open
+ * connection. Shared by {@link getStateDbFreelistInfo} (which opens its own
+ * read-only handle) and the post-purge VACUUM call site, which must read the
+ * freelist off the same read-write connection the purge just used rather
+ * than open a second one.
+ */
+export function readFreelistInfo(db: Database): StateDbFreelistInfo {
+  const freelistCount = Number(firstColumn(db.prepare("PRAGMA freelist_count").get() as Record<string, unknown>) ?? 0);
+  const pageCount = Number(firstColumn(db.prepare("PRAGMA page_count").get() as Record<string, unknown>) ?? 0);
+  return { freelistCount, pageCount, ratio: pageCount > 0 ? freelistCount / pageCount : 0 };
+}
+
 /** Read `PRAGMA freelist_count` / `PRAGMA page_count` — how much of state.db is reclaimable by VACUUM. */
 export function getStateDbFreelistInfo(dbPath: string): StateDbFreelistInfo {
   let db: Database | undefined;
   try {
     db = openReadonlyStateDb(dbPath);
-    const freelistCount = Number(
-      firstColumn(db.prepare("PRAGMA freelist_count").get() as Record<string, unknown>) ?? 0,
-    );
-    const pageCount = Number(firstColumn(db.prepare("PRAGMA page_count").get() as Record<string, unknown>) ?? 0);
-    return { freelistCount, pageCount, ratio: pageCount > 0 ? freelistCount / pageCount : 0 };
+    return readFreelistInfo(db);
   } finally {
     db?.close();
   }
