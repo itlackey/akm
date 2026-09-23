@@ -182,7 +182,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     TIMEOUT_MS,
   );
 
-  test("advisory actionable operations still complete the pass and record the unapplied count (R4)", async () => {
+  test("completes the pass despite a retired advisory op in the response, recording zero unapplied (R4 + R12a)", async () => {
     writeMemory(
       "primary",
       "A substantive primary memory that remains unchanged while its proposed merge awaits review. Its promotion proposal may succeed, but that cannot complete the pending merge.",
@@ -192,6 +192,11 @@ describe("#553 consolidate minPoolSize guard", () => {
       "A substantive secondary memory that remains unchanged while its proposed merge awaits review.",
     );
     await akmIndex({ stashDir, full: true });
+    // R12a: the schema/prompt no longer offer merge/delete/contradict — this
+    // mocked response simulates a non-schema-honouring model returning one
+    // anyway. `isValidOp` rejects it (skipped with a warning), so it never
+    // reaches `planned` and `advisoryOpsUnapplied` — permanently 0 now that
+    // the schema is promote-only — must not regress to counting it in.
     overrideSeam(_setChatCompletionForTests, async () =>
       JSON.stringify({
         operations: [
@@ -215,13 +220,13 @@ describe("#553 consolidate minPoolSize guard", () => {
     const result = await runImprove(configWithMinPoolSize(0));
 
     expect(result.consolidation?.promoted).toHaveLength(1);
-    // R4: merge/delete/contradict ops are advisory and never auto-applied, so
-    // gating the completion event on "zero advisory ops" meant it was never
-    // emitted in practice. The pass still completed — the event fires, with
-    // the unapplied advisory op recorded for reporting.
+    expect(result.consolidation?.warnings.some((w) => w.includes("skipping invalid operation"))).toBe(true);
+    // R4: the pass still completes even when the model plan carries an op the
+    // apply loop cannot act on — gating the completion event on "zero
+    // advisory ops" meant it was never emitted in practice.
     const completed = readEvents({ type: "consolidate_completed" }).events;
     expect(completed).toHaveLength(1);
-    expect(completed[0]?.metadata?.advisoryOpsUnapplied).toBe(1);
+    expect(completed[0]?.metadata?.advisoryOpsUnapplied).toBe(0);
   });
 
   test("failed promotion proposal emission does not advance the consolidation watermark", async () => {

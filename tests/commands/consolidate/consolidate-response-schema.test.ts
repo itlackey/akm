@@ -1,11 +1,16 @@
 /**
  * Tests for the structured-output (`responseSchema`) lift in `akm consolidate`.
  *
- * Asset-writers-investigation PR 1: the chunk-plan LLM call now passes the
+ * Asset-writers-investigation PR 1: the chunk-plan LLM call passes the
  * CONSOLIDATE_PLAN_JSON_SCHEMA so providers that honour
- * `response_format: json_schema` enforce the `{operations, warnings?}` shape
- * upstream. The chunk-level "invalid plan from AI — skipping" branch in
- * `runConsolidate` becomes unreachable for schema-honouring providers.
+ * `response_format: json_schema` enforce the `{operations}` shape upstream.
+ * The chunk-level "invalid plan from AI — skipping" branch in `runConsolidate`
+ * becomes unreachable for schema-honouring providers.
+ *
+ * R12a (promote-only): `merge`/`delete`/`contradict` were advisory-only — the
+ * apply loop only ever executed `promote` — and cost 21-30k completion tokens
+ * per run for output nothing acted on. The schema, the system prompt, and the
+ * `{operations}` top-level `warnings` array were all cut down to promote-only.
  *
  * These are schema-shape unit tests; the end-to-end LLM call site is exercised
  * by the existing `consolidate-chunks` / `consolidate-pipeline-fixes` tests.
@@ -13,7 +18,9 @@
 
 import { describe, expect, test } from "bun:test";
 
+import consolidateSystemPrompt from "../../../src/assets/prompts/consolidate-system.md" with { type: "text" };
 import { CONSOLIDATE_PLAN_JSON_SCHEMA } from "../../../src/commands/improve/consolidate";
+import { isValidOp } from "../../../src/commands/improve/consolidate/merge";
 
 // Internal-shape view of the schema for assertion convenience.
 interface SchemaView {
@@ -23,18 +30,23 @@ interface SchemaView {
   properties: {
     operations: {
       type: string;
-      items: { oneOf: Array<{ type: string; required: string[]; properties: Record<string, unknown> }> };
+      items: {
+        type: string;
+        required: string[];
+        additionalProperties: boolean;
+        properties: Record<string, unknown>;
+      };
     };
-    warnings: { type: string; items: { type: string } };
+    warnings?: unknown;
   };
 }
 
 describe("CONSOLIDATE_PLAN_JSON_SCHEMA — top-level shape", () => {
-  test("requires operations array, warnings optional", () => {
+  test("requires operations array; no top-level warnings property", () => {
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
     expect(s.type).toBe("object");
     expect(s.required).toContain("operations");
-    expect(s.required).not.toContain("warnings");
+    expect(s.properties.warnings).toBeUndefined();
   });
 
   test("forbids additionalProperties at the top level", () => {
@@ -42,121 +54,120 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — top-level shape", () => {
     expect(s.additionalProperties).toBe(false);
   });
 
-  test("operations is an array of one-of operation variants", () => {
+  test("operations items are a single promote-shaped object — no oneOf, no merge/delete/contradict", () => {
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
     expect(s.properties.operations.type).toBe("array");
-    expect(Array.isArray(s.properties.operations.items.oneOf)).toBe(true);
-    // The four current op variants — merge / delete / promote / contradict.
-    expect(s.properties.operations.items.oneOf.length).toBe(4);
-  });
-
-  test("warnings is a string array when present", () => {
-    const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
-    expect(s.properties.warnings.type).toBe("array");
-    expect(s.properties.warnings.items.type).toBe("string");
+    const items = s.properties.operations.items;
+    expect(items).not.toHaveProperty("oneOf");
+    expect(items.type).toBe("object");
+    const opEnum = (items.properties.op as { enum?: string[] } | undefined)?.enum;
+    expect(opEnum).toEqual(["promote"]);
   });
 });
 
-describe("CONSOLIDATE_PLAN_JSON_SCHEMA — per-variant required fields", () => {
-  function variant(opName: string): { type: string; required: string[]; properties: Record<string, unknown> } {
+describe("CONSOLIDATE_PLAN_JSON_SCHEMA — promote op shape", () => {
+  test("requires ref, knowledgeRef, reason; description is optional", () => {
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
-    const found = s.properties.operations.items.oneOf.find((v) => {
-      const opProp = v.properties.op as { enum?: string[] } | undefined;
-      return Array.isArray(opProp?.enum) && opProp.enum.includes(opName);
-    });
-    if (!found) throw new Error(`variant for op=${opName} not found in schema`);
-    return found;
-  }
-
-  test("merge op requires primary, secondaries (>=1), and mergeStrategy", () => {
-    const v = variant("merge");
-    expect(v.required).toContain("primary");
-    expect(v.required).toContain("secondaries");
-    expect(v.required).toContain("mergeStrategy");
-    const secs = v.properties.secondaries as { minItems?: number; maxItems?: number; items?: { type?: string } };
-    expect(secs.minItems).toBe(1);
-    expect(secs.maxItems).toBe(1);
-    expect(secs.items?.type).toBe("string");
-  });
-
-  test("delete op requires ref and reason — no extra fields permitted", () => {
-    const v = variant("delete");
-    expect(v.required).toContain("ref");
-    expect(v.required).toContain("reason");
-    // additionalProperties off so the LLM cannot smuggle an unsanctioned field.
-    const view = v as unknown as { additionalProperties: boolean };
-    expect(view.additionalProperties).toBe(false);
-  });
-
-  test("promote op requires ref, knowledgeRef, reason; description is optional", () => {
-    const v = variant("promote");
+    const v = s.properties.operations.items;
     expect(v.required).toContain("ref");
     expect(v.required).toContain("knowledgeRef");
     expect(v.required).toContain("reason");
     expect(v.required).not.toContain("description");
-    // description is still typed when present.
     const desc = v.properties.description as { type?: string };
     expect(desc.type).toBe("string");
   });
 
-  test("contradict op requires ref, contradictedByRef, and reason", () => {
-    const v = variant("contradict");
-    expect(v.required).toContain("ref");
-    expect(v.required).toContain("contradictedByRef");
-    expect(v.required).toContain("reason");
+  test("caps reason at 200 chars", () => {
+    const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
+    const reason = s.properties.operations.items.properties.reason as { maxLength?: number };
+    expect(reason.maxLength).toBe(200);
   });
 
-  test("every operation variant has additionalProperties: false to block field smuggling", () => {
+  test("additionalProperties: false blocks field smuggling", () => {
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
-    for (const v of s.properties.operations.items.oneOf) {
-      const view = v as unknown as { additionalProperties: boolean };
-      expect(view.additionalProperties).toBe(false);
-    }
+    expect(s.properties.operations.items.additionalProperties).toBe(false);
+  });
+
+  test("a well-formed promote op has every required key", () => {
+    const sample = {
+      op: "promote",
+      ref: "memories/auth-tips",
+      knowledgeRef: "knowledge/auth-tips",
+      reason: "Stable, reusable guidance.",
+    };
+    const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
+    expect(s.properties.operations.items.required.every((k) => k in sample)).toBe(true);
+  });
+
+  test("a payload missing the required `knowledgeRef` field fails the required-key check", () => {
+    const broken = { op: "promote", ref: "memories/auth-tips", reason: "Stable, reusable guidance." };
+    const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
+    expect(s.properties.operations.items.required.every((k) => k in broken)).toBe(false);
   });
 });
 
-describe("CONSOLIDATE_PLAN_JSON_SCHEMA — typed-shape acceptance", () => {
-  test("a well-formed plan with merge + delete ops matches the schema's required-key contract", () => {
-    // We do not have a JSON-schema validator in tree; verify the typed contract
-    // by confirming a sample payload has every required key the schema names.
-    const sample = {
-      operations: [
-        {
-          op: "merge",
-          primary: "memories/auth-tips",
-          secondaries: ["memories/auth-helpers"],
-          mergeStrategy: "synthesize",
-        },
-        {
-          op: "delete",
-          ref: "memories/outdated",
-          reason: "Superseded by knowledge/deploy.",
-        },
-      ],
-    };
-    const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
-    expect(s.required.every((k) => k in sample)).toBe(true);
-
-    const mergeVariant = s.properties.operations.items.oneOf.find((v) => {
-      const opProp = v.properties.op as { enum?: string[] };
-      return opProp.enum?.includes("merge");
-    });
-    expect(mergeVariant?.required.every((k) => k in sample.operations[0]!)).toBe(true);
-
-    const deleteVariant = s.properties.operations.items.oneOf.find((v) => {
-      const opProp = v.properties.op as { enum?: string[] };
-      return opProp.enum?.includes("delete");
-    });
-    expect(deleteVariant?.required.every((k) => k in sample.operations[1]!)).toBe(true);
+describe("consolidate-system.md — promote-only prompt (R12a)", () => {
+  test("no longer offers the merge, delete, or contradict ops as rules or JSON examples", () => {
+    expect(consolidateSystemPrompt).not.toMatch(/^\d+\.\s*MERGE:/m);
+    expect(consolidateSystemPrompt).not.toMatch(/^\d+\.\s*DELETE:/m);
+    expect(consolidateSystemPrompt).not.toMatch(/^\d+\.\s*CONTRADICT:/m);
+    expect(consolidateSystemPrompt).not.toContain('"op": "merge"');
+    expect(consolidateSystemPrompt).not.toContain('"op": "delete"');
+    expect(consolidateSystemPrompt).not.toContain('"op": "contradict"');
   });
 
-  test("a payload missing the required `primary` field for a merge op fails the required-key check", () => {
-    const broken = { operations: [{ op: "merge", secondaries: ["memories/foo"], mergeStrategy: "synthesize" }] };
-    const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
-    const mergeVariant = s.properties.operations.items.oneOf.find((v) => {
-      const opProp = v.properties.op as { enum?: string[] };
-      return opProp.enum?.includes("merge");
-    });
-    expect(mergeVariant?.required.every((k) => k in broken.operations[0]!)).toBe(false);
+  test("still documents PROMOTE and KEEP", () => {
+    expect(consolidateSystemPrompt).toContain("PROMOTE");
+    expect(consolidateSystemPrompt).toContain("KEEP");
+  });
+
+  test("the JSON example carries no top-level warnings array", () => {
+    expect(consolidateSystemPrompt).not.toContain('"warnings"');
+  });
+});
+
+describe("isValidOp — rejects retired advisory op shapes (R12a)", () => {
+  test("accepts a well-formed promote op", () => {
+    expect(
+      isValidOp({
+        op: "promote",
+        ref: "memories/foo",
+        knowledgeRef: "knowledge/foo",
+        reason: "stable fact",
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects a merge op from an old model response instead of throwing", () => {
+    expect(() =>
+      isValidOp({
+        op: "merge",
+        primary: "memories/foo",
+        secondaries: ["memories/bar"],
+        mergeStrategy: "synthesize",
+      }),
+    ).not.toThrow();
+    expect(
+      isValidOp({
+        op: "merge",
+        primary: "memories/foo",
+        secondaries: ["memories/bar"],
+        mergeStrategy: "synthesize",
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects a delete op from an old model response instead of throwing", () => {
+    expect(() => isValidOp({ op: "delete", ref: "memories/foo", reason: "stale" })).not.toThrow();
+    expect(isValidOp({ op: "delete", ref: "memories/foo", reason: "stale" })).toBe(false);
+  });
+
+  test("rejects a contradict op from an old model response instead of throwing", () => {
+    expect(() =>
+      isValidOp({ op: "contradict", ref: "memories/foo", contradictedByRef: "memories/bar", reason: "conflict" }),
+    ).not.toThrow();
+    expect(
+      isValidOp({ op: "contradict", ref: "memories/foo", contradictedByRef: "memories/bar", reason: "conflict" }),
+    ).toBe(false);
   });
 });

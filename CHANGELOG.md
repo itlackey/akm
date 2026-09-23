@@ -89,6 +89,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one op that does execute — promote — writes a proposal to state.db, not to
   the stash. Consolidation therefore cannot change a file the index reads,
   so the reindex had no precondition it could ever satisfy.
+- **Consolidate's plan schema and prompt are promote-only.** The apply loop
+  only ever executed `promote` — `merge`/`delete`/`contradict` were advisory
+  by design and never applied — but the schema still asked for all four ops
+  plus a free-text `warnings` array, and completion tokens rose from 7–8k to
+  21–30k per run after the 35B-A3B model switch with no change in
+  promotions. `CONSOLIDATE_PLAN_JSON_SCHEMA` and `consolidate-system.md` now
+  request only `promote` (with `reason` capped at 200 chars), and `isValidOp`
+  rejects any other op shape — e.g. from a model that ignores the schema —
+  with the existing "skipping invalid operation" warning instead of treating
+  it as an actionable plan entry. `ConsolidateResult.merged` / `deleted` /
+  `contradicted` and the `planned` op breakdown are unchanged in shape and
+  stay zero.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 
