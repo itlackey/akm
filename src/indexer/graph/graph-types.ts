@@ -67,6 +67,13 @@ export interface GraphExtractionTelemetry {
    */
   nonArrayBatchFailures?: number;
   /**
+   * Chunks skipped because an asset's body exceeded
+   * `processes.graphExtraction.maxChunksPerAsset` (R12b + R20) — coverage
+   * loss from the per-asset chunk cap, tracked distinctly from
+   * `truncationCount` (hard splits within a kept chunk).
+   */
+  truncatedChunks?: number;
+  /**
    * Set when the run stopped early because the failure rate crossed the
    * threshold (R2) — the eligible set was only partially processed; files not
    * yet attempted were left untouched rather than written as empty/failed.

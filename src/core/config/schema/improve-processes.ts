@@ -241,6 +241,11 @@ const GRAPH_EXTRACTION_PROCESS_FIELDS = {
   // instead of only files touched by actionable refs in the current run.
   // Used by the `graph-refresh` built-in profile / a scheduled weekly task.
   fullScan: z.boolean().optional(),
+  // R12b + R20: cap on chunks processed per asset. A body chunked beyond this
+  // is truncated to the first N chunks instead of paying for unbounded
+  // per-asset LLM calls; the coverage loss is recorded as truncatedChunks.
+  // Absent = default 8 (src/llm/graph-extract.ts DEFAULT_MAX_CHUNKS_PER_ASSET).
+  maxChunksPerAsset: positiveInt.optional(),
 };
 
 const EXTRACT_PROCESS_FIELDS = {

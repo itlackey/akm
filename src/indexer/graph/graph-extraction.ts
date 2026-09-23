@@ -116,6 +116,12 @@ export interface GraphExtractionPassOptions {
    * high-signal-first sweep). Unset = process all eligible (current behavior).
    */
   topN?: number;
+  /**
+   * Invocation-owned cap on chunks processed per asset (R12b + R20). Forwarded
+   * to {@link graphExtract.extractGraphFromBody}/`extractGraphFromBodies`;
+   * unset falls back to their own default there (currently 8).
+   */
+  maxChunksPerAsset?: number;
 }
 
 /** Progress event emitted by {@link runGraphExtractionPass}. */
@@ -254,7 +260,7 @@ function normalizeConfidence(raw: unknown): number | undefined {
   return Math.max(0, Math.min(1, raw));
 }
 
-function getGraphExtractorId(config: { model: string; batchSize: number; includeTypes: string[] }): string {
+export function getGraphExtractorId(config: { model: string; batchSize: number; includeTypes: string[] }): string {
   const fingerprint = computeBodyHash(
     JSON.stringify({
       promptVersion: graphExtract.GRAPH_EXTRACT_PROMPT_VERSION,
@@ -516,6 +522,7 @@ async function extractGraphBatches(args: {
   abortState: GraphExtractionAbortState;
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
   reportProgress: (currentPath: string | undefined, result: ExtractionRecord | undefined) => void;
+  maxChunksPerAsset?: number;
 }): Promise<{ results: Array<ExtractionRecord | undefined>; configFailure?: ConfigError }> {
   const {
     plans,
@@ -533,6 +540,7 @@ async function extractGraphBatches(args: {
     runtimeTelemetry,
     onNotices,
     reportProgress,
+    maxChunksPerAsset,
   } = args;
   const results: Array<ExtractionRecord | undefined> = new Array(plans.length).fill(undefined);
   const chunkStarts: number[] = [];
@@ -582,6 +590,7 @@ async function extractGraphBatches(args: {
             telemetry: runtimeTelemetry,
             onNotices,
             ...(lease ? { lease } : {}),
+            ...(maxChunksPerAsset != null ? { maxChunksPerAsset } : {}),
           },
         );
       } catch (error) {
@@ -1012,6 +1021,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
                   telemetry: runtimeTelemetry,
                   onNotices,
                   ...(dispatchLease ? { lease: dispatchLease } : {}),
+                  ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
                 },
               );
             } catch (err) {
@@ -1068,6 +1078,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
         abortState,
         onNotices,
         reportProgress,
+        ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
       });
       extractionResults = batch.results;
       configFailure ??= batch.configFailure;
@@ -1116,6 +1127,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
       assetRefs,
     );
     telemetry.truncationCount = runtimeTelemetry.truncationCount ?? 0;
+    telemetry.truncatedChunks = runtimeTelemetry.truncatedChunks ?? 0;
     telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
     telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
     telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;

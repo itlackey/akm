@@ -319,7 +319,7 @@ describe("improve engine-plan boundaries", () => {
     }
   });
 
-  test("improve graph extraction passes process-owned includeTypes, batchSize, and topN", async () => {
+  test("improve graph extraction passes process-owned includeTypes, batchSize, topN, and maxChunksPerAsset", async () => {
     const stash = makeStashDir();
     try {
       const config: AkmConfig = {
@@ -342,6 +342,7 @@ describe("improve engine-plan boundaries", () => {
                   includeTypes: ["memory"],
                   batchSize: 2,
                   topN: 7,
+                  maxChunksPerAsset: 3,
                 },
               }),
             },
@@ -380,7 +381,7 @@ describe("improve engine-plan boundaries", () => {
         improveProfile: plan.strategy.config,
         resolvedPlan: plan,
       });
-      expect(seenOptions).toMatchObject({ includeTypes: ["memory"], batchSize: 2, topN: 7 });
+      expect(seenOptions).toMatchObject({ includeTypes: ["memory"], batchSize: 2, topN: 7, maxChunksPerAsset: 3 });
     } finally {
       stash.cleanup();
     }

@@ -57,11 +57,62 @@ const MAX_ENTITIES_PER_ASSET = 32;
 /** Hard cap on relations returned per asset. */
 const MAX_RELATIONS_PER_ASSET = 32;
 
+/**
+ * Default cap on chunks processed per asset (R12b + R20) — overridable via
+ * `processes.graphExtraction.maxChunksPerAsset`. Without a cap, one long file
+ * chunked at MAX_CHUNK_BODY_CHARS could spend dozens of calls on a single
+ * asset (one file spent 21 of 27 run calls this way) before its output was
+ * sliced to MAX_ENTITIES_PER_ASSET/MAX_RELATIONS_PER_ASSET anyway.
+ */
+const DEFAULT_MAX_CHUNKS_PER_ASSET = 8;
+
 const SYSTEM_PROMPT = systemPromptTemplate;
 
 const USER_PROMPT_PREFIX = userPromptTemplate
   .replace("{{MAX_ENTITIES}}", String(MAX_ENTITIES_PER_ASSET))
   .replace("{{MAX_RELATIONS}}", String(MAX_RELATIONS_PER_ASSET));
+
+/**
+ * Strict JSON Schema for the single-asset extraction payload (R12b). Sent via
+ * `responseSchema` to providers that opt into structured output
+ * (`runner.connection.supportsJsonSchema` — same lift as memory-infer.ts's
+ * `DERIVED_MEMORY_JSON_SCHEMA`); the client silently drops it otherwise.
+ * `maxItems` mirrors MAX_ENTITIES_PER_ASSET/MAX_RELATIONS_PER_ASSET so a
+ * compliant provider cannot pay for output beyond what parseGraphExtraction
+ * keeps, and `additionalProperties: false` forbids the `confidence` field the
+ * prompt never asks for.
+ */
+const GRAPH_EXTRACTION_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    entities: { type: "array", items: { type: "string" }, maxItems: MAX_ENTITIES_PER_ASSET },
+    relations: {
+      type: "array",
+      maxItems: MAX_RELATIONS_PER_ASSET,
+      items: {
+        type: "object",
+        properties: {
+          from: { type: "string" },
+          to: { type: "string" },
+          type: { type: "string" },
+        },
+        required: ["from", "to"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["entities", "relations"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Hard output-token cap for the single-asset extraction call (R20), derived
+ * from the caps above so a compliant provider cannot pay for output beyond
+ * what parseGraphExtraction ever keeps. ~12 tokens covers a short quoted
+ * entity plus its array separator; a relation costs roughly 2x that for its
+ * two entity refs and `type` field, plus headroom for JSON punctuation.
+ */
+const MAX_GRAPH_EXTRACTION_TOKENS = MAX_ENTITIES_PER_ASSET * 12 + MAX_RELATIONS_PER_ASSET * 24;
 
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
 export interface GraphRelation {
@@ -80,6 +131,8 @@ export interface GraphExtraction {
   reason?: GraphExtractionReason;
   chunkCount?: number;
   truncationCount?: number;
+  /** Chunks skipped because the asset exceeded maxChunksPerAsset (R12b + R20). */
+  truncatedChunks?: number;
   filteredGenericEntities?: number;
   filteredInvalidRelations?: number;
   filteredLowConfidenceRelations?: number;
@@ -104,6 +157,8 @@ export interface GraphBatchState {
 
 export interface GraphRuntimeTelemetry {
   truncationCount?: number;
+  /** Chunks skipped because an asset exceeded maxChunksPerAsset (R12b + R20). */
+  truncatedChunks?: number;
   failureCount?: number;
   htmlErrorCount?: number;
   retryAttempts?: number;
@@ -119,6 +174,13 @@ export interface GraphExtractionRuntimeOptions {
   telemetry?: GraphRuntimeTelemetry;
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
   lease?: LoweredExecutionDispatchLease;
+  /**
+   * Cap on chunks processed per asset (R12b + R20). Bodies chunked beyond
+   * this are truncated to the first N chunks; the rest are recorded as
+   * `truncatedChunks`, never processed. Defaults to
+   * {@link DEFAULT_MAX_CHUNKS_PER_ASSET} (8) when unset.
+   */
+  maxChunksPerAsset?: number;
 }
 
 const GENERIC_ENTITIES = new Set([
@@ -232,6 +294,7 @@ function mergeGraphExtractions(extractions: GraphExtraction[]): GraphExtraction 
   const relationChunkCounts = new Map<string, number>();
   let confidence: number | undefined;
   let truncationCount = 0;
+  let truncatedChunks = 0;
   let filteredGenericEntities = 0;
   let filteredInvalidRelations = 0;
   let filteredLowConfidenceRelations = 0;
@@ -239,6 +302,7 @@ function mergeGraphExtractions(extractions: GraphExtraction[]): GraphExtraction 
 
   for (const extraction of extractions) {
     truncationCount += extraction.truncationCount ?? 0;
+    truncatedChunks += extraction.truncatedChunks ?? 0;
     filteredGenericEntities += extraction.filteredGenericEntities ?? 0;
     filteredInvalidRelations += extraction.filteredInvalidRelations ?? 0;
     filteredLowConfidenceRelations += extraction.filteredLowConfidenceRelations ?? 0;
@@ -314,6 +378,7 @@ function mergeGraphExtractions(extractions: GraphExtraction[]): GraphExtraction 
     reason,
     chunkCount: extractions.length,
     truncationCount,
+    truncatedChunks,
     filteredGenericEntities,
     filteredInvalidRelations,
     filteredLowConfidenceRelations,
@@ -863,19 +928,41 @@ export async function extractGraphFromBody(
       `graph extraction: split a long asset into ${chunked.chunks.length} chunk(s) with ${chunked.truncationCount} hard split(s).`,
     );
   }
-  if (chunked.chunks.length > 1) {
+
+  // R12b + R20: bound per-asset cost by capping how many chunks of a long
+  // asset are ever sent to the LLM. Excess chunks are dropped, never
+  // processed — the coverage loss is recorded as truncatedChunks rather than
+  // silently absorbed.
+  const maxChunksPerAsset = options.maxChunksPerAsset ?? DEFAULT_MAX_CHUNKS_PER_ASSET;
+  const cappedChunks =
+    chunked.chunks.length > maxChunksPerAsset ? chunked.chunks.slice(0, maxChunksPerAsset) : chunked.chunks;
+  const truncatedChunkCount = chunked.chunks.length - cappedChunks.length;
+  if (truncatedChunkCount > 0) {
+    bumpTelemetry(options.telemetry, "truncatedChunks", truncatedChunkCount);
+    warnVerbose(
+      `graph extraction: capped a long asset to ${cappedChunks.length} of ${chunked.chunks.length} chunk(s) ` +
+        `(maxChunksPerAsset=${maxChunksPerAsset}); ${truncatedChunkCount} chunk(s) not processed.`,
+    );
+  }
+
+  if (cappedChunks.length > 1) {
     const chunkResults: GraphExtraction[] = [];
-    for (const chunk of chunked.chunks) {
+    for (const chunk of cappedChunks) {
       chunkResults.push(await extractGraphFromBody(llmRunner, chunk, signal, akmConfig, onFallback, options));
     }
     const merged = mergeGraphExtractions(chunkResults);
     merged.truncationCount = (merged.truncationCount ?? 0) + chunked.truncationCount;
+    merged.truncatedChunks = (merged.truncatedChunks ?? 0) + truncatedChunkCount;
     return merged;
   }
 
-  const userPrompt = `${USER_PROMPT_PREFIX}${trimmedBody}`;
+  // When capped down to exactly one chunk from a body that originally split
+  // into more, that single surviving chunk (not the full trimmedBody) is what
+  // must be sent — otherwise the cap would have no effect on prompt size.
+  const bodyForCall = truncatedChunkCount > 0 ? (cappedChunks[0] ?? trimmedBody) : trimmedBody;
+  const userPrompt = `${USER_PROMPT_PREFIX}${bodyForCall}`;
 
-  return callStructured<GraphExtraction>({
+  const result = await callStructured<GraphExtraction>({
     feature: "graph_extraction",
     akmConfig,
     runner: llmRunner,
@@ -888,6 +975,8 @@ export async function extractGraphFromBody(
       temperature: 0.1,
       timeoutMs: llmRunner.timeoutMs,
       signal,
+      responseSchema: GRAPH_EXTRACTION_JSON_SCHEMA as unknown as Record<string, unknown>,
+      maxTokens: MAX_GRAPH_EXTRACTION_TOKENS,
       onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
     },
     onNotices: options.onNotices,
@@ -937,6 +1026,8 @@ export async function extractGraphFromBody(
     fallback: empty(),
     onFallback,
   });
+  if (truncatedChunkCount > 0) result.truncatedChunks = (result.truncatedChunks ?? 0) + truncatedChunkCount;
+  return result;
 }
 
 // deduplicateGraph lives in src/indexer/graph/graph-dedup.ts (pure utility, no
