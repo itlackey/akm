@@ -57,7 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the memory-volume override (`memoryVolumeConsolidationThreshold`, forcing a
   run when the eligible pool exceeds the threshold) is now bootstrap-only: once
   a `consolidate_completed` event exists for the source, the pool-delta gate
-  governs on its own, even when the pool is large.
+  governs on its own, even when the pool is large. `akm improve --plan`'s
+  `consolidation.gates.delta.reason` no longer reports "memory pool has work"
+  for both a real pool delta and the bootstrap case (no `consolidate_completed`
+  event yet, so no delta was evaluated) — bootstrap now reports its own reason.
 
 ### Added
 

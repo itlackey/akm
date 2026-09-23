@@ -421,7 +421,11 @@ function planConsolidationPass(args: {
         },
         delta: {
           passed: deltaPassed,
-          reason: deltaPassed ? "memory pool has work" : "no updates since the last completed consolidation",
+          reason: !deltaPassed
+            ? "no updates since the last completed consolidation"
+            : eligibility.lastConsolidationTs
+              ? "memory pool has work"
+              : "no completed consolidation recorded yet (bootstrap)",
         },
       },
       wouldRun,
