@@ -147,7 +147,6 @@ export interface ReportRun {
   lintFixed: number;
   reflectsWithErrorContext: number;
   orphansPurged: number;
-  evalCasesWritten: number;
 }
 
 function reshapeRun(r: ImproveRunSummary): ReportRun {
@@ -202,7 +201,6 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     lintFixed: r.lintFixed,
     reflectsWithErrorContext: r.reflectsWithErrorContext,
     orphansPurged: r.orphansPurged,
-    evalCasesWritten: r.evalCasesWritten,
   };
 }
 

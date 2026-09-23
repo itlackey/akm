@@ -79,6 +79,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now also advances on both outcomes (still excluding `llm_failed`, where no
   real attempt produced anything).
 
+### Removed
+
+- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
+  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
+  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
+  `countEvalCases` reported a cumulative on-disk file count as if it were a
+  per-run number (surfaced as `evalCasesWritten` on the improve result and in
+  `akm health`'s improve metrics). A rejected proposal row (see above) now
+  carries the same information through a path something actually reads.
+  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
+  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
+  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
+  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
+  on an envelope an older release wrote, and existing eval-case files on disk
+  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
+  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
+  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
+
 ### Changed
 
 - **The orphan-state GC pass no longer probes index.db once per pending

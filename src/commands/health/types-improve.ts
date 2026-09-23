@@ -147,7 +147,6 @@ export interface ImproveHealthMetrics {
   };
   reflectsWithErrorContext: number;
   coverageGapCount: number;
-  evalCasesWritten: number;
   deadUrlCount: number;
   /**
    * Coverage of the dead-link check across the window (#892): every
