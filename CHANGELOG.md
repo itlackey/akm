@@ -82,8 +82,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the run's write-provenance journal), and the maintenance pass indexes just
   those files with `indexWrittenAssets` instead — closing and reopening the
   shared index.db handle around the call with the same discipline the full
-  reindex used (#584). A reindex triggered separately by consolidation is
-  unaffected.
+  reindex used (#584). The separate reindex triggered by consolidation is
+  fixed the same way: it used to fire whenever `consolidation.processed > 0`
+  (memories the LLM judged), which was true on nearly every consolidating
+  run even though merge/delete/contradict ops are advisory and never
+  auto-applied, and the one op that does execute — promote — writes a
+  proposal to state.db, not to the stash. It now fires only when
+  consolidation actually wrote data (`merged`/`deleted`/`contradicted` > 0).
 
 ## [0.9.17-alpha.1] - 2026-09-22
 

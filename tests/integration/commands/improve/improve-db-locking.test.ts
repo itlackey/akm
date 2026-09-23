@@ -18,6 +18,16 @@
  *   two simultaneous writers on the same WAL file ("database is locked"). The
  *   fix reuses eventsCtx.db when present; only the dbPath fallback path opens
  *   (and then owns and closes) its own handle.
+ *
+ * r3-1 — post-consolidation reindex requires an actual mutation:
+ *   The post-consolidation branch of the same reindex seam used to fire
+ *   whenever `consolidation.processed > 0` (memories the LLM judged), not
+ *   whenever consolidation actually wrote anything. Merge/delete/contradict
+ *   ops are advisory and never auto-applied (consolidate.ts), and the one op
+ *   that does execute — promote — writes a proposal to state.db, not to the
+ *   stash, so `processed > 0` was true on nearly every consolidating run
+ *   while the reindex's own precondition (files on disk changed) almost
+ *   never held.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -25,6 +35,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmImprove, runImproveMaintenancePasses } from "../../../../src/commands/improve/improve";
+import type { AkmConfig } from "../../../../src/core/config/config";
 import { loadConfig, saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { getDbPath } from "../../../../src/core/paths";
@@ -32,12 +43,14 @@ import { openStateDatabase } from "../../../../src/core/state-db";
 import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
+import { _setChatCompletionForTests } from "../../../../src/llm/client";
 import type { Database } from "../../../../src/storage/database";
 import { insertEvent } from "../../../../src/storage/repositories/events-repository";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { getEntryByRef } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { overrideSeam } from "../../../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 const extraCleanups: Array<() => void> = [];
@@ -316,5 +329,96 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
     } finally {
       checkDb.close();
     }
+  });
+});
+
+/** Config with consolidate enabled (default-off gates: minPoolSize 0, no cooldown on a fresh stash). */
+function consolidateEnabledConfig(): AkmConfig {
+  return withImproveAutonomy(
+    withTestImproveLlm({
+      semanticSearchMode: "off",
+      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+    } as unknown as AkmConfig),
+  );
+}
+
+describe("r3-1: post-consolidation reindex requires an actual mutation, not just processed > 0", () => {
+  test("consolidation judges a memory but proposes no ops — reindexFn is not called", async () => {
+    const stash = storage.stashDir;
+    writeMemory(stash, "alpha");
+    saveConfig(consolidateEnabledConfig());
+    await akmIndex({ stashDir: stash, full: true });
+
+    let reindexCalls = 0;
+    overrideSeam(_setChatCompletionForTests, async () => JSON.stringify({ operations: [] }));
+
+    const result = await akmImprove({
+      stashDir: stash,
+      scope: "memory",
+      ensureIndexFn: async () => undefined,
+      memoryInferenceFn: async () => stubMemoryInferenceResult(),
+      graphExtractionFn: async () => stubGraphExtractionResult,
+      reindexFn: async () => {
+        reindexCalls += 1;
+      },
+    });
+
+    expect(result.consolidation?.processed).toBeGreaterThan(0);
+    expect(result.consolidation?.merged).toBe(0);
+    expect(result.consolidation?.deleted).toBe(0);
+    expect(result.consolidation?.promoted).toEqual([]);
+    expect(result.consolidation?.contradicted).toBe(0);
+    expect(reindexCalls).toBe(0);
+  });
+
+  // A promotion is a proposal written to state.db (createProposal — see
+  // src/commands/proposal/repository.ts), not a stash file write, so it must
+  // NOT count as a mutation either — verified against the apply pass in
+  // consolidate.ts, where `akmConsolidateInner`'s op-execution loop only ever
+  // handles `op.op === "promote"`; merge/delete/contradict stay advisory.
+  test("consolidation emits only a promotion proposal — reindexFn is still not called", async () => {
+    const stash = storage.stashDir;
+    const filePath = path.join(stash, "memories", "alpha.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(
+      filePath,
+      "---\ndescription: alpha memory\n---\n\n" +
+        "A substantive memory body long enough to clear the promote minimum length guard so the promotion actually emits a proposal.\n",
+      "utf8",
+    );
+    saveConfig(consolidateEnabledConfig());
+    await akmIndex({ stashDir: stash, full: true });
+
+    let reindexCalls = 0;
+    overrideSeam(_setChatCompletionForTests, async () =>
+      JSON.stringify({
+        operations: [
+          {
+            op: "promote",
+            ref: "memories/alpha",
+            knowledgeRef: "knowledge/alpha-guidance",
+            reason: "Stable guidance worth promoting.",
+            description: "Stable alpha guidance awaiting review.",
+          },
+        ],
+      }),
+    );
+
+    const result = await akmImprove({
+      stashDir: stash,
+      scope: "memory",
+      ensureIndexFn: async () => undefined,
+      memoryInferenceFn: async () => stubMemoryInferenceResult(),
+      graphExtractionFn: async () => stubGraphExtractionResult,
+      reindexFn: async () => {
+        reindexCalls += 1;
+      },
+    });
+
+    expect(result.consolidation?.promoted).toHaveLength(1);
+    expect(result.consolidation?.merged).toBe(0);
+    expect(result.consolidation?.deleted).toBe(0);
+    expect(result.consolidation?.contradicted).toBe(0);
+    expect(reindexCalls).toBe(0);
   });
 });
