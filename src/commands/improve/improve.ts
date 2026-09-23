@@ -30,6 +30,7 @@ import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal 
 import { resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { ensureIndex } from "../../indexer/ensure-index";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
 import { collectPendingMemories } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
@@ -248,6 +249,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let autonomyGatedDirectLanes: AutonomyLane[] = [];
   let guidance: string | undefined;
   let triageDrain: DrainResult | undefined;
+  let ensureIndexDurationMs: number | undefined;
 
   let improveLockOwnership: LockOwnership | undefined;
   let exitBackstop: (() => void) | undefined;
@@ -309,14 +311,36 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // which this run — and only this run — is allowed to write.
       runJournal.open();
 
-      // Drain the standing proposal backlog before indexing so fresh proposal
-      // generation sees promotions from this same serialized run.
+      // R6: ensureIndex BEFORE triage, not after. Triage promotes proposals
+      // straight into the flat `knowledge/` root; running the blocking
+      // reindex only afterward (inside indexAndCollect, below) meant every
+      // triage promotion dirtied the stash right before the rescan that is
+      // supposed to precede it, so the "blocking" reindex always found fresh
+      // work and paid for a full walk on the very run it was meant to avoid.
+      const bootstrap = await runIndexBootstrapPass(setup, budgetAbortController.signal);
+      preEnsureCleanupWarnings.push(...bootstrap.warnings);
+      ensureIndexDurationMs = bootstrap.ensureIndexDurationMs;
+
+      // Drain the standing proposal backlog under the now-current index, so
+      // fresh proposal generation sees promotions from this same serialized
+      // run.
       triageDrain = await runTriagePrePass(setup);
+
+      // R6: index triage's own writes incrementally (the R8
+      // `indexWrittenAssets` pattern) instead of letting them sit newer than
+      // `builtAt` until the next full reindex. `collectEligibleRefs` below
+      // still needs to see them, and per-file staleness (`ensure-index.ts`)
+      // needs their `content_hash` recorded so it does not re-trigger a full
+      // rescan next run for content it already has.
+      if (setup.primaryStashDir) {
+        const triageWrittenPaths = runJournal.current()?.writtenPaths() ?? [];
+        if (triageWrittenPaths.length > 0) {
+          await indexWrittenAssets(setup.primaryStashDir, triageWrittenPaths);
+        }
+      }
     }
 
-    // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs (inside the
-    // indexAndCollect helper).
-    const collected = await indexAndCollect({ run: setup, signal: budgetAbortController.signal });
+    const collected = await indexAndCollect({ run: setup });
     plannedRefs = collected.plannedRefs;
     memorySummary = collected.memorySummary;
     strategyFilteredRefs = collected.strategyFilteredRefs;
@@ -324,7 +348,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     memoryCleanupPlan = collected.memoryCleanupPlan;
     autonomyGatedDirectLanes = collected.autonomyGatedDirectLanes;
     guidance = collected.guidance;
-    preEnsureCleanupWarnings.push(...collected.warnings);
 
     if (options.dryRun) {
       const result = await runDryPlanningStage({
@@ -401,6 +424,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       rawPlannedRefs: plannedRefs,
       indexSnapshot,
       triageDrain,
+      ensureIndexDurationMs,
       eventsCtx,
     });
 
@@ -775,11 +799,96 @@ function recordImproveFailure(err: unknown, run: ImproveRunSetup, eventsCtx: Eve
 }
 
 /**
- * ensureIndex + collectEligibleRefs + the contradiction pre-pass + the
- * memory-cleanup recompute (#339 ordering). Formerly the runIndexAndCollect
- * closure mutating outer `let`s; now a pure pass returning its results.
+ * R6: ensureIndex bootstrap pass, hoisted out of `indexAndCollect` (below) so
+ * the caller can run it BEFORE the triage pre-pass instead of after it —
+ * triage promotes proposals straight into `knowledge/`, so ensureIndex must
+ * see a current index before triage dirties it, not after. Gated exactly as
+ * this logic was gated inside `indexAndCollect`: only for a resolved
+ * `primaryStashDir` on a non-dry-run.
+ *
+ * #339 fix carried over unchanged: ensureIndex MUST run before
+ * collectEligibleRefs. The eligible-ref query reads the `entries` table; if a
+ * DB version upgrade just dropped that table (or the index is otherwise
+ * empty), skipping this would silently return plannedRefs=[] and the improve
+ * loop would no-op.
  */
-async function indexAndCollect(args: { run: ImproveRunSetup; signal: AbortSignal }): Promise<{
+async function runIndexBootstrapPass(
+  run: ImproveRunSetup,
+  signal: AbortSignal,
+): Promise<{ warnings: string[]; ensureIndexDurationMs?: number }> {
+  const { primaryStashDir, options, ensureIndexFn } = run;
+  const warnings: string[] = [];
+  if (!primaryStashDir || options.dryRun) return { warnings };
+
+  // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
+  // Best-effort: a missing DB / unreadable schema is the fresh-install case
+  // and not a bug — we silently skip the probe.
+  let preEnsureEntryCount: number | undefined;
+  try {
+    const dbPath = getDbPath();
+    if (fs.existsSync(dbPath)) {
+      const probeDb = openExistingDatabase();
+      try {
+        preEnsureEntryCount = getEntryCount(probeDb);
+      } finally {
+        closeDatabase(probeDb);
+      }
+    }
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // best-effort; leave preEnsureEntryCount undefined
+  }
+
+  let ensureIndexDurationMs: number | undefined;
+  try {
+    await ensureIndexFn(primaryStashDir, {
+      mode: "blocking",
+      signal,
+      // R6: capture the implicit reindex's wall-clock cost (otherwise
+      // discarded) so the caller can surface it on the improve result.
+      onReindexTiming: ({ durationMs }) => {
+        ensureIndexDurationMs = durationMs;
+      },
+    });
+  } catch (err) {
+    if (signal.aborted) throw err;
+    warnings.push(`ensureIndex failed: ${errMessage(err)}`);
+  }
+
+  // #339 loud-fail: if the index was empty pre-ensureIndex but is now
+  // populated, a version-upgrade-triggered rebuild just happened. Surface
+  // that on stderr so the improve run is not silently masked by stale
+  // index state. Zero-before AND zero-after is the empty-stash case and
+  // is intentionally not warned (not a bug).
+  if (preEnsureEntryCount === 0) {
+    try {
+      const probeDb = openExistingDatabase();
+      let postCount = 0;
+      try {
+        postCount = getEntryCount(probeDb);
+      } finally {
+        closeDatabase(probeDb);
+      }
+      if (postCount > 0) {
+        warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
+      }
+    } catch (err) {
+      rethrowIfTestIsolationError(err);
+      // best-effort
+    }
+  }
+
+  return { warnings, ensureIndexDurationMs };
+}
+
+/**
+ * collectEligibleRefs + the contradiction pre-pass + the memory-cleanup
+ * recompute. Formerly the runIndexAndCollect closure mutating outer `let`s;
+ * now a pure pass returning its results. The ensureIndex bootstrap this
+ * function used to open with now runs earlier, before triage — see
+ * {@link runIndexBootstrapPass} and its call site in `akmImprove`.
+ */
+async function indexAndCollect(args: { run: ImproveRunSetup }): Promise<{
   plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"];
   memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"];
   strategyFilteredRefs: NonNullable<Awaited<ReturnType<typeof collectEligibleRefs>>["strategyFilteredRefs"]>;
@@ -792,78 +901,14 @@ async function indexAndCollect(args: { run: ImproveRunSetup; signal: AbortSignal
    */
   autonomyGatedDirectLanes: AutonomyLane[];
   guidance?: string;
-  warnings: string[];
 }> {
-  const { signal } = args;
-  const { scope, options, primaryStashDir, improveProfile, _earlyConfig, ensureIndexFn, collectEligibleRefsImpl } =
-    args.run;
-  const warnings: string[] = [];
-  let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"] = [];
-  let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"] = { eligible: 0, derived: 0 };
-  let strategyFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["strategyFilteredRefs"] = [];
-  let indexSnapshot: ImproveIndexSnapshot | undefined;
-  // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
-  // query reads the `entries` table; if a DB version upgrade just dropped that
-  // table (or the index is otherwise empty), the prior run order silently
-  // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
-  // here repopulates the index first so the subsequent query sees fresh data.
-  if (primaryStashDir && !options.dryRun) {
-    // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
-    // Best-effort: a missing DB / unreadable schema is the fresh-install case
-    // and not a bug — we silently skip the probe.
-    let preEnsureEntryCount: number | undefined;
-    try {
-      const dbPath = getDbPath();
-      if (fs.existsSync(dbPath)) {
-        const probeDb = openExistingDatabase();
-        try {
-          preEnsureEntryCount = getEntryCount(probeDb);
-        } finally {
-          closeDatabase(probeDb);
-        }
-      }
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-      // best-effort; leave preEnsureEntryCount undefined
-    }
-
-    try {
-      await ensureIndexFn(primaryStashDir, { mode: "blocking", signal: signal });
-    } catch (err) {
-      if (signal.aborted) throw err;
-      warnings.push(`ensureIndex failed: ${errMessage(err)}`);
-    }
-
-    // #339 loud-fail: if the index was empty pre-ensureIndex but is now
-    // populated, a version-upgrade-triggered rebuild just happened. Surface
-    // that on stderr so the improve run is not silently masked by stale
-    // index state. Zero-before AND zero-after is the empty-stash case and
-    // is intentionally not warned (not a bug).
-    if (preEnsureEntryCount === 0) {
-      try {
-        const probeDb = openExistingDatabase();
-        let postCount = 0;
-        try {
-          postCount = getEntryCount(probeDb);
-        } finally {
-          closeDatabase(probeDb);
-        }
-        if (postCount > 0) {
-          warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
-        }
-      } catch (err) {
-        rethrowIfTestIsolationError(err);
-        // best-effort
-      }
-    }
-  }
-
-  ({
+  const { scope, options, primaryStashDir, improveProfile, _earlyConfig, collectEligibleRefsImpl } = args.run;
+  const {
     plannedRefs,
     memorySummary,
     strategyFilteredRefs = [],
     indexSnapshot,
-  } = await collectEligibleRefsImpl(scope, options.stashDir, improveProfile, _earlyConfig));
+  } = await collectEligibleRefsImpl(scope, options.stashDir, improveProfile, _earlyConfig);
   const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
 
   // D8 — the two direct lanes share one eligibility predicate, which reads scope
@@ -896,7 +941,6 @@ async function indexAndCollect(args: { run: ImproveRunSetup; signal: AbortSignal
     memoryCleanupPlan,
     autonomyGatedDirectLanes,
     guidance,
-    warnings,
   };
 }
 
@@ -1675,6 +1719,7 @@ function finalizeImproveResult(args: {
   rawPlannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"];
   indexSnapshot?: ImproveIndexSnapshot;
   triageDrain?: DrainResult;
+  ensureIndexDurationMs?: number;
   eventsCtx: EventsContext;
 }): AkmImproveResult {
   const {
@@ -1685,6 +1730,7 @@ function finalizeImproveResult(args: {
     rawPlannedRefs,
     indexSnapshot,
     triageDrain,
+    ensureIndexDurationMs,
     eventsCtx,
   } = args;
   const { selectedStrategy, scope, options, primaryStashDir, startMs, resolvedPlan } = args.run;
@@ -1815,6 +1861,10 @@ function finalizeImproveResult(args: {
     // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k / §3.
     ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
     ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
+    // R6: the start-of-run implicit reindex's wall-clock cost, when one ran
+    // (absent — not zero — when the index was already fresh and no inline
+    // rebuild was needed).
+    ...(ensureIndexDurationMs !== undefined ? { ensureIndexDurationMs } : {}),
     ...(cycleMetrics ? { cycleMetrics } : {}),
     ...(orphansPurged !== undefined ? { orphansPurged } : {}),
     ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),

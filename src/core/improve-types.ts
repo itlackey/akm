@@ -884,6 +884,15 @@ export interface AkmImproveResult {
    * Omitted entirely when the pass did not run.
    */
   graphExtractionDurationMs?: number;
+  /**
+   * R6: wall-clock duration of the start-of-run implicit reindex (ms), when
+   * `ensureIndex` actually ran one — the previous no-op call discarded this
+   * entirely, hiding blocking rebuilds (tens of minutes on a large stash)
+   * from the ledger. Same top-level surfacing convention as
+   * `memoryInferenceDurationMs`. Omitted when the index was already fresh
+   * and no inline rebuild ran.
+   */
+  ensureIndexDurationMs?: number;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
   orphansPurged?: number;
   /**
