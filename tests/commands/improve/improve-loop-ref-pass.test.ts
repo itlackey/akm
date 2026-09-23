@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import path from "node:path";
 import { deriveLessonRef } from "../../../src/commands/improve/distill";
 import type { AkmImproveOptions, ImproveLoopState } from "../../../src/commands/improve/improve-run-types";
 import {
@@ -21,9 +22,10 @@ import {
   processImproveLoopRef,
 } from "../../../src/commands/improve/loop-stages";
 import { createRunContext } from "../../../src/commands/improve/run-context";
-import type { Proposal } from "../../../src/commands/proposal/repository";
+import { createProposal, isProposalSkipped, type Proposal } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
+import { readEvents } from "../../../src/core/events";
 import type { EventEnvelope } from "../../../src/core/events-types";
 import type { AkmReflectResult, ImproveEligibleRef } from "../../../src/core/improve-types";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
@@ -186,6 +188,66 @@ describe("processImproveLoopRef — reflect half", () => {
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped", "distill-skipped"]);
     expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "derived-memory-reflect-skipped" });
     expect(tally.actions[1]!.result).toEqual({ ok: true, reason: "memory requires recent feedback signal" });
+  });
+});
+
+describe("processImproveLoopRef — reflect pre-generation guard (R9, tier2-0917)", () => {
+  test("a fingerprint match skips the LLM call, lands in reflect-cooldown, and advances the signal cursor", async () => {
+    const { stashDir } = freshSandbox();
+    const target = { source: "stash", root: path.resolve(stashDir) };
+    // A real proposal in state.db for this exact ref/source/target/model —
+    // the guard's fingerprint lookup needs something to match against.
+    const existing = createProposal(stashDir, {
+      ref: "knowledge/guide.md",
+      source: "reflect",
+      target,
+      payload: { content: "---\ndescription: existing\n---\n\nbody\n" },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let reflectCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      options: { stashDir, sourceName: "stash", config: {} as AkmConfig },
+      reflectFn: () => {
+        reflectCalled = true;
+        return Promise.reject(new Error("reflectFn must not be called on a guard hit"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(reflectCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["reflect-cooldown", "distill-skipped"]);
+    const reflectAction = tally.actions[0]!.result as AkmReflectResult;
+    if (reflectAction.ok) throw new Error("expected a failure envelope");
+    expect(reflectAction.reason).toBe("cooldown");
+
+    // buildLatestProposalTsMap (the signal-delta cursor) reads `reflect_invoked`
+    // events regardless of outcome — it must still see one for this ref even
+    // though reflectFn was never invoked.
+    const { events } = readEvents({ type: "reflect_invoked" });
+    expect(events.some((e) => e.ref === "knowledge/guide.md")).toBe(true);
+  });
+
+  test("no guard hit falls through to the real reflectFn call as before", async () => {
+    const { stashDir } = freshSandbox();
+    let reflectCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      options: { stashDir, sourceName: "stash", config: {} as AkmConfig },
+      reflectFn: (args) => {
+        reflectCalled = true;
+        return Promise.resolve(reflectOk(args.ref ?? "knowledge/guide.md"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(reflectCalled).toBe(true);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["reflect", "distill-skipped"]);
   });
 });
 

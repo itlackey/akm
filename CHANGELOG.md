@@ -89,6 +89,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one op that does execute — promote — writes a proposal to state.db, not to
   the stash. Consolidation therefore cannot change a file the index reads,
   so the reindex had no precondition it could ever satisfy.
+- **The improve loop's reflect dispatch now checks the proposal
+  fingerprint/rejection-backoff guard *before* calling reflect, not just
+  after.** `fingerprint_match` and `rejection_backoff` were evaluated only
+  inside `createProposal`, which runs after reflect's full generation and
+  quality-judge call — so a ref already guaranteed to be skipped still paid
+  the LLM cost (measured: 2–16% of reflect LLM seconds spent on refs the
+  guard then discarded). The guard's fingerprint is an input fingerprint
+  (target ref, source, before-hash, model id), computable before dispatch, so
+  `checkProposalGuard` (`src/commands/proposal/repository.ts`) exposes the
+  identical check `createProposal` runs post-generation — the two share one
+  implementation and can never disagree. `runLoopReflectPass`
+  (`src/commands/improve/loop-stages.ts`) now calls it first; a hit skips
+  `reflectFn` entirely and lands in the existing `reflect-cooldown` bucket
+  with the same `reflect_invoked` event the signal-delta cursor
+  (`buildLatestProposalTsMap`) reads, so cursor advancement and run-result
+  classification are unchanged. `createProposal`'s post-generation check
+  remains the authoritative gate.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 
