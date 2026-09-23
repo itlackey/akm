@@ -25,6 +25,7 @@ import path from "node:path";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
+  withEnv,
   withIsolatedAkmStorage,
   withMockedFetch,
   writeSandboxConfig,
@@ -51,12 +52,9 @@ async function withNoRealCrontab<T>(fn: () => Promise<T>): Promise<T> {
   const fakeCrontab = path.join(dir, "crontab");
   fs.writeFileSync(fakeCrontab, "#!/usr/bin/env sh\nexit 1\n");
   fs.chmodSync(fakeCrontab, 0o755);
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${dir}${path.delimiter}${originalPath ?? ""}`;
   try {
-    return await fn();
+    return await withEnv({ PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}` }, fn);
   } finally {
-    process.env.PATH = originalPath;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
