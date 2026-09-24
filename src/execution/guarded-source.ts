@@ -36,9 +36,11 @@ export interface GuardedExecutionSource {
 
 export interface GuardedDirectoryManifestEntry {
   readonly name: string;
-  readonly kind: "directory" | "file";
+  readonly kind: "directory" | "file" | "symlink";
   readonly physicalIdentity: string;
   readonly version: string;
+  /** `readlink` text, no-follow. Present only when `kind` is `"symlink"`. */
+  readonly target?: string;
 }
 
 export interface GuardedDirectoryManifest {
@@ -288,6 +290,18 @@ export function captureGuardedDirectoryManifest(
                 "PATH_ESCAPE_VIOLATION",
               );
             }
+            // A symlink that stays inside the containment root is recorded as
+            // its own kind, identified without following it (readlink text
+            // plus its own no-follow lstat identity), so change detection
+            // still works. It is never a directory or file candidate to any
+            // manifest consumer.
+            return Object.freeze({
+              name: entry.name,
+              kind: "symlink" as const,
+              physicalIdentity: physicalIdentity(entryPath, entryStat),
+              version: statVersion(entryStat),
+              target: fs.readlinkSync(entryPath),
+            });
           }
           throw new UsageError(
             `${entryPath} is a symbolic source with a physical source identity collision; guarded reads require one no-follow owner.`,
@@ -464,7 +478,9 @@ export class GuardedExecutionSourceCollector {
       for (const entry of manifest.entries) {
         const candidate = path.join(directory, entry.name);
         if (entry.kind === "directory") visit(candidate);
-        else files.push(candidate);
+        else if (entry.kind === "file") files.push(candidate);
+        // A "symlink" entry is recorded for change detection but is never
+        // read, descended into, or made a candidate source.
       }
     };
     visit(path.resolve(directoryPath));

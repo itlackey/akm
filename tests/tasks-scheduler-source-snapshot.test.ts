@@ -105,6 +105,36 @@ describe("guarded scheduler source byte snapshots", () => {
     expect(() => assertSchedulerSourceSnapshot(prepared.sourceSnapshot)).toThrow(/outside|symbolic|changed|identity/i);
   });
 
+  test("an unscoped sync plan succeeds through a root-level in-bundle symlink when the bundle has no tasks", async () => {
+    fs.writeFileSync(path.join(storage.stashDir, "AGENTS.md"), "agents\n");
+    fs.symlinkSync(path.join(storage.stashDir, "AGENTS.md"), path.join(storage.stashDir, "CLAUDE.md"));
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput());
+
+    expect(prepared.desired).toEqual([]);
+    expect(prepared.failures).toEqual([]);
+  });
+
+  test("tasks still sync when the bundle root also holds an in-bundle symlink", async () => {
+    writeTask("alpha", 'version: 4\nrun: echo alpha\nschedule: "0 1 * * *"\n');
+    fs.writeFileSync(path.join(storage.stashDir, "AGENTS.md"), "agents\n");
+    fs.symlinkSync(path.join(storage.stashDir, "AGENTS.md"), path.join(storage.stashDir, "CLAUDE.md"));
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput());
+
+    expect(prepared.desired.map((binding) => binding.id)).toHaveLength(1);
+  });
+
+  test("refuses when the bundle root's tasks entry is itself an in-bundle symlink", async () => {
+    fs.rmSync(path.join(storage.stashDir, "tasks"), { recursive: true, force: true });
+    const realTasks = path.join(storage.stashDir, "real-tasks");
+    fs.mkdirSync(realTasks);
+    fs.writeFileSync(path.join(realTasks, "alpha.yml"), 'version: 4\nrun: echo alpha\nschedule: "0 1 * * *"\n');
+    fs.symlinkSync(realTasks, path.join(storage.stashDir, "tasks"), "dir");
+
+    await expect(prepareSchedulerSyncSourceSet(sourceInput())).rejects.toThrow(/symbolic|symlink|identity|no.follow/i);
+  });
+
   test("coherent inspection rejects two exact artifacts for one normalized native key", async () => {
     writeTask("alpha", 'version: 4\nrun: echo alpha\nschedule: "0 1 * * *"\n');
     const prepared = await prepareSchedulerSyncSourceSet(sourceInput());

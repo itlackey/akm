@@ -393,6 +393,50 @@ describe("guarded touched-directory manifests and final source CAS", () => {
     expect(() => collector.enumerateTree(root, root)).toThrow(/symbolic|symlink|outside|ambiguous/i);
   });
 
+  test("records an in-bundle symlink directory entry as its own kind instead of refusing the whole directory", async () => {
+    const { GuardedExecutionSourceCollector } = await guardedSourceApi();
+    const root = sandbox("akm-guarded-symlink-entry");
+    write(root, "AGENTS.md", "agents\n");
+    fs.symlinkSync(path.join(root, "AGENTS.md"), path.join(root, "CLAUDE.md"));
+    const collector = new GuardedExecutionSourceCollector();
+
+    const manifest = collector.trackDirectory(root, root);
+    const claude = manifest.entries.find((entry) => entry.name === "CLAUDE.md");
+    const agents = manifest.entries.find((entry) => entry.name === "AGENTS.md");
+
+    expect(claude?.kind).toBe("symlink");
+    expect(claude?.target).toBe(path.join(root, "AGENTS.md"));
+    expect(claude?.physicalIdentity).toMatch(/^(?:inode:|path:)/);
+    expect(agents?.kind).toBe("file");
+    // A symlink entry is never a source candidate: enumerateTree must not
+    // treat it as a file (or descend into it as a directory).
+    const files = collector.enumerateTree(root, root);
+    expect(files).toEqual([path.join(root, "AGENTS.md")]);
+  });
+
+  test("rejects a broken symbolic directory entry as ambiguous ownership", async () => {
+    const { GuardedExecutionSourceCollector } = await guardedSourceApi();
+    const root = sandbox("akm-guarded-broken-symlink");
+    fs.symlinkSync(path.join(root, "missing-target.md"), path.join(root, "broken.md"));
+    const collector = new GuardedExecutionSourceCollector();
+
+    expect(() => collector.trackDirectory(root, root)).toThrow(/symbolic|symlink|identity|no.follow|ambiguous/i);
+  });
+
+  test("revalidation detects a directory symlink entry retargeted between projection and mutation", async () => {
+    const { GuardedExecutionSourceCollector } = await guardedSourceApi();
+    const root = sandbox("akm-guarded-symlink-retarget");
+    write(root, "AGENTS.md", "agents\n");
+    write(root, "OTHER.md", "other\n");
+    fs.symlinkSync(path.join(root, "AGENTS.md"), path.join(root, "CLAUDE.md"));
+    const collector = new GuardedExecutionSourceCollector();
+    collector.trackDirectory(root, root);
+    fs.unlinkSync(path.join(root, "CLAUDE.md"));
+    fs.symlinkSync(path.join(root, "OTHER.md"), path.join(root, "CLAUDE.md"));
+
+    expect(() => collector.revalidate()).toThrow(/changed|manifest|read set|directory/i);
+  });
+
   for (const scenario of [
     {
       name: "added command",
