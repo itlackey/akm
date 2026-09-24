@@ -86,4 +86,22 @@ describe("computeAcceptRateBySource", () => {
     const stash = makeStashDir();
     expect(computeAcceptRateBySource(stash)).toEqual([]);
   });
+
+  test("a stale-target auto-reject is excluded from rejected/total; an ordinary rejection is counted (STALE, R20)", () => {
+    const stash = makeStashDir();
+
+    const stale = seedProposal(stash, "lessons/stale", "distill");
+    archiveProposal(stash, stale.id, "rejected", "stale-target: target changed after mint", undefined, {
+      outcome: "auto-rejected",
+      reason: "stale-target",
+      gate: "triage:personal-stash",
+    });
+
+    const ordinary = seedProposal(stash, "lessons/ordinary", "distill");
+    archiveProposal(stash, ordinary.id, "rejected", "not a real improvement");
+
+    const result = computeAcceptRateBySource(stash);
+    const distill = result.find((r) => r.source === "distill");
+    expect(distill).toEqual({ source: "distill", total: 1, accepted: 0, rejected: 1, pending: 0, acceptRate: 0 });
+  });
 });

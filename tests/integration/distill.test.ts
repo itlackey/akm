@@ -423,6 +423,60 @@ describe("akmDistill — rejected proposals tolerate legacy rows with no persist
   });
 });
 
+// buildDistillMessages excludes the drain's stale-target auto-rejects from the
+// Reflexion "don't repeat this" context (STALE, R20): that rejection is a
+// procedural refusal (the target changed after mint), not a judgement on the
+// content, and would mislead the LLM into avoiding content it was never
+// actually judged on. An ordinary rejection stays in the context.
+describe("akmDistill — rejected proposals exclude stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
+  test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
+    const stash = makeStashDir();
+    const sourceFile = path.join(stash, "skills", "dup-stale-vs-ordinary.md");
+    fs.writeFileSync(sourceFile, "---\ndescription: Source skill\n---\n\nSource skill body.\n", "utf8");
+
+    const staleRejected = createProposal(stash, {
+      ref: "skills/dup-stale-vs-ordinary",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON.replace("Use `rg`", "STALE_TARGET_REJECTED_BODY_MARKER. Use `rg`") },
+    });
+    if (isProposalSkipped(staleRejected)) throw new Error("unexpected skip seeding stale-target rejected proposal");
+    archiveProposal(stash, staleRejected.id, "rejected", "stale-target: STALE_TARGET_REASON_MARKER", undefined, {
+      outcome: "auto-rejected",
+      reason: "stale-target",
+      gate: "triage:personal-stash",
+    });
+
+    const ordinaryRejected = createProposal(stash, {
+      ref: "skills/dup-stale-vs-ordinary",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON.replace("Use `rg`", "ORDINARY_REJECTED_BODY_MARKER. Use `rg`") },
+    });
+    if (isProposalSkipped(ordinaryRejected)) throw new Error("unexpected skip seeding ordinary rejected proposal");
+    archiveProposal(stash, ordinaryRejected.id, "rejected", "ORDINARY_REJECTION_REASON_MARKER");
+
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skills/dup-stale-vs-ordinary",
+      stashDir: stash,
+      config: configEnabled(stash),
+      lookupFn: async () => sourceFile,
+      readEventsFn: emptyEvents,
+      chat: async (_config, messages) => {
+        receivedPrompt = messages.map((message) => message.content).join("\n");
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).not.toBe("llm_failed");
+    expect(receivedPrompt).toContain("ORDINARY_REJECTED_BODY_MARKER");
+    expect(receivedPrompt).toContain("ORDINARY_REJECTION_REASON_MARKER");
+    expect(receivedPrompt).not.toContain("STALE_TARGET_REJECTED_BODY_MARKER");
+    expect(receivedPrompt).not.toContain("STALE_TARGET_REASON_MARKER");
+  });
+});
+
 // ── Acceptance: gate disabled ───────────────────────────────────────────────
 
 describe("akmDistill — feature gate", () => {
