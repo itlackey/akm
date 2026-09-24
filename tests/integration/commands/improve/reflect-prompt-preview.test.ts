@@ -204,3 +204,62 @@ describe("readRejectedProposals tolerates legacy rows with no persisted changes 
     expect(preview.prompt).toContain("The rejected candidate body, verbatim.");
   });
 });
+
+// readRejectedProposals (reflect.ts) excludes the drain's stale-target
+// auto-rejects from the Reflexion "don't repeat this" context: that rejection
+// is a procedural refusal (the target changed after mint), not a judgement on
+// the content, and would mislead the LLM into avoiding content it was never
+// actually judged on. An ordinary rejection stays in the context.
+describe("readRejectedProposals excludes stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
+  test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
+    const stashDir = storage.stashDir;
+    writeLesson(stashDir, "test-lesson", "existing description", "existing usage");
+
+    const staleRejected = createProposal(stashDir, {
+      ref: "lessons/test-lesson",
+      source: "reflect",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nSTALE_TARGET_REJECTED_BODY_MARKER.\n",
+      },
+    });
+    if (isProposalSkipped(staleRejected)) throw new Error("unexpected skip seeding stale-target rejected proposal");
+    archiveProposal(stashDir, staleRejected.id, "rejected", "stale-target: STALE_TARGET_REASON_MARKER", undefined, {
+      outcome: "auto-rejected",
+      reason: "stale-target",
+      gate: "triage:personal-stash",
+    });
+
+    const ordinaryRejected = createProposal(stashDir, {
+      ref: "lessons/test-lesson",
+      source: "reflect",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nORDINARY_REJECTED_BODY_MARKER.\n",
+      },
+    });
+    if (isProposalSkipped(ordinaryRejected)) throw new Error("unexpected skip seeding ordinary rejected proposal");
+    archiveProposal(stashDir, ordinaryRejected.id, "rejected", "ORDINARY_REJECTION_REASON_MARKER");
+
+    const config = withTestImproveLlm(makeConfig(stashDir));
+    const preview = await withMockedFetch(
+      () =>
+        renderReflectPromptPreview({
+          ref: "lessons/test-lesson",
+          improveProfile: {},
+          config,
+          stashDir,
+        }),
+      () => {
+        throw new Error("renderReflectPromptPreview must never call fetch — it makes no engine call");
+      },
+    );
+
+    expect(preview.prompt).toContain("ORDINARY_REJECTED_BODY_MARKER");
+    expect(preview.prompt).toContain("ORDINARY_REJECTION_REASON_MARKER");
+    expect(preview.prompt).not.toContain("STALE_TARGET_REJECTED_BODY_MARKER");
+    expect(preview.prompt).not.toContain("STALE_TARGET_REASON_MARKER");
+  });
+});
