@@ -30,7 +30,13 @@ import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import type { LlmFeatureKey } from "../../../llm/feature-gate";
 import { callStructured } from "../../../llm/structured-call";
 import type { EligibilitySource } from "../../proposal/proposal-types";
-import { archiveProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
+import {
+  archiveProposal,
+  isProposalSkipped,
+  type Proposal,
+  type ProposalsContext,
+  recordGateDecision,
+} from "../../proposal/repository";
 import { akmSearch } from "../../read/search";
 import { scoreEncodingSalience } from "../encoding-salience";
 import { resolveImproveLlmExecution } from "../execution";
@@ -435,8 +441,12 @@ export async function runReflectQualityJudge(
  * left only an event and a `$STATE`-side file nothing read, so the same ref
  * was re-selected and re-rejected on every run. `review_needed` stays
  * `pending` for a human to triage in the normal queue (matching what
- * promote-memory.ts's comment always claimed); `quality_rejected` is minted
- * pending, then immediately archived to `rejected` with the judge's reason.
+ * promote-memory.ts's comment always claimed) and is stamped with a
+ * `quality-gate` gate decision so the triage drain's `classifyPendingProposals`
+ * (proposal/drain.ts) leaves it pending instead of deferring it to the
+ * judgment tier, which could auto-accept it with no human in the loop;
+ * `quality_rejected` is minted pending, then immediately archived to
+ * `rejected` with the judge's reason.
  * A fingerprint/backoff guard hit here (rare pre-R9; the pre-generation
  * guard is item R9) just means no new row — the envelope + event below are
  * written either way.
@@ -502,6 +512,25 @@ export function writeQualityRejection(
       }
     } else {
       proposal = mintedProposal;
+      // REVIEW: stamp the mint so the triage drain's `classifyPendingProposals`
+      // skips it instead of deferring it to the judgment tier, which could
+      // auto-accept it under `applyMode: promote` with no human ever seeing
+      // the review-band content the gate explicitly refused to auto-queue.
+      // Best-effort like the mint/archive tolerance above: a stamp failure
+      // warns and continues rather than blocking the rejection envelope.
+      try {
+        proposal =
+          recordGateDecision(
+            stash,
+            mintedProposal.id,
+            { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
+            proposalOpts.proposalsCtx,
+          ) ?? proposal;
+      } catch (error) {
+        warn(
+          `[akm] writeQualityRejection: failed to stamp gate decision for ${mintedProposal.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 

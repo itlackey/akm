@@ -175,6 +175,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   record of the rejection, so a validator throw now degrades to "no row
   minted" — the envelope file and `distill_invoked` event are still written,
   matching the existing fingerprint/backoff skip behavior.
+- **A `review_needed` quality-gate rejection could be auto-promoted by the
+  triage drain's judgment tier with no human ever seeing it.**
+  `writeQualityRejection` minted a `review_needed` outcome as an ordinary
+  pending proposal under `source: "distill"` (knowledge promotions from
+  `promote-memory.ts` take the same path); the `personal-stash` drain policy
+  defers `distill` proposals to the judgment tier, which can auto-accept
+  under `applyMode: promote` + `experimental.improveAutonomy` — so content
+  the quality judge explicitly refused to auto-queue (the 2.5–3.5
+  review-needed band) could be promoted without a human in the loop.
+  `writeQualityRejection` now stamps a `review_needed` mint with a
+  `{ outcome: "deferred", reason: "quality-review", gate: "quality-gate" }`
+  gate decision (best-effort: a stamp failure warns and continues, like the
+  existing mint/archive tolerance), and `classifyPendingProposals`
+  (`proposal/drain.ts`) skips any pending row carrying it — leaving it
+  pending and untouched, before the drain's own policy-deferred re-stamp
+  loop would otherwise overwrite the stamp.
 - **Consolidate's post-LLM promote-dedup hash double-stripped frontmatter.**
   `shouldSkipPromotionBodyDuplicate`'s `bodyHash` was computed as
   `cacheHash(parseFrontmatter(memoryContent).content.trim())` — the body was

@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { writeQualityRejection } from "../../../../src/commands/improve/distill/quality-gate";
+import { getProposal } from "../../../../src/commands/proposal/repository";
 import { readEvents } from "../../../../src/core/events";
 import { getDistillRejectedDir } from "../../../../src/core/paths";
 import { makeSandboxDir } from "../../../_helpers/sandbox";
@@ -78,6 +79,34 @@ describe("writeQualityRejection — per-criterion scores (R16)", () => {
     expect(file).toBeDefined();
     const envelope = fs.readFileSync(path.join(rejectDir, file as string), "utf8");
     expect(envelope).not.toContain("criteria:");
+  });
+});
+
+describe("writeQualityRejection — REVIEW: review_needed mint is stamped for a human, not the judgment tier", () => {
+  test("a review_needed mint carries a deferred/quality-gate gate decision", () => {
+    const content =
+      "---\ndescription: A lesson worth a human look\nwhen_to_use: Uncertain quality band\n---\n\nBody text.\n";
+    const result = writeQualityRejection(
+      stashDir,
+      "memories/source-ref",
+      "lessons/proposed-review-needed",
+      content,
+      3.0,
+      "uncertain quality band",
+      { reviewNeeded: true },
+    );
+
+    expect(result.outcome).toBe("review_needed");
+    const proposalId = (result as unknown as { proposalId?: string }).proposalId;
+    expect(proposalId).toBeDefined();
+
+    const proposal = getProposal(stashDir, proposalId as string);
+    expect(proposal.status).toBe("pending");
+    expect(proposal.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "quality-review",
+      gate: "quality-gate",
+    });
   });
 });
 

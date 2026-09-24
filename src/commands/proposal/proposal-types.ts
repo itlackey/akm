@@ -204,7 +204,11 @@ export interface ProposalGateDecision {
    * decision. The vocabulary persisted today (drain/triage gate): `empty-diff`,
    * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band`,
    * `possible-dup`, `no-judge-configured`, `judgment-accept`,
-   * `judgment-reject`.
+   * `judgment-reject`. The distill quality gate (`quality-gate` gate, stamped
+   * by `writeQualityRejection`) uses `quality-review`: a `review_needed`
+   * outcome the judge could not decide, which must reach a human rather than
+   * the triage drain's judgment tier — `classifyPendingProposals`
+   * (proposal/drain.ts) skips any row carrying it.
    */
   reason: string;
   /**
