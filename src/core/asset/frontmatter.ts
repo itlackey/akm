@@ -507,18 +507,27 @@ function sha256Hex(content: string): string {
  * Hash of `raw` with {@link BOOKKEEPING_FRONTMATTER_KEYS} removed from its
  * frontmatter and the remaining frontmatter re-serialized with sorted keys,
  * so pipeline-only bookkeeping rewrites (and incidental key-order churn)
- * cannot change the result. The body is hashed verbatim.
+ * cannot change the result. The body's boundary is normalized the same way
+ * {@link assembleAssetFromString} normalizes it (leading newlines stripped,
+ * exactly one trailing newline) before hashing, so the body-boundary shift
+ * that `writeSalienceToFrontmatter` and the `assembleAsset` bookkeeping
+ * rewrite both introduce cannot change the result either; the body's
+ * interior is still hashed verbatim.
  *
- * Falls back to hashing `raw` verbatim when there is no frontmatter block or
- * it fails to parse — normalizing unparsable frontmatter isn't safe, and the
- * caller's existing raw-hash check already covers that case.
+ * An empty frontmatter block (`---\n---\n…`) is treated as `{}` rather than
+ * falling back to the raw hash, so adding bookkeeping keys to a memory with
+ * no prior frontmatter fields is still insensitive.
+ *
+ * Falls back to hashing `raw` verbatim when there is no frontmatter block at
+ * all or it fails to parse — normalizing unparsable frontmatter isn't safe,
+ * and the caller's existing raw-hash check already covers that case.
  */
 export function computeNormalizedContentHash(raw: string): string {
   const block = parseFrontmatterBlock(raw);
-  if (!block?.frontmatter.trim()) return sha256Hex(raw);
+  if (!block) return sha256Hex(raw);
   let data: unknown;
   try {
-    data = yamlParse(block.frontmatter);
+    data = block.frontmatter.trim() ? yamlParse(block.frontmatter) : {};
   } catch {
     return sha256Hex(raw);
   }
@@ -526,7 +535,9 @@ export function computeNormalizedContentHash(raw: string): string {
   const normalized = { ...(data as Record<string, unknown>) };
   for (const key of BOOKKEEPING_FRONTMATTER_KEYS) delete normalized[key];
   const canonicalFrontmatter = yamlStringify(normalized, { sortMapEntries: true }).trimEnd();
-  return sha256Hex(`---\n${canonicalFrontmatter}\n---\n${block.content}`);
+  const normalizedBody = block.content.replace(/^\n+/, "");
+  const bodyWithTrailingNewline = normalizedBody.endsWith("\n") ? normalizedBody : `${normalizedBody}\n`;
+  return sha256Hex(`---\n${canonicalFrontmatter}\n---\n\n${bodyWithTrailingNewline}`);
 }
 
 /**
