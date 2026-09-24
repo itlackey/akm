@@ -856,6 +856,54 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(result.notices).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain("PROVIDER-BODY-SENTINEL");
   });
+
+  test("a judged-accept promote that hits the stale-target guard is auto-rejected, not left deferred (STALE, R20)", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lessons/judged-stale", "distill", VALID_LESSON);
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));
+    const promoteFn = mock(async () => {
+      throw new Error(
+        `Proposal target changed after proposal ${deferred.id} was created; refusing to overwrite newer content.`,
+      );
+    });
+    const rejectFn = fakeReject();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, rejectFn, {
+      chat,
+    });
+
+    expect(result.rejected).toEqual([deferred.id]);
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred).toEqual([]);
+    expect(rejectFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: deferred.id,
+        gateDecision: { outcome: "auto-rejected", reason: "stale-target", gate: "triage:personal-stash" },
+      }),
+    );
+  });
+
+  test("a judged-accept stale-target auto-reject that itself fails leaves the item unresolved", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lessons/judged-stale-reject-fails", "distill", VALID_LESSON);
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));
+    const promoteFn = mock(async () => {
+      throw new Error(
+        `Proposal target changed after proposal ${deferred.id} was created; refusing to overwrite newer content.`,
+      );
+    });
+    const rejectFn = mock(() => {
+      throw new Error("simulated reject failure");
+    });
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, rejectFn, {
+      chat,
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred.map((item) => item.id)).toEqual([deferred.id]);
+  });
 });
 
 describe("drainProposals — judgment tier (agent mode)", () => {
