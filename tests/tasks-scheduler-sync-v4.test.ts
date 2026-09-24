@@ -1052,9 +1052,10 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   // not a real physical-identity collision check — `beta/nightly.yml` here
   // is never opened as a task candidate at all. Per U3, an in-bundle symlink
   // that stays inside the bundle root is recorded as its own manifest kind
-  // and is never made a task candidate, so it contributes nothing and the
-  // real owner still syncs normally.
-  test("an in-bundle symlink alias contributes no task candidate; the real owner still syncs", async () => {
+  // and is never made a task candidate. r2-1 restores the report: a symlink
+  // classified as a task candidate is degraded into a per-source failure
+  // (not silently dropped), while the real owner still syncs normally.
+  test("an in-bundle symlink alias is reported as a per-source failure; the real owner still syncs", async () => {
     const componentRoot = root();
     const owner = path.join(componentRoot, "alpha", "nightly.yml");
     const alias = path.join(componentRoot, "beta", "nightly.yml");
@@ -1077,7 +1078,10 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     });
 
     expect(plan.desired.map((binding) => binding.id)).toEqual(["alpha/nightly"]);
-    expect(plan.failures).toEqual([]);
+    expect(plan.failures).toHaveLength(1);
+    expect(plan.failures[0]?.path.endsWith("beta/nightly.yml")).toBe(true);
+    expect(plan.failures[0]?.ref).toBe("team//beta/nightly");
+    expect(plan.failures[0]?.reason).toMatch(/symbolic/);
     expect(signatures).toBe(1);
   });
 
