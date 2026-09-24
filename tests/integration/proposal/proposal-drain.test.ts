@@ -26,6 +26,7 @@ import {
   type Proposal,
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
+import { writeSalienceToFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import type { EventsContext } from "../../../src/core/events";
@@ -554,6 +555,52 @@ describe("drainProposals — failed reporting (#921)", () => {
       status: "rejected",
       gateDecision: { outcome: "auto-rejected", reason: "stale-target" },
     });
+  });
+
+  test("a bookkeeping-only target rewrite stays normalized-fresh: dry-run predicts promotion, the real run promotes and keeps salience (STALE, R20)", async () => {
+    const stash = makeStashDir();
+    const assetPath = path.join(stash, "lessons", "bookkeeping-fresh.md");
+    fs.writeFileSync(assetPath, VALID_LESSON, "utf8");
+    const created = createProposal(stash, {
+      ref: "lessons/bookkeeping-fresh",
+      source: "extract",
+      force: true,
+      sourceRun: "run-x",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: VALID_LESSON.replace("Prefer rg", "Prefer rg (revised)"),
+        frontmatter: { description: "bookkeeping-fresh fixture" },
+      },
+    });
+    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
+
+    // A same-run bookkeeping-only rewrite of the target after mint — the real
+    // writer distill uses, not a hand-edited fixture. Changes the raw bytes
+    // (a `salience` key is added) but not the normalized before-hash.
+    const rewritten = writeSalienceToFrontmatter(VALID_LESSON, 0.8, {
+      novelty: 0.7,
+      magnitude: 0.6,
+      predictionError: 0.5,
+    });
+    expect(rewritten).not.toBe(VALID_LESSON);
+    fs.writeFileSync(assetPath, rewritten, "utf8");
+
+    const dryRunResult = await drainProposals(
+      baseOpts(stash, { dryRun: true, config: makeConfig(stash) }),
+      fakeAccept(),
+      fakeReject(),
+    );
+    expect(dryRunResult.promoted).toEqual([created.id]);
+    expect(dryRunResult.failed).toEqual([]);
+
+    // The real run (no promote/reject seams) hits the same normalized-fresh
+    // guard and actually promotes, keeping the bookkeeping `salience` field
+    // that was written after mint.
+    const realResult = await drainProposals(baseOpts(stash, { config: makeConfig(stash) }));
+    expect(realResult.promoted).toEqual([created.id]);
+    expect(realResult.failed).toEqual([]);
+    const finalContent = fs.readFileSync(assetPath, "utf8");
+    expect(finalContent).toContain("salience:");
   });
 
   test("a stale-target auto-reject does not count toward rejection_backoff (STALE, R20)", async () => {
