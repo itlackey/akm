@@ -111,6 +111,17 @@ describe("shouldSkipRef excludeRefPrefixes (reflect only)", () => {
     expect(shouldSkipRef("stash//knowledge/wikis/articles/raw/some-page", "reflect", strategy).skip).toBe(true);
   });
 
+  test("a trailing slash on the prefix still excludes both short and bundle-qualified refs", () => {
+    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw/"]);
+    expect(shouldSkipRef("knowledge/wikis/articles/raw/some-page", "reflect", strategy).skip).toBe(true);
+    expect(shouldSkipRef("stash//knowledge/wikis/articles/raw/some-page", "reflect", strategy).skip).toBe(true);
+  });
+
+  test("a partial-segment prefix does not match a longer segment", () => {
+    const strategy = strategyWithExcluded(["knowledge/wikis/articles/ra"]);
+    expect(shouldSkipRef("knowledge/wikis/articles/raw/some-page", "reflect", strategy).skip).toBe(false);
+  });
+
   test("leaves other refs unaffected", () => {
     const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw"]);
     const result = shouldSkipRef("knowledge/guides/http-caching", "reflect", strategy);
