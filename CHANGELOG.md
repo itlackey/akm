@@ -6,6 +6,151 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.1] - 2026-09-24
+
+### Added
+
+- **`akm improve --require-engines` now records its reachability probe on the
+  run result (R17).** `assertRequiredEnginesReachable` only ever reported a
+  failure (abort, exit 78); a probe that passed — including a slow or
+  flapping gateway that still answered in time — left no trace once the run
+  proceeded. It now returns one outcome per probed target (`process`,
+  `engine`, `endpoint`, `reachable`, `latencyMs`), threaded through a new
+  `AkmImproveOptions.engineProbe` and copied onto the persisted result as
+  `AkmImproveResult.engineProbe`. Omitted entirely when `--require-engines`
+  was not passed; a result persisted without it (every run before this
+  change) still decodes. `--require-engines --dry-run` results carry it too.
+- **Reflect had no way to exclude raw wiki-ingest snapshots, which are the
+  longest generations in the ledger (89.5s/161.8s observed).** `wikis/articles/raw/*.md`
+  website snapshots index as `knowledge/wikis/articles/raw/<slug>`, and
+  reflect's `allowedTypes` filter is type-only, so it can't exclude a subset
+  of the `knowledge` type. `processes.reflect` now accepts an optional
+  `excludeRefPrefixes: string[]` — conceptId prefixes, matched after
+  stripping an optional `bundle//` from both the ref and each prefix.
+  `shouldSkipRef` skips a matching ref with reason `exclude-filter`, for
+  reflect only (distill and consolidate are memory-only and reject the key).
+  A trailing `/` on a prefix is ignored, so
+  `"knowledge/wikis/articles/raw/"` excludes the same refs as
+  `"knowledge/wikis/articles/raw"`.
+
+- **`akm health` now checks state.db's own SQLite integrity.** A new hard
+  `state-db-integrity` check runs a read-only `PRAGMA quick_check` against
+  `state.db` and fails, naming the returned diagnostic lines and the repair
+  steps (back up, dump/restore via `sqlite3`, verify, swap in), when it
+  reports anything other than `ok`. The same check reports state.db's
+  freelist ratio (the fraction of pages `VACUUM` could reclaim) and warns
+  above 50%. Previously nothing in `akm health` looked past a successful
+  append/read round trip, which stays true on a database that is corrupt at
+  the SQLite level.
+- **The retention purge (`akm improve`) now VACUUMs state.db when more than
+  half its pages are free**, immediately after the events/improve_runs/
+  cycle-metrics purge, recording a `state_db_vacuumed` event with pages
+  before/after. Opportunistic: a locked/busy database is skipped, not
+  raised, so it never fails the purge pass it follows.
+
+### Changed
+
+- **The orphan-state GC pass no longer probes index.db once per pending
+  row.** `runOrphanStateGcPass` used to call `getEntryByRef` (up to two
+  statements each, via its bare-ref fallback) for every pending
+  `asset_salience` / `asset_outcome` row — 2,101 pending rows cost 83–100s
+  per run. It now builds one snapshot of every live `item_ref` in index.db up
+  front and matches every pending row against it in memory: O(1) index.db
+  queries per run instead of one probe per row, with the same live/orphan
+  resolution (including the bundle-qualified-exact and bare-conceptId-suffix
+  fallback) as before.
+- **Memory inference no longer forces a full reindex for the file(s) it
+  writes.** The post-inference maintenance step used to call the full
+  `reindexFn` (42–220s per run, typically for one written derived fact)
+  whenever memory inference split a parent. `runMemoryInferencePass` now
+  reports the exact paths it wrote or rewrote (`writtenPaths`, sourced from
+  the run's write-provenance journal), and the maintenance pass indexes just
+  those files with `indexWrittenAssets` instead — closing and reopening the
+  shared index.db handle around the call with the same discipline the full
+  reindex used (#584). The separate post-consolidation full reindex is
+  removed outright rather than re-gated: it used to fire whenever
+  `consolidation.processed > 0` (memories the LLM judged), but
+  merge/delete/contradict ops are advisory and never auto-applied, and the
+  one op that does execute — promote — writes a proposal to state.db, not to
+  the stash. Consolidation therefore cannot change a file the index reads,
+  so the reindex had no precondition it could ever satisfy.
+- **The improve loop's reflect dispatch now checks the proposal
+  fingerprint/rejection-backoff guard *before* calling reflect, not just
+  after.** `fingerprint_match` and `rejection_backoff` were evaluated only
+  inside `createProposal`, which runs after reflect's full generation and
+  quality-judge call — so a ref already guaranteed to be skipped still paid
+  the LLM cost (measured: 2–16% of reflect LLM seconds spent on refs the
+  guard then discarded). The guard's fingerprint is an input fingerprint
+  (target ref, source, before-hash, model id), computable before dispatch, so
+  `checkProposalGuard` (`src/commands/proposal/repository.ts`) exposes the
+  identical check `createProposal` runs post-generation — the two share one
+  implementation and can never disagree. `runLoopReflectPass`
+  (`src/commands/improve/loop-stages.ts`) now calls it first; a hit skips
+  `reflectFn` entirely and lands in the existing `reflect-cooldown` bucket
+  with the same `reflect_invoked` event the signal-delta cursor
+  (`buildLatestProposalTsMap`) reads, so cursor advancement and run-result
+  classification are unchanged. `createProposal`'s post-generation check
+  remains the authoritative gate.
+- **Consolidate's plan schema and prompt are promote-only.** The apply loop
+  only ever executed `promote` — `merge`/`delete`/`contradict` were advisory
+  by design and never applied — but the schema still asked for all four ops
+  plus a free-text `warnings` array, and completion tokens rose from 7–8k to
+  21–30k per run after the 35B-A3B model switch with no change in
+  promotions. `CONSOLIDATE_PLAN_JSON_SCHEMA` and `consolidate-system.md` now
+  request only `promote` (with `reason` capped at 200 chars), and `isValidOp`
+  rejects any other op shape — e.g. from a model that ignores the schema —
+  with the existing "skipping invalid operation" warning instead of treating
+  it as an actionable plan entry. `ConsolidateResult.merged` / `deleted` /
+  `contradicted` and the `planned` op breakdown are unchanged in shape and
+  stay zero.
+- **`improve-maintenance-passes.test.ts` moved under `tests/integration/`.**
+  The suite opens a real `state.db` via `openStateDatabase`, which AGENTS.md's
+  ORG-03..06 rule places under `tests/integration/`, not `tests/`; no content
+  change. Also corrected
+  `docs/architecture/specs/improve-collapse-churn-detector-design.md` §2.5,
+  which described the post-loop collapse-detector gate as `consolidationRan
+  OR recombination.processed > 0` — no `recombination` value is plumbed into
+  `runImprovePostLoopStage` and no recombine pass exists in the codebase, so
+  the spec now matches the shipped `consolidationRan`-only gate and notes
+  that the recombine-triggered pass is not implemented.
+- **Graph-extraction relations are now compact `[from, type, to]` triples
+  instead of `{"from","to","type"}` objects, and the batch graph-extraction
+  call now sends a `responseSchema`.** The object-keyed form cost 10+ tokens
+  per relation for no signal, and completion tokens cost far more than
+  prompt tokens; a compact triple form measured −51% / −18% completion
+  tokens on two chunks. `graph-extract.ts`'s single-asset and batch prompts
+  and JSON schemas now ask for `["from", "type", "to"]` (`type` may be `""`);
+  `parseGraphExtraction` accepts both the triple form and the legacy object
+  form (a relation-level `confidence` is still read from a legacy object,
+  though the schema no longer offers it — the prompt never asked for one).
+  Separately, production runs graph extraction batched
+  (`processes.graphExtraction.batchSize`), and `extractGraphFromBodies` sent
+  no `responseSchema` at all, so the R12b output-bounding schema only ever
+  reached the single-asset path. The batch call now sends the same
+  `maxItems`-bounded schema (scoped to the batch's asset count) through the
+  same `supportsJsonSchema`-gated `responseSchema` field the single-asset
+  call uses. `GRAPH_EXTRACT_PROMPT_VERSION` bumps `v2` → `v3`, so every file
+  re-extracts once on the next graph pass — entity semantics, caps, chunking
+  and batch sizing are unchanged.
+
+### Removed
+
+- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
+  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
+  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
+  `countEvalCases` reported a cumulative on-disk file count as if it were a
+  per-run number (surfaced as `evalCasesWritten` on the improve result and in
+  `akm health`'s improve metrics). A rejected proposal row (see above) now
+  carries the same information through a path something actually reads.
+  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
+  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
+  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
+  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
+  on an envelope an older release wrote, and existing eval-case files on disk
+  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
+  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
+  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
+
 ### Fixed
 
 - **The lesson quality judge's ACTIONABILITY criterion carried no signal, and
@@ -285,138 +430,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reported under `rejected`, matching what a real run does, instead of under
   `failed`.
 
-### Added
-
-- **`akm improve --require-engines` now records its reachability probe on the
-  run result (R17).** `assertRequiredEnginesReachable` only ever reported a
-  failure (abort, exit 78); a probe that passed — including a slow or
-  flapping gateway that still answered in time — left no trace once the run
-  proceeded. It now returns one outcome per probed target (`process`,
-  `engine`, `endpoint`, `reachable`, `latencyMs`), threaded through a new
-  `AkmImproveOptions.engineProbe` and copied onto the persisted result as
-  `AkmImproveResult.engineProbe`. Omitted entirely when `--require-engines`
-  was not passed; a result persisted without it (every run before this
-  change) still decodes. `--require-engines --dry-run` results carry it too.
-- **Reflect had no way to exclude raw wiki-ingest snapshots, which are the
-  longest generations in the ledger (89.5s/161.8s observed).** `wikis/articles/raw/*.md`
-  website snapshots index as `knowledge/wikis/articles/raw/<slug>`, and
-  reflect's `allowedTypes` filter is type-only, so it can't exclude a subset
-  of the `knowledge` type. `processes.reflect` now accepts an optional
-  `excludeRefPrefixes: string[]` — conceptId prefixes, matched after
-  stripping an optional `bundle//` from both the ref and each prefix.
-  `shouldSkipRef` skips a matching ref with reason `exclude-filter`, for
-  reflect only (distill and consolidate are memory-only and reject the key).
-  A trailing `/` on a prefix is ignored, so
-  `"knowledge/wikis/articles/raw/"` excludes the same refs as
-  `"knowledge/wikis/articles/raw"`.
-
-### Removed
-
-- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
-  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
-  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
-  `countEvalCases` reported a cumulative on-disk file count as if it were a
-  per-run number (surfaced as `evalCasesWritten` on the improve result and in
-  `akm health`'s improve metrics). A rejected proposal row (see above) now
-  carries the same information through a path something actually reads.
-  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
-  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
-  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
-  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
-  on an envelope an older release wrote, and existing eval-case files on disk
-  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
-  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
-  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
-
-### Changed
-
-- **The orphan-state GC pass no longer probes index.db once per pending
-  row.** `runOrphanStateGcPass` used to call `getEntryByRef` (up to two
-  statements each, via its bare-ref fallback) for every pending
-  `asset_salience` / `asset_outcome` row — 2,101 pending rows cost 83–100s
-  per run. It now builds one snapshot of every live `item_ref` in index.db up
-  front and matches every pending row against it in memory: O(1) index.db
-  queries per run instead of one probe per row, with the same live/orphan
-  resolution (including the bundle-qualified-exact and bare-conceptId-suffix
-  fallback) as before.
-- **Memory inference no longer forces a full reindex for the file(s) it
-  writes.** The post-inference maintenance step used to call the full
-  `reindexFn` (42–220s per run, typically for one written derived fact)
-  whenever memory inference split a parent. `runMemoryInferencePass` now
-  reports the exact paths it wrote or rewrote (`writtenPaths`, sourced from
-  the run's write-provenance journal), and the maintenance pass indexes just
-  those files with `indexWrittenAssets` instead — closing and reopening the
-  shared index.db handle around the call with the same discipline the full
-  reindex used (#584). The separate post-consolidation full reindex is
-  removed outright rather than re-gated: it used to fire whenever
-  `consolidation.processed > 0` (memories the LLM judged), but
-  merge/delete/contradict ops are advisory and never auto-applied, and the
-  one op that does execute — promote — writes a proposal to state.db, not to
-  the stash. Consolidation therefore cannot change a file the index reads,
-  so the reindex had no precondition it could ever satisfy.
-- **The improve loop's reflect dispatch now checks the proposal
-  fingerprint/rejection-backoff guard *before* calling reflect, not just
-  after.** `fingerprint_match` and `rejection_backoff` were evaluated only
-  inside `createProposal`, which runs after reflect's full generation and
-  quality-judge call — so a ref already guaranteed to be skipped still paid
-  the LLM cost (measured: 2–16% of reflect LLM seconds spent on refs the
-  guard then discarded). The guard's fingerprint is an input fingerprint
-  (target ref, source, before-hash, model id), computable before dispatch, so
-  `checkProposalGuard` (`src/commands/proposal/repository.ts`) exposes the
-  identical check `createProposal` runs post-generation — the two share one
-  implementation and can never disagree. `runLoopReflectPass`
-  (`src/commands/improve/loop-stages.ts`) now calls it first; a hit skips
-  `reflectFn` entirely and lands in the existing `reflect-cooldown` bucket
-  with the same `reflect_invoked` event the signal-delta cursor
-  (`buildLatestProposalTsMap`) reads, so cursor advancement and run-result
-  classification are unchanged. `createProposal`'s post-generation check
-  remains the authoritative gate.
-- **Consolidate's plan schema and prompt are promote-only.** The apply loop
-  only ever executed `promote` — `merge`/`delete`/`contradict` were advisory
-  by design and never applied — but the schema still asked for all four ops
-  plus a free-text `warnings` array, and completion tokens rose from 7–8k to
-  21–30k per run after the 35B-A3B model switch with no change in
-  promotions. `CONSOLIDATE_PLAN_JSON_SCHEMA` and `consolidate-system.md` now
-  request only `promote` (with `reason` capped at 200 chars), and `isValidOp`
-  rejects any other op shape — e.g. from a model that ignores the schema —
-  with the existing "skipping invalid operation" warning instead of treating
-  it as an actionable plan entry. `ConsolidateResult.merged` / `deleted` /
-  `contradicted` and the `planned` op breakdown are unchanged in shape and
-  stay zero.
-- **`improve-maintenance-passes.test.ts` moved under `tests/integration/`.**
-  The suite opens a real `state.db` via `openStateDatabase`, which AGENTS.md's
-  ORG-03..06 rule places under `tests/integration/`, not `tests/`; no content
-  change. Also corrected
-  `docs/architecture/specs/improve-collapse-churn-detector-design.md` §2.5,
-  which described the post-loop collapse-detector gate as `consolidationRan
-  OR recombination.processed > 0` — no `recombination` value is plumbed into
-  `runImprovePostLoopStage` and no recombine pass exists in the codebase, so
-  the spec now matches the shipped `consolidationRan`-only gate and notes
-  that the recombine-triggered pass is not implemented.
-- **Graph-extraction relations are now compact `[from, type, to]` triples
-  instead of `{"from","to","type"}` objects, and the batch graph-extraction
-  call now sends a `responseSchema`.** The object-keyed form cost 10+ tokens
-  per relation for no signal, and completion tokens cost far more than
-  prompt tokens; a compact triple form measured −51% / −18% completion
-  tokens on two chunks. `graph-extract.ts`'s single-asset and batch prompts
-  and JSON schemas now ask for `["from", "type", "to"]` (`type` may be `""`);
-  `parseGraphExtraction` accepts both the triple form and the legacy object
-  form (a relation-level `confidence` is still read from a legacy object,
-  though the schema no longer offers it — the prompt never asked for one).
-  Separately, production runs graph extraction batched
-  (`processes.graphExtraction.batchSize`), and `extractGraphFromBodies` sent
-  no `responseSchema` at all, so the R12b output-bounding schema only ever
-  reached the single-asset path. The batch call now sends the same
-  `maxItems`-bounded schema (scoped to the batch's asset count) through the
-  same `supportsJsonSchema`-gated `responseSchema` field the single-asset
-  call uses. `GRAPH_EXTRACT_PROMPT_VERSION` bumps `v2` → `v3`, so every file
-  re-extracts once on the next graph pass — entity semantics, caps, chunking
-  and batch sizing are unchanged.
-
-## [0.9.17-alpha.1] - 2026-09-22
-
-### Fixed
-
 - **Reflect quality-gate rejections were mislabelled `parse_error` and fed
   back into later prompts as learned "avoid" patterns.** When the reflect
   quality judge rejected an otherwise well-parsed proposal, the result
@@ -470,23 +483,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `consolidation.gates.delta.reason` no longer reports "memory pool has work"
   for both a real pool delta and the bootstrap case (no `consolidate_completed`
   event yet, so no delta was evaluated) — bootstrap now reports its own reason.
-
-### Added
-
-- **`akm health` now checks state.db's own SQLite integrity.** A new hard
-  `state-db-integrity` check runs a read-only `PRAGMA quick_check` against
-  `state.db` and fails, naming the returned diagnostic lines and the repair
-  steps (back up, dump/restore via `sqlite3`, verify, swap in), when it
-  reports anything other than `ok`. The same check reports state.db's
-  freelist ratio (the fraction of pages `VACUUM` could reclaim) and warns
-  above 50%. Previously nothing in `akm health` looked past a successful
-  append/read round trip, which stays true on a database that is corrupt at
-  the SQLite level.
-- **The retention purge (`akm improve`) now VACUUMs state.db when more than
-  half its pages are free**, immediately after the events/improve_runs/
-  cycle-metrics purge, recording a `state_db_vacuumed` event with pages
-  before/after. Opportunistic: a locked/busy database is skipped, not
-  raised, so it never fails the purge pass it follows.
 
 ## [0.9.16] - 2026-09-22
 
