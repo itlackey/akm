@@ -80,15 +80,20 @@ describe("applyConfigRetiredExperimentalKeys (apply, persists once)", () => {
   test("removes the retired key from config.json, backing up the original first, and keeps live keys", () => {
     writeConfig({ configVersion: "0.9.0", experimental: { improveAutonomy: true, workflowEngine: true } });
 
+    const backupDir = path.join(process.env.XDG_CACHE_HOME ?? "", "akm", "config-backups");
+    const before = new Set(fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : []);
+
     const result = applyConfigRetiredExperimentalKeys(configPath);
     expect(result).toEqual({ applied: true, removed: ["experimental.workflowEngine"] });
 
     const after = readConfig();
     expect(after.experimental).toEqual({ improveAutonomy: true });
 
-    const backupDir = path.join(process.env.XDG_CACHE_HOME ?? "", "akm", "config-backups");
-    expect(fs.existsSync(backupDir)).toBe(true);
-    expect(fs.readdirSync(backupDir).some((name) => name.startsWith("config-"))).toBe(true);
+    // Exclude the rolling `config.latest.json` pointer (backupExistingConfig
+    // always rewrites it): the timestamped snapshot is the one new backup.
+    const added = fs.readdirSync(backupDir).filter((name) => !before.has(name) && name !== "config.latest.json");
+    expect(added).toHaveLength(1);
+    expect(fs.readFileSync(path.join(backupDir, added[0] as string), "utf8")).toContain("workflowEngine");
   });
 
   test("drops experimental entirely when workflowEngine was its only key", () => {
