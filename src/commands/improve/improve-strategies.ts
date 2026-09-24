@@ -10,7 +10,7 @@ import proactiveMaintenance from "../../assets/improve-strategies/proactive-main
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
@@ -48,6 +48,12 @@ export function resolveProcessEnabled(
   return processes?.[processName]?.enabled === true;
 }
 
+/** `bundle//conceptId` -> bare `conceptId`, for an `excludeRefPrefixes` entry. */
+function stripBundlePrefix(value: string): string {
+  const boundary = value.indexOf("//");
+  return boundary >= 0 ? value.slice(boundary + 2) : value;
+}
+
 export function shouldSkipRef(
   ref: string,
   processName: "reflect" | "distill" | "consolidate",
@@ -59,6 +65,21 @@ export function shouldSkipRef(
   const parsed = parseRefInput(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
+
+  // R12: reflect only — raw wiki-ingest snapshots are type `knowledge`, so
+  // allowedTypes alone can't exclude them (distill/consolidate are memory-only).
+  if (processName === "reflect") {
+    const excludePrefixes = strategy.processes?.reflect?.excludeRefPrefixes;
+    if (excludePrefixes && excludePrefixes.length > 0) {
+      const conceptId = conceptIdFromTypeName(parsed.type, parsed.name);
+      const excluded = excludePrefixes.some((prefix) => {
+        const stripped = stripBundlePrefix(prefix);
+        return conceptId === stripped || conceptId.startsWith(`${stripped}/`);
+      });
+      if (excluded) return { skip: true, reason: "exclude-filter" };
+    }
+  }
+
   return { skip: false, reason: "" };
 }
 
