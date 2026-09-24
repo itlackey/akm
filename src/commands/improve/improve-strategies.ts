@@ -51,7 +51,10 @@ export function resolveProcessEnabled(
 /** `bundle//conceptId` -> bare `conceptId`, for an `excludeRefPrefixes` entry. */
 function stripBundlePrefix(value: string): string {
   const boundary = value.indexOf("//");
-  return boundary >= 0 ? value.slice(boundary + 2) : value;
+  const stripped = boundary >= 0 ? value.slice(boundary + 2) : value;
+  // A trailing `/` (e.g. "knowledge/wikis/articles/raw/") would otherwise turn the
+  // segment-boundary check below into `startsWith(".../raw//")`, which never matches.
+  return stripped.replace(/\/+$/, "");
 }
 
 export function shouldSkipRef(
