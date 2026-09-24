@@ -668,11 +668,20 @@ async function runLoopDistillPass(
       const distillModelId = resolvedPlan.processes.distill.runner?.connection.model;
       let realTargetRef = lessonRef;
       if (parsedPlannedRef.type === "memory") {
-        const durableInputRef = planned.itemRef ?? durableImproveRef(planned.ref);
+        // distill.ts's real dispatch (akmDistill) always derives
+        // durableInputRef from options.ref alone (durableImproveRef(inputRef),
+        // never itemRef) and reads/scores content via that ref
+        // (loadAndScoreInputSalience's `lookup(durableInputRef)`); mirror
+        // that here so the pre-check can never read/score a different file
+        // than the real dispatch would. itemRef is preferred only for the
+        // feedback-events query, matching readDistillFeedback's
+        // `ref: options.itemRef ?? durableInputRef`.
+        const durableInputRef = durableImproveRef(planned.ref);
+        const feedbackRef = planned.itemRef ?? durableInputRef;
         const lookup = (ref: string) => defaultLookup(ref, dedupeStashDir);
         const filePath = await lookup(durableInputRef);
         const assetContent = filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
-        const { events: feedbackEvents } = readEvents({ ref: durableInputRef, type: "feedback" }, { readOnly: true });
+        const { events: feedbackEvents } = readEvents({ ref: feedbackRef, type: "feedback" }, { readOnly: true });
         const promotesToKnowledge = await wouldPromoteMemoryToKnowledge({
           inputRef: planned.ref,
           durableInputRef,

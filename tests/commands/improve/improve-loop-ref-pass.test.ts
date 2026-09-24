@@ -635,6 +635,55 @@ describe("processImproveLoopRef — distill guard target precheck (PRECHECK, tie
     expect(distillCalled).toBe(false);
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
   });
+
+  test("itemRef diverges from ref: the precheck still classifies via ref, matching distill's real dispatch", async () => {
+    // distill's real dispatch (akmDistill) derives durableInputRef — the
+    // content lookup key — from options.ref alone, never options.itemRef
+    // (only the feedback-events query prefers itemRef). Give `planned.itemRef`
+    // a different ref with no backing file, while `planned.ref` is the real
+    // promoting memory, and mirror the feedback events under itemRef too so
+    // this isolates the content-lookup divergence specifically. A precheck
+    // that mistakenly looked up content via itemRef would find nothing,
+    // classify the target as the lesson ref, and dispatch despite the real
+    // (knowledge) target being guarded.
+    const { stashDir } = freshSandbox();
+    seedPromotingMemory(stashDir, promotingMemoryRef);
+    appendEvent({ eventType: "feedback", ref: memoryRef, metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref: memoryRef, metadata: { signal: "positive" } });
+    const knowledgeRef = deriveKnowledgeRef(promotingMemoryRef);
+    const existing = createProposal(stashDir, {
+      ref: knowledgeRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([promotingMemoryRef]),
+      signalBearingSet: new Set([promotingMemoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.reject(new Error("distillFn must not be called on a guard hit"));
+      },
+    });
+
+    const planned: ImproveEligibleRef = {
+      ref: promotingMemoryRef,
+      itemRef: memoryRef,
+      reason: "scope-type",
+    };
+    const tally = await processImproveLoopRef(planned, env);
+
+    expect(distillCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    const skipEvent = events.find((e) => e.ref === memoryRef);
+    expect(skipEvent?.metadata).toMatchObject({ outcome: "skipped", proposalRef: knowledgeRef });
+  });
 });
 
 describe("prepareImproveLoopEnv — derived guards", () => {
