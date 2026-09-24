@@ -575,6 +575,54 @@ describe("previous-release corpus — retired 0.8 source-config keys (configVers
   });
 });
 
+describe("previous-release corpus — retired experimental.workflowEngine key", () => {
+  let warnSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    resetConfigCache();
+    setQuiet(false);
+    warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    resetQuiet();
+    resetConfigCache();
+  });
+
+  test("a real-shaped 0.9.15 config (experimental.workflowEngine alongside improveAutonomy) loads, improveAutonomy is honored, and a one-time warning names the key", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        experimental: { improveAutonomy: true, workflowEngine: true },
+      }),
+    );
+
+    const config = loadConfig();
+    expect(config.experimental?.improveAutonomy).toBe(true);
+    expect((config.experimental as unknown as Record<string, unknown> | undefined)?.workflowEngine).toBeUndefined();
+    const warned = (warnSpy.mock.calls as unknown[][]).some((call) => call.join(" ").includes("workflowEngine"));
+    expect(warned).toBe(true);
+  });
+
+  test("a non-retired unknown experimental key still fails closed", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        experimental: { improveAutonomyy: true },
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(/Unrecognized key/);
+  });
+});
+
 // ── Downstream consumer: OpenPalm (#880) ────────────────────────────────────
 //
 // OpenPalm is a real, if unofficial, integration point (see #870/#867's
