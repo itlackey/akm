@@ -137,6 +137,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(proposal.changes).toEqual([]);
     expect(proposal.proposedTarget).toBeUndefined();
     expect(proposal.beforeHash).toBeUndefined();
+    expect(proposal.beforeHashNormalized).toBeUndefined();
     expect(proposal.eligibilitySource).toBeUndefined();
     expect(proposal.backupContent).toBeUndefined();
     expect(proposal.confidence).toBeUndefined();
@@ -171,6 +172,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
       changes: [{ path: "lessons/history.md", op: "update" }],
       proposedTarget: { source: "team", root: "/tmp/stash" },
       beforeHash: "a".repeat(64),
+      beforeHashNormalized: "c".repeat(64),
       review: { outcome: "accepted", decidedAt: "2026-01-01T00:00:00.000Z" },
       confidence: 0.5,
       gateDecision: { outcome: "deferred", reason: "mid-band", decidedAt: "2026-01-01T00:00:00.000Z" },
@@ -187,6 +189,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(proposal.changes).toEqual([{ path: "lessons/history.md", op: "update", after: "historical body" }]);
     expect(proposal.proposedTarget).toEqual({ source: "team", root: "/tmp/stash" });
     expect(proposal.beforeHash).toBe(metadata.beforeHash);
+    expect(proposal.beforeHashNormalized).toBe(metadata.beforeHashNormalized);
     expect(proposal.confidence).toBe(0.5);
     expect(proposal.gateDecision?.outcome).toBe("deferred");
     expect(proposal.backupContent).toBe("prior content");

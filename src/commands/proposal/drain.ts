@@ -40,7 +40,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { computeNormalizedContentHash, parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
@@ -60,6 +60,7 @@ import {
 import { prepareInlineExecutionWithRunner } from "../../integrations/agent/inline-execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
+import { STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
   listProposals,
   listProposalsReadOnly,
@@ -311,7 +312,7 @@ function deferReasonForSource(source: string): DrainDeferReason {
  * (see repository.ts's `promoteProposalWithLease` / `preflightProposalPromotion`).
  */
 function categorizeDrainFailure(message: string, fallback: string): string {
-  if (/target (?:changed after|was created after) proposal/.test(message)) return "stale-target";
+  if (/target (?:changed after|was created after) proposal/.test(message)) return STALE_TARGET_GATE_REASON;
   if (/failed validation:/.test(message)) return "validation";
   return fallback;
 }
@@ -323,6 +324,39 @@ function pushDrainFailure(result: DrainResult, id: string, err: unknown, fallbac
 }
 
 /**
+ * A `stale-target` promote failure (STALE, R20) is not a merit rejection —
+ * the guard tripped because the target changed after mint (often akm's own
+ * bookkeeping), not because of anything wrong with the proposed content. So
+ * instead of leaving the row pending to retry and fail identically every run,
+ * the drain auto-rejects it once with a structured marker.
+ * `checkFingerprintAndBackoff` (repository.ts) excludes this reason from
+ * rejection-backoff, so the ref stays re-proposable against its current
+ * content. Returns `true` when the reject succeeded (the caller should treat
+ * the item as resolved, not failed); `false` leaves it to the caller's
+ * existing failure handling.
+ */
+async function autoRejectStaleTarget(
+  stashDir: string,
+  gateLabel: string,
+  id: string,
+  message: string,
+  rejectFn: RejectFn,
+): Promise<boolean> {
+  try {
+    await rejectFn({
+      stashDir,
+      id,
+      reason: `stale-target: ${message}`,
+      gateDecision: { outcome: "auto-rejected", reason: STALE_TARGET_GATE_REASON, gate: gateLabel },
+    });
+    return true;
+  } catch (err) {
+    warn(`[triage] stale-target auto-reject failed for ${id}: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
+/**
  * Mirror repository.ts's `promoteProposalWithLease` stale-target guard so a
  * dry-run preflight predicts the same refusal a real promote would hit,
  * without writing anything. `assetPath` is the path `preflightProposalPromotion`
@@ -330,11 +364,20 @@ function pushDrainFailure(result: DrainResult, id: string, err: unknown, fallbac
  */
 function assertProposalTargetFresh(proposal: Proposal, assetPath: string): void {
   const backup = fs.existsSync(assetPath) ? fs.readFileSync(assetPath) : undefined;
-  const currentHash = backup ? createHash("sha256").update(backup).digest("hex") : undefined;
-  if (proposal.beforeHash !== undefined && (!backup || currentHash !== proposal.beforeHash)) {
-    throw new Error(
-      `Proposal target changed after proposal ${proposal.id} was created; refusing to overwrite newer content.`,
-    );
+  if (proposal.beforeHash !== undefined) {
+    // STALE (R20): mirrors repository.ts's promote guard — a normalized
+    // before-hash is insensitive to a same-run bookkeeping rewrite of the
+    // target; a legacy proposal without one keeps the raw-hash check.
+    const fresh =
+      proposal.beforeHashNormalized !== undefined
+        ? backup !== undefined &&
+          computeNormalizedContentHash(backup.toString("utf8")) === proposal.beforeHashNormalized
+        : backup !== undefined && createHash("sha256").update(backup).digest("hex") === proposal.beforeHash;
+    if (!fresh) {
+      throw new Error(
+        `Proposal target changed after proposal ${proposal.id} was created; refusing to overwrite newer content.`,
+      );
+    }
   }
   if (
     proposal.beforeHash === undefined &&
@@ -680,7 +723,15 @@ async function runJudgmentTier(input: JudgmentTierInput): Promise<{
       promoted.push(item.id);
       acceptBudget -= 1;
     } catch (err) {
-      warn(`[triage] judgment promote failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        categorizeDrainFailure(message, "promote-error") === STALE_TARGET_GATE_REASON &&
+        (await autoRejectStaleTarget(input.stashDir, input.gateLabel, item.id, message, input.rejectFn))
+      ) {
+        rejected.push(item.id);
+        continue;
+      }
+      warn(`[triage] judgment promote failed for ${item.id}: ${message}`);
       stillDeferred.push(item);
     }
   }
@@ -877,7 +928,15 @@ export async function drainProposals(
           result.promoted.push(id);
           deterministicPromoted += 1;
         } catch (err) {
-          const message = pushDrainFailure(result, id, err, "promote-error");
+          const message = err instanceof Error ? err.message : String(err);
+          if (
+            categorizeDrainFailure(message, "promote-error") === STALE_TARGET_GATE_REASON &&
+            (await autoRejectStaleTarget(opts.stashDir, gateLabel, id, message, rejectFn))
+          ) {
+            result.rejected.push(id);
+            continue;
+          }
+          pushDrainFailure(result, id, err, "promote-error");
           warn(`[triage] promote failed for ${id}: ${message}`);
         }
       }

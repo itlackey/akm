@@ -10,6 +10,7 @@
  * sequences) is handled correctly without a brittle hand-rolled state machine.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { existingFileMode, writeFileAtomic } from "../common";
@@ -476,6 +477,101 @@ export function parseYamlScalar(value: string): unknown {
     return value.slice(1, -1);
   }
   return value;
+}
+
+// ── Bookkeeping-insensitive freshness (STALE, R20) ────────────────────────────
+
+/**
+ * Frontmatter keys akm's own improve/index passes write into an EXISTING
+ * asset as pipeline bookkeeping — never a change to the asset's authored
+ * meaning. `salience`/`salienceInputs` come from {@link writeSalienceToFrontmatter}
+ * (distill); `inferenceProcessed` comes from memory inference
+ * (`indexer/passes/memory-inference.ts`). A pending proposal's mint-time
+ * before-hash is sensitive to these rewrites even though nothing a reviewer
+ * or the proposal's own diff cares about actually changed, which stales out
+ * proposals that a same-run bookkeeping pass touches after mint. See
+ * {@link computeNormalizedContentHash} and {@link carryForwardBookkeepingFrontmatter}.
+ *
+ * Deliberately excludes `beliefState`/`contradictedBy`/`supersededBy`: those
+ * are editorial state (contradiction/supersession demotions), not derived
+ * audit metadata — a promote should still refuse when one of those changed
+ * underneath a pending proposal.
+ */
+export const BOOKKEEPING_FRONTMATTER_KEYS = ["salience", "salienceInputs", "inferenceProcessed"] as const;
+
+function sha256Hex(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+/**
+ * Hash of `raw` with {@link BOOKKEEPING_FRONTMATTER_KEYS} removed from its
+ * frontmatter and the remaining frontmatter re-serialized with sorted keys,
+ * so pipeline-only bookkeeping rewrites (and incidental key-order churn)
+ * cannot change the result. The body is hashed verbatim.
+ *
+ * Falls back to hashing `raw` verbatim when there is no frontmatter block or
+ * it fails to parse — normalizing unparsable frontmatter isn't safe, and the
+ * caller's existing raw-hash check already covers that case.
+ */
+export function computeNormalizedContentHash(raw: string): string {
+  const block = parseFrontmatterBlock(raw);
+  if (!block?.frontmatter.trim()) return sha256Hex(raw);
+  let data: unknown;
+  try {
+    data = yamlParse(block.frontmatter);
+  } catch {
+    return sha256Hex(raw);
+  }
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return sha256Hex(raw);
+  const normalized = { ...(data as Record<string, unknown>) };
+  for (const key of BOOKKEEPING_FRONTMATTER_KEYS) delete normalized[key];
+  const canonicalFrontmatter = yamlStringify(normalized, { sortMapEntries: true }).trimEnd();
+  return sha256Hex(`---\n${canonicalFrontmatter}\n---\n${block.content}`);
+}
+
+/**
+ * Fold the live target's {@link BOOKKEEPING_FRONTMATTER_KEYS} into
+ * `proposedRaw` wherever the proposal's own frontmatter does not already set
+ * them, so promoting a proposal minted before a bookkeeping rewrite never
+ * drops that bookkeeping (STALE, R20) — e.g. dropping `inferenceProcessed`
+ * would make memory inference reprocess the memory.
+ *
+ * Returns `proposedRaw` unchanged when either side has no parseable
+ * frontmatter block or nothing needs to carry forward.
+ */
+export function carryForwardBookkeepingFrontmatter(proposedRaw: string, liveRaw: string): string {
+  const proposedBlock = parseFrontmatterBlock(proposedRaw);
+  const liveBlock = parseFrontmatterBlock(liveRaw);
+  if (!proposedBlock || !liveBlock) return proposedRaw;
+
+  let proposedData: Record<string, unknown>;
+  let liveData: Record<string, unknown>;
+  try {
+    const parsedProposed = proposedBlock.frontmatter.trim() ? yamlParse(proposedBlock.frontmatter) : {};
+    const parsedLive = liveBlock.frontmatter.trim() ? yamlParse(liveBlock.frontmatter) : {};
+    if (parsedProposed === null || typeof parsedProposed !== "object" || Array.isArray(parsedProposed)) {
+      return proposedRaw;
+    }
+    if (parsedLive === null || typeof parsedLive !== "object" || Array.isArray(parsedLive)) return proposedRaw;
+    proposedData = parsedProposed as Record<string, unknown>;
+    liveData = parsedLive as Record<string, unknown>;
+  } catch {
+    return proposedRaw;
+  }
+
+  const merged = { ...proposedData };
+  let changed = false;
+  for (const key of BOOKKEEPING_FRONTMATTER_KEYS) {
+    if (!(key in merged) && key in liveData) {
+      merged[key] = liveData[key];
+      changed = true;
+    }
+  }
+  if (!changed) return proposedRaw;
+
+  const newFrontmatter = yamlStringify(merged).trimEnd();
+  const separator = proposedBlock.content.startsWith("\n") ? "" : "\n";
+  return `---\n${newFrontmatter}\n---\n${separator}${proposedBlock.content}`;
 }
 
 // ── Minimum score delta to trigger a frontmatter salience rewrite ─────────────

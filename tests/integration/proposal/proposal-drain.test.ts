@@ -489,7 +489,7 @@ describe("drainProposals — failed reporting (#921)", () => {
     expect(result.failed).toEqual([{ id: empty.id, reason: "reject-error", detail: "simulated reject failure" }]);
   });
 
-  test("a stale-target refusal is categorized by its message, not lost as a generic failure", async () => {
+  test("a stale-target refusal is auto-rejected once, not left as a generic failure (STALE, R20)", async () => {
     const stash = makeStashDir();
     const accepted = seed(stash, "lessons/promote-stale", "extract", VALID_LESSON);
     const promoteFn = mock(async () => {
@@ -497,19 +497,24 @@ describe("drainProposals — failed reporting (#921)", () => {
         `Proposal target changed after proposal ${accepted.id} was created; refusing to overwrite newer content.`,
       );
     });
+    const rejectFn = fakeReject();
 
-    const result = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+    const result = await drainProposals(baseOpts(stash), promoteFn, rejectFn);
 
-    expect(result.failed).toEqual([
-      {
+    // The stale-target category is not a merit rejection, so the drain
+    // resolves it with a structured auto-reject instead of retrying forever
+    // — it lands in `rejected`, not `failed`.
+    expect(result.failed).toEqual([]);
+    expect(result.rejected).toEqual([accepted.id]);
+    expect(rejectFn).toHaveBeenCalledWith(
+      expect.objectContaining({
         id: accepted.id,
-        reason: "stale-target",
-        detail: `Proposal target changed after proposal ${accepted.id} was created; refusing to overwrite newer content.`,
-      },
-    ]);
+        gateDecision: { outcome: "auto-rejected", reason: "stale-target", gate: "triage:personal-stash" },
+      }),
+    );
   });
 
-  test("dry-run predicts the same stale-target refusal a real promote hits (parity)", async () => {
+  test("dry-run predicts the same stale-target refusal a real promote hits, then auto-rejects (parity)", async () => {
     const stash = makeStashDir();
     const assetPath = path.join(stash, "lessons", "dry-run-stale.md");
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Original: prefer rg"), "utf8");
@@ -531,15 +536,57 @@ describe("drainProposals — failed reporting (#921)", () => {
       fakeAccept(),
       fakeReject(),
     );
+    // Dry-run performs zero writes, so it still predicts the refusal via
+    // `failed` rather than actually rejecting.
     expect(dryRunResult.promoted).toEqual([]);
+    expect(dryRunResult.rejected).toEqual([]);
     expect(dryRunResult.failed).toEqual([expect.objectContaining({ id: created.id, reason: "stale-target" })]);
 
-    // The real run (no promote/reject seams — exercises the actual write path)
-    // must refuse the exact same candidate, so the two never disagree.
+    // The real run (no promote/reject seams — exercises the actual write
+    // path) hits the exact same guard, then resolves it with the drain's
+    // stale-target auto-reject (STALE, R20) instead of leaving it pending.
     const realResult = await drainProposals(baseOpts(stash, { config: makeConfig(stash) }));
     expect(realResult.promoted).toEqual([]);
-    expect(realResult.failed).toEqual([expect.objectContaining({ id: created.id, reason: "stale-target" })]);
+    expect(realResult.failed).toEqual([]);
+    expect(realResult.rejected).toEqual([created.id]);
     expect(fs.readFileSync(assetPath, "utf8")).toContain("Newer: someone else edited this");
+    expect(getProposal(stash, created.id)).toMatchObject({
+      status: "rejected",
+      gateDecision: { outcome: "auto-rejected", reason: "stale-target" },
+    });
+  });
+
+  test("a stale-target auto-reject does not count toward rejection_backoff (STALE, R20)", async () => {
+    const stash = makeStashDir();
+    const assetPath = path.join(stash, "lessons", "reproposable.md");
+    fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Original: prefer rg"), "utf8");
+    const created = createProposal(stash, {
+      ref: "lessons/reproposable",
+      source: "extract",
+      force: true,
+      sourceRun: "run-x",
+      target: { source: "stash", root: stash },
+      payload: { content: VALID_LESSON, frontmatter: { description: "reproposable fixture" } },
+    });
+    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
+    // A real content edit after mint — the drain's promote will hit the
+    // stale-target guard and auto-reject.
+    fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Newer: someone else edited this"), "utf8");
+
+    const result = await drainProposals(baseOpts(stash, { config: makeConfig(stash) }));
+    expect(result.rejected).toEqual([created.id]);
+
+    // A later proposal for the SAME ref+source, without `force`, must not be
+    // skipped by rejection_backoff (extract's cooldown is the 7-day default)
+    // — a stale-target rejection is procedural, not a judgement on content.
+    const reproposed = createProposal(stash, {
+      ref: "lessons/reproposable",
+      source: "extract",
+      sourceRun: "run-y",
+      target: { source: "stash", root: stash },
+      payload: { content: VALID_LESSON, frontmatter: { description: "reproposable fixture, take 2" } },
+    });
+    expect(isProposalSkipped(reproposed)).toBe(false);
   });
 });
 
