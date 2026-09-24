@@ -34,6 +34,7 @@ import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
   deleteAssetFromSource,
+  isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
   resolveWorkingStashTarget,
@@ -581,15 +582,6 @@ export interface TasksSyncResult {
  *   • remove orphan scheduler entries that no longer have a backing file
  */
 /**
- * Mirrors `adaptConfiguredSource` (src/core/write-source.ts): scheduler
- * bindings are only ever installed against filesystem/git bundles, since
- * writes (and therefore scheduler state) are undefined for website/npm.
- */
-function isSchedulableSourceKind(type: string): boolean {
-  return type === "filesystem" || type === "git";
-}
-
-/**
  * Compute (but never apply) a scheduler sync plan: everything through
  * `finalizeSchedulerSyncPlan`'s final call, stopping strictly before
  * `applySchedulerSyncPlan`. Shared by `akmTasksSync` (applies the plan) and
@@ -646,7 +638,7 @@ async function buildSchedulerSyncPlan(
     // Surface that as a clear usage error here instead of letting the
     // write-target resolution below raise a generic ConfigError.
     const targetSource = activeSources.find((source) => source.name === bundleTarget);
-    if (targetSource && !isSchedulableSourceKind(targetSource.type)) {
+    if (targetSource && !isWriteCapableSourceKind(targetSource.type)) {
       throw new UsageError(
         `Bundle "${bundleTarget}" has kind "${targetSource.type}"; task scheduling is only supported for filesystem and git bundles.`,
         "INVALID_FLAG_VALUE",
@@ -659,7 +651,7 @@ async function buildSchedulerSyncPlan(
   // configuredSources for removal/revocation.
   const sourceNames = bundleTarget
     ? [bundleTarget]
-    : activeSources.filter((source) => isSchedulableSourceKind(source.type)).map((source) => source.name);
+    : activeSources.filter((source) => isWriteCapableSourceKind(source.type)).map((source) => source.name);
   const inactiveOperations = bundleTarget
     ? []
     : inactiveBundleRemovalOperations(config, configuredSources, allEntries, nativeArtifacts);
