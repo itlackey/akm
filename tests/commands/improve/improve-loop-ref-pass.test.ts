@@ -16,6 +16,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { deriveLessonRef } from "../../../src/commands/improve/distill";
+import { deriveKnowledgeRef } from "../../../src/commands/improve/distill-promotion-policy";
 import type { AkmImproveOptions, ImproveLoopState } from "../../../src/commands/improve/improve-run-types";
 import {
   type ImproveLoopEnv,
@@ -31,7 +32,7 @@ import {
 } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
-import { readEvents } from "../../../src/core/events";
+import { appendEvent, readEvents } from "../../../src/core/events";
 import type { EventEnvelope } from "../../../src/core/events-types";
 import type { AkmReflectResult, ImproveEligibleRef } from "../../../src/core/improve-types";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
@@ -483,6 +484,205 @@ describe("processImproveLoopRef — distill pre-generation guard (r2-6, tier2-09
 
     expect(distillCalled).toBe(true);
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+});
+
+describe("processImproveLoopRef — distill guard target precheck (PRECHECK, tier3-0917)", () => {
+  const memoryRef = "memories/finding-1";
+  const promotingMemoryRef = "memories/vpn-required-for-deploy";
+  // Mirrors the "deploy-vpn-required" fixture in promotion-policy-corpus.ts
+  // (verified to promote by distill-promotion-policy.test.ts): substantive
+  // body, curated-looking frontmatter, and two reinforcing positive feedback
+  // events push `assessMemoryKnowledgePromotionCandidate` — the same
+  // deterministic heuristic distill.ts dispatches with — over the promotion
+  // threshold, so distill's real target is the derived KNOWLEDGE ref, not
+  // the lesson ref.
+  const PROMOTING_MEMORY_CONTENT = [
+    "---",
+    "description: VPN required before deploy",
+    "source: skill:deploy",
+    "observed_at: 2026-04-20",
+    "confidence: 0.95",
+    "tags: [deploy, ops]",
+    "---",
+    "",
+    "Always connect the VPN before starting production deploys.",
+    "",
+  ].join("\n");
+
+  function seedPromotingMemory(stashDir: string, ref: string): void {
+    fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "memories", `${ref.split("/")[1]}.md`), PROMOTING_MEMORY_CONTENT, "utf8");
+    appendEvent({ eventType: "feedback", ref, metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref, metadata: { signal: "positive" } });
+  }
+
+  test("knowledge ref guarded, distill would target the lesson (no promotion candidate) → dispatch happens", async () => {
+    const { stashDir } = freshSandbox();
+    // No memory file on disk for `memoryRef` — assessMemoryKnowledgePromotionCandidate
+    // reports "missing-asset-content" and never promotes, so the real target
+    // is always the derived lesson ref. Guard only the (irrelevant) knowledge ref.
+    const knowledgeRef = deriveKnowledgeRef(memoryRef);
+    const existing = createProposal(stashDir, {
+      ref: knowledgeRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([memoryRef]),
+      signalBearingSet: new Set([memoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.resolve(distillQueued(memoryRef, "lesson"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(distillCalled).toBe(true);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("the real target (knowledge ref) guarded for a promoting memory → skip with the paired distill_invoked event", async () => {
+    const { stashDir } = freshSandbox();
+    seedPromotingMemory(stashDir, promotingMemoryRef);
+    const knowledgeRef = deriveKnowledgeRef(promotingMemoryRef);
+    const existing = createProposal(stashDir, {
+      ref: knowledgeRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([promotingMemoryRef]),
+      signalBearingSet: new Set([promotingMemoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.reject(new Error("distillFn must not be called on a guard hit"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(promotingMemoryRef), env);
+
+    expect(distillCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    const skipEvent = events.find((e) => e.ref === promotingMemoryRef);
+    expect(skipEvent?.metadata).toMatchObject({ outcome: "skipped", proposalRef: knowledgeRef });
+  });
+
+  test("lesson ref guarded but a promoting memory's real target is knowledge → dispatch happens", async () => {
+    const { stashDir } = freshSandbox();
+    seedPromotingMemory(stashDir, promotingMemoryRef);
+    const lessonRef = deriveLessonRef(promotingMemoryRef);
+    const existing = createProposal(stashDir, {
+      ref: lessonRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([promotingMemoryRef]),
+      signalBearingSet: new Set([promotingMemoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.resolve(distillQueued(promotingMemoryRef, "knowledge"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(promotingMemoryRef), env);
+
+    expect(distillCalled).toBe(true);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("both the lesson and knowledge refs guarded for a promoting memory → skip", async () => {
+    const { stashDir } = freshSandbox();
+    seedPromotingMemory(stashDir, promotingMemoryRef);
+    for (const ref of [deriveLessonRef(promotingMemoryRef), deriveKnowledgeRef(promotingMemoryRef)]) {
+      const existing = createProposal(stashDir, { ref, source: "distill", payload: { content: VALID_LESSON } });
+      if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+    }
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([promotingMemoryRef]),
+      signalBearingSet: new Set([promotingMemoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.reject(new Error("distillFn must not be called on a guard hit"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(promotingMemoryRef), env);
+
+    expect(distillCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+  });
+
+  test("itemRef diverges from ref: the precheck still classifies via ref, matching distill's real dispatch", async () => {
+    // distill's real dispatch (akmDistill) derives durableInputRef — the
+    // content lookup key — from options.ref alone, never options.itemRef
+    // (only the feedback-events query prefers itemRef). Give `planned.itemRef`
+    // a different ref with no backing file, while `planned.ref` is the real
+    // promoting memory, and mirror the feedback events under itemRef too so
+    // this isolates the content-lookup divergence specifically. A precheck
+    // that mistakenly looked up content via itemRef would find nothing,
+    // classify the target as the lesson ref, and dispatch despite the real
+    // (knowledge) target being guarded.
+    const { stashDir } = freshSandbox();
+    seedPromotingMemory(stashDir, promotingMemoryRef);
+    appendEvent({ eventType: "feedback", ref: memoryRef, metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref: memoryRef, metadata: { signal: "positive" } });
+    const knowledgeRef = deriveKnowledgeRef(promotingMemoryRef);
+    const existing = createProposal(stashDir, {
+      ref: knowledgeRef,
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(existing)) throw new Error("unexpected skip setting up the fixture");
+
+    let distillCalled = false;
+    const env = makeEnv({
+      stashDir,
+      primaryStashDir: stashDir,
+      distillOnlyRefSet: new Set([promotingMemoryRef]),
+      signalBearingSet: new Set([promotingMemoryRef]),
+      distillFn: () => {
+        distillCalled = true;
+        return Promise.reject(new Error("distillFn must not be called on a guard hit"));
+      },
+    });
+
+    const planned: ImproveEligibleRef = {
+      ref: promotingMemoryRef,
+      itemRef: memoryRef,
+      reason: "scope-type",
+    };
+    const tally = await processImproveLoopRef(planned, env);
+
+    expect(distillCalled).toBe(false);
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    const skipEvent = events.find((e) => e.ref === memoryRef);
+    expect(skipEvent?.metadata).toMatchObject({ outcome: "skipped", proposalRef: knowledgeRef });
   });
 });
 

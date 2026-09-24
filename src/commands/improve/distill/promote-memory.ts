@@ -125,6 +125,48 @@ export async function planMemoryKnowledgePromotion(
   return { promotion: promotion as MemoryKnowledgePromotionPlan["promotion"], existingKnowledgeContent };
 }
 
+/**
+ * PRECHECK (tier3-0917): read-only classification of whether distill would
+ * promote this memory to knowledge — used by the improve loop's distill
+ * pre-generation proposal guard (`loop-stages.ts`) to pre-check the SAME ref
+ * {@link planMemoryKnowledgePromotion} will target at dispatch time
+ * (knowledgeRef when this resolves `true`, the derived lesson ref
+ * otherwise), rather than guessing which of the two a guard hit applies to.
+ * Delegates to {@link planMemoryKnowledgePromotion} itself so the
+ * classification can never drift from the real dispatch decision — no LLM
+ * call, no side effect. Every {@link PromoteMemoryContext} field this
+ * classification does not read (chat, fetchSimilarLessonsFn,
+ * existingRefVocabulary, …) is a safe placeholder here.
+ */
+export async function wouldPromoteMemoryToKnowledge(args: {
+  inputRef: string;
+  durableInputRef: string;
+  assetContent: string | null;
+  feedbackEvents: readonly { metadata?: Record<string, unknown> }[];
+  config: AkmConfig;
+  stash: string;
+  lookup: (ref: string) => Promise<string | null>;
+}): Promise<boolean> {
+  const plan = await planMemoryKnowledgePromotion({
+    targetKind: "auto",
+    inputRef: args.inputRef,
+    durableInputRef: args.durableInputRef,
+    assetContent: args.assetContent,
+    filteredEvents: args.feedbackEvents,
+    config: args.config,
+    stash: args.stash,
+    lookup: args.lookup,
+    fetchSimilarLessonsFn: () => Promise.resolve([]),
+    existingRefVocabulary: new Set(),
+    outcomeWeightEnabled: false,
+    eligMeta: {},
+    exclusionSetSize: 0,
+    filteredFeedbackCount: 0,
+    feedbackFullyFiltered: false,
+  });
+  return plan !== null;
+}
+
 /** Whether a classified promotion will actually call merge generation and/or the judge. */
 export function memoryKnowledgePromotionRequiresDispatch(
   ctx: PromoteMemoryContext,

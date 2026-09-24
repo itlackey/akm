@@ -1818,7 +1818,13 @@ async function buildDistillMessages(args: {
   ];
 }
 
-async function defaultLookup(ref: string, stashDir: string): Promise<string | null> {
+/**
+ * Exported (PRECHECK, tier3-0917) so the improve loop's distill
+ * pre-generation guard (`loop-stages.ts`) can resolve the same asset path
+ * `akmDistill` would when checking whether a memory promotes to knowledge —
+ * without duplicating the resolution logic.
+ */
+export async function defaultLookup(ref: string, stashDir: string): Promise<string | null> {
   return resolveAssetPath(ref, {
     stashDir,
     mode: "disk-only",
