@@ -1046,7 +1046,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     ]);
   });
 
-  test("a true standalone physical-source identity collision rejects before diffing", async () => {
+  // Was "a true standalone physical-source identity collision rejects before
+  // diffing" (tier3-0917-r5, U3): the rejection this pinned was actually the
+  // directory-manifest layer's former blanket refusal of ANY symbolic entry,
+  // not a real physical-identity collision check — `beta/nightly.yml` here
+  // is never opened as a task candidate at all. Per U3, an in-bundle symlink
+  // that stays inside the bundle root is recorded as its own manifest kind
+  // and is never made a task candidate, so it contributes nothing and the
+  // real owner still syncs normally.
+  test("an in-bundle symlink alias contributes no task candidate; the real owner still syncs", async () => {
     const componentRoot = root();
     const owner = path.join(componentRoot, "alpha", "nightly.yml");
     const alias = path.join(componentRoot, "beta", "nightly.yml");
@@ -1055,21 +1063,22 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     fs.symlinkSync(owner, alias);
     let signatures = 0;
 
-    await expect(
-      planSchedulerSync({
-        sourceRoot: componentRoot,
-        adapterId: "akm-task",
-        bundleName: "team",
-        bundleTarget: "team",
-        backend: "cron",
-        installed: emptyInstalled,
-        expectedSignature: () => {
-          signatures += 1;
-          return "signature";
-        },
-      }),
-    ).rejects.toThrow(/physical.*identity.*collision|same physical source/i);
-    expect(signatures).toBe(0);
+    const plan = await planSchedulerSync({
+      sourceRoot: componentRoot,
+      adapterId: "akm-task",
+      bundleName: "team",
+      bundleTarget: "team",
+      backend: "cron",
+      installed: emptyInstalled,
+      expectedSignature: () => {
+        signatures += 1;
+        return "signature";
+      },
+    });
+
+    expect(plan.desired.map((binding) => binding.id)).toEqual(["alpha/nightly"]);
+    expect(plan.failures).toEqual([]);
+    expect(signatures).toBe(1);
   });
 
   test("#867: one invalid desired task degrades (reported, excluded) instead of poisoning the whole plan; a valid peer still reconciles", async () => {

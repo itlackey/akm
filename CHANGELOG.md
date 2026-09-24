@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Unscoped `akm task sync` no longer aborts the whole host on the first
+  bundle root that happens to contain any symlink.** `captureGuardedDirectoryManifest`
+  threw for every symbolic directory entry it listed, even one the scheduler
+  never reads (e.g. a third-party skill repo's `CLAUDE.md -> AGENTS.md`) —
+  `SchedulerSourceCollector` manifests every scanned bundle's root, so one
+  such bundle among many enabled ones failed sync entirely, dry-run included.
+  A symlink that stays inside its bundle root is now recorded in the guarded
+  directory manifest as its own `"symlink"` kind, identified without
+  following it (its `readlink` text plus its no-follow `lstat` identity), so
+  change detection still works; it is never read, descended into, or turned
+  into a task/workflow candidate. A symlink that resolves outside the bundle
+  root, or one that is broken and cannot be identified safely, is still
+  refused, and a bundle root whose `tasks` or `workflows` entry is itself a
+  symlink still refuses loudly, since that is a schedulable source location.
+
 ## [0.9.17-alpha.2] - 2026-09-24
 
 ### Fixed

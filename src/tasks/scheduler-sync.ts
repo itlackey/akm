@@ -948,6 +948,17 @@ class SchedulerSourceCollector {
     this.#adapterId = input.adapterId;
     this.#sourceRoot = path.resolve(input.sourceRoot);
     const root = this.#collector.trackDirectory(this.#sourceRoot, this.#sourceRoot);
+    if (input.adapterId === "akm") {
+      for (const scheduledName of ["tasks", "workflows"] as const) {
+        const entry = root.entries.find((candidate) => candidate.name === scheduledName);
+        if (entry?.kind === "symlink") {
+          throw new UsageError(
+            `${path.join(this.#sourceRoot, scheduledName)} is a symbolic source with a physical source identity collision; guarded reads require one no-follow owner.`,
+            "RESOURCE_ALREADY_EXISTS",
+          );
+        }
+      }
+    }
     const rootDirectories = new Set(
       root.entries.filter((entry) => entry.kind === "directory").map((entry) => entry.name),
     );
