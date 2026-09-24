@@ -65,7 +65,7 @@ import type { AkmConsolidateOptions } from "./consolidate";
 import type { akmDistill } from "./distill";
 import type { collectEligibleRefs, resolveImproveScope } from "./eligibility";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
-import type { ResolvedImprovePlan } from "./improve-strategies";
+import type { EngineProbeOutcome, ResolvedImprovePlan } from "./improve-strategies";
 import type { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { akmReflect } from "./reflect";
@@ -166,6 +166,13 @@ export interface AkmImproveOptions {
    * block, which in turn overrides the built-in default.
    */
   sync?: { enabled?: boolean; push?: boolean };
+  /**
+   * R17 — the `--require-engines` reachability probe outcomes, computed by
+   * the CLI (`assertRequiredEnginesReachable`) before this call. Copied
+   * verbatim onto the result's `engineProbe` field; absent when
+   * `--require-engines` was not passed.
+   */
+  engineProbe?: readonly EngineProbeOutcome[];
 }
 
 export interface ImprovePreparationResult {

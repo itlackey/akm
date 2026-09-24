@@ -135,6 +135,21 @@ export interface EngineUnavailableProcess {
   contextLength?: number;
 }
 
+/**
+ * R17 — one `--require-engines` reachability probe outcome, recorded on the
+ * improve run result so a passing (but slow or flaky) probe leaves a trace
+ * instead of vanishing the moment the run proceeds. Built in
+ * `improve-cli.ts`'s `assertRequiredEnginesReachable` from the same
+ * `RequiredEngineTarget` list the unreachable-abort path already computes.
+ */
+export interface EngineProbeOutcome {
+  process: EngineUnavailableProcessName;
+  engine: string;
+  endpoint: string;
+  reachable: boolean;
+  latencyMs: number;
+}
+
 /** Complete immutable process behavior for one improve invocation. */
 export interface ResolvedImprovePlan {
   /** Immutable config snapshot used to re-enter canonical named-engine lowering. */

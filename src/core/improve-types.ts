@@ -3,7 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { LlmUsageCrossTabRow } from "../commands/health/types";
-import type { EngineUnavailableProcess, ProcessRoutingRow } from "../commands/improve/improve-strategies";
+import type {
+  EngineProbeOutcome,
+  EngineUnavailableProcess,
+  ProcessRoutingRow,
+} from "../commands/improve/improve-strategies";
 import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
@@ -844,6 +848,16 @@ export interface AkmImproveResult {
    * why the scheduler's stripped-down environment does not.
    */
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
+  /**
+   * R17 — `--require-engines`'s reachability probe outcomes (one row per
+   * probed target: process, engine, endpoint, reachable, latencyMs).
+   * A failing probe already aborts the run (exit 78) before this result is
+   * ever built, so every row present here is `reachable: true` — this
+   * exists so a slow or flapping gateway that still passed leaves a trace.
+   * Sourced verbatim from `AkmImproveOptions.engineProbe`. Omitted entirely
+   * when `--require-engines` was not passed.
+   */
+  engineProbe?: readonly Readonly<EngineProbeOutcome>[];
   actions?: ImproveActionResult[];
   /**
    * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`

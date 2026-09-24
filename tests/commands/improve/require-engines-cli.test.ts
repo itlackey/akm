@@ -13,7 +13,8 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { akmImprove } from "../../../src/commands/improve/improve";
-import { _setAkmImproveForTests } from "../../../src/commands/improve/improve-cli";
+import { _setAkmImproveForTests, assertRequiredEnginesReachable } from "../../../src/commands/improve/improve-cli";
+import type { ResolvedImprovePlan } from "../../../src/commands/improve/improve-strategies";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -107,5 +108,92 @@ describe("akm improve --require-engines", () => {
         reason: expect.stringContaining('engine "private"'),
       }),
     ]);
+  });
+});
+
+/** Minimal `ResolvedImprovePlan` fixture: only the fields `collectRequiredEngineTargets` reads. */
+function planWithTargets(
+  processes: Record<string, { endpoint: string; model: string; engine: string }>,
+): ResolvedImprovePlan {
+  return {
+    processes: Object.fromEntries(
+      Object.entries(processes).map(([process, { endpoint, model, engine }]) => [
+        process,
+        { enabled: true, config: {}, runner: { kind: "llm", engine, connection: { endpoint, model } } },
+      ]),
+    ),
+    triageJudgment: null,
+  } as unknown as ResolvedImprovePlan;
+}
+
+describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
+  test("returns one outcome per target, with numeric latency, when every probe is reachable", async () => {
+    const plan = planWithTargets({
+      reflect: { endpoint: "https://a.example.test/v1", model: "model-a", engine: "engineA" },
+      distill: { endpoint: "https://b.example.test/v1", model: "model-b", engine: "engineB" },
+    });
+    const probeReachable = mock(async () => ({ reachable: true }));
+
+    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable);
+
+    expect(probeReachable).toHaveBeenCalledTimes(2);
+    expect(outcomes).toHaveLength(2);
+    expect(new Set(outcomes.map((o) => o.endpoint)).size).toBe(2);
+    for (const outcome of outcomes) {
+      expect(outcome.reachable).toBe(true);
+      expect(Number.isFinite(outcome.latencyMs)).toBe(true);
+      expect(outcome.latencyMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(outcomes.map((o) => o.process).sort()).toEqual(["distill", "reflect"]);
+  });
+
+  test("dedupes the network probe by endpoint+model, but still returns one outcome per target", async () => {
+    const plan: ResolvedImprovePlan = {
+      processes: {
+        reflect: {
+          enabled: true,
+          config: {},
+          runner: {
+            kind: "llm",
+            engine: "shared",
+            connection: { endpoint: "https://shared.example.test/v1", model: "shared-model" },
+          },
+        },
+      },
+      triageJudgment: {
+        kind: "llm",
+        engine: "shared",
+        connection: { endpoint: "https://shared.example.test/v1", model: "shared-model" },
+      },
+    } as unknown as ResolvedImprovePlan;
+    const probeReachable = mock(async () => ({ reachable: true }));
+
+    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable);
+
+    expect(probeReachable).toHaveBeenCalledTimes(1);
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes.map((o) => o.process).sort()).toEqual(["reflect", "triage.judgment"]);
+    expect(outcomes[0]?.latencyMs).toBe(outcomes[1]?.latencyMs);
+  });
+
+  test("still throws ConfigError when a target is unreachable (unchanged abort behavior)", async () => {
+    const plan = planWithTargets({
+      reflect: { endpoint: "https://dead.example.test/v1", model: "model-a", engine: "engineA" },
+    });
+    const probeReachable = mock(async () => ({ reachable: false, error: "boom" }));
+
+    await expect(assertRequiredEnginesReachable(plan, probeReachable)).rejects.toThrow(
+      /completion path is not reachable/,
+    );
+  });
+
+  test("returns an empty array when there are no required-engine targets", async () => {
+    const plan: ResolvedImprovePlan = { processes: {}, triageJudgment: null } as unknown as ResolvedImprovePlan;
+    const probeReachable = mock(async () => ({ reachable: true }));
+
+    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable);
+
+    expect(outcomes).toEqual([]);
+    expect(probeReachable).not.toHaveBeenCalled();
   });
 });

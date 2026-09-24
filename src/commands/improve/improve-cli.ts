@@ -30,6 +30,7 @@ import {
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
 import {
+  type EngineProbeOutcome,
   type EngineUnavailableProcessName,
   type ResolvedImprovePlan,
   type ResolvedImproveProcess,
@@ -165,36 +166,61 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
  * insufficient here: a gateway can list a model while its upstream completion
  * route is dead (#980). Deduplicate by endpoint + model, not endpoint alone,
  * because model backends behind one gateway can fail independently.
+ *
+ * R17: a probe that PASSES used to leave no trace — a slow or flapping
+ * gateway was invisible in the improve result. On success, return one
+ * {@link EngineProbeOutcome} per target (process, engine, endpoint,
+ * reachable, latencyMs) so the caller can record it on the run result;
+ * targets sharing a deduplicated probe share its measured latency.
+ *
+ * Exported for unit tests, which inject a fake `probeReachable` (the
+ * "probe seam") instead of hitting a real endpoint.
  */
-async function assertRequiredEnginesReachable(
+export async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
   probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
     probeLlmReachable(connection, 3_000),
-): Promise<void> {
+): Promise<EngineProbeOutcome[]> {
   const targets = collectRequiredEngineTargets(plan);
-  if (targets.length === 0) return;
-  const probesByConnection = new Map<string, ReturnType<typeof probeReachable>>();
+  if (targets.length === 0) return [];
+  const probesByConnection = new Map<
+    string,
+    Promise<{ reach: { reachable: boolean; error?: string }; latencyMs: number }>
+  >();
   const probed = await Promise.all(
     targets.map(async (target) => {
       const key = `${target.connection.endpoint.replace(/\/+$/, "")}|${target.connection.model}`;
       let pending = probesByConnection.get(key);
       if (!pending) {
-        pending = probeReachable(target.connection);
+        const probeStartedAt = Date.now();
+        pending = probeReachable(target.connection).then((reach) => ({
+          reach,
+          latencyMs: Date.now() - probeStartedAt,
+        }));
         probesByConnection.set(key, pending);
       }
-      return { ...target, reach: await pending };
+      const { reach, latencyMs } = await pending;
+      return { ...target, reach, latencyMs };
     }),
   );
   const unreachable = probed.filter((item) => !item.reach.reachable);
-  if (unreachable.length === 0) return;
-  const lines = unreachable.map(
-    (item) =>
-      `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
-  );
-  throw new ConfigError(
-    `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
-    "LLM_NOT_CONFIGURED",
-  );
+  if (unreachable.length > 0) {
+    const lines = unreachable.map(
+      (item) =>
+        `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
+    );
+    throw new ConfigError(
+      `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
+      "LLM_NOT_CONFIGURED",
+    );
+  }
+  return probed.map((item) => ({
+    process: item.process,
+    engine: item.engine,
+    endpoint: item.connection.endpoint,
+    reachable: item.reach.reachable,
+    latencyMs: item.latencyMs,
+  }));
 }
 
 /**
@@ -417,9 +443,10 @@ export const improveCommand = defineCommand({
         await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
         return;
       }
+      let engineProbe: EngineProbeOutcome[] | undefined;
       if (args["require-engines"]) {
         assertRequiredEnginesAvailable(resolvedPlan);
-        await assertRequiredEnginesReachable(resolvedPlan);
+        engineProbe = await assertRequiredEnginesReachable(resolvedPlan);
       }
       const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
@@ -503,6 +530,7 @@ export const improveCommand = defineCommand({
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
+                ...(engineProbe !== undefined ? { engineProbe } : {}),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
                 consolidateOptions: {
                   target: targetArg,

@@ -1829,6 +1829,7 @@ function finalizeImproveResult(args: {
       : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
     ...(resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: resolvedPlan.engineUnavailable } : {}),
+    ...(options.engineProbe !== undefined ? { engineProbe: options.engineProbe } : {}),
     ...(usageReport ? { usageReport } : {}),
     actions: persistedActions,
     ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),
