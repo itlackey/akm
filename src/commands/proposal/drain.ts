@@ -40,7 +40,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { computeNormalizedContentHash, parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
@@ -330,11 +330,20 @@ function pushDrainFailure(result: DrainResult, id: string, err: unknown, fallbac
  */
 function assertProposalTargetFresh(proposal: Proposal, assetPath: string): void {
   const backup = fs.existsSync(assetPath) ? fs.readFileSync(assetPath) : undefined;
-  const currentHash = backup ? createHash("sha256").update(backup).digest("hex") : undefined;
-  if (proposal.beforeHash !== undefined && (!backup || currentHash !== proposal.beforeHash)) {
-    throw new Error(
-      `Proposal target changed after proposal ${proposal.id} was created; refusing to overwrite newer content.`,
-    );
+  if (proposal.beforeHash !== undefined) {
+    // STALE (R20): mirrors repository.ts's promote guard — a normalized
+    // before-hash is insensitive to a same-run bookkeeping rewrite of the
+    // target; a legacy proposal without one keeps the raw-hash check.
+    const fresh =
+      proposal.beforeHashNormalized !== undefined
+        ? backup !== undefined &&
+          computeNormalizedContentHash(backup.toString("utf8")) === proposal.beforeHashNormalized
+        : backup !== undefined && createHash("sha256").update(backup).digest("hex") === proposal.beforeHash;
+    if (!fresh) {
+      throw new Error(
+        `Proposal target changed after proposal ${proposal.id} was created; refusing to overwrite newer content.`,
+      );
+    }
   }
   if (
     proposal.beforeHash === undefined &&

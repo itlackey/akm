@@ -45,7 +45,11 @@ import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import {
+  carryForwardBookkeepingFrontmatter,
+  computeNormalizedContentHash,
+  parseFrontmatter,
+} from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
@@ -517,6 +521,8 @@ interface ProposalTargetInfo {
   targetRoot: string;
   targetRelPath: string;
   beforeHash?: string;
+  /** Bookkeeping-insensitive counterpart of {@link beforeHash} (STALE, R20). */
+  beforeHashNormalized?: string;
 }
 
 /**
@@ -552,6 +558,7 @@ function resolveProposalTargetInfo(
     targetRoot,
     targetRelPath,
     beforeHash: mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined,
+    beforeHashNormalized: mintBeforeContent !== undefined ? computeNormalizedContentHash(mintBeforeContent) : undefined,
   };
 }
 
@@ -657,6 +664,7 @@ export function createProposal(
     targetRoot,
     targetRelPath,
     beforeHash: mintedBeforeHash,
+    beforeHashNormalized: mintedBeforeHashNormalized,
   } = resolveProposalTargetInfo(stashDir, parsedRef, input.target);
   const proposalContent = targetRelPath.toLowerCase().endsWith(".md")
     ? ensureAkmMarkdownType(input.payload.content, parsedRef.type)
@@ -741,6 +749,7 @@ export function createProposal(
         changes: mintedChanges,
         proposedTarget: { source: proposalTarget.source, root: targetRoot },
         ...(mintedBeforeHash !== undefined ? { beforeHash: mintedBeforeHash } : {}),
+        ...(mintedBeforeHashNormalized !== undefined ? { beforeHashNormalized: mintedBeforeHashNormalized } : {}),
         ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
         // Attribution tagging: persist the eligibility lane so it survives to
         // accept/reject/revert time. See EligibilitySource.
@@ -2232,9 +2241,23 @@ export function preflightProposalPromotion(
   if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${preparedProposal.ref}.`, "INVALID_PROPOSAL");
   assertAkmAssetWrite(target.source);
 
-  const stampedContent = assetPath.toLowerCase().endsWith(".md")
+  let stampedContent = assetPath.toLowerCase().endsWith(".md")
     ? stampProposalProvenance(repairedContent, preparedProposal, options.gateDecision, ctx, nowIso(ctx))
     : repairedContent;
+  if (assetPath.toLowerCase().endsWith(".md") && fs.existsSync(assetPath)) {
+    // STALE (R20): carry the live target's akm bookkeeping frontmatter
+    // forward when the proposal's own frontmatter doesn't set it, so
+    // promoting never drops e.g. `inferenceProcessed` and makes memory
+    // inference reprocess the memory. Best-effort — an unreadable live file
+    // here doesn't block promotion; the freshness guard below is the real
+    // gate on staleness.
+    try {
+      const liveRaw = fs.readFileSync(assetPath, "utf8");
+      stampedContent = carryForwardBookkeepingFrontmatter(stampedContent, liveRaw);
+    } catch {
+      // Best-effort — see comment above.
+    }
+  }
   const lintBlockers = promotionLintBlockers(stampedContent, assetPath, target.source.path, ref.type, config);
   if (lintBlockers.length > 0) {
     const summary = lintBlockers.map((finding) => `[${finding.issue}] ${finding.detail}`).join("; ");
@@ -2403,11 +2426,23 @@ async function promoteProposalWithLease(
       );
     }
   }
-  if (proposal.beforeHash !== undefined && (!backup || proposalHash(backup) !== proposal.beforeHash)) {
-    throw new UsageError(
-      `Proposal target changed after proposal ${id} was created; refusing to overwrite newer content.`,
-      "INVALID_FLAG_VALUE",
-    );
+  if (proposal.beforeHash !== undefined) {
+    // STALE (R20): a proposal minted with a normalized before-hash is fresh
+    // when the CURRENT target's bookkeeping-stripped content still matches —
+    // insensitive to a same-run bookkeeping rewrite (salience scoring,
+    // inference dedup marking) of the target after mint. A legacy proposal
+    // without one keeps the exact raw-hash check it always had.
+    const fresh =
+      proposal.beforeHashNormalized !== undefined
+        ? backup !== undefined &&
+          computeNormalizedContentHash(backup.toString("utf8")) === proposal.beforeHashNormalized
+        : backup !== undefined && proposalHash(backup) === proposal.beforeHash;
+    if (!fresh) {
+      throw new UsageError(
+        `Proposal target changed after proposal ${id} was created; refusing to overwrite newer content.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
   }
   if (
     proposal.beforeHash === undefined &&

@@ -131,7 +131,7 @@ const GATE_OUTCOMES: Record<ProposalGateDecisionOutcome, true> = {
 };
 
 function validatePresentMetadata(meta: Record<string, unknown>): void {
-  const stringFields = ["sourceRun", "beforeHash", "backupContent"] as const;
+  const stringFields = ["sourceRun", "beforeHash", "beforeHashNormalized", "backupContent"] as const;
   for (const field of stringFields) {
     if (Object.hasOwn(meta, field) && typeof meta[field] !== "string") invalidPresentField(field);
   }
@@ -281,6 +281,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     changes,
     ...(proposedTarget !== undefined ? { proposedTarget } : {}),
     ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
+    ...(typeof meta.beforeHashNormalized === "string" ? { beforeHashNormalized: meta.beforeHashNormalized } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
@@ -335,6 +336,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   metaObj.changes = changesToStored(proposal.changes);
   if (proposal.proposedTarget !== undefined) metaObj.proposedTarget = currentProposalTarget(proposal.proposedTarget);
   if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
+  if (proposal.beforeHashNormalized !== undefined) metaObj.beforeHashNormalized = proposal.beforeHashNormalized;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;

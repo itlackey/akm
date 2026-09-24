@@ -295,6 +295,20 @@ export interface Proposal {
    * time — this is NOT an apply-time guard.
    */
   beforeHash?: string;
+  /**
+   * SHA-256 hex of the same mint-time target content as {@link beforeHash},
+   * but with akm's own bookkeeping frontmatter keys removed before hashing
+   * (`core/asset/frontmatter.ts`'s `computeNormalizedContentHash` /
+   * `BOOKKEEPING_FRONTMATTER_KEYS` — STALE, R20). Absent on proposals minted
+   * before this field existed, and whenever the target has no parseable
+   * frontmatter block (in which case it degenerates to {@link beforeHash}
+   * anyway). The promote guard prefers this over `beforeHash` when present,
+   * so a same-run bookkeeping rewrite of the target (salience scoring,
+   * inference dedup marking) does not stale out the proposal; a real content
+   * change still refuses. `beforeHash` itself keeps its exact raw meaning —
+   * it is also a §23.6 fingerprint term.
+   */
+  beforeHashNormalized?: string;
   review?: ProposalReview;
   /**
    * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).

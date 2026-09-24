@@ -180,6 +180,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   turning the confidence filter into dead code on exactly the providers the
   schema targets. `confidence: {"type": "number"}` is now allowed at both
   levels; `additionalProperties: false` still forbids anything else.
+- **A pending proposal went stale the moment akm's own bookkeeping touched
+  its target, and promote refused it forever (R20).** `resolveProposalTargetInfo`
+  captured the target's raw `beforeHash` at mint; the SAME nightly run's
+  `writeSalienceToFrontmatter` (distill) and memory inference's
+  `inferenceProcessed` stamp then rewrote the target's frontmatter before
+  promote ran, so `promoteProposalWithLease`'s guard (`repository.ts` ~L2406)
+  and `drain.ts`'s dry-run mirror (`assertProposalTargetFresh`) refused every
+  affected proposal with "target changed after proposal was created" — the
+  same 11+ reflect proposals, every day, on splinter. `resolveProposalTargetInfo`
+  now also captures `beforeHashNormalized` (`core/asset/frontmatter.ts`'s new
+  `computeNormalizedContentHash`, over the target with
+  `BOOKKEEPING_FRONTMATTER_KEYS` — `salience`/`salienceInputs`/`inferenceProcessed`
+  — stripped and the remaining frontmatter canonically re-serialized); the
+  promote guard and its dry-run mirror both prefer it over the raw
+  `beforeHash` when present, so a bookkeeping-only rewrite no longer stales a
+  proposal out while a real content change still refuses. Promotion also now
+  carries the live target's bookkeeping keys forward
+  (`carryForwardBookkeepingFrontmatter`) when the proposal's own frontmatter
+  doesn't set them, so accepting never drops `inferenceProcessed` and forces
+  memory inference to reprocess the memory. A legacy proposal minted before
+  this field existed keeps its exact original raw-hash check.
 
 ### Removed
 

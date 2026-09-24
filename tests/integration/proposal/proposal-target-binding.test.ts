@@ -319,6 +319,110 @@ describe("proposal queue target binding", () => {
     expect(fs.readFileSync(assetPath, "utf8")).toContain("Newer user content.");
   });
 
+  test("accept promotes across a bookkeeping-only target rewrite and carries the bookkeeping forward (STALE, R20)", async () => {
+    const primary = stash("akm-proposal-bookkeeping-primary-");
+    const team = stash("akm-proposal-bookkeeping-team-");
+    const cfg = config(primary, team);
+    const assetPath = path.join(team, "lessons", "bookkeeping-target.md");
+    const original = VALID_LESSON.replace("Bound content.", "Original content.");
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(team, {
+      ref: "team//lessons/bookkeeping-target",
+      source: "propose",
+      force: true,
+      target: { source: "team", root: team },
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    expect(created.beforeHashNormalized).toBeDefined();
+
+    // Simulate a same-run improve bookkeeping rewrite of the target (distill's
+    // salience scoring, memory inference's `inferenceProcessed` marker) —
+    // same authored content, new akm-owned frontmatter keys only.
+    const bookkept = original.replace(
+      "when_to_use: Testing proposal destinations\n---",
+      "when_to_use: Testing proposal destinations\nsalience: 0.82\ninferenceProcessed: true\n---",
+    );
+    fs.writeFileSync(assetPath, bookkept, "utf8");
+
+    const accepted = await akmProposalAccept({ queue: "team", id: created.id, config: cfg });
+    const finalContent = fs.readFileSync(accepted.assetPath, "utf8");
+    expect(finalContent).toContain("Bound content.");
+    expect(finalContent).toContain("salience: 0.82");
+    expect(finalContent).toContain("inferenceProcessed: true");
+  });
+
+  test("accept still rejects when the target's real content changed alongside bookkeeping (STALE, R20)", async () => {
+    const primary = stash("akm-proposal-real-change-primary-");
+    const team = stash("akm-proposal-real-change-team-");
+    const cfg = config(primary, team);
+    const assetPath = path.join(team, "lessons", "real-change-target.md");
+    const original = VALID_LESSON.replace("Bound content.", "Original content.");
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(team, {
+      ref: "team//lessons/real-change-target",
+      source: "propose",
+      force: true,
+      target: { source: "team", root: team },
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    // A real body edit, not just bookkeeping — the normalized-hash guard must
+    // still refuse this.
+    const realChange = original.replace("Original content.", "Someone else's content.");
+    fs.writeFileSync(assetPath, realChange, "utf8");
+
+    await expect(akmProposalAccept({ queue: "team", id: created.id, config: cfg })).rejects.toThrow(
+      /changed after proposal/i,
+    );
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("Someone else's content.");
+  });
+
+  test("a legacy proposal without a normalized before hash keeps the raw check for a bookkeeping-only rewrite", async () => {
+    const primary = stash("akm-proposal-legacy-normalized-primary-");
+    const team = stash("akm-proposal-legacy-normalized-team-");
+    const cfg = config(primary, team);
+    const assetPath = path.join(team, "lessons", "legacy-normalized.md");
+    const original = VALID_LESSON.replace("Bound content.", "Original content.");
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(team, {
+      ref: "team//lessons/legacy-normalized",
+      source: "propose",
+      force: true,
+      target: { source: "team", root: team },
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    expect(created.beforeHashNormalized).toBeDefined();
+
+    // Simulate a proposal minted before `beforeHashNormalized` existed: strip
+    // it from the persisted row so the promote guard falls back to its exact
+    // original raw-hash check.
+    const db = openStateDatabase();
+    try {
+      const row = db.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+        metadata_json: string;
+      };
+      const meta = JSON.parse(row.metadata_json);
+      delete meta.beforeHashNormalized;
+      db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(meta), created.id);
+    } finally {
+      db.close();
+    }
+
+    // Bookkeeping-only rewrite of the target — no authored content changed.
+    const bookkept = original.replace(
+      "when_to_use: Testing proposal destinations\n---",
+      "when_to_use: Testing proposal destinations\ninferenceProcessed: true\n---",
+    );
+    fs.writeFileSync(assetPath, bookkept, "utf8");
+
+    await expect(akmProposalAccept({ queue: "team", id: created.id, config: cfg })).rejects.toThrow(
+      /changed after proposal/i,
+    );
+  });
+
   test("accept rejects a file created after a bound create proposal", async () => {
     const primary = stash("akm-proposal-created-primary-");
     const team = stash("akm-proposal-created-team-");
