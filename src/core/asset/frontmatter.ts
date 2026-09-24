@@ -15,7 +15,7 @@ import fs from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { existingFileMode, writeFileAtomic } from "../common";
 import { recordWrittenPath } from "../write-provenance";
-import { assembleAsset, serializeFrontmatter } from "./asset-serialize";
+import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "./asset-serialize";
 
 /**
  * Sub-signal breakdown produced by `scoreEncodingSalience` in encoding-salience.ts.
@@ -535,9 +535,7 @@ export function computeNormalizedContentHash(raw: string): string {
   const normalized = { ...(data as Record<string, unknown>) };
   for (const key of BOOKKEEPING_FRONTMATTER_KEYS) delete normalized[key];
   const canonicalFrontmatter = yamlStringify(normalized, { sortMapEntries: true }).trimEnd();
-  const normalizedBody = block.content.replace(/^\n+/, "");
-  const bodyWithTrailingNewline = normalizedBody.endsWith("\n") ? normalizedBody : `${normalizedBody}\n`;
-  return sha256Hex(`---\n${canonicalFrontmatter}\n---\n\n${bodyWithTrailingNewline}`);
+  return sha256Hex(assembleAssetFromString(canonicalFrontmatter, block.content));
 }
 
 /**
