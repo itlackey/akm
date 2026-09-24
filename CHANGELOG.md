@@ -8,6 +8,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The lesson quality judge's ACTIONABILITY criterion carried no signal, and
+  the judge's request/parser let a differently-spelled or extra key change
+  the verdict (R16).** Splinter measured ACTIONABILITY at AUC 0.46 against
+  accept/reject outcomes — no better than chance — and averaging it into the
+  score pulled every verdict toward its 3.0 mode, i.e. the review band.
+  `buildJudgePrompt` no longer asks for it;
+  `LESSON_JUDGE_CRITERIA_KEYS` is now `novelty`/`nonRedundancy` only.
+  Separately, `runQualityJudge`'s request sent no `responseSchema` while the
+  prompt text spelled criteria as NON-REDUNDANCY / FEEDBACK ALIGNMENT, so a
+  model that echoed a differently-cased or -spelled key turned the verdict
+  into a parse failure routed to review; and `parseJudgeResponse` averaged
+  over every key present in `scores`, so an unexpected extra key changed the
+  score. `runQualityJudge` now sends a strict `responseSchema` — built from
+  the judge's own expected criteria keys, `additionalProperties: false` at
+  both levels — through the same `supportsJsonSchema`-gated
+  `request.responseSchema` path `src/llm/graph-extract.ts` uses, a no-op for
+  providers that don't opt in; and `parseJudgeResponse` now reads, validates,
+  and averages only the expected keys, silently ignoring any other key
+  instead of averaging or validating it. A missing expected key is still a
+  parse failure, unchanged.
+- **The reflect quality-gate's "no judge configured" warning named a config
+  key nothing reads.** It told users to set
+  `improve.strategies.<name>.processes.reflect.qualityGate.engine`, but
+  `qualityGate` is `{ enabled }` passthrough — `resolveReflectQualityJudgeRunner`
+  always uses the generation runner when it is an LLM, or falls back to
+  `defaults.llmEngine` via `resolveImproveLlmExecution` with no profile/process
+  layer, so that key was never read. The warning now names only
+  `defaults.llmEngine`.
+
 - **The distill/reflect LLM-as-judge quality gate inherited the generation
   runner's temperature, and its averaged score hid which criterion actually
   failed.** `runQualityJudge`'s request only pinned `enableThinking: false`,

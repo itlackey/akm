@@ -214,15 +214,28 @@ describe("runLessonQualityJudge — pinned temperature (R13)", () => {
   });
 });
 
-describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
+describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => {
   test('new-shape {"scores": {...}} JSON parses to the correct average and exposes criteria', async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 4, actionability: 5, nonRedundancy: 3 }, reason: "solid" }),
+      JSON.stringify({ scores: { novelty: 4, nonRedundancy: 3 }, reason: "solid" }),
     );
 
     expect(result.pass).toBe(true);
-    expect(result.score).toBeCloseTo((4 + 5 + 3) / 3, 9);
-    expect(result.criteria).toEqual({ novelty: 4, actionability: 5, nonRedundancy: 3 });
+    expect(result.score).toBeCloseTo((4 + 3) / 2, 9);
+    expect(result.criteria).toEqual({ novelty: 4, nonRedundancy: 3 });
+  });
+
+  test("JUDGE2: an unexpected extra key (e.g. dropped ACTIONABILITY) is ignored — not averaged, not validated", async () => {
+    // A model still echoing the retired ACTIONABILITY criterion, or one wildly
+    // out of range (99), must not change the score or fail the parse: only
+    // the two expected keys (novelty, nonRedundancy) are read.
+    const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
+      JSON.stringify({ scores: { novelty: 4, actionability: 99, nonRedundancy: 3 }, reason: "solid" }),
+    );
+
+    expect(result.pass).toBe(true);
+    expect(result.score).toBeCloseTo((4 + 3) / 2, 9);
+    expect(result.criteria).toEqual({ novelty: 4, nonRedundancy: 3 });
   });
 
   test('old-shape {"score": float} JSON still parses, with no criteria field', async () => {
@@ -237,7 +250,7 @@ describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
 
   test("a criterion of 0 routes to review exactly as a parse failure does today", async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 0, actionability: 4, nonRedundancy: 4 }, reason: "bad" }),
+      JSON.stringify({ scores: { novelty: 0, nonRedundancy: 4 }, reason: "bad" }),
     );
 
     expect(result.pass).toBe(false);
@@ -248,7 +261,7 @@ describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
 
   test("a criterion of 7 (out of range) routes to review exactly as a parse failure does today", async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 7, actionability: 4, nonRedundancy: 4 }, reason: "bad" }),
+      JSON.stringify({ scores: { novelty: 7, nonRedundancy: 4 }, reason: "bad" }),
     );
 
     expect(result.pass).toBe(false);
@@ -268,8 +281,8 @@ describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
   });
 
   test("a partial scores object (missing criterion key) routes to review exactly as a parse failure does today", async () => {
-    // Only `novelty` present — `actionability` and `nonRedundancy` are missing.
-    // A truncated or partial judge response must not auto-average over whatever arrived.
+    // Only `novelty` present — `nonRedundancy` is missing. A truncated or
+    // partial judge response must not auto-average over whatever arrived.
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
       JSON.stringify({ scores: { novelty: 5 }, reason: "partial" }),
     );
@@ -282,14 +295,14 @@ describe("runLessonQualityJudge — per-criterion scores (R16)", () => {
 
   test("the review-needed and auto-reject thresholds (3.5 / 2.5) are unchanged for the averaged criteria score", async () => {
     const reviewBand = await runLessonQualityJudge(configWithLlm(), "body", "source", async () =>
-      JSON.stringify({ scores: { novelty: 3, actionability: 3, nonRedundancy: 3 }, reason: "uncertain" }),
+      JSON.stringify({ scores: { novelty: 3, nonRedundancy: 3 }, reason: "uncertain" }),
     );
     expect(reviewBand.pass).toBe(false);
     expect(reviewBand.reviewNeeded).toBe(true);
     expect(reviewBand.score).toBeCloseTo(3, 9);
 
     const rejectBand = await runLessonQualityJudge(configWithLlm(), "body", "source", async () =>
-      JSON.stringify({ scores: { novelty: 2, actionability: 2, nonRedundancy: 2 }, reason: "weak" }),
+      JSON.stringify({ scores: { novelty: 2, nonRedundancy: 2 }, reason: "weak" }),
     );
     expect(rejectBand.pass).toBe(false);
     expect(rejectBand.reviewNeeded).toBeUndefined();
@@ -321,5 +334,86 @@ describe("runReflectQualityJudge — per-criterion scores (R16)", () => {
     expect(result.score).toBe(-1);
     expect(result.reviewNeeded).toBe(true);
     expect(result.criteria).toBeUndefined();
+  });
+});
+
+describe("runLessonQualityJudge / runReflectQualityJudge — responseSchema (JUDGE2)", () => {
+  function configWithSchemaSupport(supportsJsonSchema: boolean): AkmConfig {
+    return {
+      semanticSearchMode: "auto",
+      stashDir: "/tmp/does-not-matter",
+      sources: [],
+      defaultWriteTarget: "stash",
+      engines: {
+        default: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "test-model",
+          supportsJsonSchema,
+        },
+      },
+      defaults: { llmEngine: "default" },
+    } as unknown as AkmConfig;
+  }
+
+  test("lesson judge sends a responseSchema with exactly its two expected keys when supportsJsonSchema: true", async () => {
+    let receivedSchema: Record<string, unknown> | undefined;
+    const result = await runLessonQualityJudge(
+      configWithSchemaSupport(true),
+      "some lesson body",
+      "some source body",
+      async (_connection, _messages, options) => {
+        receivedSchema = options?.responseSchema;
+        return JSON.stringify({ scores: { novelty: 4, nonRedundancy: 4 }, reason: "ok" });
+      },
+    );
+
+    expect(result.pass).toBe(true);
+    expect(receivedSchema).toBeDefined();
+    const scoresSchema = (
+      receivedSchema as { properties: { scores: { required: string[]; properties: Record<string, unknown> } } }
+    ).properties.scores;
+    expect(scoresSchema.required).toEqual(["novelty", "nonRedundancy"]);
+    expect(Object.keys(scoresSchema.properties)).toEqual(["novelty", "nonRedundancy"]);
+  });
+
+  test("lesson judge sends no responseSchema when the runner does not opt into supportsJsonSchema", async () => {
+    let receivedSchema: Record<string, unknown> | undefined;
+    let schemaKeyPresent = true;
+    const result = await runLessonQualityJudge(
+      configWithSchemaSupport(false),
+      "some lesson body",
+      "some source body",
+      async (_connection, _messages, options) => {
+        schemaKeyPresent = Boolean(options && Object.hasOwn(options, "responseSchema"));
+        receivedSchema = options?.responseSchema;
+        return JSON.stringify({ scores: { novelty: 4, nonRedundancy: 4 }, reason: "ok" });
+      },
+    );
+
+    expect(result.pass).toBe(true);
+    expect(schemaKeyPresent).toBe(false);
+    expect(receivedSchema).toBeUndefined();
+  });
+
+  test("reflect judge's responseSchema uses the reflect judge's own criteria keys", async () => {
+    let receivedSchema: Record<string, unknown> | undefined;
+    const result = await runReflectQualityJudge(
+      configWithSchemaSupport(true),
+      "candidate content",
+      "source content",
+      [],
+      async (_connection, _messages, options) => {
+        receivedSchema = options?.responseSchema;
+        return JSON.stringify({
+          scores: { feedbackAlignment: 4, preservation: 4, quality: 4 },
+          reason: "ok",
+        });
+      },
+    );
+
+    expect(result.pass).toBe(true);
+    const scoresSchema = (receivedSchema as { properties: { scores: { required: string[] } } }).properties.scores;
+    expect(scoresSchema.required).toEqual(["feedbackAlignment", "preservation", "quality"]);
   });
 });

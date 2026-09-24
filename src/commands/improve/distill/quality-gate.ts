@@ -98,8 +98,7 @@ export function buildJudgePrompt(
     "",
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
     "1. NOVELTY: Does the lesson add information not already present in the source asset?",
-    "2. ACTIONABILITY: Can an agent follow this lesson without additional context?",
-    "3. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
+    "2. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
     "",
     "Source asset content:",
     "```",
@@ -127,7 +126,7 @@ export function buildJudgePrompt(
   lines.push("```");
   lines.push("");
   lines.push(
-    'Return ONLY valid JSON, no prose: {"scores": {"novelty": <1-5 integer>, "actionability": <1-5 integer>, "nonRedundancy": <1-5 integer>}, "reason": "<one sentence>"}',
+    'Return ONLY valid JSON, no prose: {"scores": {"novelty": <1-5 integer>, "nonRedundancy": <1-5 integer>}, "reason": "<one sentence>"}',
   );
   return lines.join("\n");
 }
@@ -218,22 +217,29 @@ export interface QualityJudgeOptions {
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }
 
-/** Criterion keys `buildJudgePrompt` asks the lesson judge to score. */
-const LESSON_JUDGE_CRITERIA_KEYS = ["novelty", "actionability", "nonRedundancy"] as const;
+/**
+ * Criterion keys `buildJudgePrompt` asks the lesson judge to score.
+ * R16: ACTIONABILITY dropped (splinter measured AUC 0.46 against accept/reject
+ * outcomes — no signal — and averaging it pulled scores toward the review band).
+ */
+const LESSON_JUDGE_CRITERIA_KEYS = ["novelty", "nonRedundancy"] as const;
 /** Criterion keys `buildReflectJudgePrompt` asks the reflect judge to score. */
 const REFLECT_JUDGE_CRITERIA_KEYS = ["feedbackAlignment", "preservation", "quality"] as const;
 
 /**
- * R16 / r2-2: parse the judge's JSON response, accepting either the current
- * per-criterion shape (`{"scores": {...}, "reason"}`, averaged in code) or
- * the old averaged-float shape (`{"score": 1-5, "reason"}`) a model may still
- * return. Each criterion (or the bare score) must be a finite number in 1..5;
- * anything else — an out-of-range or non-finite value, an empty `scores`
- * object, a non-string `reason` — is a parse failure so the caller routes to
- * review exactly as before. `expectedCriteriaKeys` names the criteria this
- * judge's prompt asked for; a `scores` object missing any of them is a parse
- * failure too, so a truncated or partial response can't auto-pass on
- * whatever keys happened to arrive.
+ * R16 / r2-2 / JUDGE2: parse the judge's JSON response, accepting either the
+ * current per-criterion shape (`{"scores": {...}, "reason"}`, averaged in
+ * code) or the old averaged-float shape (`{"score": 1-5, "reason"}`) a model
+ * may still return. `expectedCriteriaKeys` names the criteria this judge's
+ * prompt asked for; only those keys are read, validated, and averaged — a
+ * `scores` object missing any of them is a parse failure (a truncated or
+ * partial response can't auto-pass on whatever keys happened to arrive), and
+ * any OTHER key present (e.g. a model spelling a key differently, or echoing
+ * a criterion the prompt didn't ask for) is silently ignored rather than
+ * changing the score or failing the parse. Each expected criterion (or the
+ * bare score) must be a finite number in 1..5; anything else — an
+ * out-of-range or non-finite value, a non-string `reason` — is a parse
+ * failure so the caller routes to review exactly as before.
  */
 function parseJudgeResponse(
   raw: string,
@@ -245,15 +251,16 @@ function parseJudgeResponse(
 
   if (parsed.scores !== undefined) {
     if (typeof parsed.scores !== "object" || parsed.scores === null || Array.isArray(parsed.scores)) return undefined;
-    const entries = Object.entries(parsed.scores as Record<string, unknown>);
-    if (entries.length === 0) return undefined;
+    const scores = parsed.scores as Record<string, unknown>;
     const criteria: Record<string, number> = {};
-    for (const [key, value] of entries) {
+    let sum = 0;
+    for (const key of expectedCriteriaKeys) {
+      const value = scores[key];
       if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || value > 5) return undefined;
       criteria[key] = value;
+      sum += value;
     }
-    if (expectedCriteriaKeys.some((key) => !Object.hasOwn(criteria, key))) return undefined;
-    const score = entries.reduce((sum, [, value]) => sum + (value as number), 0) / entries.length;
+    const score = sum / expectedCriteriaKeys.length;
     return { score, reason, criteria };
   }
 
@@ -262,6 +269,37 @@ function parseJudgeResponse(
   }
 
   return undefined;
+}
+
+/**
+ * JUDGE2: strict JSON Schema for a judge response, sent through the same
+ * `supportsJsonSchema`-gated `request.responseSchema` path
+ * `src/llm/graph-extract.ts` (`GRAPH_EXTRACTION_JSON_SCHEMA`) uses — a
+ * provider that doesn't opt in (`runner.connection.supportsJsonSchema`) sees
+ * no change. Built from `expectedCriteriaKeys` so each judge's schema matches
+ * exactly the criteria its own prompt asks for; `additionalProperties: false`
+ * at both levels means a model that spells a key differently is rejected by
+ * a schema-enforcing provider rather than silently producing a parse failure.
+ */
+function buildJudgeResponseSchema(expectedCriteriaKeys: readonly string[]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const key of expectedCriteriaKeys) {
+    properties[key] = { type: "integer", minimum: 1, maximum: 5 };
+  }
+  return {
+    type: "object",
+    required: ["scores", "reason"],
+    additionalProperties: false,
+    properties: {
+      scores: {
+        type: "object",
+        required: [...expectedCriteriaKeys],
+        additionalProperties: false,
+        properties,
+      },
+      reason: { type: "string" },
+    },
+  };
 }
 
 async function runQualityJudge(
@@ -299,6 +337,9 @@ async function runQualityJudge(
         // (measured: 10/16 verdict flips at 0.3, 0/16 at 0). Pinned regardless
         // of what `engines.<name>.temperature` the runner resolves.
         temperature: 0,
+        // JUDGE2: bounds the response to exactly this judge's criteria on
+        // providers that opt into structured output; a no-op otherwise.
+        responseSchema: buildJudgeResponseSchema(expectedCriteriaKeys),
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(chat ? { chat } : {}),

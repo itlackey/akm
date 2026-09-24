@@ -2351,7 +2351,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   if (qualityGateSkippedNoJudge) {
     warnOnce(
       "reflect-quality-gate-no-judge",
-      "Reflect proposal quality gate has no LLM configured to judge proposals (set defaults.llmEngine, or improve.strategies.<name>.processes.reflect.qualityGate.engine). Skipping the gate for this run; the proposal is queued for human review instead.",
+      "Reflect proposal quality gate has no LLM configured to judge proposals (set defaults.llmEngine). Skipping the gate for this run; the proposal is queued for human review instead.",
     );
     qualityJudgeSelection = Object.freeze({ enabled: false, runner: undefined });
   }
