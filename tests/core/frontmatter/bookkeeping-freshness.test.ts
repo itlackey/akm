@@ -9,7 +9,14 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { carryForwardBookkeepingFrontmatter, computeNormalizedContentHash } from "../../../src/core/asset/frontmatter";
+import { assembleAsset } from "../../../src/core/asset/asset-serialize";
+import {
+  carryForwardBookkeepingFrontmatter,
+  computeNormalizedContentHash,
+  parseFrontmatter,
+  parseFrontmatterBlock,
+  writeSalienceToFrontmatter,
+} from "../../../src/core/asset/frontmatter";
 
 describe("computeNormalizedContentHash", () => {
   test("is insensitive to a salience bookkeeping rewrite", () => {
@@ -62,6 +69,34 @@ describe("computeNormalizedContentHash", () => {
     // Should not throw, and should be stable across repeated calls.
     expect(computeNormalizedContentHash(raw)).toBe(computeNormalizedContentHash(raw));
   });
+});
+
+describe("computeNormalizedContentHash — invariant under the real bookkeeping writers", () => {
+  const salienceInputs = { novelty: 0.85, magnitude: 0.75, predictionError: 1 };
+
+  const fixtures: Array<[string, string]> = [
+    ["body directly after the fence", "---\ntype: memory\nname: test\n---\nBody content here.\n"],
+    ["body after a blank line", "---\ntype: memory\nname: test\n---\n\nBody content here.\n"],
+    ["body with no trailing newline", "---\ntype: memory\nname: test\n---\n\nBody content here."],
+    ["empty frontmatter block", "---\n---\nBody content here.\n"],
+  ];
+
+  for (const [label, raw] of fixtures) {
+    test(`${label}: unchanged after writeSalienceToFrontmatter`, () => {
+      const before = computeNormalizedContentHash(raw);
+      const after = writeSalienceToFrontmatter(raw, 0.8, salienceInputs);
+      expect(computeNormalizedContentHash(after)).toBe(before);
+    });
+
+    test(`${label}: unchanged after the assembleAsset inference rewrite`, () => {
+      const before = computeNormalizedContentHash(raw);
+      const after = assembleAsset(
+        { ...parseFrontmatter(raw).data, inferenceProcessed: true },
+        parseFrontmatterBlock(raw)!.content,
+      );
+      expect(computeNormalizedContentHash(after)).toBe(before);
+    });
+  }
 });
 
 describe("carryForwardBookkeepingFrontmatter", () => {
