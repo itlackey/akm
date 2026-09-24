@@ -537,11 +537,12 @@ describe("drainProposals — failed reporting (#921)", () => {
       fakeAccept(),
       fakeReject(),
     );
-    // Dry-run performs zero writes, so it still predicts the refusal via
-    // `failed` rather than actually rejecting.
+    // Dry-run performs zero writes, but still predicts the same outcome as a
+    // real run: the stale-target refusal is not a merit rejection, so it is
+    // reported under `rejected`, not `failed`.
     expect(dryRunResult.promoted).toEqual([]);
-    expect(dryRunResult.rejected).toEqual([]);
-    expect(dryRunResult.failed).toEqual([expect.objectContaining({ id: created.id, reason: "stale-target" })]);
+    expect(dryRunResult.failed).toEqual([]);
+    expect(dryRunResult.rejected).toEqual([created.id]);
 
     // The real run (no promote/reject seams — exercises the actual write
     // path) hits the exact same guard, then resolves it with the drain's
@@ -903,6 +904,45 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(result.rejected).toEqual([]);
     expect(result.promoted).toEqual([]);
     expect(result.deferred.map((item) => item.id)).toEqual([deferred.id]);
+  });
+
+  test("judgment-tier dry-run predicts the same stale-target refusal a real judged promote would hit (parity)", async () => {
+    const stash = makeStashDir();
+    const assetPath = path.join(stash, "lessons", "judgment-dry-run-stale.md");
+    fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Original: prefer rg"), "utf8");
+    const created = createProposal(stash, {
+      ref: "lessons/judgment-dry-run-stale",
+      source: "distill",
+      force: true,
+      sourceRun: "run-x",
+      target: { source: "stash", root: stash },
+      payload: { content: VALID_LESSON, frontmatter: { description: "judgment-dry-run-stale fixture" } },
+    });
+    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
+    // The target changes again after the proposal is minted — the exact
+    // condition the judged-accept preflight must refuse.
+    fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Newer: someone else edited this"), "utf8");
+
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable distill" }));
+    const promoteFn = fakeAccept();
+    const rejectFn = fakeReject();
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, dryRun: true, config: makeConfig(stash) }),
+      promoteFn,
+      rejectFn,
+      { chat },
+    );
+
+    // Dry-run performs zero writes, but still predicts the same outcome a real
+    // judged promote would hit: the stale-target refusal, reported under
+    // `rejected` rather than as a promotion.
+    expect(result.promoted).toEqual([]);
+    expect(result.rejected).toEqual([created.id]);
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(rejectFn).not.toHaveBeenCalled();
+    expect(getProposal(stash, created.id).status).toBe("pending");
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("Newer: someone else edited this");
   });
 });
 

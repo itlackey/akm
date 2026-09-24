@@ -698,13 +698,19 @@ async function runJudgmentTier(input: JudgmentTierInput): Promise<{
     if (input.dryRun) {
       try {
         if (input.config) {
-          preflightProposalPromotion(input.config, proposal, {
+          const preflight = preflightProposalPromotion(input.config, proposal, {
             ...(input.target ? { target: input.target } : {}),
             gateDecision: { outcome: "auto-accepted", reason: "judgment-accept", gate: input.gateLabel },
           });
+          assertProposalTargetFresh(proposal, preflight.assetPath);
         }
       } catch (err) {
-        warn(`[triage] judgment preflight failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
+        const message = err instanceof Error ? err.message : String(err);
+        if (categorizeDrainFailure(message, "promote-error") === STALE_TARGET_GATE_REASON) {
+          rejected.push(item.id);
+          continue;
+        }
+        warn(`[triage] judgment preflight failed for ${item.id}: ${message}`);
         stillDeferred.push(item);
         continue;
       }
@@ -963,7 +969,12 @@ export async function drainProposals(
           result.promoted.push(id);
           deterministicPromoted += 1;
         } catch (err) {
-          const message = pushDrainFailure(result, id, err, "promote-error");
+          const message = err instanceof Error ? err.message : String(err);
+          if (categorizeDrainFailure(message, "promote-error") === STALE_TARGET_GATE_REASON) {
+            result.rejected.push(id);
+            continue;
+          }
+          pushDrainFailure(result, id, err, "promote-error");
           warn(`[triage] preflight failed for ${id}: ${message}`);
         }
       }

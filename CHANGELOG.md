@@ -290,7 +290,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   "previously rejected" context (`reflect.ts`'s `readRejectedProposals`,
   `distill.ts`'s `buildDistillMessages`) and the accept-rate health metric
   (`health/accept-rate.ts`) now exclude stale-target rejections too, so a
-  procedural refusal doesn't misrepresent content quality.
+  procedural refusal doesn't misrepresent content quality. `--dry-run` now
+  predicts the same outcome: a stale-target promote failure it detects is
+  reported under `rejected`, matching what a real run does, instead of under
+  `failed`.
 
 ### Added
 
