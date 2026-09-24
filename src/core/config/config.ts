@@ -34,6 +34,7 @@ import type {
 import { upgradeConfigVersion } from "./config-version-shim";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { migrateLegacySourceShape } from "./legacy-source-shape-shim";
+import { stripRetiredExperimentalKeys } from "./retired-experimental-keys-shim";
 import { isApiKeyReference, SECRET_STORE_REFERENCE_PATTERN } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
@@ -211,7 +212,8 @@ export function acquireConfigReadFence(): { config: AkmConfig; release: () => vo
  * before it is either validated (the local/top-level file) or merged in as
  * an `extends` base: JSONC parse already done by the caller, then version
  * shim, then legacy `stashDir`/`sources[]`/`installed[]` shim, then the
- * legacy `extraParams` lift (#852). Shared by {@link parseAndValidateConfigText}
+ * legacy `extraParams` lift (#852), then the retired `experimental.*` key
+ * shim. Shared by {@link parseAndValidateConfigText}
  * (the local file) and {@link resolveExtendsChain} (each base in the chain) so
  * a fleet-shared base config can carry its own old `configVersion` / legacy
  * shape independently of the file that extends it.
@@ -219,7 +221,8 @@ export function acquireConfigReadFence(): { config: AkmConfig; release: () => vo
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
   const versioned = upgradeConfigVersion(parseConfigText(text, sourcePath), sourcePath);
   const parsedRaw = migrateLegacySourceShape(versioned, sourcePath);
-  return liftExtraParamsOrThrow(parsedRaw, sourcePath);
+  const liftedRaw = liftExtraParamsOrThrow(parsedRaw, sourcePath);
+  return stripRetiredExperimentalKeys(liftedRaw, sourcePath);
 }
 
 /**

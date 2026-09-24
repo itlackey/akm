@@ -24,6 +24,12 @@ import {
   findConfigExtraParamsLift,
 } from "./migrate/config-extra-params";
 import {
+  applyConfigRetiredExperimentalKeys,
+  type ConfigRetiredExperimentalKeysPlan,
+  type ConfigRetiredExperimentalKeysResult,
+  findConfigRetiredExperimentalKeys,
+} from "./migrate/config-retired-experimental-keys";
+import {
   applyConfigSchedulerSourceIdMigration,
   type ConfigSchedulerSourceIdPlan,
   type ConfigSchedulerSourceIdResult,
@@ -60,6 +66,7 @@ export interface CombinedMigrationPlan {
   blockers: string[];
   configExtraParams: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
   configSchedulerSourceIds?: ConfigSchedulerSourceIdResult | { pending: ConfigSchedulerSourceIdPlan };
+  configRetiredExperimentalKeys: ConfigRetiredExperimentalKeysResult | { pending: ConfigRetiredExperimentalKeysPlan };
   stateMigrations: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
@@ -147,6 +154,9 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       status: "blocked",
       blockers: pendingLift.lifted,
       configExtraParams,
+      configRetiredExperimentalKeys: apply
+        ? applyConfigRetiredExperimentalKeys(configPath)
+        : { pending: findConfigRetiredExperimentalKeys(configPath) },
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
@@ -169,9 +179,20 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       ),
       configExtraParams,
       configSchedulerSourceIds,
+      configRetiredExperimentalKeys: apply
+        ? applyConfigRetiredExperimentalKeys(configPath)
+        : { pending: findConfigRetiredExperimentalKeys(configPath) },
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
+
+  // Retired `experimental.*` keys never block anything — the read shim
+  // already tolerates them (src/core/config/retired-experimental-keys-shim.ts),
+  // so this is cleanup, not a precondition later steps depend on.
+  const configRetiredExperimentalKeys = apply
+    ? applyConfigRetiredExperimentalKeys(configPath)
+    : { pending: findConfigRetiredExperimentalKeys(configPath) };
+  if (apply && (configRetiredExperimentalKeys as ConfigRetiredExperimentalKeysResult).applied) resetConfigCache();
 
   // State next, and before the task migrators: they open state.db themselves,
   // and an ordinary open refuses a historical-destructive migration by design.
@@ -215,6 +236,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     blockers: [...taskV3.blockers, ...taskV4.blockers],
     configExtraParams,
     configSchedulerSourceIds,
+    configRetiredExperimentalKeys,
     stateMigrations,
     schedulerActivation,
     taskV3Migration: taskV3.taskV3Migration,

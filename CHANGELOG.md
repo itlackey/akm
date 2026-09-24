@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A config carrying the retired `experimental.workflowEngine` key no longer
+  fails to load.** `ExperimentalConfigSchema` moved from `.passthrough()` to
+  `.strict()` in 0.9.16 (`cc6152e02`), after `workflowEngine` had already been
+  removed from it in `e0655d13c`; a real config a 0.9.15 install wrote (whose
+  passthrough still accepted the key) then failed every command with
+  `Invalid config: experimental: Unrecognized key(s) in object: 'workflowEngine'`.
+  The config loader now strips known-retired `experimental.*` keys in memory
+  before validation, warning once and naming `akm migrate apply`; a genuinely
+  unknown/misspelled key (e.g. `improveAutonomyy`) still fails closed.
+  `akm migrate apply` removes the retired key from `config.json` on disk
+  (with the usual backup), and `--dry-run` reports the pending removal.
+
 ## [0.9.17-alpha.1] - 2026-09-24
 
 ### Added
