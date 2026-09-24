@@ -36,16 +36,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `defaults.llmEngine` via `resolveImproveLlmExecution` with no profile/process
   layer, so that key was never read. The warning now names only
   `defaults.llmEngine`.
-- **Reflect had no way to exclude raw wiki-ingest snapshots, which are the
-  longest generations in the ledger (89.5s/161.8s observed).** `wikis/articles/raw/*.md`
-  website snapshots index as `knowledge/wikis/articles/raw/<slug>`, and
-  reflect's `allowedTypes` filter is type-only, so it can't exclude a subset
-  of the `knowledge` type. `processes.reflect` now accepts an optional
-  `excludeRefPrefixes: string[]` — conceptId prefixes, matched after
-  stripping an optional `bundle//` from both the ref and each prefix.
-  `shouldSkipRef` skips a matching ref with reason `exclude-filter`, for
-  reflect only (distill and consolidate are memory-only and reject the key).
-
 - **The distill/reflect LLM-as-judge quality gate inherited the generation
   runner's temperature, and its averaged score hid which criterion actually
   failed.** `runQualityJudge`'s request only pinned `enableThinking: false`,
@@ -304,6 +294,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `AkmImproveResult.engineProbe`. Omitted entirely when `--require-engines`
   was not passed; a result persisted without it (every run before this
   change) still decodes. `--require-engines --dry-run` results carry it too.
+- **Reflect had no way to exclude raw wiki-ingest snapshots, which are the
+  longest generations in the ledger (89.5s/161.8s observed).** `wikis/articles/raw/*.md`
+  website snapshots index as `knowledge/wikis/articles/raw/<slug>`, and
+  reflect's `allowedTypes` filter is type-only, so it can't exclude a subset
+  of the `knowledge` type. `processes.reflect` now accepts an optional
+  `excludeRefPrefixes: string[]` — conceptId prefixes, matched after
+  stripping an optional `bundle//` from both the ref and each prefix.
+  `shouldSkipRef` skips a matching ref with reason `exclude-filter`, for
+  reflect only (distill and consolidate are memory-only and reject the key).
+  A trailing `/` on a prefix is ignored, so
+  `"knowledge/wikis/articles/raw/"` excludes the same refs as
+  `"knowledge/wikis/articles/raw"`.
 
 ### Removed
 
