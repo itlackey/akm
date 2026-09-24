@@ -8,6 +8,7 @@ import {
   projectResolvedProcessRouting,
   resolveImprovePlan,
   resolveImproveStrategy,
+  shouldSkipRef,
 } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
@@ -82,6 +83,56 @@ describe("resolveImproveStrategy", () => {
     expect(() =>
       resolveImproveStrategy("does-not-exist", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
     ).toThrow(ConfigError);
+  });
+});
+
+// WIKI (R12): reflect's excludeRefPrefixes filter keeps raw wiki-ingest
+// snapshots (type `knowledge`, so allowedTypes alone can't exclude them) out
+// of reflect without affecting distill/consolidate.
+describe("shouldSkipRef excludeRefPrefixes (reflect only)", () => {
+  function strategyWithExcluded(excludeRefPrefixes: string[]) {
+    return resolveImproveStrategy("default", {
+      semanticSearchMode: "off",
+      improve: { strategies: { default: { processes: { reflect: { excludeRefPrefixes } } } } },
+    }).config;
+  }
+
+  test("skips a ref under an excluded prefix with reason exclude-filter", () => {
+    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw"]);
+    expect(shouldSkipRef("knowledge/wikis/articles/raw/some-page", "reflect", strategy)).toEqual({
+      skip: true,
+      reason: "exclude-filter",
+    });
+  });
+
+  test("matches both bundle-qualified and short forms", () => {
+    const strategy = strategyWithExcluded(["stash//knowledge/wikis/articles/raw"]);
+    expect(shouldSkipRef("knowledge/wikis/articles/raw/some-page", "reflect", strategy).skip).toBe(true);
+    expect(shouldSkipRef("stash//knowledge/wikis/articles/raw/some-page", "reflect", strategy).skip).toBe(true);
+  });
+
+  test("leaves other refs unaffected", () => {
+    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw"]);
+    const result = shouldSkipRef("knowledge/guides/http-caching", "reflect", strategy);
+    expect(result.skip).toBe(false);
+  });
+
+  test("does not apply the filter to distill", () => {
+    const strategy = resolveImproveStrategy("default", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          default: {
+            processes: {
+              distill: { allowedTypes: ["memory", "knowledge"] },
+              reflect: { excludeRefPrefixes: ["knowledge/wikis/articles/raw"] },
+            },
+          },
+        },
+      },
+    }).config;
+    const result = shouldSkipRef("knowledge/wikis/articles/raw/some-page", "distill", strategy);
+    expect(result.skip).toBe(false);
   });
 });
 

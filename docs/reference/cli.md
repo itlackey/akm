@@ -2459,8 +2459,9 @@ configures a judgment engine. Each row carries `enabled`, the resolved
 `engine`/`model` (llm-backed processes only) and `engineKind`, this process's
 own lowering `notices`, and — for reflect/distill/consolidate only —
 `eligibleRefs`, the count of this run's `effectiveRefs` the process would act
-on (`shouldSkipRef`'s allowedTypes/process-disabled check; a count, not a
-per-ref matrix, to keep the envelope bounded). A row that could not resolve an
+on (`shouldSkipRef`'s allowedTypes/excludeRefPrefixes (reflect only)/
+process-disabled check; a count, not a per-ref matrix, to keep the envelope
+bounded). A row that could not resolve an
 engine or credential carries `unavailable: {configKey, reason}` — the same
 data behind `skippedProcesses` above, reshaped per process. When the process
 resolved a real engine whose credential just isn't reachable here, the row
