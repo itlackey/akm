@@ -79,6 +79,7 @@ import type {
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { AkmReflectOptions } from "./reflect";
+import { readOnlyEventsContext } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { errMessage } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -681,7 +682,16 @@ async function runLoopDistillPass(
         const lookup = (ref: string) => defaultLookup(ref, dedupeStashDir);
         const filePath = await lookup(durableInputRef);
         const assetContent = filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
-        const { events: feedbackEvents } = readEvents({ ref: feedbackRef, type: "feedback" }, { readOnly: true });
+        // PRECHECK (tier3-0917-r3, r3-4): reuse the loop's long-lived
+        // eventsCtx.db handle when one is open, instead of opening a fresh
+        // read-only state.db connection per memory ref (R25). Degrades to
+        // the previous readOnly-open when no live handle is present (e.g.
+        // this function invoked without a run-scoped eventsCtx), via the
+        // same readOnlyEventsContext helper reflect.ts's read call sites use.
+        const { events: feedbackEvents } = readEvents(
+          { ref: feedbackRef, type: "feedback" },
+          readOnlyEventsContext(eventsCtx),
+        );
         const promotesToKnowledge = await wouldPromoteMemoryToKnowledge({
           inputRef: planned.ref,
           durableInputRef,

@@ -56,6 +56,7 @@ describe("buildDryRunResult — the P3 envelope", () => {
       selectedStrategy: { name: "default" },
       scope: { mode: "all" as const },
       resolvedPlan: { processes: {}, triageJudgment: null, autonomyGated: [], engineUnavailable: [] },
+      options: {},
     } as unknown as Parameters<typeof buildDryRunResult>[0];
     const collected = {
       plannedRefs: [{ ref: "memories/a", reason: "scope-type" }] as ImproveEligibleRef[],

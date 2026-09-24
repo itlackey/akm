@@ -221,7 +221,7 @@ const MAX_GLOBAL_FEEDBACK_LINES = 20;
  * all assets so `akm reflect` can operate in a general "review recent
  * signals" mode. Best-effort — a missing or empty events stream returns `[]`.
  */
-function readOnlyEventsContext(ctx?: EventsContext): EventsContext {
+export function readOnlyEventsContext(ctx?: EventsContext): EventsContext {
   return ctx?.db ? ctx : { ...(ctx ?? {}), readOnly: true };
 }
 
