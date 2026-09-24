@@ -112,6 +112,7 @@ import {
   AUTOMATED_PROPOSAL_SOURCES,
   type EligibilitySource,
   isAutomatedProposalSource,
+  isStaleTargetRejection,
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
@@ -852,9 +853,13 @@ function checkFingerprintAndBackoff(
   }
 
   // Rejection backoff (RETAINED cooldown semantics): a recent rejection for
-  // this ref+source suppresses new proposals until the window expires.
+  // this ref+source suppresses new proposals until the window expires. A
+  // stale-target auto-reject (STALE, R20) is excluded — it is not a
+  // judgement on the content, and counting it here would suppress a
+  // legitimate re-propose against the ref's now-current content.
   const rejected = listStateProposals(db, { stashDir, ref: normalizedRef, status: "rejected" })
     .filter((p) => p.source === source)
+    .filter((p) => !isStaleTargetRejection(p))
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
 
   const mostRecent = rejected[0];

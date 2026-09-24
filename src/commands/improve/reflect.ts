@@ -76,7 +76,7 @@ import { collectDispatchSensitiveValues, type RunnerSeams } from "../../integrat
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
-import type { EligibilitySource } from "../proposal/proposal-types";
+import { type EligibilitySource, isStaleTargetRejection } from "../proposal/proposal-types";
 import {
   type CreateProposalInput,
   isProposalSkipped,
@@ -302,7 +302,12 @@ function readRejectedProposals(
   proposalsCtx?: ProposalsContext,
 ): RejectedProposalContext[] {
   if (!ref) return [];
+  // Exclude the drain's stale-target auto-rejects (STALE, R20): those are a
+  // procedural refusal (the target changed after mint), not a judgement on
+  // the content, and would mislead this Reflexion-style "don't repeat this"
+  // context.
   return listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, proposalsCtx)
+    .filter((p) => !isStaleTargetRejection(p))
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
     .slice(0, MAX_REJECTED_PROPOSALS)
     .map((p) => ({

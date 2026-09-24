@@ -78,7 +78,7 @@ import type { ChatMessage, chatCompletion } from "../../llm/client";
 import { callStructured, preflightStructuredLlmRunner } from "../../llm/structured-call";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
-import type { EligibilitySource } from "../proposal/proposal-types";
+import { type EligibilitySource, isStaleTargetRejection } from "../proposal/proposal-types";
 import {
   isProposalSkipped,
   listProposals,
@@ -1763,11 +1763,16 @@ async function buildDistillMessages(args: {
   } = args;
   // Inject last 1–3 rejected proposals for this ref as Reflexion-style
   // verbal-RL context so the LLM avoids regenerating refused proposals.
+  // Exclude the drain's stale-target auto-rejects (STALE, R20): those are a
+  // procedural refusal (the target changed after mint), not a judgement on
+  // the content, and would mislead this Reflexion-style "don't repeat this"
+  // context.
   const rejectedForRef = listProposalsReadOnly(
     stash,
     { ref: inputRef, status: "rejected", includeArchive: true },
     options.ctx,
   )
+    .filter((p) => !isStaleTargetRejection(p))
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
     .slice(0, MAX_REJECTED_PROPOSALS)
     .map((p) => ({

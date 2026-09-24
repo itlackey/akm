@@ -201,6 +201,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   doesn't set them, so accepting never drops `inferenceProcessed` and forces
   memory inference to reprocess the memory. A legacy proposal minted before
   this field existed keeps its exact original raw-hash check.
+- **A stale-target promote failure was retried, and refused, identically
+  every drain run forever (R20).** The drain already categorized a
+  "target changed/was created after proposal" failure as `stale-target`
+  (`categorizeDrainFailure`), but left the row pending either way — so the
+  same proposals failed the same way on every subsequent `akm proposal
+  drain` / triage pass. Both promote-failure sites (`drainProposals`'s
+  deterministic loop and `runJudgmentTier`) now auto-reject a stale-target
+  failure once, stamping `gateDecision: { outcome: "auto-rejected", reason:
+  "stale-target" }` instead of leaving it to retry. This is not a merit
+  rejection, so `checkFingerprintAndBackoff`'s rejection-backoff window
+  (`repository.ts`) now excludes stale-target rows — the ref stays
+  re-proposable against its current content — and the Reflexion
+  "previously rejected" context (`reflect.ts`'s `readRejectedProposals`,
+  `distill.ts`'s `buildDistillMessages`) and the accept-rate health metric
+  (`health/accept-rate.ts`) now exclude stale-target rejections too, so a
+  procedural refusal doesn't misrepresent content quality.
 
 ### Removed
 

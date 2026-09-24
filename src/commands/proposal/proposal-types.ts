@@ -365,6 +365,31 @@ export interface Proposal {
   eligibilitySource?: EligibilitySource;
 }
 
+/**
+ * Gate-decision reason token for a promote refusal caused by the TARGET
+ * changing after mint — often akm's own bookkeeping, not a merit judgement on
+ * the proposed content (STALE, R20). The drain stamps this on the auto-reject
+ * it issues instead of retrying a promote that will fail identically forever;
+ * {@link isStaleTargetRejection} and the rejection-backoff guard
+ * (`repository.ts`'s `checkFingerprintAndBackoff`) both key off the exact
+ * string so they can't drift apart.
+ */
+export const STALE_TARGET_GATE_REASON = "stale-target";
+
+/**
+ * True for a rejected proposal whose rejection was the drain's stale-target
+ * auto-reject (STALE, R20), not a judgement on the proposed content. Readers
+ * that treat a rejection as "this content was refused" — the Reflexion
+ * "previously rejected" context (`improve/reflect.ts`, `improve/distill.ts`)
+ * and the accept-rate health metric (`health/accept-rate.ts`) — exclude these
+ * rows so a procedural refusal doesn't misrepresent content quality.
+ */
+export function isStaleTargetRejection(proposal: Pick<Proposal, "gateDecision">): boolean {
+  return (
+    proposal.gateDecision?.outcome === "auto-rejected" && proposal.gateDecision.reason === STALE_TARGET_GATE_REASON
+  );
+}
+
 // ── Validator-shared types ───────────────────────────────────────────────────
 //
 // Moved from ./validators/proposals.ts (ProposalValidationFinding,
