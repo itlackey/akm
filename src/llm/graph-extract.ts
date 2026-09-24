@@ -40,7 +40,7 @@ import { type CallStructuredRequest, callStructured, type StructuredLlmRunner } 
  */
 const BATCH_ASSET_SEPARATOR = "=== ASSET";
 
-export const GRAPH_EXTRACT_PROMPT_VERSION = "v2";
+export const GRAPH_EXTRACT_PROMPT_VERSION = "v3";
 
 /** Asset bodies longer than this are chunked instead of truncated. */
 const MAX_CHUNK_BODY_CHARS = 1600;
@@ -73,19 +73,26 @@ const USER_PROMPT_PREFIX = userPromptTemplate
   .replace("{{MAX_RELATIONS}}", String(MAX_RELATIONS_PER_ASSET));
 
 /**
- * Strict JSON Schema for the single-asset extraction payload (R12b). Sent via
- * `responseSchema` to providers that opt into structured output
- * (`runner.connection.supportsJsonSchema` — same lift as memory-infer.ts's
- * `DERIVED_MEMORY_JSON_SCHEMA`); the client silently drops it otherwise.
- * `maxItems` mirrors MAX_ENTITIES_PER_ASSET/MAX_RELATIONS_PER_ASSET so a
- * compliant provider cannot pay for output beyond what parseGraphExtraction
- * keeps. `confidence` is allowed (not prompted for, but optional) at both
- * levels because parseGraphExtraction reads it — the extraction-level value
- * feeds the merged confidence, and the relation-level value is filtered
- * against MIN_RELATION_CONFIDENCE; `additionalProperties: false` forbids
- * anything else.
+ * Strict JSON Schema for one asset's extraction payload (R12b, compacted for
+ * R12). Sent via `responseSchema` to providers that opt into structured
+ * output (`runner.connection.supportsJsonSchema` — same lift as
+ * memory-infer.ts's `DERIVED_MEMORY_JSON_SCHEMA`); the client silently drops
+ * it otherwise. `maxItems` mirrors MAX_ENTITIES_PER_ASSET/MAX_RELATIONS_PER_ASSET
+ * so a compliant provider cannot pay for output beyond what
+ * parseGraphExtraction keeps. Relations are compact `[from, type, to]`
+ * triples (`type` may be `""`) rather than `{"from","to","type"}` objects —
+ * the object-keyed form cost 10+ tokens per relation for no signal, and
+ * output tokens cost far more than prompt tokens. There is deliberately no
+ * relation-level `confidence` in the schema (the prompt never asks for one);
+ * `parseGraphExtraction` still reads it from a legacy object-shaped relation
+ * for backward compatibility. `confidence` stays at the extraction level —
+ * parseGraphExtraction reads it into the merged confidence.
+ * `additionalProperties: false` forbids anything else. Reused as the `items`
+ * schema of a batch call's array response (see
+ * {@link buildBatchResponseSchema}) so a single-asset and a batched call
+ * bound entities/relations identically.
  */
-const GRAPH_EXTRACTION_JSON_SCHEMA = {
+const GRAPH_EXTRACTION_ITEM_SCHEMA = {
   type: "object",
   properties: {
     entities: { type: "array", items: { type: "string" }, maxItems: MAX_ENTITIES_PER_ASSET },
@@ -93,15 +100,10 @@ const GRAPH_EXTRACTION_JSON_SCHEMA = {
       type: "array",
       maxItems: MAX_RELATIONS_PER_ASSET,
       items: {
-        type: "object",
-        properties: {
-          from: { type: "string" },
-          to: { type: "string" },
-          type: { type: "string" },
-          confidence: { type: "number" },
-        },
-        required: ["from", "to"],
-        additionalProperties: false,
+        type: "array",
+        items: { type: "string" },
+        minItems: 3,
+        maxItems: 3,
       },
     },
     confidence: { type: "number" },
@@ -109,6 +111,23 @@ const GRAPH_EXTRACTION_JSON_SCHEMA = {
   required: ["entities", "relations"],
   additionalProperties: false,
 } as const;
+
+/** Schema for {@link extractGraphFromBody}'s single-asset `responseSchema`. */
+const GRAPH_EXTRACTION_JSON_SCHEMA = GRAPH_EXTRACTION_ITEM_SCHEMA;
+
+/**
+ * Schema for {@link extractGraphFromBodies}' batch `responseSchema` — an
+ * array of exactly `count` {@link GRAPH_EXTRACTION_ITEM_SCHEMA} elements, one
+ * per asset in the batch, matching the batch prompt's contract.
+ */
+function buildBatchResponseSchema(count: number) {
+  return {
+    type: "array",
+    minItems: count,
+    maxItems: count,
+    items: GRAPH_EXTRACTION_ITEM_SCHEMA,
+  } as const;
+}
 
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
 export interface GraphRelation {
@@ -425,13 +444,36 @@ function parseGraphExtraction(raw: unknown): GraphExtraction {
   let filteredLowConfidenceRelations = 0;
   if (Array.isArray(item.relations)) {
     for (const relation of item.relations) {
-      if (typeof relation !== "object" || relation === null || Array.isArray(relation)) {
+      // Compact triple form `[from, type, to]` (R12) — `type` may be "".
+      // Legacy `{"from","to","type","confidence"}` object form still parses
+      // for backward compatibility (older cached prompts, other callers).
+      let fromRaw: string;
+      let toRaw: string;
+      let typeRaw: string | undefined;
+      let confidenceRaw: unknown;
+      if (Array.isArray(relation)) {
+        if (
+          relation.length !== 3 ||
+          typeof relation[0] !== "string" ||
+          typeof relation[1] !== "string" ||
+          typeof relation[2] !== "string"
+        ) {
+          filteredInvalidRelations += 1;
+          continue;
+        }
+        fromRaw = normalizeEntityName(relation[0]);
+        typeRaw = relation[1];
+        toRaw = normalizeEntityName(relation[2]);
+      } else if (typeof relation === "object" && relation !== null) {
+        const rel = relation as Record<string, unknown>;
+        fromRaw = typeof rel.from === "string" ? normalizeEntityName(rel.from) : "";
+        toRaw = typeof rel.to === "string" ? normalizeEntityName(rel.to) : "";
+        typeRaw = typeof rel.type === "string" ? rel.type : undefined;
+        confidenceRaw = rel.confidence;
+      } else {
         filteredInvalidRelations += 1;
         continue;
       }
-      const rel = relation as Record<string, unknown>;
-      const fromRaw = typeof rel.from === "string" ? normalizeEntityName(rel.from) : "";
-      const toRaw = typeof rel.to === "string" ? normalizeEntityName(rel.to) : "";
       if (!fromRaw || !toRaw) {
         filteredInvalidRelations += 1;
         continue;
@@ -444,12 +486,12 @@ function parseGraphExtraction(raw: unknown): GraphExtraction {
         continue;
       }
 
-      const type = typeof rel.type === "string" ? normalizeRelationType(rel.type) : undefined;
+      const type = typeRaw !== undefined ? normalizeRelationType(typeRaw) : undefined;
       if (type !== undefined && GENERIC_RELATION_TYPES.has(type)) {
         filteredInvalidRelations += 1;
         continue;
       }
-      const confidence = parseConfidence(rel.confidence);
+      const confidence = parseConfidence(confidenceRaw);
       if (confidence !== undefined && confidence < MIN_RELATION_CONFIDENCE) {
         filteredLowConfidenceRelations += 1;
         continue;
@@ -502,8 +544,8 @@ function parseGraphExtraction(raw: unknown): GraphExtraction {
  *
  *   Expected model output (valid JSON array, no prose):
  *     [
- *       {"entities":["ServiceA","ServiceB"],"relations":[{"from":"ServiceA","to":"ServiceB","type":"integrates with"}]},
- *       {"entities":["Terraform","Prod cluster"],"relations":[{"from":"Terraform","to":"Prod cluster","type":"provisions"}]},
+ *       {"entities":["ServiceA","ServiceB"],"relations":[["ServiceA","integrates with","ServiceB"]]},
+ *       {"entities":["Terraform","Prod cluster"],"relations":[["Terraform","provisions","Prod cluster"]]},
  *       {"entities":[],"relations":[]}
  *     ]
  *
@@ -543,10 +585,10 @@ function buildBatchUserPrompt(bodies: string[]): string {
     `Extract entities and relations from the N=${count} assets below.\n\n` +
     `Rules:\n` +
     `- Output ONLY a JSON array of exactly ${count} objects, one per asset, preserving input order.\n` +
-    `- Each object: {"entities": ["Entity One", ...], "relations": [{"from": "A", "to": "B", "type": "uses"}, ...]}\n` +
+    `- Each object: {"entities": ["Entity One", ...], "relations": [["A", "uses", "B"], ...]}\n` +
     `- Entities are short, canonical noun phrases (project names, services, tools, people, file/dir names, technical concepts).\n` +
-    `- Relations connect two entities that both appear in that asset's entities array.\n` +
-    `- "type" is a short verb phrase (e.g. "uses", "depends on", "owns"). Optional; omit when unsure.\n` +
+    `- Each relation is a 3-element array: [from, type, to]. Relations connect two entities that both appear in that asset's entities array.\n` +
+    `- "type" is a short verb phrase (e.g. "uses", "depends on", "owns"). Use "" when unsure.\n` +
     `- Drop pleasantries, meta-commentary, and timestamps.\n` +
     `- Limit to at most ${MAX_ENTITIES_PER_ASSET} entities and ${MAX_RELATIONS_PER_ASSET} relations per asset.\n` +
     `- Use {"entities":[],"relations":[]} for assets with no extractable graph content.\n` +
@@ -697,6 +739,10 @@ export async function extractGraphFromBodies(
 
   const systemPrompt = buildBatchSystemPrompt();
   const userPrompt = buildBatchUserPrompt(nonEmptyBodies);
+  // Same responseSchema lift as extractGraphFromBody (R12b), scoped to this
+  // batch's asset count so a compliant provider bounds every element's
+  // entities/relations by the same maxItems as the single-asset path.
+  const batchResponseSchema = buildBatchResponseSchema(nonEmptyBodies.length);
   const truncatedBodies = nonEmptyBodies.filter((body) => body.length > MAX_BATCH_BODY_CHARS).length;
   if (truncatedBodies > 0) {
     warnVerbose(
@@ -733,6 +779,7 @@ export async function extractGraphFromBodies(
             temperature: 0.1,
             timeoutMs: llmRunner.timeoutMs,
             signal,
+            responseSchema: batchResponseSchema as unknown as Record<string, unknown>,
             onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
           },
           options.lease,
@@ -754,7 +801,12 @@ export async function extractGraphFromBodies(
               { role: "system", content: buildBatchRetrySystemPrompt() },
               { role: "user", content: userPrompt },
             ],
-            { temperature: 0, timeoutMs: llmRunner.timeoutMs, signal },
+            {
+              temperature: 0,
+              timeoutMs: llmRunner.timeoutMs,
+              signal,
+              responseSchema: batchResponseSchema as unknown as Record<string, unknown>,
+            },
             options.lease,
             options.onNotices,
           );

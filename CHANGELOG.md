@@ -264,6 +264,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `runImprovePostLoopStage` and no recombine pass exists in the codebase, so
   the spec now matches the shipped `consolidationRan`-only gate and notes
   that the recombine-triggered pass is not implemented.
+- **Graph-extraction relations are now compact `[from, type, to]` triples
+  instead of `{"from","to","type"}` objects, and the batch graph-extraction
+  call now sends a `responseSchema`.** The object-keyed form cost 10+ tokens
+  per relation for no signal, and completion tokens cost far more than
+  prompt tokens; a compact triple form measured −51% / −18% completion
+  tokens on two chunks. `graph-extract.ts`'s single-asset and batch prompts
+  and JSON schemas now ask for `["from", "type", "to"]` (`type` may be `""`);
+  `parseGraphExtraction` accepts both the triple form and the legacy object
+  form (a relation-level `confidence` is still read from a legacy object,
+  though the schema no longer offers it — the prompt never asked for one).
+  Separately, production runs graph extraction batched
+  (`processes.graphExtraction.batchSize`), and `extractGraphFromBodies` sent
+  no `responseSchema` at all, so the R12b output-bounding schema only ever
+  reached the single-asset path. The batch call now sends the same
+  `maxItems`-bounded schema (scoped to the batch's asset count) through the
+  same `supportsJsonSchema`-gated `responseSchema` field the single-asset
+  call uses. `GRAPH_EXTRACT_PROMPT_VERSION` bumps `v2` → `v3`, so every file
+  re-extracts once on the next graph pass — entity semantics, caps, chunking
+  and batch sizing are unchanged.
 
 ## [0.9.17-alpha.1] - 2026-09-22
 
