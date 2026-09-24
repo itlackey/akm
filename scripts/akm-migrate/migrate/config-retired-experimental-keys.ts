@@ -22,27 +22,17 @@ import {
   readConfigText,
   writeConfigAtomic,
 } from "../../../src/core/config/config-io";
-import { RETIRED_EXPERIMENTAL_KEYS } from "../../../src/core/config/retired-experimental-keys-shim";
+import { retiredExperimentalKeysIn } from "../../../src/core/config/retired-experimental-keys-shim";
 
 export interface ConfigRetiredExperimentalKeysPlan {
   /** One `experimental.<key>` entry per retired key that would be removed. */
   removed: string[];
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function readRawConfig(configPath: string): Record<string, unknown> | undefined {
   const text = readConfigText(configPath);
   if (text === undefined) return undefined;
   return parseConfigText(text, configPath);
-}
-
-function retiredKeysPresent(raw: Record<string, unknown>): string[] {
-  if (!isPlainRecord(raw.experimental)) return [];
-  const experimental = raw.experimental;
-  return RETIRED_EXPERIMENTAL_KEYS.filter((key) => key in experimental);
 }
 
 /**
@@ -53,7 +43,7 @@ function retiredKeysPresent(raw: Record<string, unknown>): string[] {
 export function findConfigRetiredExperimentalKeys(configPath: string): ConfigRetiredExperimentalKeysPlan {
   const raw = readRawConfig(configPath);
   if (!raw) return { removed: [] };
-  return { removed: retiredKeysPresent(raw).map((key) => `experimental.${key}`) };
+  return { removed: retiredExperimentalKeysIn(raw).map((key) => `experimental.${key}`) };
 }
 
 export interface ConfigRetiredExperimentalKeysResult extends ConfigRetiredExperimentalKeysPlan {
@@ -68,7 +58,7 @@ export interface ConfigRetiredExperimentalKeysResult extends ConfigRetiredExperi
 export function applyConfigRetiredExperimentalKeys(configPath: string): ConfigRetiredExperimentalKeysResult {
   const raw = readRawConfig(configPath);
   if (!raw) return { applied: false, removed: [] };
-  const retired = retiredKeysPresent(raw);
+  const retired = retiredExperimentalKeysIn(raw);
   if (retired.length === 0) return { applied: false, removed: [] };
 
   const experimental = { ...(raw.experimental as Record<string, unknown>) };
