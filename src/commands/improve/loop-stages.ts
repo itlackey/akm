@@ -8,7 +8,7 @@ import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { appendEvent, type EventsContext } from "../../core/events";
+import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type {
   AkmDistillResult,
   AkmReflectResult,
@@ -63,7 +63,8 @@ import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { checkProposalGuard, expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
-import { deriveLessonRef } from "./distill";
+import { defaultLookup, deriveLessonRef } from "./distill";
+import { wouldPromoteMemoryToKnowledge } from "./distill/promote-memory";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import { findAssetFilePath, isDistillCandidateRef } from "./eligibility";
@@ -640,34 +641,55 @@ async function runLoopDistillPass(
         }
       }
 
-      // R9 extension (r2-6, tier2-0917): the fingerprint/rejection-backoff
-      // guard `createProposal` runs AFTER distill's ~generation + judge is
-      // computable from inputs available before dispatch — mirror the
-      // reflect pre-check above so a guard hit skips the LLM call entirely.
-      // Distill's real `createProposal` call always targets the derived
-      // lesson/knowledge ref (`effectiveLessonRef` in distill.ts), never the
-      // input ref, so the guard is checked against the same lessonRef /
-      // knowledgeRef pair the pending-proposal dedup above already computes
-      // — which one distill actually mints is decided at dispatch time
-      // (memory promotion), so both are checked, same as B2 above.
+      // R9 extension (r2-6, tier2-0917; PRECHECK, tier3-0917): the
+      // fingerprint/rejection-backoff guard `createProposal` runs AFTER
+      // distill's ~generation + judge is computable from inputs available
+      // before dispatch — mirror the reflect pre-check above so a guard hit
+      // skips the LLM call entirely. Distill's real `createProposal` call
+      // always targets the derived lesson/knowledge ref (`effectiveLessonRef`
+      // in distill.ts), never the input ref.
+      // Which ref that is: for every non-memory distill-candidate type,
+      // `targetKind` defaults to "lesson" (distill.ts ~L882, `invokeDistill
+      // AndRecord` above only ever sets `proposalKind: "auto"` for memory
+      // refs) and is never overridden to "knowledge", so lessonRef is the
+      // ONLY real target. For memory refs (`proposalKind: "auto"`), the
+      // target is decided at dispatch by `planMemoryKnowledgePromotion`
+      // (knowledgeRef via promotion, lessonRef as fallback) — that decision
+      // IS cheap and LLM-free (a deterministic score over the asset content
+      // + its feedback history, plus one lookup for an existing knowledge
+      // file), so it is pre-checked exactly via `wouldPromoteMemoryToKnowledge`,
+      // a thin wrapper that delegates to `planMemoryKnowledgePromotion`
+      // itself so this can never drift from distill's real decision. A
+      // guard hit on the ref distill would NOT have targeted must never
+      // suppress a legitimate dispatch.
       // §23.6 fingerprint model-id term: distill resolves models, not
       // engines (unlike reflect), so this must match `distillRunner?.
       // connection.model` in distill.ts, not the engine name.
       const distillModelId = resolvedPlan.processes.distill.runner?.connection.model;
-      let guardSkip: ReturnType<typeof checkProposalGuard>;
-      let guardSkipRef = lessonRef;
-      for (const candidateRef of [lessonRef, knowledgeRef]) {
-        guardSkip = checkProposalGuard({
+      let realTargetRef = lessonRef;
+      if (parsedPlannedRef.type === "memory") {
+        const durableInputRef = planned.itemRef ?? durableImproveRef(planned.ref);
+        const lookup = (ref: string) => defaultLookup(ref, dedupeStashDir);
+        const filePath = await lookup(durableInputRef);
+        const assetContent = filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
+        const { events: feedbackEvents } = readEvents({ ref: durableInputRef, type: "feedback" }, { readOnly: true });
+        const promotesToKnowledge = await wouldPromoteMemoryToKnowledge({
+          inputRef: planned.ref,
+          durableInputRef,
+          assetContent,
+          feedbackEvents,
+          config: options.config ?? loadConfig(),
           stash: dedupeStashDir,
-          ref: candidateRef,
-          source: "distill",
-          ...(distillModelId ? { modelId: distillModelId } : {}),
+          lookup,
         });
-        if (guardSkip) {
-          guardSkipRef = candidateRef;
-          break;
-        }
+        if (promotesToKnowledge) realTargetRef = knowledgeRef;
       }
+      const guardSkip = checkProposalGuard({
+        stash: dedupeStashDir,
+        ref: realTargetRef,
+        source: "distill",
+        ...(distillModelId ? { modelId: distillModelId } : {}),
+      });
       if (guardSkip) {
         tally.actions.push({
           ref: planned.ref,
@@ -687,7 +709,7 @@ async function runLoopDistillPass(
             ref: planned.itemRef ?? durableImproveRef(planned.ref),
             metadata: {
               outcome: "skipped" as const,
-              proposalRef: guardSkipRef,
+              proposalRef: realTargetRef,
               message: guardSkip.message,
               skipReason: guardSkip.reason,
               ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
