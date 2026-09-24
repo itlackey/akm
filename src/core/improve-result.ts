@@ -29,6 +29,7 @@ const COMMON_FIELDS = [
   "plan",
   "actions",
   "skippedProcesses",
+  "engineProbe",
   "distillSkipped",
   "validationFailures",
   "schemaRepairs",
@@ -438,6 +439,7 @@ function validateCommon(value: Record<string, unknown>): void {
   for (const field of [
     "actions",
     "skippedProcesses",
+    "engineProbe",
     "validationFailures",
     "schemaRepairs",
     "extract",

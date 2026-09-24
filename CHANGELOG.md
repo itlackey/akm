@@ -240,6 +240,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   schema targets. `confidence: {"type": "number"}` is now allowed at both
   levels; `additionalProperties: false` still forbids anything else.
 
+### Added
+
+- **`akm improve --require-engines` now records its reachability probe on the
+  run result (R17).** `assertRequiredEnginesReachable` only ever reported a
+  failure (abort, exit 78); a probe that passed — including a slow or
+  flapping gateway that still answered in time — left no trace once the run
+  proceeded. It now returns one outcome per probed target (`process`,
+  `engine`, `endpoint`, `reachable`, `latencyMs`), threaded through a new
+  `AkmImproveOptions.engineProbe` and copied onto the persisted result as
+  `AkmImproveResult.engineProbe`. Omitted entirely when `--require-engines`
+  was not passed; a result persisted without it (every run before this
+  change) still decodes. `--require-engines --dry-run` now carries the field
+  too — `buildDryRunResult` previously dropped it even though the probe had
+  already run before the dry-run early return.
+
 ### Removed
 
 - **The write-only distill/proposal eval-cases path.** `writeEvalCase`
