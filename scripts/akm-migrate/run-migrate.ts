@@ -230,9 +230,16 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const stateStatus: MigrationStatus = "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const schedulerStatus: MigrationStatus =
     "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
+  const retiredKeysStatus: MigrationStatus =
+    "pending" in configRetiredExperimentalKeys && configRetiredExperimentalKeys.pending.removed.length > 0
+      ? "ready"
+      : "current";
   return {
     schemaVersion: 1,
-    status: worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
+    status: worstStatus(
+      worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
+      retiredKeysStatus,
+    ),
     blockers: [...taskV3.blockers, ...taskV4.blockers],
     configExtraParams,
     configSchedulerSourceIds,

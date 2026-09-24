@@ -211,6 +211,8 @@ test("dry-run reports a pending retired experimental key removal, leaving the co
   const plan = await runMigration({ apply: false });
 
   expect(plan.configRetiredExperimentalKeys).toEqual({ pending: { removed: ["experimental.workflowEngine"] } });
+  // apply will rewrite config.json, so the preview must not claim "current".
+  expect(plan.status).toBe("ready");
   const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
   expect(written.experimental).toEqual({ improveAutonomy: true, workflowEngine: true });
 });

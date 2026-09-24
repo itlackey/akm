@@ -87,7 +87,7 @@ import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
 import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { resetQuiet, setQuiet } from "../../src/core/warn";
+import { _resetWarnOnceForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -580,6 +580,9 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
 
   beforeEach(() => {
     resetConfigCache();
+    // The warning is once-per-process; an earlier test loading the same key
+    // would otherwise consume it before this describe asserts it.
+    _resetWarnOnceForTests();
     setQuiet(false);
     warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   });
