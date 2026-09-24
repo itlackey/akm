@@ -269,6 +269,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   doesn't set them, so accepting never drops `inferenceProcessed` and forces
   memory inference to reprocess the memory. A legacy proposal minted before
   this field existed keeps its exact original raw-hash check.
+  `computeNormalizedContentHash` also normalizes the body boundary the same
+  way `assembleAssetFromString` does (leading newlines stripped, exactly one
+  trailing newline) before hashing, and treats an empty frontmatter block as
+  `{}` instead of falling back to the raw hash — both `writeSalienceToFrontmatter`
+  and the memory-inference `assembleAsset` rewrite shift where the body starts,
+  which without this normalization still staled a proposal out unless the
+  target's frontmatter was already in that exact on-disk shape.
 - **A stale-target promote failure was retried, and refused, identically
   every drain run forever (R20).** The drain already categorized a
   "target changed/was created after proposal" failure as `stale-target`
