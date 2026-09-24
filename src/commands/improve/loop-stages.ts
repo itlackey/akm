@@ -79,6 +79,7 @@ import type {
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { AkmReflectOptions } from "./reflect";
+import { readOnlyEventsContext } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { errMessage } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -685,10 +686,11 @@ async function runLoopDistillPass(
         // eventsCtx.db handle when one is open, instead of opening a fresh
         // read-only state.db connection per memory ref (R25). Degrades to
         // the previous readOnly-open when no live handle is present (e.g.
-        // this function invoked without a run-scoped eventsCtx).
+        // this function invoked without a run-scoped eventsCtx), via the
+        // same readOnlyEventsContext helper reflect.ts's read call sites use.
         const { events: feedbackEvents } = readEvents(
           { ref: feedbackRef, type: "feedback" },
-          eventsCtx?.db ? eventsCtx : { readOnly: true },
+          readOnlyEventsContext(eventsCtx),
         );
         const promotesToKnowledge = await wouldPromoteMemoryToKnowledge({
           inputRef: planned.ref,
