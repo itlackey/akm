@@ -17,7 +17,9 @@
  *   - buildSchemaRepairPrompt   (schema-repair — fix frontmatter)
  *   - buildDistillPrompt        (distill — lesson/knowledge)
  *   - buildExtractPrompt        (extract — lessons/memories from a session)
- *   - buildChunkPrompt          (consolidate — merge memories)
+ *
+ * consolidate's buildChunkPrompt does not take a standardsContext (CONS2,
+ * tier3-0917): the chunk prompt is a promote-only op list that never used it.
  *
  * Plus one tie-through test: the REAL `resolveStashStandards` output (from an
  * on-disk convention fact) reaches a builder's rendered prompt.
@@ -32,7 +34,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildChunkPrompt } from "../src/commands/improve/consolidate/chunking";
 import { buildDistillPrompt } from "../src/commands/improve/distill";
 import { buildExtractPrompt } from "../src/commands/improve/extract-prompt";
 import { resolveStandardsContext } from "../src/core/standards/resolve-standards-context";
@@ -44,15 +45,6 @@ const LEAD_IN = "Standards to follow (the rulebook for this target)";
 /** A distinctive sentinel that only appears via standards injection. */
 const SENTINEL = "ZZZ_STANDARD_RULE_use_kebab_case";
 
-// Minimal cast fixtures: builders that read member `filePath` degrade safely
-// (try/catch) when the path does not exist, so bogus paths are fine here.
-// biome-ignore lint/suspicious/noExplicitAny: minimal test fixtures for pure prompt builders
-const memoryEntry = (name: string): any => ({
-  name,
-  description: `desc ${name}`,
-  tags: [],
-  filePath: `/nonexistent/${name}.md`,
-});
 const sessionData = () =>
   ({
     ref: {
@@ -104,10 +96,6 @@ const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => str
   {
     name: "buildExtractPrompt",
     render: (s) => buildExtractPrompt({ data: sessionData(), events: [], inlineRefs: [], standardsContext: s }),
-  },
-  {
-    name: "buildChunkPrompt",
-    render: (s) => buildChunkPrompt("source", [memoryEntry("m1"), memoryEntry("m2")], 0, 1, 3000, new Set(), s),
   },
 ];
 

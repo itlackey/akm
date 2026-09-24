@@ -13,7 +13,6 @@ import { conceptIdFromTypeName, displayRef, parseRefInput } from "../../core/ass
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { openStateDatabase } from "../../core/state-db";
 import { parseSinceToIsoLenient } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
@@ -980,7 +979,6 @@ async function judgeConsolidationChunks(args: {
   sourceName: string;
   bodyTruncation: number;
   pendingProposalBodyHashes: Set<string>;
-  standardsContext: string;
   warnings: string[];
   accounting: ConsolidateAccounting;
 }): Promise<ConsolidateOperation[][]> {
@@ -993,7 +991,6 @@ async function judgeConsolidationChunks(args: {
     sourceName,
     bodyTruncation,
     pendingProposalBodyHashes,
-    standardsContext,
     warnings,
     accounting,
   } = args;
@@ -1076,7 +1073,6 @@ async function judgeConsolidationChunks(args: {
       chunks.length,
       bodyTruncation,
       pendingProposalBodyHashes,
-      standardsContext,
     );
 
     // Single chunk LLM call, wrapped in the feature gate. Deduplicated across
@@ -1342,11 +1338,6 @@ async function planConsolidation(
         ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
     );
 
-    // Consolidate output merges memories (non-wiki) → stash authoring standards.
-    // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
-    // per chunk).
-    const standardsContext = resolveStandardsContext("memories/_consolidated", stashDir);
-
     const chunkOpsArrays = await judgeConsolidationChunks({
       chunks,
       opts,
@@ -1356,7 +1347,6 @@ async function planConsolidation(
       sourceName,
       bodyTruncation,
       pendingProposalBodyHashes,
-      standardsContext,
       warnings,
       accounting,
     });

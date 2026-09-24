@@ -276,6 +276,25 @@ describe("buildChunkPrompt size bounds", () => {
   });
 });
 
+describe("buildChunkPrompt header is ref-free (CONS2, tier3-0917 R5c)", () => {
+  it("header names the memory count, not a memories/<name> range", () => {
+    const memories = makeMemoryBatch(tempDir, 3, 50);
+    const prompt = buildChunkPrompt("/test/stash", memories, 1, 4, 500);
+
+    const headerLine = prompt.split("\n")[1];
+    expect(headerLine).toBe("Chunk 2 of 4 (3 memories):");
+    expect(headerLine).not.toContain("memories/");
+    expect(headerLine).not.toContain("–");
+  });
+
+  it("never emits a standards block", () => {
+    const memories = makeMemoryBatch(tempDir, 2, 50);
+    const prompt = buildChunkPrompt("/test/stash", memories, 0, 1, 500);
+
+    expect(prompt).not.toContain("Standards to follow");
+  });
+});
+
 describe("chunk count arithmetic", () => {
   it("50 memories with chunkSize 20 produces exactly 3 chunks", () => {
     // 50 / 20 → 2 full chunks of 20 + 1 partial chunk of 10 = 3 chunks total
