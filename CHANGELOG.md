@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.3] - 2026-09-24
+
 ### Fixed
 
 - **Unscoped `akm task sync` no longer aborts the whole host on the first
