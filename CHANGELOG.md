@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.2] - 2026-09-24
+
 ### Fixed
 
 - **A config carrying the retired `experimental.workflowEngine` key no longer
