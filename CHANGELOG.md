@@ -192,7 +192,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `AkmImproveOptions.engineProbe` and copied onto the persisted result as
   `AkmImproveResult.engineProbe`. Omitted entirely when `--require-engines`
   was not passed; a result persisted without it (every run before this
-  change) still decodes.
+  change) still decodes. `--require-engines --dry-run` now carries the field
+  too — `buildDryRunResult` previously dropped it even though the probe had
+  already run before the dry-run early return.
 
 ### Removed
 

@@ -124,6 +124,30 @@ test("akmImprove copies options.engineProbe onto the live result, and it round-t
   }
 });
 
+test("akmImprove copies options.engineProbe onto the dry-run result too", async () => {
+  const stash = makeStashDir();
+  try {
+    const engineProbe: EngineProbeOutcome[] = [
+      { process: "reflect", engine: "engineA", endpoint: "https://a.example.test/v1", reachable: true, latencyMs: 42 },
+    ];
+
+    const result = await akmImprove({
+      ...noopStageSeams(cheapConfig(), stash.dir),
+      dryRun: true,
+      engineProbe,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.dryRun).toBe(true);
+    expect(result.engineProbe).toEqual(engineProbe);
+
+    const decoded = decodeImproveResult(JSON.stringify(result));
+    expect(decoded.envelope.engineProbe).toEqual(engineProbe);
+  } finally {
+    stash.cleanup();
+  }
+});
+
 test("engineProbe is absent from the result when --require-engines was not set", async () => {
   const stash = makeStashDir();
   try {
