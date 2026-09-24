@@ -34,6 +34,19 @@ import { warnOnce } from "../warn";
 export const RETIRED_EXPERIMENTAL_KEYS = ["workflowEngine"] as const;
 
 /**
+ * Which `RETIRED_EXPERIMENTAL_KEYS` are present in a raw config's
+ * `experimental` section. Returns `[]` when `raw.experimental` is missing or
+ * not a record. Shared by `stripRetiredExperimentalKeys` below and by
+ * `akm migrate apply`'s on-disk counterpart
+ * (`scripts/akm-migrate/migrate/config-retired-experimental-keys.ts`).
+ */
+export function retiredExperimentalKeysIn(raw: Record<string, unknown>): string[] {
+  const experimental = raw.experimental;
+  if (!isRecord(experimental)) return [];
+  return RETIRED_EXPERIMENTAL_KEYS.filter((key) => key in experimental);
+}
+
+/**
  * Drop retired `experimental.*` keys from a raw parsed config object before
  * schema validation, warning once per source when any were present. Live
  * keys (including an unrecognized one, e.g. a typo) are left untouched for
@@ -43,10 +56,9 @@ export function stripRetiredExperimentalKeys(
   raw: Record<string, unknown>,
   sourcePath?: string,
 ): Record<string, unknown> {
-  if (!isRecord(raw.experimental)) return raw;
-  const original = raw.experimental;
-  const present = RETIRED_EXPERIMENTAL_KEYS.filter((key) => key in original);
+  const present = retiredExperimentalKeysIn(raw);
   if (present.length === 0) return raw;
+  const original = raw.experimental as Record<string, unknown>;
 
   const experimental = { ...original };
   for (const key of present) delete experimental[key];
