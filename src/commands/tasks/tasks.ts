@@ -581,6 +581,15 @@ export interface TasksSyncResult {
  *   • remove orphan scheduler entries that no longer have a backing file
  */
 /**
+ * Mirrors `adaptConfiguredSource` (src/core/write-source.ts): scheduler
+ * bindings are only ever installed against filesystem/git bundles, since
+ * writes (and therefore scheduler state) are undefined for website/npm.
+ */
+function isSchedulableSourceKind(type: string): boolean {
+  return type === "filesystem" || type === "git";
+}
+
+/**
  * Compute (but never apply) a scheduler sync plan: everything through
  * `finalizeSchedulerSyncPlan`'s final call, stopping strictly before
  * `applySchedulerSyncPlan`. Shared by `akmTasksSync` (applies the plan) and
@@ -630,7 +639,27 @@ async function buildSchedulerSyncPlan(
   const nativeArtifacts = inspection.artifacts;
   const configuredSources = resolveConfiguredSources(config);
   const activeSources = resolveActiveConfiguredSources(config);
-  const sourceNames = bundleTarget ? [bundleTarget] : activeSources.map((source) => source.name);
+  if (bundleTarget) {
+    // adaptConfiguredSource (src/core/write-source.ts) rejects any kind
+    // other than filesystem/git outright, so a website/npm bundle can never
+    // carry scheduler state (akm task enable already fails the same way).
+    // Surface that as a clear usage error here instead of letting the
+    // write-target resolution below raise a generic ConfigError.
+    const targetSource = activeSources.find((source) => source.name === bundleTarget);
+    if (targetSource && !isSchedulableSourceKind(targetSource.type)) {
+      throw new UsageError(
+        `Bundle "${bundleTarget}" has kind "${targetSource.type}"; task scheduling is only supported for filesystem and git bundles.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+  }
+  // Unscoped sync only installs/removes bindings for bundles that can carry
+  // them (filesystem/git). A website/npm bundle contributes no installs and
+  // must not crash the loop; inactiveOperations below still sees it via
+  // configuredSources for removal/revocation.
+  const sourceNames = bundleTarget
+    ? [bundleTarget]
+    : activeSources.filter((source) => isSchedulableSourceKind(source.type)).map((source) => source.name);
   const inactiveOperations = bundleTarget
     ? []
     : inactiveBundleRemovalOperations(config, configuredSources, allEntries, nativeArtifacts);
