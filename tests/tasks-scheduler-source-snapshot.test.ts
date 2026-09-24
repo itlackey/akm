@@ -35,6 +35,21 @@ function writeTask(id: string, source: string | Uint8Array): string {
   return file;
 }
 
+/** `workflows/release.yml` (real, scheduled) plus `workflows/release.md -> ../sources/release.md`. */
+function writeReleaseWorkflowWithSymlinkedSibling(): void {
+  fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
+  fs.mkdirSync(path.join(storage.stashDir, "sources"), { recursive: true });
+  fs.writeFileSync(
+    path.join(storage.stashDir, "workflows", "release.yml"),
+    "name: release\non:\n  schedule:\n    - cron: '0 8 * * 1'\njobs:\n  main:\n    runs-on: [self-hosted]\n    steps:\n      - id: release\n        run: echo release\n",
+  );
+  fs.writeFileSync(path.join(storage.stashDir, "sources", "release.md"), "# release\n");
+  fs.symlinkSync(
+    path.join(storage.stashDir, "sources", "release.md"),
+    path.join(storage.stashDir, "workflows", "release.md"),
+  );
+}
+
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
@@ -186,6 +201,26 @@ describe("guarded scheduler source byte snapshots", () => {
     expect(prepared.failures).toHaveLength(1);
     expect(prepared.failures[0]?.ref).toBe("stash//workflows/nightly");
     expect(prepared.failures[0]?.reason).toMatch(/symbolic/);
+  });
+
+  test("a real scheduled workflow with a symlinked sibling of the same name is reported once and not scheduled", async () => {
+    writeReleaseWorkflowWithSymlinkedSibling();
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput());
+
+    expect(prepared.desired).toEqual([]);
+    expect(prepared.failures).toHaveLength(1);
+    expect(prepared.failures[0]?.ref).toBe("stash//workflows/release");
+    expect(prepared.failures[0]?.reason).toMatch(/symbolic/);
+  });
+
+  test("the same workflow sibling layout contributes nothing when it is not granted", async () => {
+    writeReleaseWorkflowWithSymlinkedSibling();
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput({ enabledActivations: new Set() }));
+
+    expect(prepared.desired).toEqual([]);
+    expect(prepared.failures).toEqual([]);
   });
 
   test("coherent inspection rejects two exact artifacts for one normalized native key", async () => {

@@ -824,10 +824,16 @@ function enumerateWorkflowLookups(
     lookups.set(canonicalName, owners);
   }
   for (const symlink of collector.symlinkSources()) {
+    if (!isAuthoredWorkflowRelativePath(input.adapterId, symlink.relativePath)) continue;
     if (path.basename(symlink.sourcePath).toLowerCase() === "readme.md") continue;
     const authoredName = workflowNameForSourcePath(input.sourceRoot, input.adapterId, symlink.sourcePath);
     if (authoredName === undefined) continue;
     const canonicalName = canonicalizeWorkflowName(authoredName);
+    // A real sibling sharing this name must not compile either: runtime
+    // resolution follows the symlink and may pick it over the file the
+    // binding was compiled from. The symbolic failure below is the ref's
+    // only report.
+    lookups.delete(canonicalName);
     const failureRef = makeBundleRef(
       input.bundleName,
       input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName,

@@ -19,10 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   following it (its `readlink` text plus its no-follow `lstat` identity), so
   change detection still works; it is never read or descended into. A symlink
   sitting exactly where a task or workflow source lives (a `.yml` under
-  `tasks/`, or a workflow-named file under `workflows/`) is reported as its
-  own per-source failure — "is a symbolic source; guarded reads require a
-  regular no-follow owner" — instead of silently disappearing from the
-  desired set, while every other task and workflow still reconciles. A
+  `tasks/`, any `.yml` under an `akm-task` bundle, or a workflow-named file
+  under `workflows/`) is reported as its own per-source failure — "is a
+  symbolic source; guarded reads require a regular no-follow owner" — and its
+  ref is not scheduled, even when a real sibling file shares that ref, while
+  every other task and workflow still reconciles. A
   symlink that resolves outside the bundle root, or one that is broken and
   cannot be identified safely, is still refused, and a bundle root whose
   `tasks` or `workflows` entry is itself a symlink still refuses loudly,
