@@ -61,6 +61,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exceeded the excerpt length was judged on metadata only and never showed
   its own body text. The excerpt now truncates `stripFrontmatterBody(body)`;
   hot/queued detection is unchanged and still reads the raw body.
+- **Consolidate's chunk prompt carried an unused ~14k-char standards block and
+  a header the model sometimes echoed back as a bogus `ref`.** Every chunk
+  prompt resolved and injected a "Standards to follow" section
+  (`resolveStandardsContext("memories/_consolidated", ...)`), but the chunk
+  output is a promote-only op list that never reads it. Separately, the
+  chunk header (`Chunk N of M, memories <first>–<last>:`) named the chunk's
+  boundary memories with an en dash between two `memories/<name>` refs; on
+  2026-09-24 the judge model returned promote ops whose `ref` was exactly
+  that `memories/<first>–memories/<last>` range, naming a memory that does
+  not exist and losing the promotion. `buildChunkPrompt` no longer takes a
+  `standardsContext` and the header is now
+  `Chunk N of M (<count> memories):` — no refs in it.
 - **Consolidate re-judged memories that were already promoted verbatim into
   `knowledge/`.** That duplication was previously discovered only after the
   LLM (`shouldSkipPromotionBodyDuplicate`), so a pool where the large

@@ -92,12 +92,7 @@ export function buildChunkPrompt(
   totalChunks: number,
   bodyTruncation: number,
   pendingProposalBodyHashes: Set<string> = new Set(),
-  standardsContext = "",
 ): string {
-  const start = memories[0] ? `memories/${memories[0].name}` : "";
-  const lastMemory = memories[memories.length - 1];
-  const end = lastMemory ? `memories/${lastMemory.name}` : "";
-
   // First pass: classify each memory's annotations. 2026-05-27 controlled
   // diagnostic (/tmp/akm-health-investigations/ministral-prompt-annotation-diagnostic.md)
   // found the `(already queued)` annotation honored ~60% of the time
@@ -132,15 +127,9 @@ export function buildChunkPrompt(
 
   const lines: string[] = [
     `Source: ${sourceName}`,
-    `Chunk ${chunkIndex + 1} of ${totalChunks}, memories ${start}–${end}:`,
+    `Chunk ${chunkIndex + 1} of ${totalChunks} (${memories.length} memories):`,
     "",
   ];
-
-  if (standardsContext.trim()) {
-    lines.push("Standards to follow (the rulebook for this target):");
-    lines.push(standardsContext.trim());
-    lines.push("");
-  }
 
   for (let i = 0; i < memories.length; i++) {
     const m = memories[i]!;
