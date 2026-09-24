@@ -17,11 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A symlink that stays inside its bundle root is now recorded in the guarded
   directory manifest as its own `"symlink"` kind, identified without
   following it (its `readlink` text plus its no-follow `lstat` identity), so
-  change detection still works; it is never read, descended into, or turned
-  into a task/workflow candidate. A symlink that resolves outside the bundle
-  root, or one that is broken and cannot be identified safely, is still
-  refused, and a bundle root whose `tasks` or `workflows` entry is itself a
-  symlink still refuses loudly, since that is a schedulable source location.
+  change detection still works; it is never read or descended into. A symlink
+  sitting exactly where a task or workflow source lives (a `.yml` under
+  `tasks/`, or a workflow-named file under `workflows/`) is reported as its
+  own per-source failure — "is a symbolic source; guarded reads require a
+  regular no-follow owner" — instead of silently disappearing from the
+  desired set, while every other task and workflow still reconciles. A
+  symlink that resolves outside the bundle root, or one that is broken and
+  cannot be identified safely, is still refused, and a bundle root whose
+  `tasks` or `workflows` entry is itself a symlink still refuses loudly,
+  since that is a schedulable source location.
 
 ## [0.9.17-alpha.2] - 2026-09-24
 

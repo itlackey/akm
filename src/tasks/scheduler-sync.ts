@@ -542,6 +542,14 @@ async function compileTaskSources(
   failures: SchedulerSourceFailure[],
 ): Promise<void> {
   if (input.adapterId !== "akm" && input.adapterId !== "akm-task") return;
+  for (const symlink of collector.symlinkSources()) {
+    if (!isAuthoredTaskRelativePath(input.adapterId, symlink.relativePath)) continue;
+    const qualifiedRef = makeBundleRef(input.bundleName, symlink.relativePath.slice(0, -4));
+    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("task", qualifiedRef))) {
+      continue;
+    }
+    failures.push(taskFailure(symlink.sourcePath, qualifiedRef, symbolicSourceError(symlink.sourcePath)));
+  }
   const physicalOwners = new Map<string, string>();
   for (const guarded of collector.authoredTaskSources(input.adapterId)) {
     const sourcePath = guarded.sourcePath;
@@ -815,6 +823,20 @@ function enumerateWorkflowLookups(
     owners.push(guarded);
     lookups.set(canonicalName, owners);
   }
+  for (const symlink of collector.symlinkSources()) {
+    if (path.basename(symlink.sourcePath).toLowerCase() === "readme.md") continue;
+    const authoredName = workflowNameForSourcePath(input.sourceRoot, input.adapterId, symlink.sourcePath);
+    if (authoredName === undefined) continue;
+    const canonicalName = canonicalizeWorkflowName(authoredName);
+    const failureRef = makeBundleRef(
+      input.bundleName,
+      input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName,
+    );
+    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("workflow", failureRef))) {
+      continue;
+    }
+    failures.push(workflowFailure(symlink.sourcePath, failureRef, symbolicSourceError(symlink.sourcePath)));
+  }
   return new Map(
     [...lookups]
       .sort(([left], [right]) => compareCodePoints(left, right))
@@ -898,6 +920,18 @@ function assertUniqueInstalledIds(installed: readonly InstalledSchedulerBinding[
   }
 }
 
+/**
+ * The reason recorded for a symlinked task/workflow source: it stays a
+ * per-source failure (like the read boundary it replaces), never a silent
+ * drop and never a follow.
+ */
+function symbolicSourceError(sourcePath: string): UsageError {
+  return new UsageError(
+    `${sourcePath} is a symbolic source; guarded reads require a regular no-follow owner.`,
+    "RESOURCE_ALREADY_EXISTS",
+  );
+}
+
 function taskFailure(file: string, ref: string, cause: unknown): SchedulerSourceFailure {
   const detail = taskSourceErrorDetail(cause);
   const reason = detail === errorMessage(cause) ? `${file}: ${detail}` : detail;
@@ -938,6 +972,28 @@ export function assertSchedulerSourceSnapshot(snapshot: SchedulerSourceSnapshot)
 }
 
 type GuardedSchedulerSource = SchedulerSourceSnapshot["files"][number];
+
+/**
+ * Shared with the symlink classification in {@link compileTaskSources}: a
+ * `.yml` under `tasks/` (or, for `akm-task`, anywhere) is a task candidate —
+ * one classifier for both a captured file and an uncaptured symlink entry.
+ */
+function isAuthoredTaskRelativePath(adapterId: string, relativePath: string): boolean {
+  if (!relativePath.endsWith(".yml")) return false;
+  if (adapterId === "akm-task") return true;
+  return path.posix.dirname(relativePath) === "tasks";
+}
+
+/**
+ * Shared with the symlink classification in {@link enumerateWorkflowLookups}:
+ * anything under `workflows/` (or, for `akm-workflow`, anywhere) is a
+ * workflow candidate — one classifier for both a captured file and an
+ * uncaptured symlink entry.
+ */
+function isAuthoredWorkflowRelativePath(adapterId: string, relativePath: string): boolean {
+  if (adapterId === "akm-workflow") return true;
+  return relativePath.startsWith("workflows/");
+}
 
 class SchedulerSourceCollector {
   readonly #adapterId: string;
@@ -995,23 +1051,33 @@ class SchedulerSourceCollector {
   authoredTaskSources(adapterId: string): readonly GuardedSchedulerSource[] {
     return this.#collector
       .snapshot()
-      .sources.filter((file) => {
-        if (!file.authored || !file.relativePath.endsWith(".yml")) return false;
-        if (adapterId === "akm-task") return true;
-        return path.posix.dirname(file.relativePath) === "tasks";
-      })
+      .sources.filter((file) => file.authored && isAuthoredTaskRelativePath(adapterId, file.relativePath))
       .sort(compareGuardedSources);
   }
 
   authoredWorkflowSources(adapterId: string): readonly GuardedSchedulerSource[] {
     return this.#collector
       .snapshot()
-      .sources.filter((file) => {
-        if (!file.authored) return false;
-        if (adapterId === "akm-workflow") return true;
-        return file.relativePath.startsWith("workflows/");
-      })
+      .sources.filter((file) => file.authored && isAuthoredWorkflowRelativePath(adapterId, file.relativePath))
       .sort(compareGuardedSources);
+  }
+
+  /**
+   * Every `kind: "symlink"` entry across the directory manifests captured so
+   * far (never read, never followed — see `captureGuardedDirectoryManifest`),
+   * with its path relative to the source root so callers can classify it
+   * with the same predicates as a real, captured file.
+   */
+  symlinkSources(): readonly { readonly sourcePath: string; readonly relativePath: string }[] {
+    const entries: { sourcePath: string; relativePath: string }[] = [];
+    for (const manifest of this.#collector.snapshot().directoryManifests) {
+      for (const entry of manifest.entries) {
+        if (entry.kind !== "symlink") continue;
+        const sourcePath = path.join(manifest.directoryPath, entry.name);
+        entries.push({ sourcePath, relativePath: toPosix(path.relative(this.#sourceRoot, sourcePath)) });
+      }
+    }
+    return entries;
   }
 
   readBytes(file: string, containmentRoot: string): Uint8Array {

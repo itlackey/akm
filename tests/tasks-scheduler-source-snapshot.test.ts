@@ -135,6 +135,59 @@ describe("guarded scheduler source byte snapshots", () => {
     await expect(prepareSchedulerSyncSourceSet(sourceInput())).rejects.toThrow(/symbolic|symlink|identity|no.follow/i);
   });
 
+  test("a granted in-bundle symlinked task source is reported as a per-source failure, not scheduled", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "sources"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "sources", "nightly.yml"),
+      'version: 4\nrun: echo nightly\nschedule: "0 1 * * *"\n',
+    );
+    fs.symlinkSync(
+      path.join(storage.stashDir, "sources", "nightly.yml"),
+      path.join(storage.stashDir, "tasks", "nightly.yml"),
+    );
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput());
+
+    expect(prepared.desired).toEqual([]);
+    expect(prepared.failures).toHaveLength(1);
+    expect(prepared.failures[0]?.ref).toBe("stash//tasks/nightly");
+    expect(prepared.failures[0]?.reason).toMatch(/symbolic/);
+  });
+
+  test("the same symlinked task source layout produces no failure when it is not granted", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "sources"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "sources", "nightly.yml"),
+      'version: 4\nrun: echo nightly\nschedule: "0 1 * * *"\n',
+    );
+    fs.symlinkSync(
+      path.join(storage.stashDir, "sources", "nightly.yml"),
+      path.join(storage.stashDir, "tasks", "nightly.yml"),
+    );
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput({ enabledActivations: new Set() }));
+
+    expect(prepared.desired).toEqual([]);
+    expect(prepared.failures).toEqual([]);
+  });
+
+  test("a granted in-bundle symlinked workflow source is reported as a per-source failure, not scheduled", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
+    fs.mkdirSync(path.join(storage.stashDir, "sources"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "sources", "nightly.md"), "# nightly\n");
+    fs.symlinkSync(
+      path.join(storage.stashDir, "sources", "nightly.md"),
+      path.join(storage.stashDir, "workflows", "nightly.md"),
+    );
+
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput());
+
+    expect(prepared.desired).toEqual([]);
+    expect(prepared.failures).toHaveLength(1);
+    expect(prepared.failures[0]?.ref).toBe("stash//workflows/nightly");
+    expect(prepared.failures[0]?.reason).toMatch(/symbolic/);
+  });
+
   test("coherent inspection rejects two exact artifacts for one normalized native key", async () => {
     writeTask("alpha", 'version: 4\nrun: echo alpha\nschedule: "0 1 * * *"\n');
     const prepared = await prepareSchedulerSyncSourceSet(sourceInput());
