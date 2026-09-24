@@ -681,7 +681,15 @@ async function runLoopDistillPass(
         const lookup = (ref: string) => defaultLookup(ref, dedupeStashDir);
         const filePath = await lookup(durableInputRef);
         const assetContent = filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
-        const { events: feedbackEvents } = readEvents({ ref: feedbackRef, type: "feedback" }, { readOnly: true });
+        // PRECHECK (tier3-0917-r3, r3-4): reuse the loop's long-lived
+        // eventsCtx.db handle when one is open, instead of opening a fresh
+        // read-only state.db connection per memory ref (R25). Degrades to
+        // the previous readOnly-open when no live handle is present (e.g.
+        // this function invoked without a run-scoped eventsCtx).
+        const { events: feedbackEvents } = readEvents(
+          { ref: feedbackRef, type: "feedback" },
+          eventsCtx?.db ? eventsCtx : { readOnly: true },
+        );
         const promotesToKnowledge = await wouldPromoteMemoryToKnowledge({
           inputRef: planned.ref,
           durableInputRef,
