@@ -1342,13 +1342,22 @@ export function assertAkmAssetWrite(source: WriteTargetSource, allowedAdapters: 
 }
 
 /**
+ * The write-capable source kinds. Writes (and therefore scheduler state,
+ * which only ever binds to a writable source) are defined only for these
+ * two kinds; anything else throws `ConfigError`.
+ */
+export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "git" {
+  return kind === "filesystem" || kind === "git";
+}
+
+/**
  * Reject any kind reaching the write/delete helpers other than the two
  * supported writable kinds. The config loader is the first line of defence
  * (assertWritableAllowedForKind), but we throw here so external callers that
  * bypass the loader still get a clear error.
  */
 function assertSupportedKind(source: WriteTargetSource): void {
-  if (source.kind === "filesystem" || source.kind === "git") return;
+  if (isWriteCapableSourceKind(source.kind)) return;
   throw new ConfigError(
     `write-source: unsupported kind "${source.kind}" for source "${source.name}". ` +
       "Writes are only defined for `filesystem` and `git` sources.",
@@ -1391,7 +1400,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
   // reaching this point is a config-loader bug (assertWritableAllowedForKind
   // should have rejected it). Throw a ConfigError rather than silently
   // forwarding an unsupported kind.
-  if (runtime.type !== "filesystem" && runtime.type !== "git") {
+  if (!isWriteCapableSourceKind(runtime.type)) {
     throw new ConfigError(
       `write-source: source "${runtime.name}" has unsupported kind "${runtime.type}" for writes. ` +
         "Writes are only defined for `filesystem` and `git` sources.",
