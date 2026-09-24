@@ -300,3 +300,52 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("45 */6 * * *");
   });
 });
+
+// U2: writes (and therefore scheduler state) are only ever defined for
+// filesystem/git sources (adaptConfiguredSource, src/core/write-source.ts).
+// An enabled website/npm bundle must not crash unscoped `akm task sync`, and
+// a scoped sync naming one must fail with a clear usage error rather than
+// the write-target ConfigError that used to escape from resolveWriteTarget.
+describe("akmTasksSync — website/npm bundles cannot carry scheduler state", () => {
+  const backendFor = (exec: CronExec) => {
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    return CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath: false,
+    });
+  };
+
+  beforeEach(() => {
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: stashDir, writable: true },
+        docs: { website: { url: "https://example.test/docs/" } },
+      },
+      defaultBundle: "stash",
+    });
+  });
+
+  test("unscoped sync installs the filesystem bundle's task and skips the enabled website bundle", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *");
+
+    const result = await akmTasksSync({ backend });
+
+    expect(result.installed).toEqual(["alpha"]);
+    expect(exec.current()).toContain("task run alpha --bundle stash --scheduled");
+  });
+
+  test("scoped sync against the website bundle fails with a clear usage error, not a write-target ConfigError", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *");
+
+    await expect(akmTasksSync({ backend }, "docs")).rejects.toThrow(
+      /Bundle "docs" has kind "website"; task scheduling is only supported for filesystem and git bundles\./,
+    );
+  });
+});

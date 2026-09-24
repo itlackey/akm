@@ -19,6 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unknown/misspelled key (e.g. `improveAutonomyy`) still fails closed.
   `akm migrate apply` removes the retired key from `config.json` on disk
   (with the usual backup), and `--dry-run` reports the pending removal.
+- **Unscoped `akm task sync` no longer crashes when an enabled website or npm
+  bundle is configured.** The sync plan loop resolved every active source
+  through the write-target resolver, which rejects any kind other than
+  `filesystem`/`git` outright (writes, and therefore scheduler state, are
+  undefined for those kinds — the same rejection `akm task enable` already
+  hit). Unscoped sync now skips non-filesystem/git bundles when building
+  install operations — they never carried schedulable tasks — while
+  inactive-bundle removal/revocation still sees them. A scoped
+  `akm task sync --bundle <website-or-npm-bundle>` now fails with a clear
+  usage error instead of the write-target `ConfigError`.
 
 ## [0.9.17-alpha.1] - 2026-09-24
 
