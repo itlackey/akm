@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
-import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
+import { createProposal, getProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { slugForPath } from "../../src/indexer/installations";
 import { runCliCapture } from "../_helpers/cli";
@@ -137,7 +137,7 @@ describe("akm proposal drain strategy selector", () => {
     expect(JSON.parse(explicit.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
   });
 
-  test("reports a stale-target refusal under `failed` instead of failed:0 (#921)", async () => {
+  test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
     const stashDir = makeStashDir();
     const assetPath = path.join(stashDir, "lessons", "cli-stale.md");
     fs.writeFileSync(
@@ -163,8 +163,16 @@ describe("akm proposal drain strategy selector", () => {
     const result = await runCli(["proposal", "drain", "--promote", "-y", "--format=json"], { stashDir });
     expect(result.status).toBe(0);
     const envelope = JSON.parse(result.stdout);
+    // The stale-target category is not a merit rejection, so the drain
+    // resolves it with a structured auto-reject instead of retrying forever
+    // — it lands in `rejected`, not `failed` (STALE, R20).
     expect(envelope.promoted).toEqual([]);
-    expect(envelope.failed).toEqual([expect.objectContaining({ id: created.id, reason: "stale-target" })]);
+    expect(envelope.failed).toEqual([]);
+    expect(envelope.rejected).toEqual([created.id]);
+    expect(getProposal(stashDir, created.id)).toMatchObject({
+      status: "rejected",
+      gateDecision: { outcome: "auto-rejected", reason: "stale-target" },
+    });
   });
 });
 
