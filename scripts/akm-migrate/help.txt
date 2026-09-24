@@ -6,13 +6,16 @@ has ever written lives here; the CLI proper reads only current schemas.
 plan (exit 1 when any step is blocked):
 
   1. legacy config `extraParams` keys lifted onto first-class engine fields
-  2. scheduler grants bound to the configured source installation that was
+  2. retired `experimental.*` config keys removed (today `workflowEngine`)
+  3. scheduler grants bound to the configured source installation that was
      approved (stale grants whose bundle no longer exists are removed)
-  3. pending state.db migrations, historical-destructive ones included,
+  4. pending state.db migrations, historical-destructive ones included,
      with a verified sibling safety copy (the only path that admits them)
-  4. task-v2 files to task v3, then task-v3 files to task source v4
-  5. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
-  6. live `.akm` writers relocated to `$STATE`/`$CACHE`, for every local
+  5. source-owned schedule enablement converted to host-local scheduler
+     grants
+  6. task-v2 files to task v3, then task-v3 files to task source v4
+  7. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
+  8. live `.akm` writers relocated to `$STATE`/`$CACHE`, for every local
      bundle (distill-rejected, eval-cases, measurement verdicts, and stale
      improve-pipeline locks — a lock a live run still holds is left alone)
 

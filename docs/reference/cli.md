@@ -1673,16 +1673,25 @@ in order:
 
 1. legacy config `extraParams` keys lifted onto first-class engine fields
    (`configExtraParams`);
-2. pending `state.db` migrations, historical-destructive ones included, with
+2. retired `experimental.*` config keys removed, today `workflowEngine`
+   (`configRetiredExperimentalKeys`) — config loading already ignores them
+   with a one-time warning, so this only cleans the file;
+3. scheduler grants bound to the configured source installation that was
+   approved, with stale grants for removed bundles dropped
+   (`configSchedulerSourceIds`);
+4. pending `state.db` migrations, historical-destructive ones included, with
    a verified sibling safety copy (`stateMigrations`) — the only path besides
    `akm upgrade` that admits released migration 018, which an ordinary
    command refuses;
-3. task-v2 files to task v3, then task-v3 files to task source v4
+5. source-owned schedule enablement converted to host-local scheduler grants
+   (`schedulerActivation`);
+6. task-v2 files to task v3, then task-v3 files to task source v4
    (`taskV3Migration`, `taskV4Migration`), each keeping its own lock, backup,
    prevalidation, and rollback, so a file blocked in the first generation does
    not stop the second from converting files already at `version: 3`;
-4. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
-   (`deadResidue`, `staleTxns`).
+7. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
+   (`deadResidue`, `staleTxns`), then live `.akm` writers relocated to
+   `$STATE`/`$CACHE` (`writerRelocation`).
 
 ```sh
 akm migrate status
