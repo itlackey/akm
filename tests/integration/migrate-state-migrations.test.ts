@@ -21,6 +21,7 @@ import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { openDatabase } from "../../src/storage/database";
 import { runMigrations } from "../../src/storage/engines/sqlite-migrations";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -85,6 +86,19 @@ function writeLegacyExtraParamsConfig(configDir: string): string {
           extraParams: { temperature: 0.7 },
         },
       },
+    }),
+  );
+  return configPath;
+}
+
+/** A config carrying one live and one retired `experimental.*` key. */
+function writeRetiredExperimentalKeysConfig(configDir: string): string {
+  const configPath = path.join(configDir, "akm", "config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      configVersion: "0.9.0",
+      experimental: { improveAutonomy: true, workflowEngine: true },
     }),
   );
   return configPath;
@@ -189,4 +203,37 @@ test("status names a pending config lift as the blocker instead of dying on the 
   // Read-only still reports what state is waiting behind the lift.
   expect(plan.stateMigrations).toEqual({ pending: FROM_018 });
   expect(plan.taskV3Migration).toBeUndefined();
+});
+
+test("dry-run reports a pending retired experimental key removal, leaving the config file unchanged", async () => {
+  const configPath = writeRetiredExperimentalKeysConfig(storage.configDir);
+
+  const plan = await runMigration({ apply: false });
+
+  expect(plan.configRetiredExperimentalKeys).toEqual({ pending: { removed: ["experimental.workflowEngine"] } });
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  expect(written.experimental).toEqual({ improveAutonomy: true, workflowEngine: true });
+});
+
+test("apply removes the retired experimental key, keeps the live one, and the next loadConfig warns nothing about it", async () => {
+  const configPath = writeRetiredExperimentalKeysConfig(storage.configDir);
+
+  const plan = await runMigration({ apply: true });
+
+  expect(plan.configRetiredExperimentalKeys).toEqual({ applied: true, removed: ["experimental.workflowEngine"] });
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  expect(written.experimental).toEqual({ improveAutonomy: true });
+
+  resetConfigCache();
+  _resetWarnOnceForTests();
+  const warnings: string[] = [];
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  try {
+    loadConfig();
+  } finally {
+    _setWarnSinkForTests(undefined);
+  }
+  expect(warnings.some((w) => w.includes("workflowEngine"))).toBe(false);
 });

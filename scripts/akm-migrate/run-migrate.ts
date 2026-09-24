@@ -148,15 +148,25 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     : { pending: findConfigExtraParamsLift(configPath) };
   if (apply && (configExtraParams as ConfigExtraParamsLiftResult).applied) resetConfigCache();
   const pendingLift = apply ? undefined : (configExtraParams as { pending: ConfigExtraParamsLiftPlan }).pending;
+
+  // Retired `experimental.*` keys never block anything — the read shim
+  // already tolerates them (src/core/config/retired-experimental-keys-shim.ts),
+  // so this is cleanup, not a precondition later steps depend on. Computed
+  // once here (it reads and writes only the raw file under its own lock and
+  // never calls loadConfig) so both early "blocked" returns below and the
+  // full plan can share the same value.
+  const configRetiredExperimentalKeys = apply
+    ? applyConfigRetiredExperimentalKeys(configPath)
+    : { pending: findConfigRetiredExperimentalKeys(configPath) };
+  if (apply && (configRetiredExperimentalKeys as ConfigRetiredExperimentalKeysResult).applied) resetConfigCache();
+
   if (pendingLift && pendingLift.lifted.length > 0) {
     return {
       schemaVersion: 1,
       status: "blocked",
       blockers: pendingLift.lifted,
       configExtraParams,
-      configRetiredExperimentalKeys: apply
-        ? applyConfigRetiredExperimentalKeys(configPath)
-        : { pending: findConfigRetiredExperimentalKeys(configPath) },
+      configRetiredExperimentalKeys,
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
@@ -179,20 +189,10 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       ),
       configExtraParams,
       configSchedulerSourceIds,
-      configRetiredExperimentalKeys: apply
-        ? applyConfigRetiredExperimentalKeys(configPath)
-        : { pending: findConfigRetiredExperimentalKeys(configPath) },
+      configRetiredExperimentalKeys,
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
-
-  // Retired `experimental.*` keys never block anything — the read shim
-  // already tolerates them (src/core/config/retired-experimental-keys-shim.ts),
-  // so this is cleanup, not a precondition later steps depend on.
-  const configRetiredExperimentalKeys = apply
-    ? applyConfigRetiredExperimentalKeys(configPath)
-    : { pending: findConfigRetiredExperimentalKeys(configPath) };
-  if (apply && (configRetiredExperimentalKeys as ConfigRetiredExperimentalKeysResult).applied) resetConfigCache();
 
   // State next, and before the task migrators: they open state.db themselves,
   // and an ordinary open refuses a historical-destructive migration by design.
