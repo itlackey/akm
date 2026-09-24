@@ -734,6 +734,16 @@ function classifyPendingProposals(opts: DrainOptions): DrainClassification {
     if (proposal.gateDecision?.outcome === "auto-rejected" && !proposal.gateDecision.gate?.startsWith("triage:")) {
       continue;
     }
+    // REVIEW: a `review_needed` distill/promote-memory row is stamped
+    // `deferred`/`quality-gate` by `writeQualityRejection` (distill/quality-gate.ts)
+    // precisely because the quality judge could not decide and wants a human,
+    // not the judgment tier, to see it. Skip it here — before `classifyProposal`
+    // would otherwise defer it to the judgment tier (which can auto-accept
+    // under `applyMode: promote`) and before the policy-deferred re-stamp loop
+    // in `drainProposals` would overwrite this stamp with a `triage:` one.
+    if (proposal.gateDecision?.outcome === "deferred" && proposal.gateDecision.gate === "quality-gate") {
+      continue;
+    }
     if (
       proposal.gateDecision?.outcome === "staged" &&
       proposal.gateDecision.gate === gateLabel &&

@@ -24,6 +24,7 @@ import {
   isProposalSkipped,
   listProposals,
   type Proposal,
+  recordGateDecision,
 } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
@@ -975,5 +976,62 @@ describe("drainProposals — judgment disabled", () => {
     const result = await drainProposals(baseOpts(stash, { judgment: null }), fakeAccept(), fakeReject(), {});
 
     expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+  });
+});
+
+// ── REVIEW: the quality gate's review_needed band must reach a human ────────
+//
+// `writeQualityRejection` (distill/quality-gate.ts) stamps a `review_needed`
+// mint `deferred`/`quality-gate`. `classifyPendingProposals` must skip that
+// row entirely — not classify it, not re-stamp it, not send it to the
+// judgment tier, which could auto-accept it under `applyMode: promote` with
+// no human ever seeing content the gate explicitly refused to auto-queue. An
+// unstamped `distill` row is unaffected and still reaches judgment normally
+// (PERSONAL_STASH defers `distill` to the judgment tier).
+
+describe("drainProposals — REVIEW: quality-gate review-band rows are skipped, not judged", () => {
+  test("a distill row stamped deferred/quality-gate stays pending and untouched; the judgment seam is never called", async () => {
+    const stash = makeStashDir();
+    const reviewNeeded = seed(stash, "lessons/review-needed", "distill", VALID_LESSON);
+    recordGateDecision(stash, reviewNeeded.id, {
+      outcome: "deferred",
+      reason: "quality-review",
+      gate: "quality-gate",
+    });
+    const before = getProposal(stash, reviewNeeded.id);
+
+    const chat = mock(async () => {
+      throw new Error("quality-gate review_needed row reached the judgment tier");
+    });
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "promote" }),
+      fakeAccept(),
+      fakeReject(),
+      { chat },
+    );
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(result.promoted).toEqual([]);
+    expect(result.rejected).toEqual([]);
+    expect(result.deferred).toEqual([]);
+    expect(getProposal(stash, reviewNeeded.id)).toEqual(before);
+  });
+
+  test("an unstamped distill row still reaches the judgment tier", async () => {
+    const stash = makeStashDir();
+    const distillRow = seed(stash, "lessons/unstamped-distill", "distill", VALID_LESSON);
+
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "genuinely useful" }));
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "promote" }),
+      fakeAccept(),
+      fakeReject(),
+      { chat },
+    );
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(result.promoted).toEqual([distillRow.id]);
   });
 });
