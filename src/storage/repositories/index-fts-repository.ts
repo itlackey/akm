@@ -544,10 +544,7 @@ function ftsRowidLayoutHolds(db: Database): boolean {
   const fragmentRow = db
     .prepare("SELECT rowid, entry_id, fragment_ordinal FROM entry_fragments_fts ORDER BY rowid DESC LIMIT 1")
     .get() as { rowid: number; entry_id: number; fragment_ordinal: number } | undefined;
-  if (
-    fragmentRow &&
-    fragmentRow.rowid !== fragmentRow.entry_id * FRAGMENT_ROWID_ORDINAL_SPAN + fragmentRow.fragment_ordinal
-  ) {
+  if (fragmentRow && fragmentRow.rowid !== fragmentFtsRowid(fragmentRow.entry_id, fragmentRow.fragment_ordinal)) {
     return false;
   }
   return true;

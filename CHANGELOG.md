@@ -123,7 +123,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   index-fts-repository.ts src/indexer/search/` returns nothing outside the
   new maintenance code itself), so an older binary keeps reading the
   realigned tables correctly; measured on a SQLite-backup-API copy of the
-  same 23,933-entry index, that one-time realignment costs about 23s wall /
+  same 23,933-entry index, that one-time realignment costs about 9.5s wall /
   1.1GB peak RSS. That writable open now also re-checks the contract on
   each table's highest-rowid row and realigns again if it no longer holds:
   an older binary sharing this generation (or a rollback) deletes an entry
