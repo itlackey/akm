@@ -139,7 +139,14 @@ describe("akm health --no-probe (#914)", () => {
         name: string;
         status: string;
         evidence?: {
-          installs?: Array<{ path: string; binDir: string; manager: string; version?: string; isRunning: boolean }>;
+          installs?: Array<{
+            path: string;
+            binDir: string;
+            manager: string;
+            version?: string;
+            isRunning: boolean;
+            linked: boolean;
+          }>;
         };
       }>;
     };
@@ -160,6 +167,7 @@ describe("akm health --no-probe (#914)", () => {
         manager: "standalone",
         version: pkgVersion,
         isRunning: false,
+        linked: true,
       },
     ]);
 
