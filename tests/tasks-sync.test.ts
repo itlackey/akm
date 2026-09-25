@@ -183,7 +183,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle");
   });
 
-  test("`akm task disable` also removes a granted, installed binding (upgrade-B)", async () => {
+  test("`akm task disable` also removes a granted, installed binding", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *", true);
@@ -195,7 +195,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle");
   });
 
-  test("`akm task add --disabled` does not re-grant or reinstall the task it just disabled (upgrade-B r2-1)", async () => {
+  test("`akm task add --disabled` does not re-grant or reinstall the task it just disabled", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *", true);
@@ -212,7 +212,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle stash --scheduled");
   });
 
-  test("carries forward a grant lost outside `disable` for an installed row with a backing file (upgrade-B)", async () => {
+  test("carries forward a grant lost outside `disable` for an installed row with a backing file", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("orphan", "*/5 * * * *", true);
@@ -227,7 +227,7 @@ describe("akmTasksSync — schedule drift", () => {
     resetConfigCache();
     expect(schedulerActivations(loadConfig())).toEqual([]);
 
-    // Only `akm task sync` itself carries a grant forward (upgrade-B r2-1);
+    // Only `akm task sync` itself carries a grant forward;
     // the internal reconciling syncs inside add/enable/disable never do.
     const result = await akmTasksSync({ backend }, undefined, { carryForward: true });
     expect(result.removed).not.toContain("orphan");
