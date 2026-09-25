@@ -1738,11 +1738,12 @@ blocked-reason table and worked examples, and
 [Bundling akm](../integration/bundling-akm.md) for the plan JSON shape and
 how to drive this from a container/image boot step.
 
-Each step above runs under its own catch: a step's own anomaly (or, for
-`apply`, its read-only fallback failing too) is recorded in the plan's
-`failedSteps: [{step, error}]` instead of ending the whole run — the
-remaining steps still run in order, and each one's own section is simply
-absent from the plan when it is the step that failed. Any `failedSteps` entry
+Each step above runs under its own catch: a step's own anomaly is always
+recorded in the plan's `failedSteps: [{step, error}]` instead of ending the
+whole run — the remaining steps still run in order. Under `apply`, a failed
+step's section falls back to its read-only preview; if that fails too, the
+fallback adds its own `failedSteps` entry, and the section is absent from the
+plan. Any `failedSteps` entry
 forces `status: "blocked"` and adds a matching line to `blockers`, so
 `akm migrate status|apply` reports the plan and exits 1 (not the internal-error
 70) the same way it does for any other blocked plan.

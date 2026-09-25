@@ -217,12 +217,15 @@ export function finalizeSchedulerSyncPlan(
     installed: inspection.installed,
     nativeArtifacts: inspection.artifacts,
   };
-  // Whole-operation preconditions: a duplicate id WITHIN the authored
+  // Preconditions for this bundle's plan: a duplicate id WITHIN the authored
   // desired set, or an incoherent/ambiguous backend read, can't be safely
   // attributed to one binding — which of two colliding sources is "the
   // anomaly" is exactly what's unproven, so reconciling everything else
   // around a guess would risk silently overwriting or orphaning a native
-  // scheduler entry. These still hard-fail the whole sync.
+  // scheduler entry. They hard-fail this bundle's plan: the whole sync when
+  // it is scoped to one bundle, one reported bundle failure when it is not
+  // (the backend-wide coherence check runs once before the per-bundle loop
+  // and hard-fails the whole sync either way).
   assertUniqueDesiredIds(prepared.desired);
   assertSchedulerBackendInspection(inspection, prepared.desired, input.inspection !== undefined);
 
