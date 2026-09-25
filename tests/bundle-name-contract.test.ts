@@ -19,7 +19,7 @@ import path from "node:path";
 import { akmAdd } from "../src/commands/sources/source-add";
 import { loadConfig, saveConfig } from "../src/core/config/config";
 import { UsageError } from "../src/core/errors";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "./_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -109,6 +109,24 @@ describe("akm bundle add <local path> --name (D6)", () => {
     await expect(akmAdd({ ref: dir, name: "stable" })).resolves.toBeDefined();
     expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stable"]);
   });
+
+  // A legal slug that happens to shadow an inherited `Object.prototype`
+  // member (e.g. `toString`) must not be rejected as "already exists" — the
+  // existence check is an own-property check on the bundles map, not a `in`
+  // walk of the prototype chain. (`constructor` itself is not used here: it
+  // is independently blocked by the prototype-pollution guard in
+  // `src/core/config/deep-merge.ts`'s `UNSAFE_KEYS`, which every config load
+  // — not just an `extends` chain — runs through; that is a separate,
+  // deliberate guard out of scope for this item.)
+  test("--name toString succeeds on a fresh config", async () => {
+    const dir = createTmpDir();
+    makeStashDir(dir);
+
+    const result = await akmAdd({ ref: dir, name: "toString" });
+
+    expect(result.bundleId).toBe("toString");
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["toString"]);
+  });
 });
 
 describe("akm bundle add <website URL> --name (D6)", () => {
@@ -151,5 +169,18 @@ describe("akm bundle add <website URL> --name (D6)", () => {
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
     expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["original"]);
+  });
+
+  test("a successful add result carries bundleId", async () => {
+    const result = await withMockedFetch(
+      () => akmAdd({ ref: "http://127.0.0.1:9/docs", name: "my-site" }),
+      () =>
+        new Response("<html><head><title>T</title></head><body><h1>T</h1><p>hi</p></body></html>", {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        }),
+    );
+
+    expect(result.bundleId).toBe("my-site");
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["my-site"]);
   });
 });
