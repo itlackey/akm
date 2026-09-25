@@ -25,8 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   up the freshly installed binary path without a manual step; a sync failure
   is reported under `postUpgrade.taskSync`, never thrown, and is now also
   folded into `postUpgrade.message` so a text-output caller sees it without
-  reading the structured field. `--skip-post-upgrade` skips both the index
-  rebuild and the task sync. `akm upgrade --check`'s plain-text output now
+  reading the structured field, using the child's own `{ok:false, error,
+  code}` JSON line rather than the first line of its stderr — a warning
+  `akm task sync` printed ahead of it (e.g. a carried-forward grant) could
+  otherwise read as the failure detail. `--skip-post-upgrade` skips both the
+  index rebuild and the task sync. `akm upgrade --check`'s plain-text output now
   names the `--version`/`--tag` it actually checked instead of a bare
   `akm upgrade` (which would install `latest`), and reports a downgrade
   target as a downgrade rather than as "available".
@@ -267,7 +270,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `carriedForward` is never also listed under `removes`. `akm setup`'s
   confirmed activation also carries forward grants for installed tasks
   outside its review before it applies the operator's selections, so a task
-  left unchecked is still removed. Carry-forward never rebinds an existing
+  left unchecked is still removed. Its task-review checklist now also
+  pre-checks an embedded task whose grant was lost but whose installed
+  native binding the carry-forward would still grant, instead of showing it
+  disabled and unchecked (the wizard skips startup reconciliation, so this
+  is exactly the state left behind by an upgrade that reset host-local
+  config); any carry-forward warning or stale-grant notice is now logged
+  instead of discarded. Carry-forward never rebinds an existing
   grant to a new source: a ref already granted, even to a stale `sourceId`
   left behind when its bundle was removed and re-added under the same name,
   is reported as stale rather than silently re-granted — `akm task enable

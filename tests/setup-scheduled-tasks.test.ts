@@ -20,7 +20,13 @@ import {
 import { schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
-import { carryForwardSchedulerGrants } from "../src/tasks/scheduler-grant-carry-forward";
+import type { SchedulerBackendInspection } from "../src/tasks/scheduler-binding";
+import {
+  carryForwardSchedulerGrants,
+  type SchedulerGrantCarryForwardResult,
+  type StaleSchedulerGrant,
+  staleSchedulerGrantWarning,
+} from "../src/tasks/scheduler-grant-carry-forward";
 import {
   resolveScheduledTaskContext,
   schedulerContextDescriptor,
@@ -98,14 +104,26 @@ const EMPTY_SYNC_RESULT: TasksSyncResult = {
   failures: [],
 };
 
+const EMPTY_INSPECTION: SchedulerBackendInspection = { installed: [], artifacts: [] };
+const EMPTY_CARRY_FORWARD_RESULT: SchedulerGrantCarryForwardResult = {
+  applied: [],
+  warnings: [],
+  staleGrants: [],
+};
+
 function makeDeps(
   installed: Array<{ id: string; schedule: string; enabled: boolean; description?: string }>,
   syncResult: TasksSyncResult = EMPTY_SYNC_RESULT,
+  options: {
+    inspection?: SchedulerBackendInspection;
+    carryForwardResult?: SchedulerGrantCarryForwardResult;
+  } = {},
 ) {
   const calls = {
     prepared: [] as PreparedSetupTask[][],
     syncCalls: 0,
     carryForwardCalls: 0,
+    inspectInstalledCalls: 0,
   };
   const deps = {
     list: () => installed,
@@ -119,9 +137,14 @@ function makeDeps(
       calls.syncCalls += 1;
       return syncResult;
     },
+    inspectInstalled: async () => {
+      calls.inspectInstalledCalls += 1;
+      return options.inspection ?? EMPTY_INSPECTION;
+    },
     carryForward: async () => {
       state.events.push("carryForward");
       calls.carryForwardCalls += 1;
+      return options.carryForwardResult ?? EMPTY_CARRY_FORWARD_RESULT;
     },
   };
   return { deps, calls };
@@ -184,6 +207,9 @@ describe("stepScheduledTasks", () => {
     state.confirmReturn = true;
     state.onConfirm = () => {
       expect(state.notes).toHaveLength(1);
+      // The read-only inventory used to pre-check the review has already run by now, but nothing
+      // that mutates task files or scheduler state has.
+      expect(calls.inspectInstalledCalls).toBe(1);
       expect(calls.prepared).toHaveLength(0);
       expect(calls.syncCalls).toBe(0);
       expect(calls.carryForwardCalls).toBe(0);
@@ -223,6 +249,31 @@ describe("stepScheduledTasks", () => {
 
     expect(calls.carryForwardCalls).toBe(1);
     expect(state.events).toEqual(["confirm", "carryForward", "prepare", "sync"]);
+  });
+
+  test("logs every carry-forward warning and stale-grant notice", async () => {
+    const staleGrant: StaleSchedulerGrant = {
+      kind: "task",
+      ref: "stash//tasks/example",
+      grantedSourceId: "filesystem:old",
+      currentSourceId: "filesystem:new",
+    };
+    const { deps } = makeDeps([], EMPTY_SYNC_RESULT, {
+      carryForwardResult: {
+        applied: [],
+        warnings: ["Native scheduler activation could not be inspected: boom"],
+        staleGrants: [staleGrant],
+      },
+    });
+    state.confirmReturn = true;
+
+    await stepScheduledTasks(deps);
+
+    expect(state.logs).toContainEqual({
+      level: "warn",
+      message: "Native scheduler activation could not be inspected: boom",
+    });
+    expect(state.logs).toContainEqual({ level: "warn", message: staleSchedulerGrantWarning(staleGrant) });
   });
 
   test("reports every skipped task and no activation success for a partial sync", async () => {
@@ -519,6 +570,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         list: listSetupTaskDefinitions,
         prepare: prepareSetupTaskDefinitions,
         sync: (deps, bundleTarget, syncOptions) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => backend.inspectBindings!({}),
         carryForward: async () => carryForwardSchedulerGrants(await backend.inspectBindings!({})),
       });
 
@@ -526,6 +578,59 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       expect(schedulerActivations(loadConfig())).toContainEqual(
         expect.objectContaining({ kind: "task", ref: "stash//tasks/orphan" }),
       );
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  // `akm setup` skips startup reconciliation, so on the first run after an upgrade that dropped
+  // host-local grants, an embedded task with a live installed binding but no grant would otherwise
+  // show as disabled and unchecked — and confirming the wizard would then remove its row, acting on
+  // a state the wizard itself never actually holds.
+  test("pre-checks an embedded task whose grant was lost but a native binding still exists", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+      const deps = {
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (
+          syncDeps: Parameters<typeof akmTasksSync>[0],
+          bundleTarget?: string,
+          syncOptions?: Parameters<typeof akmTasksSync>[2],
+        ) => akmTasksSync({ ...syncDeps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => backend.inspectBindings!({}),
+        carryForward: async () => carryForwardSchedulerGrants(await backend.inspectBindings!({})),
+      };
+
+      // First run: select and activate the embedded `improve` task, installing its crontab row.
+      state.multiselectReturn = ["improve"];
+      state.confirmReturn = true;
+      await stepScheduledTasks(deps);
+      expect(exec.current()).toContain("task run improve");
+
+      // Simulate the grant record vanishing (e.g. an upgrade that reset host-local config) while
+      // the installed crontab row and the task file it backs both survive untouched.
+      writeSandboxConfig({ scheduler: { enabled: [] } });
+      resetConfigCache();
+      expect(schedulerActivations(loadConfig())).toEqual([]);
+
+      // Second run: decline activation, just inspect what the review pre-checks.
+      resetClack();
+      state.confirmReturn = false;
+      await stepScheduledTasks(deps);
+
+      expect(state.multiselectConfig?.initialValues).toContain("improve");
     } finally {
       storage.cleanup();
     }
@@ -558,6 +663,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
           bundleTarget?: string,
           syncOptions?: Parameters<typeof akmTasksSync>[2],
         ) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => backend.inspectBindings!({}),
         carryForward: async () => carryForwardSchedulerGrants(await backend.inspectBindings!({})),
       };
 
