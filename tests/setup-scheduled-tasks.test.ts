@@ -636,7 +636,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
     }
   });
 
-  // Reviewer finding (regression from f84e14332): a managed embedded task's
+  // Reviewer finding: a managed embedded task's
   // template is still prepared on disk even when the operator leaves it unchecked (":273-276"), so
   // a carry-forward that ran AFTER `prepare` revoked its grant would immediately re-grant it and
   // undo the deselection. Carry-forward must run before `prepare`, so `prepare`'s revocation is the

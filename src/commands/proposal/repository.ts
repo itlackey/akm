@@ -899,7 +899,7 @@ export interface CheckProposalGuardInput {
 }
 
 /**
- * R9 (tier2-0917): pure pre-generation check of the fingerprint-match /
+ * R9: pure pre-generation check of the fingerprint-match /
  * rejection-backoff guard — the same computation `createProposal` runs AFTER
  * generation (`checkFingerprintAndBackoff`), exposed so a caller can skip an
  * expensive LLM call BEFORE making it. Shares {@link resolveProposalTargetInfo}
