@@ -15,6 +15,7 @@
 import { resolveStashDir } from "../../src/core/common";
 import { bundleContentRoots, bundleKeyForContentRoot, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import type { QuarantinedTxn } from "../../src/core/fs-txn";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import {
@@ -90,7 +91,7 @@ export interface CombinedMigrationPlan {
   taskV4BackupPath?: string;
   taskV4Applied?: number;
   deadResidue?: { pending: DeadResidueEntry[] } | { removed: DeadResidueRemoval[] };
-  staleTxns?: { pending: StaleTxnEntry[] } | { recovered: StaleTxnEntry[] };
+  staleTxns?: { pending: StaleTxnEntry[] } | { recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[] };
   // Keyed by bundle id (the default stash first, then every other
   // filesystem-backed bundle) — one filesystem bundle can trail live writer
   // residue as easily as another (itlackey/akm#890).
@@ -286,7 +287,7 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
       ? { removed: removeDeadResidue(stashDir) }
       : { pending: findDeadResidueEntries(stashDir) };
     stashSections.staleTxns = apply
-      ? { recovered: await recoverStaleTxns(stashDir) }
+      ? await recoverStaleTxns(stashDir)
       : { pending: findStaleTxnEntries(stashDir) };
   }
   const relocationTargets = writerRelocationTargets(stashDir);

@@ -167,6 +167,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A migration that cannot finish (`blocked`, or the spawn itself failing)
   warns once, retries no more than once per 10 minutes, and never fails the
   command it ran ahead of.
+- **A poisoned transaction journal is quarantined and reported instead of
+  aborting the whole recovery scan.** `recoverTxnsForRoot`
+  (`src/core/fs-txn.ts`) fenced and finalized every journal under one loop
+  with no per-journal isolation: the first journal whose fence or handler
+  threw aborted the scan, leaving every OTHER journal under the same root
+  unrecovered and `akm migrate apply` exiting 70 (twelve journals, one
+  diverged, took down recovery for all twelve). Each journal's fence +
+  rollback/finalize now runs under its own `try`; a failure moves that
+  journal to `$DATA/txn-quarantine/<rootNs>/<id>/` (with a `reason.json`
+  naming the reason, the akm version, and the timestamp — nothing is
+  deleted) and the scan continues. `recoverTxnsForRoot` now returns
+  `{ recovered, quarantined }`; `akm migrate apply`'s `staleTxns` plan
+  section reports both lists, and a quarantined journal does not make the
+  plan `blocked`. A non-empty `$DATA/txn-quarantine` now also surfaces as a
+  new `txn-quarantine` `akm health` advisory. `akm migrate status` (and
+  `apply --dry-run`) now also runs the read-only fence check per journal and
+  marks a would-be-quarantined one with `wouldQuarantine: { reason }` in its
+  `staleTxns.pending` entry — a fence violation is cheap to determine without
+  mutation; a journal that would only fail during `rollback`/`finalize`
+  still reports as plain "pending", since that requires actually running
+  recovery.
 
 ### Changed
 

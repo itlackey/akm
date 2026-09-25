@@ -29,6 +29,7 @@ import {
   type Txn,
   type TxnJournal,
   txnNamespaceDir,
+  txnQuarantineNamespaceDir,
 } from "../../src/core/fs-txn";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../_helpers/sandbox";
 
@@ -118,8 +119,9 @@ describe("fs-txn engine core", () => {
     const doneAlready = beginTxn({ kind: "test-kind-recover", root, changes: [], payload: { label: "done" } });
     advanceTxn(doneAlready, "committed");
 
-    const recovered = await recoverTxnsForRoot(root);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
     expect(recovered).toHaveLength(3);
+    expect(quarantined).toHaveLength(0);
     expect(calls.sort()).toEqual(["finalize:fw@files-published", "rollback:rb"]);
     // Every transaction dir is swept after recovery.
     const nsDir = txnNamespaceDir(root);
@@ -136,7 +138,7 @@ describe("fs-txn engine core", () => {
     cleanupTxn(txn.dir);
   });
 
-  test("recovery refuses journals whose changes escape the root", async () => {
+  test("a journal whose changes escape the root is quarantined, not thrown on", async () => {
     const root = freshRoot();
     registerRecordingKind("test-kind-fence", []);
     const txn = beginTxn({
@@ -145,11 +147,23 @@ describe("fs-txn engine core", () => {
       changes: [{ path: "/etc/passwd", op: "update", beforeHash: null, afterHash: null }],
       payload: { label: "evil" },
     });
-    void txn;
-    await expect(recoverTxnsForRoot(root)).rejects.toThrow(/outside its root/);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.transactionId).toBe(txn.journal.transactionId);
+    expect(quarantined[0]?.reason).toMatch(/outside its root/);
+    // The journal directory MOVED to the quarantine home — nothing deleted.
+    expect(fs.existsSync(txn.dir)).toBe(false);
+    const quarantineDir = path.join(txnQuarantineNamespaceDir(root), txn.journal.transactionId);
+    expect(quarantined[0]?.journalPath).toBe(path.join(quarantineDir, "journal.json"));
+    expect(fs.existsSync(path.join(quarantineDir, "journal.json"))).toBe(true);
+    const reason = JSON.parse(fs.readFileSync(path.join(quarantineDir, "reason.json"), "utf8"));
+    expect(reason.reason).toMatch(/outside its root/);
+    expect(typeof reason.version).toBe("string");
+    expect(typeof reason.quarantinedAt).toBe("string");
   });
 
-  test("recovery refuses journals bound to a different root", async () => {
+  test("a journal bound to a different root is quarantined, not thrown on", async () => {
     const root = freshRoot();
     const other = freshRoot();
     registerRecordingKind("test-kind-foreign", []);
@@ -158,9 +172,12 @@ describe("fs-txn engine core", () => {
     const dir = path.join(txnNamespaceDir(root), txn.journal.transactionId);
     fs.mkdirSync(dir, { recursive: true });
     fs.copyFileSync(txn.journalPath, path.join(dir, "journal.json"));
-    await expect(recoverTxnsForRoot(root)).rejects.toThrow(/different root/);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.reason).toMatch(/different root/);
+    expect(fs.existsSync(dir)).toBe(false);
     cleanupTxn(txn.dir);
-    cleanupTxn(dir);
   });
 
   // ── unknown-kind sweep (0.9.0: `akm mv` and its `kind:"mv"` handler are
@@ -194,9 +211,10 @@ describe("fs-txn engine core", () => {
     const root = freshRoot();
     const dir = fabricateUnknownKindTxnDir(root, "mv", TXN_SWEEP_GRACE_MS + 60_000);
 
-    const recovered = await recoverTxnsForRoot(root);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
     // Nothing was recovered (no handler could roll it back or forward) …
     expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(0);
     // … and the unrecoverable directory is gone rather than fencing the scan.
     expect(fs.existsSync(dir)).toBe(false);
   });
@@ -209,8 +227,9 @@ describe("fs-txn engine core", () => {
     advanceTxn(known, "files-published");
     const stale = fabricateUnknownKindTxnDir(root, "mv", TXN_SWEEP_GRACE_MS + 60_000);
 
-    const recovered = await recoverTxnsForRoot(root);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
     expect(recovered.map((j) => j.kind)).toEqual(["test-kind-sweep-sibling"]);
+    expect(quarantined).toHaveLength(0);
     expect(calls).toEqual(["finalize:live@files-published"]);
     expect(fs.existsSync(stale)).toBe(false);
     expect(fs.existsSync(known.dir)).toBe(false);
@@ -223,8 +242,9 @@ describe("fs-txn engine core", () => {
     // apart, so a just-written journal must survive the scan untouched.
     const dir = fabricateUnknownKindTxnDir(root, "not-yet-imported-kind", 0);
 
-    const recovered = await recoverTxnsForRoot(root);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
     expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(0);
     expect(fs.existsSync(path.join(dir, "journal.json"))).toBe(true);
     cleanupTxn(dir);
   });
@@ -236,8 +256,9 @@ describe("fs-txn engine core", () => {
 
     // A narrowly-filtered caller (the shape every pre-0.9.0 mv hook used) must
     // still clear garbage no handler can ever recover.
-    const recovered = await recoverTxnsForRoot(root, (j) => j.kind === "test-kind-sweep-filtered");
+    const { recovered, quarantined } = await recoverTxnsForRoot(root, (j) => j.kind === "test-kind-sweep-filtered");
     expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(0);
     expect(fs.existsSync(dir)).toBe(false);
   });
 
@@ -261,18 +282,18 @@ describe("fs-txn engine core", () => {
 
     // filter narrows recovery: nothing matches → nothing rolled back/swept.
     const none = await recoverTxnsForRoot(root, (j) => j.kind === "something-else");
-    expect(none).toHaveLength(0);
+    expect(none.recovered).toHaveLength(0);
     expect(fs.existsSync(txn.journalPath)).toBe(true);
 
     const all = await recoverTxnsForRoot(root);
-    expect(all).toHaveLength(1);
+    expect(all.recovered).toHaveLength(1);
+    expect(all.quarantined).toHaveLength(0);
     expect(calls).toEqual(["rollback:l1"]);
     expect(fs.existsSync(path.join(txnNamespaceDir(root), "junk-no-journal"))).toBe(false);
   });
 
-  test("a finalize crash leaves the journal at its recorded phase for re-entry", async () => {
+  test("a finalize throw quarantines its own journal without blocking a sibling's recovery", async () => {
     const root = freshRoot();
-    let crashOnce = true;
     const calls: string[] = [];
     registerTxnKind<{ label: string }>("test-kind-crashy", {
       phases: ["prepared", "files-published", "state-persisted", "committed"],
@@ -282,24 +303,31 @@ describe("fs-txn engine core", () => {
       },
       finalize(txn: Txn<{ label: string }>) {
         if (txn.journal.phase === "files-published") advanceTxn(txn, "state-persisted");
-        if (crashOnce) {
-          crashOnce = false;
-          throw new Error("simulated crash between steps");
-        }
-        if (txn.journal.phase === "state-persisted") advanceTxn(txn, "committed");
+        throw new Error("simulated crash between steps");
       },
     });
+    registerRecordingKind("test-kind-crashy-sibling", calls);
     const txn = beginTxn({ kind: "test-kind-crashy", root, changes: [], payload: { label: "c" } });
     advanceTxn(txn, "files-published");
+    const sibling = beginTxn({ kind: "test-kind-crashy-sibling", root, changes: [], payload: { label: "ok" } });
+    advanceTxn(sibling, "files-published");
 
-    await expect(recoverTxnsForRoot(root)).rejects.toThrow(/simulated crash/);
-    // Journal survived at the phase the crash interrupted.
-    const onDisk = JSON.parse(fs.readFileSync(txn.journalPath, "utf8")) as TxnJournal<unknown>;
-    expect(onDisk.phase).toBe("state-persisted");
-
-    const second = await recoverTxnsForRoot(root);
-    expect(second).toHaveLength(1);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    // The sibling recovers normally — one poisoned journal does not brick
+    // the scan.
+    expect(recovered.map((j) => j.kind)).toEqual(["test-kind-crashy-sibling"]);
+    expect(calls).toEqual(["finalize:ok@files-published"]);
+    // The crashy journal is quarantined, not left on disk for a retry.
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.transactionId).toBe(txn.journal.transactionId);
+    expect(quarantined[0]?.phase).toBe("state-persisted"); // advanced before the throw
+    expect(quarantined[0]?.reason).toMatch(/simulated crash/);
     expect(fs.existsSync(txn.journalPath)).toBe(false);
-    expect(calls).toEqual([]);
+    expect(fs.existsSync(quarantined[0]?.journalPath as string)).toBe(true);
+
+    // Nothing left to recover — a second scan finds neither journal again.
+    const second = await recoverTxnsForRoot(root);
+    expect(second.recovered).toHaveLength(0);
+    expect(second.quarantined).toHaveLength(0);
   });
 });

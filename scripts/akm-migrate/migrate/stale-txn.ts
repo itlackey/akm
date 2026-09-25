@@ -22,7 +22,14 @@
  * exactly that kind of entry point.
  */
 
-import { canonicalTxnRoot, listTxnJournalsTolerant, recoverTxnsForRoot, type TxnJournal } from "../../../src/core/fs-txn";
+import {
+  canonicalTxnRoot,
+  listTxnJournalsTolerant,
+  probeJournalFence,
+  type QuarantinedTxn,
+  recoverTxnsForRoot,
+  type TxnJournal,
+} from "../../../src/core/fs-txn";
 // Side-effect import: registers the `proposal`/`proposal-reject` txn kinds
 // so recovery below can roll them forward/back for the stash root.
 import "../../../src/commands/proposal/repository";
@@ -33,30 +40,50 @@ export interface StaleTxnEntry {
   kind: string;
   phase: string;
   root: string;
+  /**
+   * Set when this journal would fail its (read-only) fence check and be
+   * quarantined by `akm migrate apply`, determined without mutation. A
+   * journal that would instead fail during `rollback`/`finalize` cannot be
+   * told apart from a normal pending recovery without actually running it,
+   * so it has no `wouldQuarantine` and stays plain "pending" here.
+   */
+  wouldQuarantine?: { reason: string };
 }
 
 /**
  * Find every durable-transaction journal bound to `stashDir`'s namespace.
  * Read-only, tolerant of a corrupt journal (counted, not thrown on) — mirrors
- * `findDeadResidueEntries`'s read-only/never-mutates contract.
+ * `findDeadResidueEntries`'s read-only/never-mutates contract. Each entry
+ * also carries the outcome of the (also read-only) fence check that `apply`
+ * would run first, so a fence violation shows up here as `wouldQuarantine`
+ * rather than only after a real recovery attempt.
  */
 export function findStaleTxnEntries(stashDir: string): StaleTxnEntry[] {
   const root = canonicalTxnRoot(stashDir);
   const { matches } = listTxnJournalsTolerant((j) => canonicalTxnRoot(j.root) === root);
-  return matches.map(({ journal }) => journalToEntry(journal));
+  return matches.map(({ journal }) => journalToPendingEntry(journal, root));
 }
 
 function journalToEntry(journal: TxnJournal<unknown>): StaleTxnEntry {
   return { transactionId: journal.transactionId, kind: journal.kind, phase: journal.phase, root: journal.root };
 }
 
+function journalToPendingEntry(journal: TxnJournal<unknown>, root: string): StaleTxnEntry {
+  const reason = probeJournalFence(journal, root);
+  return { ...journalToEntry(journal), ...(reason !== undefined ? { wouldQuarantine: { reason } } : {}) };
+}
+
 /**
  * Recover every durable transaction bound to `stashDir`'s namespace: roll
- * back journals before their kind's commit point, roll forward the rest.
- * The counterpart to {@link findStaleTxnEntries}, invoked only from `akm
- * migrate apply`.
+ * back journals before their kind's commit point, roll forward the rest. A
+ * journal that cannot be recovered is quarantined, not thrown — it is
+ * resolved state, reported alongside what recovered normally. The
+ * counterpart to {@link findStaleTxnEntries}, invoked only from `akm migrate
+ * apply`.
  */
-export async function recoverStaleTxns(stashDir: string): Promise<StaleTxnEntry[]> {
-  const recovered = await recoverTxnsForRoot(stashDir);
-  return recovered.map(journalToEntry);
+export async function recoverStaleTxns(
+  stashDir: string,
+): Promise<{ recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[] }> {
+  const { recovered, quarantined } = await recoverTxnsForRoot(stashDir);
+  return { recovered: recovered.map(journalToEntry), quarantined };
 }

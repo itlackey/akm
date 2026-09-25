@@ -136,7 +136,7 @@ Key fields:
 | `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskV3Migration` / `taskV4Migration` | Per-generation summary: `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
 | `backupPath` / `taskV4BackupPath` | Present after a real apply that changed at least one file in that generation — a timestamped snapshot directory. |
-| `deadResidue` / `staleTxns` | Present only when a bundle is configured. `{ pending: [...] }` under a read-only run, `{ removed: [...] }` / `{ recovered: [...] }` after apply. |
+| `deadResidue` / `staleTxns` | Present only when a bundle is configured. `{ pending: [...] }` under a read-only run, `{ removed: [...] }` / `{ recovered: [...], quarantined: [...] }` after apply. A journal `recoverTxnsForRoot` could not recover (fence violation or handler throw) is quarantined to `$DATA/txn-quarantine`, not thrown — it does not set `status` to `blocked`. `staleTxns.pending` entries carry `wouldQuarantine: { reason }` when the journal's read-only fence check alone (not a `rollback`/`finalize` run) already shows it would be quarantined by a real apply. |
 
 **Backups and their retention:**
 
