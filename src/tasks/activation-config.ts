@@ -20,9 +20,7 @@ import path from "node:path";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { bundleRefToString, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { typeNameFromConceptId } from "../core/asset/resolve-ref";
-import { deriveBundleId } from "../core/bundle-id";
-import { resolveStashDir } from "../core/common";
-import { type AkmConfig, mutateConfig } from "../core/config/config";
+import { type AkmConfig, mutateConfig, schedulerSourceIdFor } from "../core/config/config";
 import { bundleComponentConfig, bundleContentRoots, isBundleEnabled } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { warnOnce } from "../core/warn";
@@ -75,14 +73,7 @@ export function revokeSchedulerActivationsForBundle(config: AkmConfig, bundleId:
 
 /** Whether refs from this bundle may be scheduled here: configured and enabled, or the implicit `AKM_BUNDLE_DIR` stash. */
 export function isSchedulerBundleActive(config: AkmConfig, bundleId: string): boolean {
-  if (isBundleEnabled(config, bundleId)) return true;
-  if (config.bundles?.[bundleId] !== undefined || !process.env.AKM_BUNDLE_DIR?.trim()) return false;
-  try {
-    const root = resolveStashDir();
-    return deriveBundleId(undefined, root, new Set(Object.keys(config.bundles ?? {}))) === bundleId;
-  } catch {
-    return false;
-  }
+  return schedulerSourceIdFor(config, bundleId) !== undefined;
 }
 
 /**

@@ -6,8 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { isBundleSlug } from "../asset/asset-ref";
-import { isRecord } from "../common";
+import { isBundleSlug, parseBundleRef } from "../asset/asset-ref";
+import { deriveBundleId } from "../bundle-id";
+import { isRecord, resolveStashDir } from "../common";
 import { ConfigError } from "../errors";
 import { liftLegacyEngineExtraParams } from "../extra-params";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
@@ -20,7 +21,15 @@ import {
   writeConfigAtomic,
 } from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
-import { bundleComponentConfig, bundleContentRoot, bundleContentRoots, bundlesToSourceEntries } from "./config-sources";
+import {
+  bundleComponentConfig,
+  bundleContentRoot,
+  bundleContentRoots,
+  bundleSourceId,
+  bundlesToSourceEntries,
+  filesystemBundleSourceId,
+  isBundleEnabled,
+} from "./config-sources";
 import type {
   AkmConfig,
   BundleConfigEntry,
@@ -914,7 +923,7 @@ export function normalizeConfigFile(configPath: string, options: { apply: boolea
     const localRaw = runConfigFilePipeline(text, configPath);
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
-    const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
+    const body = withSchedulerOnDisk(configWriteBody(localRaw, current, next) as Record<string, unknown>, next);
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
     const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
       .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
@@ -989,6 +998,60 @@ export async function mutateConfigWithPrecommit<T>(
   }
 }
 
+const UNBOUND_SCHEDULER_SOURCE_ID = `sha256:${"0".repeat(64)}`;
+
+/**
+ * The source identity 0.9.16 bound a scheduler grant to: the configured
+ * bundle's source id, or the implicit `AKM_BUNDLE_DIR` stash's. `undefined`
+ * when the bundle is not active on this host.
+ */
+export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): string | undefined {
+  if (isBundleEnabled(config, bundleId)) return bundleSourceId(config, bundleId);
+  if (config.bundles?.[bundleId] !== undefined || !process.env.AKM_BUNDLE_DIR?.trim()) return undefined;
+  try {
+    const root = resolveStashDir();
+    const implicitId = deriveBundleId(undefined, root, new Set(Object.keys(config.bundles ?? {})));
+    return implicitId === bundleId ? filesystemBundleSourceId(root) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `scheduler.enabled` is a list of refs in memory but is written in the
+ * `{kind, ref, sourceId}` shape 0.9.16 reads, so that release still runs
+ * against a config this one wrote (the upgrade rehearsal's read-back). This
+ * release reads either shape; the object form can go once no supported
+ * release is strict about it.
+ */
+function schedulerEnabledOnDisk(config: AkmConfig): unknown[] | undefined {
+  const enabled = config.scheduler?.enabled;
+  if (enabled === undefined) return undefined;
+  return enabled.map((ref) => {
+    let bundle: string | undefined;
+    let conceptId = "";
+    try {
+      const parsed = parseBundleRef(ref);
+      bundle = parsed.bundle;
+      conceptId = parsed.conceptId;
+    } catch {
+      return ref;
+    }
+    return {
+      kind: conceptId.startsWith("workflows/") ? "workflow" : "task",
+      ref,
+      sourceId:
+        (bundle !== undefined ? schedulerSourceIdFor(config, bundle) : undefined) ?? UNBOUND_SCHEDULER_SOURCE_ID,
+    };
+  });
+}
+
+function withSchedulerOnDisk(body: Record<string, unknown>, config: AkmConfig): Record<string, unknown> {
+  const onDisk = schedulerEnabledOnDisk(config);
+  if (onDisk === undefined || !isPlainConfigObject(body.scheduler)) return body;
+  return { ...body, scheduler: { ...body.scheduler, enabled: onDisk } };
+}
+
 /**
  * Strip literal apiKey fields before writing config to disk.
  * API keys are expected to come from environment variables
@@ -1057,7 +1120,7 @@ export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknow
     }
   }
 
-  return sanitized;
+  return withSchedulerOnDisk(sanitized, config);
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {

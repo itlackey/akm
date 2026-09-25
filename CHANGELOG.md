@@ -35,8 +35,9 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   under `$DATA`, `$STATE` and `$CONFIG`, and runs whether or not a bundle is
   configured.
 - **Scheduling is one list.** `scheduler.enabled` holds the fully-qualified
-  refs this host schedules (`bundle//tasks/x`), as plain strings. The
-  0.9.17-alpha `{kind, ref, sourceId}` grant objects are read as their ref.
+  refs this host schedules (`bundle//tasks/x`). It is still written in the
+  `{kind, ref, sourceId}` shape 0.9.16 reads, so that release keeps working
+  against a config this one wrote; either shape is read as the ref.
   A config with no list at all (every release before 0.9.17) means "keep
   what is installed": the first `akm task sync` (or `setup`, `task enable`,
   `task disable`, `task add`) takes the akm-written rows already in the

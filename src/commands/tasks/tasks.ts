@@ -44,12 +44,7 @@ import {
 import type { InputFlag } from "../../execution/input-contract";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
-import {
-  enabledRefsFromInstalled,
-  isSchedulerRefEnabled,
-  schedulerEnabledRefs,
-  setSchedulerRefEnabled,
-} from "../../tasks/activation-config";
+import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, RebindSchedulerBinding, SchedulerBackend } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
@@ -414,12 +409,6 @@ export async function akmTasksRun(
   const scheduled = options.scheduled === true;
   const conceptId = adapterId === "akm" ? `tasks/${resolvedId}` : resolvedId;
   const qualifiedRef = makeBundleRef(bundle.source.name, conceptId);
-  if (scheduled && !isSchedulerRefEnabled(loadConfig(), qualifiedRef)) {
-    throw new UsageError(
-      `Scheduled task ${JSON.stringify(qualifiedRef)} is not enabled in local scheduler config; run \`akm task enable ${qualifiedRef}\`.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
   // D5 "Construction" (spec docs/plans/specs/p1b-model-extraction.md §1.2/
   // §5.2): built ONCE at this invocation boundary. eventSource is "task"
   // whether or not --scheduled was passed (§1.6 D5-N1) — scheduled stays a

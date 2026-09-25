@@ -82,8 +82,11 @@ the first bump that will need it, per #863.
 
 ## Scheduler activation
 
-`scheduler.enabled` is this host's list of scheduled refs — fully-qualified
-strings such as `stash//tasks/nightly`. A ref that is not listed is disabled.
+`scheduler.enabled` is this host's list of scheduled refs, such as
+`stash//tasks/nightly`. A ref that is not listed is disabled. On disk each
+entry is still written as the `{kind, ref, sourceId}` object 0.9.16 reads,
+so that release keeps working against a config this one wrote; in memory it
+is the ref.
 A config without the list (written before 0.9.17) means "keep what is
 installed": the first `akm task sync` fills it from the akm-written native
 scheduler rows. The 0.9.17-alpha `{kind, ref, sourceId}` entries are read as
