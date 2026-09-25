@@ -151,6 +151,7 @@ describe("akm health --no-probe (#914)", () => {
     expect(installsCheck?.evidence?.installs).toEqual([
       {
         path: expect.stringContaining("akm-health-probe-sandbox-"),
+        binDir: expect.stringContaining("akm-health-probe-sandbox-"),
         manager: "standalone",
         version: pkgVersion,
         isRunning: false,
