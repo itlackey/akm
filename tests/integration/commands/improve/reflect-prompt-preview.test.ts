@@ -151,14 +151,14 @@ describe("renderReflectPromptPreview (#952)", () => {
   });
 });
 
-// (tier0-0917 R1) A legacy rejected proposal (metadata_json has no `changes`
+// (R1) A legacy rejected proposal (metadata_json has no `changes`
 // key at all — the pre-#858/#859 archive shape) must not throw before
 // reflect dispatch. `readRejectedProposals` used `proposalContent(p)`, which
 // throws when `changes[0]?.after` is undefined; `storedToChanges` deliberately
 // returns `[]` for these rows, so every legacy rejected proposal made the
 // whole prompt-gathering step throw. Reading the preview from
 // `p.payload.content` instead (always populated) fixes it.
-describe("readRejectedProposals tolerates legacy rows with no persisted changes (tier0-0917 R1)", () => {
+describe("readRejectedProposals tolerates legacy rows with no persisted changes (R1)", () => {
   test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
     const stashDir = storage.stashDir;
     writeLesson(stashDir, "test-lesson", "existing description", "existing usage");

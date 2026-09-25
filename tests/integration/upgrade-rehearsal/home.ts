@@ -379,7 +379,7 @@ export async function buildHome(oldLauncher: string, root: string): Promise<Upgr
  * predates `task enable`/`task disable` and source-bound scheduler grants
  * (0.9.16) entirely, so this installs a real crontab row with NO
  * `scheduler.enabled` config grant at all, the exact 2026-09-24 scenario
- * upgrade-B's carry-forward exists to rescue. Deliberately reduced from
+ * the scheduler-grant carry-forward exists to rescue. Deliberately reduced from
  * {@link buildHome}'s full five-bundle-kind fixture (brief's own allowance:
  * "adapt the home builder per origin ... report any gap as a deviation") --
  * every other bundle kind, index/search/remember, and the retired

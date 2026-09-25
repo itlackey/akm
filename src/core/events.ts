@@ -146,7 +146,7 @@ export type EventType =
   /** R5 — emitted by the maintenance purge when improve_cycle_metrics rows past retention are deleted. Metadata: `{purgedCount, retentionDays}`. */
   | "improve_cycle_metrics_purged"
   /**
-   * R0 (tier0-0917) — emitted by `vacuumStateDbIfReclaimable`
+   * R0 — emitted by `vacuumStateDbIfReclaimable`
    * (src/storage/state-db-integrity.ts) after a `VACUUM` triggered by a
    * post-purge freelist-ratio check. Metadata carries
    * `{pagesBefore, pagesAfter, freelistRatioBefore}`.

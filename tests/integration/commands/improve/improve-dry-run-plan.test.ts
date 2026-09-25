@@ -1069,7 +1069,7 @@ describe("#800 effective dry-run planner", () => {
     });
   });
 
-  // (tier0-0917 r2-3) R4.3 — the consolidation plan's `gates.delta.reason` must
+  // R4.3 — the consolidation plan's `gates.delta.reason` must
   // distinguish bootstrap (no consolidate_completed event ever recorded) from a
   // real pool delta, rather than reporting "memory pool has work" for both.
   describe("consolidation preview gates.delta reason", () => {

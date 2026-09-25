@@ -110,7 +110,7 @@ describe("writeQualityRejection — REVIEW: review_needed mint is stamped for a 
   });
 });
 
-describe("writeQualityRejection — r2-1: mint-time canonical validator rejection is not fatal", () => {
+describe("writeQualityRejection — mint-time canonical validator rejection is not fatal", () => {
   test("structurally-invalid quality_rejected content returns a normal result with no proposalId, still writes the envelope and event, and does not throw", () => {
     // No `description`/`when_to_use` frontmatter — the mint-time canonical
     // validator (proposal/repository.ts rejectProposal) throws UsageError for

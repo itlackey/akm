@@ -700,7 +700,7 @@ describe("runMemoryInferencePass — enabled", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
-      // R78 (tier1-0917): derived child + rewritten parent, the two files
+      // R78: derived child + rewritten parent, the two files
       // indexWrittenAssets indexes afterwards instead of a full reindex.
       writtenPaths: [derivedPath, parentPath].sort(),
     });

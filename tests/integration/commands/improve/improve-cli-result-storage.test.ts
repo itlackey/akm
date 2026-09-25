@@ -92,7 +92,7 @@ function runCli(args: string[], stashDir: string): CliRun {
 }
 
 /**
- * Startup host-local reconciliation (upgrade-B, `src/core/version-reconcile.ts`)
+ * Startup host-local reconciliation (`src/core/version-reconcile.ts`)
  * writes its own version stamp/lock under `$STATE` — and, the first time it
  * actually runs a real `akm-migrate apply --host-local` against a fresh
  * `$STATE`/`$CONFIG` pair (exactly what this file's per-call sandbox always

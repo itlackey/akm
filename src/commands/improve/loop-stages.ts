@@ -1151,7 +1151,7 @@ async function runMaintenancePassesUnderLease(
     allWarnings.push(...inference.warnings);
     const memoryInference = inference.memoryInference;
 
-    // R78 (tier1-0917): index exactly the files memory inference wrote (derived children
+    // R78: index exactly the files memory inference wrote (derived children
     // + rewritten parents) instead of a full reindex — typically one written
     // fact per run, which used to pay a full-corpus reindex regardless.
     if (memoryInference && memoryInference.writtenPaths.length > 0) {
@@ -1696,7 +1696,7 @@ export const STATE_GC_GRACE_MS = daysToMs(7);
  * bundles — but against a prebuilt {@link LiveRefSnapshot}
  * (`getLiveRefSnapshot`) instead of a database round trip per row: with up to
  * a few thousand pending rows per run, one probe per row was the dominant
- * cost R78 (tier1-0917).
+ * cost R78.
  *
  * On top of that, falls back to the BARE conceptId form (`bareImproveRef` —
  * the same primitive `preparation.ts`'s `normalizeStoredKey` map is built
@@ -1804,7 +1804,7 @@ export function runOrphanStateGcPass(
   let collected = 0;
 
   try {
-    // R78 (tier1-0917): one query for every live item_ref, shared by both tables' sweeps
+    // R78: one query for every live item_ref, shared by both tables' sweeps
     // below — replaces a `getEntryByRef` round trip per pending row. Inside
     // the try so a schema mismatch (e.g. a DB version upgrade that dropped
     // `entries`) degrades to the "orphan state GC failed" warning below
