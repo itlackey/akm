@@ -149,6 +149,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   needed to re-grant it, taking every scheduled task on the host down with
   no way back short of re-authoring them. Fixed by the startup
   reconciliation and `task sync` carry-forward above (2026-09-24, one host).
+- **The post-install version-mismatch message blamed a lagging `@latest`
+  dist-tag and offered a no-op remedy.** Every package-manager install now
+  pins `<pkg>@<resolved-version>` (see Added, above), so a mismatch between
+  the installed version and `akm --version` after `akm upgrade` is no
+  longer dist-tag lag — the remedy of installing `@<resolved-version>` was
+  already what had just run. The message
+  (`src/commands/sources/self-update.ts`) now says another `akm` earlier on
+  `PATH` may be shadowing the freshly installed one, or the install is
+  partial, and points at `which -a akm` / `command -v akm`.
 
 ### Added
 

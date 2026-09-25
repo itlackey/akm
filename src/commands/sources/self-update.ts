@@ -689,9 +689,10 @@ async function runPackageManagerUpgrade(input: {
     );
   }
 
-  // The package manager exiting 0 does not prove it delivered
-  // `latestVersion`: a lagging `@latest` dist-tag (partial publish,
-  // registry mirror lag) "succeeds" while leaving the old version on PATH.
+  // The package manager exiting 0 does not prove `akm` on PATH now resolves
+  // to what was just installed: the install pins an exact version
+  // (`getPackageManagerUpgradeCommand` below), so a mismatch here means
+  // another akm earlier on PATH is shadowing it, or the install is partial.
   // Re-read the version the shim actually reports before claiming an
   // upgrade, so stop before claiming success.
   const installedVersion = readInstalledCliVersion("akm");
@@ -703,9 +704,9 @@ async function runPackageManagerUpgrade(input: {
       installMethod,
       message:
         `\`${packageManagerCommand.displayCommand}\` succeeded, but \`akm --version\` still reports ` +
-        `v${installedVersion} (expected v${latestVersion}). The ${installMethod} registry's @latest tag ` +
-        `may be lagging the GitHub release — try again shortly, or install the exact version: ` +
-        `${packageManagerCommand.displayCommand.replace(/@latest\b/, `@${latestVersion}`)}`,
+        `v${installedVersion} (expected v${latestVersion}). Another akm earlier on PATH may be ` +
+        `shadowing the one just installed — check with \`which -a akm\` (or \`command -v akm\`), ` +
+        `or the install may be partial.`,
       migration: await runMigrationStep(runTool),
     };
   }

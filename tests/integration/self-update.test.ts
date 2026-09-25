@@ -379,9 +379,11 @@ describe("performUpgrade", () => {
     expect(spawnSyncSpy).toHaveBeenCalled();
   });
 
-  test("a lagging @latest dist-tag downgrades the result to upgraded:false with the pin remedy (§24.2)", async () => {
+  test("a post-install version mismatch downgrades the result to upgraded:false with PATH-shadowing guidance (§24.2)", async () => {
     // The install command "succeeds" but the on-PATH akm still reports the
-    // OLD version — the registry's @latest tag lags the GitHub release.
+    // OLD version. Installs now pin an exact version, so this is not
+    // dist-tag lag — it means another akm earlier on PATH is shadowing the
+    // one just installed, or the install is partial.
     spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "0.0.13\n", stderr: "" } as never;
       return { status: 0, stdout: "", stderr: "" } as never;
@@ -399,7 +401,9 @@ describe("performUpgrade", () => {
 
     expect(result.upgraded).toBe(false);
     expect(result.message).toContain("still reports v0.0.13");
-    expect(result.message).toContain("@0.0.14");
+    expect(result.message).toContain("which -a akm");
+    expect(result.message).not.toContain("@latest");
+    expect(result.message).not.toContain("lagging");
   });
 
   test("a verified matching version is reported in the success message", async () => {
