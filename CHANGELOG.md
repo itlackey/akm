@@ -57,14 +57,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `bundles` key, `defaultBundle`/`defaultWriteTarget` when they name the old
   id, and every `scheduler.enabled[].ref` with the old `//` prefix; then it
   renames the lockfile entry, re-keys every indexed entry's
-  `bundle_id`/`item_ref`, and rewrites this tool's own state rows that name
-  the old bundle (`proposals.ref`, a pending proposal's
-  `proposedTarget.source`, and workflow `task_history.target_ref`). Refs
-  inside the bundle's own CONTENT (cross-references, a task's `uses:`,
-  `supersededBy`) are reported, never rewritten — the result's `contentRefs`
-  lists the indexed files that still spell the old prefix. `--dry-run` shows
-  the full plan (row counts, scheduler refs, content files) without writing
-  anything.
+  `bundle_id`/`item_ref` and the metadata-enrichment LLM cache's
+  `asset_ref` (in the same `index.db` write, so a rename can't land between
+  the two and strand the cache — the next `akm index` would otherwise treat
+  every renamed asset as stale and re-enrich it through the LLM from
+  scratch), and rewrites this tool's own state rows that name the old bundle
+  (`proposals.ref`, a pending proposal's `proposedTarget.source`, and
+  workflow `task_history.target_ref`). It then re-syncs native scheduler
+  rows under the new name (`akmTasksSync`, reported in the result's
+  `taskSync` field — a sync failure is reported, not thrown, since
+  config/index/state are already renamed by then), so a scheduled task or
+  workflow stops invoking `<old>//…` the moment the rename applies instead of
+  waiting on a manual `akm task sync`. Refs inside the bundle's own CONTENT
+  (cross-references, a task's `uses:`, `supersededBy`) are reported, never
+  rewritten — the result's `contentRefs` lists the indexed files that still
+  spell the old prefix. `--dry-run` shows the full plan (row counts,
+  scheduler refs, content files, and the installed native scheduler rows a
+  real run's sync would replace) without writing anything.
 - **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
   `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
   `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag

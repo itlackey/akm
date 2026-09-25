@@ -29,6 +29,7 @@
  */
 
 import fs from "node:fs";
+import { akmTasksSync, type TasksSyncResult } from "../commands/tasks/tasks";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
 import {
   closeDatabase,
@@ -36,11 +37,15 @@ import {
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import { getFilePathsByBundle, renameEntriesBundleId } from "../storage/repositories/index-entries-repository";
+import { renameLlmCacheAssetRefs } from "../storage/repositories/index-llm-cache-repository";
 import { countProposalsForBundleRename, renameProposalsBundleRef } from "../storage/repositories/proposals-repository";
 import {
   countTaskHistoryTargetRefs,
   renameTaskHistoryTargetRefs,
 } from "../storage/repositories/task-history-repository";
+import { selectBackend } from "../tasks/backends";
+import type { SchedulerBackend } from "../tasks/backends/types";
+import type { SchedulerBackendInspection } from "../tasks/scheduler-binding";
 import { bundleRefToString, parseBundleRef } from "./asset/asset-ref";
 import { validateExplicitBundleName } from "./bundle-id";
 import type { AkmConfig, BundleConfigEntry } from "./config/config";
@@ -63,11 +68,27 @@ export interface BundleRenamePlan {
   state: { proposalRefs: number; proposalTargets: number; taskHistoryRefs: number };
   /** Indexed files under the bundle whose content still spells `<old>//` — reported, not rewritten. */
   contentRefs: string[];
+  /**
+   * Installed native scheduler rows (cron line, launchd plist, scheduled
+   * task) whose invocation still names the old bundle — best-effort, empty
+   * when the active backend can't provide one coherent inspection. A real
+   * run's post-rename `akm task sync` replaces these; `--dry-run` lists them
+   * so the plan shows what that sync will touch.
+   */
+  nativeSchedulerRows: string[];
 }
 
 export interface BundleRenameResult extends BundleRenamePlan {
   /** `false` for `--dry-run`: nothing below was written. */
   applied: boolean;
+  /**
+   * Outcome of re-syncing native scheduler rows under the new bundle id,
+   * run immediately after the state rewrite below. Absent on `--dry-run`
+   * (nothing was renamed yet to sync against). A sync failure is reported
+   * here, not thrown — config, index, and state are already renamed by the
+   * time this runs.
+   */
+  taskSync?: { ok: true; result: TasksSyncResult } | { ok: false; error: string };
 }
 
 /** Throws if `newId` cannot become `oldId`'s new key. Re-run under the config lock at apply time. */
@@ -131,14 +152,48 @@ function filesStillMentioning(filePaths: string[], oldId: string): string[] {
   return hits;
 }
 
+/** True when an installed binding's invocation names `bundleId` — either as a `task run` entry's `--bundle <id>` argument, or as a `workflow run <id>//…` ref. */
+function invocationNamesBundle(invocation: readonly string[] | undefined, bundleId: string): boolean {
+  if (!invocation) return false;
+  for (let i = 0; i < invocation.length; i++) {
+    const token = invocation[i];
+    if (token === bundleId && invocation[i - 1] === "--bundle") return true;
+    if (token?.startsWith(`${bundleId}//`)) return true;
+  }
+  return false;
+}
+
+/**
+ * Installed native scheduler rows whose invocation names `oldId`, best-effort
+ * (a backend that can't provide `inspectBindings`, or whose inspection
+ * throws, reports none — this is a preview, not a correctness requirement).
+ */
+async function nativeSchedulerRowsNamingBundle(sched: SchedulerBackend, oldId: string): Promise<string[]> {
+  if (!sched.inspectBindings) return [];
+  try {
+    const inspection = await sched.inspectBindings({});
+    return inspection.installed
+      .filter((entry) => invocationNamesBundle(entry.invocation, oldId))
+      .map((entry) => entry.invocation?.join(" ") ?? entry.id);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Build the rename plan — every count and ref this rename would touch — by
  * reading, never writing. Shared by `--dry-run` and a real run so the two
  * can never disagree about what was reported vs. what happened.
  */
-function buildPlan(config: AkmConfig, oldId: string, newId: string): BundleRenamePlan {
+async function buildPlan(
+  config: AkmConfig,
+  oldId: string,
+  newId: string,
+  sched: SchedulerBackend,
+): Promise<BundleRenamePlan> {
   const schedulerRefs = schedulerRefsToRewrite(config, oldId);
   const lockPresent = readLockfile().some((entry) => entry.id === oldId);
+  const nativeSchedulerRows = await nativeSchedulerRowsNamingBundle(sched, oldId);
 
   let indexEntries = 0;
   let contentRefs: string[] = [];
@@ -177,22 +232,68 @@ function buildPlan(config: AkmConfig, oldId: string, newId: string): BundleRenam
     index: { entries: indexEntries },
     state: { proposalRefs, proposalTargets, taskHistoryRefs },
     contentRefs,
+    nativeSchedulerRows,
   };
+}
+
+function taskSyncErrorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/**
+ * Remove every installed native row still naming `oldId`, best-effort,
+ * before the sync below installs the new-named ones. Without this, a plain
+ * `akmTasksSync(deps, newId)` alone cannot clean the old rows up: a task
+ * binding's native id depends only on the task id, so the OLD row and the
+ * new one it should become collide on that id, and `belongsToBundle`
+ * (scheduler-sync.ts) gates ownership on the bundle NAME the row was
+ * installed under — the physical-path check only confirms a name match, it
+ * never substitutes for one — so the sync's own `foreignIdCollisions` logic
+ * treats the old row as belonging to neither bundle and silently drops the
+ * new binding instead of replacing it. A workflow binding's native id
+ * depends on its fully-qualified ref instead, so old and new never collide
+ * at all and the old row would otherwise be left installed forever. Both
+ * fail the same way this function fixes: uninstall the exact native rows
+ * `nativeSchedulerRowsNamingBundle` already found, by their native id, so
+ * the sync that follows starts from a clean slate.
+ */
+async function removeStaleNativeSchedulerRows(sched: SchedulerBackend, oldId: string): Promise<void> {
+  if (!sched.inspectBindings) return;
+  let installed: SchedulerBackendInspection["installed"];
+  try {
+    installed = (await sched.inspectBindings({})).installed;
+  } catch {
+    return;
+  }
+  for (const entry of installed) {
+    if (!invocationNamesBundle(entry.invocation, oldId)) continue;
+    try {
+      await sched.uninstall(entry.nativeId ?? entry.id);
+    } catch {
+      // Best-effort: a row this process can't remove is left for the
+      // operator's own `akm task sync` to reconcile, same as every other
+      // per-item failure `akmTasksSync` itself reports rather than throws.
+    }
+  }
 }
 
 /**
  * Rename a configured bundle's key everywhere akm itself persists it. With
  * `dryRun: true`, only {@link buildPlan} runs — nothing is written, matching
- * a `applied: false` result the caller renders as the plan.
+ * a `applied: false` result the caller renders as the plan. `deps.backend`
+ * lets a caller (tests) inject a fake scheduler backend instead of the real
+ * OS one `selectBackend()` would otherwise pick.
  */
 export async function renameBundle(
   oldId: string,
   newId: string,
   options: { dryRun?: boolean } = {},
+  deps: { backend?: SchedulerBackend } = {},
 ): Promise<BundleRenameResult> {
   const config = loadConfig();
   validateRename(config, oldId, newId);
-  const plan = buildPlan(config, oldId, newId);
+  const sched = deps.backend ?? selectBackend();
+  const plan = await buildPlan(config, oldId, newId, sched);
   if (options.dryRun) return { ...plan, applied: false };
 
   // Config: the bundles key, defaultBundle/defaultWriteTarget, and every
@@ -205,13 +306,18 @@ export async function renameBundle(
   await renameLockEntry(oldId, newId);
 
   // Index: bundle_id/item_ref on every entry row (see index-entries-repository's
-  // renameEntriesBundleId docstring for why no FTS/vector rebuild is needed).
+  // renameEntriesBundleId docstring for why no FTS/vector rebuild is needed),
+  // and the metadata-enrichment LLM cache keyed by the same canonical
+  // item_ref — in the SAME write, so a rename can never land between the two
+  // and leave the cache stranded under the old prefix (the next `akm index`'s
+  // clearStaleCacheEntries would then delete it, forcing a full re-enrich).
   const readIndexDb = openReadonlyExistingDatabase(getDbPath());
   if (readIndexDb) {
     closeDatabase(readIndexDb);
     const writeIndexDb = openIndexDatabase(getDbPath());
     try {
       renameEntriesBundleId(writeIndexDb, oldId, newId);
+      renameLlmCacheAssetRefs(writeIndexDb, oldId, newId);
     } finally {
       closeDatabase(writeIndexDb);
     }
@@ -226,5 +332,21 @@ export async function renameBundle(
     });
   }
 
-  return { ...plan, applied: true };
+  // Scheduler: remove native rows still naming `<old>//` (see
+  // removeStaleNativeSchedulerRows for why a plain sync alone can't do
+  // this), then re-sync so a scheduled run's invocation stops naming the
+  // old bundle the moment the rename applies, instead of waiting on the
+  // operator to run `akm task sync` by hand. Reported, never thrown:
+  // config/index/state above are already renamed by this point, so a sync
+  // failure must not make the rename itself look like it failed.
+  let taskSync: BundleRenameResult["taskSync"];
+  try {
+    await removeStaleNativeSchedulerRows(sched, oldId);
+    const result = await akmTasksSync({ backend: sched }, newId);
+    taskSync = { ok: true, result };
+  } catch (cause) {
+    taskSync = { ok: false, error: taskSyncErrorMessage(cause) };
+  }
+
+  return { ...plan, applied: true, taskSync };
 }

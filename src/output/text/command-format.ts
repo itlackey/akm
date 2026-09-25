@@ -606,6 +606,7 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
   const entries = Number(index.entries ?? 0);
   const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
+  const nativeSchedulerRows = Array.isArray(r.nativeSchedulerRows) ? r.nativeSchedulerRows : [];
 
   const verb = applied ? "Renamed" : "Would rename";
   const lines = [
@@ -613,9 +614,18 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
       `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s)).`,
   ];
   if (!applied) {
-    lines.push("Re-run without --dry-run to apply. `akm task sync` still needs to run afterward.");
+    lines.push("Re-run without --dry-run to apply. It also re-syncs native scheduler bindings under the new name.");
+    if (nativeSchedulerRows.length > 0) {
+      lines.push(`Native scheduler rows naming "${oldId}//" that the sync would replace:`);
+      for (const row of nativeSchedulerRows) lines.push(`  - ${String(row)}`);
+    }
   } else {
-    lines.push("Run `akm task sync` to reconcile native scheduler bindings under the new name.");
+    const taskSync = r.taskSync as { ok?: boolean; error?: string } | undefined;
+    if (taskSync?.ok === true) {
+      lines.push("Native scheduler bindings re-synced under the new name.");
+    } else if (taskSync?.ok === false) {
+      lines.push(`Re-syncing native scheduler bindings failed: ${taskSync.error}. Run \`akm task sync\` to retry.`);
+    }
   }
   if (contentRefs.length > 0) {
     lines.push(`Content still spelling "${oldId}//" (not rewritten — edit these by hand):`);

@@ -1248,9 +1248,12 @@ state rows that name the old bundle (`proposals.ref`, a pending proposal's
 write target, and workflow `task_history.target_ref`). Reported, never
 rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
 a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
-that still spell the old `<old>//` prefix so you can fix them by hand. Native
-scheduler bindings still need `akm task sync` afterward to pick up the new
-name; run `--dry-run` first if the bundle has scheduled tasks.
+that still spell the old `<old>//` prefix so you can fix them by hand. A real
+run also re-syncs native scheduler bindings under the new name (`taskSync` in
+the result reports the outcome; a sync failure is reported, not thrown, since
+config/index/state are already renamed by then); `--dry-run` lists the
+installed native rows that still name the old bundle
+(`nativeSchedulerRows`) so you can see what that sync will replace.
 
 ### upgrade
 

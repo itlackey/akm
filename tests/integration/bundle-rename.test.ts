@@ -16,16 +16,56 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Proposal } from "../../src/commands/proposal/proposal-types";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
+import { akmTasksSync } from "../../src/commands/tasks/tasks";
 import { renameBundle } from "../../src/core/bundle-rename";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
+import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { readLockfile, upsertLockEntry } from "../../src/integrations/lockfile";
-import { closeDatabase } from "../../src/storage/repositories/index-connection";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import {
+  clearStaleCacheEntries,
+  getLlmCacheEntry,
+  upsertLlmCacheEntry,
+} from "../../src/storage/repositories/index-llm-cache-repository";
 import { upsertProposal } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
+import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
+import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
+import type { SchedulerBackend } from "../../src/tasks/backends/types";
+import {
+  resolveScheduledTaskContext,
+  schedulerContextDescriptor,
+  writeSchedulerContextDescriptor,
+} from "../../src/tasks/scheduler-invocation";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+
+/** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/tasks-sync.test.ts. */
+function memoryExec(initial = ""): CronExec & { current: () => string } {
+  let store = initial;
+  return {
+    read: (): CronExecResult => ({ status: 0, stdout: store, stderr: "" }),
+    write: (content: string): CronExecResult => {
+      store = content;
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    current: () => store,
+  };
+}
+
+/** A real CRON_BACKEND wired to an in-memory crontab, so the rename's `akmTasksSync` call never touches the host's real crontab. */
+function fakeCronBackend(exec: CronExec): SchedulerBackend {
+  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+  return CRON_BACKEND({
+    exec,
+    fs: { ensureDir() {} },
+    logDir: "/var/log/akm",
+    akmArgv: ["/usr/local/bin/akm"],
+    envPath: false,
+  });
+}
 
 let storage: IsolatedAkmStorage;
 
@@ -93,8 +133,9 @@ describe("akm bundle rename — dry-run", () => {
   test("reports the plan and writes nothing", async () => {
     await seedBundleWithOneEntry();
     const configBefore = fs.readFileSync(path.join(storage.configDir, "akm", "config.json"), "utf8");
+    const backend = fakeCronBackend(memoryExec());
 
-    const plan = await renameBundle("original", "renamed", { dryRun: true });
+    const plan = await renameBundle("original", "renamed", { dryRun: true }, { backend });
 
     expect(plan.applied).toBe(false);
     expect(plan.index.entries).toBe(1);
@@ -151,9 +192,11 @@ describe("akm bundle rename — applied", () => {
       closeDatabase(stateDb);
     }
 
-    const result = await renameBundle("original", "renamed");
+    const backend = fakeCronBackend(memoryExec());
+    const result = await renameBundle("original", "renamed", {}, { backend });
 
     expect(result.applied).toBe(true);
+    expect(result.taskSync?.ok).toBe(true);
     expect(result.index.entries).toBe(2);
     expect(result.config.defaultBundleChanges).toBe(true);
     expect(result.config.defaultWriteTargetChanges).toBe(true);
@@ -203,14 +246,74 @@ describe("akm bundle rename — applied", () => {
   test("a bundle with no lock entry, no scheduler grants, and no state rows renames cleanly", async () => {
     await seedBundleWithOneEntry();
 
-    const result = await renameBundle("original", "renamed");
+    const backend = fakeCronBackend(memoryExec());
+    const result = await renameBundle("original", "renamed", {}, { backend });
 
     expect(result.applied).toBe(true);
+    expect(result.taskSync?.ok).toBe(true);
     expect(result.lock.present).toBe(false);
     expect(result.config.schedulerRefs).toEqual([]);
     expect(result.state.proposalRefs).toBe(0);
     expect(result.state.proposalTargets).toBe(0);
     expect(result.state.taskHistoryRefs).toBe(0);
     expect(readLockfile()).toEqual([]);
+  });
+});
+
+describe("akm bundle rename — native scheduler sync", () => {
+  test("moves an installed native row from the old bundle name to the new one; --dry-run reports it first", async () => {
+    await seedBundleWithOneEntry();
+    const tasksDir = path.join(storage.stashDir, "tasks");
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tasksDir, "foo.yml"),
+      'version: 4\nrun: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
+      "utf8",
+    );
+    setSchedulerRefEnabled("task", "original//tasks/foo", true);
+
+    const exec = memoryExec();
+    const backend = fakeCronBackend(exec);
+    // Install the native row under the OLD name first, exactly as a real
+    // prior `akm task sync` would have.
+    await akmTasksSync({ backend }, "original");
+    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
+
+    // --dry-run reports the stale row and leaves the crontab untouched.
+    const plan = await renameBundle("original", "renamed", { dryRun: true }, { backend });
+    expect(plan.nativeSchedulerRows.some((row) => row.includes("--bundle original"))).toBe(true);
+    expect(exec.current()).toContain("--bundle original");
+
+    const result = await renameBundle("original", "renamed", {}, { backend });
+    expect(result.applied).toBe(true);
+    expect(result.taskSync?.ok).toBe(true);
+    expect(exec.current()).toContain("task run foo --bundle renamed --scheduled");
+    expect(exec.current()).not.toContain("--bundle original");
+  });
+});
+
+describe("akm bundle rename — LLM enrichment cache", () => {
+  test("a seeded cache row is renamed and survives clearStaleCacheEntries", async () => {
+    await seedBundleWithOneEntry();
+    const writeDb = openIndexDatabase(getDbPath());
+    try {
+      upsertLlmCacheEntry(writeDb, "original//knowledge/hello", "body-hash", JSON.stringify({ summary: "hi" }));
+    } finally {
+      closeDatabase(writeDb);
+    }
+
+    const backend = fakeCronBackend(memoryExec());
+    const result = await renameBundle("original", "renamed", {}, { backend });
+    expect(result.applied).toBe(true);
+
+    const readDb = openIndexDatabase(getDbPath());
+    try {
+      clearStaleCacheEntries(readDb);
+      const entry = getLlmCacheEntry(readDb, "renamed//knowledge/hello", "body-hash");
+      expect(entry?.resultJson).toBe(JSON.stringify({ summary: "hi" }));
+      expect(getLlmCacheEntry(readDb, "original//knowledge/hello", "body-hash")).toBeUndefined();
+    } finally {
+      closeDatabase(readDb);
+    }
   });
 });
