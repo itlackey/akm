@@ -136,8 +136,8 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
     const otherRoot = fs.mkdtempSync(path.join(storage.root, "other-root-"));
     fs.writeFileSync(badJournalPath, `${JSON.stringify({ ...badJournal, root: otherRoot }, null, 2)}\n`, "utf8");
 
-    // Unmodified base code (3dfa3e29d): this throws, aborting recovery for
-    // good1 and good2's crashed transactions along with it.
+    // Before this fix, this threw, aborting recovery for good1 and
+    // good2's crashed transactions along with it.
     const result = await akmProposalAccept({ stashDir: storage.stashDir, id: good1.id });
     expect(result.ok).toBe(true);
     expect(getProposal(storage.stashDir, good1.id).status).toBe("accepted");
@@ -200,12 +200,12 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
     const badTransactionId = path.basename(badDir);
     fs.writeFileSync(path.join(badDir, "journal.json"), "{ not valid json", "utf8");
 
-    // Unmodified base code (3dfa3e29d): akm proposal accept/reject reach
+    // Before this fix: akm proposal accept/reject reach
     // recoverProposalTransactions only through
     // recoverProposalTransactionsForStash, whose own listTxnJournals
     // root-discovery scan fails loudly on ANY unreadable journal.json
     // anywhere under $DATA/txn, before good's own root is ever resolved —
-    // this throws a SyntaxError out of akmProposalAccept entirely.
+    // this threw a SyntaxError out of akmProposalAccept entirely.
     const result = await akmProposalAccept({ stashDir: storage.stashDir, id: good.id });
     expect(result.ok).toBe(true);
     expect(getProposal(storage.stashDir, good.id).status).toBe("accepted");
@@ -225,10 +225,10 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
 
     const good = seedProposal("quarantine-reject-corrupt-good");
 
-    // Unmodified base code (3dfa3e29d): promoteProposalWithLease calls
+    // Before this fix: promoteProposalWithLease calls
     // recoverRejectTransaction(stashDir, good.id) ahead of every accept,
     // which shares good's stash-wide transaction namespace with bad's
-    // crashed reject journal. Its unguarded JSON.parse throws a
+    // crashed reject journal. Its unguarded JSON.parse threw a
     // SyntaxError while scanning for good's own (nonexistent) reject
     // journal, aborting good's unrelated accept entirely.
     const result = await akmProposalAccept({ stashDir: storage.stashDir, id: good.id });
@@ -252,8 +252,8 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
       }
     });
 
-    // Unmodified base code (769d2c05c) swallows this into a deferred warning
-    // and resolves `ok: true`, instead of failing the command as transient.
+    // Before this fix, this was swallowed into a deferred warning that
+    // resolved `ok: true`, instead of failing the command as transient.
     await expect(akmProposalAccept({ stashDir: storage.stashDir, id: target.id })).rejects.toThrow(TransientError);
     // The proposal itself is already fully accepted (persisted before the
     // hook fired) — only journal cleanup is pending — and the journal is
@@ -330,9 +330,9 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
       }
     });
 
-    // Unmodified base code (769d2c05c) swallows this and lets accept
-    // continue over a proposal already durably marked "rejected", so it
-    // throws the "not pending" UsageError instead of a TransientError.
+    // Before this fix, this was swallowed and let accept continue over a
+    // proposal already durably marked "rejected", so it threw the "not
+    // pending" UsageError instead of a TransientError.
     await expect(akmProposalAccept({ stashDir: storage.stashDir, id: bad.id })).rejects.toThrow(TransientError);
     expect(fs.existsSync(dir)).toBe(true);
     expect(fs.existsSync(txnQuarantineNamespaceDir(storage.stashDir))).toBe(false);

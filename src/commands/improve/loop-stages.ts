@@ -345,7 +345,7 @@ async function runLoopReflectPass(
         // the reflect_invoked event and the persisted proposal.
         ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
       } satisfies AkmReflectOptions;
-      // R9 (tier2-0917): the fingerprint/rejection-backoff guard `createProposal`
+      // R9: the fingerprint/rejection-backoff guard `createProposal`
       // runs AFTER reflect's ~39s generation + judge is computable from inputs
       // available before dispatch. Check it here first — on a hit, skip the LLM
       // call entirely and synthesize the same "cooldown" envelope reflect.ts's
