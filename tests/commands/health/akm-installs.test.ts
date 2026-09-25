@@ -22,6 +22,7 @@ function install(overrides: Partial<AkmInstall>): AkmInstall {
     manager: "standalone",
     version: "0.9.17",
     isRunning: false,
+    linked: true,
     ...overrides,
   };
 }
@@ -146,5 +147,29 @@ describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // r2-1: an npm global package the direct akm-cli/dist scan found but that
+  // nothing links onto any bin dir has no package manager command that can
+  // ever update it, so the remedy is to remove it, and the message says it
+  // is not on PATH rather than implying a link exists.
+  test("an unlinked npm install behind: the message says not on PATH and remedies by removing it, no npm install -g", () => {
+    const result = collectAkmInstallsAdvisory(true, {
+      cliVersion: "0.9.17",
+      enumerateAkmInstalls: () => [
+        install({ path: "/a/akm", version: "0.9.17", isRunning: true }),
+        install({
+          path: "/root/lib/node_modules/akm-cli/dist/akm",
+          manager: "npm",
+          linked: false,
+          version: "0.9.15",
+        }),
+      ],
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("/root/lib/node_modules/akm-cli/dist/akm");
+    expect(result.message).toContain("not on PATH");
+    expect(result.message).toContain("remove /root/lib/node_modules/akm-cli");
+    expect(result.message).not.toContain("npm install -g");
   });
 });

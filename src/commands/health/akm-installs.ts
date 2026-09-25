@@ -19,7 +19,12 @@
  * reported as `unknown`, never allowed to abort the health report.
  */
 
-import { type AkmInstall, type AkmInstallManager, enumerateAkmInstalls } from "../../core/akm-installs";
+import {
+  type AkmInstall,
+  enumerateAkmInstalls,
+  isUnlinkedNpmInstall,
+  unlinkedNpmPackageRoot,
+} from "../../core/akm-installs";
 import { getPackageManagerUpgradeCommand } from "../sources/self-update";
 import type { HealthCheckResult } from "./types";
 
@@ -33,19 +38,25 @@ export interface AkmInstallsAdvisoryOptions {
 }
 
 /**
- * The command that pins `install` to the running `cliVersion`. Reuses
+ * The remedy for `install`, pinned to the running `cliVersion`. Reuses
  * `getPackageManagerUpgradeCommand` (`../sources/self-update.ts`) so this
  * remedy can never drift from what `akm upgrade` itself would run, and pins
  * the running version rather than `@latest` — a host running a prerelease
  * (e.g. `next`) would otherwise be told to install `@latest` and downgrade.
+ * An unlinked npm global package (upgrade-D3 r2-1) has no bin-dir link for
+ * any package manager command to update, so its remedy is to remove the
+ * package directory instead — the same "is this install manageable"
+ * decision `self-update.ts`'s `describeOtherInstalls`/`upgradeOtherInstall`
+ * make, via the shared `isUnlinkedNpmInstall`/`unlinkedNpmPackageRoot`.
  */
-function remedyFor(manager: AkmInstallManager, cliVersion: string, binDir: string | undefined): string {
-  switch (manager) {
+function remedyFor(install: AkmInstall, cliVersion: string): string {
+  if (isUnlinkedNpmInstall(install)) return `remove ${unlinkedNpmPackageRoot(install)}`;
+  switch (install.manager) {
     case "npm":
     case "bun":
     case "pnpm":
       return (
-        getPackageManagerUpgradeCommand(manager, undefined, cliVersion, binDir)?.displayCommand ??
+        getPackageManagerUpgradeCommand(install.manager, undefined, cliVersion, install.binDir)?.displayCommand ??
         "reinstall it manually"
       );
     case "checkout":
@@ -99,10 +110,10 @@ export function collectAkmInstallsAdvisory(probe: boolean, options: AkmInstallsA
 
   if (behind.length > 0) {
     const behindDetail = behind
-      .map(
-        (install) =>
-          `${install.path} -> v${install.version} (${remedyFor(install.manager, options.cliVersion, install.binDir)})`,
-      )
+      .map((install) => {
+        const status = isUnlinkedNpmInstall(install) ? `v${install.version}, not on PATH` : `v${install.version}`;
+        return `${install.path} -> ${status} (${remedyFor(install, options.cliVersion)})`;
+      })
       .join("; ");
     const unreadableDetail =
       unreadable.length > 0
