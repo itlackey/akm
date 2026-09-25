@@ -508,6 +508,20 @@ export interface ShowResponse extends FragmentProvenance {
   contextTruncated?: boolean;
 }
 
+/**
+ * One OTHER akm install found on the host (upgrade-D D3) — never the install
+ * that is currently running, which `currentVersion`/`newVersion` already
+ * describe. `before`/`after` are `undefined` when that install's `--version`
+ * probe failed.
+ */
+export interface OtherAkmInstallStatus {
+  path: string;
+  before: string | undefined;
+  after: string | undefined;
+  ok: boolean;
+  message: string;
+}
+
 export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
@@ -519,6 +533,12 @@ export interface UpgradeCheckResponse {
    * resolved version, not necessarily the newest one.
    */
   requestedTarget?: { version?: string; tag?: string };
+  /**
+   * (upgrade-D D3) `--check` lists every other akm install found on the host
+   * read-only: `before`/`after` are the same (nothing was attempted), `ok`
+   * says whether it already matches `latestVersion`.
+   */
+  otherInstalls?: OtherAkmInstallStatus[];
 }
 
 export interface UpgradeResponse {
@@ -547,6 +567,14 @@ export interface UpgradeResponse {
    * `failed` means the migrator could not run at all; `error` says why.
    */
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
+  /**
+   * (upgrade-D D3) Every OTHER akm install found on the host: for a
+   * recognizable manager (npm/bun/pnpm), the SAME version was just installed
+   * there too and re-verified with `--version`; an install with no manager
+   * (a standalone binary, a checkout) is listed with `ok: false` and never
+   * touched. Present only when the primary install above actually upgraded.
+   */
+  otherInstalls?: OtherAkmInstallStatus[];
 }
 
 export interface InfoResponse {
