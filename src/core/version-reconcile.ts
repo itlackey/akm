@@ -253,6 +253,14 @@ export function describeHostLocalReconciliation(plan: HostLocalMigrationPlan): s
   push("state.db migration(s) applied", arrayLength(stateMigrations?.applied));
   const schedulerActivation = section("schedulerActivation");
   push("scheduler grant(s) carried forward", arrayLength(schedulerActivation?.applied));
+  const schedulerWarnings = Array.isArray(schedulerActivation?.warnings)
+    ? (schedulerActivation.warnings as ReadonlyArray<unknown>).filter(
+        (value): value is string => typeof value === "string",
+      )
+    : undefined;
+  if (schedulerWarnings && schedulerWarnings.length > 0) {
+    notes.push(`${schedulerWarnings.length} scheduler grant warning(s): ${schedulerWarnings.join("; ")}`);
+  }
   const staleTxns = section("staleTxns");
   push("stale transaction(s) recovered", arrayLength(staleTxns?.recovered));
   const quarantined = Array.isArray(staleTxns?.quarantined)
@@ -263,6 +271,18 @@ export function describeHostLocalReconciliation(plan: HostLocalMigrationPlan): s
       .map((entry) => entry.journalPath)
       .filter((value): value is string => typeof value === "string");
     notes.push(`${quarantined.length} stale transaction(s) quarantined (see ${paths.join(", ")})`);
+  }
+  const deferred = Array.isArray(staleTxns?.deferred)
+    ? (staleTxns.deferred as ReadonlyArray<{ transactionId?: unknown; reason?: unknown }>)
+    : undefined;
+  if (deferred && deferred.length > 0) {
+    const items = deferred
+      .filter(
+        (entry): entry is { transactionId: string; reason: string } =>
+          typeof entry.transactionId === "string" && typeof entry.reason === "string",
+      )
+      .map((entry) => `${entry.transactionId}: ${entry.reason}`);
+    notes.push(`${deferred.length} stale transaction(s) left for retry: ${items.join("; ")}`);
   }
 
   return notes;

@@ -163,29 +163,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/commands/sources/self-update.ts`) now says another `akm` earlier on
   `PATH` may be shadowing the freshly installed one, or the install is
   partial, and points at `which -a akm` / `command -v akm`.
-- **A poisoned transaction journal is quarantined and reported instead of
-  aborting the whole recovery scan.** `recoverTxnsForRoot`
+- **An untrusted transaction journal is quarantined and reported instead of
+  aborting the whole recovery scan; a trusted one whose recovery action
+  fails is deferred instead of quarantined.** `recoverTxnsForRoot`
   (`src/core/fs-txn.ts`) fenced and finalized every journal under one loop
   with no per-journal isolation: the first journal whose fence or handler
   threw aborted the scan, leaving every OTHER journal under the same root
   unrecovered and `akm migrate apply` exiting 70 (twelve journals, one
-  diverged, took down recovery for all twelve). Each journal's fence +
-  rollback/finalize now runs under its own `try`; a failure moves that
-  journal to `$DATA/txn-quarantine/<rootNs>/<id>/` (with a `reason.json`
-  naming the reason, the akm version, and the timestamp — nothing is
-  deleted) and the scan continues. `recoverTxnsForRoot` now returns
-  `{ recovered, quarantined }`; `akm migrate apply`'s `staleTxns` plan
-  section reports both lists, and a quarantined journal does not make the
-  plan `blocked`. A non-empty `$DATA/txn-quarantine` now also surfaces as a
-  new `txn-quarantine` `akm health` advisory. `akm migrate status` (and
-  `apply --dry-run`) now also runs the read-only fence check per journal and
-  marks a would-be-quarantined one with `wouldQuarantine: { reason }` in its
-  `staleTxns.pending` entry — a fence violation is cheap to determine without
-  mutation; a journal that would only fail during `rollback`/`finalize`
-  still reports as plain "pending", since that requires actually running
-  recovery. A transient failure (`state.db` contention under load) is left
-  in place for a later retry instead of being quarantined; only a
-  non-transient failure is quarantined.
+  diverged, took down recovery for all twelve). Each journal's fence now
+  runs under its own `try`; an unreadable `journal.json` or a fence
+  violation (root binding, phase membership, path containment, the kind's
+  own `validate`) means the journal cannot be trusted, and moves it to
+  `$DATA/txn-quarantine/<rootNs>/<id>/` (with a `reason.json` naming the
+  reason, the akm version, and the timestamp — nothing is deleted). A
+  journal that PASSES its fence but whose `rollback`/`finalize` throws is
+  left exactly where it is instead: the recovery ACTION failed (a refused
+  git push, a target that diverged, `state.db` contention), not the
+  journal, so quarantining it would discard the only record of an
+  interrupted mutation — it is `warnOnce`-logged and reported under
+  `deferred` for a later scan to retry. Either way the scan continues with
+  the next journal. `recoverTxnsForRoot` now returns
+  `{ recovered, quarantined, deferred }`; `akm migrate apply`'s `staleTxns`
+  plan section reports all three lists, and neither a quarantined nor a
+  deferred journal makes the plan `blocked`. A non-empty
+  `$DATA/txn-quarantine` surfaces as the `txn-quarantine` `akm health`
+  advisory, and a deferred journal older than an hour surfaces as the new
+  `txn-awaiting-recovery` advisory, naming the proposal id when the journal
+  belongs to one. `akm migrate status` (and `apply --dry-run`) also runs the
+  read-only fence check per journal and marks a would-be-quarantined one
+  with `wouldQuarantine: { reason }` in its `staleTxns.pending` entry — a
+  fence violation is cheap to determine without mutation; a journal that
+  would only fail during `rollback`/`finalize` still reports as plain
+  "pending", since that requires actually running recovery.
 - **A bad proposal transaction journal no longer aborts recovery for every
   other proposal sharing its root, and quarantine is reserved for journals
   that cannot be trusted.** `recoverProposalTransactions`
@@ -239,8 +248,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`lastAttemptVersion` on the stamp), so installing a fix no longer has to
   wait out a blocked attempt some earlier version made, and
   the startup summary now also names any journal `staleTxns` quarantined
-  during the reconcile, with its quarantine path, instead of only counting
-  the ones it recovered.
+  during the reconcile, with its quarantine path, and any journal it left
+  deferred for a later retry, with the reason, instead of only counting the
+  ones it recovered; a stale scheduler grant the same reconcile's
+  carry-forward could not carry forward is now named the same way.
 - **`akm task sync` carries a scheduler grant forward before it would
   otherwise remove it as ungranted.** An installed native
   scheduler binding backed by a file in an enabled bundle, but with no
