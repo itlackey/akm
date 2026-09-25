@@ -2952,10 +2952,15 @@ Manual `akm task run` remains available. To remove a task, delete its file
 (`<bundle>/tasks/<id>.yml`) and run `akm task sync` — sync uninstalls the
 orphaned scheduler entry.
 
-`akm task sync --dry-run` prints the planned adds/updates/removes (removals
-carry their owning bundle) without touching the scheduler — zero writes.
-Exits non-zero when removals are pending, so it can gate a CI/health check
-on "sync would change something."
+An explicit `akm task sync` also grants any installed, backed,
+enabled-bundle scheduler row that has no grant yet (the operator's own prior
+`task sync`, recognized rather than removed) instead of treating it as an
+orphan; `akm task disable <ref>` is how to drop one of those grants on
+purpose. `akm task sync --dry-run` prints the planned adds/updates/removes
+(removals carry their owning bundle) without touching the scheduler — zero
+writes, and any row it would grant is listed under `carriedForward` rather
+than under `removes`. Exits non-zero when removals are pending, so it can
+gate a CI/health check on "sync would change something."
 
 `akm task prune` reclaims installed scheduler entries that `sync` can never
 clean up on its own: entries whose own `--scheduler-context` descriptor no
