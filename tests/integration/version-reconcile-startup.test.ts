@@ -195,3 +195,131 @@ test("a crontab row for an ungranted task and a retired schedule[].enabled marke
     sandbox.cleanup();
   }
 }, 120_000);
+
+/**
+ * r3-2 Finding B: nothing ungated pinned that the `akm task sync` CLI leaf
+ * passes `carryForward: true` (`src/commands/tasks/tasks-cli.ts`). This
+ * reuses the fixture above (fake crontab, sandbox XDG env, real `bun
+ * src/cli.ts`) but drives `task sync`/`task sync --dry-run` directly instead
+ * of the startup-reconciliation hook, and installs the task with a current
+ * version stamp so startup reconciliation does NOT run again and carry
+ * forward the grant on its own — only `task sync`'s own `carryForward: true`
+ * can be responsible for what this test asserts.
+ */
+test("`akm task sync` and its `--dry-run` preview carry an ungranted installed binding forward on their own", () => {
+  const sandbox = makeSandboxDir("akm-task-sync-carry-forward-cli");
+  const id = `orphan-${process.pid}-${Date.now()}`;
+  const fakeBin = path.join(sandbox.dir, "fake-bin");
+  const fakeCrontab = path.join(sandbox.dir, "crontab");
+  const home = path.join(sandbox.dir, "home");
+  const configHome = path.join(sandbox.dir, "config");
+  const dataHome = path.join(sandbox.dir, "data");
+  const cacheHome = path.join(sandbox.dir, "cache");
+  const stateHome = path.join(sandbox.dir, "state");
+  const stashDir = path.join(sandbox.dir, "stash");
+
+  for (const dir of [fakeBin, home, path.join(configHome, "akm"), dataHome, cacheHome, stateHome, stashDir]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(fakeBin, "crontab"),
+    [
+      "#!/bin/sh",
+      `if [ "\${1:-}" = "-l" ]; then`,
+      '  if [ -f "$FAKE_CRONTAB" ]; then cat "$FAKE_CRONTAB"; exit 0; fi',
+      '  echo "no crontab for sandbox" >&2',
+      "  exit 1",
+      "fi",
+      `if [ "\${1:-}" = "-" ]; then cp /dev/stdin "$FAKE_CRONTAB"; exit 0; fi`,
+      "exit 2",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(configHome, "akm", "config.json"),
+    `${JSON.stringify({
+      configVersion: "0.9.0",
+      bundles: { stash: { path: stashDir } },
+      defaultBundle: "stash",
+      semanticSearchMode: "off",
+    })}\n`,
+    { mode: 0o600 },
+  );
+
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"]) delete env[key];
+  env.HOME = home;
+  env.XDG_CONFIG_HOME = configHome;
+  env.XDG_DATA_HOME = dataHome;
+  env.XDG_CACHE_HOME = cacheHome;
+  env.XDG_STATE_HOME = stateHome;
+  env.AKM_BUNDLE_DIR = stashDir;
+  env.FAKE_CRONTAB = fakeCrontab;
+  env.PATH = [fakeBin, env.PATH ?? ""].join(path.delimiter);
+  env.NO_COLOR = "1";
+
+  try {
+    const cli = path.resolve("src/cli.ts");
+    const configPath = path.join(configHome, "akm", "config.json");
+    const stampPath = path.join(stateHome, "akm", "version-reconcile.json");
+    const ref = `stash//tasks/${id}`;
+
+    // Install the task the ordinary way. This command's own startup-
+    // reconciliation hook stamps the current version, so neither command
+    // below reconciles on startup — the carry-forward each performs must
+    // come from `task sync`'s own `carryForward: true`.
+    const add = run(["bun", cli, "task", "add", id, "--schedule", "@daily", "--command", "/bin/echo orphan-task"], env);
+    expectSuccess(add, "task add");
+    expect(fs.readFileSync(fakeCrontab, "utf8")).toContain(`# akm:task ${id} BEGIN`);
+
+    // Strip the grant `task add` just wrote, leaving an installed crontab
+    // row with no host-local record of it — the same shape #849's
+    // dry-run/full-sync carry-forward is meant to recognize.
+    const configBeforeStrip = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      scheduler: { enabled: Array<{ kind: string; ref: string }> };
+    };
+    configBeforeStrip.scheduler.enabled = configBeforeStrip.scheduler.enabled.filter((a) => a.ref !== ref);
+    expect(configBeforeStrip.scheduler.enabled).not.toContainEqual(expect.objectContaining({ ref }));
+    fs.writeFileSync(configPath, `${JSON.stringify(configBeforeStrip, null, 2)}\n`, { mode: 0o600 });
+
+    const stampBefore = fs.readFileSync(stampPath, "utf8");
+    const mtimeBefore = fs.statSync(stampPath).mtimeMs;
+
+    // `task sync --dry-run`: must carry the ref forward in its preview
+    // instead of planning to remove it, and must not touch config.
+    const dryRun = run(["bun", cli, "task", "sync", "--dry-run"], env);
+    expectSuccess(dryRun, "task sync --dry-run");
+    const preview = JSON.parse(dryRun.stdout) as {
+      carriedForward?: string[];
+      removes?: Array<{ id: string }>;
+    };
+    expect(preview.carriedForward).toEqual([ref]);
+    expect(preview.removes?.some((removal) => removal.id === id)).toBe(false);
+
+    const configAfterDryRun = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      scheduler?: { enabled?: Array<{ ref: string }> };
+    };
+    expect(configAfterDryRun.scheduler?.enabled).not.toContainEqual(expect.objectContaining({ ref }));
+
+    // `task sync` (real): carries the grant forward for real and keeps the
+    // crontab row — this is the assertion that fails if `carryForward:
+    // true` is removed from the real-sync call in tasks-cli.ts.
+    const sync = run(["bun", cli, "task", "sync"], env);
+    expectSuccess(sync, "task sync");
+
+    const configAfterSync = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      scheduler?: { enabled?: Array<{ kind: string; ref: string }> };
+    };
+    expect(configAfterSync.scheduler?.enabled).toContainEqual(expect.objectContaining({ kind: "task", ref }));
+    expect(fs.readFileSync(fakeCrontab, "utf8")).toContain(`# akm:task ${id} BEGIN`);
+
+    // Neither command reconciled on startup — proving the carry-forward
+    // above came from `task sync` itself, not from startup reconciliation
+    // running a second time.
+    expect(fs.readFileSync(stampPath, "utf8")).toBe(stampBefore);
+    expect(fs.statSync(stampPath).mtimeMs).toBe(mtimeBefore);
+  } finally {
+    sandbox.cleanup();
+  }
+}, 120_000);
