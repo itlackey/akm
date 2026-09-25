@@ -12,10 +12,15 @@ would produce, prints a one-line stderr deprecation warning (once per file
 per process), and never writes anything to disk. Only a v2/v3 document the
 deterministic conversion itself cannot resolve (an ambiguous shell command,
 say) fails to load, with `UsageError` code `TASK_SCHEMA_VERSION_UNSUPPORTED`
-naming the specific blocked reason and the human decision it needs. Task
-source v4 adds typed `inputs:` and a single bounded `output:` schema
-(command targets only), and makes scheduling OPTIONAL rather than
-mandatory. `akm task add` authors task source v4 directly.
+naming the specific blocked reason and the human decision it needs. A
+declared `version: 4` document whose `schedule[]` still carries a
+per-entry `enabled` key — 0.9.15's v4 grammar accepted it, this release's
+does not — reads through the same kind of in-memory shim: the key is
+stripped without ever being read (activation is host-local, below) and the
+same one-line deprecation warning is printed. Task source v4 adds typed
+`inputs:` and a single bounded `output:` schema (command targets only), and
+makes scheduling OPTIONAL rather than mandatory. `akm task add` authors
+task source v4 directly.
 
 If you have `version: 3` or `version: 2` files on disk (from an earlier
 akm release), see [Migrating to task source v4](#migrating-to-task-source-v4)
@@ -420,7 +425,9 @@ for full before/after examples and recovery guidance.
   file's declared schema version. A version 2/3 file the in-memory shim
   converts reports `converts` (exit 0); one the shim's deterministic
   planner cannot resolve reports `blocked` (exit 1) naming the human
-  decision it needs.
+  decision it needs. A `version: 4` file whose only defect is a retired
+  `schedule[].enabled` also reports `converts` (`sourceVersion` still `4`)
+  — it read through the shim too, not the direct v4 path.
 - `akm task add` writes a task source v4 document and installs it after
   validation. `--params` renders typed `inputs:` declarations instead of a
   `with:` bag; `--schedule` is required on every invocation. `--disabled`
