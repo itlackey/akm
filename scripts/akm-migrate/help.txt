@@ -27,11 +27,11 @@ version change (`reconcileOnVersionChange`, `src/core/version-reconcile.ts`)
 -- the CLI proper still reads only current schemas; it never absorbs the
 migration steps, it only calls the one tool that runs them.
 
-`--host-local` narrows `status`/`apply` to steps 1-4 above plus stale
+`--host-local` narrows `status`/`apply` to steps 1-5 above plus stale
 transaction recovery: config.json, state.db, scheduler grants (including
 carrying a grant forward from an installed native scheduler row that has
 no config entry yet -- the operator's own prior `akm task sync`), and
-`$DATA/txn`. It never rewrites bundle content (steps 5-8) -- task files,
+`$DATA/txn`. It never rewrites bundle content (steps 6-8) -- task files,
 `.akm` residue, and writer relocation stay reachable only through the full
 `apply`, run by a human or `akm upgrade`.
 

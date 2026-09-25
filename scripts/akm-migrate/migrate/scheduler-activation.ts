@@ -17,7 +17,7 @@ import {
   type SchedulerGrantCarryForwardResult,
 } from "../../../src/tasks/scheduler-grant-carry-forward";
 import type { SchedulerActivation } from "../../../src/tasks/activation-config";
-import type { SchedulerBackend } from "../../../src/tasks/scheduler-binding";
+import type { SchedulerBackend, SchedulerBackendInspection } from "../../../src/tasks/scheduler-binding";
 
 export interface SchedulerActivationMigrationPlan {
   readonly pending: readonly SchedulerActivation[];
@@ -26,13 +26,31 @@ export interface SchedulerActivationMigrationPlan {
 
 export type SchedulerActivationMigrationResult = SchedulerGrantCarryForwardResult;
 
-function unavailablePlan(selected: string | undefined, message?: string): SchedulerActivationMigrationPlan {
-  return Object.freeze({
-    pending: Object.freeze([]),
-    warnings: Object.freeze([
-      message ?? `Scheduler backend ${JSON.stringify(selected)} cannot inspect native bindings.`,
-    ]),
-  });
+/**
+ * Select the native scheduler backend and inspect its installed bindings,
+ * shared by both `inspectSchedulerActivationMigration` and
+ * `applySchedulerActivationMigration` so the select/inspect/error-handling
+ * logic exists in exactly one place.
+ */
+async function inspectNativeBindings(
+  backend: SchedulerBackend | undefined,
+): Promise<{ inspection: SchedulerBackendInspection } | { warning: string }> {
+  let selected: SchedulerBackend;
+  try {
+    selected = backend ?? selectBackend();
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return { warning: `Native scheduler activation could not be inspected: ${message}` };
+  }
+  if (!selected.inspectBindings) {
+    return { warning: `Scheduler backend ${JSON.stringify(selected.name)} cannot inspect native bindings.` };
+  }
+  try {
+    return { inspection: await selected.inspectBindings({}) };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return { warning: `Native scheduler activation could not be inspected: ${message}` };
+  }
 }
 
 export async function inspectSchedulerActivationMigration(
@@ -40,47 +58,18 @@ export async function inspectSchedulerActivationMigration(
 ): Promise<SchedulerActivationMigrationPlan> {
   resetConfigCache();
   const config = loadConfig();
-  let selected: SchedulerBackend;
-  try {
-    selected = backend ?? selectBackend();
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    return unavailablePlan(undefined, `Native scheduler activation could not be inspected: ${message}`);
-  }
-  if (!selected.inspectBindings) return unavailablePlan(selected.name);
-  try {
-    const inspection = await selected.inspectBindings({});
-    return Object.freeze({
-      pending: pendingGrantsFromInstalled(inspection.installed, config),
-      warnings: Object.freeze([]),
-    });
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    return unavailablePlan(undefined, `Native scheduler activation could not be inspected: ${message}`);
-  }
+  const result = await inspectNativeBindings(backend);
+  if ("warning" in result) return Object.freeze({ pending: Object.freeze([]), warnings: Object.freeze([result.warning]) });
+  return Object.freeze({
+    pending: pendingGrantsFromInstalled(result.inspection.installed, config),
+    warnings: Object.freeze([]),
+  });
 }
 
 export async function applySchedulerActivationMigration(
   backend?: SchedulerBackend,
 ): Promise<SchedulerActivationMigrationResult> {
-  let selected: SchedulerBackend;
-  try {
-    selected = backend ?? selectBackend();
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    return { applied: Object.freeze([]), warnings: Object.freeze([`Native scheduler activation could not be inspected: ${message}`]) };
-  }
-  if (!selected.inspectBindings) {
-    return {
-      applied: Object.freeze([]),
-      warnings: Object.freeze([`Scheduler backend ${JSON.stringify(selected.name)} cannot inspect native bindings.`]),
-    };
-  }
-  try {
-    const inspection = await selected.inspectBindings({});
-    return await carryForwardSchedulerGrants(inspection);
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    return { applied: Object.freeze([]), warnings: Object.freeze([`Native scheduler activation could not be inspected: ${message}`]) };
-  }
+  const result = await inspectNativeBindings(backend);
+  if ("warning" in result) return { applied: Object.freeze([]), warnings: Object.freeze([result.warning]) };
+  return carryForwardSchedulerGrants(result.inspection);
 }

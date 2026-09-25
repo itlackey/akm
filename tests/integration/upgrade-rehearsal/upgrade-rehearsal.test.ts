@@ -29,13 +29,22 @@ import { resolveCandidateTarball } from "./candidate";
 import { requireUpgradeRehearsalCapabilities } from "./gate";
 import { buildHome, buildLegacyGrantHome, type LegacyGrantHome, type UpgradeHome } from "./home";
 import { installAkmTarball, runLauncher } from "./install";
-import { fetchPreviousReleaseTarball, resolveUpgradeOriginVersion } from "./previous-release";
+import { fetchPreviousReleaseTarball, resolveUpgradeOriginVersion, type UpgradeOrigin } from "./previous-release";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const REQUESTED = process.env.AKM_UPGRADE_REHEARSAL === "1";
+// The CI matrix (.github/workflows/ci.yml's upgrade-rehearsal job) runs each
+// KNOWN_UPGRADE_ORIGINS entry in its own parallel job by setting this to one
+// origin; unset (local dev, tests/release-check.sh) runs every origin's
+// describe block in this one process, same as before this filter existed.
+const ORIGIN_FILTER = process.env.AKM_UPGRADE_REHEARSAL_ORIGIN?.trim();
 
 if (!REQUESTED) {
   console.log("AKM_UPGRADE_REHEARSAL is not set to 1 — skipping the upgrade rehearsal gate.");
+}
+
+function skipOrigin(origin: UpgradeOrigin): boolean {
+  return !REQUESTED || (Boolean(ORIGIN_FILTER) && ORIGIN_FILTER !== origin);
 }
 
 requireUpgradeRehearsalCapabilities({
@@ -65,7 +74,7 @@ function extractCronCommandContaining(crontab: string, needle: string): string {
   throw new Error(`No crontab entry's command references ${JSON.stringify(needle)}:\n${crontab}`);
 }
 
-describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-release-built home", () => {
+describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a previous-release-built home", () => {
   let workRoot: string;
   let previousVersion: string;
   let previousLauncher: string;
@@ -359,78 +368,81 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
  * minimal fixture `buildLegacyGrantHome` builds (see its own comment for
  * why), not the full five-bundle-kind home.
  */
-describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a 0.9.15-built (pre-grant-model) home", () => {
-  let workRoot: string;
-  let candidateLauncher: string;
-  let candidateMigrateLauncher: string;
-  let candidateVersion: string;
-  let home: LegacyGrantHome;
+describe.skipIf(skipOrigin("0.9.15"))(
+  "upgrade rehearsal: candidate against a 0.9.15-built (pre-grant-model) home",
+  () => {
+    let workRoot: string;
+    let candidateLauncher: string;
+    let candidateMigrateLauncher: string;
+    let candidateVersion: string;
+    let home: LegacyGrantHome;
 
-  beforeAll(async () => {
-    workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-upgrade-rehearsal-0915-"));
-    const cacheRoot = path.join(os.tmpdir(), "akm-upgrade-rehearsal");
-    fs.mkdirSync(cacheRoot, { recursive: true });
+    beforeAll(async () => {
+      workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-upgrade-rehearsal-0915-"));
+      const cacheRoot = path.join(os.tmpdir(), "akm-upgrade-rehearsal");
+      fs.mkdirSync(cacheRoot, { recursive: true });
 
-    candidateVersion = candidatePackageVersion();
-    const originVersion = await resolveUpgradeOriginVersion("0.9.15", candidateVersion);
+      candidateVersion = candidatePackageVersion();
+      const originVersion = await resolveUpgradeOriginVersion("0.9.15", candidateVersion);
 
-    const [originTarball, candidateTarball] = await Promise.all([
-      fetchPreviousReleaseTarball(originVersion, cacheRoot),
-      resolveCandidateTarball(REPO_ROOT, workRoot),
-    ]);
+      const [originTarball, candidateTarball] = await Promise.all([
+        fetchPreviousReleaseTarball(originVersion, cacheRoot),
+        resolveCandidateTarball(REPO_ROOT, workRoot),
+      ]);
 
-    const prefixRoot = path.join(workRoot, "prefixes");
-    fs.mkdirSync(prefixRoot, { recursive: true });
+      const prefixRoot = path.join(workRoot, "prefixes");
+      fs.mkdirSync(prefixRoot, { recursive: true });
 
-    const originInstall = await installAkmTarball(originTarball, prefixRoot, "live", originVersion);
-    home = await buildLegacyGrantHome(originInstall.launcher, path.join(workRoot, "home"));
+      const originInstall = await installAkmTarball(originTarball, prefixRoot, "live", originVersion);
+      home = await buildLegacyGrantHome(originInstall.launcher, path.join(workRoot, "home"));
 
-    // Install the CANDIDATE over `live`, in the SAME prefix — an in-place
-    // swap, exactly like the "previous"-origin suite above.
-    const candidateInstall = await installAkmTarball(candidateTarball, prefixRoot, "live", candidateVersion);
-    candidateLauncher = candidateInstall.launcher;
-    candidateMigrateLauncher = candidateInstall.migrateLauncher;
-  }, 900_000);
+      // Install the CANDIDATE over `live`, in the SAME prefix — an in-place
+      // swap, exactly like the "previous"-origin suite above.
+      const candidateInstall = await installAkmTarball(candidateTarball, prefixRoot, "live", candidateVersion);
+      candidateLauncher = candidateInstall.launcher;
+      candidateMigrateLauncher = candidateInstall.migrateLauncher;
+    }, 900_000);
 
-  afterAll(() => {
-    if (workRoot) fs.rmSync(workRoot, { recursive: true, force: true });
-  });
+    afterAll(() => {
+      if (workRoot) fs.rmSync(workRoot, { recursive: true, force: true });
+    });
 
-  test("the crontab row installed by 0.9.15 runs the candidate before any `migrate` call, and the grant is carried forward", async () => {
-    const crontabBefore = fs.readFileSync(home.fakeCrontab, "utf8");
-    const command = extractCronCommandContaining(crontabBefore, home.taskId);
+    test("the crontab row installed by 0.9.15 runs the candidate before any `migrate` call, and the grant is carried forward", async () => {
+      const crontabBefore = fs.readFileSync(home.fakeCrontab, "utf8");
+      const command = extractCronCommandContaining(crontabBefore, home.taskId);
 
-    const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
-    expect(executed.status, executed.stderr).toBe(0);
+      const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
+      expect(executed.status, executed.stderr).toBe(0);
 
-    // The startup reconcile hook (src/cli.ts's reconcileOnVersionChange, run
-    // by the `task run` the cron command just invoked) already carried the
-    // grant forward — confirm it exists, with no manual `akm migrate apply`
-    // or `akm task sync` in between.
-    const configGet = await runLauncher(candidateLauncher, ["config", "get", "scheduler.enabled"], home.env);
-    expect(configGet.status, configGet.stderr).toBe(0);
-    // `config get` prints the raw value, unwrapped (no `{value}` envelope).
-    const grants = (JSON.parse(configGet.stdout) as { kind?: string; ref?: string }[] | null) ?? [];
-    expect(grants.some((grant) => grant.kind === "task" && grant.ref?.endsWith(`tasks/${home.taskId}`))).toBe(true);
+      // The startup reconcile hook (src/cli.ts's reconcileOnVersionChange, run
+      // by the `task run` the cron command just invoked) already carried the
+      // grant forward — confirm it exists, with no manual `akm migrate apply`
+      // or `akm task sync` in between.
+      const configGet = await runLauncher(candidateLauncher, ["config", "get", "scheduler.enabled"], home.env);
+      expect(configGet.status, configGet.stderr).toBe(0);
+      // `config get` prints the raw value, unwrapped (no `{value}` envelope).
+      const grants = (JSON.parse(configGet.stdout) as { kind?: string; ref?: string }[] | null) ?? [];
+      expect(grants.some((grant) => grant.kind === "task" && grant.ref?.endsWith(`tasks/${home.taskId}`))).toBe(true);
 
-    const hostLocalStatus = await runLauncher(candidateMigrateLauncher, ["status", "--host-local"], home.env);
-    expect(hostLocalStatus.status, hostLocalStatus.stderr).toBe(0);
-    const hostLocalPlan = JSON.parse(hostLocalStatus.stdout) as {
-      mode?: string;
-      status?: string;
-      blockers?: string[];
-    };
-    expect(hostLocalPlan.mode).toBe("host-local");
-    expect(hostLocalPlan.status).toBe("current");
-    expect(hostLocalPlan.blockers ?? []).toEqual([]);
+      const hostLocalStatus = await runLauncher(candidateMigrateLauncher, ["status", "--host-local"], home.env);
+      expect(hostLocalStatus.status, hostLocalStatus.stderr).toBe(0);
+      const hostLocalPlan = JSON.parse(hostLocalStatus.stdout) as {
+        mode?: string;
+        status?: string;
+        blockers?: string[];
+      };
+      expect(hostLocalPlan.mode).toBe("host-local");
+      expect(hostLocalPlan.status).toBe("current");
+      expect(hostLocalPlan.blockers ?? []).toEqual([]);
 
-    // A plain `task sync` afterward must not remove the now-granted,
-    // still-installed row.
-    const sync = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
-    expect(sync.status, sync.stderr).toBe(0);
-    const syncResult = JSON.parse(sync.stdout) as { removed?: string[] };
-    expect(syncResult.removed ?? []).not.toContain(home.taskId);
-    const crontabAfter = fs.readFileSync(home.fakeCrontab, "utf8");
-    expect(crontabAfter).toContain(home.taskId);
-  });
-});
+      // A plain `task sync` afterward must not remove the now-granted,
+      // still-installed row.
+      const sync = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
+      expect(sync.status, sync.stderr).toBe(0);
+      const syncResult = JSON.parse(sync.stdout) as { removed?: string[] };
+      expect(syncResult.removed ?? []).not.toContain(home.taskId);
+      const crontabAfter = fs.readFileSync(home.fakeCrontab, "utf8");
+      expect(crontabAfter).toContain(home.taskId);
+    });
+  },
+);
