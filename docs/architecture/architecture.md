@@ -219,10 +219,11 @@ prose-only until 0.9.0, and drifted.
 Command layers therefore never hold provider knowledge. Where a step is
 meaningful only for a publication-backed target, `write-source.ts` exposes a
 kind-neutral wrapper that absorbs the guard and no-ops otherwise:
-`commitWriteTargetBoundary`, `captureGitPublication`,
-`captureWriteTargetPathSnapshot`, and `publishWriteTargetTransaction`.
-Recording or comparing a kind for transaction *identity* (`targetKind:
-target.source.kind`) is not branching and stays in the command layer.
+`prepareWriteTargetForMutation`, `commitWriteTargetBoundary`, and
+`withWriteTargetMutation` (write the file, `git add` exactly the recorded
+paths, commit, push with `--force-with-lease` when configured). Recording a
+kind for display (`targetKind: target.source.kind`) is not branching and stays
+in the command layer.
 
 ```ts
 writeAssetToSource(source, config, ref, content)

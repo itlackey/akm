@@ -16,17 +16,12 @@ if (mode === "workflow") {
   };
   const assetPath = path.join(root, "workflows", "shared.md");
   fs.writeFileSync(readyPath, "ready");
-  withWriteTargetMutation(
-    target,
-    [assetPath],
-    { ignored: "reject", purpose: `test-${content}`, message: `Write ${content}` },
-    () => {
-      fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-      writeFileAtomic(assetPath, content, 0o644);
-      fs.writeFileSync(enteredPath, "entered");
-      while (!fs.existsSync(releasePath)) sleepSync(10);
-    },
-  );
+  withWriteTargetMutation(target, [assetPath], { purpose: `test-${content}`, message: `Write ${content}` }, () => {
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    writeFileAtomic(assetPath, content, 0o644);
+    fs.writeFileSync(enteredPath, "entered");
+    while (!fs.existsSync(releasePath)) sleepSync(10);
+  });
 } else {
   throw new Error("Invalid write-mutation lease worker arguments.");
 }

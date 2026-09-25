@@ -38,6 +38,20 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   still load, PATH included, until that sync. (`src/tasks/scheduler-invocation.ts`,
   `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
   `src/tasks/scheduler-sync.ts`.)
+- **The write path keeps only what its callers use** (`src/core/write-source.ts`,
+  1,485 → 602 lines). The git transaction chain — publication identity capture,
+  path, worktree and commit snapshot validation, base-HEAD assertions,
+  transaction-commit discovery, a per-repo pending-mutation registry and a
+  plan/begin/publish API — lost its last callers when the proposal
+  transaction journals were removed and survived only because one test
+  imported it; its 15 exports and their private helpers are gone. A write to a
+  git-backed bundle now writes the file atomically inside the bundle root,
+  records the exact path, and the boundary commits exactly those paths and
+  pushes with `--force-with-lease`. A dirty or gitignored destination is no
+  longer refused: an ignored path stays local with a warning instead of the
+  command throwing after the file had already landed, and an upstream that
+  cannot be inspected during preparation warns instead of aborting. Path
+  containment, the symlink-escape refusal and the detached-HEAD refusal stay.
 - **Readers tolerate everything older releases wrote.** No config object is
   strict any more: a key this release does not know — retired, misspelled,
   or written by a newer release — is kept in memory and named once

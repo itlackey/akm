@@ -117,7 +117,6 @@ function appendLessonStrength(refInput: AssetRef, feedbackRef: string): { ref: s
       resolved.target,
       [filePath],
       {
-        ignored: "reject",
         purpose: "feedback-lesson-credit",
         message: `Update ${makeBundleRef(bundleId, conceptId)}`,
       },

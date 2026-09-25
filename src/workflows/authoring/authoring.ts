@@ -126,15 +126,10 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   const defaultBundle = defaultBundleForTarget(config);
   const ref = makeBundleRef(target.source.name === defaultBundle ? undefined : target.source.name, conceptId);
-  withWriteTargetMutation(
-    target,
-    [assetPath],
-    { ignored: "reject", purpose: "workflow-authoring", message: `Create ${ref}` },
-    () => {
-      fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-      writeFileAtomic(assetPath, authoredContent.endsWith("\n") ? authoredContent : `${authoredContent}\n`, mode);
-    },
-  );
+  withWriteTargetMutation(target, [assetPath], { purpose: "workflow-authoring", message: `Create ${ref}` }, () => {
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    writeFileAtomic(assetPath, authoredContent.endsWith("\n") ? authoredContent : `${authoredContent}\n`, mode);
+  });
 
   return {
     ref,

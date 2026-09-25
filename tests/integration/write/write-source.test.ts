@@ -9,7 +9,6 @@
  *   - the single batch-at-boundary commit (issue #507) produces exactly one
  *     complete commit + clean tree, pushes per the writable+remote+push gate,
  *     and is a no-op for filesystem targets
- *   - rejection of `writable: true` on website / npm at config load
  *   - rejection of unsupported `kind` reaching the helper
  *   - resolveWriteTarget precedence (explicit → defaultWriteTarget → defaultBundle)
  *   - commit-message sanitization (issue #270) via the boundary commit
@@ -26,7 +25,6 @@ import type { SourceConfigEntry } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
 import { sanitizeCommitMessage } from "../../../src/core/git-message";
 import {
-  assertWritableAllowedForKind,
   commitWriteTargetBoundary,
   deleteAssetFromSource,
   formatRefForMessage,
@@ -101,31 +99,6 @@ describe("resolveWritable", () => {
 
   test("explicit value wins for git", () => {
     expect(resolveWritable({ type: "git", writable: true })).toBe(true);
-  });
-});
-
-// ── assertWritableAllowedForKind ────────────────────────────────────────────
-
-describe("assertWritableAllowedForKind", () => {
-  test("rejects writable: true on website", () => {
-    expect(() => assertWritableAllowedForKind({ type: "website", writable: true, name: "docs" })).toThrow(ConfigError);
-  });
-
-  test("rejects writable: true on npm", () => {
-    expect(() => assertWritableAllowedForKind({ type: "npm", writable: true, name: "pkg" })).toThrow(ConfigError);
-  });
-
-  test("allows writable: true on git", () => {
-    expect(() => assertWritableAllowedForKind({ type: "git", writable: true })).not.toThrow();
-  });
-
-  test("allows writable: true on filesystem", () => {
-    expect(() => assertWritableAllowedForKind({ type: "filesystem", writable: true })).not.toThrow();
-  });
-
-  test("ignores absent / false writable on website + npm (no-op)", () => {
-    expect(() => assertWritableAllowedForKind({ type: "website" })).not.toThrow();
-    expect(() => assertWritableAllowedForKind({ type: "npm", writable: false })).not.toThrow();
   });
 });
 
