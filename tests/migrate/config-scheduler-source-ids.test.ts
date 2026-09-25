@@ -75,6 +75,63 @@ describe("scheduler source-id config migration", () => {
     expect(findConfigSchedulerSourceIdMigration(getConfigPath()).changes).toEqual([]);
   });
 
+  test("rebinds a grant whose sourceId is present but stale, not only a missing one", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        bundles: { team: { path: storage.stashDir } },
+        defaultBundle: "team",
+        scheduler: {
+          enabled: [
+            {
+              kind: "task",
+              ref: "team//tasks/nightly",
+              sourceId: filesystemBundleSourceId(path.join(storage.stashDir, "..", "different-origin")),
+            },
+          ],
+        },
+      }),
+    );
+    resetConfigCache();
+    const currentSourceId = bundleSourceId(loadConfig(), "team");
+
+    const plan = findConfigSchedulerSourceIdMigration(configPath);
+    expect(plan.changes).toEqual([{ kind: "bind", ref: "team//tasks/nightly", sourceId: currentSourceId }]);
+
+    expect(applyConfigSchedulerSourceIdMigration(configPath).applied).toBe(true);
+    resetConfigCache();
+    expect(schedulerActivations(loadConfig())).toEqual([
+      { kind: "task", ref: "team//tasks/nightly", sourceId: currentSourceId },
+    ]);
+    expect(findConfigSchedulerSourceIdMigration(configPath).changes).toEqual([]);
+  });
+
+  test("leaves an already-granted activation alone when its bundle isn't configured right now", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const staleSourceId = filesystemBundleSourceId(path.join(storage.stashDir, "..", "different-origin"));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        scheduler: { enabled: [{ kind: "task", ref: "removed//tasks/nightly", sourceId: staleSourceId }] },
+      }),
+    );
+    resetConfigCache();
+
+    expect(findConfigSchedulerSourceIdMigration(configPath).changes).toEqual([]);
+    expect(applyConfigSchedulerSourceIdMigration(configPath).applied).toBe(false);
+    resetConfigCache();
+    expect(schedulerActivations(loadConfig())).toEqual([
+      { kind: "task", ref: "removed//tasks/nightly", sourceId: staleSourceId },
+    ]);
+  });
+
   test("binds an environment-only working bundle instead of dropping its grant", () => {
     const bundleId = deriveBundleId(undefined, storage.stashDir, new Set());
     fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
