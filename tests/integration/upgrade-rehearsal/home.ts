@@ -52,6 +52,7 @@ export interface UpgradeHome {
   readonly env: NodeJS.ProcessEnv;
   readonly stashDir: string;
   readonly fakeCrontab: string;
+  readonly configPath: string;
   readonly taskIds: UpgradeHomeTaskIds;
   readonly bundles: UpgradeHomeBundles;
   readonly searchTerm: string;
@@ -114,6 +115,7 @@ export async function buildHome(oldLauncher: string, root: string): Promise<Upgr
   const cacheHome = path.join(root, "cache");
   const stateHome = path.join(root, "state");
   const stashDir = path.join(root, "stash");
+  const configPath = path.join(configHome, "akm", "config.json");
 
   for (const dir of [
     fakeBin,
@@ -134,7 +136,7 @@ export async function buildHome(oldLauncher: string, root: string): Promise<Upgr
   fs.writeFileSync(path.join(fakeBin, "crontab"), fakeCrontabScript(), { mode: 0o755 });
 
   fs.writeFileSync(
-    path.join(configHome, "akm", "config.json"),
+    configPath,
     `${JSON.stringify(
       {
         configVersion: "0.9.0",
@@ -331,11 +333,27 @@ export async function buildHome(oldLauncher: string, root: string): Promise<Upgr
   await runStep("task run manual", oldLauncher, ["task", "run", `stash//tasks/${taskIds.manual}`], env);
   // akm proposal new needs an engine — skipped per the brief.
 
+  // ── 10. Model a config carried over from 0.9.15, which accepted this key ─
+  // (`experimental.workflowEngine`). Written AFTER the last old-launcher
+  // step above: the previous release installed for this rehearsal (0.9.16+)
+  // already rejects it — its `experimental` schema is `.strict()` with no
+  // read shim — so the old launcher must never read config.json again once
+  // the key is present. Only the CANDIDATE, which carries the retired-key
+  // read shim, is exercised against it (tests 1-3), and `migrate apply`
+  // (test 3) is the on-disk removal the read shim's warning points to.
+  const rawConfig = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({ ...rawConfig, experimental: { workflowEngine: true } }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+
   return {
     root,
     env,
     stashDir,
     fakeCrontab,
+    configPath,
     taskIds,
     bundles: { stash: "stash", secondFs: "second-fs", git: "git-bundle", website: "site", npm: npmBundleName },
     searchTerm,

@@ -4,14 +4,16 @@
 
 /**
  * RUNTIME-03/ORG-03: this suite installs the PREVIOUS published `akm-cli`
- * release and the CANDIDATE build as real global npm packages (real `npm
- * pack` / `npm install --global` into throwaway prefixes), uses the previous
- * release to build a realistic home (five bundle kinds, scheduled tasks, a
- * synced fake crontab), then drives the candidate against that home and the
- * previous release back against the candidate-written home. It shells out to
- * real `npm`/`git` subprocesses, spawns real installed binaries, and serves
- * local HTTP fixtures — it belongs in the integration target, not the unit
- * target, which must stay hermetic and host-independent.
+ * release as a real global npm package (real `npm pack` / `npm install
+ * --global` into a throwaway prefix), uses it to build a realistic home
+ * (five bundle kinds, scheduled tasks, a synced fake crontab), then installs
+ * the CANDIDATE build OVER that same prefix — an in-place swap, the same
+ * thing a real `npm i -g akm-cli@…`/`bun add -g` upgrade does — and drives
+ * the candidate against the home, and finally a separate untouched copy of
+ * the previous release back against the candidate-written home. It shells
+ * out to real `npm`/`git` subprocesses, spawns real installed binaries, and
+ * serves local HTTP fixtures — it belongs in the integration target, not the
+ * unit target, which must stay hermetic and host-independent.
  *
  * Gated behind `AKM_UPGRADE_REHEARSAL=1` (unset: logs one line and skips).
  * See docs/architecture/testing/testing-workflow.md's "Upgrade Regression
@@ -66,9 +68,8 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
   let workRoot: string;
   let previousVersion: string;
   let previousLauncher: string;
-  let previousPrefix: string;
   let candidateLauncher: string;
-  let candidatePrefix: string;
+  let livePrefix: string;
   let candidateVersion: string;
   let home: UpgradeHome;
 
@@ -87,16 +88,31 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
 
     const prefixRoot = path.join(workRoot, "prefixes");
     fs.mkdirSync(prefixRoot, { recursive: true });
-    const [previousInstall, candidateInstall] = await Promise.all([
-      installAkmTarball(previousTarball, prefixRoot, "previous", previousVersion),
-      installAkmTarball(candidateTarball, prefixRoot, "candidate", candidateVersion),
-    ]);
-    previousLauncher = previousInstall.launcher;
-    previousPrefix = previousInstall.prefix;
-    candidateLauncher = candidateInstall.launcher;
-    candidatePrefix = candidateInstall.prefix;
 
-    home = await buildHome(previousLauncher, path.join(workRoot, "home"));
+    // Install the previous release into TWO prefixes: `live`, which the
+    // candidate is installed OVER in place below (the same prefix a real
+    // `npm i -g akm-cli@…`/`bun add -g` upgrade replaces), and an untouched
+    // `previous-readback` copy that step 11 drives against the
+    // candidate-written home.
+    const [liveInstall, previousReadbackInstall] = await Promise.all([
+      installAkmTarball(previousTarball, prefixRoot, "live", previousVersion),
+      installAkmTarball(previousTarball, prefixRoot, "previous-readback", previousVersion),
+    ]);
+    previousLauncher = previousReadbackInstall.launcher;
+
+    home = await buildHome(liveInstall.launcher, path.join(workRoot, "home"));
+    // Surfaced (not silently dropped) rather than left as an unread field.
+    console.log(`upgrade-rehearsal home deviations:\n- ${home.deviations.join("\n- ")}`);
+
+    // Install the CANDIDATE over `live`, in the SAME prefix — an in-place
+    // swap, not a side-by-side install. Scheduler rows the previous release
+    // wrote while building the home embed a launcher path inside `live`;
+    // that path does not change across this swap, which is exactly what
+    // lets step 6's plain `task sync` (no `--rebind`) leave them alone and
+    // still have them run the candidate.
+    const candidateInstall = await installAkmTarball(candidateTarball, prefixRoot, "live", candidateVersion);
+    candidateLauncher = candidateInstall.launcher;
+    livePrefix = candidateInstall.prefix;
   }, 900_000);
 
   afterAll(() => {
@@ -117,9 +133,17 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
     expect(plan.blockers ?? []).toEqual([]);
   });
 
-  test("3. candidate migrate apply succeeds and status then reports current", async () => {
+  test("3. candidate migrate apply succeeds, removes experimental.workflowEngine, and status then reports current", async () => {
     const apply = await runLauncher(candidateLauncher, ["migrate", "apply"], home.env);
     expect(apply.status, apply.stderr).toBe(0);
+
+    // `home.ts` writes `experimental.workflowEngine` into config.json to
+    // model a value carried over from 0.9.15 (see its comment) — this is
+    // the on-disk removal the retired-config-key read shim's warning names.
+    const configAfterApply = JSON.parse(fs.readFileSync(home.configPath, "utf8")) as {
+      experimental?: Record<string, unknown>;
+    };
+    expect(configAfterApply.experimental?.workflowEngine).toBeUndefined();
 
     const status = await runLauncher(candidateLauncher, ["migrate", "status"], home.env);
     expect(status.status, status.stderr).toBe(0);
@@ -139,6 +163,20 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
       expect(names).toContain(expected);
     }
     expect(listed.sources?.length ?? 0).toBe(5);
+
+    // Every listed bundle must be enabled. `bundle list`'s SourceEntry shape
+    // carries no `enabled` field of its own (an upgrade must not leave a
+    // bundle silently disabled, but nothing in that read surface says so
+    // either way) — read the field the candidate actually loaded instead:
+    // `config get bundles`, keyed by bundle name, `enabled: false` only when
+    // set.
+    const bundlesGet = await runLauncher(candidateLauncher, ["config", "get", "bundles"], home.env);
+    expect(bundlesGet.status, bundlesGet.stderr).toBe(0);
+    const bundlesConfig = JSON.parse(bundlesGet.stdout) as Record<string, { enabled?: boolean } | undefined>;
+    for (const name of names) {
+      if (!name) continue;
+      expect(bundlesConfig[name]?.enabled, `bundle ${JSON.stringify(name)}`).not.toBe(false);
+    }
 
     const info = await runLauncher(candidateLauncher, ["info"], home.env);
     expect(info.status, info.stderr).toBe(0);
@@ -167,33 +205,28 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
     expect(removed.some((entry) => entry.includes(home.taskIds.b))).toBe(false);
   });
 
-  test("6. task sync rebinds a/b to the candidate launcher; c stays absent", async () => {
-    // `--rebind`: plain `task sync` treats an installed binding whose
-    // schedule/inputs already match the desired state as satisfied and
-    // leaves its recorded invocation (including the launcher path) alone —
-    // it does not implicitly repoint every binding at whichever binary is
-    // running sync today. `--rebind` is the documented flag for "replace
-    // installed bindings with the current invocation" (tasks-cli.ts), which
-    // is what an upgrade that moved the launcher path needs.
-    const result = await runLauncher(candidateLauncher, ["task", "sync", "--rebind"], home.env);
+  test("6. task sync (plain, no --rebind) keeps a/b scheduled inside `live`; c stays absent", async () => {
+    // Plain `task sync` is what an upgrading user actually runs — no other
+    // command sits between "install the new package" and "the scheduler
+    // keeps working". An installed binding whose schedule/inputs already
+    // match the desired state is left exactly as recorded, not implicitly
+    // repointed at whichever binary is running sync today (`--rebind` is
+    // the explicit "replace installed bindings with the current invocation"
+    // flag; see tasks-cli.ts) — there is nothing here for it to fix: the
+    // candidate was installed OVER `live` in place, so the launcher path a/b
+    // already embed still resolves inside `live` unchanged.
+    const result = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
     expect(result.status, result.stderr).toBe(0);
 
     const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
     const commandA = extractCronCommandContaining(crontab, home.taskIds.a);
     const commandB = extractCronCommandContaining(crontab, home.taskIds.b);
-    // The generated command embeds the RESOLVED launcher target
-    // (`<prefix>/lib/node_modules/akm-cli/dist/akm`), not the npm-generated
-    // `<prefix>/bin/akm` symlink `candidateLauncher` itself — compare
-    // against the candidate's install prefix instead of the exact launcher
-    // string, and confirm the previous install's prefix is gone.
-    expect(commandA).toContain(candidatePrefix);
-    expect(commandB).toContain(candidatePrefix);
-    expect(commandA).not.toContain(previousPrefix);
-    expect(commandB).not.toContain(previousPrefix);
+    expect(commandA).toContain(livePrefix);
+    expect(commandB).toContain(livePrefix);
     expect(crontab.includes(home.taskIds.c)).toBe(false);
   });
 
-  test("7. the generated cron command for scheduled-a executes and writes a task log", async () => {
+  test("7. the generated cron command for scheduled-a runs the CANDIDATE and writes a task log", async () => {
     const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
     const command = extractCronCommandContaining(crontab, home.taskIds.a);
     const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
@@ -210,6 +243,23 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
     const row = rows[0] as { status?: string; log?: string };
     expect(row.status).toBe("completed");
     expect(row.log && fs.existsSync(row.log)).toBe(true);
+
+    // Prove the row that just ran was the CANDIDATE, not the previous
+    // release still installed at `previous-readback`: the generated command
+    // is the resolved invocation argv (one token per element — see
+    // buildScheduledBindingInvocation/resolveAkmInvocation in
+    // src/tasks/backends/cron.ts and src/tasks/resolve-akm-bin.ts, unquoted
+    // via quoteForCron since fixture paths never contain shell-special
+    // characters) followed by `task run <ref>`. Strip the `task run …` tail
+    // and re-invoke the same resolved argv with `--version` instead.
+    const tokens = command.split(/\s+/);
+    const taskIndex = tokens.indexOf("task");
+    if (taskIndex <= 0) throw new Error(`Could not find the "task" subcommand in generated command: ${command}`);
+    const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, taskIndex);
+    if (!rowRuntime) throw new Error(`Could not extract an invocation from command: ${command}`);
+    const version = await runLauncher(rowRuntime, [...rowRuntimeArgs, "--version"], home.env);
+    expect(version.status, version.stderr).toBe(0);
+    expect(version.stdout).toContain(candidateVersion);
   });
 
   test("8. task run stash//tasks/manual succeeds", async () => {

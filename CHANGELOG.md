@@ -10,16 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
   `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
-  release and the candidate build as real global npm packages, drives the
-  previous release to build a realistic home (a filesystem, git, website, and
-  npm bundle; scheduled and manual tasks; a synced fake crontab), then runs
-  the candidate against that home — `migrate status`/`apply`, `search`,
-  `show`, `task sync` (dry-run and real), executing a rebound cron command,
-  `health`, `improve --plan` — and runs the previous release back against the
-  candidate-written home. Wired into CI (`.github/workflows/ci.yml`'s new
-  `upgrade-rehearsal` job) and `tests/release-check.sh` (right after packing
-  the release candidate). `.github/workflows/ci.yml` also now runs on pushes
-  to `release/*` branches, which previously had no CI coverage at all.
+  release as a real global npm package, drives it to build a realistic home
+  (a filesystem, git, website, and npm bundle; scheduled and manual tasks; a
+  synced fake crontab), then installs the candidate build OVER it in place —
+  the same prefix a real `npm i -g`/`bun add -g` upgrade replaces — and runs
+  the candidate against that home — `migrate status`/`apply`, `bundle list`
+  with every bundle confirmed enabled, `search`, `show`, plain `task sync`
+  (dry-run and real, no `--rebind`, as an upgrading user actually runs it),
+  executing the generated cron command and confirming it ran the candidate,
+  `health`, `improve --plan` — and finally installs a separate untouched copy
+  of the previous release and runs it back against the candidate-written
+  home. Wired into CI (`.github/workflows/ci.yml`'s new `upgrade-rehearsal`
+  job) and `tests/release-check.sh` (right after packing the release
+  candidate). `.github/workflows/ci.yml` also now runs on pushes to
+  `release/*` branches, which previously had no CI coverage at all.
 - **A single retired-config-keys registry (`src/core/config/retired-keys.ts`)
   and a schema-compat lint (`bun scripts/lint-config-schema-compat.ts`, wired
   into `bun run lint`) that fails the build when a config key disappears from
