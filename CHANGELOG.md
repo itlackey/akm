@@ -24,6 +24,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   job) and `tests/release-check.sh` (right after packing the release
   candidate). `.github/workflows/ci.yml` also now runs on pushes to
   `release/*` branches, which previously had no CI coverage at all.
+  **(upgrade-B)** Proves the fix for the defect above (Fixed, below) two
+  ways: a new first assertion in the "previous"-origin suite runs
+  scheduled-a's generated cron command BEFORE any `migrate` call and
+  confirms `akm-migrate status --host-local` then reports `current` with no
+  manual step in between; and a second, dedicated origin,
+  `KNOWN_UPGRADE_ORIGINS`' fixed `"0.9.15"` (the last release before
+  source-bound scheduler grants), builds a minimal home whose crontab row
+  carries no host-local grant at all — the exact 2026-09-24 shape — and
+  confirms the candidate carries the grant forward and a plain `task sync`
+  afterward does not remove it.
 - **A single retired-config-keys registry (`src/core/config/retired-keys.ts`)
   and a schema-compat lint (`bun scripts/lint-config-schema-compat.ts`, wired
   into `bun run lint`) that fails the build when a config key disappears from
