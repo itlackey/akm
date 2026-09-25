@@ -196,10 +196,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scheduler binding backed by a file in an enabled bundle, but with no
   `scheduler.enabled` entry — the exact shape a lost or reset host-local
   config leaves behind — is granted before `desired`/`removed` is computed,
-  instead of being deleted on the next sync. `akm task disable <ref>` is
-  still the supported way to drop a granted, installed binding: its own
-  reconciling sync skips carry-forward for that one call so the row it just
-  revoked is not immediately re-granted. `--dry-run` reports what would be
+  instead of being deleted on the next sync. Carry-forward is opt-in and
+  only an explicit `akm task sync` (and its `--dry-run` preview) requests
+  it; the reconciling syncs inside `akm task add`, `enable` and `disable`
+  never carry forward, so none of those commands can re-grant or reinstall
+  a binding the same call just revoked. `--dry-run` reports what would be
   carried forward under a new `carriedForward` field and never applies it.
 - **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
   config.json (legacy source shape, `extraParams`, retired keys, scheduler
