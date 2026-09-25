@@ -1352,12 +1352,16 @@ otherwise install into the wrong node's global prefix), and re-verifies it
 with `--version`. One already at the target version is reported `ok: true`
 without being reinstalled. An install with no manager it can run (a
 standalone binary, a checkout) is listed but never touched — update those by
-hand. Results land in the `otherInstalls` field: `[{path, before, after, ok,
-message}]`. `--check` reports the same list read-only against that same
-target (`before` equals `after`; `ok` says whether that install already
-matches it), without touching anything. See `akm health`'s `akm-installs`
-advisory for the same enumeration surfaced as an ongoing health check, whose
-remedy command is built the same way.
+hand. An npm global package the enumeration found only by scanning
+`akm-cli/dist` directly, with nothing linking it onto any bin dir, is also
+never touched — no package manager command can update a copy nothing links
+to — and is reported as an orphan to remove or reinstall by hand instead of
+"will update it via npm". Results land in the `otherInstalls` field:
+`[{path, before, after, ok, message}]`. `--check` reports the same list
+read-only against that same target (`before` equals `after`; `ok` says
+whether that install already matches it), without touching anything. See
+`akm health`'s `akm-installs` advisory for the same enumeration surfaced as
+an ongoing health check, whose remedy command is built the same way.
 
 ### clone
 
