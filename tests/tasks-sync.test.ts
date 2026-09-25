@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDisable, akmTasksSync } from "../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache } from "../src/core/config/config";
@@ -453,6 +454,54 @@ describe("akmTasksSync — website/npm bundles cannot carry scheduler state", ()
 
     await expect(akmTasksSync({ backend }, "docs")).rejects.toThrow(
       /Bundle "docs" has kind "website"; task scheduling is only supported for filesystem and git bundles\./,
+    );
+  });
+});
+
+// C3: an unscoped (multi-bundle) sync must isolate one bundle's own
+// anomaly — before this fix, one bundle's `tasks/` root being a symlink
+// (or any other whole-bundle source-collection failure) threw out of
+// `buildSchedulerSyncPlan`'s per-bundle loop and aborted every OTHER
+// selected bundle's sync too.
+describe("akmTasksSync — one bundle's poisoned source set does not cost every OTHER bundle its sync", () => {
+  const backendFor = (exec: CronExec) => {
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    return CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath: false,
+    });
+  };
+
+  test("the healthy bundle still installs its task; the poisoned bundle is reported, not thrown", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+
+    const poisonedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-sync-poisoned-"));
+    const poisonedTasksTarget = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-sync-poisoned-target-"));
+    // A `tasks/` root that is itself a symlink: SchedulerSourceCollector's
+    // constructor throws for this bundle (guarded reads require a
+    // no-follow owner) — a whole-bundle source-collection failure, not a
+    // single source's.
+    fs.symlinkSync(poisonedTasksTarget, path.join(poisonedDir, "tasks"));
+
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: stashDir, writable: true },
+        poisoned: { path: poisonedDir, writable: true },
+      },
+      defaultBundle: "stash",
+    });
+    writeTask("alpha", "*/15 * * * *");
+
+    const result = await akmTasksSync({ backend });
+
+    expect(result.installed).toEqual(["alpha"]);
+    expect(exec.current()).toContain("task run alpha --bundle stash --scheduled");
+    expect(result.failures.some((failure) => failure.path === "poisoned" && /symbolic/i.test(failure.reason))).toBe(
+      true,
     );
   });
 });
