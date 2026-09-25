@@ -75,6 +75,13 @@ function renameDeps(backend: SchedulerBackend): {
   return { backend, syncTasks: (newId, sched) => akmTasksSync({ backend: sched }, newId) };
 }
 
+/** `deps` for a call expected to throw during validation, before `syncTasks` would ever run. */
+const unreachableSyncTasks: { syncTasks: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult> } = {
+  syncTasks: () => {
+    throw new Error("syncTasks should not run: validation should have thrown first");
+  },
+};
+
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
@@ -120,20 +127,22 @@ function makeProposal(id: string, ref: string, targetSource: string): Proposal {
 describe("akm bundle rename — validation", () => {
   test("rejects an unconfigured bundle", async () => {
     saveConfig({ semanticSearchMode: "off" });
-    await expect(renameBundle("nope", "also-nope")).rejects.toThrow(NotFoundError);
+    await expect(renameBundle("nope", "also-nope", {}, unreachableSyncTasks)).rejects.toThrow(NotFoundError);
   });
 
   test("rejects an illegal new name", async () => {
     await seedBundleWithOneEntry();
-    await expect(renameBundle("original", "bad.name")).rejects.toThrow(UsageError);
-    await expect(renameBundle("original", "bad.name")).rejects.toThrow(/not a legal bundle name/);
+    await expect(renameBundle("original", "bad.name", {}, unreachableSyncTasks)).rejects.toThrow(UsageError);
+    await expect(renameBundle("original", "bad.name", {}, unreachableSyncTasks)).rejects.toThrow(
+      /not a legal bundle name/,
+    );
   });
 
   test("rejects a new name already taken by a different bundle", async () => {
     await seedBundleWithOneEntry();
     const config = loadConfig();
     saveConfig({ ...config, bundles: { ...config.bundles, taken: { path: "/tmp/other" } } });
-    await expect(renameBundle("original", "taken")).rejects.toThrow(/already exists/);
+    await expect(renameBundle("original", "taken", {}, unreachableSyncTasks)).rejects.toThrow(/already exists/);
   });
 });
 
@@ -143,7 +152,7 @@ describe("akm bundle rename — dry-run", () => {
     const configBefore = fs.readFileSync(path.join(storage.configDir, "akm", "config.json"), "utf8");
     const backend = fakeCronBackend(memoryExec());
 
-    const plan = await renameBundle("original", "renamed", { dryRun: true }, { backend });
+    const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
 
     expect(plan.applied).toBe(false);
     expect(plan.index.entries).toBe(1);
@@ -288,7 +297,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     expect(exec.current()).toContain("task run foo --bundle original --scheduled");
 
     // --dry-run reports the stale row and leaves the crontab untouched.
-    const plan = await renameBundle("original", "renamed", { dryRun: true }, { backend });
+    const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
     expect(plan.nativeSchedulerRows.some((row) => row.includes("--bundle original"))).toBe(true);
     expect(exec.current()).toContain("--bundle original");
 

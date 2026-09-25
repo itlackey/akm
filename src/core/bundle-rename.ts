@@ -84,14 +84,13 @@ export interface BundleRenameResult extends BundleRenamePlan {
   /**
    * Outcome of re-syncing native scheduler rows under the new bundle id,
    * run immediately after the state rewrite below. Absent on `--dry-run`
-   * (nothing was renamed yet to sync against) or when `deps.syncTasks` was
-   * not supplied. `ok` is `false` both when the sync call itself threw
-   * (`error` carries the message, no `result`) and when it returned with
-   * one or more `result.failures` — a binding that failed to prepare has
-   * already lost its old native row (see `removeStaleNativeSchedulerRows`)
-   * and is not scheduled until `akm task sync` is re-run. Reported here,
-   * never thrown either way — config, index, and state are already renamed
-   * by the time this runs.
+   * (nothing was renamed yet to sync against). `ok` is `false` both when
+   * the sync call itself threw (`error` carries the message, no `result`)
+   * and when it returned with one or more `result.failures` — a binding
+   * that failed to prepare has already lost its old native row (see
+   * `removeStaleNativeSchedulerRows`) and is not scheduled until
+   * `akm task sync` is re-run. Reported here, never thrown either way —
+   * config, index, and state are already renamed by the time this runs.
    */
   taskSync?: { ok: boolean; result: TasksSyncResult } | { ok: false; error: string };
 }
@@ -291,7 +290,8 @@ async function removeStaleNativeSchedulerRows(sched: SchedulerBackend, oldId: st
  * caller runs the post-rename `akmTasksSync` — `src/core` sits below
  * `src/commands` (see `src/core/improve-types.ts`'s note on the same
  * direction), so this module never imports `akmTasksSync` itself; the real
- * caller (`akm bundle rename`'s command handler) always supplies it.
+ * caller (`akm bundle rename`'s command handler) always supplies it, and is
+ * required so a missing wire-up is a type error, not a silently skipped sync.
  */
 export async function renameBundle(
   oldId: string,
@@ -299,8 +299,8 @@ export async function renameBundle(
   options: { dryRun?: boolean } = {},
   deps: {
     backend?: SchedulerBackend;
-    syncTasks?: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult>;
-  } = {},
+    syncTasks: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult>;
+  },
 ): Promise<BundleRenameResult> {
   const config = loadConfig();
   validateRename(config, oldId, newId);
@@ -355,14 +355,12 @@ export async function renameBundle(
   // `result.failures` — a binding that failed to prepare has already lost
   // its old native row above and is not scheduled until a retry.
   let taskSync: BundleRenameResult["taskSync"];
-  if (deps.syncTasks) {
-    try {
-      await removeStaleNativeSchedulerRows(sched, oldId);
-      const result = await deps.syncTasks(newId, sched);
-      taskSync = { ok: result.failures.length === 0, result };
-    } catch (cause) {
-      taskSync = { ok: false, error: taskSyncErrorMessage(cause) };
-    }
+  try {
+    await removeStaleNativeSchedulerRows(sched, oldId);
+    const result = await deps.syncTasks(newId, sched);
+    taskSync = { ok: result.failures.length === 0, result };
+  } catch (cause) {
+    taskSync = { ok: false, error: taskSyncErrorMessage(cause) };
   }
 
   return { ...plan, applied: true, taskSync };
