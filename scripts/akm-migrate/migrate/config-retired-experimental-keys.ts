@@ -5,11 +5,11 @@
 /**
  * Retired `experimental.*` key removal, as an `akm migrate` concern.
  *
- * `stripRetiredExperimentalKeys`
- * (`src/core/config/retired-experimental-keys-shim.ts`) tolerates a retired
- * key like `experimental.workflowEngine` in memory on every load, so a
- * config a 0.9.15 install wrote keeps working on 0.9.16+. This is the
- * on-disk counterpart, in the same one-time-migration shape as
+ * `stripRetiredConfigKeys` (`src/core/config/retired-config-keys-shim.ts`,
+ * driven by `RETIRED_CONFIG_KEYS` in `src/core/config/retired-keys.ts`)
+ * tolerates a retired key like `experimental.workflowEngine` in memory on
+ * every load, so a config a 0.9.15 install wrote keeps working on 0.9.16+.
+ * This is the on-disk counterpart, in the same one-time-migration shape as
  * `./config-extra-params.ts`: `akm migrate apply` removes the key from
  * `config.json` once, with the usual backup, so the in-memory warning goes
  * away for good.
@@ -22,7 +22,22 @@ import {
   readConfigText,
   writeConfigAtomic,
 } from "../../../src/core/config/config-io";
-import { retiredExperimentalKeysIn } from "../../../src/core/config/retired-experimental-keys-shim";
+import { isRecord } from "../../../src/core/common";
+import { RETIRED_CONFIG_KEYS } from "../../../src/core/config/retired-keys";
+
+const EXPERIMENTAL_PREFIX = "experimental.";
+
+/** Registered `experimental.*` retired key names (bare, e.g. `"workflowEngine"`), from RETIRED_CONFIG_KEYS. */
+const RETIRED_EXPERIMENTAL_KEY_NAMES = RETIRED_CONFIG_KEYS.filter(
+  (entry) => entry.disposition === "ignored" && entry.path.startsWith(EXPERIMENTAL_PREFIX),
+).map((entry) => entry.path.slice(EXPERIMENTAL_PREFIX.length));
+
+/** Which registered `experimental.*` keys are present in a raw config's `experimental` section. */
+function retiredExperimentalKeysIn(raw: Record<string, unknown>): string[] {
+  const experimental = raw.experimental;
+  if (!isRecord(experimental)) return [];
+  return RETIRED_EXPERIMENTAL_KEY_NAMES.filter((key) => key in experimental);
+}
 
 export interface ConfigRetiredExperimentalKeysPlan {
   /** One `experimental.<key>` entry per retired key that would be removed. */

@@ -5,9 +5,10 @@
 /**
  * `experimental.workflowEngine` (retired in `e0655d13c`, before
  * `ExperimentalConfigSchema` went `.strict()` in `cc6152e02`) is tolerated
- * in memory by `stripRetiredExperimentalKeys`
- * (`src/core/config/retired-experimental-keys-shim.ts`) on every load.
- * `findConfigRetiredExperimentalKeys` (status, read-only) and
+ * in memory by `stripRetiredConfigKeys`
+ * (`src/core/config/retired-config-keys-shim.ts`, driven by the
+ * `RETIRED_CONFIG_KEYS` registry in `src/core/config/retired-keys.ts`) on
+ * every load. `findConfigRetiredExperimentalKeys` (status, read-only) and
  * `applyConfigRetiredExperimentalKeys` (apply, persists once) are the
  * on-disk counterpart, in the same one-time-migration shape as
  * `./config-extra-params.ts`.
