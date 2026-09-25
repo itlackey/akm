@@ -1295,7 +1295,14 @@ describe("getPackageManagerUpgradeCommand", () => {
 // ── Other akm installs on the host (upgrade-D D3) ────────────────────────────
 
 function fakeInstall(overrides: Partial<AkmInstall>): AkmInstall {
-  return { path: "/opt/other/akm", manager: "npm", version: "0.0.13", isRunning: false, ...overrides };
+  return {
+    path: "/opt/other/akm",
+    binDir: "/opt/other",
+    manager: "npm",
+    version: "0.0.13",
+    isRunning: false,
+    ...overrides,
+  };
 }
 
 describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
