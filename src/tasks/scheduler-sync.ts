@@ -217,20 +217,20 @@ export function finalizeSchedulerSyncPlan(
     installed: inspection.installed,
     nativeArtifacts: inspection.artifacts,
   };
-  // Whole-operation preconditions (C3 (ii)): a duplicate id WITHIN the
-  // authored desired set, or an incoherent/ambiguous backend read, can't be
-  // safely attributed to one binding — which of two colliding sources is
-  // "the anomaly" is exactly what's unproven, so reconciling everything
-  // else around a guess would risk silently overwriting or orphaning a
-  // native scheduler entry. These still hard-fail the whole sync.
+  // Whole-operation preconditions: a duplicate id WITHIN the authored
+  // desired set, or an incoherent/ambiguous backend read, can't be safely
+  // attributed to one binding — which of two colliding sources is "the
+  // anomaly" is exactly what's unproven, so reconciling everything else
+  // around a guess would risk silently overwriting or orphaning a native
+  // scheduler entry. These still hard-fail the whole sync.
   assertUniqueDesiredIds(prepared.desired);
   assertSchedulerBackendInspection(inspection, prepared.desired, input.inspection !== undefined);
 
-  // C3 (i): a desired binding whose id collides with a DIFFERENT bundle's
-  // real installed entry is a per-item anomaly — unlike the assertions
-  // above, exactly one side of the collision is ours, so that one binding
-  // is excluded (never installed/updated) and reported in `failures`
-  // instead of aborting every other binding in this same bundle's sync.
+  // A desired binding whose id collides with a DIFFERENT bundle's real
+  // installed entry is a per-item anomaly — unlike the assertions above,
+  // exactly one side of the collision is ours, so that one binding is
+  // excluded (never installed/updated) and reported in `failures` instead
+  // of aborting every other binding in this same bundle's sync.
   const reconcileFailures: SchedulerSourceFailure[] = [];
   const foreignCollisions = foreignIdCollisions(prepared.desired, coherentInput);
   const desired =
@@ -273,9 +273,9 @@ export function finalizeSchedulerSyncPlan(
     const artifact = exactInstalledArtifact(binding.id, current, inspection.artifacts);
     const priorFingerprint = artifact?.fingerprint ?? current.signature;
     if (artifact === undefined || priorFingerprint === undefined) {
-      // C3 (i): can't prove what's currently installed, so this ONE
-      // binding is left exactly as installed (no update applied) and
-      // reported — every other binding still reconciles normally.
+      // Can't prove what's currently installed, so this ONE binding is
+      // left exactly as installed (no update applied) and reported — every
+      // other binding still reconciles normally.
       reconcileFailures.push(
         Object.freeze({
           path: binding.source,
@@ -305,7 +305,7 @@ export function finalizeSchedulerSyncPlan(
   const removed: string[] = [];
   for (const id of removalCandidates) {
     const current = present.get(id);
-    // C3 (i): `buildSchedulerRemoveOperation` keeps throwing on its own
+    // `buildSchedulerRemoveOperation` keeps throwing on its own
     // — `akm task prune` (#851) still depends on that contract for entries
     // it has independently confirmed are safe to remove — but sync's own
     // removal loop is per-item here: one installed row this process can't
@@ -485,7 +485,8 @@ function assertCoherentInspection(inspection: SchedulerBackendInspection, requir
     const key = schedulerNativeArtifactKey(artifact.nativeId);
     if (seenNativeKeys.has(key)) {
       throw new UsageError(
-        `Scheduler inspection has duplicate normalized native artifact ${JSON.stringify(artifact.nativeId)}; expected cardinality one.`,
+        `Scheduler inspection has duplicate normalized native artifact ${JSON.stringify(artifact.nativeId)}; expected cardinality one. ` +
+          "Remove the duplicate native entry by hand, or run `akm task prune` to reconcile orphaned entries, then retry.",
         "RESOURCE_ALREADY_EXISTS",
       );
     }
@@ -503,7 +504,8 @@ function assertCoherentInspection(inspection: SchedulerBackendInspection, requir
       (artifact.bindingId !== undefined && artifact.bindingId !== installed.id)
     ) {
       throw new UsageError(
-        `Scheduler inspection is not coherent for ${JSON.stringify(nativeId)}: installed and native fingerprints differ.`,
+        `Scheduler inspection is not coherent for ${JSON.stringify(nativeId)}: installed and native fingerprints differ. ` +
+          "Re-run `akm task sync` (the native scheduler changed mid-read), or inspect the entry by hand if it recurs.",
         "RESOURCE_ALREADY_EXISTS",
       );
     }
@@ -512,7 +514,8 @@ function assertCoherentInspection(inspection: SchedulerBackendInspection, requir
       (artifact.invocation === undefined || !sameInvocation(installed.invocation, artifact.invocation))
     ) {
       throw new UsageError(
-        `Scheduler inspection is not coherent for ${JSON.stringify(nativeId)}: installed and native owners differ.`,
+        `Scheduler inspection is not coherent for ${JSON.stringify(nativeId)}: installed and native owners differ. ` +
+          "Re-run `akm task sync` (the native scheduler changed mid-read), or inspect the entry by hand if it recurs.",
         "RESOURCE_ALREADY_EXISTS",
       );
     }
@@ -528,7 +531,8 @@ function nativeArtifactCollision(
       ? `${JSON.stringify(value.nativeId)} (unproven owner)`
       : `binding ${JSON.stringify(value.bindingId)} invoking ${JSON.stringify(value.invocation)}`;
   return new UsageError(
-    `Native scheduler artifact collision between ${owner(left)} and ${owner(right)}; refusing to overwrite an existing or ambiguous native owner.`,
+    `Native scheduler artifact collision between ${owner(left)} and ${owner(right)}; refusing to overwrite an existing or ambiguous native owner. ` +
+      "Rename one of the colliding tasks or workflows, or run `akm task prune` to remove the stale native entry first.",
     "RESOURCE_ALREADY_EXISTS",
   );
 }
@@ -933,7 +937,7 @@ function belongsToBundle(entry: InstalledSchedulerBinding, input: SchedulerSyncP
 
 /**
  * Every desired binding whose id collides with a DIFFERENT bundle's real
- * installed entry (C3 (i)): a map from that binding's id to the foreign
+ * installed entry: a map from that binding's id to the foreign
  * installed row it collides with, one entry per colliding id. Replaces the
  * single-collision `assertNoForeignIds` throw — `finalizeSchedulerSyncPlan`
  * excludes each colliding binding and reports it instead of refusing the
@@ -974,7 +978,8 @@ function assertUniqueDesiredIds(desired: readonly SchedulerBinding[]): void {
   for (const binding of desired) {
     if (seen.has(binding.id)) {
       throw new UsageError(
-        `Desired scheduler id collision for ${JSON.stringify(binding.id)}; no native definitions were changed.`,
+        `Desired scheduler id collision for ${JSON.stringify(binding.id)}; no native definitions were changed. ` +
+          "Rename one of the colliding tasks or workflows so their scheduler ids differ, then retry.",
         "RESOURCE_ALREADY_EXISTS",
       );
     }
@@ -987,7 +992,8 @@ function assertUniqueInstalledIds(installed: readonly InstalledSchedulerBinding[
   for (const binding of installed) {
     if (seen.has(binding.id)) {
       throw new UsageError(
-        `Installed scheduler id collision for ${JSON.stringify(binding.id)}; refusing whole-set reconciliation.`,
+        `Installed scheduler id collision for ${JSON.stringify(binding.id)}; refusing whole-set reconciliation. ` +
+          "Run `akm task prune` or remove the duplicate native entry by hand, then retry.",
         "RESOURCE_ALREADY_EXISTS",
       );
     }
@@ -1018,13 +1024,16 @@ function workflowFailure(file: string, ref: string | undefined, cause: unknown):
 }
 
 /**
- * C3 (i): `buildSchedulerRemoveOperation` threw for one installed row —
- * there is no source file for an installed-only row, so `path` falls back
- * to the scheduler binding id itself; `ref` is filled in only when
+ * `buildSchedulerRemoveOperation` threw for one installed row — there is no
+ * source file for an installed-only row, so `path` falls back to the
+ * scheduler binding id itself; `ref` is filled in only when
  * {@link installedLogicalSource} can still recognize the invocation shape
- * (best-effort — the same throw this wraps often means it can't).
+ * (best-effort — the same throw this wraps often means it can't). Exported
+ * so `buildSchedulerSyncPlan`'s inactive-bundle removal loop
+ * (`src/commands/tasks/tasks.ts`) reports one unattributable installed row
+ * of a disabled bundle without a second builder.
  */
-function installedRowFailure(
+export function installedRowFailure(
   id: string,
   current: InstalledSchedulerBinding | undefined,
   input: Pick<SchedulerSyncPlanInput, "adapterId" | "bundleName">,
@@ -1064,7 +1073,8 @@ export function assertSchedulerSourceSnapshot(snapshot: SchedulerSourceSnapshot)
     }
   } catch (cause) {
     throw new UsageError(
-      `Scheduler desired source read set changed after projection; refusing native mutation: ${errorMessage(cause)}`,
+      `Scheduler desired source read set changed after projection; refusing native mutation: ${errorMessage(cause)}. ` +
+        "Re-run `akm task sync` (the source changed mid-sync).",
       "RESOURCE_ALREADY_EXISTS",
     );
   }
@@ -1108,7 +1118,8 @@ class SchedulerSourceCollector {
         const entry = root.entries.find((candidate) => candidate.name === scheduledName);
         if (entry?.kind === "symlink") {
           throw new UsageError(
-            `${path.join(this.#sourceRoot, scheduledName)} is a symbolic source with a physical source identity collision; guarded reads require one no-follow owner.`,
+            `${path.join(this.#sourceRoot, scheduledName)} is a symbolic source with a physical source identity collision; guarded reads require one no-follow owner. ` +
+              `Replace the symlinked ${JSON.stringify(scheduledName)} with a regular directory, then retry.`,
             "RESOURCE_ALREADY_EXISTS",
           );
         }

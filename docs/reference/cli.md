@@ -2980,14 +2980,20 @@ gate a CI/health check on "sync would change something."
 `sync`'s (and `sync --dry-run`'s) result always carries `failures: [{path,
 ref?, reason}]` — one entry per item sync could not reconcile: a task/workflow
 source that failed to parse or prepare, a desired binding whose id collides
-with a different bundle's real installed entry, an installed row this process
-cannot safely update or remove (no exact native fingerprint, no resolvable
-ordinal), or — for an unscoped, multi-bundle sync — a whole bundle whose
-source set itself could not be read. Every one of these is a per-item
-anomaly: the item is excluded (left exactly as it was) and reported here,
-while every OTHER item and bundle in the same sync still reconciles normally.
-`failures` is empty on a fully clean sync; a non-empty `failures` still exits
-non-zero, same as a pending removal.
+with a different bundle's real installed entry, an installed row (including
+one belonging to a disabled bundle) this process cannot safely update or
+remove (no exact native fingerprint, no resolvable ordinal), or — for an
+unscoped, multi-bundle sync — a whole bundle whose source set itself could
+not be read. Every one of these is a per-item anomaly: the item is excluded
+(left exactly as it was) and reported here, while every OTHER item and
+bundle in the same sync still reconciles normally; with `--bundle`, that one
+bundle IS the whole sync, so its failure raises instead of being reported
+here, and an unscoped sync where every bundle fails resolves with those
+failures here instead of raising. `failures` is empty on a fully clean sync;
+a non-empty `failures` still exits non-zero, same as a pending removal. An
+incoherent or ambiguous backend read (a duplicate installed id or native
+artifact) can't be attributed to one item or bundle and still raises instead
+of appearing in `failures`.
 
 `akm task prune` reclaims installed scheduler entries that `sync` can never
 clean up on its own: entries whose own `--scheduler-context` descriptor no

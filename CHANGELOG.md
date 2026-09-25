@@ -136,16 +136,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `src/tasks/scheduler-sync.ts`, and its per-bundle loop in
   `buildSchedulerSyncPlan`, `src/commands/tasks/tasks.ts`) used to throw and
   abort the entire reconciliation for: an installed binding it could not
-  prove a native fingerprint for (update or removal), a desired task/workflow
-  whose id collided with a different bundle's real installed entry, or — in
-  an unscoped, multi-bundle sync — one bundle's own source set failing to
-  read at all. Each of these is now excluded and reported in the sync
-  result's `failures: [{path, ref?, reason}]` (already returned, now also
-  documented — see `docs/reference/cli.md`), while every other binding and
-  bundle in the same sync still reconciles normally. Genuine whole-operation
-  preconditions — a duplicate id within one bundle's own authored sources, an
-  incoherent backend read, a TOCTOU source-read-set change — still hard-fail,
-  since there both sides of the collision are unprovable. `akm-migrate`'s
+  prove a native fingerprint for (update or removal, including one installed
+  row of a disabled bundle being removed), a desired task/workflow whose id
+  collided with a different bundle's real installed entry, or — in an
+  unscoped, multi-bundle sync — one bundle's own source set failing to read
+  at all. Each of these is now excluded and reported in the sync result's
+  `failures: [{path, ref?, reason}]` (already returned, now also documented
+  — see `docs/reference/cli.md`), while every other binding and bundle in
+  the same sync still reconciles normally; a scoped sync (`--bundle`) has
+  only one bundle to isolate, so its failure rethrows the original error
+  instead of being reported, and an unscoped sync where every bundle fails
+  resolves with those failures on an otherwise-empty plan instead of
+  throwing. The one precondition that genuinely can't be attributed to a
+  single bundle — an incoherent or ambiguous backend read (a duplicate
+  installed id, a duplicate normalized native artifact, or installed/native
+  fingerprints that disagree) — is validated once, backend-wide, before any
+  bundle's own reconciliation begins, and still hard-fails the whole sync.
+  `akm-migrate`'s
   `runMigration` (`scripts/akm-migrate/run-migrate.ts`) now runs every step
   under its own catch too: a step's own throw (or, under `apply`, its
   read-only fallback failing as well) is recorded in the plan's new

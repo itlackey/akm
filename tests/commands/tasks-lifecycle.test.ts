@@ -290,7 +290,7 @@ describe("task lifecycle failure handling", () => {
     // #867: the invalid-id source itself degrades (reported, excluded from
     // `desired`) instead of poisoning the whole sync — which makes its
     // still-installed, malformed (no proven invocation) native entry look
-    // orphaned. C3: removing an entry with no provable owner is itself a
+    // orphaned. Removing an entry with no provable owner is itself a
     // per-item removal anomaly (`finalizeSchedulerSyncPlan`'s removal loop),
     // reported in `failures` rather than thrown — nothing mutates either way.
     const result = await akmTasksSync({ backend });
