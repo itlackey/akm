@@ -224,7 +224,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   warns once, retries no more than once per 10 minutes, and never fails the
   command it ran ahead of. The 10-minute backoff is per running version
   (`lastAttemptVersion` on the stamp), so installing a fix no longer has to
-  wait out a blocked attempt some earlier version made **(upgrade-B3)**, and
+  wait out a blocked attempt some earlier version made, and
   the startup summary now also names any journal `staleTxns` quarantined
   during the reconcile, with its quarantine path, instead of only counting
   the ones it recovered.
