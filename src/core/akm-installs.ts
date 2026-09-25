@@ -109,6 +109,17 @@ export interface AkmInstall {
   version: string | undefined;
   /** True when this install is the one executing right now. */
   isRunning: boolean;
+  /**
+   * False when the ONLY candidate that resolved to this install was the
+   * direct `<npmGlobalRoot>/akm-cli/dist` scan in
+   * {@link addNpmGlobalRootCandidates} — a copy `npm install -g` placed on
+   * disk but never linked onto PATH, a prefix `bin/`, or an nvm `bin/`.
+   * `akm upgrade` cannot manage an unlinked copy through any package manager
+   * command, since there is no link for that manager to update (upgrade-D3
+   * r2-1). True for every other candidate source (PATH, the known roots, a
+   * prefix's `bin/`, an nvm `bin/`).
+   */
+  linked: boolean;
 }
 
 export interface EnumerateAkmInstallsOptions {
@@ -142,12 +153,14 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
 
   const fixedRoots = options.fixedRoots ?? ["/usr/local/bin"];
 
-  // candidate akm path -> the binDir it should be reported with. Normally
-  // that is just the directory the candidate was found in, but a candidate
-  // added directly from an npm global root's `akm-cli/dist` (below) is
-  // reported with that root's `bin/` instead — where its adjacent npm
-  // actually lives, not the `dist/` directory it has no package manager in.
-  const candidates = new Map<string, string>();
+  // candidate akm path -> the binDir it should be reported with, and
+  // whether it was reached only through the direct `akm-cli/dist` scan.
+  // `binDir` is normally just the directory the candidate was found in, but
+  // a candidate added directly from an npm global root's `akm-cli/dist`
+  // (below) is reported with that root's `bin/` instead — where its
+  // adjacent npm actually lives, not the `dist/` directory it has no
+  // package manager in.
+  const candidates = new Map<string, { binDir: string; direct: boolean }>();
   for (const dir of pathDirectories(env)) addCandidate(candidates, dir);
   for (const dir of knownRootDirectories(env, npmGlobalRoot, fixedRoots)) addCandidate(candidates, dir);
   for (const root of discoverAdjacentNpmGlobalRoots(env, home)) addNpmGlobalRootCandidates(candidates, root);
@@ -155,20 +168,28 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
   if (bunPrefixRoot) addNpmGlobalRootCandidates(candidates, bunPrefixRoot);
 
   const byRealpath = new Map<string, AkmInstall>();
-  for (const [candidate, binDir] of candidates) {
+  for (const [candidate, { binDir, direct }] of candidates) {
     let real: string;
     try {
       real = fs.realpathSync(candidate);
     } catch {
       continue; // broken symlink, or it vanished between listing and stat
     }
-    if (byRealpath.has(real)) continue;
+    const existing = byRealpath.get(real);
+    if (existing) {
+      // A later, direct-only candidate never demotes an already-linked
+      // install; a later linked candidate always promotes an install first
+      // seen only through the direct scan (upgrade-D3 r2-1).
+      if (!direct) existing.linked = true;
+      continue;
+    }
     byRealpath.set(real, {
       path: real,
       binDir,
       manager: classifyInstall(real),
       version: probeVersion(run, real),
       isRunning: runningRealpaths.has(real),
+      linked: !direct,
     });
   }
   return [...byRealpath.values()];
@@ -227,11 +248,20 @@ function bunPrefixLibNodeModules(env: NodeJS.ProcessEnv, home: string | undefine
   return bunInstall ? path.join(bunInstall, "lib", "node_modules") : undefined;
 }
 
-/** Adds `<root>/../bin` (that root's own bin dir) and `<root>/akm-cli/dist` as candidates, both reported with that bin dir. */
-function addNpmGlobalRootCandidates(candidates: Map<string, string>, npmGlobalRoot: string): void {
+/**
+ * Adds `<root>/../bin` (that root's own bin dir) and `<root>/akm-cli/dist`
+ * as candidates, both reported with that bin dir. The `akm-cli/dist` scan is
+ * `direct: true` — it is the only way this function reports an install that
+ * was never linked onto any bin dir, so it must never mark `linked: true` on
+ * its own (see the `linked` field on {@link AkmInstall}).
+ */
+function addNpmGlobalRootCandidates(
+  candidates: Map<string, { binDir: string; direct: boolean }>,
+  npmGlobalRoot: string,
+): void {
   const binDir = npmGlobalBinDir(npmGlobalRoot);
   addCandidate(candidates, binDir);
-  addCandidate(candidates, path.join(npmGlobalRoot, "akm-cli", "dist"), binDir);
+  addCandidate(candidates, path.join(npmGlobalRoot, "akm-cli", "dist"), binDir, true);
 }
 
 function pathDirectories(env: NodeJS.ProcessEnv): string[] {
@@ -287,13 +317,23 @@ function resolveNpmGlobalRootSafely(env: NodeJS.ProcessEnv): string | undefined 
   }
 }
 
-/** `binDirOverride` reports the candidate under a different binDir than `dir` — see the call site in `addNpmGlobalRootCandidates`. */
-function addCandidate(paths: Map<string, string>, dir: string | undefined, binDirOverride?: string): void {
+/**
+ * `binDirOverride` reports the candidate under a different binDir than
+ * `dir` — see the call site in `addNpmGlobalRootCandidates`. `direct` marks
+ * a candidate reached only through the direct `akm-cli/dist` scan there;
+ * every other call site leaves it `false` (a real bin-dir candidate).
+ */
+function addCandidate(
+  paths: Map<string, { binDir: string; direct: boolean }>,
+  dir: string | undefined,
+  binDirOverride?: string,
+  direct = false,
+): void {
   if (!dir) return;
   for (const name of ["akm", "akm.exe", "akm.cmd"]) {
     const candidate = path.join(dir, name);
     try {
-      if (fs.statSync(candidate).isFile()) paths.set(candidate, binDirOverride ?? dir);
+      if (fs.statSync(candidate).isFile()) paths.set(candidate, { binDir: binDirOverride ?? dir, direct });
     } catch {
       // Not present at this root — normal; not every root exists on every host.
     }
@@ -317,6 +357,25 @@ function classifyInstall(real: string): AkmInstallManager {
   if (normalized.includes(NODE_MODULES_SEGMENT)) return "npm";
   if (hasGitAncestor(real)) return "checkout";
   return "standalone";
+}
+
+/**
+ * True for an npm-managed install that `akm upgrade` can never move because
+ * nothing links it onto any bin dir (upgrade-D3 r2-1). Shared by the
+ * self-update "left untouched" status and the `akm-installs` health remedy
+ * so the "is this install manageable" decision lives in one place.
+ */
+export function isUnlinkedNpmInstall(install: AkmInstall): boolean {
+  return install.manager === "npm" && !install.linked;
+}
+
+/**
+ * The npm package directory implied by the `<npmGlobalRoot>/akm-cli/dist/<binary>`
+ * layout {@link addNpmGlobalRootCandidates}'s direct scan assumes — this
+ * install's realpath, two directories up from the `akm` binary itself.
+ */
+export function unlinkedNpmPackageRoot(install: AkmInstall): string {
+  return path.dirname(path.dirname(install.path));
 }
 
 function probeVersion(run: typeof spawnSync, real: string): string | undefined {

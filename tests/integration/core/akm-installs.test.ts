@@ -126,6 +126,9 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       expect(installs).toHaveLength(1);
       expect(installs[0]?.path).toBe(fs.realpathSync(real));
       expect(installs[0]?.binDir).toBe(binDir);
+      // An nvm-bin shim is a real bin-dir candidate, not the direct
+      // `akm-cli/dist` scan, so it is linked (upgrade-D3 r2-1).
+      expect(installs[0]?.linked).toBe(true);
     } finally {
       sandbox.cleanup();
     }
@@ -252,7 +255,43 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
         manager: "npm",
         version: "0.9.15-beta.1",
         binDir: path.join(prefixRoot, "bin"),
+        // Nothing links this install onto any bin dir — it was found only
+        // through the direct `akm-cli/dist` scan (upgrade-D3 r2-1).
+        linked: false,
       });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  // upgrade-D3 r2-1: when that same npm global root's `bin/` DOES hold a
+  // link to the install (a real `npm install -g` result, unlike the orphan
+  // case above), the direct `akm-cli/dist` scan finds the same realpath a
+  // second time through a non-direct candidate, and `linked` must reflect
+  // that — not the direct scan alone.
+  test("a prefix bin/ symlink onto the direct akm-cli/dist scan's install gives linked: true", () => {
+    const sandbox = makeSandboxDir("akm-installs-linked-bindir");
+    try {
+      const nodeBinDir = path.join(sandbox.dir, "other-node", "bin");
+      fs.mkdirSync(nodeBinDir, { recursive: true });
+      const prefixRoot = path.join(sandbox.dir, "scratch-prefix");
+      const npmGlobalRoot = path.join(prefixRoot, "lib", "node_modules");
+      fs.writeFileSync(path.join(nodeBinDir, "node"), `#!/bin/sh\necho ${JSON.stringify(npmGlobalRoot)}\n`, {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(nodeBinDir, "npm"), "", { mode: 0o755 });
+
+      const stub = writeStubAkm(path.join(npmGlobalRoot, "akm-cli", "dist"), "0.9.15-beta.1");
+      const prefixBinDir = path.join(prefixRoot, "bin");
+      fs.mkdirSync(prefixBinDir, { recursive: true });
+      fs.symlinkSync(stub, path.join(prefixBinDir, "akm"));
+
+      const installs = enumerateAkmInstalls(
+        { PATH: nodeBinDir, HOME: sandbox.dir },
+        { fixedRoots: [], runningRealpaths: [] },
+      );
+      const found = installs.find((i) => i.path === fs.realpathSync(stub));
+      expect(found).toMatchObject({ manager: "npm", linked: true });
     } finally {
       sandbox.cleanup();
     }
@@ -277,6 +316,9 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
         manager: "npm",
         version: "0.9.15-beta.1",
         binDir: path.join(sandbox.dir, ".bun", "bin"),
+        // Nothing links this install onto any bin dir — it was found only
+        // through the direct `akm-cli/dist` scan (upgrade-D3 r2-1).
+        linked: false,
       });
     } finally {
       sandbox.cleanup();
