@@ -91,7 +91,7 @@ import {
   JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS,
   validateJsonSchemaSubset,
 } from "../../src/core/json-schema";
-import { _setWarnSinkForTests } from "../../src/core/warn";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../src/execution/limits";
 import { TASK_V3_MAX_REDACT_NAMES } from "../../src/tasks/source/bounded-document";
 import * as ParseTaskSourceModule from "../../src/tasks/source/parse-task-source";
@@ -561,40 +561,117 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
     expect(result.v4.manualOnly).toBe(true);
   });
 
-  test("version: 3 is rejected at runtime and points to the explicit migrator", () => {
-    const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n";
-    const filePath = "/bundle/tasks/x.yml";
-    let error: unknown;
-    try {
-      parseTaskSource({ yaml, filePath });
-    } catch (cause) {
-      error = cause;
-    }
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as UsageError).code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
-    expect((error as UsageError).hint()).toContain("akm migrate apply");
-  });
+  // Upgrade-smoothness shim (reinstated by A3 after e413af024 deleted it):
+  // `version: 3` and `version: 2` no longer fail closed by themselves —
+  // `parseTaskSource` first runs the SAME pure planners `akm migrate apply`
+  // uses on the bytes already in hand, entirely in memory, and only falls
+  // back to `TASK_SCHEMA_VERSION_UNSUPPORTED` when that deterministic
+  // conversion itself cannot proceed. A migratable v3 document reads
+  // straight through.
+  describe("v2/v3 in-memory read shim (A3)", () => {
+    let warnCalls: string[] = [];
 
-  // When the deterministic conversion itself cannot proceed (an unknown v3
-  // field, here), the shim yields no bytes and the gate falls back to a hard
-  // failure — the shim removes friction for the deterministic case, it never
-  // launders a genuinely invalid document. The message now names the
-  // migrator's own blocked reason (issue #869) rather than a generic
-  // "not accepted", since re-running the migrator would report the same
-  // block: a person has to resolve it, not the tool.
-  test("version: 3 that the migration planner cannot convert still raises TASK_SCHEMA_VERSION_UNSUPPORTED", () => {
-    const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\nbogus: true\n";
-    const filePath = "/bundle/tasks/x.yml";
-    let error: unknown;
-    try {
+    beforeEach(() => {
+      warnCalls = [];
+      _resetWarnOnceForTests();
+      overrideSeam(_setWarnSinkForTests, (level, args) => {
+        if (level !== "warn") return;
+        warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
+      });
+    });
+
+    test("version: 3 is auto-read as v4 through the in-memory migration shim (row B-14) and warns once", () => {
+      const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n";
+      const filePath = "/bundle/tasks/x.yml";
+      const result = parseTaskSource({ yaml, filePath });
+      expect(result.version).toBe(4);
+      if (result.version !== 4) throw new Error("unreachable: asserted above");
+      expect(result.v4.target).toEqual({ kind: "uses", uses: { kind: "command", ref: "commands/review" } });
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]).toContain(filePath);
+      expect(warnCalls[0]).toContain("akm migrate apply");
+    });
+
+    test("version: 2 is auto-read as v4 through the chained v2->v3->v4 migration shim", () => {
+      const yaml = "version: 2\nschedule: '0 2 * * *'\nenabled: true\ncommand: /usr/local/bin/backup.sh\n";
+      const filePath = "/bundle/tasks/y.yml";
+      const result = parseTaskSource({ yaml, filePath });
+      expect(result.version).toBe(4);
+      if (result.version !== 4) throw new Error("unreachable: asserted above");
+      expect(result.v4.target.kind).toBe("run");
+    });
+
+    // Activation moved to host-local scheduler config (e413af024); the shim
+    // must never resurrect a source-owned activation signal. `akm.enabled`
+    // is not in the v3->v4 planner's AKM_HOIST_KEYS and a schedule[] cron
+    // entry the planner emits never carries `enabled`, so the parsed
+    // document must carry no enablement anywhere.
+    test("a v3 document with akm.enabled: true parses through the shim with no enablement anywhere", () => {
+      const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n  enabled: true\n";
+      const filePath = "/bundle/tasks/z.yml";
+      const result = parseTaskSource({ yaml, filePath });
+      expect(result.version).toBe(4);
+      if (result.version !== 4) throw new Error("unreachable: asserted above");
+      expect(Object.hasOwn(result.v4, "enabled")).toBe(false);
+      for (const entry of result.v4.schedule) {
+        expect(Object.hasOwn(entry, "enabled")).toBe(false);
+      }
+    });
+
+    test("re-parsing the same file only warns once per process", () => {
+      const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n";
+      const filePath = "/bundle/tasks/repeat.yml";
       parseTaskSource({ yaml, filePath });
-    } catch (cause) {
-      error = cause;
-    }
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as UsageError).code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
-    expect((error as UsageError).message).toContain(`Task at ${filePath} uses task schema version 3`);
-    expect((error as UsageError).hint()).toContain("akm migrate apply");
+      parseTaskSource({ yaml, filePath });
+      expect(warnCalls).toHaveLength(1);
+    });
+
+    // When the deterministic conversion itself cannot proceed (an unknown
+    // v3 field, here), the shim yields no bytes and the gate falls back to
+    // a hard failure — the shim removes friction for the deterministic
+    // case, it never launders a genuinely invalid document. The message
+    // names the migrator's own blocked reason (issue #869) rather than a
+    // generic "not accepted", since re-running the migrator would report
+    // the same block: a person has to resolve it, not the tool.
+    test("version: 3 that the migration planner cannot convert still raises TASK_SCHEMA_VERSION_UNSUPPORTED", () => {
+      const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\nbogus: true\n";
+      const filePath = "/bundle/tasks/x.yml";
+      let error: unknown;
+      try {
+        parseTaskSource({ yaml, filePath });
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(UsageError);
+      expect((error as UsageError).code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
+      expect((error as UsageError).message).toBe(
+        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version 3 and needs a human decision before it can run — the deterministic migrator cannot convert it automatically (invalid-v3-task: unknown v3 field(s): bogus).`,
+      );
+      expect((error as UsageError).hint()).toBe(
+        "Review the file and resolve the ambiguity by hand, then it will convert normally; `akm migrate status` reports the same reason.",
+      );
+    });
+
+    // Same shape, one hop earlier: an unconvertible v2 document (an array
+    // command:, which has no safe v3 run: string) still fails closed with
+    // the specific blocked reason rather than being laundered through.
+    test("version: 2 that the migration planner cannot convert still raises TASK_SCHEMA_VERSION_UNSUPPORTED", () => {
+      const yaml = "version: 2\nschedule: '0 2 * * *'\ncommand:\n  - /usr/local/bin/backup.sh\n  - --force\n";
+      const filePath = "/bundle/tasks/w.yml";
+      let error: unknown;
+      try {
+        parseTaskSource({ yaml, filePath });
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(UsageError);
+      expect((error as UsageError).code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
+      expect((error as UsageError).message).toContain(`Task at ${filePath} uses task schema version 2`);
+      expect((error as UsageError).message).toContain("argv-array-has-no-portable-shell-string");
+      expect((error as UsageError).hint()).toBe(
+        "Review the file and resolve the ambiguity by hand, then it will convert normally; `akm migrate status` reports the same reason.",
+      );
+    });
   });
 
   // Row B-16: a document with no version: key, or a version: that is NOT A

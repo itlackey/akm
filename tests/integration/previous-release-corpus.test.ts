@@ -228,21 +228,43 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     }
   });
 
-  describe("task source v2/v3 (explicitly migrated to v4)", () => {
-    test("a real-shaped task v2 file is rejected by runtime and converted by akm-migrate", () => {
+  describe("task source v2/v3 (read via the in-memory shim, and explicitly migrated to v4)", () => {
+    beforeEach(() => {
+      _resetWarnOnceForTests();
+      setQuiet(false);
+    });
+    afterEach(() => resetQuiet());
+
+    test("a real-shaped task v2 file reads via the shim (parses to v4, one warning) and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2.yml");
       const yaml = readFixture("task-v2.yml");
-      expect(() => parseTaskSource({ yaml, filePath })).toThrow(/TASK_SCHEMA_VERSION_UNSUPPORTED/);
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const parsed = parseTaskSource({ yaml, filePath });
+      expect(parsed.version).toBe(4);
+      expect(parsed.v4.schedule.length).toBeGreaterThan(0);
+      expect(parsed.v4.target.kind).toBe("run");
+      expect(Object.hasOwn(parsed.v4, "enabled")).toBe(false);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
+
       const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("run");
     });
 
-    test("a real-shaped task v3 file is rejected by runtime and converted by akm-migrate", () => {
+    test("a real-shaped task v3 file reads via the shim (parses to v4, one warning) and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v3.yml");
       const yaml = readFixture("task-v3.yml");
-      expect(() => parseTaskSource({ yaml, filePath })).toThrow(/TASK_SCHEMA_VERSION_UNSUPPORTED/);
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const parsed = parseTaskSource({ yaml, filePath });
+      expect(parsed.version).toBe(4);
+      expect(parsed.v4.schedule.length).toBeGreaterThan(0);
+      expect(parsed.v4.target.kind).toBe("uses");
+      expect(Object.hasOwn(parsed.v4, "enabled")).toBe(false);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
+
       const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
@@ -464,13 +486,27 @@ describe("previous-release corpus — upgrade must not break reads", () => {
   // v2 task whose `command:` started with `env NAME=value... cmd args...`
   // (a common, ordinary way to write a cron command) hit
   // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable — this is
-  // exactly the gap that shipped in 0.9.4. Runtime rejection is now intended,
-  // while the explicit migrator must continue to convert this real shape.
+  // exactly the gap that shipped in 0.9.4. A3 reinstated the in-memory read
+  // shim, so this shape is readable again (not just migratable) — updated
+  // alongside the "task source v2/v3" describe above since it exercises the
+  // same router path.
   describe("task source v2 — env-prefixed command (#867)", () => {
-    test("a real-shaped env-prefixed task is rejected by runtime and converted by akm-migrate", () => {
+    beforeEach(() => {
+      _resetWarnOnceForTests();
+      setQuiet(false);
+    });
+    afterEach(() => resetQuiet());
+
+    test("a real-shaped env-prefixed task reads via the shim and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2-env-prefixed.yml");
       const yaml = readFixture("task-v2-env-prefixed.yml");
-      expect(() => parseTaskSource({ yaml, filePath })).toThrow(/TASK_SCHEMA_VERSION_UNSUPPORTED/);
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const parsed = parseTaskSource({ yaml, filePath });
+      expect(parsed.version).toBe(4);
+      expect(parsed.v4.schedule.length).toBeGreaterThan(0);
+      expect(parsed.v4.target.kind).toBe("run");
+      warnSpy.mockRestore();
+
       const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
