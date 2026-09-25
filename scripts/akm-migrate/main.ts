@@ -28,14 +28,16 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     case "help":
       console.log(helpText.trimEnd());
       return;
-    case "status":
-      if (rest.length > 0) throw new UsageError("`status` accepts no options.", "INVALID_FLAG_VALUE");
-      printPlan(await runMigration({ apply: false }));
+    case "status": {
+      const unknown = rest.find((arg) => arg !== "--host-local");
+      if (unknown !== undefined) throw new UsageError(`\`status\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
+      printPlan(await runMigration({ apply: false, hostLocal: rest.includes("--host-local") }));
       return;
+    }
     case "apply": {
-      const unknown = rest.find((arg) => arg !== "--dry-run");
+      const unknown = rest.find((arg) => arg !== "--dry-run" && arg !== "--host-local");
       if (unknown !== undefined) throw new UsageError(`\`apply\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
-      printPlan(await runMigration({ apply: !rest.includes("--dry-run") }));
+      printPlan(await runMigration({ apply: !rest.includes("--dry-run"), hostLocal: rest.includes("--host-local") }));
       return;
     }
     default:

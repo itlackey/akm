@@ -15,8 +15,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmTasksSync } from "../src/commands/tasks/tasks";
-import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { akmTasksDisable, akmTasksSync } from "../src/commands/tasks/tasks";
+import { loadConfig, resetConfigCache } from "../src/core/config/config";
+import { schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import {
   resolveScheduledTaskContext,
@@ -175,10 +176,54 @@ describe("akmTasksSync — schedule drift", () => {
     await akmTasksSync({ backend });
     expect(exec.current()).not.toContain("# akm:disabled");
 
-    writeTask("alpha", "*/15 * * * *", false);
-    const result = await akmTasksSync({ backend });
-    expect(result.removed).toEqual(["alpha"]);
+    // `akm task disable` — not a raw config edit — is the supported way to
+    // drop a granted, installed binding (upgrade-B): the installed native
+    // row is otherwise an installed-and-backed binding that a plain sync's
+    // own carry-forward would rescue rather than remove, so `disable`'s own
+    // reconciling sync skips carry-forward for exactly this call.
+    const disabled = await akmTasksDisable("alpha", {}, { backend });
+    expect(disabled.sync.removed).toEqual(["alpha"]);
     expect(exec.current()).not.toContain("task run alpha --bundle");
+  });
+
+  test("carries forward a grant lost outside `disable` for an installed row with a backing file (upgrade-B)", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("orphan", "*/5 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run orphan");
+
+    // Simulate the grant record itself vanishing (e.g. an upgrade that
+    // reset host-local config) while the installed crontab row and the
+    // task file it backs both survive untouched — the exact 2026-09-24
+    // scenario. This is NOT `akm task disable`.
+    writeSandboxConfig({ scheduler: { enabled: [] } });
+    resetConfigCache();
+    expect(schedulerActivations(loadConfig())).toEqual([]);
+
+    const result = await akmTasksSync({ backend });
+    expect(result.removed).not.toContain("orphan");
+    expect(exec.current()).toContain("task run orphan");
+    expect(schedulerActivations(loadConfig())).toContainEqual(
+      expect.objectContaining({ kind: "task", ref: "stash//tasks/orphan" }),
+    );
+  });
+
+  test("an installed row with no backing file is still removed, not carried forward", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("ghost", "*/5 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run ghost");
+
+    writeSandboxConfig({ scheduler: { enabled: [] } });
+    resetConfigCache();
+    fs.rmSync(path.join(tasksDir, "ghost.yml"));
+
+    const result = await akmTasksSync({ backend });
+    expect(result.removed).toEqual(["ghost"]);
+    expect(exec.current()).not.toContain("task run ghost");
+    expect(schedulerActivations(loadConfig())).toEqual([]);
   });
 
   test("removes orphaned scheduler entries with no backing file", async () => {

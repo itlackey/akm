@@ -156,9 +156,12 @@ describe("bundle-targeted tasks via --bundle", () => {
     // The file must NOT have been written to the primary stash.
     expect(fs.existsSync(path.join(iso.stashDir, "tasks", "foo.yml"))).toBe(false);
 
-    setSchedulerRefEnabled("task", "work//tasks/foo", false);
-    const resynced = await akmTasksSync({ backend: cron() }, "work");
-    expect(resynced.removed).toEqual(["foo"]);
+    // `akm task disable` (not a raw config edit) is the supported way to
+    // drop a granted, installed binding (upgrade-B carry-forward): its own
+    // reconciling sync skips carry-forward for exactly this call, so the
+    // binding it just revoked isn't immediately rescued back.
+    const disabled = await akmTasksDisable("work//tasks/foo", {}, { backend: cron() });
+    expect(disabled.sync.removed).toEqual(["foo"]);
     expect(cronBody(exec.current(), "foo")).toBeUndefined();
   });
 

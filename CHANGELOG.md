@@ -24,6 +24,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   job) and `tests/release-check.sh` (right after packing the release
   candidate). `.github/workflows/ci.yml` also now runs on pushes to
   `release/*` branches, which previously had no CI coverage at all.
+  **(upgrade-B)** Proves the fix for the defect above (Fixed, below) two
+  ways: a new first assertion in the "previous"-origin suite runs
+  scheduled-a's generated cron command BEFORE any `migrate` call and
+  confirms `akm-migrate status --host-local` then reports `current` with no
+  manual step in between; and a second, dedicated origin,
+  `KNOWN_UPGRADE_ORIGINS`' fixed `"0.9.15"` (the last release before
+  source-bound scheduler grants), builds a minimal home whose crontab row
+  carries no host-local grant at all — the exact 2026-09-24 shape — and
+  confirms the candidate carries the grant forward and a plain `task sync`
+  afterward does not remove it.
 - **A single retired-config-keys registry (`src/core/config/retired-keys.ts`)
   and a schema-compat lint (`bun scripts/lint-config-schema-compat.ts`, wired
   into `bun run lint`) that fails the build when a config key disappears from
@@ -110,9 +120,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validate` reports such a file `converts` (`sourceVersion` still `4`)
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
+- **`akm task sync` could remove a scheduled task's evidence before a
+  post-upgrade `akm migrate apply` ever ran.** Only `akm upgrade` triggered
+  the migrator, and it cannot install a prerelease — every prerelease
+  install, plain `npm i -g`/`bun add -g`, and image rebuild bypassed it
+  entirely, with nothing detecting that the host was last written by a
+  different version. Meanwhile `akm task sync` treats an installed native
+  binding with no grant as an orphan and removes it (`desired` holds only
+  granted refs) — so a `task sync` that ran before a human got around to
+  `akm migrate apply` permanently deleted the installed row the migration
+  needed to re-grant it, taking every scheduled task on the host down with
+  no way back short of re-authoring them. Fixed by the startup
+  reconciliation and `task sync` carry-forward above (2026-09-24, one host).
+
+### Added
+
+- **Every akm command reconciles host-local state on a version change, with
+  no manual step.** `src/cli.ts`'s `runCli()` now runs
+  `reconcileOnVersionChange` (`src/core/version-reconcile.ts`) right after
+  `applyEarlyStderrFlags`, gated by a new `shouldReconcileOnStartup`
+  predicate: it skips the same recovery/setup surfaces
+  `shouldBypassConfigStartup` does (`--help`/`--version`/bare/`help`/
+  `hints`/`setup`/`migrate`/`config path`) but, unlike that predicate, DOES
+  run for `task run --id ...` — a scheduled task surviving an upgrade with
+  no manual step is the whole point. `reconcileOnVersionChange` compares a
+  `$STATE/version-reconcile.json` stamp against the running akm's version
+  and, on a mismatch, spawns `akm-migrate apply --host-local` under a
+  `$STATE/locks/version-reconcile.lock` lock before writing the new stamp.
+  A migration that cannot finish (`blocked`, or the spawn itself failing)
+  warns once, retries no more than once per 10 minutes, and never fails the
+  command it ran ahead of.
 
 ### Changed
 
+- **`akm task sync` carries a scheduler grant forward before it would
+  otherwise remove it as ungranted (upgrade-B).** An installed native
+  scheduler binding backed by a file in an enabled bundle, but with no
+  `scheduler.enabled` entry — the exact shape a lost or reset host-local
+  config leaves behind — is granted before `desired`/`removed` is computed,
+  instead of being deleted on the next sync. `akm task disable <ref>` is
+  still the supported way to drop a granted, installed binding: its own
+  reconciling sync skips carry-forward for that one call so the row it just
+  revoked is not immediately re-granted. `--dry-run` reports what would be
+  carried forward under a new `carriedForward` field and never applies it.
+- **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
+  config.json (legacy source shape, `extraParams`, retired keys, scheduler
+  `sourceId` binding), pending `state.db` migrations (historical-destructive
+  ones included, with the same verified safety copy), the scheduler-grant
+  carry-forward, and `$DATA/txn` stale-transaction recovery — never bundle
+  content (task v2/v3/v4 rewrites, dead `.akm` residue, writer relocation).
+  Skipped sections are absent from the plan, not empty, and the plan's
+  `mode` field reads `"host-local"`. `scripts/akm-migrate/help.txt` documents
+  the two modes.
+- **Scheduler-grant carry-forward is now a reusable `src/` module.**
+  `pendingGrantsFromInstalled`/`carryForwardSchedulerGrants`
+  (`src/tasks/scheduler-grant-carry-forward.ts`) hold the logic that used to
+  live only in `scripts/akm-migrate/migrate/scheduler-activation.ts` (now a
+  thin importer), so `akm task sync` can carry a grant forward before it
+  would otherwise remove it as ungranted (upgrade-B). A carried-forward row
+  now also requires a backing asset file on disk — an installed native
+  binding for a task/workflow that no longer exists in the bundle is never
+  granted, closing the gap a purely name-based carry-forward would have left
+  open for a stale or forged crontab row.
 - **Documented the persisted-data compatibility contract.** Added
   `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
   reader owes data an earlier release wrote, plus a per-format table (config,

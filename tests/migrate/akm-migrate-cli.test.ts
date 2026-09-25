@@ -15,11 +15,11 @@ describe("akm-migrate CLI", () => {
     expect(String(log.mock.calls[0]?.[0])).toContain("Usage: akm-migrate <command> [options]");
   });
 
-  test("the surface is `status` and `apply [--dry-run]`, nothing else", async () => {
+  test("the surface is `status [--host-local]` and `apply [--dry-run] [--host-local]`, nothing else", async () => {
     await expect(main([])).rejects.toThrow(/Choose `status` or `apply \[--dry-run\]`/);
     // The per-generation verbs are gone: one tool, one plan.
     await expect(main(["task-v4-apply"])).rejects.toThrow(/Choose `status` or `apply/);
-    await expect(main(["status", "--dry-run"])).rejects.toThrow(/`status` accepts no options/);
+    await expect(main(["status", "--dry-run"])).rejects.toThrow(/`status` does not accept --dry-run/);
     await expect(main(["apply", "--force"])).rejects.toThrow(/`apply` does not accept --force/);
   });
 });

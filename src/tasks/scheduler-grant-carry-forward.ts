@@ -1,0 +1,182 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * Carry forward host-local scheduler grants from installed native scheduler
+ * bindings. A row `akm task sync` wrote to this host's crontab/launchd/
+ * schtasks is the operator's own prior act; recognizing it as a grant
+ * invents no new authority. Shared by `akm task sync` (which must carry a
+ * row forward before it would otherwise remove it as ungranted) and
+ * host-local migration (`akm-migrate apply --host-local`, via
+ * `scripts/akm-migrate/migrate/scheduler-activation.ts`).
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
+import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { typeNameFromConceptId } from "../core/asset/resolve-ref";
+import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
+import {
+  bundleComponentConfig,
+  bundleContentRoots,
+  bundleSourceId,
+  isBundleEnabled,
+} from "../core/config/config-sources";
+import { canonicalSchedulerActivationRef, type SchedulerActivation, schedulerActivations } from "./activation-config";
+import { selectBackend } from "./backends";
+import type { InstalledSchedulerBinding, SchedulerBackendInspection } from "./scheduler-binding";
+
+export interface SchedulerGrantCarryForwardResult {
+  readonly applied: readonly SchedulerActivation[];
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Whether `bundle`'s resolved content root has an on-disk file backing
+ * `conceptId`. A conceptId with no registered placement stashDir (an
+ * adapter-projected task, e.g. `adapter: "akm-task"`) or a bundle this
+ * process cannot resolve to a filesystem content root (a `git`/`website`/
+ * `npm` bundle, materialized elsewhere) is treated as backed: this function
+ * has no way to check it without I/O beyond what "pure" here allows, and
+ * carry-forward for those cases defers to the caller's own removal path
+ * (`akm task sync`'s desired/removed computation), which already resolves
+ * such sources fully.
+ */
+function hasBackingFile(config: AkmConfig, bundle: string, conceptId: string): boolean {
+  const parts = typeNameFromConceptId(conceptId);
+  if (!parts) return true;
+  const typeDir = stashDirFor(parts.type);
+  if (!typeDir) return true;
+  const contentRoot = bundleContentRoots(config).find((entry) => entry.id === bundle)?.contentRoot;
+  if (!contentRoot) return true;
+  try {
+    const target = assetPathForName(parts.type, path.join(contentRoot, typeDir), parts.name);
+    return fs.existsSync(target) && fs.statSync(target).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function activationFromInstalledEntry(
+  entry: InstalledSchedulerBinding,
+  config: AkmConfig,
+): SchedulerActivation | undefined {
+  if (entry.enabled !== true || !entry.invocation) return undefined;
+  const invocation = entry.invocation;
+  if (invocation[0] === "workflow" && invocation[1] === "run" && invocation.length === 3) {
+    const ref = invocation[2];
+    if (!ref) return undefined;
+    try {
+      const canonicalRef = canonicalSchedulerActivationRef(ref);
+      const parsed = parseBundleRef(canonicalRef);
+      const bundle = parsed.bundle;
+      if (!bundle || !isBundleEnabled(config, bundle)) return undefined;
+      if (!hasBackingFile(config, bundle, parsed.conceptId)) return undefined;
+      return Object.freeze({
+        kind: "workflow" as const,
+        ref: canonicalRef,
+        sourceId: bundleSourceId(config, bundle),
+      });
+    } catch {
+      return undefined;
+    }
+  }
+  if (invocation[0] !== "task" || invocation[1] !== "run" || !invocation[2]) return undefined;
+  const bundleIndex = invocation.indexOf("--bundle", 3);
+  const bundle = bundleIndex === -1 ? config.defaultBundle : invocation[bundleIndex + 1];
+  if (!bundle) return undefined;
+  if (!isBundleEnabled(config, bundle)) return undefined;
+  const adapter = config.bundles?.[bundle] ? (bundleComponentConfig(config.bundles[bundle])?.adapter ?? "akm") : "akm";
+  const conceptId = adapter === "akm-task" ? invocation[2] : `tasks/${invocation[2]}`;
+  if (!hasBackingFile(config, bundle, conceptId)) return undefined;
+  try {
+    return Object.freeze({
+      kind: "task" as const,
+      ref: canonicalSchedulerActivationRef(makeBundleRef(bundle, conceptId)),
+      sourceId: bundleSourceId(config, bundle),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function activationKey(activation: SchedulerActivation): string {
+  return `${activation.kind}\0${activation.ref}\0${activation.sourceId}`;
+}
+
+/**
+ * Which installed native scheduler bindings are eligible to become
+ * host-local scheduler grants that do not already exist. Pure: no config
+ * mutation, no scheduler backend call — the only I/O is confirming that a
+ * candidate still has a backing asset file on disk (see {@link hasBackingFile}).
+ */
+export function pendingGrantsFromInstalled(
+  installed: readonly InstalledSchedulerBinding[],
+  config: AkmConfig,
+): readonly SchedulerActivation[] {
+  const existing = new Set(schedulerActivations(config).map(activationKey));
+  const pending = new Map<string, SchedulerActivation>();
+  for (const entry of installed) {
+    const activation = activationFromInstalledEntry(entry, config);
+    if (!activation) continue;
+    const key = activationKey(activation);
+    if (!existing.has(key)) pending.set(key, activation);
+  }
+  return Object.freeze(
+    [...pending.values()].sort(
+      (left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind),
+    ),
+  );
+}
+
+/**
+ * Apply {@link pendingGrantsFromInstalled} to config. `backendInspection`
+ * lets a caller that already inspected the scheduler backend (`akm task
+ * sync`'s own `inspectBindings` call) reuse that read instead of triggering
+ * a second one; omitting it inspects the platform backend directly (the
+ * migrator's path, which has no inspection of its own).
+ */
+export async function carryForwardSchedulerGrants(
+  backendInspection?: SchedulerBackendInspection,
+): Promise<SchedulerGrantCarryForwardResult> {
+  const config = loadConfig();
+  let inspection = backendInspection;
+  if (!inspection) {
+    let selected: ReturnType<typeof selectBackend>;
+    try {
+      selected = selectBackend();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      return { applied: [], warnings: [`Native scheduler activation could not be inspected: ${message}`] };
+    }
+    if (!selected.inspectBindings) {
+      return {
+        applied: [],
+        warnings: [`Scheduler backend ${JSON.stringify(selected.name)} cannot inspect native bindings.`],
+      };
+    }
+    try {
+      inspection = await selected.inspectBindings({});
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      return { applied: [], warnings: [`Native scheduler activation could not be inspected: ${message}`] };
+    }
+  }
+  const pending = pendingGrantsFromInstalled(inspection.installed, config);
+  if (pending.length === 0) return { applied: Object.freeze([]), warnings: Object.freeze([]) };
+  const additions = new Map(pending.map((activation) => [activationKey(activation), activation]));
+  mutateConfig((current) => {
+    const combined = new Map(
+      schedulerActivations(current).map((activation) => [activationKey(activation), activation]),
+    );
+    for (const [key, activation] of additions) combined.set(key, activation);
+    const enabled = [...combined.values()].sort(
+      (left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind),
+    );
+    return { ...current, scheduler: { ...current.scheduler, enabled } };
+  });
+  resetConfigCache();
+  return { applied: pending, warnings: Object.freeze([]) };
+}
