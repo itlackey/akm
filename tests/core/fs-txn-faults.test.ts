@@ -248,8 +248,9 @@ describe("fs-txn fault injection (WI-6.7, plan Chunk-6 gate)", () => {
 
     // Recovery (journal still before the commit phase) rolls the WHOLE
     // batch back: updates byte-identical to their originals, create gone.
-    const recovered = await recoverTxnsForRoot(root);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
     expect(recovered).toHaveLength(1);
+    expect(quarantined).toHaveLength(0);
     expect(readOrNull(root, "lessons/batch-a.md")).toBe(ORIGINALS["lessons/batch-a.md"] as string);
     expect(readOrNull(root, "lessons/batch-b.md")).toBe(ORIGINALS["lessons/batch-b.md"] as string);
     expect(readOrNull(root, "lessons/batch-new.md")).toBeNull();
@@ -270,8 +271,9 @@ describe("fs-txn fault injection (WI-6.7, plan Chunk-6 gate)", () => {
     // staged content), not inferred from bytes the apply loop already wrote.
     fs.rmSync(path.join(root, "lessons/batch-b.md"));
 
-    const recovered = await recoverTxnsForRoot(root);
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
     expect(recovered).toHaveLength(1);
+    expect(quarantined).toHaveLength(0);
     expect(readOrNull(root, "lessons/batch-a.md")).toBe(BATCH[0]!.after);
     expect(readOrNull(root, "lessons/batch-b.md")).toBe(BATCH[1]!.after);
     expect(readOrNull(root, "lessons/batch-new.md")).toBe(BATCH[2]!.after);

@@ -10,8 +10,10 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { findStaleTxnEntries, recoverStaleTxns } from "../../scripts/akm-migrate/migrate/stale-txn";
-import { advanceTxn, beginTxn, registerTxnKind } from "../../src/core/fs-txn";
+import { advanceTxn, beginTxn, registerTxnKind, txnQuarantineNamespaceDir } from "../../src/core/fs-txn";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -76,10 +78,11 @@ describe("migrate stale-txn detection and recovery", () => {
     registerRecordingKind("test-stale-apply-rollback", calls);
     beginTxn({ kind: "test-stale-apply-rollback", root: stashDir, changes: [], payload: { label: "rb" } });
 
-    const recovered = await recoverStaleTxns(stashDir);
+    const { recovered, quarantined } = await recoverStaleTxns(stashDir);
 
     expect(recovered).toHaveLength(1);
     expect(recovered[0]?.kind).toBe("test-stale-apply-rollback");
+    expect(quarantined).toHaveLength(0);
     expect(calls).toEqual(["rollback:rb"]);
     expect(findStaleTxnEntries(stashDir)).toEqual([]);
   });
@@ -91,10 +94,51 @@ describe("migrate stale-txn detection and recovery", () => {
     const txn = beginTxn({ kind: "test-stale-apply-finalize", root: stashDir, changes: [], payload: { label: "fw" } });
     advanceTxn(txn, "files-published");
 
-    const recovered = await recoverStaleTxns(stashDir);
+    const { recovered, quarantined } = await recoverStaleTxns(stashDir);
 
     expect(recovered).toHaveLength(1);
+    expect(quarantined).toHaveLength(0);
     expect(calls).toEqual(["finalize:fw"]);
     expect(findStaleTxnEntries(stashDir)).toEqual([]);
+  });
+
+  test("a poisoned journal is quarantined, reported, and does not block a sibling's recovery", async () => {
+    const stashDir = freshStash();
+    const calls: string[] = [];
+    registerTxnKind<{ label: string }>("test-stale-poisoned", {
+      phases: ["prepared", "files-published", "committed"],
+      commitPhase: "files-published",
+      rollback() {
+        throw new Error("poisoned journal");
+      },
+      finalize() {
+        calls.push("finalize:unreachable");
+      },
+    });
+    registerRecordingKind("test-stale-poisoned-sibling", calls);
+    beginTxn({ kind: "test-stale-poisoned", root: stashDir, changes: [], payload: { label: "bad" } });
+    const sibling = beginTxn({
+      kind: "test-stale-poisoned-sibling",
+      root: stashDir,
+      changes: [],
+      payload: { label: "fw" },
+    });
+    advanceTxn(sibling, "files-published");
+
+    const { recovered, quarantined } = await recoverStaleTxns(stashDir);
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.kind).toBe("test-stale-poisoned-sibling");
+    expect(calls).toEqual(["finalize:fw"]);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.kind).toBe("test-stale-poisoned");
+    expect(quarantined[0]?.reason).toMatch(/poisoned journal/);
+
+    // The stash's stale-journal listing no longer sees either journal — the
+    // recovered one was cleaned up, the poisoned one moved out of `$DATA/txn`.
+    expect(findStaleTxnEntries(stashDir)).toEqual([]);
+    const quarantineDir = path.join(txnQuarantineNamespaceDir(stashDir), quarantined[0]?.transactionId as string);
+    expect(fs.existsSync(path.join(quarantineDir, "journal.json"))).toBe(true);
+    expect(fs.existsSync(path.join(quarantineDir, "reason.json"))).toBe(true);
   });
 });

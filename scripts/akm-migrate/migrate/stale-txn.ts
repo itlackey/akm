@@ -22,7 +22,13 @@
  * exactly that kind of entry point.
  */
 
-import { canonicalTxnRoot, listTxnJournalsTolerant, recoverTxnsForRoot, type TxnJournal } from "../../../src/core/fs-txn";
+import {
+  canonicalTxnRoot,
+  listTxnJournalsTolerant,
+  type QuarantinedTxn,
+  recoverTxnsForRoot,
+  type TxnJournal,
+} from "../../../src/core/fs-txn";
 // Side-effect import: registers the `proposal`/`proposal-reject` txn kinds
 // so recovery below can roll them forward/back for the stash root.
 import "../../../src/commands/proposal/repository";
@@ -52,11 +58,15 @@ function journalToEntry(journal: TxnJournal<unknown>): StaleTxnEntry {
 
 /**
  * Recover every durable transaction bound to `stashDir`'s namespace: roll
- * back journals before their kind's commit point, roll forward the rest.
- * The counterpart to {@link findStaleTxnEntries}, invoked only from `akm
- * migrate apply`.
+ * back journals before their kind's commit point, roll forward the rest. A
+ * journal that cannot be recovered is quarantined, not thrown — it is
+ * resolved state, reported alongside what recovered normally. The
+ * counterpart to {@link findStaleTxnEntries}, invoked only from `akm migrate
+ * apply`.
  */
-export async function recoverStaleTxns(stashDir: string): Promise<StaleTxnEntry[]> {
-  const recovered = await recoverTxnsForRoot(stashDir);
-  return recovered.map(journalToEntry);
+export async function recoverStaleTxns(
+  stashDir: string,
+): Promise<{ recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[] }> {
+  const { recovered, quarantined } = await recoverTxnsForRoot(stashDir);
+  return { recovered: recovered.map(journalToEntry), quarantined };
 }
