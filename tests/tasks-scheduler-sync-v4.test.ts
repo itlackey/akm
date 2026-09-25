@@ -1111,7 +1111,11 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(plan.desired.map((binding) => binding.id)).toEqual(["a-valid"]);
     expect(plan.failures).toHaveLength(1);
     expect(plan.failures[0]?.path).toContain("b-invalid.yml");
-    expect(plan.failures[0]?.reason).toContain("akm migrate apply --dry-run");
+    // A3 reinstated the in-memory v2/v3 read shim: an unconvertible v2/v3
+    // file now fails with the shim's "needs a human decision" wording
+    // (naming the migrator's own blocked reason), not the plain
+    // TASK_SCHEMA_VERSION_UNSUPPORTED "akm migrate apply --dry-run" hint.
+    expect(plan.failures[0]?.reason).toContain("needs a human decision");
     expect(signatures).toBe(1);
   });
 
