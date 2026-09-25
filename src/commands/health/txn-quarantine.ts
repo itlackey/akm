@@ -28,6 +28,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { listTxnJournalsTolerant } from "../../core/fs-txn";
 import type { HealthCheckResult } from "./types";
 
 /** Transaction kinds registered by `src/commands/proposal/repository.ts`. */
@@ -89,50 +90,21 @@ export function collectTxnAwaitingRecoveryAdvisory(
   now: number = Date.now(),
 ): HealthCheckResult | undefined {
   const txnDir = path.join(dataDir, "txn");
-  let namespaces: fs.Dirent[];
-  try {
-    namespaces = fs.readdirSync(txnDir, { withFileTypes: true });
-  } catch {
-    return undefined; // no txn dir yet — nothing to report.
-  }
+  // Unreadable journals are skipped here (not reported) — the quarantine
+  // advisory covers that case.
+  const { matches } = listTxnJournalsTolerant(() => true, dataDir);
 
   const stale: { transactionId: string; proposalId?: string }[] = [];
-  for (const ns of namespaces) {
-    if (!ns.isDirectory()) continue;
-    const nsDir = path.join(txnDir, ns.name);
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(nsDir, { withFileTypes: true });
-    } catch {
-      continue; // Unreadable namespace dir — best-effort, skip it.
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const journalPath = path.join(nsDir, entry.name, "journal.json");
-      let mtimeMs: number;
-      try {
-        mtimeMs = fs.statSync(journalPath).mtimeMs;
-      } catch {
-        continue; // no journal.json here (a fresh, journal-less transaction dir)
-      }
-      if (now - mtimeMs < AWAITING_RECOVERY_MIN_AGE_MS) continue;
-      try {
-        const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
-          transactionId?: unknown;
-          kind?: unknown;
-          payload?: { proposalId?: unknown };
-        };
-        const transactionId = typeof journal.transactionId === "string" ? journal.transactionId : entry.name;
-        const kind = typeof journal.kind === "string" ? journal.kind : undefined;
-        const proposalId =
-          kind !== undefined && PROPOSAL_TXN_KINDS.has(kind) && typeof journal.payload?.proposalId === "string"
-            ? journal.payload.proposalId
-            : undefined;
-        stale.push(proposalId !== undefined ? { transactionId, proposalId } : { transactionId });
-      } catch {
-        // Unreadable journal — the quarantine advisory covers this case.
-      }
-    }
+  for (const { journal, mtimeMs } of matches) {
+    if (now - mtimeMs < AWAITING_RECOVERY_MIN_AGE_MS) continue;
+    const payload = journal.payload as { proposalId?: unknown } | undefined;
+    const proposalId =
+      PROPOSAL_TXN_KINDS.has(journal.kind) && typeof payload?.proposalId === "string" ? payload.proposalId : undefined;
+    stale.push(
+      proposalId !== undefined
+        ? { transactionId: journal.transactionId, proposalId }
+        : { transactionId: journal.transactionId },
+    );
   }
   if (stale.length === 0) return undefined;
 

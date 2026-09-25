@@ -85,7 +85,10 @@ function seedTxnJournal(
   const dir = path.join(dataDir, "txn", ns, id);
   fs.mkdirSync(dir, { recursive: true });
   const journalPath = path.join(dir, "journal.json");
-  fs.writeFileSync(journalPath, `${JSON.stringify({ version: 1, kind: "proposal", transactionId: id, ...payload })}\n`);
+  fs.writeFileSync(
+    journalPath,
+    `${JSON.stringify({ version: 1, kind: "proposal", phase: "prepared", transactionId: id, ...payload })}\n`,
+  );
   const mtime = new Date(Date.now() - ageMs);
   fs.utimesSync(journalPath, mtime, mtime);
 }
@@ -129,7 +132,7 @@ describe("collectTxnAwaitingRecoveryAdvisory", () => {
     const journalPath = path.join(dir, "journal.json");
     fs.writeFileSync(
       journalPath,
-      `${JSON.stringify({ version: 1, kind: "not-a-proposal", transactionId: "txn-other" })}\n`,
+      `${JSON.stringify({ version: 1, kind: "not-a-proposal", phase: "prepared", transactionId: "txn-other" })}\n`,
     );
     const mtime = new Date(Date.now() - (ONE_HOUR_MS + 60_000));
     fs.utimesSync(journalPath, mtime, mtime);

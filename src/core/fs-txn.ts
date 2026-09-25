@@ -667,10 +667,15 @@ export interface TxnJournalScanResult {
  * scan. Recovery call sites (which must decide how to roll a journal forward
  * or back) keep using {@link listTxnJournals} — it fails loudly on purpose,
  * since silently skipping a damaged journal there could leave an interrupted,
- * irreversible mutation unrecovered.
+ * irreversible mutation unrecovered. `dataDir` defaults to `getDataDir()`;
+ * callers that already resolved it (e.g. `akm health`'s advisories) pass it
+ * through instead of letting this re-resolve it.
  */
-export function listTxnJournalsTolerant(predicate: (journal: TxnJournal<unknown>) => boolean): TxnJournalScanResult {
-  const home = path.join(getDataDir(), "txn");
+export function listTxnJournalsTolerant(
+  predicate: (journal: TxnJournal<unknown>) => boolean,
+  dataDir: string = getDataDir(),
+): TxnJournalScanResult {
+  const home = path.join(dataDir, "txn");
   const matches: TxnJournalScanEntry[] = [];
   const unreadableMtimes: number[] = [];
   if (!fs.existsSync(home)) return { matches, unreadableMtimes };
