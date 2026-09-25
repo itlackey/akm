@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`akm bundle rename <old> <new>`.** Renaming a bundle used to mean
+  hand-editing the `bundles` key in `config.json`, which stranded every
+  durable ref the tool had minted under the old id — the index and state
+  databases kept the old `<old>//` prefix while config named the new one
+  (the exact hand-rename signature `warnOnBundleRenameDrift` already
+  detected and warned about, with "there is no rekey command in 0.9.0").
+  `akm bundle rename` is that command: under the config lock it rewrites the
+  `bundles` key, `defaultBundle`/`defaultWriteTarget` when they name the old
+  id, and every `scheduler.enabled[].ref` with the old `//` prefix; then it
+  renames the lockfile entry, re-keys every indexed entry's
+  `bundle_id`/`item_ref`, and rewrites this tool's own state rows that name
+  the old bundle (`proposals.ref`, a pending proposal's
+  `proposedTarget.source`, and workflow `task_history.target_ref`). Refs
+  inside the bundle's own CONTENT (cross-references, a task's `uses:`,
+  `supersededBy`) are reported, never rewritten — the result's `contentRefs`
+  lists the indexed files that still spell the old prefix. `--dry-run` shows
+  the full plan (row counts, scheduler refs, content files) without writing
+  anything.
 - **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
   `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
   `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag

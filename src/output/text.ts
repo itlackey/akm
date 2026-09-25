@@ -30,6 +30,7 @@ import type { OutputCommandName } from "./shapes";
 import { writeStdout } from "./stdout";
 import { addFormatters } from "./text/add";
 import { bundleCreateFormatters } from "./text/bundle-create";
+import { bundleRenameFormatters } from "./text/bundle-rename";
 import { bundleShowFormatters } from "./text/bundle-show";
 import { cloneFormatters } from "./text/clone";
 import { configFormatters } from "./text/config";
@@ -67,6 +68,7 @@ import { workflowFormatters } from "./text/workflow";
 // compile instead of silently disappearing at runtime.
 const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
   ...bundleCreateFormatters,
+  ...bundleRenameFormatters,
   ...bundleShowFormatters,
   ...indexFormatters,
   ...showFormatters,

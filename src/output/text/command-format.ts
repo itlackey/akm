@@ -593,6 +593,37 @@ export function formatRemovePlain(r: Record<string, unknown>): string {
   return `remove: ${target} ${ok}`;
 }
 
+export function formatBundleRenamePlain(r: Record<string, unknown>): string {
+  const oldId = String(r.oldId ?? "?");
+  const newId = String(r.newId ?? "?");
+  const applied = r.applied === true;
+  const config = (r.config as Record<string, unknown> | undefined) ?? {};
+  const state = (r.state as Record<string, unknown> | undefined) ?? {};
+  const index = (r.index as Record<string, unknown> | undefined) ?? {};
+  const schedulerRefs = Array.isArray(config.schedulerRefs) ? config.schedulerRefs.length : 0;
+  const proposalRefs = Number(state.proposalRefs ?? 0);
+  const proposalTargets = Number(state.proposalTargets ?? 0);
+  const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
+  const entries = Number(index.entries ?? 0);
+  const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
+
+  const verb = applied ? "Renamed" : "Would rename";
+  const lines = [
+    `${verb} bundle "${oldId}" to "${newId}" (${entries} index entries, ${schedulerRefs} scheduler grant(s), ` +
+      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s)).`,
+  ];
+  if (!applied) {
+    lines.push("Re-run without --dry-run to apply. `akm task sync` still needs to run afterward.");
+  } else {
+    lines.push("Run `akm task sync` to reconcile native scheduler bindings under the new name.");
+  }
+  if (contentRefs.length > 0) {
+    lines.push(`Content still spelling "${oldId}//" (not rewritten — edit these by hand):`);
+    for (const file of contentRefs) lines.push(`  - ${String(file)}`);
+  }
+  return lines.join("\n");
+}
+
 export function formatUpdatePlain(r: Record<string, unknown>): string {
   // R-015: `processed` alone conflated three cases into one empty array —
   // a true no-op (--all with nothing configured), a source this call flatly

@@ -181,6 +181,32 @@ durable usage links; it cannot detect every theoretical cross-file split.
 akm bundle update --all && akm index
 ```
 
+## akm bundle rename
+
+`akm bundle rename <old> <new>` is the one command allowed to change a
+configured bundle's key. A bundle id is a mass identity prefix: every ref this
+tool minted (`entries.item_ref`, `proposals.ref`, a pending proposal's write
+target, a workflow's `task_history.target_ref`, `scheduler.enabled[].ref`)
+carries it, so hand-editing the `bundles` key in `config.json` strands all of
+it — the rest of akm keeps reading the old prefix out of the index and state
+databases while config names the new one.
+
+```sh
+akm bundle rename old-name new-name --dry-run   # See the plan first
+akm bundle rename old-name new-name
+```
+
+`<new>` must be a legal, unused bundle slug — the same `--name` contract
+`akm bundle add` enforces. Rewritten: the config key,
+`defaultBundle`/`defaultWriteTarget` when they name the old id, every
+scheduler grant's ref, the lockfile entry, every indexed entry's `bundle_id`,
+and this tool's own state rows that name the old bundle. Reported, never
+rewritten: refs inside the bundle's own content (cross-references, a task's
+`uses:`, `supersededBy`) — the command lists the files that still spell the
+old `<old>//` prefix so you can fix them by hand. Run `akm task sync`
+afterward if the bundle has scheduled tasks, so native scheduler bindings pick
+up the new name.
+
 ## akm clone
 
 `akm clone` copies a single asset from any bundle into your writable bundle
