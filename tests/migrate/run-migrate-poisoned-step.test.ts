@@ -3,41 +3,45 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * C3: one poisoned migration step must never end the whole `runMigration`
- * run. Before this fix, `runMigration` ran its steps in a flat sequence with
- * no per-step catch, so any one step's throw propagated out of
- * `runMigration` itself — no plan at all, and (through `runWithJsonErrors`)
- * `akm-migrate status|apply` exiting INTERNAL(70) instead of reporting a
- * blocked plan.
+ * One poisoned migration step must never end the whole `runMigration` run.
+ * Before this fix, `runMigration` ran its steps in a flat sequence with no
+ * per-step catch, so any one step's throw propagated out of `runMigration`
+ * itself — no plan at all, and (through `runWithJsonErrors`) `akm-migrate
+ * status|apply` exiting INTERNAL(70) instead of reporting a blocked plan.
  *
- * Two levels:
- *   - `migrationStep`/`migrationStepAsync` directly, against synthetic
- *     steps: precise, fast, and independent of which real migrate/*.ts step
- *     happens to be easiest to break today.
+ * Three levels:
+ *   - `migrationStep` directly, against synthetic steps (sync and async
+ *     actions alike): precise, fast, and independent of which real
+ *     migrate/*.ts step happens to be easiest to break today.
  *   - `runMigration` end to end, with a REAL poisoned item: a second
  *     filesystem bundle whose writer-relocation target directory is
  *     occupied by a file instead of being creatable, so
  *     `applyWriterRelocation` throws for that one bundle while every other
  *     bundle (and every other step) still runs normally.
+ *   - `runMigration` end to end with an invalid config (`bundles.primary.path`
+ *     not a string): `loadConfig()` inside `writerRelocationTargets` throws,
+ *     which must land in `failedSteps` too rather than escape `runMigration`.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { migrationStep, migrationStepAsync, runMigration } from "../../scripts/akm-migrate/run-migrate";
+import { migrationStep, runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { resetConfigCache } from "../../src/core/config/config";
 import { getDistillRejectedDir } from "../../src/core/paths";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
-// ── migrationStep / migrationStepAsync directly ────────────────────────────
+// ── migrationStep directly ──────────────────────────────────────────────────
 
-test("migrationStep: one poisoned step among N leaves the other N-1 with their normal outcome", () => {
+test("migrationStep: one poisoned step among N leaves the other N-1 with their normal outcome", async () => {
   const failedSteps: { step: string; error: string }[] = [];
-  const results = ["a", "b", "c", "d", "e"].map((label, index) =>
-    migrationStep(failedSteps, `step-${label}`, () => {
-      if (index === 2) throw new Error(`${label} is poisoned`);
-      return `${label}-ok`;
-    }),
+  const results = await Promise.all(
+    ["a", "b", "c", "d", "e"].map((label, index) =>
+      migrationStep(failedSteps, `step-${label}`, () => {
+        if (index === 2) throw new Error(`${label} is poisoned`);
+        return `${label}-ok`;
+      }),
+    ),
   );
 
   expect(results).toEqual(["a-ok", "b-ok", undefined, "d-ok", "e-ok"]);
@@ -45,9 +49,9 @@ test("migrationStep: one poisoned step among N leaves the other N-1 with their n
   expect(failedSteps[0]).toEqual({ step: "step-c", error: "c is poisoned" });
 });
 
-test("migrationStep: a poisoned apply falls back to its own read-only probe instead of losing the section", () => {
+test("migrationStep: a poisoned apply falls back to its own read-only probe instead of losing the section", async () => {
   const failedSteps: { step: string; error: string }[] = [];
-  const result = migrationStep(
+  const result = await migrationStep(
     failedSteps,
     "writeStep",
     () => {
@@ -62,9 +66,9 @@ test("migrationStep: a poisoned apply falls back to its own read-only probe inst
   expect(failedSteps[0]?.error).toBe("write failed");
 });
 
-test("migrationStep: a poisoned apply AND a poisoned probe still return (undefined), never throw", () => {
+test("migrationStep: a poisoned apply AND a poisoned probe still return (undefined), never throw", async () => {
   const failedSteps: { step: string; error: string }[] = [];
-  const result = migrationStep(
+  const result = await migrationStep(
     failedSteps,
     "writeStep",
     () => {
@@ -81,11 +85,11 @@ test("migrationStep: a poisoned apply AND a poisoned probe still return (undefin
   expect(failedSteps[1]).toEqual({ step: "writeStep (read-only fallback)", error: "probe failed too" });
 });
 
-test("migrationStepAsync: same isolation guarantee for an async step", async () => {
+test("migrationStep: same isolation guarantee for an async action", async () => {
   const failedSteps: { step: string; error: string }[] = [];
   const results = await Promise.all(
     ["a", "b", "c"].map((label, index) =>
-      migrationStepAsync(failedSteps, `async-${label}`, async () => {
+      migrationStep(failedSteps, `async-${label}`, async () => {
         if (index === 1) throw new Error(`${label} is poisoned`);
         return `${label}-ok`;
       }),
@@ -168,3 +172,31 @@ test("apply: one bundle's writer relocation throwing does not cost every OTHER b
   expect(fs.existsSync(path.join(primaryOld, "lesson.md"))).toBe(false);
   expect(fs.existsSync(path.join(getDistillRejectedDir(storage.stashDir), "lesson.md"))).toBe(true);
 });
+
+// ── runMigration end to end, with a config `loadConfig()` rejects ──────────
+
+for (const apply of [false, true]) {
+  test(`${apply ? "apply" : "status"}: a config loadConfig() rejects blocks the plan instead of throwing out of runMigration`, async () => {
+    // bundles.primary.path is a number, not a string — schema-invalid.
+    // `stashDirIfConfigured()` tolerates this (readStashDirFromConfig reads
+    // the raw JSON and treats a non-string path as absent, so it falls
+    // through to STASH_DIR_NOT_FOUND), but `writerRelocationTargets()` calls
+    // the full `loadConfig()`, which throws for it.
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: 42, writable: true } },
+    });
+
+    const plan = await runMigration({ apply });
+
+    // No throw reached the caller: runMigration returned a full plan.
+    expect(plan.status).toBe("blocked");
+    expect(
+      plan.failedSteps?.some((entry) => entry.step === "stashDir" || entry.step === "writerRelocationTargets"),
+    ).toBe(true);
+
+    // A config-independent section (state.db migrations read XDG_STATE_HOME,
+    // never `loadConfig()`) still ran and is present.
+    expect(plan.stateMigrations).toBeDefined();
+  });
+}
