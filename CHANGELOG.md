@@ -113,6 +113,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Scheduler-grant carry-forward is now a reusable `src/` module.**
+  `pendingGrantsFromInstalled`/`carryForwardSchedulerGrants`
+  (`src/tasks/scheduler-grant-carry-forward.ts`) hold the logic that used to
+  live only in `scripts/akm-migrate/migrate/scheduler-activation.ts` (now a
+  thin importer), so `akm task sync` can carry a grant forward before it
+  would otherwise remove it as ungranted (upgrade-B). A carried-forward row
+  now also requires a backing asset file on disk — an installed native
+  binding for a task/workflow that no longer exists in the bundle is never
+  granted, closing the gap a purely name-based carry-forward would have left
+  open for a stale or forged crontab row.
 - **Documented the persisted-data compatibility contract.** Added
   `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
   reader owes data an earlier release wrote, plus a per-format table (config,

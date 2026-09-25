@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import {
   applySchedulerActivationMigration,
   inspectSchedulerActivationMigration,
@@ -21,6 +23,12 @@ beforeEach(() => {
     defaultBundle: "team",
     bundles: { team: { path: storage.stashDir, writable: true } },
   });
+  // A carried-forward grant requires a backing file (upgrade-B policy 1):
+  // "nightly" and "release" back the two installed rows that qualify below.
+  fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "tasks", "nightly.yml"), "schedule: '0 2 * * *'\n");
+  fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "workflows", "release.yml"), "steps: []\n");
 });
 
 afterEach(() => storage.cleanup());
