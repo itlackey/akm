@@ -103,8 +103,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole
   full-text index, twice per entry per run. On a 23.9k-entry index, one
   touched file in a flat `knowledge/` directory of 13.7k entries took 26
-  minutes (task run `2026-09-24T20-30-01-663Z`); on a backup copy of that
-  index the same rescan now takes 38 s. FTS rows are keyed by rowid, and the
+  minutes (task run `2026-09-24T20-30-01-663Z`); on backup copies of that
+  index the same rescan took 31 minutes before this change and takes 38 s
+  after it. FTS rows are keyed by rowid, and the
   first writable open after upgrading realigns an existing index in place,
   about 10 s and ~1.1 GB peak memory at that size, with no index-generation
   bump, so an older binary keeps reading it. A writable open realigns again
