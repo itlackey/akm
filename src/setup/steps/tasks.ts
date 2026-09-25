@@ -303,12 +303,18 @@ export async function stepScheduledTasks(
   // would see re-granted anyway, without mutating anything before the
   // confirmation below.
   const config = loadConfig();
-  const inspection = await deps.inspectInstalled();
-  const pendingTaskIds = new Set(
-    pendingGrantsFromInstalled(inspection.installed, config)
-      .filter((activation) => activation.kind === "task")
-      .map((activation) => parseBundleRef(activation.ref).conceptId.replace(/^tasks\//, "")),
-  );
+  let pendingTaskIds = new Set<string>();
+  try {
+    const inspection = await deps.inspectInstalled();
+    pendingTaskIds = new Set(
+      pendingGrantsFromInstalled(inspection.installed, config)
+        .filter((activation) => activation.kind === "task")
+        .map((activation) => parseBundleRef(activation.ref).conceptId.replace(/^tasks\//, "")),
+    );
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    p.log.warn(`Native scheduler activation could not be inspected: ${message}`);
+  }
 
   const preChecked = embedded
     .filter((task) => byId.get(task.id)?.enabled === true || pendingTaskIds.has(task.id))
