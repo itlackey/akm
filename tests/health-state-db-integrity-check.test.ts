@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R0 (tier0-0917): `akm health` never looked at state.db's own SQLite-level
+ * R0: `akm health` never looked at state.db's own SQLite-level
  * integrity — the pre-existing `state-db-round-trip` check only proves one
  * row can be appended and read back, which stays true on a database that
  * fails `PRAGMA quick_check` elsewhere (out-of-order rowids, bad index entry

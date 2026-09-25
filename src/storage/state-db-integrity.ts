@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * state.db integrity + reclaimable-space probes (R0, tier0-0917).
+ * state.db integrity + reclaimable-space probes (R0).
  *
  * `akm health`'s `state-db-integrity` check (src/commands/health/checks.ts)
  * is a pure projection like every other check, so the actual IO lives here:

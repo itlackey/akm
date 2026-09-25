@@ -757,9 +757,9 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
   });
 });
 
-// ── R9 (tier2-0917) — pre-generation guard check ────────────────────────────
+// ── R9 — pre-generation guard check ────────────────────────────
 
-describe("checkProposalGuard — pre-generation fingerprint/backoff check (R9, tier2-0917)", () => {
+describe("checkProposalGuard — pre-generation fingerprint/backoff check (R9)", () => {
   test("fingerprint_match: fires on the exact inputs a second createProposal mint would also reject", () => {
     const stash = makeStashDir();
     const target = { source: "stash", root: path.resolve(stash) };

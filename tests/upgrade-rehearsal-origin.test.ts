@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `resolveUpgradeOriginVersion`/`KNOWN_UPGRADE_ORIGINS` (upgrade-B) with an
+ * `resolveUpgradeOriginVersion`/`KNOWN_UPGRADE_ORIGINS` with an
  * injected `CommandRunner` — no real `npm`/network, unlike the gated
  * `AKM_UPGRADE_REHEARSAL=1` suite these feed.
  */

@@ -636,7 +636,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
     }
   });
 
-  // Reviewer finding (Batch B): a pending grant from an installed native binding pre-checked ANY
+  // A pending grant from an installed native binding used to pre-check ANY
   // bundle whose concept id matched an embedded template's name, so an installed, ungranted
   // `team//tasks/improve` pre-checked the default bundle's `improve`. Only a pending grant in the
   // bundle `listSetupTaskDefinitions` reviews (the default write target) may pre-check.

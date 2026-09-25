@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `shouldReconcileOnStartup` (upgrade-B) — same recovery/setup surfaces
+ * `shouldReconcileOnStartup` — same recovery/setup surfaces
  * `shouldBypassConfigStartup` keeps reachable against a broken config are
  * skipped here too, EXCEPT `task run --id ...`: a scheduled run surviving
  * an upgrade with no manual step is the whole point of this feature.
