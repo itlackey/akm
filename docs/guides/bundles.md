@@ -199,7 +199,7 @@ akm bundle rename old-name new-name
 `<new>` must be a legal, unused bundle slug — the same `--name` contract
 `akm bundle add` enforces. Rewritten: the config key,
 `defaultBundle`/`defaultWriteTarget` when they name the old id, every
-scheduler grant's ref, the lockfile entry, every indexed entry's `bundle_id`,
+scheduler ref, the lockfile entry, every indexed entry's `bundle_id`,
 the metadata-enrichment LLM cache keyed by the same `item_ref`, and this
 tool's own state rows that name the old bundle. Reported, never rewritten:
 refs inside the bundle's own content (cross-references, a task's `uses:`,

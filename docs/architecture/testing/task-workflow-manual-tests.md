@@ -1467,7 +1467,7 @@ akm index
    consolidation + triage drain (run on demand via \`akm task run
    akm-improve-catchup\`)"`, `.schedule[0] == {"ordinal":0,"cron":"0 4 * * *","enabled":false,"source":"schedule[0].cron","inputs":{}}`
    — the real shipped file describes a schedule but cannot activate itself;
-   the host-local config has no grant for it.
+   this host's `scheduler.enabled` list does not name it.
 2. `akm workflow plan workflows/wrap-real-improve-task --format json` →
    `.steps[0].targetKind == "shell"`, `.steps[0].expansion ==
    {"via":"task","taskRef":"tasks/akm-improve-catchup"}`,

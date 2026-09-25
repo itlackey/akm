@@ -6,68 +6,105 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Upgrades stop breaking because the machinery that broke them is gone, not
+because more was added: this release removes the scheduler-grant layer, the
+filesystem transaction journals, the maintenance barrier and lock mutex, the
+strict config schemas and their retired-key registry, and every per-key
+config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
+
+### Changed
+
+- **Readers tolerate everything older releases wrote.** No config object is
+  strict any more: a key this release does not know — retired, misspelled,
+  or written by a newer release — is kept in memory and named once
+  (`unknownConfigKeyPaths`, `src/core/config/config.ts`, found by walking
+  the schema), round-trips through ordinary writes so a newer release's
+  settings survive a downgrade, and is dropped only by `akm migrate apply`.
+  The retired-keys registry, its read shim, and the schema-compatibility
+  lint are removed; nothing needs registering for a key to be tolerated.
+- **`akm migrate apply` has one config step.** `configFile`
+  (`normalizeConfigFile`) reads config.json through the same pipeline every
+  load runs (config-version shim, legacy source shape, `extraParams` lift)
+  and writes the current shape back under a backup, dropping unknown keys.
+  It replaces the per-key `configLegacySourceShape`, `configExtraParams`,
+  `configRetiredKeys` and `configSchedulerSourceIds` steps, the
+  `schedulerActivation` and `staleTxns` steps, and the `--host-local` mode. A
+  pending config lift is now `ready`, never a blocker for the other steps.
+  The `deadResidue` step also removes the transaction-journal,
+  maintenance-barrier, lock-mutex and version-stamp files older releases left
+  under `$DATA`, `$STATE` and `$CONFIG`, and runs whether or not a bundle is
+  configured.
+- **Scheduling is one list.** `scheduler.enabled` holds the fully-qualified
+  refs this host schedules (`bundle//tasks/x`), as plain strings. The
+  0.9.17-alpha `{kind, ref, sourceId}` grant objects are read as their ref.
+  A config with no list at all (every release before 0.9.17) means "keep
+  what is installed": the first `akm task sync` (or `setup`, `task enable`,
+  `task disable`, `task add`) takes the akm-written rows already in the
+  native scheduler as the host's choice, writes the list, and says so;
+  `task sync --dry-run` reports it without writing. An explicit list, empty
+  or not, is never second-guessed. Grants, source identities, the
+  carry-forward, the scheduler-activation and source-id migrations and the
+  fire-time re-check are gone (`src/tasks/activation-config.ts`).
+- **Proposal accept and revert write directly.** The asset file is written
+  (temp file + rename), committed through the ordinary write-target
+  boundary, then the proposal row and its event are recorded in one
+  state.db transaction and the file is indexed best-effort. A crash in
+  between leaves a re-acceptable pending proposal, nothing corrupt. The
+  filesystem transaction journals (`src/core/fs-txn.ts`) with their
+  recovery, quarantine, deferral and fencing are removed, along with the
+  `txn-quarantine`/`txn-awaiting-recovery` health advisories.
+- **A lock file is one `O_EXCL` create** (`src/core/file-lock.ts`). The
+  SQLite lock-operation mutex, the maintenance barrier (a lock guarding lock
+  registration) and its per-open activity registry — the source of the
+  lock-sidecar leak that grew `$STATE` by hundreds of megabytes — are
+  removed. `MAINTENANCE_BARRIER_BUSY` no longer exists; contention is
+  reported as `INDEX_DB_CONTENDED`, `STATE_DB_CONTENDED` or
+  `IMPROVE_LOCK_HELD`, as before.
+- **Removed from 0.9.17-alpha:** startup version reconciliation
+  (`version-reconcile.json`), the akm-install enumerator and `akm upgrade
+  --version`/`--tag` with its other-install mover, the `version-reconcile`,
+  `scheduler-grants`, `scheduled-startup-failures` and `akm-installs` health
+  advisories, and the `akm info` `compat` manifest with its
+  `PLUGIN_PROTOCOL_VERSION`. `akm upgrade` is what it was in 0.9.16.
+- **Documented the persisted-data compatibility contract.** Added
+  `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
+  reader owes data an earlier release wrote, plus a per-format table (config,
+  `state.db`, `index.db`, task source, workflow IR, native scheduler rows,
+  proposal and task-history metadata, lock payloads,
+  guarded directory manifests, `.akm` residue) naming where each is written,
+  its version marker, its older/newer-data behavior, and which gate covers
+  it — with explicit `Gap:` notes where the code does not meet the contract
+  yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
+  persisted data" section now points at this doc instead of a deleted file.
+
 ### Added
 
-- **`akm info` publishes a `compat` manifest, and a new `PLUGIN_PROTOCOL_VERSION`
-  pins the plugin-facing JSON contract.** Plugins previously gated on a
-  hand-maintained semver range (`AKM_VERSION_RANGE` in
-  `akm-plugins/claude/shared/akm-version.ts`) that says nothing about the
-  contracts they actually depend on — the 0.9.2 `claude-code`→`claude`
-  rename broke session extraction while the version check passed, because a
-  version range can't see an index generation or a state ledger move. `akm
-  info`'s new `compat` field carries `indexGeneration`, `stateLedgerHead`,
-  `taskSourceVersion`, `configVersion`, `workflowIrVersion`, and
-  `pluginProtocol`, each read live from the constant that already owns it.
-  `pluginProtocol` (`PLUGIN_PROTOCOL_VERSION`, `src/version.ts`) is the
-  contract version for the JSON key sets of `akm search`, `akm curate`,
-  `akm show`, `akm info`, and `akm proposal extract` result envelopes;
-  `tests/contracts/plugin-protocol.test.ts` pins those key sets and fails,
-  with the instruction to bump, when one changes shape without a matching
-  version bump.
-- **Every akm install on the host is known, and `akm upgrade` moves all of
-  them.** A host can run more than one `akm` at once — the shell's bun-global
-  copy, cron's nvm-node copy, a harness plugin's own bundled copy — and
-  `akm upgrade` used to move only whichever one was currently running,
-  leaving the others silently behind until an unrelated failure surfaced the
-  drift. `enumerateAkmInstalls` (`src/core/akm-installs.ts`) finds every
-  `akm` on PATH plus the known install roots (bun global, the npm global
-  root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
-  version's `bin/`), deduped by realpath, classified, and probed with
-  `--version` — pure, local, no network call. It also derives the npm global
-  root of every distinct `node` executable it finds — on PATH, in an nvm
-  `bin/` dir, or in `~/.bun/bin`, not only the running one — scanning that
-  root's `akm-cli/dist` directly so a copy `npm install -g`'d there is
-  reported even when it was never linked onto PATH, and it scans
-  `${BUN_INSTALL:-~/.bun}/lib/node_modules` unconditionally — the layout a
-  plain `npm install -g` produces when it runs under bun's `node -> bun`
-  shim, easy to mistake for a bun-managed install and easy to strand out of
-  sight. `akm upgrade` now enumerates the OTHER installs after the primary
-  install step runs — including when that step is a no-op because the
-  running install is already current — and, for each with a recognizable
-  manager (npm/bun/pnpm), moves it to the version the running install has
-  afterward (never an older `latest`, which would silently downgrade a peer
-  on a host running a prerelease) via that install's own adjacent package
-  manager, run under that install's own `node` (its bin directory prepended
-  to `PATH`), and re-verifies it, reporting the outcome in a new
-  `otherInstalls` field; an install it cannot manage (a standalone binary, a
-  checkout) is listed but never touched. Nor is an npm global package the
-  direct `akm-cli/dist` scan found but that nothing links onto any bin
-  dir — there is no package manager link left to update through, so it is
-  reported as an orphan to remove or reinstall by hand rather than "will
-  update it via npm" (on Windows, where npm links a global package with a
-  cmd-shim file in its own prefix rather than a symlink, a prefix holding
-  `akm.cmd` counts as linked, and that prefix is the install's bin
-  directory). `--check` lists the same information read-only. A new
-  `akm-installs` `akm health` advisory (`--probe`-gated) reports the same
-  enumeration as an ongoing check, warning by path with the manager command
-  that pins it to the running version — the same `getPackageManagerUpgradeCommand`
-  `akm upgrade` uses, never `@latest`, so a host running a prerelease isn't
-  told to downgrade; that same unlinked orphan is instead named "not on
-  PATH" with a remedy to remove its package directory. `akm health`'s
-  `plugin-version` check (itlackey/akm#832)
-  also now reports the OpenCode plugin's bundled `akm-cli` version — an
-  in-process copy sharing the host's databases — against the running CLI, as
-  a second `opencode-plugin-version` advisory.
+- **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
+  `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
+  release as a real global npm package, drives it to build a realistic home
+  (a filesystem, git, website, and npm bundle; scheduled and manual tasks; a
+  synced fake crontab), then installs the candidate build OVER it in place —
+  the same prefix a real `npm i -g`/`bun add -g` upgrade replaces — and runs
+  the candidate against that home — `migrate status`/`apply`, `bundle list`
+  with every bundle confirmed enabled, `search`, `show`, plain `task sync`
+  (dry-run and real, no `--rebind`, as an upgrading user actually runs it),
+  executing the generated cron command and confirming it ran the candidate,
+  `health`, `improve --plan` — and finally installs a separate untouched copy
+  of the previous release and runs it back against the candidate-written
+  home. Wired into CI (`.github/workflows/ci.yml`'s new `upgrade-rehearsal`
+  job) and `tests/release-check.sh` (right after packing the release
+  candidate). `.github/workflows/ci.yml` also now runs on pushes to
+  `release/*` branches, which previously had no CI coverage at all.
+  It also proves the fix for the defect above (Fixed, below) two
+  ways: a new first assertion in the "previous"-origin suite runs
+  scheduled-a's generated cron command BEFORE any `migrate` call and
+  confirms `akm-migrate status --host-local` then reports `current` with no
+  manual step in between; and a second, dedicated origin,
+  `KNOWN_UPGRADE_ORIGINS`' fixed `"0.9.15"` (the last release before
+  source-bound scheduler grants), builds a minimal home whose crontab row
+  carries no host-local grant at all — the exact 2026-09-24 shape — and
+  confirms the candidate carries the grant forward and a plain `task sync`
+  afterward does not remove it.
 - **`akm bundle rename <old> <new>`.** Renaming a bundle used to mean
   hand-editing the `bundles` key in `config.json`, which stranded every
   durable ref the tool had minted under the old id — the index and state
@@ -100,108 +137,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spell the old prefix. `--dry-run` shows the full plan (row counts,
   scheduler refs, content files, and the installed native scheduler rows a
   real run's sync would replace) without writing anything.
-- **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
-  `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
-  `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag
-  `next`) could only be installed by hand, bypassing the migration/index step
-  `akm upgrade` is designed to run. `--version` installs an exact release;
-  `--tag` resolves an npm dist-tag through the npm registry (npm/Bun/pnpm
-  installs only — a standalone binary has no dist-tag, use `--version`); the
-  two are mutually exclusive, and `--check` reports the resolved target
-  without installing. A target older than the running version is a downgrade
-  and is refused unless combined with `--force`. Every package-manager
-  install now pins `<pkg>@<resolved-version>` instead of the floating
-  `@latest` tag, so the exact version that was decided on is the one that
-  gets installed. `akm upgrade` also now runs `akm task sync` after
-  `akm index`, so scheduler rows recorded under the same install method pick
-  up the freshly installed binary path without a manual step; a sync failure
-  is reported under `postUpgrade.taskSync`, never thrown, and is now also
-  folded into `postUpgrade.message` so a text-output caller sees it without
-  reading the structured field, using the child's own `{ok:false, error,
-  code}` error envelope (the trailing JSON object on its stderr, usually
-  pretty-printed) rather than the first line of its stderr — a warning
-  `akm task sync` printed ahead of it (e.g. a carried-forward grant) could
-  otherwise read as the failure detail. `--skip-post-upgrade` skips both the
-  index rebuild and the task sync. `akm upgrade --check`'s plain-text output now
-  names the `--version`/`--tag` it actually checked instead of a bare
-  `akm upgrade` (which would install `latest`), and reports a downgrade
-  target as a downgrade rather than as "available".
-- **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
-  `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
-  release as a real global npm package, drives it to build a realistic home
-  (a filesystem, git, website, and npm bundle; scheduled and manual tasks; a
-  synced fake crontab), then installs the candidate build OVER it in place —
-  the same prefix a real `npm i -g`/`bun add -g` upgrade replaces — and runs
-  the candidate against that home — `migrate status`/`apply`, `bundle list`
-  with every bundle confirmed enabled, `search`, `show`, plain `task sync`
-  (dry-run and real, no `--rebind`, as an upgrading user actually runs it),
-  executing the generated cron command and confirming it ran the candidate,
-  `health`, `improve --plan` — and finally installs a separate untouched copy
-  of the previous release and runs it back against the candidate-written
-  home. Wired into CI (`.github/workflows/ci.yml`'s new `upgrade-rehearsal`
-  job) and `tests/release-check.sh` (right after packing the release
-  candidate). `.github/workflows/ci.yml` also now runs on pushes to
-  `release/*` branches, which previously had no CI coverage at all.
-  It also proves the fix for the defect above (Fixed, below) two
-  ways: a new first assertion in the "previous"-origin suite runs
-  scheduled-a's generated cron command BEFORE any `migrate` call and
-  confirms `akm-migrate status --host-local` then reports `current` with no
-  manual step in between; and a second, dedicated origin,
-  `KNOWN_UPGRADE_ORIGINS`' fixed `"0.9.15"` (the last release before
-  source-bound scheduler grants), builds a minimal home whose crontab row
-  carries no host-local grant at all — the exact 2026-09-24 shape — and
-  confirms the candidate carries the grant forward and a plain `task sync`
-  afterward does not remove it.
-- **A single retired-config-keys registry (`src/core/config/retired-keys.ts`)
-  and a schema-compat lint (`bun scripts/lint-config-schema-compat.ts`, wired
-  into `bun run lint`) that fails the build when a config key disappears from
-  `schemas/akm-config.json` or an object turns `.strict()` without being
-  registered.** `ExperimentalConfigSchema` went `.strict()` in 0.9.16 with no
-  record of which keys earlier releases accepted under it, and the retired
-  `experimental.workflowEngine` then failed every command for anyone whose
-  0.9.15-written config still carried it — the same knowledge used to be
-  split across `RETIRED_TOP_LEVEL_CONFIG_KEYS` (`config.ts`),
-  `RETIRED_EXPERIMENTAL_KEYS` (a dedicated `experimental.*` shim), and the
-  `extraParams` lift table, with nothing checking that a key removed from the
-  schema was registered anywhere. `stripRetiredConfigKeys`
-  (`src/core/config/retired-config-keys-shim.ts`, replacing the old
-  `experimental.*`-only shim) now drops every registered path — top-level or
-  nested — before validation and warns once per source naming all of them,
-  instead of only the `experimental.*` ones. `akm migrate apply` now removes
-  every registered `"ignored"` retired key from `config.json` too, not only
-  `experimental.*` (the registry's `"lifted"` keys — `extraParams`, and now
-  `stashDir`/`sources`/`installed`, see Fixed below — are converted by their
-  own dedicated shim instead): the migrator step (renamed
-  `scripts/akm-migrate/migrate/config-retired-experimental-keys.ts` ->
-  `config-retired-keys.ts`, plan field `configRetiredExperimentalKeys` ->
-  `configRetiredKeys`, prerelease migrator output) previously only cleaned
-  up `experimental.workflowEngine`, so the shim's own "Run `akm migrate
-  apply` to remove them" advice could never be made true for a top-level
-  retired key like `llm` or `profiles` — the warning would repeat forever.
-  It now shares its path-walking with the read shim
-  (`retiredConfigKeysIn`/`withoutRetiredConfigKeys`, exported from
-  `retired-config-keys-shim.ts`) instead of filtering the registry a second
-  time. Also deleted the two leftover duplicate retired-key lists this same
-  change was meant to replace: the dead `superRefine` warn loop in
-  `config-schema.ts` (every file-loaded config reaches that schema only
-  after the read shim has already stripped these keys) and the speculative
-  `RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES` in `config.ts` (both of its callers
-  already receive post-shim input).
-- **Three new `akm health` advisories that name an upgrade break within one
-  report** (`src/commands/health/upgrade-advisories.ts`):
-  `version-reconcile` warns when this host's host-local state hasn't
-  reconciled to the version that's actually running (a missing, stale, or
-  blocked `$STATE/version-reconcile.json` stamp), naming `akm migrate status`
-  and the first blocker; `scheduler-grants` (`--probe`-gated, like
-  `scheduler-binary`) warns when an installed native scheduler row has no
-  host-local grant yet, naming the refs and `akm task sync`; and
-  `scheduled-startup-failures` warns when a scheduled run in the health
-  window failed with a startup-class exit code (2 usage, 70 internal, 78
-  config) — a run that died before its body executed — naming the task id(s)
-  and, when a log is on disk, the first line naming the error. Previously
-  none of `state-db-migrations`, `scheduler-binary`, or `task-fail-rate` said
-  any of this, so an upgrade break could run for hours before anyone
-  noticed. See `docs/architecture/internals/health-advisories.md`.
 
 ### Fixed
 
@@ -222,6 +157,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   result always carries `registryId` (the registry install id) rather than
   only when it happens to differ from `bundleId`, so a caller no longer has
   to reconstruct the key from `sourceAdded`/`installed`.
+- **`akm bundle add <registry ref> --name <name>` now keys the bundle by
+  `<name>`.** For npm, `github:` and Git refs, `--name` was accepted and then
+  dropped before the bundle key was derived, so the bundle was keyed by the
+  basename of its materialized cache directory instead — `extracted`, or
+  `extracted-<hash>` once that was taken — and its assets were only
+  addressable as `extracted//…`. The name now goes through the same
+  slug-legality and uniqueness rules as a local or website add. The install's
+  registry id is still recorded as `registryId`, so `akm bundle update` and
+  `akm bundle remove` keep resolving the original ref. Re-adding a ref that is
+  already installed keeps its existing key, as local and website re-adds do.
+- **A registry bundle added without `--name` is keyed by its package or repo
+  name instead of `extracted`.** `akm bundle add npm:<pkg>` now creates bundle
+  `<pkg>` (`npm:@scope/pkg` → `pkg`), and `github:owner/repo` or a Git URL
+  ending in `/repo` creates `repo` — the mapping the bundle schema already
+  documented for `registryId`. The key used to come from the basename of the
+  cache directory the package was unpacked into, which is always `extracted`,
+  so every registry bundle after the first was `extracted-<hash>`. A dotted
+  or mixed-case name is slugged like a directory name (`Foo.js` → `foo-js`),
+  and a `--name` that is not a legal bundle slug now falls back to this name
+  too. Bundles that are already installed keep their current key, including
+  `extracted`, because every recorded `extracted//…` ref depends on it.
 - **A one-file change in a large directory no longer costs `akm index` half
   an hour.** Both full-text tables keyed their per-entry deletes on
   `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole
@@ -264,27 +220,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   order. `akm migrate status|apply` (`scripts/akm-migrate/main.ts`) already
   exits 1 for any blocked plan, so a poisoned step no longer exits the
   internal-error code 70 with nothing printed.
-- **The legacy `stashDir`/`sources[]`/`installed` config shape is repaired
+- **The legacy `stashDir`/`sources[]`/`installed` config shape is persisted
   by `akm migrate apply`, and an empty one no longer fails every command**
   (#863). `migrateLegacySourceShape`
   (`src/core/config/legacy-source-shape-shim.ts`) has always converted a
   usable `stashDir`/`sources[]`/`installed` in memory on every load and told
   the user to run `akm migrate apply` to make that stick, but nothing on disk
-  ever did — the retired-keys migrator step doesn't touch them, since
-  `RETIRED_CONFIG_KEYS` (`src/core/config/retired-keys.ts`) registers them
-  `"lifted"`, not `"ignored"`. A new migrator step
-  (`scripts/akm-migrate/migrate/config-legacy-source-shape.ts`, plan field
-  `configLegacySourceShape`, wired in ahead of `configRetiredKeys`) now calls
-  that same shim to persist the conversion to `config.json` once, under a
-  backup, making the warning's advice true. Separately, through 0.9.16 and
-  0.9.17-alpha.3 a config whose `sources` was `[]` (what 0.8.9's
-  `akm source remove` writes after the last source is removed) or whose
-  `stashDir` was empty or unusable failed every command with exit 78
-  `INVALID_CONFIG_FILE` ("sources is not supported"): the shim only fired on
-  a non-empty value while the schema rejected any present key, and
-  `akm migrate apply` failed the same way, so nothing could repair it. The
-  shim now triggers on the key's presence — such a config loads with the
-  one-time legacy-shape warning, and `akm migrate apply` removes the keys.
+  ever did; the migrator's `configFile` step now writes that current shape
+  back once, under a backup. Separately, through 0.9.16 and 0.9.17-alpha.3 a
+  config whose `sources` was `[]` (what 0.8.9's `akm source remove` writes
+  after the last source is removed) or whose `stashDir` was empty or
+  unusable failed every command with exit 78; it now loads, with the shim's
+  one-time warning.
 - **A `version: 2` or `version: 3` task source reads and runs again instead
   of failing closed on upgrade.** `e413af024` deleted the in-memory
   v2/v3 -> v4 read shim on the argument that "untrusted source cannot carry
@@ -312,221 +259,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validate` reports such a file `converts` (`sourceVersion` still `4`)
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
-- **`akm bundle add <registry ref> --name <name>` now keys the bundle by
-  `<name>`.** For npm, `github:` and Git refs, `--name` was accepted and then
-  dropped before the bundle key was derived, so the bundle was keyed by the
-  basename of its materialized cache directory instead — `extracted`, or
-  `extracted-<hash>` once that was taken — and its assets were only
-  addressable as `extracted//…`. The name now goes through the same
-  slug-legality and uniqueness rules as a local or website add. The install's
-  registry id is still recorded as `registryId`, so `akm bundle update` and
-  `akm bundle remove` keep resolving the original ref. Re-adding a ref that is
-  already installed keeps its existing key, as local and website re-adds do.
-- **A registry bundle added without `--name` is keyed by its package or repo
-  name instead of `extracted`.** `akm bundle add npm:<pkg>` now creates bundle
-  `<pkg>` (`npm:@scope/pkg` → `pkg`), and `github:owner/repo` or a Git URL
-  ending in `/repo` creates `repo` — the mapping the bundle schema already
-  documented for `registryId`. The key used to come from the basename of the
-  cache directory the package was unpacked into, which is always `extracted`,
-  so every registry bundle after the first was `extracted-<hash>`. A dotted
-  or mixed-case name is slugged like a directory name (`Foo.js` → `foo-js`),
-  and a `--name` that is not a legal bundle slug now falls back to this name
-  too. Bundles that are already installed keep their current key, including
-  `extracted`, because every recorded `extracted//…` ref depends on it.
-- **`akm task sync` could remove a scheduled task's evidence before a
-  post-upgrade `akm migrate apply` ever ran.** Only `akm upgrade` triggered
-  the migrator, and it cannot install a prerelease — every prerelease
-  install, plain `npm i -g`/`bun add -g`, and image rebuild bypassed it
-  entirely, with nothing detecting that the host was last written by a
-  different version. Meanwhile `akm task sync` treats an installed native
-  binding with no grant as an orphan and removes it (`desired` holds only
-  granted refs) — so a `task sync` that ran before a human got around to
-  `akm migrate apply` permanently deleted the installed row the migration
-  needed to re-grant it, taking every scheduled task on the host down with
-  no way back short of re-authoring them. Fixed by the startup
-  reconciliation and `task sync` carry-forward below (2026-09-24, one host).
-- **The post-install version-mismatch message blamed a lagging `@latest`
-  dist-tag and offered a no-op remedy.** Every package-manager install now
-  pins `<pkg>@<resolved-version>` (see Added, above), so a mismatch between
-  the installed version and `akm --version` after `akm upgrade` is no
-  longer dist-tag lag — the remedy of installing `@<resolved-version>` was
-  already what had just run. The message
-  (`src/commands/sources/self-update.ts`) now says another `akm` earlier on
-  `PATH` may be shadowing the freshly installed one, or the install is
-  partial, and points at `which -a akm` / `command -v akm`.
-- **An untrusted transaction journal is quarantined and reported instead of
-  aborting the whole recovery scan; a trusted one whose recovery action
-  fails is deferred instead of quarantined.** `recoverTxnsForRoot`
-  (`src/core/fs-txn.ts`) fenced and finalized every journal under one loop
-  with no per-journal isolation: the first journal whose fence or handler
-  threw aborted the scan, leaving every OTHER journal under the same root
-  unrecovered and `akm migrate apply` exiting 70 (twelve journals, one
-  diverged, took down recovery for all twelve). Each journal's fence now
-  runs under its own `try`; an unreadable `journal.json` or a fence
-  violation (root binding, phase membership, path containment, the kind's
-  own `validate`) means the journal cannot be trusted, and moves it to
-  `$DATA/txn-quarantine/<rootNs>/<id>/` (with a `reason.json` naming the
-  reason, the akm version, and the timestamp — nothing is deleted). A
-  journal that PASSES its fence but whose `rollback`/`finalize` throws is
-  left exactly where it is instead: the recovery ACTION failed (a refused
-  git push, a target that diverged, `state.db` contention), not the
-  journal, so quarantining it would discard the only record of an
-  interrupted mutation — it is `warnOnce`-logged and reported under
-  `deferred` for a later scan to retry. Either way the scan continues with
-  the next journal. `recoverTxnsForRoot` now returns
-  `{ recovered, quarantined, deferred }`; `akm migrate apply`'s `staleTxns`
-  plan section reports all three lists, and neither a quarantined nor a
-  deferred journal makes the plan `blocked`. A non-empty
-  `$DATA/txn-quarantine` surfaces as the `txn-quarantine` `akm health`
-  advisory, and a deferred journal older than an hour surfaces as the new
-  `txn-awaiting-recovery` advisory, naming the proposal id when the journal
-  belongs to one. `akm migrate status` (and `apply --dry-run`) also runs the
-  read-only fence check per journal and marks a would-be-quarantined one
-  with `wouldQuarantine: { reason }` in its `staleTxns.pending` entry — a
-  fence violation is cheap to determine without mutation; a journal that
-  would only fail during `rollback`/`finalize` still reports as plain
-  "pending", since that requires actually running recovery.
-- **A bad proposal transaction journal no longer aborts recovery for every
-  other proposal sharing its root, and quarantine is reserved for journals
-  that cannot be trusted.** `recoverProposalTransactions`
-  (`src/commands/proposal/repository.ts`), which runs ahead of every
-  `akm proposal accept`/`reject`, threw out of its scan on the first
-  corrupt, unsafe, or finalize-failing journal it found under a target's
-  transaction namespace — taking down recovery of every OTHER proposal's
-  pending journal in the same root along with it. An unreadable
-  `journal.json`, or one that fails the unsafe check or the fence, is
-  untrusted and is quarantined (via `quarantineTxnDirSafely`, exported from
-  `src/core/fs-txn.ts` for reuse here), the same per-journal contract
-  `recoverTxnsForRoot` has, above. A SIBLING journal (some other proposal's)
-  whose rollback or finalize fails — transient or not — is a failed
-  recovery ACTION rather than an untrusted journal, so it is left in place
-  with a warning for a later retry instead of being quarantined. The
-  requested proposal's OWN journal is never quarantined or deferred either
-  way: any failure on it — the unsafe check, the fence, rollback, or
-  finalize — leaves that journal in place and fails the command (wrapping a
-  raw `state.db`-contention error as transient, exit 75), rather than
-  letting `accept`/`reject` proceed over a crashed transaction whose
-  outcome is still unknown. Two more unguarded scans on that same
-  `accept`/`reject` path shared the same failure mode and are fixed the
-  same way: `recoverProposalTransactionsForStash`'s upfront root-discovery
-  scan (which read every proposal journal under `$DATA/txn` to find which
-  roots to recover) now tolerates an unreadable sibling instead of throwing
-  before recovery is even reached, and warns once naming the unreadable
-  count for a root that has no other matching journal to trigger a full
-  scan of it; `recoverRejectTransaction` (run on every `accept` ahead of
-  promotion, and which only ever finalizes the requested proposal's own
-  reject journal) still quarantines a corrupt journal, but every other
-  failure on that journal now leaves it in place and fails the command
-  instead of quarantining it.
-- **Every `state.db` open no longer leaks a lock-mutex sidecar file.**
-  `acquireMaintenanceActivitySync` (`src/core/maintenance-barrier.ts`) gave
-  every activity lock its own uniquely-named path
-  (`maintenance-activities/<name>-<pid>-<uuid>.lock`), and `file-lock.ts`'s
-  operation mutex always derived its sidecar from that path
-  (`.<lock-basename>.operations.sensitive`) — a mutex meant to serialize
-  repeated use of one canonical path, not to be created fresh per
-  acquisition. Since nothing ever revisits a path unique to one acquisition,
-  nothing ever removed its sidecar either. Activity locks now share one
-  mutex path per data dir (`maintenance-activities/.activities.operations.sensitive`);
-  `tryAcquireLockSync`/`releaseLock`/`reclaimStaleLock` (`src/core/file-lock.ts`)
-  gained an optional `mutexPath` override for this, with every other caller
-  (config-io, run-lock, version-reconcile, improve, env secret, index
-  writer/rebuild locks) unaffected and still deriving the canonical path.
-  `akm index`'s finalize phase now also runs a bounded, best-effort
-  `sweepMaintenanceActivityOrphans()` (new export in `maintenance-barrier.ts`)
-  that removes leftover pre-fix sidecars whose lock file is gone and activity
-  lock files whose owner pid has died, capped at 50,000 files per run (about
-  0.2 s) so a large backlog drains over a few `akm index` runs instead of
-  stalling one.
-- **`akm setup`'s scheduled-tasks review no longer pre-checks a task from a
-  pending grant in the wrong bundle.** `stepScheduledTasks`
-  (`src/setup/steps/tasks.ts`) pre-checked an embedded template whenever ANY
-  bundle had a pending carry-forward grant whose concept id matched the
-  template's name, so an installed, ungranted `team//tasks/improve` would
-  pre-check the default bundle's `improve`. It now only counts a pending
-  grant whose bundle equals the default write target `listSetupTaskDefinitions`
-  reviews.
-
-### Changed
-
-- **Every akm command reconciles host-local state on a version change, with
-  no manual step.** `src/cli.ts`'s `runCli()` now runs
-  `reconcileOnVersionChange` (`src/core/version-reconcile.ts`) right after
-  `applyEarlyStderrFlags`, gated by a new `shouldReconcileOnStartup`
-  predicate: it skips the same recovery/setup surfaces
-  `shouldBypassConfigStartup` does (`--help`/`--version`/bare/`help`/
-  `hints`/`setup`/`migrate`/`config path`) but, unlike that predicate, DOES
-  run for `task run --id ...` — a scheduled task surviving an upgrade with
-  no manual step is the whole point. `reconcileOnVersionChange` compares a
-  `$STATE/version-reconcile.json` stamp against the running akm's version
-  and, on a mismatch, spawns `akm-migrate apply --host-local` under a
-  `$STATE/locks/version-reconcile.lock` lock before writing the new stamp.
-  A migration that cannot finish (`blocked`, or the spawn itself failing)
-  warns once, retries no more than once per 10 minutes, and never fails the
-  command it ran ahead of. The 10-minute backoff is per running version
-  (`lastAttemptVersion` on the stamp), so installing a fix no longer has to
-  wait out a blocked attempt some earlier version made, and
-  the startup summary now also names any journal `staleTxns` quarantined
-  during the reconcile, with its quarantine path, and any journal it left
-  deferred for a later retry, with the reason, instead of only counting the
-  ones it recovered; a stale scheduler grant the same reconcile's
-  carry-forward could not carry forward is now named the same way.
-- **`akm task sync` carries a scheduler grant forward before it would
-  otherwise remove it as ungranted.** An installed native
-  scheduler binding backed by a file in an enabled bundle, but with no
-  `scheduler.enabled` entry — the exact shape a lost or reset host-local
-  config leaves behind — is granted before `desired`/`removed` is computed,
-  instead of being deleted on the next sync. Carry-forward is opt-in and
-  only an explicit `akm task sync` (and its `--dry-run` preview) requests
-  it; the reconciling syncs inside `akm task add`, `enable` and `disable`
-  never carry forward, so none of those commands can re-grant or reinstall
-  a binding the same call just revoked. `--dry-run` reports what would be
-  carried forward under a new `carriedForward` field and never applies it;
-  its plan now reflects the carry-forward too, so a row listed under
-  `carriedForward` is never also listed under `removes`. `akm setup`'s
-  confirmed activation also carries forward grants for installed tasks
-  outside its review before it applies the operator's selections, so a task
-  left unchecked is still removed. Its task-review checklist now also
-  pre-checks an embedded task whose grant was lost but whose installed
-  native binding the carry-forward would still grant, instead of showing it
-  disabled and unchecked (the wizard skips startup reconciliation, so this
-  is exactly the state left behind by an upgrade that reset host-local
-  config); any carry-forward warning or stale-grant notice is now logged
-  instead of discarded. Carry-forward never rebinds an existing
-  grant to a new source: a ref already granted, even to a stale `sourceId`
-  left behind when its bundle was removed and re-added under the same name,
-  is reported as stale rather than silently re-granted — `akm task enable
-  <ref>` rebinds a stale task grant explicitly; a stale workflow grant has
-  no such command and must be re-created explicitly.
-- **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
-  config.json (legacy source shape, `extraParams`, retired keys, scheduler
-  `sourceId` binding), pending `state.db` migrations (historical-destructive
-  ones included, with the same verified safety copy), the scheduler-grant
-  carry-forward, and `$DATA/txn` stale-transaction recovery — never bundle
-  content (task v2/v3/v4 rewrites, dead `.akm` residue, writer relocation).
-  Skipped sections are absent from the plan, not empty, and the plan's
-  `mode` field reads `"host-local"`. `scripts/akm-migrate/help.txt` documents
-  the two modes.
-- **Scheduler-grant carry-forward is now a reusable `src/` module.**
-  `pendingGrantsFromInstalled`/`carryForwardSchedulerGrants`
-  (`src/tasks/scheduler-grant-carry-forward.ts`) hold the logic that used to
-  live only in `scripts/akm-migrate/migrate/scheduler-activation.ts` (now a
-  thin importer), so `akm task sync` can carry a grant forward before it
-  would otherwise remove it as ungranted. A carried-forward row
-  now also requires a backing asset file on disk — an installed native
-  binding for a task/workflow that no longer exists in the bundle is never
-  granted, closing the gap a purely name-based carry-forward would have left
-  open for a stale or forged crontab row.
-- **Documented the persisted-data compatibility contract.** Added
-  `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
-  reader owes data an earlier release wrote, plus a per-format table (config,
-  `state.db`, `index.db`, task source, workflow IR, native scheduler rows,
-  transaction journals, proposal and task-history metadata, lock payloads,
-  guarded directory manifests, `.akm` residue) naming where each is written,
-  its version marker, its older/newer-data behavior, and which gate covers
-  it — with explicit `Gap:` notes where the code does not meet the contract
-  yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
-  persisted data" section now points at this doc instead of a deleted file.
 
 ## [0.9.17-alpha.3] - 2026-09-24
 

@@ -50,8 +50,8 @@ describe("triage improve-process config schema", () => {
     // An unknown judgment key is not fatal: the loader warns about it and it changes nothing.
     const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } });
     expect(withUnknown.success).toBe(true);
-    // judgment.mode is retired in favor of a named engine.
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(false);
+    // judgment.mode is retired in favor of a named engine; like any unknown key it is tolerated, not fatal.
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(true);
     // judgment.timeoutMs accepts null
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
   });

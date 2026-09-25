@@ -29,31 +29,25 @@ akm migrate apply
 
 In order, every run applies (or, under `status`/`--dry-run`, plans):
 
-1. **Legacy source shape** — a `stashDir`/`sources[]`/`installed` config
-   converted to `bundles`/`defaultBundle` (`configLegacySourceShape`).
-2. **Legacy config lift** — `extraParams` keys on an engine config moved onto
-   first-class fields (`configExtraParams`).
-3. **Retired config keys removed**, top-level and nested
-   (`configRetiredKeys`); config loading already ignores them with a one-time
-   warning, so this only cleans the file.
-4. **Scheduler grants bound to their source installation**, with stale grants
-   for removed bundles dropped (`configSchedulerSourceIds`).
-5. **Pending `state.db` migrations**, historical-destructive ones included
+1. **config.json in its current shape** (`configFile`): retired and unknown
+   keys dropped, legacy `extraParams` lifted onto first-class fields, the
+   legacy `stashDir`/`sources[]`/`installed` layout converted to
+   `bundles`/`defaultBundle`. Config loading already does all of this in
+   memory; this persists it under a backup.
+2. **Pending `state.db` migrations**, historical-destructive ones included
    (`stateMigrations`). This is the only path (besides `akm upgrade`, which
    calls the same code) that is allowed to apply a destructive migration to an
    existing, unversioned or behind-generation `state.db` — see
    [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
-6. **Source-owned schedule enablement** converted to host-local scheduler
-   grants (`schedulerActivation`).
-7. **Task sources**: task-v2 files to task v3, then task-v3 files to task
+3. **Task sources**: task-v2 files to task v3, then task-v3 files to task
    source v4 (`taskV3Migration`, `taskV4Migration`). Each generation keeps its
    own lock and backup, so a file blocked in one generation does not stop the
    other from converting files that are already current.
-8. **Stash residue sweeps**: superseded pre-0.9.0 `.akm` files and stale
-   filesystem transactions (`deadResidue`, `staleTxns`), then live `.akm`
-   writers relocated to `$STATE`/`$CACHE` (`writerRelocation`), scoped to the
-   configured local bundles (the residue sweeps are skipped entirely when no
-   bundle is configured yet).
+4. **Residue sweeps**: superseded pre-0.9.0 `.akm` files in the stash and the
+   transaction-journal, maintenance-barrier, lock-mutex and version-stamp
+   files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`),
+   then live `.akm` writers relocated to `$STATE`/`$CACHE`
+   (`writerRelocation`), scoped to the configured local bundles.
 
 The step list in [`docs/reference/cli.md`](../reference/cli.md#migrate) is the
 authoritative one; the two must agree.
@@ -71,16 +65,11 @@ planners' content hashes, abbreviated here):
   "schemaVersion": 1,
   "status": "current",
   "blockers": [],
-  "configLegacySourceShape": { "pending": { "converted": [] } },
-  "configExtraParams": { "pending": { "lifted": [], "conflicts": [] } },
-  "configSchedulerSourceIds": { "pending": { "changes": [] } },
-  "configRetiredKeys": { "pending": { "removed": [] } },
+  "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
-  "schedulerActivation": { "pending": [], "warnings": [] },
   "taskV3Migration": { "schemaVersion": 1, "generation": "1b09…6cc8", "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
   "taskV4Migration": { "schemaVersion": 1, "generation": "ccd6…0150", "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
   "deadResidue": { "pending": [] },
-  "staleTxns": { "pending": [] },
   "writerRelocation": { "pending": { "stash": { "directories": [], "lockArtifacts": [], "skippedLocks": [] } } }
 }
 ```
@@ -136,7 +125,7 @@ Key fields:
 | `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskV3Migration` / `taskV4Migration` | Per-generation summary: `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
 | `backupPath` / `taskV4BackupPath` | Present after a real apply that changed at least one file in that generation — a timestamped snapshot directory. |
-| `deadResidue` / `staleTxns` | Present only when a bundle is configured. `{ pending: [...] }` under a read-only run, `{ removed: [...] }` / `{ recovered: [...], quarantined: [...], deferred: [...] }` after apply. An untrusted journal (unreadable `journal.json`, or a fence violation) is quarantined to `$DATA/txn-quarantine`; a trusted, fenced journal whose `rollback`/`finalize` throws is deferred, left in place under `$DATA/txn/<rootNs>/`. Neither is thrown, and neither sets `status` to `blocked`. `staleTxns.pending` entries carry `wouldQuarantine: { reason }` when the journal's read-only fence check alone (not a `rollback`/`finalize` run) already shows it would be quarantined by a real apply. |
+| `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` / `{ recovered: [...], quarantined: [...], deferred: [...] }` after apply. An untrusted journal (unreadable `journal.json`, or a fence violation) is quarantined to `$DATA/txn-quarantine`; a trusted, fenced journal whose `rollback`/`finalize` throws is deferred, left in place under `$DATA/txn/<rootNs>/`. Neither is thrown, and neither sets `status` to `blocked`. `staleTxns.pending` entries carry `wouldQuarantine: { reason }` when the journal's read-only fence check alone (not a `rollback`/`finalize` run) already shows it would be quarantined by a real apply. |
 
 **Backups and their retention:**
 

@@ -80,7 +80,7 @@ never collide:
 | `$STASH/.akm/eval-cases/` | `$STATE/improve/eval-cases/<stash>/` |
 | `$STASH/.akm/measurement/verdicts/` | `$STATE/improve/measurement/verdicts/<stash>/` |
 | `$STASH/.akm/unresolved-sources/` | `$CACHE/index/unresolved-sources/<stash>/` |
-| `$STASH/.akm/improve.lock` (+ `.improve.lock.operations.sensitive` mutex) | `$STATE/locks/<stash>/improve.lock` (+ `.improve.lock.operations.sensitive`) |
+| `$STASH/.akm/improve.lock` | `$STATE/locks/<stash>/improve.lock` |
 
 `akm migrate status`/`apply` covers every configured LOCAL bundle (the
 default stash first, then every other filesystem-backed bundle — a

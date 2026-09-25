@@ -335,18 +335,6 @@ Returns a JSON object with:
 | `registries` | Configured registries |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
-| `compat` | Compat manifest (see below) — plugins gate on these, not on the version string |
-
-`compat` fields:
-
-| Field | Description |
-| --- | --- |
-| `indexGeneration` | `index.db` schema generation this binary reads/writes |
-| `stateLedgerHead` | Id of the last applied `state.db` migration |
-| `taskSourceVersion` | Task source document version this binary writes |
-| `configVersion` | `config.json` `configVersion` this binary writes |
-| `workflowIrVersion` | Frozen workflow plan `irVersion` this binary writes |
-| `pluginProtocol` | JSON key-set contract of plugin-facing command results (`search`, `curate`, `show`, `info`, `proposal extract`) |
 
 `semanticSearch.status` values:
 - `"ready-vec"` — native sqlite-vec extension active (fastest)
@@ -382,7 +370,7 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, the `scheduler-binary` version check, and the `akm-installs` host-wide version-skew check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
@@ -392,9 +380,7 @@ to the `default-llm-engine` and every `configured-engines` LLM connection (and
 an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
 runs the scheduler's recorded akm binary with `--version` to check it
-against the running CLI (`scheduler-binary`), and enumerates every OTHER
-`akm` install on the host with its own `--version` probe, same as
-`akm upgrade` (`akm-installs`).
+against the running CLI (`scheduler-binary`).
 
 Primary result fields:
 
@@ -1267,11 +1253,10 @@ use their package manager.
 
 Upgrade replaces the installed program when a newer release exists, then runs
 `akm-migrate apply` — the migrator that shipped with whatever is now installed
-— rebuilds the derived index, and re-syncs scheduled tasks (`akm task sync`)
-so scheduler rows pick up the newly installed binary path. The migration step
-runs on every `akm upgrade`, install or no install, and its plan is reported
-under `migration`; an upgrade whose migration is blocked or could not run
-exits 1. That makes `akm upgrade` safe as a container entrypoint: on a current
+— and rebuilds the derived index. The migration step runs on every
+`akm upgrade`, install or no install, and its plan is reported under
+`migration`; an upgrade whose migration is blocked or could not run exits 1.
+That makes `akm upgrade` safe as a container entrypoint: on a current
 installation it is a no-op. An akm installed as a dependency of another
 package (`installMethod: "package-local"`) is never reinstalled — the parent
 package owns that copy — but its migrations still run. Standalone downloads
@@ -1281,33 +1266,17 @@ Standalone downloads are streamed directly to the staged file while SHA-256 is
 computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 1 MiB; an oversized response is cancelled and the staged file is removed.
 
-By default `akm upgrade` installs the latest release. `--version` or `--tag`
-(mutually exclusive) install a specific target instead: `--version` names an
-exact semver release; `--tag` names an npm dist-tag (e.g. `next` for a
-prerelease) and only applies to npm/Bun/pnpm installs, since a standalone
-binary has no dist-tag to resolve — use `--version` there. A `--version`/
-`--tag` older than the running version is a downgrade and is refused unless
-combined with `--force`. `--check`'s plain-text output names the target it
-resolved: `run 'akm upgrade --version X'` / `--tag <t>` for an explicit
-target instead of a bare `akm upgrade` (which would install `latest`
-instead), and a downgrade target reads as "v<X> is older than the installed
-v<Y>; pass --force to downgrade" rather than "available".
-
 ```sh
-akm upgrade                    # Install a newer release if there is one, then run every pending migration
-akm upgrade --check            # Check for updates without installing (no migration step)
-akm upgrade --force            # Force the install even if already on latest
-akm upgrade --tag next         # Install the latest prerelease published under the "next" dist-tag
-akm upgrade --version 0.9.17   # Install that exact release
+akm upgrade              # Install a newer release if there is one, then run every pending migration
+akm upgrade --check      # Check for updates without installing (no migration step)
+akm upgrade --force      # Force the install even if already on latest
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--check` | Check for updates without installing |
-| `--force` | Force upgrade even if on latest version (also required to downgrade) |
-| `--version <semver>` | Install this exact version instead of the latest release |
-| `--tag <dist-tag>` | Install this npm dist-tag instead of the latest release (npm/bun/pnpm only) |
-| `--skip-post-upgrade` | Skip the post-upgrade index rebuild and task sync |
+| `--force` | Force upgrade even if on latest version |
+| `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.
@@ -1321,47 +1290,13 @@ Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
 full boot contract, JSON shapes, and exit codes.
 
-The post-upgrade `akm task sync` runs against the binary `akm upgrade` just
-installed, so scheduler rows recorded by an earlier sync under the *same*
-install method pick up the new binary path automatically — no manual
-`akm task sync` needed. Switching install methods entirely (installing via a
-different package manager than the one that put akm on PATH today) still
-needs a manual `akm task sync` afterward, since that switch does not go
-through `akm upgrade`; see [`task sync`](#task) and `akm health`'s
-`scheduler-binary` advisory. A failed post-upgrade task sync is reported
-under `postUpgrade.taskSync` rather than failing the upgrade; it is also
-folded into `postUpgrade.message`, so a plain-text caller sees it without
-reading the structured field.
-
-A host can run more than one `akm`: the shell's bun-global copy, cron's
-nvm-node copy, the OpenCode plugin's own bundled copy — each upgraded
-separately in the past, so one could silently fall behind. After the primary
-install step above runs — including when it is a no-op because the running
-install is already the latest version — `akm upgrade` also enumerates every
-OTHER `akm` on PATH and in the known install roots (bun global, the npm
-global root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
-version's `bin/`) and, for each with a recognizable manager (npm/bun/pnpm)
-not already at that version, moves it to the version the RUNNING install has
-after this command — never an older `latest` release (on a host running a
-prerelease newer than the last stable release, that would silently downgrade
-a peer already at the running version) — via that install's own adjacent
-package manager (not always the running install's), run under that install's
-own `node` rather than the running process's (its bin directory prepended to
-`PATH`, since npm/pnpm resolve `node` through `#!/usr/bin/env node` and would
-otherwise install into the wrong node's global prefix), and re-verifies it
-with `--version`. One already at the target version is reported `ok: true`
-without being reinstalled. An install with no manager it can run (a
-standalone binary, a checkout) is listed but never touched — update those by
-hand. An npm global package the enumeration found only by scanning
-`akm-cli/dist` directly, with nothing linking it onto any bin dir, is also
-never touched — no package manager command can update a copy nothing links
-to — and is reported as an orphan to remove or reinstall by hand instead of
-"will update it via npm". Results land in the `otherInstalls` field:
-`[{path, before, after, ok, message}]`. `--check` reports the same list
-read-only against that same target (`before` equals `after`; `ok` says
-whether that install already matches it), without touching anything. See
-`akm health`'s `akm-installs` advisory for the same enumeration surfaced as
-an ongoing health check, whose remedy command is built the same way.
+`akm upgrade` replaces the binary in place for its own install method, but a
+scheduler binding recorded by an earlier `akm task sync` under a *different*
+install method is not repointed automatically — the scheduler runs the
+binary path recorded at sync time, not whichever akm `upgrade` just
+installed. Run `akm task sync` after switching installers so scheduled runs
+pick up the new binary; see [`task sync`](#task) and `akm health`'s
+`scheduler-binary` advisory.
 
 ### clone
 
@@ -1772,40 +1707,31 @@ wrapper over the standalone `akm-migrate` executable (installed alongside
 akm has ever written so the CLI proper reads only current schemas. The steps,
 in order:
 
-1. legacy `stashDir`/`sources[]`/`installed` config converted to
-   `bundles`/`defaultBundle` (`configLegacySourceShape`) — config loading
-   already does this in memory with a one-time warning naming this command,
-   so this persists it to the file;
-2. legacy config `extraParams` keys lifted onto first-class engine fields
-   (`configExtraParams`);
-3. every registered retired config key removed, top-level (`llm`, `profiles`,
-   `agent`, ...) and nested (today `experimental.workflowEngine`)
-   (`configRetiredKeys`) — config loading already ignores them with a
-   one-time warning, so this only cleans the file;
-4. scheduler grants bound to the configured source installation that was
-   approved, with stale grants for removed bundles dropped
-   (`configSchedulerSourceIds`);
-5. pending `state.db` migrations, historical-destructive ones included, with
+1. config.json rewritten in its current shape (`configFile`): retired and
+   unknown keys dropped, legacy `extraParams` lifted onto first-class engine
+   fields, the legacy `stashDir`/`sources[]`/`installed` layout converted to
+   `bundles`/`defaultBundle`, `configVersion` bumped — the same pipeline
+   every load already runs in memory, so this only persists it, under a
+   backup;
+2. pending `state.db` migrations, historical-destructive ones included, with
    a verified sibling safety copy (`stateMigrations`) — the only path besides
    `akm upgrade` that admits released migration 018, which an ordinary
    command refuses;
-6. source-owned schedule enablement converted to host-local scheduler grants
-   (`schedulerActivation`);
-7. task-v2 files to task v3, then task-v3 files to task source v4
+3. task-v2 files to task v3, then task-v3 files to task source v4
    (`taskV3Migration`, `taskV4Migration`), each keeping its own lock, backup,
    prevalidation, and rollback, so a file blocked in the first generation does
    not stop the second from converting files already at `version: 3`;
-8. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
-   (`deadResidue`, `staleTxns`), then live `.akm` writers relocated to
-   `$STATE`/`$CACHE` (`writerRelocation`).
+4. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+   the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
+   version-stamp files older releases kept under `$DATA`, `$STATE` and
+   `$CONFIG`; then live `.akm` writers relocated to `$STATE`/`$CACHE`
+   (`writerRelocation`).
 
 ```sh
 akm migrate status
 akm migrate apply --dry-run
 akm migrate apply
 akm-migrate apply          # the same, without the akm wrapper
-akm-migrate apply --host-local   # steps 1, 2, 3, 4, 5, 6, and stale-transaction
-                                  # recovery only -- never bundle content (7, 8)
 ```
 
 `status` and `apply --dry-run` are read-only. Apply skips blocked task
@@ -1827,27 +1753,6 @@ plan. Any `failedSteps` entry
 forces `status: "blocked"` and adds a matching line to `blockers`, so
 `akm migrate status|apply` reports the plan and exits 1 (not the internal-error
 70) the same way it does for any other blocked plan.
-
-**`--host-local`** narrows `status`/`apply` to config.json, `state.db`,
-scheduler grants (including step 6's carry-forward, from an installed
-native scheduler row `akm task sync` already wrote), and `$DATA/txn` stale
-transactions — never bundle content (steps 7 and 8: task file rewrites,
-dead `.akm` residue, writer relocation), which stay reachable only through
-a full `apply`. The returned plan's `mode` field reads `"host-local"`, and
-a skipped section is absent from the plan, not empty.
-
-Every akm command now runs `akm-migrate apply --host-local` itself, once
-per version change: on startup, before the command's own work, akm compares
-`$STATE/version-reconcile.json` against its own version and, on a mismatch,
-runs the host-local apply under a lock before continuing — including for a
-scheduled `akm task run`. This is what lets a prerelease install
-(`npm i -g akm-cli@next`), a plain `npm i -g`/`bun add -g`, or an image
-rebuild — none of which can run `akm upgrade`'s own post-install step —
-still bring host-local state up to date with no manual step. A migration
-that cannot finish (blocked, or the reconcile attempt itself failing) warns
-once and lets the command run anyway; it is retried automatically no more
-than once every 10 minutes. `akm migrate status` (the full plan) always
-tells you exactly what remains pending and why.
 
 ### config
 
@@ -3041,21 +2946,17 @@ time. Each run is recorded as a row in the durable `task_history` table
 no `task_invoked`/`task_completed` event type on the `akm log` stream.
 
 Task source cannot enable itself. `akm task enable <fully-qualified-ref>` adds
-an exact source-bound `{kind, ref, sourceId}` grant to this host's
-`scheduler.enabled` config and
-syncs that bundle; `akm task disable` removes it and unschedules the task.
+the ref to this host's `scheduler.enabled` list and syncs that bundle; `akm task disable` removes it and unschedules the task.
 Manual `akm task run` remains available. To remove a task, delete its file
 (`<bundle>/tasks/<id>.yml`) and run `akm task sync` — sync uninstalls the
 orphaned scheduler entry.
 
-An explicit `akm task sync` also grants any installed, backed,
-enabled-bundle scheduler row that has no grant yet (the operator's own prior
-`task sync`, recognized rather than removed) instead of treating it as an
-orphan; `akm task disable <ref>` is how to drop one of those grants on
-purpose. `akm task sync --dry-run` prints the planned adds/updates/removes
-(removals carry their owning bundle) without touching the scheduler — zero
-writes, and any row it would grant is listed under `carriedForward` rather
-than under `removes`. Exits non-zero when removals are pending, so it can
+A config with no `scheduler.enabled` list at all (written before 0.9.17)
+means "keep what is installed": `akm task sync` takes the akm-written rows
+already in the scheduler as this host's choice and writes the list; an
+explicit list is never second-guessed. `akm task sync --dry-run` prints the
+planned adds/updates/removes (removals carry their owning bundle) without
+touching the scheduler — zero writes. Exits non-zero when removals are pending, so it can
 gate a CI/health check on "sync would change something."
 
 `sync`'s (and `sync --dry-run`'s) result always carries `failures: [{path,

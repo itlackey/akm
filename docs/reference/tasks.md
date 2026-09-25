@@ -174,25 +174,22 @@ would. Multiple schedule entries create deterministic scheduler bindings
 for the one source task.
 
 Task source v4 has **no enablement flag**. A source describes what may run;
-it cannot authorize its own host scheduling. Activation is an exact,
-host-local allow-list in `config.json` under `scheduler.enabled`, keyed by
-asset kind, fully qualified ref, and the approved source installation identity.
-Absence means disabled. A removed, disabled, or replaced bundle cannot reuse a
-grant written for an earlier source under the same name. Use `akm task
-enable <bundle>//tasks/<id>` and `akm task disable <bundle>//tasks/<id>` to
-change that list and immediately sync the affected bundle. `akm task add`
-enables its new task by default; `--disabled` writes the same task source but
-does not add the local activation.
+it cannot authorize its own host scheduling. Activation is this host's list of
+fully-qualified refs in `config.json` under `scheduler.enabled`. A ref that
+is not listed is disabled. A config with no list at all (written before
+0.9.17) means "keep what is installed": the first sync fills the list from
+the akm-written native bindings. Use `akm task enable <bundle>//tasks/<id>`
+and `akm task disable <bundle>//tasks/<id>` to change the list and
+immediately sync the affected bundle. `akm task add` enables its new task by
+default; `--disabled` writes the same task source but does not list it.
 
 `akm task run <id>` executes a task immediately, including a disabled task.
 `akm task sync` scans every enabled configured bundle, selects only locally
 activated task/workflow refs, validates the complete desired set, and then
 atomically reconciles scheduler state. `--bundle <name>` narrows that pass to
 one active bundle. If every configured bundle is disabled, sync removes the
-attributable native entries without reading task content. Scheduled task
-invocations check both the local activation and current source identity again at
-fire time before re-reading the guarded current task bytes; workflow targets
-then create a fresh durable workflow freeze.
+attributable native entries without reading task content. Workflow targets
+create a fresh durable workflow freeze at fire time.
 
 ## Typed inputs and output
 

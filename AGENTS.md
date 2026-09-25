@@ -19,7 +19,7 @@
 - Write-target resolution order is `--target` -> `defaultWriteTarget` -> working stash (`defaultBundle`); there is no fallback to the first writable source.
 - `writable` defaults to `true` on `filesystem` and `false` on `git` / `website` / `npm`; `writable: true` on `website` or `npm` is rejected at config load.
 - Treat `enabled: false` as inert across content reads, writes, indexing, and execution. Explicit bundle lifecycle commands may still update a named disabled bundle without activating it. Never infer the default/trusted bundle from array position; carry bundle identity and default status explicitly.
-- Scheduler grants are host-local `{kind, ref, sourceId}` entries. `sourceId` binds authority to the configured origin, bundle removal revokes its entries, and old grant shapes are rewritten only by `akm-migrate`.
+- `scheduler.enabled` is this host's list of scheduled refs (`bundle//tasks/x`); removing a bundle drops its refs. A config without the list means "keep what is installed": the first `task sync`/`setup`/`enable`/`disable`/`add` after an upgrade takes the akm-written native rows as the choice and writes it (`enabledRefsFromInstalled`, `src/tasks/activation-config.ts`). An explicit list, empty or not, is never second-guessed. There are no grants, source identities or fire-time checks.
 - `extends` may share portable policy, but host authority stays local: sources/defaults, registries, scheduler/execution/experimental state, credentials, executable argv/workspace, publication policy, and credential-bearing network connections must not be inherited. Bundle-relative chains require physical (realpath) containment.
 - Executable asset frontmatter may request a tool subset but cannot set child `workspace`, `environment`, or opaque `runtime`; tool requests are capped by local `execution.allowedTools` and must be enforceable by the selected lowerer.
 - Unsafe CLI overrides name one risk. Use `--allow-insecure-transport` only for plain HTTP and `--allow-dangerous-env-keys` only for reviewed process-hijacking environment keys; do not add a combined bypass.
@@ -80,23 +80,9 @@ Machinery that prevents **data loss or corruption** passes test 2 on its own mer
 
 ### Reading persisted data
 
-A reader must tolerate data that older releases wrote: convert in memory, warn once, and keep the migrator as the on-disk rewrite path rather than a precondition for reading; the only refusal is data written by a newer release, and it must name the upgrade as the remedy. `docs/architecture/persisted-data-compat.md` is the per-format contract and inventory (where each format is written, its version marker, and its gap, if any) — read it before touching any persisted format. Every format bump must add its old shape to the upgrade rehearsal gate (`tests/integration/upgrade-rehearsal/`) and, for config keys, pass the schema-compatibility lint (`scripts/lint-config-schema-compat.ts`).
+A reader must tolerate data that older releases wrote: convert in memory, warn once, and keep the migrator as the on-disk rewrite path rather than a precondition for reading; the only refusal is data written by a newer release, and it must name the upgrade as the remedy. No config object is strict: an unknown key at any depth is kept in memory and named once (`unknownConfigKeyPaths`, found by walking the schema), round-trips through ordinary writes, and is dropped only by `akm migrate apply` — whose single config step, `configFile` (`normalizeConfigFile`), reads config.json through the same pipeline every load runs and writes the current shape back. `docs/architecture/persisted-data-compat.md` is the per-format contract and inventory — read it before touching any persisted format. Every format bump must add its old shape to the upgrade rehearsal gate (`tests/integration/upgrade-rehearsal/`).
 
-Authority-bearing records are the narrow exception: if migration requires a
-new trust decision or binds approval to an identity older data never
-recorded, ordinary runtime code must not invent it. A scheduler grant is the
-one kind of authority ordinary runtime code MAY carry forward on its own —
-but only from evidence the operator already created on this host: an
-installed native scheduler row `akm task sync` itself wrote
-(`pendingGrantsFromInstalled`/`carryForwardSchedulerGrants`,
-`src/tasks/scheduler-grant-carry-forward.ts`), never a row this process
-cannot attribute to a prior `akm task sync`. Anything else authority-bearing
-without such evidence is reported, never invented: report the required `akm
-migrate apply` step and let the standalone migrator make the explicit,
-backed-up rewrite — it remains the only path that rewrites bundle content.
-Source-bound `scheduler.enabled[].sourceId` is the canonical example of the
-general rule; the scheduler-grant carry-forward is the one narrow,
-deliberate exception to it.
+Runtime code never invents authority. The one host-local choice it fills in by itself is `scheduler.enabled`, and only from evidence the operator already created on this host: a config without the list takes the akm-written rows already installed in the native scheduler as the choice. Everything else that would need a new trust decision is reported, never invented.
 
 ### Worked examples
 

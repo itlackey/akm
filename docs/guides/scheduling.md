@@ -46,17 +46,14 @@ changed. Run interactive `akm setup` to review, prepare, and activate tasks.
 
 Task definitions live under `<bundle>/tasks/` as task source v4 `.yml` sources;
 the [task source reference](../reference/tasks.md) defines their executable and
-scheduling grammar. A definition cannot enable itself: this host's exact
-activated refs live separately in `config.json` under `scheduler.enabled`.
-Use `akm task enable <bundle>//tasks/<id>` or `akm task disable <ref>` to
-change that local grant without editing bundle content. An unscoped `akm task
-sync` reconciles activated refs from every enabled configured bundle and
-removes installed bindings owned by bundles that are now disabled.
-
-Each local grant also records the configured source identity. Renaming or
-repointing a bundle does not transfer execution authority to the replacement;
-enable the task again after reviewing the new source. Removing a bundle revokes
-its grants, and disabling a bundle makes them inert.
+scheduling grammar. A definition cannot enable itself: the refs this host schedules live
+separately in `config.json` under `scheduler.enabled`, a list of
+fully-qualified refs. Use `akm task enable <bundle>//tasks/<id>` or `akm task
+disable <ref>` to change it without editing bundle content. An unscoped `akm
+task sync` installs exactly the listed refs from every enabled configured
+bundle and removes akm-written bindings for refs that are gone or no longer
+listed. Removing a bundle drops its refs from the list; disabling a bundle
+leaves them inert.
 
 Native scheduler entries are separate OS state. Activation captures the
 installed akm runtime so scheduled execution does not silently switch to a
@@ -70,33 +67,17 @@ Scheduler sync/validation evidence is not an executable snapshot and is never re
 ## Rerunning setup preserves scheduler bindings
 
 Rerunning `akm setup` preserves existing scheduler bindings by design — it
-will not silently rebind entries that are already activated. Before applying
-the operator's selections from that run's review, setup's confirmed
-activation also carries forward grants for installed tasks outside its
-review, so a task the operator leaves unchecked is still removed rather than
-re-granted.
+will not silently rebind entries that are already activated.
 
-## Upgrades no longer need a manual `akm migrate apply`
+## Upgrades
 
-Before 0.9.17, only `akm upgrade` ran the migrator after an install — a
-prerelease install (`npm i -g akm-cli@next`), a plain `npm i -g`/`bun add
--g`, or an image rebuild all bypassed it, and a scheduled task's crontab (or
-launchd/schtasks) row could be removed by the next `akm task sync` before a
-human ever ran `akm migrate apply` to re-grant it.
-
-Every akm command now reconciles host-local state (config, scheduler
-grants, `state.db`) with the installed version by itself, once per version
-change, before the command's own work runs — including a scheduled `akm
-task run`. A scheduled task survives an upgrade by any install method with
-no manual step. An explicit `akm task sync` also carries a scheduler grant
-forward for any installed, backed, enabled-bundle binding that has no grant
-yet, as a second safeguard against the same evidence being lost. The
-reconciling syncs inside `akm task add`, `enable` and `disable` never carry
-forward, so none of those commands can re-grant a binding the same call just
-revoked. `akm task disable <ref>` is still the way to deliberately drop one.
-
-`akm migrate status` always reports whether anything host-local remains
-pending, and why.
+A config written before 0.9.17 has no `scheduler.enabled` list. The first
+`akm task sync` (or `setup`, `task enable`, `task disable`, `task add`) after
+the upgrade takes the akm-written rows already installed in the native
+scheduler as this host's choice, writes the list, and says so — a scheduled
+task survives an upgrade by any install method with no manual step. An
+explicit empty list is a choice: sync then removes every akm-written row.
+`akm migrate status` reports anything else that remains pending, and why.
 
 ## Migrating or repairing scheduler bindings (`--rebind`)
 

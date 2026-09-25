@@ -221,12 +221,12 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).toThrow(ConfigError);
   });
 
-  test("rejects retired improve process selectors", () => {
+  test("tolerates retired improve process selectors like any unknown key", () => {
     writeConfig({
       configVersion: "0.9.0",
       improve: { strategies: { default: { processes: { reflect: { profile: "fast", mode: "llm" } } } } },
     });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
+    expect(() => loadUserConfig()).not.toThrow();
   });
 
   test("rejects an improve process that selects a missing or incompatible engine", () => {

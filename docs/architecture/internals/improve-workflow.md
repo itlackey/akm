@@ -25,7 +25,7 @@ flowchart TD
     B --> C{dryRun?}
     C -- no --> E[Acquire whole-run lock\n$STATE/locks/&lt;stash&gt;/improve.lock]
     C -- yes --> COLLECT[collectEligibleRefs\nquery existing SQLite index, filter to stashDir]
-    E --> E1{lock file or maintenance barrier held?}
+    E --> E1{lock file held?}
     E1 -- yes, skip-if-locked --> SKIP[Return exit-0 no-op\nno triage, index, events, or sync]
     E1 -- yes, no flag --> ERR([throw ConfigError: already running])
     E1 -- no / stale reclaimed --> TRIAGE[Triage pending proposal backlog]

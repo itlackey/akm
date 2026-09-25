@@ -122,31 +122,19 @@ const extractTriageGateField = z
   .passthrough()
   .optional();
 
-const triageJudgmentErrorMap: z.ZodErrorMap = (issue, ctx) => {
-  if (issue.code === z.ZodIssueCode.unrecognized_keys) {
-    const retired = issue.keys.find((key) => key === "mode" || key === "profile");
-    if (retired) return { message: `${retired} is retired; use engine` };
-  }
-  return { message: ctx.defaultError };
-};
-
-// Judgment is an explicit opt-in surface, so invocation typos must fail closed.
-// Keep the shared override schema lenient for ordinary cross-version config
-// compatibility. Unknown keys pass through, like every other nested surface. `extraParams`
-// remains the intentional arbitrary provider-parameter escape hatch.
+// Unknown keys pass through here like every other nested surface (the loader
+// names them once); `extraParams` remains the arbitrary provider-parameter
+// escape hatch.
 const triageJudgmentLlmOverridesField = LlmInvocationOverridesSchema.passthrough();
 
 const triageJudgmentObjectField = z
-  .object(
-    {
-      enabled: z.boolean().optional(),
-      engine: engineName.optional(),
-      model: nonEmptyString.optional(),
-      timeoutMs: z.union([positiveInt, z.null()]).optional(),
-      llm: triageJudgmentLlmOverridesField.optional(),
-    },
-    { errorMap: triageJudgmentErrorMap },
-  )
+  .object({
+    enabled: z.boolean().optional(),
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    llm: triageJudgmentLlmOverridesField.optional(),
+  })
   .passthrough();
 
 /** Triage process: explicit LLM-as-judge enablement and execution overrides. */
@@ -307,39 +295,6 @@ const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   limit: processLimitField,
 };
 
-/**
- * Shared cross-process superRefine: rejects the retired `mode`/`profile`
- * knobs (top-level and inside a `judgment` sub-object) in favour of `engine`.
- * Applied identically to every per-process schema and to the wide
- * ImproveProcessConfigSchema.
- */
-function checkRetiredProcessKeys(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
-  for (const key of ["mode", "profile"]) {
-    if (key in value) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is retired; use engine` });
-    }
-  }
-  if ("judgement" in value) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["judgement"],
-      message: "judgement is not a valid key; use judgment",
-    });
-  }
-  const judgment = value.judgment as Record<string, unknown> | undefined;
-  if (judgment) {
-    for (const key of ["mode", "profile"]) {
-      if (key in judgment) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["judgment", key],
-          message: `${key} is retired; use engine`,
-        });
-      }
-    }
-  }
-}
-
 /** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */
 function rejectExcludeRefPrefixesOutsideReflect(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
   if ("excludeRefPrefixes" in value) {
@@ -363,64 +318,52 @@ export const ImproveProcessConfigSchema = z
     ...TRIAGE_PROCESS_FIELDS,
     ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS,
   })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.reflect` — narrow per-process schema (WI-9.6). */
 export const ReflectProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...REFLECT_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.distill` — narrow per-process schema (WI-9.6). */
 export const DistillProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...DISTILL_PROCESS_FIELDS })
   .passthrough()
-  .superRefine(checkRetiredProcessKeys)
   .superRefine(rejectExcludeRefPrefixesOutsideReflect);
 
 /** `processes.consolidate` — narrow per-process schema (WI-9.6). */
 export const ConsolidateProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...CONSOLIDATE_PROCESS_FIELDS })
   .passthrough()
-  .superRefine(checkRetiredProcessKeys)
   .superRefine(rejectExcludeRefPrefixesOutsideReflect);
 
 /** `processes.memoryInference` — narrow per-process schema (WI-9.6). */
 export const MemoryInferenceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...MEMORY_INFERENCE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.graphExtraction` — narrow per-process schema (WI-9.6). */
 export const GraphExtractionProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...GRAPH_EXTRACTION_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.extract` — narrow per-process schema (WI-9.6). */
 export const ExtractProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...EXTRACT_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.validation` — narrow per-process schema (WI-9.6); no extra fields beyond the shared base. */
-export const ValidationProcessConfigSchema = z
-  .object({ ...IMPROVE_PROCESS_BASE_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+export const ValidationProcessConfigSchema = z.object({ ...IMPROVE_PROCESS_BASE_FIELDS }).passthrough();
 
 /** `processes.triage` — narrow per-process schema (WI-9.6). */
 export const TriageProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...TRIAGE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.proactiveMaintenance` — narrow per-process schema (WI-9.6). */
 export const ProactiveMaintenanceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 const ImproveProfileProcessesSchema = z
   .object({

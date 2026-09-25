@@ -82,15 +82,13 @@ the first bump that will need it, per #863.
 
 ## Scheduler activation
 
-`scheduler.enabled` is this host's explicit scheduling allow-list. Each entry
-has a `kind` (`task` or `workflow`), a canonical fully qualified `ref`, and a
-`sourceId` binding the grant to the configured source installation that was
-approved. Absence means disabled. Replacing a bundle's path or locator under
-the same name invalidates the old grant; ordinary updates from the same origin
-do not. Authored task/workflow files may describe schedules but cannot grant
-themselves authority to create native scheduler entries. Do not edit
-`sourceId` manually: `akm task enable` writes it, and `akm migrate apply`
-upgrades grants written by older releases.
+`scheduler.enabled` is this host's list of scheduled refs — fully-qualified
+strings such as `stash//tasks/nightly`. A ref that is not listed is disabled.
+A config without the list (written before 0.9.17) means "keep what is
+installed": the first `akm task sync` fills it from the akm-written native
+scheduler rows. The 0.9.17-alpha `{kind, ref, sourceId}` entries are read as
+their `ref`. Authored task/workflow files may describe schedules but cannot
+put themselves on the list.
 
 This key is deliberately local: if a config uses `extends`, any `scheduler`
 section in the base is ignored with a warning. Only the top-level local config
@@ -734,7 +732,7 @@ one file, and have each host's local config extend it.
   `extends` at it.
 
 Shared layers carry portable policy, not host authority. `bundles`, source and
-write defaults, registries, embedding connections, scheduler grants,
+write defaults, registries, embedding connections, scheduler activation,
 `execution`, `experimental`, and setup state are ignored when inherited.
 Engine definitions may be shared, but credentials and executable authority
 (`apiKey`, `apiKeyFile`, `bin`, `args`, and `workspace`) must be supplied by
