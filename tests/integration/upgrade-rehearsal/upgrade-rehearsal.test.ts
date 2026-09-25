@@ -264,6 +264,20 @@ describe.skipIf(!REQUESTED)("upgrade rehearsal: candidate against a previous-rel
   });
 
   test("8. task run stash//tasks/manual succeeds", async () => {
+    // The manual task was already run once by the PREVIOUS release (home.ts
+    // "Index, remember, search, and run the manual task"). Read that row
+    // back through the CANDIDATE before running it again here, to prove the
+    // candidate can decode a task_history row the previous release wrote.
+    const priorHistory = await runLauncher(
+      candidateLauncher,
+      ["task", "history", `stash//tasks/${home.taskIds.manual}`, "--limit", "1"],
+      home.env,
+    );
+    expect(priorHistory.status, priorHistory.stderr).toBe(0);
+    const priorRows = (JSON.parse(priorHistory.stdout) as { rows?: { status?: string }[] }).rows ?? [];
+    expect(priorRows.length).toBeGreaterThan(0);
+    expect(priorRows[0]?.status).toBe("completed");
+
     const result = await runLauncher(
       candidateLauncher,
       ["task", "run", `stash//tasks/${home.taskIds.manual}`],
