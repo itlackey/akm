@@ -626,8 +626,8 @@ function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?
   }
 }
 
-/** `akm task sync` after the install: a failure is reported, never thrown. */
 /**
+ * `akm task sync` after the install: a failure is reported, never thrown.
  * `firstLine` carries the short detail `runPostUpgradeTasks` folds into
  * `postUpgrade.message` on failure; it is not part of the public
  * `postUpgrade.taskSync` shape (`UpgradeResponse["postUpgrade"]`), so callers
