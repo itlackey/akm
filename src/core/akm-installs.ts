@@ -108,6 +108,13 @@ export interface EnumerateAkmInstallsOptions {
    * set instead of depending on how the test runner itself was launched.
    */
   runningRealpaths?: readonly string[];
+  /**
+   * Extra install roots scanned unconditionally, regardless of `PATH` or
+   * `HOME`/`NVM_DIR` — `install.sh`'s default `INSTALL_DIR`. Defaults to
+   * `["/usr/local/bin"]`. Tests supply `[]` so a real standalone install on
+   * the host running the tests cannot leak into enumeration (upgrade-D r2-3).
+   */
+  fixedRoots?: readonly string[];
 }
 
 /**
@@ -120,9 +127,11 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
   const runningRealpaths = new Set(options.runningRealpaths ?? defaultRunningRealpaths());
   const npmGlobalRoot = resolveNpmGlobalRootSafely(env);
 
+  const fixedRoots = options.fixedRoots ?? ["/usr/local/bin"];
+
   const candidates = new Set<string>();
   for (const dir of pathDirectories(env)) addCandidate(candidates, dir);
-  for (const dir of knownRootDirectories(env, npmGlobalRoot)) addCandidate(candidates, dir);
+  for (const dir of knownRootDirectories(env, npmGlobalRoot, fixedRoots)) addCandidate(candidates, dir);
 
   const byRealpath = new Map<string, AkmInstall>();
   for (const candidate of candidates) {
@@ -151,7 +160,11 @@ function pathDirectories(env: NodeJS.ProcessEnv): string[] {
     .filter((dir) => dir.length > 0);
 }
 
-function knownRootDirectories(env: NodeJS.ProcessEnv, npmGlobalRoot: string | undefined): string[] {
+function knownRootDirectories(
+  env: NodeJS.ProcessEnv,
+  npmGlobalRoot: string | undefined,
+  fixedRoots: readonly string[],
+): string[] {
   const home = env.HOME?.trim();
   const dirs: string[] = [];
   if (home) dirs.push(path.join(home, ".bun", "bin"));
@@ -159,7 +172,7 @@ function knownRootDirectories(env: NodeJS.ProcessEnv, npmGlobalRoot: string | un
   const pnpmHome = env.PNPM_HOME?.trim();
   if (pnpmHome) dirs.push(pnpmHome);
   if (home) dirs.push(path.join(home, ".local", "bin"));
-  dirs.push("/usr/local/bin");
+  dirs.push(...fixedRoots);
   dirs.push(...nvmBinDirectories(env, home));
   return dirs;
 }
