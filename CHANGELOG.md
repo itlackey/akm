@@ -62,17 +62,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **`akm migrate apply` no longer deletes a legacy `stashDir`/`sources[]`/
-  `installed` config instead of converting it.** `RETIRED_CONFIG_KEYS`
-  (`src/core/config/retired-keys.ts`) registered these three as
-  `"ignored"`, so the retired-keys migrator step deleted them outright —
-  destroying the user's stash/bundle configuration — even though
-  `migrateLegacySourceShape` (`src/core/config/legacy-source-shape-shim.ts`)
-  already converts them in memory on every load and its warning has always
-  named `akm migrate apply` as the fix. The three now carry the `"lifted"`
-  disposition instead, and a new migrator step
+- **The legacy `stashDir`/`sources[]`/`installed` config warning's
+  `akm migrate apply` advice now works.** `migrateLegacySourceShape`
+  (`src/core/config/legacy-source-shape-shim.ts`) has always converted the
+  three in memory on every load and told the user to run `akm migrate apply`
+  to make that stick, but nothing on disk ever did — the retired-keys
+  migrator step didn't touch them, since `RETIRED_CONFIG_KEYS`
+  (`src/core/config/retired-keys.ts`) registers them `"lifted"`, not
+  `"ignored"`. A new migrator step
   (`scripts/akm-migrate/migrate/config-legacy-source-shape.ts`, plan field
-  `configLegacySourceShape`, wired in ahead of `configRetiredKeys`) calls
+  `configLegacySourceShape`, wired in ahead of `configRetiredKeys`) now calls
   that same shim to persist the conversion to `config.json` once, under a
   backup, making the warning's advice true.
 - **A `version: 2` or `version: 3` task source reads and runs again instead
