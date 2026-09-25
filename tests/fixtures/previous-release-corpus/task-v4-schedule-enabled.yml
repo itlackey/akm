@@ -1,0 +1,11 @@
+version: 4
+run: /usr/local/bin/akm-backup.sh
+name: nightly-backup
+description: Nightly backup and integrity check
+when_to_use: Runs automatically every night; do not invoke manually.
+tags:
+  - ops
+  - backup
+schedule:
+  - cron: 0 2 * * *
+    enabled: false

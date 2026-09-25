@@ -26,6 +26,11 @@
  *     converted through the explicit v2->v3->v4 migrator.
  *   - task source v3 (`fixtures/task-v3.yml`) — rejected by runtime and
  *     converted through the explicit v3->v4 migrator.
+ *   - task source v4 with a retired `schedule[].enabled`
+ *     (`fixtures/task-v4-schedule-enabled.yml`, exactly as 0.9.15's `akm
+ *     task add --disabled` wrote it) — read via the in-memory shim's
+ *     `version === 4` branch and converted through the explicit
+ *     `akm-migrate` v4->v4 pass.
  *   - pre-envelope proposal rows (`metadata_json` missing `changes`,
  *     `proposedTarget`, `beforeHash`, `eligibilitySource`, `backupContent` —
  *     the REAL shape pulled from a live 24,358-row archive during the #859
@@ -269,6 +274,44 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("uses");
+    });
+  });
+
+  describe("task source v4 with a retired schedule[].enabled (0.9.15's own grammar)", () => {
+    beforeEach(() => {
+      _resetWarnOnceForTests();
+      setQuiet(false);
+    });
+    afterEach(() => resetQuiet());
+
+    test("a real-shaped 0.9.15 `task add --disabled` file reads via the shim (parses to v4, one warning) and converts via akm-migrate", () => {
+      const filePath = path.join(FIXTURES_DIR, "task-v4-schedule-enabled.yml");
+      const yaml = readFixture("task-v4-schedule-enabled.yml");
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const parsed = parseTaskSource({ yaml, filePath });
+      expect(parsed.version).toBe(4);
+      expect(parsed.v4.schedule.length).toBeGreaterThan(0);
+      expect(parsed.v4.target.kind).toBe("run");
+      for (const entry of parsed.v4.schedule) {
+        expect(Object.hasOwn(entry, "enabled")).toBe(false);
+      }
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
+
+      // `akm-migrate`'s second generation (task v3 -> task source v4) also
+      // reaches a declared `version: 4` file directly through
+      // `planTaskToV4File` (`scripts/akm-migrate/task-migrate.ts`'s
+      // `planTaskToV4Migration`) — there is no v3 hop for a file already
+      // declaring version 4, unlike `migrateLegacyTask` above.
+      const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
+      const v4 = planTaskToV4File(input);
+      expect(v4.status).toBe("changed");
+      if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
+      expect(v4.reason).toBe("source-enablement-removed");
+      const migrated = parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
+      expect(migrated.version).toBe(4);
+      expect(migrated.v4.schedule.length).toBeGreaterThan(0);
+      expect(migrated.v4.target.kind).toBe("run");
     });
   });
 
