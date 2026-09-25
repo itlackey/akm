@@ -4,7 +4,7 @@
 
 /**
  * Legacy `stashDir`/`sources[]`/`installed` -> `bundles`/`defaultBundle`
- * conversion (r3-1), as an `akm migrate` concern.
+ * conversion, as an `akm migrate` concern.
  *
  * `migrateLegacySourceShape` (`src/core/config/legacy-source-shape-shim.ts`)
  * already folds this shape in memory on every load and warns that
