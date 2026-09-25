@@ -33,7 +33,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm` on PATH plus the known install roots (bun global, the npm global
   root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
   version's `bin/`), deduped by realpath, classified, and probed with
-  `--version` — pure, local, no network call. `akm upgrade` now enumerates
+  `--version` — pure, local, no network call. It also derives the npm global
+  root of every distinct `node` executable it finds, not only the running
+  one, scanning that root's `akm-cli/dist` directly so a copy `npm install
+  -g`'d there is reported even when it was never linked onto PATH, and it
+  scans `${BUN_INSTALL:-~/.bun}/lib/node_modules` unconditionally — the
+  layout a plain `npm install -g` produces when it runs under bun's `node ->
+  bun` shim, easy to mistake for a bun-managed install and easy to strand
+  out of sight. `akm upgrade` now enumerates
   the OTHER installs after the primary one succeeds and, for each with a
   recognizable manager (npm/bun/pnpm), installs the same version there too
   and re-verifies it, reporting the outcome in a new `otherInstalls` field;
