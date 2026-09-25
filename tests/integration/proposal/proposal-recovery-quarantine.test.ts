@@ -14,7 +14,14 @@
  * unsafe, or finalize-failing SIBLING journal sharing a root's transaction
  * namespace must not abort recovery of every other journal there, which
  * runs ahead of every `akm proposal accept`/`reject`. A transient
- * (`state.db` busy) failure defers instead of quarantining.
+ * (`state.db` busy) failure defers instead of quarantining. Two more spots
+ * on that same public `accept`/`reject` path kept their own unguarded scans
+ * and are covered here too: `recoverProposalTransactionsForStash`'s
+ * upfront `listTxnJournals` root-discovery call failed loudly on ANY
+ * unreadable journal anywhere under `$DATA/txn` before the per-root scan
+ * above was ever reached (now `listTxnJournalsTolerant`), and
+ * `recoverRejectTransaction`'s own scan (run on every `accept`, ahead of
+ * promotion) had an unguarded `JSON.parse` of its own.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -22,13 +29,7 @@ import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
-import {
-  _recoverProposalTransactionsForTests,
-  createProposal,
-  getProposal,
-  isProposalSkipped,
-} from "../../../src/commands/proposal/repository";
-import { loadConfig } from "../../../src/core/config/config";
+import { createProposal, getProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import { TransientError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import {
@@ -37,7 +38,6 @@ import {
   txnNamespaceDir,
   txnQuarantineNamespaceDir,
 } from "../../../src/core/fs-txn";
-import { resolveBundleWriteTarget } from "../../../src/core/mutation-target";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -72,8 +72,8 @@ afterEach(() => {
   storage.cleanup();
 });
 
-async function crashProposalAt(phase: string, proposalId: string): Promise<void> {
-  await crashProposalAtHelper(markers.dir, children, phase, proposalId, "accept");
+async function crashProposalAt(phase: string, proposalId: string, operation = "accept"): Promise<void> {
+  await crashProposalAtHelper(markers.dir, children, phase, proposalId, operation);
 }
 
 function seedProposal(name: string): { id: string; assetPath: string } {
@@ -167,7 +167,7 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
     expect(getProposal(storage.stashDir, bad.id).status).toBe("pending");
   });
 
-  test("a corrupt journal.json is quarantined without blocking a sibling's recovery", async () => {
+  test("a corrupt journal.json is quarantined without blocking a sibling's recovery, through the real akm proposal accept path", async () => {
     const good = seedProposal("quarantine-corrupt-good");
     const bad = seedProposal("quarantine-corrupt-bad");
     await crashProposalAt("asset-published", good.id);
@@ -177,22 +177,43 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
     const badTransactionId = path.basename(badDir);
     fs.writeFileSync(path.join(badDir, "journal.json"), "{ not valid json", "utf8");
 
-    const config = loadConfig();
-    const target = resolveBundleWriteTarget(config, "stash");
-    // Uses the test-only seam: akm proposal accept/reject reach
-    // recoverProposalTransactions only through recoverProposalTransactionsForStash,
-    // whose own listTxnJournals root-discovery scan fails loudly on ANY
-    // unreadable journal.json anywhere under $DATA/txn (by design), so it
-    // can't reach a corrupt SIBLING journal to prove this contract in
-    // isolation.
-    const completed = await _recoverProposalTransactionsForTests(target, storage.stashDir);
-
-    expect(completed.get(good.id)?.status).toBe("accepted");
+    // Unmodified base code (3dfa3e29d): akm proposal accept/reject reach
+    // recoverProposalTransactions only through
+    // recoverProposalTransactionsForStash, whose own listTxnJournals
+    // root-discovery scan fails loudly on ANY unreadable journal.json
+    // anywhere under $DATA/txn, before good's own root is ever resolved —
+    // this throws a SyntaxError out of akmProposalAccept entirely.
+    const result = await akmProposalAccept({ stashDir: storage.stashDir, id: good.id });
+    expect(result.ok).toBe(true);
     expect(getProposal(storage.stashDir, good.id).status).toBe("accepted");
 
     expect(fs.existsSync(badDir)).toBe(false);
     expectQuarantined(badTransactionId, /Cannot read transaction journal|JSON/i);
     expect(getProposal(storage.stashDir, bad.id).status).toBe("pending");
+  });
+
+  test("a corrupt sibling proposal-reject journal is quarantined without blocking another proposal's accept", async () => {
+    const bad = seedProposal("quarantine-reject-corrupt-bad");
+    await crashProposalAt("reject-state-persisted", bad.id, "reject");
+
+    const badDir = findJournalDir(bad.id);
+    const badTransactionId = path.basename(badDir);
+    fs.writeFileSync(path.join(badDir, "journal.json"), "{ not valid json", "utf8");
+
+    const good = seedProposal("quarantine-reject-corrupt-good");
+
+    // Unmodified base code (3dfa3e29d): promoteProposalWithLease calls
+    // recoverRejectTransaction(stashDir, good.id) ahead of every accept,
+    // which shares good's stash-wide transaction namespace with bad's
+    // crashed reject journal. Its unguarded JSON.parse throws a
+    // SyntaxError while scanning for good's own (nonexistent) reject
+    // journal, aborting good's unrelated accept entirely.
+    const result = await akmProposalAccept({ stashDir: storage.stashDir, id: good.id });
+    expect(result.ok).toBe(true);
+    expect(getProposal(storage.stashDir, good.id).status).toBe("accepted");
+
+    expect(fs.existsSync(badDir)).toBe(false);
+    expectQuarantined(badTransactionId, /Cannot read transaction journal|JSON/i);
   });
 
   test("a TransientError from finalize defers the journal instead of quarantining it", async () => {

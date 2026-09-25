@@ -64,7 +64,7 @@ import {
   cleanupTxn,
   fsyncTxnDir,
   fsyncTxnFile,
-  listTxnJournals,
+  listTxnJournalsTolerant,
   mintTxnId,
   quarantineTxnDirSafely,
   registerTxnKind,
@@ -1700,12 +1700,8 @@ async function recoverProposalTransactions(
 
 /**
  * TEST-ONLY: exercises {@link recoverProposalTransactions}'s per-journal
- * recovery/quarantine contract directly. `akm proposal accept`/`reject`
- * reach it only through {@link recoverProposalTransactionsForStash}, whose
- * upfront {@link listTxnJournals} root-discovery scan fails loudly on ANY
- * unreadable `journal.json` anywhere under `$DATA/txn` (by design — see its
- * doc comment in `src/core/fs-txn.ts`), so a corrupt SIBLING journal can't be
- * reached that way in isolation. This seam calls the per-root scan directly.
+ * recovery/quarantine contract directly, without going through
+ * {@link recoverProposalTransactionsForStash}'s root-discovery scan.
  */
 export const _recoverProposalTransactionsForTests = recoverProposalTransactions;
 
@@ -1716,12 +1712,20 @@ export async function recoverProposalTransactionsForStash(
   proposalId?: string,
 ): Promise<Map<string, Proposal>> {
   const completed = new Map<string, Proposal>();
-  const matches = listTxnJournals(
+  // A corrupt/unreadable journal ANYWHERE under `$DATA/txn` must not abort
+  // root discovery for every OTHER proposal — the same "one bad journal
+  // can't brick recovery" contract this function's own per-root scan
+  // (recoverProposalTransactions, below) already gives journals that share
+  // a root's namespace. listTxnJournalsTolerant counts an unreadable journal
+  // instead of throwing; it is not lost silently, because whichever root it
+  // lives under still gets a full directory scan (and quarantines it) once
+  // any OTHER matching proposal journal for that root is discovered here.
+  const matches = listTxnJournalsTolerant(
     (j) =>
       j.kind === PROPOSAL_TXN_KIND &&
       path.resolve((j as TxnJournal<ProposalTxnPayload>).payload.stashDir) === path.resolve(stashDir) &&
       (proposalId === undefined || (j as TxnJournal<ProposalTxnPayload>).payload.proposalId === proposalId),
-  ) as TxnJournal<ProposalTxnPayload>[];
+  ).matches.map((entry) => entry.journal) as TxnJournal<ProposalTxnPayload>[];
   const irreversible = matches.filter((journal) => journal.phase !== "prepared" && journal.phase !== "committed");
   if (proposalId !== undefined && irreversible.length > 1) {
     throw new Error(`Conflicting durable proposal transactions exist for ${proposalId}; refusing recovery.`);
@@ -1813,6 +1817,17 @@ function finalizeRejectTransaction(txn: RejectTxn, ctx?: ProposalsContext): Prop
   return proposal;
 }
 
+/**
+ * Recover a stuck `proposal-reject` transaction for `proposalId`, run on
+ * every `akm proposal accept` ahead of promotion. Gives this scan the same
+ * per-journal contract {@link recoverProposalTransactions} and
+ * {@link recoverTxnsForRoot} (`src/core/fs-txn.ts`) have: a sibling journal
+ * (any kind, any proposal) that is unreadable, unsafe, or fails to finalize
+ * is quarantined via {@link quarantineTxnDirSafely} and the scan continues,
+ * rather than aborting `accept` for every proposal in this stash. A
+ * `TransientError`/SQLite-contention failure while finalizing THIS
+ * proposal's own reject leaves its journal in place for a later scan.
+ */
 function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: ProposalsContext): Proposal | undefined {
   const nsDir = txnNamespaceDir(stashDir);
   if (!fs.existsSync(nsDir)) return undefined;
@@ -1821,15 +1836,40 @@ function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: Pr
     const transactionDir = path.join(nsDir, entry.name);
     const journalPath = path.join(transactionDir, "journal.json");
     if (!fs.existsSync(journalPath)) continue;
-    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<RejectTxnPayload>;
+    let journal: TxnJournal<RejectTxnPayload>;
+    try {
+      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<RejectTxnPayload>;
+    } catch (error) {
+      quarantineTxnDirSafely(
+        transactionDir,
+        stashDir,
+        undefined,
+        error instanceof Error ? error.message : String(error),
+      );
+      continue;
+    }
     if (journal.kind !== REJECT_TXN_KIND) continue;
     if (journal.payload.proposalId !== proposalId) continue;
-    if (journal.version !== 1 || path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) {
-      throw new Error(`Refusing unsafe proposal rejection journal at ${journalPath}.`);
+    try {
+      if (journal.version !== 1 || path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) {
+        throw new Error(`Refusing unsafe proposal rejection journal at ${journalPath}.`);
+      }
+      const proposal = finalizeRejectTransaction({ journal, journalPath, dir: transactionDir }, ctx);
+      cleanupTxn(transactionDir);
+      return proposal;
+    } catch (error) {
+      if (error instanceof TransientError || isSqliteContentionError(error)) {
+        warnOnce(
+          `proposal-reject-txn-transient:${journal.transactionId}`,
+          `[proposals] leaving rejection transaction journal ${journal.transactionId} in place after a transient error (${
+            error instanceof Error ? error.message : String(error)
+          }); a later recovery retries it.`,
+        );
+        return undefined;
+      }
+      quarantineTxnDirSafely(transactionDir, stashDir, journal, error instanceof Error ? error.message : String(error));
+      return undefined;
     }
-    const proposal = finalizeRejectTransaction({ journal, journalPath, dir: transactionDir }, ctx);
-    cleanupTxn(transactionDir);
-    return proposal;
   }
   return undefined;
 }

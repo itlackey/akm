@@ -192,7 +192,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `src/core/fs-txn.ts` for reuse here) and continues the scan, the same
   per-journal contract `recoverTxnsForRoot` has, above; a transient
   (`state.db` busy) failure defers the journal for a later retry instead of
-  quarantining it.
+  quarantining it. Two more unguarded scans on that same `accept`/`reject`
+  path shared the same failure mode and are fixed the same way:
+  `recoverProposalTransactionsForStash`'s upfront root-discovery scan (which
+  read every proposal journal under `$DATA/txn` to find which roots to
+  recover) now tolerates an unreadable sibling instead of throwing before
+  recovery is even reached, and `recoverRejectTransaction` (run on every
+  `accept` ahead of promotion) now quarantines a corrupt or unsafe sibling
+  journal in the same stash namespace instead of throwing out of it.
 
 ### Changed
 
