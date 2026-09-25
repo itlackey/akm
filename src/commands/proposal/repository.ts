@@ -76,6 +76,7 @@ import {
   txnNamespaceDir,
 } from "../../core/fs-txn";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
+import { getDataDir } from "../../core/paths";
 import { getStateDbPath, isSqliteContentionError, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn, warnOnce } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
@@ -1607,22 +1608,47 @@ function resolveProposalRecoveryTarget(
 }
 
 /**
+ * Rethrow a failure on the caller's OWN transaction journal (the one
+ * `accept`/`reject` is about to act on) rather than quarantining or
+ * deferring it: a raw SQLite-contention throw becomes a `TransientError`
+ * (`STATE_DB_CONTENDED`, exit 75) exactly like an already-typed
+ * `TransientError`; every other error passes through unchanged, since the
+ * command must fail rather than proceed over a crashed transaction whose
+ * recovery outcome is still unknown.
+ */
+function rethrowOwnJournalFailure(error: unknown, kind: "proposal" | "rejection", transactionId: string): never {
+  if (error instanceof TransientError) throw error;
+  if (isSqliteContentionError(error)) {
+    const transient = new TransientError(
+      `akm's state database is busy while recovering ${kind} transaction ${transactionId}; retry shortly.`,
+      "STATE_DB_CONTENDED",
+    );
+    transient.cause = error;
+    throw transient;
+  }
+  throw error;
+}
+
+/**
  * Recover every `proposal` transaction journal under `target`'s namespace,
- * giving this loop the same per-journal contract {@link recoverTxnsForRoot}
- * (`src/core/fs-txn.ts`) has for the generic engine: an unreadable, unsafe,
- * or fence/finalize-failing journal is quarantined (via
- * {@link quarantineTxnDirSafely}) and the scan continues with the next
- * journal, rather than one bad journal aborting recovery for every OTHER
- * journal sharing this root's namespace — recovery that runs before every
- * `akm proposal accept`/`reject`. A `TransientError` or SQLite-contention
- * shaped throw on a SIBLING journal (some other proposal's) means
- * `state.db` is busy mid-`finalize`, not a broken journal, so that one is
- * left in place for a later scan to retry instead. The same failure on
- * `proposalId`'s OWN journal is rethrown as a `TransientError` instead: the
- * caller is about to act on `proposalId` (accept/reject), and deferring
- * would let that action run ahead of a crashed transaction whose recovery
- * outcome (e.g. "asset already published") is still unknown, so the
- * command must fail as retryable (exit 75) rather than proceed.
+ * ahead of every `akm proposal accept`/`reject`. Per-journal contract:
+ * - An unreadable `journal.json` is quarantined (via
+ *   {@link quarantineTxnDirSafely}) and the scan continues to the next
+ *   journal — whose journal it is cannot be known.
+ * - A readable journal belonging to `proposalId` (the one the caller is
+ *   about to act on) is never quarantined or deferred: ANY failure — the
+ *   unsafe check, {@link fenceProposalTxnJournal}, rollback, or finalize —
+ *   leaves the journal in place and is rethrown via
+ *   {@link rethrowOwnJournalFailure}, so the command fails rather than
+ *   proceeding over a crashed transaction whose recovery outcome (e.g.
+ *   "asset already published") is still unknown.
+ * - A SIBLING journal (some other proposal's) that fails the unsafe check
+ *   or the fence is untrusted and is quarantined.
+ * - A SIBLING journal whose rollback or finalize throws — transient or
+ *   not — is a failed recovery ACTION rather than an untrusted journal: it
+ *   is left in place with a `warnOnce`, and the scan continues. A later
+ *   recovery pass, or a command that acts on that proposal directly,
+ *   retries it.
  * This loop stays separate from {@link recoverTxnsForRoot} (rather than
  * routing through the ALSO-registered generic `proposal` handler, below)
  * because it threads the caller's `ctx` through `getProposal`/
@@ -1663,6 +1689,7 @@ async function recoverProposalTransactions(
     }
     if (journal.kind !== PROPOSAL_TXN_KIND) continue;
     if (path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) continue;
+    const isOwnJournal = proposalId !== undefined && journal.payload.proposalId === proposalId;
     try {
       if (
         journal.version !== 1 ||
@@ -1673,6 +1700,17 @@ async function recoverProposalTransactions(
         throw new Error(`Refusing unsafe proposal transaction journal at ${journalPath}.`);
       }
       fenceProposalTxnJournal(journal, transactionDir, target.source.path);
+    } catch (error) {
+      if (isOwnJournal) rethrowOwnJournalFailure(error, "proposal", journal.transactionId);
+      quarantineTxnDirSafely(
+        transactionDir,
+        target.source.path,
+        journal,
+        error instanceof Error ? error.message : String(error),
+      );
+      continue;
+    }
+    try {
       const txn: ProposalTxn = { journal, journalPath, dir: transactionDir };
       if (journal.phase === "prepared") {
         rollbackPreparedProposalTransaction(txn);
@@ -1685,29 +1723,12 @@ async function recoverProposalTransactions(
       cleanupProposalPublication(journal.payload);
       cleanupTxn(transactionDir);
     } catch (error) {
-      if (error instanceof TransientError || isSqliteContentionError(error)) {
-        if (proposalId !== undefined && journal.payload.proposalId === proposalId) {
-          if (error instanceof TransientError) throw error;
-          const transient = new TransientError(
-            `akm's state database is busy while recovering proposal transaction ${journal.transactionId}; retry shortly.`,
-            "STATE_DB_CONTENDED",
-          );
-          transient.cause = error;
-          throw transient;
-        }
-        warnOnce(
-          `proposal-txn-transient:${journal.transactionId}`,
-          `[proposals] leaving transaction journal ${journal.transactionId} in place after a transient error (${
-            error instanceof Error ? error.message : String(error)
-          }); a later recovery retries it.`,
-        );
-        continue;
-      }
-      quarantineTxnDirSafely(
-        transactionDir,
-        target.source.path,
-        journal,
-        error instanceof Error ? error.message : String(error),
+      if (isOwnJournal) rethrowOwnJournalFailure(error, "proposal", journal.transactionId);
+      warnOnce(
+        `proposal-txn-recovery-failed:${journal.transactionId}`,
+        `[proposals] leaving transaction journal ${journal.transactionId} in place after a recovery failure (${
+          error instanceof Error ? error.message : String(error)
+        }); a later recovery retries it.`,
       );
     }
   }
@@ -1726,15 +1747,25 @@ export async function recoverProposalTransactionsForStash(
   // can't brick recovery" contract this function's own per-root scan
   // (recoverProposalTransactions, below) already gives journals that share
   // a root's namespace. listTxnJournalsTolerant counts an unreadable journal
-  // instead of throwing; it is not lost silently, because whichever root it
-  // lives under still gets a full directory scan (and quarantines it) once
-  // any OTHER matching proposal journal for that root is discovered here.
-  const matches = listTxnJournalsTolerant(
+  // instead of throwing; whichever root it lives under gets a full
+  // directory scan (and quarantines it) once some OTHER matching proposal
+  // journal for that root is discovered here — but a root with no such
+  // sibling is never scanned at all, so the count below is the only record
+  // of it and is worth a warning rather than silence.
+  const scan = listTxnJournalsTolerant(
     (j) =>
       j.kind === PROPOSAL_TXN_KIND &&
       path.resolve((j as TxnJournal<ProposalTxnPayload>).payload.stashDir) === path.resolve(stashDir) &&
       (proposalId === undefined || (j as TxnJournal<ProposalTxnPayload>).payload.proposalId === proposalId),
-  ).matches.map((entry) => entry.journal) as TxnJournal<ProposalTxnPayload>[];
+  );
+  if (scan.unreadableMtimes.length > 0) {
+    const txnHome = path.join(getDataDir(), "txn");
+    warnOnce(
+      `proposal-txn-unreadable:${stashDir}`,
+      `[proposals] ${scan.unreadableMtimes.length} unreadable transaction journal(s) under ${txnHome}; a per-root scan quarantines one only once a readable sibling journal for that root is recovered.`,
+    );
+  }
+  const matches = scan.matches.map((entry) => entry.journal) as TxnJournal<ProposalTxnPayload>[];
   const irreversible = matches.filter((journal) => journal.phase !== "prepared" && journal.phase !== "committed");
   if (proposalId !== undefined && irreversible.length > 1) {
     throw new Error(`Conflicting durable proposal transactions exist for ${proposalId}; refusing recovery.`);
@@ -1828,18 +1859,17 @@ function finalizeRejectTransaction(txn: RejectTxn, ctx?: ProposalsContext): Prop
 
 /**
  * Recover a stuck `proposal-reject` transaction for `proposalId`, run on
- * every `akm proposal accept` ahead of promotion. Gives this scan the same
- * per-journal contract {@link recoverProposalTransactions} and
- * {@link recoverTxnsForRoot} (`src/core/fs-txn.ts`) have: an unreadable or
- * unsafe journal encountered while scanning for `proposalId`'s own reject
- * journal is quarantined via {@link quarantineTxnDirSafely} and the scan
- * continues, rather than aborting `accept` for every proposal in this
- * stash. This function only ever finalizes `proposalId`'s OWN reject
- * journal (it skips every other proposal's), so a `TransientError`/SQLite-
- * contention failure while finalizing it is rethrown as a `TransientError`
- * instead of being swallowed — the caller is about to accept this same
- * proposal, and letting that run ahead of an unfinished durable rejection
- * would double-finalize it.
+ * every `akm proposal accept` ahead of promotion. An unreadable journal
+ * encountered while scanning for `proposalId`'s own reject journal is
+ * quarantined via {@link quarantineTxnDirSafely} and the scan continues,
+ * rather than aborting `accept` for every proposal in this stash — whose
+ * journal it is cannot be known. This function only ever processes
+ * `proposalId`'s OWN reject journal (it skips every other proposal's), so
+ * every other failure — the unsafe check or finalize — leaves that journal
+ * in place and is rethrown via {@link rethrowOwnJournalFailure} rather than
+ * quarantined: the caller is about to accept this same proposal, and
+ * letting that run ahead of an unfinished durable rejection would
+ * double-finalize it.
  */
 function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: ProposalsContext): Proposal | undefined {
   const nsDir = txnNamespaceDir(stashDir);
@@ -1871,17 +1901,7 @@ function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: Pr
       cleanupTxn(transactionDir);
       return proposal;
     } catch (error) {
-      if (error instanceof TransientError || isSqliteContentionError(error)) {
-        if (error instanceof TransientError) throw error;
-        const transient = new TransientError(
-          `akm's state database is busy while recovering rejection transaction ${journal.transactionId}; retry shortly.`,
-          "STATE_DB_CONTENDED",
-        );
-        transient.cause = error;
-        throw transient;
-      }
-      quarantineTxnDirSafely(transactionDir, stashDir, journal, error instanceof Error ? error.message : String(error));
-      return undefined;
+      rethrowOwnJournalFailure(error, "rejection", journal.transactionId);
     }
   }
   return undefined;
