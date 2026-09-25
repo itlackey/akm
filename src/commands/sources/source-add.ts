@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isBundleSlug } from "../../core/asset/asset-ref";
+import { slugForRegistryId } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import {
@@ -425,7 +426,9 @@ function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, inst
  * The stable bundle key for a registry install: reuse the existing bundle for
  * this install id (so re-installs keep the same key), otherwise derive a
  * batch-unique key via the shared {@link deriveBundleId} (D-R5) — preferring the
- * caller's explicit `--name`, as local and website adds do — unique against the
+ * caller's explicit `--name`, as local and website adds do, then the
+ * package/repo name the install id names rather than the basename of the
+ * materialized cache directory (`extracted`) — unique against the
  * currently-configured bundle keys.
  */
 function resolveInstalledBundleKey(
@@ -436,7 +439,8 @@ function resolveInstalledBundleKey(
 ): string {
   const existing = findInstalledBundleKey(bundles, installId);
   if (existing) return existing;
-  return deriveBundleId(explicitName ?? installId, path.resolve(stashRoot), new Set(Object.keys(bundles)));
+  const preferred = explicitName && isBundleSlug(explicitName) ? explicitName : slugForRegistryId(installId);
+  return deriveBundleId(preferred, path.resolve(stashRoot), new Set(Object.keys(bundles)));
 }
 
 function toReadableId(resolvedPath: string): string {

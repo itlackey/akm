@@ -21,11 +21,11 @@ const GIT_URL = "https://git.example.test/acme/other-fixture.git";
 
 // Every registry-backed ref kind: its install id carries a `:` (so it can never
 // be a bundle key itself) and its content materializes under the cache's
-// `extracted/` directory.
+// `extracted/` directory. `name` is the package/repo name the id names.
 const REGISTRY_REFS = [
-  { ref: `npm:${NPM_PACKAGE}`, registryId: `npm:${NPM_PACKAGE}` },
-  { ref: "github:acme/name-fixture", registryId: "github:acme/name-fixture" },
-  { ref: `git+${GIT_URL}`, registryId: "git:https://git.example.test/acme/other-fixture" },
+  { ref: `npm:${NPM_PACKAGE}`, registryId: `npm:${NPM_PACKAGE}`, name: NPM_PACKAGE },
+  { ref: "github:acme/name-fixture", registryId: "github:acme/name-fixture", name: "name-fixture" },
+  { ref: `git+${GIT_URL}`, registryId: "git:https://git.example.test/acme/other-fixture", name: "other-fixture" },
 ];
 
 let storage: IsolatedAkmStorage;
@@ -136,5 +136,23 @@ describe("akm bundle add <registry ref> --name", () => {
 
     expect(bundleKeys()).toEqual(["my-bundle"]);
     expect(readLockfile().map((entry) => entry.id)).toEqual(["my-bundle"]);
+  });
+});
+
+describe("akm bundle add <registry ref> without a usable --name", () => {
+  for (const { ref, registryId, name } of REGISTRY_REFS) {
+    test(`keys ${ref} by its package/repo name, not by its cache directory`, async () => {
+      await bundleAdd(ref);
+
+      expect(bundleKeys()).toEqual([name]);
+      expect(loadConfig().bundles?.[name]?.registryId).toBe(registryId);
+      expect(readLockfile().map((entry) => entry.id)).toEqual([name]);
+    });
+  }
+
+  test("a --name that is not a legal bundle slug falls back to the package name", async () => {
+    await bundleAdd(`npm:${NPM_PACKAGE}`, "--name", "my.bundle");
+
+    expect(bundleKeys()).toEqual([NPM_PACKAGE]);
   });
 });
