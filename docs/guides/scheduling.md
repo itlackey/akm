@@ -84,10 +84,12 @@ Every akm command now reconciles host-local state (config, scheduler
 grants, `state.db`) with the installed version by itself, once per version
 change, before the command's own work runs — including a scheduled `akm
 task run`. A scheduled task survives an upgrade by any install method with
-no manual step. `akm task sync` also carries a scheduler grant forward for
-any installed, backed, enabled-bundle binding that has no grant yet, as a
-second safeguard against the same evidence being lost. `akm task disable
-<ref>` is still the way to deliberately drop one.
+no manual step. An explicit `akm task sync` also carries a scheduler grant
+forward for any installed, backed, enabled-bundle binding that has no grant
+yet, as a second safeguard against the same evidence being lost. The
+reconciling syncs inside `akm task add`, `enable` and `disable` never carry
+forward, so none of those commands can re-grant a binding the same call just
+revoked. `akm task disable <ref>` is still the way to deliberately drop one.
 
 `akm migrate status` always reports whether anything host-local remains
 pending, and why.
