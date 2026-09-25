@@ -440,10 +440,10 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // writable open safely rebuilds instead of admitting a partial v23 index.
   setMeta(db, "version", String(DB_VERSION));
 
-  // #C1: one-time in-place realignment of FTS rowids onto entry_id / an
+  // One-time in-place realignment of FTS rowids onto entry_id / an
   // encoded fragment rowid, so a per-entry delete is a rowid lookup/range
-  // instead of a full-table scan. Runs only on this writable open path
-  // (ensureSchema has no other caller); a no-op after the first pass.
+  // instead of a full-table scan. Runs on every writable open path
+  // (ensureSchema has no other caller); a no-op once the layout holds.
   ensureFtsRowidLayout(db);
 }
 
