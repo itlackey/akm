@@ -115,9 +115,12 @@ export interface AkmInstall {
    * {@link addNpmGlobalRootCandidates} — a copy `npm install -g` placed on
    * disk but never linked onto PATH, a prefix `bin/`, or an nvm `bin/`.
    * `akm upgrade` cannot manage an unlinked copy through any package manager
-   * command, since there is no link for that manager to update (upgrade-D3
-   * r2-1). True for every other candidate source (PATH, the known roots, a
-   * prefix's `bin/`, an nvm `bin/`).
+   * command, since there is no link for that manager to update. True for
+   * every other candidate source (PATH, the known roots, a prefix's `bin/`,
+   * an nvm `bin/`). On Windows npm links a global package with cmd-shim
+   * FILES in its own prefix (`%APPDATA%\npm\akm.cmd`), never symlinks, so no
+   * realpath can tie the shim to `akm-cli\dist`; there, a direct scan whose
+   * prefix holds `akm.cmd` counts as linked.
    */
   linked: boolean;
 }
@@ -138,6 +141,12 @@ export interface EnumerateAkmInstallsOptions {
    * the host running the tests cannot leak into enumeration (upgrade-D r2-3).
    */
   fixedRoots?: readonly string[];
+  /**
+   * The platform whose npm layout and link rule apply; defaults to
+   * `process.platform`. Tests exercise the win32 branch (prefix-is-bin-dir,
+   * cmd-shim files) on a POSIX host through this seam.
+   */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -148,6 +157,7 @@ export interface EnumerateAkmInstallsOptions {
 export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateAkmInstallsOptions = {}): AkmInstall[] {
   const run = options.spawnSync ?? spawnSync;
   const runningRealpaths = new Set(options.runningRealpaths ?? defaultRunningRealpaths());
+  const platform = options.platform ?? process.platform;
   const npmGlobalRoot = resolveNpmGlobalRootSafely(env);
   const home = env.HOME?.trim();
 
@@ -162,10 +172,10 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
   // package manager in.
   const candidates = new Map<string, { binDir: string; direct: boolean }>();
   for (const dir of pathDirectories(env)) addCandidate(candidates, dir);
-  for (const dir of knownRootDirectories(env, npmGlobalRoot, fixedRoots)) addCandidate(candidates, dir);
-  for (const root of discoverAdjacentNpmGlobalRoots(env, home)) addNpmGlobalRootCandidates(candidates, root);
+  for (const dir of knownRootDirectories(env, npmGlobalRoot, fixedRoots, platform)) addCandidate(candidates, dir);
+  for (const root of discoverAdjacentNpmGlobalRoots(env, home)) addNpmGlobalRootCandidates(candidates, root, platform);
   const bunPrefixRoot = bunPrefixLibNodeModules(env, home);
-  if (bunPrefixRoot) addNpmGlobalRootCandidates(candidates, bunPrefixRoot);
+  if (bunPrefixRoot) addNpmGlobalRootCandidates(candidates, bunPrefixRoot, platform);
 
   const byRealpath = new Map<string, AkmInstall>();
   for (const [candidate, { binDir, direct }] of candidates) {
@@ -258,10 +268,16 @@ function bunPrefixLibNodeModules(env: NodeJS.ProcessEnv, home: string | undefine
 function addNpmGlobalRootCandidates(
   candidates: Map<string, { binDir: string; direct: boolean }>,
   npmGlobalRoot: string,
+  platform: NodeJS.Platform,
 ): void {
-  const binDir = npmGlobalBinDir(npmGlobalRoot);
+  const binDir = npmGlobalBinDir(npmGlobalRoot, platform);
   addCandidate(candidates, binDir);
-  addCandidate(candidates, path.join(npmGlobalRoot, "akm-cli", "dist"), binDir, true);
+  // On Windows npm's link is a cmd-shim FILE in its own prefix, which no
+  // realpath can tie back to `akm-cli\dist`; the shim in that prefix is that
+  // prefix's link by construction, so the direct scan counts as linked when
+  // it is present. POSIX keeps the realpath rule: only a real symlink links.
+  const direct = platform === "win32" ? !fs.existsSync(path.join(binDir, "akm.cmd")) : true;
+  addCandidate(candidates, path.join(npmGlobalRoot, "akm-cli", "dist"), binDir, direct);
 }
 
 function pathDirectories(env: NodeJS.ProcessEnv): string[] {
@@ -275,11 +291,12 @@ function knownRootDirectories(
   env: NodeJS.ProcessEnv,
   npmGlobalRoot: string | undefined,
   fixedRoots: readonly string[],
+  platform: NodeJS.Platform,
 ): string[] {
   const home = env.HOME?.trim();
   const dirs: string[] = [];
   if (home) dirs.push(path.join(home, ".bun", "bin"));
-  if (npmGlobalRoot) dirs.push(npmGlobalBinDir(npmGlobalRoot));
+  if (npmGlobalRoot) dirs.push(npmGlobalBinDir(npmGlobalRoot, platform));
   const pnpmHome = env.PNPM_HOME?.trim();
   if (pnpmHome) dirs.push(pnpmHome);
   if (home) dirs.push(path.join(home, ".local", "bin"));
@@ -288,8 +305,13 @@ function knownRootDirectories(
   return dirs;
 }
 
-/** npm's global bin dir is the prefix sibling of `<prefix>/lib/node_modules`: `<prefix>/bin`. */
-function npmGlobalBinDir(npmGlobalRoot: string): string {
+/**
+ * npm's global bin dir for a global root. POSIX: the prefix sibling of
+ * `<prefix>/lib/node_modules`, i.e. `<prefix>/bin`. Windows: the root is
+ * `<prefix>\node_modules` and the shims live in the prefix itself.
+ */
+function npmGlobalBinDir(npmGlobalRoot: string, platform: NodeJS.Platform): string {
+  if (platform === "win32") return path.dirname(npmGlobalRoot);
   return path.join(path.dirname(path.dirname(npmGlobalRoot)), "bin");
 }
 

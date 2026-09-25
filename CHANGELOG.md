@@ -54,7 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   direct `akm-cli/dist` scan found but that nothing links onto any bin
   dir — there is no package manager link left to update through, so it is
   reported as an orphan to remove or reinstall by hand rather than "will
-  update it via npm". `--check` lists the same information read-only. A new
+  update it via npm" (on Windows, where npm links a global package with a
+  cmd-shim file in its own prefix rather than a symlink, a prefix holding
+  `akm.cmd` counts as linked, and that prefix is the install's bin
+  directory). `--check` lists the same information read-only. A new
   `akm-installs` `akm health` advisory (`--probe`-gated) reports the same
   enumeration as an ongoing check, warning by path with the manager command
   that pins it to the running version — the same `getPackageManagerUpgradeCommand`

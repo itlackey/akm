@@ -317,9 +317,92 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
         version: "0.9.15-beta.1",
         binDir: path.join(sandbox.dir, ".bun", "bin"),
         // Nothing links this install onto any bin dir — it was found only
-        // through the direct `akm-cli/dist` scan (upgrade-D3 r2-1).
+        // through the direct `akm-cli/dist` scan.
         linked: false,
       });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  // On Windows npm's global root is `<prefix>\node_modules`, its shims live
+  // in the prefix itself, and they are cmd-shim FILES, never symlinks — so
+  // the POSIX realpath rule can never mark such an install linked. The
+  // `platform` seam exercises that branch on this host.
+  function writeWindowsNpmPrefix(sandbox: string, name: string, withShim: boolean): { prefix: string; stub: string } {
+    const nodeBinDir = path.join(sandbox, `${name}-node`);
+    fs.mkdirSync(nodeBinDir, { recursive: true });
+    const prefix = path.join(sandbox, `${name}-prefix`);
+    const npmGlobalRoot = path.join(prefix, "node_modules");
+    fs.writeFileSync(path.join(nodeBinDir, "node"), `#!/bin/sh\necho ${JSON.stringify(npmGlobalRoot)}\n`, {
+      mode: 0o755,
+    });
+    fs.writeFileSync(path.join(nodeBinDir, "npm"), "", { mode: 0o755 });
+    const stub = writeStubAkm(path.join(npmGlobalRoot, "akm-cli", "dist"), "0.9.17");
+    if (withShim) fs.writeFileSync(path.join(prefix, "akm.cmd"), "@echo off\r\n");
+    return { prefix, stub };
+  }
+
+  test("win32: a cmd-shim file in npm's own prefix marks the direct-scan install linked, with the prefix as binDir", () => {
+    const sandbox = makeSandboxDir("akm-installs-win32-shim");
+    try {
+      const { prefix, stub } = writeWindowsNpmPrefix(sandbox.dir, "a", true);
+      const installs = enumerateAkmInstalls(
+        { PATH: path.join(sandbox.dir, "a-node"), HOME: sandbox.dir },
+        { fixedRoots: [], runningRealpaths: [], platform: "win32" },
+      );
+      const found = installs.find((i) => i.path === fs.realpathSync(stub));
+      expect(found).toMatchObject({ manager: "npm", binDir: prefix, linked: true });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("win32: without a cmd-shim in the prefix, the direct-scan install stays unlinked", () => {
+    const sandbox = makeSandboxDir("akm-installs-win32-noshim");
+    try {
+      const { prefix, stub } = writeWindowsNpmPrefix(sandbox.dir, "b", false);
+      const installs = enumerateAkmInstalls(
+        { PATH: path.join(sandbox.dir, "b-node"), HOME: sandbox.dir },
+        { fixedRoots: [], runningRealpaths: [], platform: "win32" },
+      );
+      const found = installs.find((i) => i.path === fs.realpathSync(stub));
+      expect(found).toMatchObject({ manager: "npm", binDir: prefix, linked: false });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  // Candidate order must not decide `linked`: an install first reached
+  // through one root's direct `akm-cli/dist` scan is promoted when a LATER
+  // root's bin dir turns out to link onto it.
+  test("a later bin-dir link promotes an install first seen only through the direct scan", () => {
+    const sandbox = makeSandboxDir("akm-installs-late-link");
+    try {
+      const nodeA = path.join(sandbox.dir, "node-a", "bin");
+      const nodeB = path.join(sandbox.dir, "node-b", "bin");
+      const rootA = path.join(sandbox.dir, "prefix-a", "lib", "node_modules");
+      const rootB = path.join(sandbox.dir, "prefix-b", "lib", "node_modules");
+      for (const [dir, root] of [
+        [nodeA, rootA],
+        [nodeB, rootB],
+      ] as const) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "node"), `#!/bin/sh\necho ${JSON.stringify(root)}\n`, { mode: 0o755 });
+        fs.writeFileSync(path.join(dir, "npm"), "", { mode: 0o755 });
+      }
+      // Root A holds the package; only root B's bin dir links to it, and
+      // root B is discovered after root A (PATH order).
+      const stub = writeStubAkm(path.join(rootA, "akm-cli", "dist"), "0.9.17");
+      const binB = path.join(sandbox.dir, "prefix-b", "bin");
+      fs.mkdirSync(binB, { recursive: true });
+      fs.symlinkSync(stub, path.join(binB, "akm"));
+      const installs = enumerateAkmInstalls(
+        { PATH: [nodeA, nodeB].join(path.delimiter), HOME: sandbox.dir },
+        { fixedRoots: [], runningRealpaths: [] },
+      );
+      const found = installs.find((i) => i.path === fs.realpathSync(stub));
+      expect(found).toMatchObject({ manager: "npm", linked: true });
     } finally {
       sandbox.cleanup();
     }
