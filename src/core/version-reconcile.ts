@@ -87,12 +87,8 @@ function lockFilePath(stateDir: string): string {
 }
 
 function readStamp(stateDir: string): VersionReconcileStamp | undefined {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(stampPath(stateDir), "utf8")) as VersionReconcileStamp;
-    return typeof parsed === "object" && parsed !== null ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+  const read = readVersionReconcileStamp(stateDir);
+  return read.outcome === "found" ? read.stamp : undefined;
 }
 
 /** Outcome of {@link readVersionReconcileStamp}, distinguishing "never reconciled" from "cannot tell". */

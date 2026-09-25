@@ -110,4 +110,20 @@ describe("scheduled-startup-failures advisory (upgrade-D/D2)", () => {
     expect(check.message).toContain("usage-fail");
     expect(check.message).toContain("internal-fail");
   });
+
+  test("unknown: task_history cannot be queried (closed database handle)", async () => {
+    const db = openStateDatabase();
+    db.close();
+    const results = await collectUpgradeAdvisories({
+      db,
+      since: SINCE,
+      stateDir: storage.stateDir,
+      cliVersion: "1.2.3",
+      probe: false,
+      backend: noBackend,
+    });
+    const check = results.find((result) => result.name === "scheduled-startup-failures");
+    if (!check) throw new Error("expected a scheduled-startup-failures advisory");
+    expect(check.status).toBe("unknown");
+  });
 });
