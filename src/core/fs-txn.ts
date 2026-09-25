@@ -34,17 +34,20 @@
  * {@link recoverTxnsForRoot} (after importing the domain registrar so the
  * kinds are registered).
  *
- * ## Quarantine
+ * ## Quarantine and deferral
  *
- * A journal {@link recoverTxnsForRoot} cannot recover — an unreadable
- * `journal.json`, a fence violation, or a `rollback`/`finalize` throw — is
- * moved to `$DATA/txn-quarantine/<rootNs>/<transactionId>/` (see
- * {@link QuarantinedTxn}) rather than aborting the whole scan. A `finalize`
- * throw that is a `TransientError` or SQLite-contention-shaped
- * (`isSqliteContentionError`) is the one exception: it means ordinary
- * `state.db` contention mid-`finalize`, not a broken journal, so it is left
- * in place for a later scan to retry rather than quarantined. Recovery is
- * per-journal: one poisoned or busy journal never blocks the others, and
+ * A journal that cannot be TRUSTED — an unreadable `journal.json` or a fence
+ * violation (root binding, phase membership, path containment, the kind's
+ * own `validate`) — is QUARANTINED: moved to
+ * `$DATA/txn-quarantine/<rootNs>/<transactionId>/` (see {@link
+ * QuarantinedTxn}) rather than aborting the whole scan. A trusted, fenced
+ * journal whose `rollback`/`finalize` throws is DEFERRED instead: the
+ * recovery ACTION failed (a refused git push, a target that diverged,
+ * `state.db` contention), not the journal, so quarantining it would discard
+ * the only record of an interrupted mutation. A deferred journal is left
+ * exactly where it is and reported under {@link DeferredTxn} for a later
+ * scan — or an operation on the entity it belongs to — to retry. Recovery is
+ * per-journal: one untrusted or stuck journal never blocks the others, and
  * never bricks a later scan against the same root the way a thrown error
  * would.
  *
@@ -59,10 +62,8 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pkgVersion } from "../version";
-import { TransientError } from "./errors";
 import type { FileChangeOp } from "./file-change";
 import { getDataDir } from "./paths";
-import { isSqliteContentionError } from "./state-db";
 import { warn, warnOnce } from "./warn";
 
 // ── Journal shapes ───────────────────────────────────────────────────────────
@@ -108,6 +109,20 @@ export interface Txn<P = unknown> {
  * `$DATA/txn-quarantine/<rootNs>/<transactionId>/journal.json`.
  */
 export interface QuarantinedTxn {
+  transactionId: string;
+  kind: string;
+  phase: string;
+  journalPath: string;
+  reason: string;
+}
+
+/**
+ * One trusted, fenced journal whose `rollback`/`finalize` threw and was left
+ * in place for a later scan to retry (see {@link recoverTxnsForRoot}) instead
+ * of being quarantined — the recovery ACTION failed, not the journal itself.
+ * `reason` is the error that made the recovery action fail.
+ */
+export interface DeferredTxn {
   transactionId: string;
   kind: string;
   phase: string;
@@ -512,21 +527,26 @@ export function isCommittedPhase(journal: TxnJournal<unknown>): boolean {
  * name and `"unknown"` for exactly this case — rather than thrown, so one
  * damaged journal never aborts the scan before its siblings are reached.
  *
- * A journal of a REGISTERED kind whose fence check or `rollback`/`finalize`
- * throws is QUARANTINED (moved to `$DATA/txn-quarantine/<rootNs>/<id>/`, see
- * {@link QuarantinedTxn}) and the scan continues with the next journal — with
- * one exception: a `TransientError` (`src/core/errors.ts`) or a
- * SQLite-contention-shaped error (`isSqliteContentionError`,
- * `src/core/state-db.ts`) means the journal is at or past its commit point
- * with `finalize` mid-flight against a busy `state.db`, not broken. That
- * journal is left exactly where it is — not quarantined, not counted as
- * recovered — for a later scan to retry once the contention clears. A
- * failure of the quarantine move itself (see
- * {@link quarantineTxnDirSafely}) warns and also leaves the journal in
- * place rather than escaping the scan. One poisoned or busy journal must
- * never block recovery of every OTHER journal in the same namespace, or
- * brick every later scan against the same root the way a thrown error
- * would.
+ * A journal of a REGISTERED kind whose fence check throws is QUARANTINED
+ * (moved to `$DATA/txn-quarantine/<rootNs>/<id>/`, see {@link
+ * QuarantinedTxn}) and the scan continues with the next journal — the fence
+ * (root binding, phase membership, path containment, the kind's own
+ * `validate`) is what decides whether the journal can be trusted at all. A
+ * failure of the quarantine move itself (see {@link quarantineTxnDirSafely})
+ * warns and also leaves the journal in place rather than escaping the scan.
+ *
+ * A journal that PASSES its fence but whose `rollback`/`finalize` throws is
+ * DEFERRED, not quarantined: the recovery ACTION failed — a refused git
+ * push, a target that diverged, `state.db` contention — not the journal, so
+ * quarantining it would discard the only record of an interrupted mutation.
+ * It is left exactly where it is, `warnOnce`-logged naming its id, kind,
+ * phase and the error, and reported under the result's `deferred` (see
+ * {@link DeferredTxn}) — not counted as recovered — for a later scan, or an
+ * operation on the entity it belongs to, to retry.
+ *
+ * Either way, one untrusted or stuck journal must never block recovery of
+ * every OTHER journal in the same namespace, or brick every later scan
+ * against the same root the way a thrown error would.
  *
  * `filter` optionally narrows recovery (e.g. one kind, one proposal id). The
  * unknown-kind sweep runs BEFORE the filter: such a journal is garbage no
@@ -536,11 +556,12 @@ export function isCommittedPhase(journal: TxnJournal<unknown>): boolean {
 export async function recoverTxnsForRoot(
   root: string,
   filter?: (journal: TxnJournal<unknown>) => boolean,
-): Promise<{ recovered: TxnJournal<unknown>[]; quarantined: QuarantinedTxn[] }> {
+): Promise<{ recovered: TxnJournal<unknown>[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] }> {
   const nsDir = txnNamespaceDir(root);
   const recovered: TxnJournal<unknown>[] = [];
   const quarantined: QuarantinedTxn[] = [];
-  if (!fs.existsSync(nsDir)) return { recovered, quarantined };
+  const deferred: DeferredTxn[] = [];
+  if (!fs.existsSync(nsDir)) return { recovered, quarantined, deferred };
   for (const entry of fs.readdirSync(nsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const dir = path.join(nsDir, entry.name);
@@ -566,6 +587,12 @@ export async function recoverTxnsForRoot(
     if (filter && !filter(journal)) continue;
     try {
       fenceJournal(journal, dir, root, journalPath);
+    } catch (error) {
+      const q = quarantineTxnDirSafely(dir, root, journal, error instanceof Error ? error.message : String(error));
+      if (q) quarantined.push(q);
+      continue;
+    }
+    try {
       const handler = requireKind(journal.kind);
       const txn: Txn<unknown> = { journal, journalPath, dir };
       const terminal = handler.phases[handler.phases.length - 1];
@@ -577,20 +604,21 @@ export async function recoverTxnsForRoot(
       recovered.push(journal);
       cleanupTxn(dir);
     } catch (error) {
-      if (error instanceof TransientError || isSqliteContentionError(error)) {
-        warnOnce(
-          `txn-transient:${journal.transactionId}`,
-          `[txn] leaving transaction journal ${journal.transactionId} in place after a transient error (${
-            error instanceof Error ? error.message : String(error)
-          }); a later 'akm migrate apply' retries it.`,
-        );
-        continue;
-      }
-      const q = quarantineTxnDirSafely(dir, root, journal, error instanceof Error ? error.message : String(error));
-      if (q) quarantined.push(q);
+      const reason = error instanceof Error ? error.message : String(error);
+      warnOnce(
+        `txn-deferred:${journal.transactionId}`,
+        `[txn] leaving transaction journal ${journal.transactionId} (kind "${journal.kind}", phase "${journal.phase}") in place after its recovery action failed (${reason}); a later scan retries it.`,
+      );
+      deferred.push({
+        transactionId: journal.transactionId,
+        kind: journal.kind,
+        phase: journal.phase,
+        journalPath,
+        reason,
+      });
     }
   }
-  return { recovered, quarantined };
+  return { recovered, quarantined, deferred };
 }
 
 /**

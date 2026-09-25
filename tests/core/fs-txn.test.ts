@@ -293,9 +293,10 @@ describe("fs-txn engine core", () => {
     expect(fs.existsSync(path.join(txnNamespaceDir(root), "junk-no-journal"))).toBe(false);
   });
 
-  test("a finalize throw quarantines its own journal without blocking a sibling's recovery", async () => {
+  test("a finalize throw on a fenced journal defers it — reported under deferred, not quarantined — and it is retried on the next scan", async () => {
     const root = freshRoot();
     const calls: string[] = [];
+    let shouldThrow = true;
     registerTxnKind<{ label: string }>("test-kind-crashy", {
       phases: ["prepared", "files-published", "state-persisted", "committed"],
       commitPhase: "files-published",
@@ -304,7 +305,9 @@ describe("fs-txn engine core", () => {
       },
       finalize(txn: Txn<{ label: string }>) {
         if (txn.journal.phase === "files-published") advanceTxn(txn, "state-persisted");
-        throw new Error("simulated crash between steps");
+        if (shouldThrow) throw new Error("simulated crash between steps");
+        calls.push(`finalize:${txn.journal.payload.label}@${txn.journal.phase}`);
+        if (txn.journal.phase === "state-persisted") advanceTxn(txn, "committed");
       },
     });
     registerRecordingKind("test-kind-crashy-sibling", calls);
@@ -313,23 +316,28 @@ describe("fs-txn engine core", () => {
     const sibling = beginTxn({ kind: "test-kind-crashy-sibling", root, changes: [], payload: { label: "ok" } });
     advanceTxn(sibling, "files-published");
 
-    const { recovered, quarantined } = await recoverTxnsForRoot(root);
-    // The sibling recovers normally — one poisoned journal does not brick
+    const { recovered, quarantined, deferred } = await recoverTxnsForRoot(root);
+    // The sibling recovers normally — one deferred journal does not brick
     // the scan.
     expect(recovered.map((j) => j.kind)).toEqual(["test-kind-crashy-sibling"]);
     expect(calls).toEqual(["finalize:ok@files-published"]);
-    // The crashy journal is quarantined, not left on disk for a retry.
-    expect(quarantined).toHaveLength(1);
-    expect(quarantined[0]?.transactionId).toBe(txn.journal.transactionId);
-    expect(quarantined[0]?.phase).toBe("state-persisted"); // advanced before the throw
-    expect(quarantined[0]?.reason).toMatch(/simulated crash/);
-    expect(fs.existsSync(txn.journalPath)).toBe(false);
-    expect(fs.existsSync(quarantined[0]?.journalPath as string)).toBe(true);
+    // The crashy journal's recovery ACTION failed; the journal itself is
+    // still trusted, so it is deferred and left in place, not quarantined.
+    expect(quarantined).toHaveLength(0);
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]?.transactionId).toBe(txn.journal.transactionId);
+    expect(deferred[0]?.phase).toBe("state-persisted"); // advanced before the throw
+    expect(deferred[0]?.reason).toMatch(/simulated crash/);
+    expect(fs.existsSync(txn.journalPath)).toBe(true);
 
-    // Nothing left to recover — a second scan finds neither journal again.
+    // A second scan, once the recovery action succeeds, finalizes it.
+    shouldThrow = false;
     const second = await recoverTxnsForRoot(root);
-    expect(second.recovered).toHaveLength(0);
+    expect(second.recovered.map((j) => j.kind)).toEqual(["test-kind-crashy"]);
     expect(second.quarantined).toHaveLength(0);
+    expect(second.deferred).toHaveLength(0);
+    expect(calls).toContain("finalize:c@state-persisted");
+    expect(fs.existsSync(txn.dir)).toBe(false);
   });
 
   /** Write a raw journal.json under root's namespace, bypassing beginTxn. */
@@ -438,24 +446,32 @@ describe("fs-txn engine core", () => {
     expect(fs.existsSync(txn.dir)).toBe(false);
   });
 
-  test("a non-transient finalize throw is still quarantined (contention only defers)", async () => {
+  test("a non-transient rollback throw defers the journal too — a failed recovery action never implies the journal itself is untrustworthy", async () => {
     const root = freshRoot();
     registerTxnKind<{ label: string }>("test-kind-nontransient", {
       phases: ["prepared", "files-published", "state-persisted", "committed"],
       commitPhase: "files-published",
-      rollback() {},
-      finalize() {
+      rollback() {
         throw new Error("genuinely broken, not contention");
       },
+      finalize() {},
     });
     const txn = beginTxn({ kind: "test-kind-nontransient", root, changes: [], payload: { label: "n" } });
-    advanceTxn(txn, "files-published");
+    // Stays at "prepared" — before the commit point, so recovery rolls BACK.
 
-    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    const { recovered, quarantined, deferred } = await recoverTxnsForRoot(root);
     expect(recovered).toHaveLength(0);
-    expect(quarantined).toHaveLength(1);
-    expect(quarantined[0]?.reason).toMatch(/genuinely broken, not contention/);
-    expect(fs.existsSync(txn.journalPath)).toBe(false);
+    expect(quarantined).toHaveLength(0);
+    expect(deferred).toEqual([
+      {
+        transactionId: txn.journal.transactionId,
+        kind: "test-kind-nontransient",
+        phase: "prepared",
+        journalPath: txn.journalPath,
+        reason: "genuinely broken, not contention",
+      },
+    ]);
+    expect(fs.existsSync(txn.journalPath)).toBe(true);
   });
 
   test("a finalize throw shaped like a raw SQLite busy error defers rather than quarantines", async () => {
