@@ -5,17 +5,22 @@
 import { placementTypes } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
 import { getSources, loadConfig } from "../../core/config/config";
+import { CURRENT_CONFIG_VERSION } from "../../core/config/schema/primitives";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
 import { getCacheDir, getConfigDir, getDataDir, getDbPath, getStateDir } from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
+import { STATE_MIGRATIONS } from "../../core/state/migrations";
 import { error } from "../../core/warn";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryCount, getEntryCountByType } from "../../storage/repositories/index-entries-repository";
+import { CANONICAL_INDEX_DB_VERSION } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { isVecAvailable } from "../../storage/repositories/index-vec-repository";
-import { pkgVersion } from "../../version";
+import { TASK_SOURCE_V4_VERSION } from "../../tasks/source/task-source-v4";
+import { PLUGIN_PROTOCOL_VERSION, pkgVersion } from "../../version";
+import { WORKFLOW_IR_V5_VERSION } from "../../workflows/ir/schema-v4";
 
 /**
  * Assemble system info describing the current capabilities, configuration,
@@ -76,6 +81,23 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     searchModes.push("semantic", "hybrid");
   }
 
+  // Contracts a plugin can gate on directly, instead of the `version` semver
+  // range it maintains by hand — a version check cannot see an index
+  // generation or a state ledger (D1). The last `STATE_MIGRATIONS` entry is
+  // the state.db ledger head; every other value comes from the constant
+  // that already owns it.
+  const lastStateMigration = STATE_MIGRATIONS[STATE_MIGRATIONS.length - 1];
+  if (!lastStateMigration) throw new Error("State migration registry has no entries.");
+  const stateLedgerHead = lastStateMigration.id;
+  const compat: InfoResponse["compat"] = {
+    indexGeneration: CANONICAL_INDEX_DB_VERSION,
+    stateLedgerHead,
+    taskSourceVersion: TASK_SOURCE_V4_VERSION,
+    configVersion: CURRENT_CONFIG_VERSION,
+    workflowIrVersion: WORKFLOW_IR_V5_VERSION,
+    pluginProtocol: PLUGIN_PROTOCOL_VERSION,
+  };
+
   return {
     schemaVersion: 1,
     version: pkgVersion,
@@ -94,6 +116,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     registries,
     sourceProviders,
     indexStats,
+    compat,
   };
 }
 

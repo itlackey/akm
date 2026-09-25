@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`akm info` publishes a `compat` manifest, and a new `PLUGIN_PROTOCOL_VERSION`
+  pins the plugin-facing JSON contract.** Plugins previously gated on a
+  hand-maintained semver range (`AKM_VERSION_RANGE` in
+  `akm-plugins/claude/shared/akm-version.ts`) that says nothing about the
+  contracts they actually depend on — the 0.9.2 `claude-code`→`claude`
+  rename broke session extraction while the version check passed, because a
+  version range can't see an index generation or a state ledger move. `akm
+  info`'s new `compat` field carries `indexGeneration`, `stateLedgerHead`,
+  `taskSourceVersion`, `configVersion`, `workflowIrVersion`, and
+  `pluginProtocol`, each read live from the constant that already owns it.
+  `pluginProtocol` (`PLUGIN_PROTOCOL_VERSION`, `src/version.ts`) is the
+  contract version for the JSON key sets of `akm search`, `akm curate`,
+  `akm show`, `akm info`, and `akm proposal extract` result envelopes;
+  `tests/contracts/plugin-protocol.test.ts` pins those key sets and fails,
+  with the instruction to bump, when one changes shape without a matching
+  version bump.
 - **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
   `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
   `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag
