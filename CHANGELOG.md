@@ -210,6 +210,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   never carry forward, so none of those commands can re-grant or reinstall
   a binding the same call just revoked. `--dry-run` reports what would be
   carried forward under a new `carriedForward` field and never applies it.
+  Carry-forward never rebinds an existing grant to a new source: a ref
+  already granted, even to a stale `sourceId` left behind when its bundle
+  was removed and re-added under the same name, is reported as stale rather
+  than silently re-granted — only an explicit `akm migrate apply` may rebind
+  it.
 - **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
   config.json (legacy source shape, `extraParams`, retired keys, scheduler
   `sourceId` binding), pending `state.db` migrations (historical-destructive
