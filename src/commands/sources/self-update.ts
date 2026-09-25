@@ -6,6 +6,7 @@ import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { BUN_GLOBAL_INSTALL_PATTERN, PNPM_GLOBAL_INSTALL_PATTERN } from "../../core/akm-installs";
 import {
   fetchWithRetry,
   IS_WINDOWS,
@@ -25,8 +26,6 @@ import { runMigrationTool } from "../migration-tool";
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
-const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
-const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
 const MAX_BINARY_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_CHECKSUM_METADATA_BYTES = 1024 * 1024;
 
