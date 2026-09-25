@@ -176,10 +176,12 @@ transaction as its `entries` upsert. Deletes remove the FTS row before the
 parent entry. There is no caller-managed FTS dirty queue; a full FTS rebuild is
 reserved for explicit recovery of regenerable index state.
 
-Rows carry an explicit `rowid = entry_id` (#C1), so a per-entry delete is a
+Rows carry an explicit `rowid = entry_id`, so a per-entry delete is a
 rowid lookup instead of a full-table scan of the `entry_id UNINDEXED` column.
 A one-time in-place realignment rebuilds any older index.db's rows onto this
-contract at the next writable open (`index_meta.ftsRowidLayout`).
+contract at the next writable open (`index_meta.ftsRowidLayout`), and that
+same open re-checks the contract on the table's highest-rowid row and
+realigns again if a writer sharing this generation left it unaligned.
 
 #### Table: `entry_fragments`
 
@@ -202,7 +204,7 @@ keeping the two BM25 populations independently calibrated. Search selects one
 fragment per matching parent and merges it with parent results; `fragment_id`
 is the selector returned in the hit ref.
 
-Rows carry an explicit `rowid = entry_id * 2^20 + fragment_ordinal` (#C1), so
+Rows carry an explicit `rowid = entry_id * 2^20 + fragment_ordinal`, so
 a per-entry delete is a rowid RANGE (`>= start < end`) instead of a full-table
 scan of the `entry_id UNINDEXED` column.
 
