@@ -9,9 +9,9 @@
  * `akm migrate apply` will rewrite the file. `findConfigLegacySourceShape`
  * (status, read-only) and `applyConfigLegacySourceShape` (apply, persists
  * once) are the on-disk counterpart, in the same one-time-migration shape as
- * `./config-extra-params.ts` — replacing what `stripRetiredConfigKeys`
- * (`./config-retired-keys.ts`) used to do here, which deleted this shape
- * instead of converting it.
+ * `./config-extra-params.ts`. The retired-keys step
+ * (`scripts/akm-migrate/migrate/config-retired-keys.ts`) leaves these keys
+ * alone because the registry marks them `"lifted"`.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -22,6 +22,7 @@ import {
   applyConfigLegacySourceShape,
   findConfigLegacySourceShape,
 } from "../../scripts/akm-migrate/migrate/config-legacy-source-shape";
+import { migrateLegacySourceShape } from "../../src/core/config/legacy-source-shape-shim";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 
 let root: string;
@@ -212,9 +213,12 @@ describe("applyConfigLegacySourceShape (apply, persists once)", () => {
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
     try {
-      // The same detection findConfigLegacySourceShape uses is what the
-      // in-memory read shim runs on every load; re-running it here proves
-      // the file no longer trips it.
+      // Run the in-memory read shim itself (the one every config load runs)
+      // on the rewritten file: it is what warns, so it proves the file no
+      // longer trips it. `findConfigLegacySourceShape` is pure and never
+      // warns.
+      const rewritten = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      migrateLegacySourceShape(rewritten, configPath);
       expect(findConfigLegacySourceShape(configPath)).toEqual({ converted: [] });
     } finally {
       _setWarnSinkForTests(undefined);
