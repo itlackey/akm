@@ -16,7 +16,7 @@
  * the full purity-contract design history.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import unitPreambleTemplate from "../../assets/prompts/workflow-unit-preamble.md" with { type: "text" };
 import { UsageError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
@@ -40,7 +40,6 @@ import {
 } from "../program/expressions";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
-import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import { type JudgeCallIdentity, parseJudgeVerdict, type SummaryJudge } from "../validate-summary";
 import { gateNodeId } from "./frozen-judge";
 import { enqueueUnitWrite } from "./unit-writer";
@@ -590,9 +589,9 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
  *
  * These are applied on top of the resolved `env:` bindings in the child, so an
  * engine-authored context variable can never be shadowed by a binding. Params
- * are DECLARED NON-SECRET (`exec/param-secrets.ts` explains why: they are in
- * every unit prompt and in the input hash, so they cannot be redacted);
- * secrets belong in `env:` bindings, which reach the child by name.
+ * reach the child in clear (only the journal scrubs secret-shaped values —
+ * `exec/param-secrets.ts`); secrets belong in `env:` bindings, which reach the
+ * child by name.
  *
  * SIZE is not bounded here, on purpose. A workflow artifact has no bound
  * comparable to an OS environment entry, so `AKM_INPUTS` (and `AKM_PARAMS` /
@@ -636,22 +635,15 @@ function buildExecContextEnv(args: {
 }
 
 /**
- * The canonical dispatch-input envelope: every field here is an input that
- * changes what the backend is actually asked to do, so a completed unit is
- * reused ONLY when all of them match. `env` carries names only, never
- * resolved secret values. `retry`/`onError` are deliberately excluded — they
- * govern failed-unit re-dispatch, not a completed unit's inputs/output.
- * `gateFeedback` is included conditionally (a gate retry is a materially
- * different ask). `taskInputs` is likewise included conditionally (R-R15,
- * `hashVersion` 7): a reference binding's RESOLVED value reaches the unit's
- * prompt / `AKM_TASK_INPUTS` / `childParams`, so a changed upstream value is a
- * materially different ask even though the binding's authored shape inside
- * `frozenTarget` is unchanged — hashing it makes a resume whose journaled
- * upstream output was altered fail loudly as replay divergence instead of
- * silently reusing the stale row. The key is absent for a unit whose target
- * carries no `inputBindings`, so a binding-free unit's preimage keeps the same
- * shape it had (only the version fields moved 6 → 7). This is the ONE place a
- * unit's inputHash is computed.
+ * The canonical dispatch-input envelope, recorded on every attempt row as
+ * `input_hash`: every field here is an input that changes what the backend is
+ * actually asked to do. It is INFORMATIONAL — resume reuses a completed row by
+ * unit id regardless of it (a diagnostic can still tell two dispatches of one
+ * unit apart). `env` carries names only, never resolved secret values.
+ * `retry`/`onError` are excluded — they govern failed-unit re-dispatch, not a
+ * unit's inputs. `gateFeedback` and `taskInputs` are included conditionally so
+ * a binding-free, loop-1 unit's preimage keeps its historical shape
+ * (`hashVersion` 7). This is the ONE place a unit's inputHash is computed.
  *
  * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md for
  * the full field-by-field inclusion/exclusion rationale (reviewer finding #1).
@@ -1042,7 +1034,7 @@ function firstFailureDiagnostic(failed: UnitOutcome[]): string {
  * Applies the `on_error` policy (`fail` vs `continue`), the reducer (via
  * {@link buildEvidence}), the vote-tie failure, and the typed-artifact schema
  * validation (fail-fast, errors in the summary, `artifactSchemaFailure` marker).
- * Callers own dispatch-specific concerns (replay-divergence, budget) BEFORE
+ * Callers own dispatch-specific concerns (budget, journal writes) BEFORE
  * calling this; those never occur on the report path (units are journaled).
  */
 export function reduceStepOutcomes(
@@ -1190,8 +1182,15 @@ export { canonicalJson };
 // every unit id and input hash in it) matches the one the original run built.
 // `native-executor.test.ts` asserts the round-trip identity.
 
-// GATE_EVALUATION_PHASE moved to ../runtime/unit-phases.ts (leaf) so
-// unit-checkin can key on it without closing the exec ↔ runtime cycle.
+/**
+ * `phase` marker stamped on gate-evaluation unit rows. Step ids cannot contain
+ * dots (`PROGRAM_STEP_ID_PATTERN`), so a step can never be NAMED `x.gate` and
+ * the synthetic `<stepId>.gate` node id is collision-free against user step
+ * ids. The phase column is nonetheless the discriminator we key on — an
+ * explicit marker, not a `node_id` suffix match. Dispatch rows always journal
+ * `phase: null`.
+ */
+const GATE_EVALUATION_PHASE = "gate";
 
 /** The unit id of a step's gate-evaluation row for a given 1-based loop. */
 export function gateUnitId(stepId: string, loop: number): string {
@@ -1347,7 +1346,6 @@ export interface GateUnitRef {
   model: string | null;
   runner: IrRuntimeKind;
   inputHash: string;
-  claimHolder?: string;
   durableAttempt?: WorkflowRunUnitAttemptRowV4;
   tokens?: number;
 }
@@ -1355,8 +1353,6 @@ export interface GateUnitRef {
 /** Insert the gate-evaluation unit row (running) just before the judge runs. */
 export async function journalGateEvaluationStart(gate: GateUnitRef): Promise<GateUnitRef> {
   const unitId = gateUnitId(gate.stepId, gate.loop);
-  const now = new Date().toISOString();
-  const claimHolder = gate.claimHolder ?? `direct:${randomUUID()}`;
   const reserved = await enqueueUnitWrite(() =>
     withWorkflowRunsRepo((repo) =>
       repo.reserveUnitAttempt({
@@ -1369,17 +1365,11 @@ export async function journalGateEvaluationStart(gate: GateUnitRef): Promise<Gat
         engine: gate.engine,
         model: gate.model,
         inputHash: gate.inputHash,
-        claimHolder,
-        claimExpiresAt: new Date(Date.parse(now) + 90_000).toISOString(),
-        now,
-        leaseMode: gate.claimHolder === undefined ? "direct" : "engine",
+        now: new Date().toISOString(),
       }),
     ),
   );
-  if (reserved.kind === "busy") {
-    throw new UsageError(`Gate ${unitId} has a live durable attempt held by another engine.`);
-  }
-  return { ...gate, claimHolder, durableAttempt: reserved.attempt };
+  return { ...gate, durableAttempt: reserved.attempt };
 }
 
 /**
@@ -1413,7 +1403,6 @@ export async function journalGateEvaluationFinish(
         unitId,
         attempt: durableAttempt.attempt,
         dispatchId: durableAttempt.dispatch_id,
-        claimHolder: durableAttempt.claim_holder,
         status,
         resultJson: verdict ? JSON.stringify(verdict) : null,
         tokens: gate.tokens ?? null,
@@ -1423,7 +1412,7 @@ export async function journalGateEvaluationFinish(
     }),
   );
   if (!finished) {
-    throw new UsageError(`Gate ${unitId} no longer owns its durable attempt; refusing a late terminal write.`);
+    throw new UsageError(`Gate ${unitId} was already finished; refusing a duplicate terminal write.`);
   }
 }
 
@@ -1618,8 +1607,8 @@ export function seedJournaledRouteDecisions(
 // spine." Every step completion goes through it — first pass or resume — so
 // route evaluation, artifact-judged gates, gate-row journaling, and the
 // bounded-loop rejection contract have exactly one definition. The
-// caller owns the SPINE-WALKING glue (which loop to run next, skip cascades,
-// lease renewal); this function performs exactly ONE completion attempt.
+// caller owns the SPINE-WALKING glue (which loop to run next, skip cascades);
+// this function performs exactly ONE completion attempt.
 
 export interface FinalizeStepInput {
   runId: string;
@@ -1647,18 +1636,6 @@ export interface FinalizeStepInput {
   summaryJudge: SummaryJudge | null | undefined;
   /** Cooperative run cancellation checked before completion is committed. */
   signal?: AbortSignal;
-  /**
-   * The EFFECTIVE dispatch signal the judge call runs under — the engine's
-   * heartbeat-chained controller, which aborts on a LOST LEASE as well as on a
-   * caller abort. It must reach the completion path, because the interruption
-   * guard there is what tells an aborted judge apart from a failed one: seeing
-   * only {@link signal}, a lost-lease abort mid-judge reads as a thrown judge
-   * call and durably blocks the step blaming verifier infrastructure, moments
-   * before the real lost-lease error is raised. Defaults to {@link signal}.
-   */
-  dispatchSignal?: AbortSignal;
-  /** Engine run-lease holder (engine path only); absent on the manual/report path. */
-  leaseHolder?: string;
 }
 
 export type FinalizeStepResult =
@@ -1713,7 +1690,6 @@ export interface JudgeFailureBlock {
    * omits it — the difference is what the step produced, not a policy split.
    */
   evidence?: Record<string, unknown>;
-  leaseHolder?: string;
 }
 
 /**
@@ -1731,7 +1707,6 @@ export async function blockStepForJudgeFailure(input: JudgeFailureBlock): Promis
     status: "blocked",
     notes,
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return notes;
 }
@@ -1743,7 +1718,6 @@ async function blockFinalizedStep(input: FinalizeStepInput, cause: string): Prom
     stepId: input.stepId,
     cause,
     evidence: input.result.evidence,
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return { kind: "judge-failed", summary };
 }
@@ -1782,7 +1756,6 @@ export interface ChildWorkflowBlock {
   childStepId: string | null;
   /** The executed step's evidence (the composing unit's outcome, including the child run identity). */
   evidence?: Record<string, unknown>;
-  leaseHolder?: string;
 }
 
 /**
@@ -1807,7 +1780,6 @@ export async function blockStepForChildWorkflow(input: ChildWorkflowBlock): Prom
     status: "blocked",
     notes,
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return notes;
 }
@@ -1824,7 +1796,6 @@ async function blockFinalizedStepForChildWorkflow(
     childRef: childBlocked.childRef,
     childStepId: childBlocked.childStepId,
     evidence: input.result.evidence,
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return { kind: "child-blocked", summary };
 }
@@ -1854,7 +1825,6 @@ async function blockFinalizedStepForChildWorkflow(
  */
 export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<FinalizeStepResult> {
   const { runId, workflowRef, stepId, stepPlan, completionCriteria, gateLoop, loopsRemaining, result } = input;
-  const lease = input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {};
 
   if (!result.ok) {
     // P3b §3.4: a composed child workflow that blocked is never fed into the
@@ -1875,7 +1845,6 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       status: "failed",
       notes: result.summary,
       evidence: result.evidence,
-      ...lease,
     });
     return { kind: "failed", summary: result.summary };
   }
@@ -1907,7 +1876,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
     const decision = evaluateRoute(stepPlan.route, scope);
     if (!decision.ok) {
       const notes = `Step "${stepId}" route failed: ${decision.error}`;
-      await completeWorkflowStep({ runId, stepId, status: "failed", notes, evidence: result.evidence, ...lease });
+      await completeWorkflowStep({ runId, stepId, status: "failed", notes, evidence: result.evidence });
       return { kind: "failed", summary: notes, routeFailure: true };
     }
     applyRouteDecision(stepPlan.route, stepId, decision.selected, input.routeSelected, input.routeUnselected);
@@ -1966,7 +1935,6 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
                 }),
               )
               .digest("hex"),
-            ...(input.leaseHolder !== undefined ? { claimHolder: input.leaseHolder } : {}),
           };
           gateUnit = await journalGateEvaluationStart(gateUnit);
         }
@@ -2008,20 +1976,14 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   // Reviewer #6: once the judge is invoked, its gate row is journaled `running`
   // (journalGateEvaluationStart) and MUST be finished on every exit. The
   // already-fixed window is the judge itself throwing (caught inside
-  // validateStepSummary — `judgeFailure` records it). The remaining
-  // window is `completeWorkflowStep` throwing AFTER the judge ran — a stolen
-  // lease, a concurrent state change, a DB error — which would otherwise skip the
-  // finish and strand the gate row in `running`. Finish it as an errored row (the
-  // observed outcome: the completion did not succeed), then re-propagate.
-  //
-  // The signal handed down is the DISPATCH signal (the judge call runs under
-  // it), not just the caller's: the interruption guard inside the completion
-  // path rethrows an abort instead of classifying it as a judge outage, and a
-  // lost lease aborting mid-judge is an interruption — recording it as a
-  // verifier failure would blame infrastructure and durably block a step whose
-  // gate simply never finished evaluating.
+  // validateStepSummary — `judgeFailure` records it). The remaining window is
+  // `completeWorkflowStep` throwing AFTER the judge ran — a concurrent state
+  // change (the run abandoned mid-step), a DB error — which would otherwise
+  // skip the finish and strand the gate row in `running`. Finish it as an
+  // errored row (the observed outcome: the completion did not succeed), then
+  // re-propagate. The caller's signal reaches the completion path so an abort
+  // mid-judge is an interruption, not a verifier outage.
   let completion: Awaited<ReturnType<typeof completeWorkflowStep>>;
-  const completionSignal = input.dispatchSignal ?? input.signal;
   try {
     completion = await completeWorkflowStep({
       runId,
@@ -2030,8 +1992,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       summary,
       evidence: result.evidence,
       summaryJudge,
-      ...(completionSignal ? { signal: completionSignal } : {}),
-      ...lease,
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   } catch (err) {
     if (gateUnit) await journalGateEvaluationFinish(gateUnit, true, undefined);

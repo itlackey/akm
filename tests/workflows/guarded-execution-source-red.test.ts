@@ -205,28 +205,6 @@ describe("GuardedExecutionSourceCollector retained adapter inputs", () => {
     expect(collector.snapshot().sources).toEqual([bound]);
   });
 
-  test("rejects short refs and inconsistent bundle identity at the bind boundary", async () => {
-    const { GuardedExecutionSourceCollector } = await guardedSourceApi();
-    const root = sandbox("akm-guarded-canonical-ref");
-    const bytes = "Review.\n";
-    const file = write(root, "commands/review.md", bytes);
-    const collector = new GuardedExecutionSourceCollector();
-    collector.readBytes(file, root);
-
-    expect(() =>
-      collector.bindIdentity(file, root, {
-        ...identity("primary", "commands/review", "akm", "commands/review.md", bytes),
-        ref: "commands/review",
-      }),
-    ).toThrow(/fully.qualified|canonical|ref|bundle/i);
-    expect(() =>
-      collector.bindIdentity(file, root, {
-        ...identity("primary", "commands/review", "akm", "commands/review.md", bytes),
-        bundle: "other",
-      }),
-    ).toThrow(/bundle|ref|identity|match/i);
-  });
-
   test("sorts cross-bundle owners by canonical logical identity without collapsing equal content", async () => {
     const { GuardedExecutionSourceCollector } = await guardedSourceApi();
     const outer = sandbox("akm-guarded-cross-bundle");

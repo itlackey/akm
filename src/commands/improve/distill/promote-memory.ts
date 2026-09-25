@@ -26,16 +26,20 @@ import { appendEvent, type EventsContext } from "../../../core/events";
 import type { AkmDistillResult } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import type { LoweringNotice } from "../../../execution/resolved-request";
-import type { LoweredExecutionDispatchLease } from "../../../integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { callStructured } from "../../../llm/structured-call";
 import type { EligibilitySource } from "../../proposal/proposal-types";
-import { isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
+import type { Proposal, ProposalsContext } from "../../proposal/repository";
 import { assessMemoryKnowledgePromotionCandidate, type MemoryPromotionAssessment } from "../distill-promotion-policy";
 import { emitProposal } from "../proposal-envelope";
 import { durableImproveRef } from "../source-identity";
-import { persistOutputEncodingSalience, runLessonQualityJudge, writeQualityRejection } from "./quality-gate";
+import {
+  persistOutputEncodingSalience,
+  runLessonQualityJudge,
+  stageJudgedProposal,
+  writeQualityRejection,
+} from "./quality-gate";
 
 /**
  * Everything the promotion branch needs from `akmDistill`. Plain data + the
@@ -59,7 +63,6 @@ export interface PromoteMemoryContext {
   strategy?: ImproveProfileConfig;
   /** Preferred production path: exact symbolic runner selected for distill. */
   llmRunner?: Extract<RunnerSpec, { kind: "llm" }>;
-  lease?: LoweredExecutionDispatchLease;
   signal?: AbortSignal;
   chat?: (config: LlmConnectionConfig, messages: ChatMessage[], options?: ChatCompletionOptions) => Promise<string>;
   stash: string;
@@ -125,48 +128,6 @@ export async function planMemoryKnowledgePromotion(
   return { promotion: promotion as MemoryKnowledgePromotionPlan["promotion"], existingKnowledgeContent };
 }
 
-/**
- * PRECHECK: read-only classification of whether distill would
- * promote this memory to knowledge — used by the improve loop's distill
- * pre-generation proposal guard (`loop-stages.ts`) to pre-check the SAME ref
- * {@link planMemoryKnowledgePromotion} will target at dispatch time
- * (knowledgeRef when this resolves `true`, the derived lesson ref
- * otherwise), rather than guessing which of the two a guard hit applies to.
- * Delegates to {@link planMemoryKnowledgePromotion} itself so the
- * classification can never drift from the real dispatch decision — no LLM
- * call, no side effect. Every {@link PromoteMemoryContext} field this
- * classification does not read (chat, fetchSimilarLessonsFn,
- * existingRefVocabulary, …) is a safe placeholder here.
- */
-export async function wouldPromoteMemoryToKnowledge(args: {
-  inputRef: string;
-  durableInputRef: string;
-  assetContent: string | null;
-  feedbackEvents: readonly { metadata?: Record<string, unknown> }[];
-  config: AkmConfig;
-  stash: string;
-  lookup: (ref: string) => Promise<string | null>;
-}): Promise<boolean> {
-  const plan = await planMemoryKnowledgePromotion({
-    targetKind: "auto",
-    inputRef: args.inputRef,
-    durableInputRef: args.durableInputRef,
-    assetContent: args.assetContent,
-    filteredEvents: args.feedbackEvents,
-    config: args.config,
-    stash: args.stash,
-    lookup: args.lookup,
-    fetchSimilarLessonsFn: () => Promise.resolve([]),
-    existingRefVocabulary: new Set(),
-    outcomeWeightEnabled: false,
-    eligMeta: {},
-    exclusionSetSize: 0,
-    filteredFeedbackCount: 0,
-    feedbackFullyFiltered: false,
-  });
-  return plan !== null;
-}
-
 /** Whether a classified promotion will actually call merge generation and/or the judge. */
 export function memoryKnowledgePromotionRequiresDispatch(
   ctx: PromoteMemoryContext,
@@ -224,7 +185,6 @@ async function resolveKnowledgePromotionContent(
       const mergeResponse = await callStructured<string>({
         feature: "distill",
         runner,
-        ...(ctx.lease ? { lease: ctx.lease } : {}),
         messages: [
           { role: "system", content: "Return only valid JSON. No prose." },
           { role: "user", content: mergePrompt },
@@ -348,7 +308,6 @@ export async function promoteMemoryToKnowledge(
     const judgeResult = await runLessonQualityJudge(config, resolvedPromotionContent, assetContent ?? "", chat, {
       ...(similarLessons.length > 0 ? { similarLessons } : {}),
       ...(ctx.llmRunner ? { llmRunner: ctx.llmRunner } : {}),
-      ...(ctx.lease ? { lease: ctx.lease } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
       ...(ctx.onNotices ? { onNotices: ctx.onNotices } : {}),
     });
@@ -356,7 +315,7 @@ export async function promoteMemoryToKnowledge(
       const proposalOpts = {
         ...(ctx.proposalsCtx ? { proposalsCtx: ctx.proposalsCtx } : {}),
         ...(ctx.sourceRun !== undefined ? { sourceRun: ctx.sourceRun } : {}),
-        ...(ctx.llmRunner?.connection.model ? { modelId: ctx.llmRunner.connection.model } : {}),
+        ledgerRef: ctx.itemRef ?? durableInputRef,
       };
       if (judgeResult.reviewNeeded) {
         // Uncertainty band (2.5–3.5): queue as review_needed instead of rejecting.
@@ -393,13 +352,11 @@ export async function promoteMemoryToKnowledge(
     if (judgeResult.score > 0) knowledgeJudgeConfidence = judgeResult.score / 5;
   }
   const knowledgeParsed = parseFrontmatter(resolvedPromotionContent);
-  const proposalResult = emitProposal(
+  let proposal: Proposal = emitProposal(
     { stashDir: stash, proposalsCtx: ctx.proposalsCtx },
     {
       ref: promotion.knowledgeRef,
       source: "distill",
-      // §23.6 fingerprint model-id term (WI-6.4).
-      ...(ctx.llmRunner?.connection.model ? { modelId: ctx.llmRunner.connection.model } : {}),
       ...(ctx.sourceRun !== undefined ? { sourceRun: ctx.sourceRun } : {}),
       payload: {
         content: resolvedPromotionContent,
@@ -408,37 +365,13 @@ export async function promoteMemoryToKnowledge(
       ...(knowledgeJudgeConfidence !== undefined ? { confidence: knowledgeJudgeConfidence } : {}),
       // Attribution tagging: persist the eligibility lane on the proposal.
       ...(ctx.eligibilitySource ? { eligibilitySource: ctx.eligibilitySource } : {}),
+      // The improve ledger keys the attempt by the input memory, not the knowledge ref.
+      attemptedRefs: [ctx.itemRef ?? durableInputRef],
     },
   );
+  // A judge scored this content (confidence is set only on a real pass).
+  if (knowledgeJudgeConfidence !== undefined) proposal = stageJudgedProposal(stash, proposal, ctx.proposalsCtx);
 
-  if (isProposalSkipped(proposalResult)) {
-    appendEvent(
-      {
-        eventType: "distill_invoked",
-        // Use item_ref when resolved, otherwise the input conceptId.
-        ref: ctx.itemRef ?? durableInputRef,
-        metadata: {
-          outcome: "skipped" as const,
-          proposalRef: promotion.knowledgeRef,
-          message: proposalResult.message,
-          skipReason: proposalResult.reason,
-          ...eligMeta,
-        },
-      },
-      ctx.eventsCtx,
-    );
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "skipped",
-      inputRef,
-      proposalRef: promotion.knowledgeRef,
-      skipReason: proposalResult.reason,
-      message: proposalResult.message,
-    };
-  }
-
-  const proposal: Proposal = proposalResult;
   // G4: content-score the distilled OUTPUT so it carries a real encoding
   // salience (encoding_source='content') from creation.
   persistOutputEncodingSalience(

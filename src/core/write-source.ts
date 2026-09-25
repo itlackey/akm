@@ -37,7 +37,7 @@ import {
   runGit,
   saveGitStash,
 } from "../sources/providers/git";
-import { assertGitExactPathsClean, listIgnoredExactPaths } from "../sources/providers/git-stash";
+import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import { detectAdapterId } from "./adapter/detect-adapter";
 import { ensureAkmMarkdownType } from "./asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
@@ -487,17 +487,6 @@ export function recordWriteTargetPath(source: WriteTargetSource, filePath: strin
   const pending = pendingGitPaths.get(repoDir) ?? new Set<string>();
   pending.add(path.resolve(filePath));
   pendingGitPaths.set(repoDir, pending);
-}
-
-/** Refuse to overwrite exact paths that carry staged or unstaged user work. */
-export function assertWriteTargetPathsClean(source: WriteTargetSource, filePaths: string[]): void {
-  if (source.kind !== "git") return;
-  const repoDir = repoDirFor(source);
-  if (!isGitBackedStash(repoDir)) return;
-  assertGitExactPathsClean(
-    repoDir,
-    filePaths.map((filePath) => path.relative(repoDir, path.resolve(filePath)).replaceAll(path.sep, "/")),
-  );
 }
 
 function lstatOrNull(filePath: string): fs.Stats | null {

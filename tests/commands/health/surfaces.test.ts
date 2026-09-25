@@ -14,7 +14,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { collectConfigSkewAdvisory, collectEgressAdvisory } from "../../../src/commands/health/surfaces";
+import { collectConfigSkewAdvisory } from "../../../src/commands/health/config-skew";
+import { collectEgressAdvisory } from "../../../src/commands/health/egress";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

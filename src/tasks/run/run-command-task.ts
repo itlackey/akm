@@ -25,7 +25,7 @@ import { dispatchPreparedCommandInvocation } from "../../commands/command/comman
 import type { TaskLogLineInput } from "../../core/logs-db";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunAgentOptions } from "../../integrations/agent";
-import type { DispatchLoweredExecutionOptions } from "../../integrations/agent/execution-lowering";
+import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import type { chatCompletion } from "../../llm/client";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
@@ -39,7 +39,7 @@ export async function runPreparedCommandTask(input: {
   logPath: string;
   startedAt: Date;
   now: () => Date;
-  runAgentImpl?: DispatchLoweredExecutionOptions["runAgent"];
+  runAgentImpl?: RunExecutionOptions["runAgent"];
   chatCompletionImpl?: typeof chatCompletion;
   agentOptions?: Partial<RunAgentOptions>;
   historyReserved: boolean;

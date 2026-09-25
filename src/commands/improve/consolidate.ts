@@ -20,13 +20,10 @@ import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-s
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import {
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-} from "../../integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
-import { callStructured, preflightStructuredLlmRunner } from "../../llm/structured-call";
+import { callStructured } from "../../llm/structured-call";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import {
@@ -37,18 +34,13 @@ import {
 import { findEntryIdByRef, getAllEntries, getEntryById } from "../../storage/repositories/index-entries-repository";
 import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
 import { getNeighborsByEntryId } from "../../storage/repositories/index-vec-repository";
-import {
-  isProposalSkipped,
-  listProposals,
-  listProposalsReadOnly,
-  type ProposalsContext,
-  proposalContent,
-} from "../proposal/repository";
+import { listProposals, listProposalsReadOnly, type ProposalsContext, proposalContent } from "../proposal/repository";
 import { hasSupersededStatus, validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
 import { type AntiCollapseConfig, DEFAULT_RANDOM_CLUSTER_FRACTION } from "./anti-collapse";
 import { cacheHash } from "./content-hash";
 import { resolveImproveLlmExecution } from "./execution";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { emitProposal } from "./proposal-envelope";
 import { createRunContext, type RunContext } from "./run-context";
 
@@ -88,8 +80,6 @@ export interface AkmConsolidateOptions {
   llmRunner?: Extract<RunnerSpec, { kind: "llm" }> | null;
   /** Internal diagnostics sink for resolved/lowered dispatches. */
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
-  /** When true, indicates the run was triggered automatically by volume threshold rather than by the memory_consolidation feature flag. */
-  autoTriggered?: boolean;
   /**
    * Incremental gate (ISO timestamp). When set, consolidation considers only
    * memories modified after this time PLUS their top-k semantic neighbours from
@@ -620,9 +610,9 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     );
   }
 
-  // WS-3a: open one state.db handle shared by the body-embedding cache (dedup
-  // + cluster) and the judged-state cache. All callers in the function body
-  // receive this handle; it is closed in the `finally` block below.
+  // WS-3a: open one state.db handle for the body-embedding cache (dedup +
+  // cluster). All callers in the function body receive this handle; it is
+  // closed in the `finally` block below.
   // Fail-open: any open error leaves it `undefined` and all cache paths skip.
   let sharedStateDb: Database | undefined;
   if (config.embedding) {
@@ -669,6 +659,8 @@ interface ConsolidateAccounting {
   skipReasonByRef: Map<string, { ref: string; skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }> }>;
   /** Refs that contributed to judgedNoAction in their own chunk. */
   judgedNoActionRefs: Set<string>;
+  /** Every memory ref in a chunk the model judged (or an all-hot chunk judged without it). */
+  judgedRefs: Set<string>;
   /** Record a deterministic post-LLM op rejection for `ref`. */
   pushSkipReason: (op: ConsolidateOpKind | "unknown", ref: string, reason: string) => void;
 }
@@ -682,6 +674,7 @@ function createConsolidateAccounting(): ConsolidateAccounting {
     skipReasons: [],
     skipReasonByRef: new Map(),
     judgedNoActionRefs: new Set(),
+    judgedRefs: new Set(),
     pushSkipReason: () => {},
   };
   acc.pushSkipReason = (op, ref, reason) => {
@@ -732,6 +725,8 @@ export interface ConsolidationPoolSnapshot {
   memories: MemoryEntry[];
   /** Memories dropped because their body already exists verbatim in `knowledge/`. */
   prefilteredAlreadyPromoted: number;
+  /** Memories the improve ledger skipped: judged within their revisit window and unchanged since. */
+  judgedUnchanged: number;
 }
 
 interface ConsolidationSourceOwner {
@@ -788,6 +783,8 @@ export function inspectConsolidationPool(
   }
   memories = memories.filter((memory) => fs.existsSync(memory.filePath));
   const poolSize = memories.length;
+  memories = dropLedgerBlockedMemories(memories, stashDir, opts.proposalsCtx, readOnly);
+  const judgedUnchanged = poolSize - memories.length;
 
   if (opts.incrementalSince && memories.length > 0) {
     memories = narrowToIncrementalCandidates(
@@ -833,7 +830,49 @@ export function inspectConsolidationPool(
     memories = memories.slice(0, opts.limit);
   }
 
-  return { poolSize, candidatePoolSize: memories.length, dedupPoolSize, memories, prefilteredAlreadyPromoted };
+  return {
+    poolSize,
+    candidatePoolSize: memories.length,
+    dedupPoolSize,
+    memories,
+    prefilteredAlreadyPromoted,
+    judgedUnchanged,
+  };
+}
+
+/**
+ * The improve ledger's consolidate key for a memory: its conceptId. Rows are
+ * partitioned by stash, so the bundle qualifier adds nothing here.
+ */
+function consolidateLedgerRef(memory: MemoryEntry): string {
+  return conceptIdFromTypeName("memory", memory.name);
+}
+
+/**
+ * Drop memories consolidate already judged whose revisit window is still
+ * open and whose file has not changed since the judgement — they are not
+ * re-judged. A memory edited after its last judgement comes back at once.
+ */
+function dropLedgerBlockedMemories(
+  memories: MemoryEntry[],
+  stashDir: string,
+  proposalsCtx: ProposalsContext | undefined,
+  readOnly: boolean,
+): MemoryEntry[] {
+  const ledger = loadLedgerSnapshot({ proposalsCtx, readOnly }, stashDir, ["consolidate"]);
+  if (ledger.size === 0) return memories;
+  const nowIso = new Date().toISOString();
+  return memories.filter((memory) => {
+    const row = ledger.get(ledgerKey("consolidate", consolidateLedgerRef(memory)));
+    if (!row) return true;
+    let changedAt: string | undefined;
+    try {
+      changedAt = fs.statSync(memory.filePath).mtime.toISOString();
+    } catch {
+      changedAt = undefined;
+    }
+    return !isLedgerBlocked(row, nowIso, changedAt);
+  });
 }
 
 /**
@@ -892,6 +931,13 @@ async function narrowConsolidationPool(
 ): Promise<NarrowPoolResult> {
   const snapshot = inspectConsolidationPool(opts, stashDir, warnings, existingKnowledgeBodyHashes);
   const { memories, prefilteredAlreadyPromoted } = snapshot;
+  if (snapshot.judgedUnchanged > 0) {
+    warnings.push(
+      `Consolidation: skipped ${snapshot.judgedUnchanged} memor${
+        snapshot.judgedUnchanged === 1 ? "y" : "ies"
+      } judged within the revisit window and unchanged since.`,
+    );
+  }
   if (prefilteredAlreadyPromoted > 0) {
     warnings.push(
       `Consolidation: pre-filtered ${prefilteredAlreadyPromoted} memor${
@@ -975,7 +1021,6 @@ async function judgeConsolidationChunks(args: {
   opts: AkmConsolidateOptions;
   config: AkmConfig;
   llmRunner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-  lease: LoweredExecutionDispatchLease | undefined;
   sourceName: string;
   bodyTruncation: number;
   pendingProposalBodyHashes: Set<string>;
@@ -987,7 +1032,6 @@ async function judgeConsolidationChunks(args: {
     opts,
     config,
     llmRunner,
-    lease,
     sourceName,
     bodyTruncation,
     pendingProposalBodyHashes,
@@ -1057,7 +1101,11 @@ async function judgeConsolidationChunks(args: {
     // Σ(skipReasons) + failedChunkMemories`. Not counted toward the
     // LLM-failure-rate abort policy — no request was attempted.
     if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
-      for (const m of chunk) accounting.judgedNoActionRefs.add(conceptIdFromTypeName("memory", m.name));
+      for (const m of chunk) {
+        const memRef = conceptIdFromTypeName("memory", m.name);
+        accounting.judgedNoActionRefs.add(memRef);
+        accounting.judgedRefs.add(memRef);
+      }
       accounting.judgedNoAction += chunk.length;
       warn(
         `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
@@ -1090,7 +1138,6 @@ async function judgeConsolidationChunks(args: {
         akmConfig: config,
         enabled: true,
         runner: llmRunner,
-        ...(lease ? { lease } : {}),
         messages: [
           { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
@@ -1170,6 +1217,7 @@ async function judgeConsolidationChunks(args: {
     }
 
     recordChunkJudgedNoAction(chunk, ops, accounting);
+    for (const m of chunk) accounting.judgedRefs.add(conceptIdFromTypeName("memory", m.name));
 
     chunkOpsArrays.push(ops);
   }
@@ -1255,119 +1303,113 @@ async function planConsolidation(
       dispatchingChunks.push(chunk);
     }
   }
-  const dispatchLease =
-    llmRunner && dispatchingChunks.length > 0 ? await preflightStructuredLlmRunner(llmRunner) : undefined;
+  if (llmRunner && dispatchingChunks.length > 0) assertRunnerCredentials(llmRunner);
 
-  try {
-    // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
-    // This ensures that semantically similar memories land in the same LLM
-    // context window, allowing the model to detect and merge duplicates that
-    // would otherwise be split across chunks and survive indefinitely.
-    // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
-    // Fails open: if embeddings are unavailable or fail, original order is used.
-    const { ordered: clusteredMemories, embedTelemetry } = await clusterMemoriesBySimilarity(
-      budgetedMemories,
-      config,
-      sharedStateDb,
-      opts.signal,
-    );
+  // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
+  // This ensures that semantically similar memories land in the same LLM
+  // context window, allowing the model to detect and merge duplicates that
+  // would otherwise be split across chunks and survive indefinitely.
+  // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
+  // Fails open: if embeddings are unavailable or fail, original order is used.
+  const { ordered: clusteredMemories, embedTelemetry } = await clusterMemoriesBySimilarity(
+    budgetedMemories,
+    config,
+    sharedStateDb,
+    opts.signal,
+  );
 
-    // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
-    // A small fraction (default 5%) of the pool is shuffled into random positions
-    // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
-    // entrenchment where only the most-retrieved assets ever get consolidated.
-    // DEFAULT ON since R5 — opt out via antiCollapse.enabled: false.
-    let finalClusteredMemories = clusteredMemories;
-    {
-      const antiCollapseForCluster: AntiCollapseConfig =
-        (getImproveProcessConfig("consolidate", opts.improveProfile)?.antiCollapse as AntiCollapseConfig | undefined) ??
-        {};
-      if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
-        const fraction = antiCollapseForCluster.randomClusterFraction ?? DEFAULT_RANDOM_CLUSTER_FRACTION;
-        const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
-        // Pick `randomCount` positions to inject random (un-clustered) members.
-        // Use a seeded-ish shuffle: sort by hash of the name so it's deterministic
-        // per run but not strictly similarity-driven.
-        const shuffled = [...clusteredMemories].sort((a, b) => {
-          // Deterministic shuffle: compare sha256-ish (use name hash as proxy).
-          const ha = a.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
-          const hb = b.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
-          return ha - hb;
-        });
-        const randomSlice = shuffled.slice(0, randomCount);
-        const randomSet = new Set(randomSlice.map((m) => m.name));
-        // Insert random members at intervals through the clustered sequence.
-        const withRandom: MemoryEntry[] = [];
-        const interval = Math.max(2, Math.floor(clusteredMemories.length / randomCount));
-        let randomIdx = 0;
-        for (let i = 0; i < clusteredMemories.length; i++) {
-          const m = clusteredMemories[i];
-          if (m && !randomSet.has(m.name)) withRandom.push(m);
-          if (i > 0 && i % interval === 0 && randomIdx < randomSlice.length) {
-            const r = randomSlice[randomIdx++];
-            if (r) withRandom.push(r);
-          }
-        }
-        // Append any remaining random members not yet inserted.
-        while (randomIdx < randomSlice.length) {
+  // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
+  // A small fraction (default 5%) of the pool is shuffled into random positions
+  // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
+  // entrenchment where only the most-retrieved assets ever get consolidated.
+  // DEFAULT ON since R5 — opt out via antiCollapse.enabled: false.
+  let finalClusteredMemories = clusteredMemories;
+  {
+    const antiCollapseForCluster: AntiCollapseConfig =
+      (getImproveProcessConfig("consolidate", opts.improveProfile)?.antiCollapse as AntiCollapseConfig | undefined) ??
+      {};
+    if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
+      const fraction = antiCollapseForCluster.randomClusterFraction ?? DEFAULT_RANDOM_CLUSTER_FRACTION;
+      const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
+      // Pick `randomCount` positions to inject random (un-clustered) members.
+      // Use a seeded-ish shuffle: sort by hash of the name so it's deterministic
+      // per run but not strictly similarity-driven.
+      const shuffled = [...clusteredMemories].sort((a, b) => {
+        // Deterministic shuffle: compare sha256-ish (use name hash as proxy).
+        const ha = a.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        const hb = b.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        return ha - hb;
+      });
+      const randomSlice = shuffled.slice(0, randomCount);
+      const randomSet = new Set(randomSlice.map((m) => m.name));
+      // Insert random members at intervals through the clustered sequence.
+      const withRandom: MemoryEntry[] = [];
+      const interval = Math.max(2, Math.floor(clusteredMemories.length / randomCount));
+      let randomIdx = 0;
+      for (let i = 0; i < clusteredMemories.length; i++) {
+        const m = clusteredMemories[i];
+        if (m && !randomSet.has(m.name)) withRandom.push(m);
+        if (i > 0 && i % interval === 0 && randomIdx < randomSlice.length) {
           const r = randomSlice[randomIdx++];
           if (r) withRandom.push(r);
         }
-        finalClusteredMemories = withRandom;
-        warnings.push(
-          `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
-        );
       }
+      // Append any remaining random members not yet inserted.
+      while (randomIdx < randomSlice.length) {
+        const r = randomSlice[randomIdx++];
+        if (r) withRandom.push(r);
+      }
+      finalClusteredMemories = withRandom;
+      warnings.push(
+        `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
+      );
     }
-
-    const chunks: MemoryEntry[][] = [];
-    for (let i = 0; i < finalClusteredMemories.length; i += chunkSize) {
-      chunks.push(finalClusteredMemories.slice(i, i + chunkSize));
-    }
-
-    // 2026-05-27 prompt-context fix: precompute body-hashes of pending
-    // consolidate proposals once, so the per-chunk prompt can annotate
-    // memories whose body would just produce a deterministic
-    // `dedup_pending_proposal` skip. Cuts ~110 wasted LLM proposals per
-    // 4h on this user's stack. See
-    // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
-    const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
-
-    warn(
-      `[consolidate] ${budgetedMemories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
-        ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
-    );
-
-    const chunkOpsArrays = await judgeConsolidationChunks({
-      chunks,
-      opts,
-      config,
-      llmRunner,
-      lease: dispatchLease,
-      sourceName,
-      bodyTruncation,
-      pendingProposalBodyHashes,
-      warnings,
-      accounting,
-    });
-
-    // Build the known-refs set from the already-filtered memory pool so
-    // mergePlans() can reject LLM-hallucinated primary refs before execution.
-    const knownRefs = new Set(budgetedMemories.map((m) => conceptIdFromTypeName("memory", m.name)));
-    const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays, knownRefs);
-    warnings.push(...mergeWarnings);
-
-    return {
-      allOps,
-      totalChunks: chunks.length,
-      llmPoolSize,
-      deferredMemories: memories.length - budgetedMemories.length,
-      embedTelemetry,
-      sourceName,
-    };
-  } finally {
-    if (dispatchLease) disposeLoweredExecutionDispatchLease(dispatchLease);
   }
+
+  const chunks: MemoryEntry[][] = [];
+  for (let i = 0; i < finalClusteredMemories.length; i += chunkSize) {
+    chunks.push(finalClusteredMemories.slice(i, i + chunkSize));
+  }
+
+  // 2026-05-27 prompt-context fix: precompute body-hashes of pending
+  // consolidate proposals once, so the per-chunk prompt can annotate
+  // memories whose body would just produce a deterministic
+  // `dedup_pending_proposal` skip. Cuts ~110 wasted LLM proposals per
+  // 4h on this user's stack. See
+  // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
+  const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
+
+  warn(
+    `[consolidate] ${budgetedMemories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
+      ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
+  );
+
+  const chunkOpsArrays = await judgeConsolidationChunks({
+    chunks,
+    opts,
+    config,
+    llmRunner,
+    sourceName,
+    bodyTruncation,
+    pendingProposalBodyHashes,
+    warnings,
+    accounting,
+  });
+
+  // Build the known-refs set from the already-filtered memory pool so
+  // mergePlans() can reject LLM-hallucinated primary refs before execution.
+  const knownRefs = new Set(budgetedMemories.map((m) => conceptIdFromTypeName("memory", m.name)));
+  const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays, knownRefs);
+  warnings.push(...mergeWarnings);
+
+  return {
+    allOps,
+    totalChunks: chunks.length,
+    llmPoolSize,
+    deferredMemories: memories.length - budgetedMemories.length,
+    embedTelemetry,
+    sourceName,
+  };
 }
 
 async function akmConsolidateInner(
@@ -1447,11 +1489,24 @@ async function akmConsolidateInner(
     promotionFailures,
     warnings,
     pushSkipReason: accounting.pushSkipReason,
-    llmRunner: opts.llmRunner ?? null,
   };
   for (const op of allOps) {
     if (op.op === "promote") await emitPromotionProposal(op, promoteContext);
   }
+  // The improve ledger: a promoted memory's row came with its proposal; every
+  // other memory the model judged is `judged_no_action` until its revisit
+  // window or its next edit. A promotion that failed to persist stays
+  // unrecorded, so the next run retries it.
+  recordLedgerAttempt(
+    { proposalsCtx: opts.proposalsCtx },
+    [...accounting.judgedRefs]
+      .filter(
+        (ref) =>
+          !promoteContext.promotedSourceRefs.has(ref) &&
+          !accounting.skipReasonByRef.get(ref)?.skips.some((skip) => skip.reason === "promote_create_failed"),
+      )
+      .map((ref) => ({ stashDir, ref, source: "consolidate", outcome: "judged_no_action" as const })),
+  );
 
   return makeConsolidateResult({
     target: sourceName,
@@ -1493,7 +1548,6 @@ export interface PromoteContext {
   promotionFailures: { count: number };
   warnings: string[];
   pushSkipReason: ConsolidateAccounting["pushSkipReason"];
-  llmRunner?: Extract<RunnerSpec, { kind: "llm" }> | null;
 }
 
 /** Reject a promotion when its body already exists in knowledge or the queue. */
@@ -1703,29 +1757,24 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       return;
     }
 
-    const proposalResult = emitProposal(
+    const proposal = emitProposal(
       { stashDir, proposalsCtx: ctx.proposalsCtx },
       {
         ref: knowledgeRef,
         target: { source: target.source.name, root: target.source.path },
         source: "consolidate",
         sourceRun,
-        // §23.6 fingerprint model-id term (WI-6.4).
-        ...(ctx.llmRunner?.connection.model ? { modelId: ctx.llmRunner.connection.model } : {}),
         payload: {
           content: promotedAssetContent,
           frontmatter: { description, xrefs: [canonicalXref(op.ref)] },
         },
         ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
+        // The improve ledger keys the attempt by the source memory.
+        attemptedRefs: [op.ref],
       },
     );
-    if (isProposalSkipped(proposalResult)) {
-      warnings.push(`Promote: skipped proposal for ${op.ref} (${proposalResult.reason}): ${proposalResult.message}`);
-      pushSkipReason("promote", op.ref, `promote_proposal_${proposalResult.reason}`);
-    } else {
-      promoted.push(proposalResult.id);
-      promotedSourceRefs.add(op.ref);
-    }
+    promoted.push(proposal.id);
+    promotedSourceRefs.add(op.ref);
   } catch (e) {
     ctx.promotionFailures.count++;
     warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);

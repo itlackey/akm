@@ -11,35 +11,30 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { parseRefInput } from "../../../core/asset/resolve-ref";
-import { timestampForFilename } from "../../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { ConfigError } from "../../../core/errors";
 import { appendEvent, type EventsContext } from "../../../core/events";
 import type { AkmDistillResult, DistillOutcome } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
-import { getDistillRejectedDir } from "../../../core/paths";
 import { withStateDb } from "../../../core/state-db";
 import { warn } from "../../../core/warn";
-import { recordWrittenPath } from "../../../core/write-provenance";
 import type { LoweringNotice } from "../../../execution/resolved-request";
-import type { LoweredExecutionDispatchLease } from "../../../integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import type { LlmFeatureKey } from "../../../llm/feature-gate";
 import { callStructured } from "../../../llm/structured-call";
 import type { EligibilitySource } from "../../proposal/proposal-types";
 import {
-  archiveProposal,
-  isProposalSkipped,
   type Proposal,
   type ProposalsContext,
+  proposalContentHash,
   recordGateDecision,
 } from "../../proposal/repository";
 import { akmSearch } from "../../read/search";
 import { scoreEncodingSalience } from "../encoding-salience";
 import { resolveImproveLlmExecution } from "../execution";
+import { recordLedgerAttempt } from "../ledger";
 import { emitProposal } from "../proposal-envelope";
 import { computeSalience, upsertAssetSalience } from "../salience";
 
@@ -217,7 +212,6 @@ export interface QualityJudgeOptions {
   llmRunner?: Extract<RunnerSpec, { kind: "llm" }>;
   /** The caller already froze judge selection; absence of llmRunner must fail closed without re-resolution. */
   runnerSelectionFrozen?: true;
-  lease?: LoweredExecutionDispatchLease;
   timeoutMs?: number | null;
   signal?: AbortSignal;
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
@@ -332,7 +326,6 @@ async function runQualityJudge(
     const raw = await callStructured<string>({
       feature,
       runner,
-      ...(options.lease ? { lease: options.lease } : {}),
       messages: [
         { role: "system", content: "Return only valid JSON. No prose." },
         { role: "user", content: prompt },
@@ -424,42 +417,58 @@ export async function runReflectQualityJudge(
   );
 }
 
+// ── Judge verdict bookkeeping ────────────────────────────────────────────────
+
+/**
+ * Stamp a freshly minted proposal whose quality judge passed: a `staged` gate
+ * decision carrying the judged content's hash. The triage drain accepts a
+ * staged proposal whose content still matches (and whose target is
+ * unchanged); an edit after judging sends it back for judgment. Best-effort —
+ * a failed stamp only means the drain judges the proposal again.
+ */
+export function stageJudgedProposal(stash: string, proposal: Proposal, proposalsCtx?: ProposalsContext): Proposal {
+  try {
+    return (
+      recordGateDecision(
+        stash,
+        proposal.id,
+        {
+          outcome: "staged",
+          reason: "quality-judge",
+          gate: "quality-gate",
+          contentHash: proposalContentHash(proposal),
+        },
+        proposalsCtx,
+      ) ?? proposal
+    );
+  } catch (error) {
+    warn(
+      `[akm] failed to record the quality-judge pass for ${proposal.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return proposal;
+  }
+}
+
 // ── Quality-rejection helper ─────────────────────────────────────────────────
 
 /**
- * Write a rejected lesson to `$STATE/improve/distill-rejected/<stash>/`
- * (itlackey/akm#890), persist it as a real `proposals` row, append a
- * `distill_invoked` quality-rejected event, and return the `quality_rejected`
- * envelope.
+ * Record a distill quality-gate outcome and return its envelope.
  *
- * R10: the proposal row is minted through the same `createProposal`
- * (`emitProposal`) path every other distill proposal takes, so `source:
- * "distill"` fingerprint/backoff bookkeeping (proposal/repository.ts
- * `checkFingerprintAndBackoff`) and the Reflexion "previously rejected"
- * context (distill.ts's `buildDistillMessages`, reflect.ts's
- * `readRejectedProposals`) can see it — before this, a quality rejection
- * left only an event and a `$STATE`-side file nothing read, so the same ref
- * was re-selected and re-rejected on every run. `review_needed` stays
- * `pending` for a human to triage in the normal queue (matching what
- * promote-memory.ts's comment always claimed) and is stamped with a
- * `quality-gate` gate decision so the triage drain's `classifyPendingProposals`
- * (proposal/drain.ts) leaves it pending instead of deferring it to the
- * judgment tier, which could auto-accept it with no human in the loop;
- * `quality_rejected` is minted pending, then immediately archived to
- * `rejected` with the judge's reason.
- * A fingerprint/backoff guard hit here (rare pre-R9; the pre-generation
- * guard is item R9) just means no new row — the envelope + event below are
- * written either way.
+ * `quality_rejected` lands in the improve ledger under the input's key — the
+ * distill rejection window keeps candidate selection from re-generating it.
+ * `review_needed` mints a real pending proposal for a human (its ledger row
+ * follows the proposal), stamped with a `quality-gate` gate decision so the
+ * triage drain leaves it for review instead of auto-accepting it.
  *
  * @param stash     - Root stash directory.
- * @param inputRef  - The original input ref (for the event).
+ * @param inputRef  - The original input ref (for the event and envelope).
  * @param proposalRef - The proposed lesson/knowledge ref.
  * @param content   - The raw content that failed the quality gate.
  * @param score     - Quality score from the judge.
  * @param reason    - Human-readable rejection reason.
  * @param extraMeta - Optional additional metadata for the event.
  * @param eventsCtx - Events context so the emit takes appendEvent's fast path (R25).
- * @param proposalOpts - Test seam / attribution passthrough for the minted proposal row.
+ * @param opts      - Test seam / attribution passthrough, and the input's ledger key (default `inputRef`).
  */
 export function writeQualityRejection(
   stash: string,
@@ -471,102 +480,56 @@ export function writeQualityRejection(
   extraMeta: Record<string, unknown> = {},
   eligibilitySource?: EligibilitySource,
   eventsCtx?: EventsContext,
-  proposalOpts: { proposalsCtx?: ProposalsContext; sourceRun?: string; modelId?: string } = {},
+  opts: { proposalsCtx?: ProposalsContext; sourceRun?: string; ledgerRef?: string } = {},
 ): AkmDistillResult {
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
+  const ledgerRef = opts.ledgerRef ?? inputRef;
 
-  // The mint-time canonical validator inside createProposal (via
-  // emitProposal) throws UsageError for structurally-invalid content (e.g. a
-  // lessons/ ref missing description/when_to_use). The proposal row here is
-  // bookkeeping for backoff/Reflexion, never the authoritative record of the
-  // rejection, so a validator throw degrades to "no row minted" — the same
-  // bucket as the fingerprint/backoff skip below, not a caller-visible error.
-  // The archiveProposal call below is guarded the same way, for the
-  // same reason.
-  let mintedProposal: ReturnType<typeof emitProposal> | undefined;
-  try {
-    mintedProposal = emitProposal(
-      { stashDir: stash, ...(proposalOpts.proposalsCtx ? { proposalsCtx: proposalOpts.proposalsCtx } : {}) },
-      {
-        ref: proposalRef,
-        source: "distill",
-        ...(proposalOpts.sourceRun !== undefined ? { sourceRun: proposalOpts.sourceRun } : {}),
-        ...(proposalOpts.modelId !== undefined ? { modelId: proposalOpts.modelId } : {}),
-        payload: { content },
-        ...(eligibilitySource ? { eligibilitySource } : {}),
-      },
-    );
-  } catch {
-    mintedProposal = undefined;
-  }
   let proposal: Proposal | undefined;
-  if (mintedProposal && !isProposalSkipped(mintedProposal)) {
-    if (outcome === "quality_rejected") {
-      try {
-        proposal = archiveProposal(stash, mintedProposal.id, "rejected", reason, proposalOpts.proposalsCtx);
-      } catch (error) {
-        warn(
-          `[akm] writeQualityRejection: failed to archive proposal ${mintedProposal.id} as rejected: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } else {
-      proposal = mintedProposal;
-      // REVIEW: stamp the mint so the triage drain's `classifyPendingProposals`
-      // skips it instead of deferring it to the judgment tier, which could
-      // auto-accept it under `applyMode: promote` with no human ever seeing
-      // the review-band content the gate explicitly refused to auto-queue.
-      // Best-effort like the mint/archive tolerance above: a stamp failure
-      // warns and continues rather than blocking the rejection envelope.
-      try {
-        proposal =
-          recordGateDecision(
-            stash,
-            mintedProposal.id,
-            { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
-            proposalOpts.proposalsCtx,
-          ) ?? proposal;
-      } catch (error) {
-        warn(
-          `[akm] writeQualityRejection: failed to stamp gate decision for ${mintedProposal.id}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+  if (outcome === "quality_rejected") {
+    recordLedgerAttempt(
+      { proposalsCtx: opts.proposalsCtx, eventsCtx },
+      { stashDir: stash, ref: ledgerRef, source: "distill", outcome: "quality_rejected", detail: reason },
+    );
+  } else {
+    // The mint-time canonical validator throws UsageError for
+    // structurally-invalid content; that degrades to "no row minted" rather
+    // than a caller-visible error, and the ledger still records the attempt.
+    try {
+      proposal = emitProposal(
+        { stashDir: stash, ...(opts.proposalsCtx ? { proposalsCtx: opts.proposalsCtx } : {}) },
+        {
+          ref: proposalRef,
+          source: "distill",
+          ...(opts.sourceRun !== undefined ? { sourceRun: opts.sourceRun } : {}),
+          payload: { content },
+          attemptedRefs: [ledgerRef],
+          ...(eligibilitySource ? { eligibilitySource } : {}),
+        },
+      );
+      proposal =
+        recordGateDecision(
+          stash,
+          proposal.id,
+          { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
+          opts.proposalsCtx,
+        ) ?? proposal;
+    } catch (error) {
+      warn(
+        `[akm] writeQualityRejection: failed to queue ${proposalRef} for review: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      recordLedgerAttempt(
+        { proposalsCtx: opts.proposalsCtx, eventsCtx },
+        { stashDir: stash, ref: ledgerRef, source: "distill", outcome: "review_needed", detail: reason },
+      );
     }
   }
 
-  const rejectDir = getDistillRejectedDir(stash);
-  fs.mkdirSync(rejectDir, { recursive: true });
-  const ts = timestampForFilename();
-  const rejectPath = path.join(rejectDir, `${ts}-${proposalRef.replace(/[:/\\]/g, "-")}.md`);
-  // R16: surface the judge's per-criterion scores in the envelope frontmatter
-  // when the caller supplied them (a judge-based rejection), same as the event.
-  const criteria =
-    extraMeta.criteria && typeof extraMeta.criteria === "object" && !Array.isArray(extraMeta.criteria)
-      ? (extraMeta.criteria as Record<string, number>)
-      : undefined;
-  const criteriaFrontmatter = criteria
-    ? `criteria:\n${Object.entries(criteria)
-        .map(([key, value]) => `  ${key}: ${value}`)
-        .join("\n")}\n`
-    : "";
-  fs.writeFileSync(
-    rejectPath,
-    `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n${criteriaFrontmatter}---\n\n${content}`,
-    "utf8",
-  );
-  // #652 / itlackey/akm#890: journal it even though it now lands under
-  // `$STATE`, outside the stash's git repo — `result.writtenPaths` reports
-  // every path a run touched, in or out of the stash (describeRunWrittenPaths
-  // in improve.ts falls back to the absolute path for anything outside the
-  // stash root), and the auto-sync commit's own containment check
-  // (resolveSyncPathSet's `relativeWrittenPath`) already drops anything
-  // outside `repoDir` from what gets staged — recording it here cannot cause
-  // it to be committed.
-  recordWrittenPath(rejectPath);
   appendEvent(
     {
       eventType: "distill_invoked",
-      ref: inputRef,
+      ref: ledgerRef,
       metadata: {
         outcome,
         proposalRef,

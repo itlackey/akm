@@ -51,15 +51,7 @@ import {
   NO_ENGINE_REMEDY,
   withEngineFallback,
 } from "../../integrations/agent/engine-fallback";
-import {
-  acquireLoweredExecutionDispatchLease,
-  dispatchLoweredExecutionRequest,
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-  lowerResolvedExecutionRequest,
-  lowerResolvedExecutionRequestWithRunner,
-} from "../../integrations/agent/execution-lowering";
-import { prepareInlineExecution, prepareInlineExecutionWithRunner } from "../../integrations/agent/inline-execution";
+import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import {
   buildReflectOutputRepairPrompt,
   buildReflectPrompt,
@@ -72,14 +64,18 @@ import {
   type RejectedProposalContext,
 } from "../../integrations/agent/prompts";
 import { type RunnerSpec, runnerIsLlm, runnerSupportsFileWrite } from "../../integrations/agent/runner";
-import { collectDispatchSensitiveValues, type RunnerSeams } from "../../integrations/agent/runner-dispatch";
+import {
+  assertRunnerCredentials,
+  collectDispatchSensitiveValues,
+  type RunExecutionOptions,
+  runExecution,
+} from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
-import { type EligibilitySource, isStaleTargetRejection } from "../proposal/proposal-types";
+import { type EligibilitySource, isProceduralRejection } from "../proposal/proposal-types";
 import {
   type CreateProposalInput,
-  isProposalSkipped,
   listProposalsReadOnly,
   type Proposal,
   type ProposalsContext,
@@ -88,9 +84,10 @@ import {
 import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { deriveLessonRef } from "./distill";
-import { runReflectQualityJudge } from "./distill/quality-gate";
+import { runReflectQualityJudge, stageJudgedProposal } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveLlmExecution } from "./execution";
+import { recordLedgerAttempt } from "./ledger";
 import { emitProposal } from "./proposal-envelope";
 import { classifyReflectChange } from "./reflect-noise";
 import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
@@ -134,7 +131,7 @@ export interface AkmReflectOptions {
   /** Test seam: forwarded to runAgent for fake spawn / timers. */
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   /** Test seam for SDK generation without starting a real SDK server. */
-  runSdk?: RunnerSeams["runSdk"];
+  runSdk?: RunExecutionOptions["runSdk"];
   /** Test seam: stable id / clock for proposal creation. */
   ctx?: ProposalsContext;
   /**
@@ -307,7 +304,7 @@ function readRejectedProposals(
   // the content, and would mislead this Reflexion-style "don't repeat this"
   // context.
   return listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, proposalsCtx)
-    .filter((p) => !isStaleTargetRejection(p))
+    .filter((p) => !isProceduralRejection(p))
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
     .slice(0, MAX_REJECTED_PROPOSALS)
     .map((p) => ({
@@ -478,24 +475,6 @@ async function readRelatedLessons(
   }
 
   return [...related.values()];
-}
-
-/**
- * Returns true only when `stdout` is a recognised AKM proposal-skip signal.
- *
- * Accepted forms are structured JSON: `{ skipped: true }` or
- * `{ reason: "<known-skip-reason>" }`.
- */
-function isStructuredCooldownSignal(stdout: string): boolean {
-  try {
-    const parsed = JSON.parse(stdout.trim());
-    if (parsed?.skipped === true) return true;
-    if (typeof parsed?.reason === "string" && ["fingerprint_match", "rejection_backoff"].includes(parsed.reason))
-      return true;
-  } catch {
-    // Non-JSON stdout is never a structured cooldown signal.
-  }
-  return false;
 }
 
 /**
@@ -891,8 +870,6 @@ export interface RunReflectViaLlmOptions {
   prompt: string | undefined;
   /** Exact symbolic runner selected before dispatch. */
   runner: Extract<RunnerSpec, { kind: "llm" }>;
-  /** Operation-scoped credential snapshot shared across generation/refinement/repair. */
-  lease?: LoweredExecutionDispatchLease;
   /** Hard timeout for the LLM request in ms. */
   timeoutMs?: number | null;
   /** Optional caller-driven cancellation signal. */
@@ -1084,7 +1061,6 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
     callStructured<string>({
       feature: "reflect_proposal",
       runner: opts.runner,
-      ...(opts.lease ? { lease: opts.lease } : {}),
       messages: callMessages,
       request: {
         ...(repairTimeoutMs !== undefined
@@ -1216,7 +1192,6 @@ async function finalizeReflectProposal(args: {
   qualityGateEnabled: boolean;
   qualityGateSkippedNoJudge: boolean;
   qualityJudgeRunner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-  qualityJudgeLease: LoweredExecutionDispatchLease | undefined;
   feedback: Parameters<typeof runReflectQualityJudge>[3];
   stash: string;
   emitReflectFailed: (
@@ -1236,7 +1211,6 @@ async function finalizeReflectProposal(args: {
     qualityGateEnabled,
     qualityGateSkippedNoJudge,
     qualityJudgeRunner,
-    qualityJudgeLease,
     feedback,
     stash,
     emitReflectFailed,
@@ -1346,13 +1320,24 @@ async function finalizeReflectProposal(args: {
       {
         runnerSelectionFrozen: true,
         ...(qualityJudgeRunner ? { llmRunner: qualityJudgeRunner } : {}),
-        ...(qualityJudgeLease ? { lease: qualityJudgeLease } : {}),
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         onNotices,
       },
     );
     if (!judgeResult.pass) {
+      if (options.ref) {
+        recordLedgerAttempt(
+          { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx },
+          {
+            stashDir: stash,
+            ref: options.itemRef ?? durableImproveRef(options.ref),
+            source: "reflect",
+            outcome: "quality_rejected",
+            detail: judgeResult.reason,
+          },
+        );
+      }
       appendEvent(
         {
           eventType: "reflect_completed",
@@ -1386,9 +1371,9 @@ async function finalizeReflectProposal(args: {
     stash,
     engineName,
     durationMs: result.durationMs,
-    emitReflectFailed,
     outputTelemetry,
     qualityGateSkippedNoJudge,
+    judgePassed: qualityGateEnabled && !sanitizeOutcome.sizeGuardRatio && !sanitizeOutcome.truncationMarkerLeaked,
     sizeGuardRatio: sanitizeOutcome.sizeGuardRatio,
     truncationMarkerLeaked: sanitizeOutcome.truncationMarkerLeaked,
   });
@@ -1396,9 +1381,8 @@ async function finalizeReflectProposal(args: {
 
 /**
  * Create the reflect proposal from sanitized+judged payload: stamp the R-4/#373
- * lesson provenance marker, call `createProposal`, and emit the terminal
- * `reflect_completed` (or a cooldown skip envelope). Extracted verbatim from
- * `akmReflect`'s finalize tail.
+ * lesson provenance marker, call `createProposal`, record the judge's verdict
+ * as a gate decision, and emit the terminal `reflect_completed`.
  */
 function createReflectProposal(args: {
   payload: ReturnType<typeof parseAgentProposalPayload>;
@@ -1408,14 +1392,10 @@ function createReflectProposal(args: {
   durationMs: number;
   outputTelemetry?: ReflectLlmTelemetry;
   qualityGateSkippedNoJudge: boolean;
+  /** The quality judge scored this exact content and passed it. */
+  judgePassed: boolean;
   sizeGuardRatio?: { code: "EXCESSIVE_SHRINKAGE" | "EXCESSIVE_EXPANSION"; ratio: number };
   truncationMarkerLeaked?: boolean;
-  emitReflectFailed: (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ) => void;
 }): AkmReflectResult {
   const {
     payload,
@@ -1423,9 +1403,9 @@ function createReflectProposal(args: {
     stash,
     engineName,
     durationMs,
-    emitReflectFailed,
     outputTelemetry,
     qualityGateSkippedNoJudge,
+    judgePassed,
     sizeGuardRatio,
     truncationMarkerLeaked,
   } = args;
@@ -1468,32 +1448,10 @@ function createReflectProposal(args: {
     // Attribution tagging: persist the eligibility lane on the proposal so it
     // survives to accept/reject/revert time even across runs. See EligibilitySource.
     ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-    // §23.6 fingerprint model-id term (WI-6.4): the engine that generated
-    // this draft (reflect resolves engines, not bare model ids).
-    modelId: engineName,
+    // The improve ledger keys the attempt by the candidate's durable state key.
+    ...(options.itemRef ? { attemptedRefs: [options.itemRef] } : {}),
   };
-  const proposalResult = emitProposal({ stashDir: stash, proposalsCtx: options.ctx }, createInput);
-
-  if (isProposalSkipped(proposalResult)) {
-    // Dedup/cooldown guard fired — surface as a "cooldown" reason (not "parse_error")
-    // so the improve orchestrator can distinguish legitimate skips from real failures
-    // and exclude them from recentErrors/avoidPatterns injection.
-    emitReflectFailed("cooldown", "proposal_skipped", options.ref, {
-      proposalSkipReason: proposalResult.reason,
-      ...(outputTelemetry ?? {}),
-    });
-    return {
-      schemaVersion: 2,
-      ok: false,
-      reason: "cooldown" as const,
-      error: `Proposal skipped (${proposalResult.reason}): ${proposalResult.message}`,
-      ...(options.ref ? { ref: options.ref } : {}),
-      engine: engineName,
-      exitCode: null,
-    };
-  }
-
-  let proposal: Proposal = proposalResult;
+  let proposal: Proposal = emitProposal({ stashDir: stash, proposalsCtx: options.ctx }, createInput);
 
   const reviewReasons: string[] = [];
   if (qualityGateSkippedNoJudge) reviewReasons.push("no-judge-configured");
@@ -1512,6 +1470,8 @@ function createReflectProposal(args: {
         },
         options.ctx,
       ) ?? proposal;
+  } else if (judgePassed) {
+    proposal = stageJudgedProposal(stash, proposal, options.ctx);
   }
 
   appendEvent(
@@ -1619,13 +1579,7 @@ function resolveReflectPayload(args: {
   try {
     return { payload: parseAgentProposalPayload(result.stdout ?? "") };
   } catch (err) {
-    // Reclassify cooldown/skip messages that arrive as stdout text instead of
-    // valid proposal JSON. These are legitimate skip signals, not parse failures,
-    // and should not pollute reflectFailedActions or recentErrors injection.
-    const stdoutText = result.stdout ?? "";
-    const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
-    const reason: AgentFailureReason = isCooldownSignal ? "cooldown" : "parse_error";
-    emitReflectFailed(reason, isCooldownSignal ? "stdout_cooldown_signal" : "parse_error", options.ref, {
+    emitReflectFailed("parse_error", "parse_error", options.ref, {
       ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
       ...(reflectLlmTelemetry(result) ?? {}),
     });
@@ -1633,7 +1587,7 @@ function resolveReflectPayload(args: {
       failure: {
         schemaVersion: 2,
         ok: false,
-        reason,
+        reason: "parse_error",
         error: err instanceof Error ? err.message : String(err),
         ...(options.ref ? { ref: options.ref } : {}),
         engine: engineName,
@@ -1657,7 +1611,7 @@ type ReflectQualityJudgeSelection = Readonly<{
   runner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
 }>;
 
-/** Resolve the exact judge transport before generation so its credential can join the operation snapshot. */
+/** Resolve the exact judge transport before generation, so a missing judge credential fails before any work. */
 function resolveReflectQualityJudgeRunner(
   config: AkmConfig,
   runnerSpec: RunnerSpec,
@@ -1671,19 +1625,22 @@ function resolveReflectQualityJudgeRunner(
   return Object.freeze({ enabled: true, runner: resolved?.runner });
 }
 
-/** Acquire through genuine preparation/lowering for all runner kinds, including SDK fallback credentials. */
-function acquireReflectDispatchLease(
+/**
+ * Lower `runnerSpec` through genuine preparation, then check its required
+ * credentials (SDK fallback included), so a bad transport or a missing
+ * credential fails before any reflect work starts.
+ */
+function preflightReflectDispatch(
   runnerSpec: RunnerSpec,
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void,
-): LoweredExecutionDispatchLease {
-  const prepared = prepareInlineExecutionWithRunner({
+): void {
+  const prepared = resolveExecution({
     content: "Validate reflect operation transport before dispatch.",
     runner: runnerSpec,
-    invocationKind: "direct",
   });
-  const lowered = lowerResolvedExecutionRequestWithRunner(prepared.request, prepared.runner);
+  const lowered = buildExecution(prepared.request, prepared.runner);
   onNotices(lowered.notices);
-  return acquireLoweredExecutionDispatchLease(lowered);
+  assertRunnerCredentials(lowered.runner);
 }
 
 /**
@@ -1705,13 +1662,12 @@ function resolveReflectRunner(options: AkmReflectOptions): {
   let runnerSpec: RunnerSpec;
   let notices: readonly Readonly<LoweringNotice>[] = [];
   if (options.engine) {
-    const prepared = prepareInlineExecution({
+    const prepared = resolveExecution({
       content: "reflect engine selection",
       config,
-      invocationKind: "direct",
       current: { engine: options.engine },
     });
-    const lowered = lowerResolvedExecutionRequest(prepared.request, prepared.config);
+    const lowered = buildExecution(prepared.request, prepared.runner);
     runnerSpec = lowered.runner;
     notices = lowered.notices;
   } else if (options.improveProfile) {
@@ -1740,12 +1696,11 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     if (!defaultEngine) {
       throw new ConfigError(`reflect ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "INVALID_CONFIG_FILE");
     }
-    const prepared = prepareInlineExecution({
+    const prepared = resolveExecution({
       content: "reflect engine selection",
       config,
-      invocationKind: "direct",
     });
-    const lowered = lowerResolvedExecutionRequest(prepared.request, prepared.config);
+    const lowered = buildExecution(prepared.request, prepared.runner);
     runnerSpec = lowered.runner;
     notices = lowered.notices;
   }
@@ -1989,13 +1944,11 @@ async function runReflectRefineIterations(args: {
   assetContent: string | undefined;
   sources: ReflectPromptSources;
   runnerSpec: RunnerSpec;
-  lease: LoweredExecutionDispatchLease;
   agentEnv: Record<string, string>;
   draftPathsToCleanup: string[];
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }): Promise<{ result: AgentRunResult; lastDraftPath: string | undefined }> {
-  const { options, parsedRef, assetContent, sources, runnerSpec, lease, agentEnv, draftPathsToCleanup, onNotices } =
-    args;
+  const { options, parsedRef, assetContent, sources, runnerSpec, agentEnv, draftPathsToCleanup, onNotices } = args;
   const maxRefineIters = Math.max(1, options.maxRefineIters ?? 1);
   // Determine whether this dispatch can honour the file-write contract.
   // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
@@ -2039,7 +1992,6 @@ async function runReflectRefineIterations(args: {
       iterResult = await runReflectViaLlm({
         prompt,
         runner: runnerSpec,
-        lease,
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         priorDraft,
@@ -2060,7 +2012,7 @@ async function runReflectRefineIterations(args: {
         ...(Object.hasOwn(options, "timeoutMs") ? { timeout: options.timeoutMs } : {}),
         ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
       };
-      const prepared = prepareInlineExecutionWithRunner({
+      const prepared = resolveExecution({
         content: hasConversation ? REFLECT_CRITIQUE_PROMPT : (prompt ?? ""),
         ...(hasConversation
           ? {
@@ -2071,13 +2023,11 @@ async function runReflectRefineIterations(args: {
             }
           : {}),
         runner: runnerSpec,
-        invocationKind: "direct",
         ...(Object.keys(current).length > 0 ? { current } : {}),
       });
-      const lowered = lowerResolvedExecutionRequestWithRunner(prepared.request, prepared.runner);
+      const lowered = buildExecution(prepared.request, prepared.runner);
       onNotices(lowered.notices);
-      iterResult = await dispatchLoweredExecutionRequest(lowered, {
-        lease,
+      iterResult = await runExecution(lowered, {
         ...(options.runSdk ? { runSdk: options.runSdk } : {}),
         runOptions: {
           ...(options.signal ? { signal: options.signal } : {}),
@@ -2262,7 +2212,7 @@ function validateReflectPayloadRef(args: {
  * engine dispatch. Reuses every read-only step `akmReflect` performs before
  * {@link buildReflectPrompt} (source resolution, runner resolution, feedback /
  * schema-hint / related-lesson / rejected-proposal gathering) and stops right
- * there: no dispatch lease is acquired, no request is sent, and — because the
+ * there: no credential is read, no request is sent, and — because the
  * `emitReflectFailed` callback passed to {@link resolveReflectSource} here is
  * a no-op — no `reflect_invoked`/`reflect_completed` event is appended either.
  *
@@ -2361,167 +2311,152 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     qualityJudgeSelection = Object.freeze({ enabled: false, runner: undefined });
   }
   const qualityJudgeRunner = qualityJudgeSelection.runner;
-  let generationLease: LoweredExecutionDispatchLease | undefined;
-  let qualityJudgeLease: LoweredExecutionDispatchLease | undefined;
+  preflightReflectDispatch(runnerSpec, collectExecutionNotices);
+  if (qualityJudgeRunner && qualityJudgeRunner !== runnerSpec) {
+    preflightReflectDispatch(qualityJudgeRunner, collectExecutionNotices);
+  }
 
+  // WI-9.10: RunContext, built only once config/runnerSpec exist so engine
+  // resolution's existing error-priority ordering is undisturbed (see
+  // buildReflectRunContext's docblock). D6: assetCtx is a fresh,
+  // per-invocation memo — readRelatedLessons below is its genuine
+  // content-read consumer.
+  const ctx = buildReflectRunContext({ options, stash, config, runnerSpec });
+  const assetCtx = ctx.withFreshAssetMemo();
+
+  // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
+  // proposals. These are stable across refinement iterations; only the
+  // `priorDraft` field changes per-iteration (R-1 / #372).
+  const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent, assetCtx);
+
+  // 5. Spawn the agent — with the optional Self-Refine loop (R-1 / #372),
+  // extracted to {@link runReflectRefineIterations}.
+  const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
+  const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
+    ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+    ...(options.runAgentOptions ?? {}),
+  });
+
+  const draftPathsToCleanup: string[] = [];
+
+  // `result` / `lastDraftPath` / `payload` are populated inside the try. Hoisted
+  // here so the post-try sections (R-3 ref guard, sanitizer, quality gate,
+  // createProposal) can use them after the drafts have been cleaned up.
+  let result = {} as AgentRunResult;
+  let lastDraftPath: string | undefined;
+  let payload: ReturnType<typeof parseAgentProposalPayload>;
   try {
-    generationLease = acquireReflectDispatchLease(runnerSpec, collectExecutionNotices);
-    qualityJudgeLease =
-      qualityJudgeRunner === runnerSpec
-        ? generationLease
-        : qualityJudgeRunner
-          ? acquireReflectDispatchLease(qualityJudgeRunner, collectExecutionNotices)
-          : undefined;
-
-    // WI-9.10: RunContext, built only once config/runnerSpec exist so engine
-    // resolution's existing error-priority ordering is undisturbed (see
-    // buildReflectRunContext's docblock). D6: assetCtx is a fresh,
-    // per-invocation memo — readRelatedLessons below is its genuine
-    // content-read consumer.
-    const ctx = buildReflectRunContext({ options, stash, config, runnerSpec });
-    const assetCtx = ctx.withFreshAssetMemo();
-
-    // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
-    // proposals. These are stable across refinement iterations; only the
-    // `priorDraft` field changes per-iteration (R-1 / #372).
-    const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent, assetCtx);
-
-    // 5. Spawn the agent — with the optional Self-Refine loop (R-1 / #372),
-    // extracted to {@link runReflectRefineIterations}.
-    const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
-    const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
-      ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-      ...(options.runAgentOptions ?? {}),
-    });
-
-    const draftPathsToCleanup: string[] = [];
-
-    // `result` / `lastDraftPath` / `payload` are populated inside the try. Hoisted
-    // here so the post-try sections (R-3 ref guard, sanitizer, quality gate,
-    // createProposal) can use them after the drafts have been cleaned up.
-    let result = {} as AgentRunResult;
-    let lastDraftPath: string | undefined;
-    let payload: ReturnType<typeof parseAgentProposalPayload>;
-    try {
-      const iterated = await runReflectRefineIterations({
-        options,
-        parsedRef,
-        assetContent,
-        sources,
-        runnerSpec,
-        lease: generationLease,
-        agentEnv,
-        draftPathsToCleanup,
-        onNotices: collectExecutionNotices,
-      });
-      emitReflectInvoked();
-      result = iterated.result;
-      lastDraftPath = iterated.lastDraftPath;
-
-      const finalResult: AgentRunResult = result;
-
-      if (!finalResult.ok) {
-        // B3: ENOENT / not-found gives an actionable hint.
-        if (isEnoentFailure(finalResult)) {
-          emitReflectFailed("spawn_failed", "enoent", options.ref, {
-            ...(finalResult.exitCode !== undefined ? { exitCode: finalResult.exitCode } : {}),
-          });
-          return {
-            ...failureEnvelope(finalResult, options.ref, engineName),
-            error: enoentHintMessage(runnerIsLlm(runnerSpec) ? engineName : runnerSpec.profile.bin),
-            ...reflectNoticeFields(executionNotices),
-          };
-        }
-        const envelope = failureEnvelope(finalResult, options.ref, engineName);
-        emitReflectFailed(
-          envelope.reason,
-          envelope.reason === "parse_error" ? "parse_error" : "agent_crash",
-          options.ref,
-          {
-            ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
-            ...(reflectLlmTelemetry(finalResult) ?? {}),
-          },
-        );
-        return { ...envelope, ...reflectNoticeFields(executionNotices) };
-      }
-
-      // Re-alias to `result` for the downstream code that references it.
-      result = finalResult;
-
-      const resolved = resolveReflectPayload({
-        result,
-        lastDraftPath,
-        sensitiveValues,
-        options,
-        engineName,
-        emitReflectFailed,
-      });
-      if ("failure" in resolved) {
-        return { ...resolved.failure, ...reflectNoticeFields(executionNotices) };
-      }
-      payload = resolved.payload;
-    } catch (error) {
-      if (!(error instanceof ConfigError)) emitReflectInvoked();
-      throw error;
-    } finally {
-      // Always remove tmp draft files — success, failure, or exception. Returns
-      // inside the try above trigger this block before the function exits. Code
-      // after this point uses the already-loaded `payload` and never touches the
-      // draft paths.
-      cleanupReflectDrafts(draftPathsToCleanup);
-    }
-
-    const unsafeContent = generatedContentRejection(
-      payload.content,
-      redactSensitiveText(payload.content, sensitiveValues),
-    );
-    if (unsafeContent) {
-      emitReflectFailed("parse_error", "parse_error", options.ref, {
-        ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-      });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "parse_error",
-        error: unsafeContent,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-        ...reflectNoticeFields(executionNotices),
-      };
-    }
-
-    const refFailure = validateReflectPayloadRef({
-      payload,
-      result,
+    const iterated = await runReflectRefineIterations({
       options,
-      engineName,
-      emitReflectFailed,
-      executionNotices,
-    });
-    if (refFailure) return refFailure;
-
-    const finalized = await finalizeReflectProposal({
-      payload,
+      parsedRef,
       assetContent,
-      result,
-      options,
-      engineName,
-      config,
-      qualityGateEnabled: qualityJudgeSelection.enabled,
-      qualityGateSkippedNoJudge,
-      qualityJudgeRunner,
-      qualityJudgeLease,
-      feedback: sources.feedback,
-      stash,
-      emitReflectFailed,
+      sources,
+      runnerSpec,
+      agentEnv,
+      draftPathsToCleanup,
       onNotices: collectExecutionNotices,
     });
-    return { ...finalized, ...reflectNoticeFields(executionNotices) };
-  } finally {
-    if (qualityJudgeLease && qualityJudgeLease !== generationLease) {
-      disposeLoweredExecutionDispatchLease(qualityJudgeLease);
+    emitReflectInvoked();
+    result = iterated.result;
+    lastDraftPath = iterated.lastDraftPath;
+
+    const finalResult: AgentRunResult = result;
+
+    if (!finalResult.ok) {
+      // B3: ENOENT / not-found gives an actionable hint.
+      if (isEnoentFailure(finalResult)) {
+        emitReflectFailed("spawn_failed", "enoent", options.ref, {
+          ...(finalResult.exitCode !== undefined ? { exitCode: finalResult.exitCode } : {}),
+        });
+        return {
+          ...failureEnvelope(finalResult, options.ref, engineName),
+          error: enoentHintMessage(runnerIsLlm(runnerSpec) ? engineName : runnerSpec.profile.bin),
+          ...reflectNoticeFields(executionNotices),
+        };
+      }
+      const envelope = failureEnvelope(finalResult, options.ref, engineName);
+      emitReflectFailed(
+        envelope.reason,
+        envelope.reason === "parse_error" ? "parse_error" : "agent_crash",
+        options.ref,
+        {
+          ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
+          ...(reflectLlmTelemetry(finalResult) ?? {}),
+        },
+      );
+      return { ...envelope, ...reflectNoticeFields(executionNotices) };
     }
-    if (generationLease) disposeLoweredExecutionDispatchLease(generationLease);
+
+    // Re-alias to `result` for the downstream code that references it.
+    result = finalResult;
+
+    const resolved = resolveReflectPayload({
+      result,
+      lastDraftPath,
+      sensitiveValues,
+      options,
+      engineName,
+      emitReflectFailed,
+    });
+    if ("failure" in resolved) {
+      return { ...resolved.failure, ...reflectNoticeFields(executionNotices) };
+    }
+    payload = resolved.payload;
+  } catch (error) {
+    if (!(error instanceof ConfigError)) emitReflectInvoked();
+    throw error;
+  } finally {
+    // Always remove tmp draft files — success, failure, or exception. Returns
+    // inside the try above trigger this block before the function exits. Code
+    // after this point uses the already-loaded `payload` and never touches the
+    // draft paths.
+    cleanupReflectDrafts(draftPathsToCleanup);
   }
+
+  const unsafeContent = generatedContentRejection(
+    payload.content,
+    redactSensitiveText(payload.content, sensitiveValues),
+  );
+  if (unsafeContent) {
+    emitReflectFailed("parse_error", "parse_error", options.ref, {
+      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+    });
+    return {
+      schemaVersion: 2,
+      ok: false,
+      reason: "parse_error",
+      error: unsafeContent,
+      ...(options.ref ? { ref: options.ref } : {}),
+      engine: engineName,
+      exitCode: result.exitCode,
+      ...reflectNoticeFields(executionNotices),
+    };
+  }
+
+  const refFailure = validateReflectPayloadRef({
+    payload,
+    result,
+    options,
+    engineName,
+    emitReflectFailed,
+    executionNotices,
+  });
+  if (refFailure) return refFailure;
+
+  const finalized = await finalizeReflectProposal({
+    payload,
+    assetContent,
+    result,
+    options,
+    engineName,
+    config,
+    qualityGateEnabled: qualityJudgeSelection.enabled,
+    qualityGateSkippedNoJudge,
+    qualityJudgeRunner,
+    feedback: sources.feedback,
+    stash,
+    emitReflectFailed,
+    onNotices: collectExecutionNotices,
+  });
+  return { ...finalized, ...reflectNoticeFields(executionNotices) };
 }

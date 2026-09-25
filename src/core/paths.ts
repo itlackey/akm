@@ -389,32 +389,6 @@ function stashScopedDir(base: string, stashDir: string): string {
 }
 
 /**
- * `$STATE/improve/distill-rejected/<stash>/` — lessons that failed the
- * distill quality gate. Moved out of `$STASH/.akm/distill-rejected/`
- * (itlackey/akm#890): nothing reads it to resolve bundle content, so it does
- * not meet the "must travel with the content" rule.
- */
-export function getDistillRejectedDir(stashDir: string): string {
-  return stashScopedDir(path.join(getStateDir(), "improve", "distill-rejected"), stashDir);
-}
-
-/**
- * `$STATE/improve/eval-cases/<stash>/` — regression eval cases captured from
- * rejected distill/proposal output. Moved out of `$STASH/.akm/eval-cases/`
- * (itlackey/akm#890).
- *
- * R10: the writer (`src/commands/improve/eval-cases.ts`) was removed —
- * nothing ever read the files it wrote, and a rejected proposal row now
- * carries the same information (see `quality-gate.ts`'s
- * `writeQualityRejection`). This resolver stays: `scripts/akm-migrate/migrate/
- * writer-relocation.ts` still uses it to relocate pre-existing eval-case
- * files an older release wrote to the legacy `$STASH/.akm/eval-cases/` path.
- */
-export function getEvalCasesDir(stashDir: string): string {
-  return stashScopedDir(path.join(getStateDir(), "improve", "eval-cases"), stashDir);
-}
-
-/**
  * `$STATE/improve/measurement/verdicts/<stash>/` — `akm-eval-proactive-verdict`
  * reports. Moved out of `$STASH/.akm/measurement/verdicts/` (itlackey/akm#890);
  * the pilot treatment file at `$STASH/.akm/measurement/` is manually-authored

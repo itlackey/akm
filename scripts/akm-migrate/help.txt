@@ -5,18 +5,18 @@ shape akm has ever written (in memory, with a warning); `apply` makes the
 current shape durable on disk. `status` and `apply` run every step, in
 order, and print one combined JSON plan (exit 1 when any step is blocked):
 
-  1. config.json rewritten in its current shape (retired and unknown keys
-     dropped, legacy `extraParams` lifted onto engine fields, the legacy
-     source layout converted, `configVersion` bumped) -- backed up first
+  1. config.json rewritten in its current shape (unknown keys dropped,
+     legacy `extraParams` lifted onto engine fields, the legacy source
+     layout converted, `configVersion` set to the current value) -- backed
+     up first
   2. pending state.db migrations, historical-destructive ones included,
      with a verified sibling safety copy (the only path that admits them)
-  3. task-v2 files to task v3, then task-v3 files to task source v4
+  3. task files at version 2 or 3, and version 4 files still carrying the
+     retired `schedule[].enabled` key, rewritten as task source v4 under
+     one backup directory per run
   4. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
      and the transaction-journal, maintenance-barrier, lock-mutex and
      version-stamp files older releases kept under $DATA, $STATE and $CONFIG
-  5. live `.akm` writers relocated to `$STATE`/`$CACHE`, for every local
-     bundle (distill-rejected, eval-cases, measurement verdicts, and stale
-     improve-pipeline locks -- a lock a live run still holds is left alone)
 
 `akm migrate status|apply` wraps this executable; `akm upgrade` runs
 `apply` after its install step, so an image that ships akm can put either

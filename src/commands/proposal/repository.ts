@@ -39,8 +39,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { adapterForId } from "../../core/adapter/registry";
-import { createValidateContext } from "../../core/adapter/validate-context";
 import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
@@ -61,7 +59,6 @@ import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
   assertAkmAssetWrite,
-  assertWriteTargetPathsClean,
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
@@ -75,6 +72,11 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
+  type ImproveLedgerOutcome,
+  recordImproveLedger,
+  recordImproveLedgerDecision,
+} from "../../storage/repositories/improve-ledger-repository";
+import {
   getStateProposal,
   listStateProposalIdsByPrefix,
   listStateProposals,
@@ -86,10 +88,11 @@ import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
 import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
 import {
+  ASSET_MISSING_GATE_REASON,
   AUTOMATED_PROPOSAL_SOURCES,
   type EligibilitySource,
+  EXPIRED_GATE_REASON,
   isAutomatedProposalSource,
-  isStaleTargetRejection,
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
@@ -97,6 +100,7 @@ import {
   type ProposalPayload,
   type ProposalSource,
   type ProposalStatus,
+  STALE_TARGET_GATE_REASON,
 } from "./proposal-types";
 import {
   canonicalOnlyProposalValidators,
@@ -240,10 +244,12 @@ export interface CreateProposalInput {
   sourceRun?: string;
   payload: ProposalPayload;
   /**
-   * When true, bypass dedup and cooldown guards. Use for human-initiated or
-   * forced re-proposals that the operator has explicitly requested.
+   * Improve-ledger keys of the assets this proposal was generated from — the
+   * input memory for distill, the source memory for a consolidate promotion.
+   * Each gets an `improve_ledger` row (outcome `proposed`) in the same
+   * transaction as the mint. Defaults to the proposal's own ref.
    */
-  force?: boolean;
+  attemptedRefs?: readonly string[];
   /**
    * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
    *
@@ -260,83 +266,9 @@ export interface CreateProposalInput {
    * (`propose`, `remember`, `import`) that have no eligibility lane.
    */
   eligibilitySource?: EligibilitySource;
-  /**
-   * Engine/model identifier that generated this proposal's content — the
-   * plan §4.5 model-id term of the §23.6 input fingerprint. The same inputs
-   * processed by a DIFFERENT model are a new fingerprint (not a dup). Omitted
-   * by human-initiated sources; automated producers pass their resolved
-   * runner's model where available.
-   */
-  modelId?: string;
 }
-
-/**
- * Reason a `createProposal` call was skipped by the fingerprint/backoff guard
- * (WI-6.4, plan §4.5 — the §23.6 input-fingerprint scheme replaced the
- * dedup/cooldown content-hash machinery).
- *
- *   - `fingerprint_match`  — These exact inputs (scheme version + source +
- *                            target ref + target before-hash + engine/model-id;
- *                            evidence/guidance/evaluator terms reserved) were
- *                            already processed into a proposal. Pass
- *                            `force: true` to enqueue anyway.
- *   - `rejection_backoff`  — A proposal for this `ref+source` was rejected
- *                            within the source-specific backoff window
- *                            (reflect: 14 d, distill: 30 d, others: 7 d) —
- *                            the RETAINED cooldown semantics.
- */
-export type ProposalSkipReason = "fingerprint_match" | "rejection_backoff";
-
-export interface CreateProposalSkipped {
-  skipped: true;
-  reason: ProposalSkipReason;
-  /** Human-readable explanation for logs / telemetry. */
-  message: string;
-  /** The existing proposal that triggered the guard (when applicable). */
-  existingProposalId?: string;
-}
-
-/** Result of {@link createProposal} — either a new `Proposal` or a skip record. */
-export type CreateProposalResult = Proposal | CreateProposalSkipped;
-
-/** Type guard: true when createProposal returned a skipped record. */
-export function isProposalSkipped(result: CreateProposalResult): result is CreateProposalSkipped {
-  return (result as CreateProposalSkipped).skipped === true;
-}
-
-// ── Fingerprint / rejection-backoff constants ────────────────────────────────
 
 const MS_PER_DAY = 86_400_000;
-
-/**
- * Post-rejection backoff windows by source (the RETAINED cooldown semantics,
- * plan §4.5). After a proposal is rejected, `createProposal` silently skips
- * new proposals for the same `ref+source` until the window expires (unless
- * `force: true` is passed).
- *
- * Rationale (Settles 2009 active-learning survey; Argilla/Label Studio HITL):
- * Reviewer fatigue is a blocker for the human-in-the-loop guarantee. Backoff
- * prevents nightly improve runs from re-flooding the queue with near-identical
- * proposals the reviewer just declined.
- *
- *   - reflect: 14 days (agent-based; slower feedback loops)
- *   - distill: 30 days (LLM-based; even more prone to regeneration loops)
- *   - default: 7 days  (conservative fallback for other sources)
- */
-const COOLDOWN_MS: Record<string, number> = {
-  reflect: 14 * MS_PER_DAY,
-  distill: 30 * MS_PER_DAY,
-};
-const DEFAULT_COOLDOWN_MS = 7 * MS_PER_DAY;
-
-function cooldownMsForSource(source: string): number {
-  return COOLDOWN_MS[source] ?? DEFAULT_COOLDOWN_MS;
-}
-
-/** Compute a stable SHA-256 hex digest of a proposal's content string. */
-function contentHash(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex");
-}
 
 // ── Store access ─────────────────────────────────────────────────────────────
 
@@ -492,7 +424,7 @@ export function resolveProposalQueueTarget(
   return { source: bundleId, root };
 }
 
-/** Mint-time target resolution shared by {@link createProposal} and {@link checkProposalGuard}. */
+/** Mint-time target resolution for {@link createProposal}. */
 interface ProposalTargetInfo {
   proposalTarget: NonNullable<CreateProposalInput["target"]>;
   normalizedRef: string;
@@ -505,11 +437,7 @@ interface ProposalTargetInfo {
 
 /**
  * Resolve the durable target ref, target root/rel-path, and current
- * before-hash for a parsed proposal ref (WI-6.2). This is the exact
- * computation `createProposal` uses to derive its mint-time `beforeHash`
- * fingerprint term; {@link checkProposalGuard} (R9) calls it too, so a
- * pre-generation guard check and `createProposal`'s post-generation check
- * always agree on what "these inputs" means for the same ref/target.
+ * before-hash for a parsed proposal ref (WI-6.2).
  */
 function resolveProposalTargetInfo(
   stashDir: string,
@@ -535,7 +463,7 @@ function resolveProposalTargetInfo(
     normalizedRef,
     targetRoot,
     targetRelPath,
-    beforeHash: mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined,
+    beforeHash: mintBeforeContent !== undefined ? proposalHash(mintBeforeContent) : undefined,
     beforeHashNormalized: mintBeforeContent !== undefined ? computeNormalizedContentHash(mintBeforeContent) : undefined,
   };
 }
@@ -546,26 +474,12 @@ function resolveProposalTargetInfo(
  * Create a new pending proposal. The id is a stable random UUID, so two
  * proposals with the same `ref` never collide.
  *
- * **Input-fingerprint / rejection-backoff guard** (§23.6, WI-6.4):
- *
- * Before writing, this function checks:
- *   1. `fingerprint_match` — the §23.6 input fingerprint (scheme version,
- *      source, ref, target before-hash, model id) was already processed.
- *      The row survives the proposal's lifecycle, so identical inputs stay
- *      deduplicated until the target, model, or scheme changes. Pass
- *      `input.force = true` to bypass.
- *   2. `rejection_backoff` — a proposal for this `ref+source` was rejected
- *      within the source-specific backoff window (reflect: 14 d, distill:
- *      30 d, others: 7 d). Bypass with `force: true`.
- *
- * When a guard fires the function returns a `CreateProposalSkipped` record
- * instead of writing. Use {@link isProposalSkipped} to detect it.
+ * The mint and its `improve_ledger` rows (outcome `proposed`, one per
+ * {@link CreateProposalInput.attemptedRefs} entry) commit in one transaction.
+ * Whether a ref may be proposed again is decided before generation, by the
+ * stage's candidate selection reading that ledger — not here.
  */
-export function createProposal(
-  stashDir: string,
-  input: CreateProposalInput,
-  ctx?: ProposalsContext,
-): CreateProposalResult {
+export function createProposal(stashDir: string, input: CreateProposalInput, ctx?: ProposalsContext): Proposal {
   if (!isValidProposalSource(input.source)) {
     warn(
       `[proposal] Unknown source "${input.source}". ` +
@@ -685,20 +599,8 @@ export function createProposal(
     }
   }
 
-  const fingerprint = computeProposalFingerprint({
-    ref: normalizedRef,
-    source: input.source,
-    ...(mintedBeforeHash !== undefined ? { beforeHash: mintedBeforeHash } : {}),
-    ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-  });
-
   return withProposalsDb(stashDir, ctx, (db) => {
     return withImmediateTransaction(db, () => {
-      if (!input.force) {
-        const skip = checkFingerprintAndBackoff(db, stashDir, normalizedRef, input.source, fingerprint, ctx);
-        if (skip) return skip;
-      }
-
       const created = nowIso(ctx);
 
       // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
@@ -735,176 +637,19 @@ export function createProposal(
       };
 
       upsertProposal(db, proposal, stashDir);
-      // Record the processed fingerprint (also on force — a forced enqueue is
-      // still "these inputs were processed"; future unforced identical inputs
-      // dedup against it).
-      recordProposalFingerprint(db, stashDir, fingerprint, normalizedRef, input, proposal.id, created);
+      for (const ref of input.attemptedRefs ?? [normalizedRef]) {
+        recordImproveLedger(db, {
+          stashDir,
+          ref,
+          source: input.source,
+          outcome: "proposed",
+          at: created,
+          proposalId: proposal.id,
+        });
+      }
       return proposal;
     });
   });
-}
-
-/** Version stamp of the input-fingerprint scheme; bump when terms change. */
-const PROPOSAL_FINGERPRINT_VERSION = 1;
-
-/**
- * Compute the §23.6 input fingerprint for a proposal mint (+ the plan §4.5
- * engine/model-id term). Terms, in order: scheme version, source (the recipe
- * stand-in until Wave-2 recipes exist), target ref, target before-hash
- * (empty for a create), evidence IDs/hashes (reserved — not yet modeled),
- * guidance hashes (reserved), evaluator version (reserved), model id.
- * Deliberately an INPUT fingerprint: the generated content is not a term —
- * already-processed inputs skip re-processing regardless of what the model
- * produced this time.
- */
-function computeProposalFingerprint(args: {
-  ref: string;
-  source: string;
-  beforeHash?: string;
-  modelId?: string;
-}): string {
-  return contentHash(
-    [
-      `v${PROPOSAL_FINGERPRINT_VERSION}`,
-      args.source,
-      args.ref,
-      args.beforeHash ?? "",
-      "", // evidence IDs/hashes — reserved (Wave-2 recipes)
-      "", // guidance hashes — reserved
-      "", // evaluator version — reserved
-      args.modelId ?? "",
-    ].join("\0"),
-  );
-}
-
-/**
- * Durably record a processed fingerprint (INSERT OR REPLACE — idempotent).
- * `ref` must be the NORMALIZED ref — the same value the fingerprint was
- * computed over — so future ref-keyed readers of the table never mismatch.
- */
-function recordProposalFingerprint(
-  db: Database,
-  stashDir: string,
-  fingerprint: string,
-  ref: string,
-  input: CreateProposalInput,
-  proposalId: string,
-  createdAt: string,
-): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO proposal_fingerprints
-       (stash_dir, fingerprint, ref, source, model_id, proposal_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(stashDir, fingerprint, ref, input.source, input.modelId ?? "", proposalId, createdAt);
-}
-
-/**
- * Evaluate the fingerprint + rejection-backoff guards. Returns the skip
- * record when a guard fires, or undefined when the create may proceed.
- */
-function checkFingerprintAndBackoff(
-  db: Database,
-  stashDir: string,
-  normalizedRef: string,
-  source: string,
-  fingerprint: string,
-  ctx: ProposalsContext | undefined,
-): CreateProposalSkipped | undefined {
-  const nowMs = (ctx?.now ?? Date.now)();
-  const backoffMs = cooldownMsForSource(source);
-
-  // §23.6: an already-processed fingerprint skips another model call's output
-  // unless explicitly forced. The row survives the proposal's lifecycle —
-  // identical inputs stay deduplicated until the target (before-hash), the
-  // model, or the scheme changes.
-  const existing = db
-    .prepare("SELECT proposal_id FROM proposal_fingerprints WHERE stash_dir = ? AND fingerprint = ?")
-    .get(stashDir, fingerprint) as { proposal_id: string | null } | undefined;
-  if (existing) {
-    return {
-      skipped: true,
-      reason: "fingerprint_match",
-      message: `These inputs were already processed into a proposal for ${normalizedRef} (fingerprint match). Pass force:true to enqueue anyway.`,
-      ...(existing.proposal_id ? { existingProposalId: existing.proposal_id } : {}),
-    };
-  }
-
-  // Rejection backoff (RETAINED cooldown semantics): a recent rejection for
-  // this ref+source suppresses new proposals until the window expires. A
-  // stale-target auto-reject (STALE, R20) is excluded — it is not a
-  // judgement on the content, and counting it here would suppress a
-  // legitimate re-propose against the ref's now-current content.
-  const rejected = listStateProposals(db, { stashDir, ref: normalizedRef, status: "rejected" })
-    .filter((p) => p.source === source)
-    .filter((p) => !isStaleTargetRejection(p))
-    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
-
-  const mostRecent = rejected[0];
-  if (mostRecent !== undefined) {
-    const rejectedAt = new Date(mostRecent.updatedAt ?? 0).getTime();
-    if (nowMs - rejectedAt < backoffMs) {
-      const backoffDays = backoffMs / MS_PER_DAY;
-      const remainingDays = Math.ceil((backoffMs - (nowMs - rejectedAt)) / MS_PER_DAY);
-      return {
-        skipped: true,
-        reason: "rejection_backoff",
-        message:
-          `Proposal for ${normalizedRef} from source "${source}" is in rejection backoff ` +
-          `(${backoffDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
-        existingProposalId: mostRecent.id,
-      };
-    }
-  }
-
-  return undefined;
-}
-
-/** Input to {@link checkProposalGuard}. */
-export interface CheckProposalGuardInput {
-  /** Stash directory to check against (the run's primary stash). */
-  stash: string;
-  /** Asset ref the generation call would target. */
-  ref: string;
-  /** Proposal source the generation call would use (e.g. `"reflect"`). */
-  source: string;
-  /** Explicit proposal target, when the caller would pass one to `createProposal`. */
-  target?: CreateProposalInput["target"];
-  /** Engine/model id the generation call would use (the §23.6 model-id fingerprint term). */
-  modelId?: string;
-}
-
-/**
- * R9: pure pre-generation check of the fingerprint-match /
- * rejection-backoff guard — the same computation `createProposal` runs AFTER
- * generation (`checkFingerprintAndBackoff`), exposed so a caller can skip an
- * expensive LLM call BEFORE making it. Shares {@link resolveProposalTargetInfo}
- * and {@link checkFingerprintAndBackoff} verbatim with `createProposal`, so
- * the two can never disagree about what "these inputs" means for the same
- * ref/source/target/model. `createProposal`'s post-generation check remains
- * the authoritative gate: this is a best-effort optimisation that fails open
- * (returns `undefined`, i.e. "not skipped") on any resolution error — an
- * unresolvable target here must never block the real dispatch.
- */
-export function checkProposalGuard(
-  input: CheckProposalGuardInput,
-  ctx?: ProposalsContext,
-): CreateProposalSkipped | undefined {
-  try {
-    const parsedRef = parseRefInput(input.ref);
-    if (!stashDirFor(parsedRef.type)) return undefined;
-    const { normalizedRef, beforeHash } = resolveProposalTargetInfo(input.stash, parsedRef, input.target);
-    const fingerprint = computeProposalFingerprint({
-      ref: normalizedRef,
-      source: input.source,
-      ...(beforeHash !== undefined ? { beforeHash } : {}),
-      ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-    });
-    return withProposalsDb(input.stash, ctx, (db) =>
-      checkFingerprintAndBackoff(db, input.stash, normalizedRef, input.source, fingerprint, ctx),
-    );
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -1050,9 +795,30 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
 }
 
 /**
+ * The improve-ledger outcome a proposal decision records. A procedural
+ * refusal — the retention expiry, the drain's stale-target auto-reject, an
+ * orphan whose asset is gone — is not a judgement on the content, so it never
+ * carries the rejection window.
+ */
+function ledgerOutcomeForDecision(
+  status: "accepted" | "rejected" | "reverted",
+  gateDecision?: Pick<ProposalGateDecision, "outcome" | "reason">,
+): ImproveLedgerOutcome {
+  if (status === "accepted") return "accepted";
+  if (gateDecision?.outcome === "auto-rejected") {
+    if (gateDecision.reason === EXPIRED_GATE_REASON) return "expired";
+    if (gateDecision.reason === STALE_TARGET_GATE_REASON || gateDecision.reason === ASSET_MISSING_GATE_REASON) {
+      return "failed";
+    }
+  }
+  return "rejected";
+}
+
+/**
  * Archive a proposal: flip its status to `accepted` / `rejected`, bump
  * `updatedAt`, and record the review block. Used by both accept and reject
- * paths so the live queue only contains pending entries.
+ * paths so the live queue only contains pending entries. The decision lands
+ * in the improve ledger in the same transaction.
  */
 export function archiveProposal(
   stashDir: string,
@@ -1084,14 +850,23 @@ export function archiveProposal(
         ...(gateDecision ? { gateDecision: { ...gateDecision, decidedAt: gateDecision.decidedAt ?? decidedAt } } : {}),
       };
       upsertProposal(db, updated, stashDir);
+      recordImproveLedgerDecision(db, {
+        proposalId: updated.id,
+        stashDir,
+        ref: updated.ref,
+        source: updated.source,
+        outcome: ledgerOutcomeForDecision(status, gateDecision),
+        at: decidedAt,
+        ...(reason !== undefined ? { detail: reason } : {}),
+      });
       return updated;
     });
   });
 }
 
 /**
- * Record the drain/triage engine's decision onto a proposal (#577).
- * Drain-owned audit machinery — the deterministic drain engine is the writer.
+ * Record a gate's decision onto a proposal (#577): the triage drain's verdict,
+ * or the generating stage's quality-judge pass / review deferral.
  *
  * Stamps `gateDecision` (decision / reason / measurement / thresholds) onto the
  * row so `akm proposal show` and `list` can explain why a proposal landed where
@@ -1099,6 +874,9 @@ export function archiveProposal(
  * change `status` or bump `updatedAt` — a `deferred` proposal stays `pending`,
  * and the accept / reject status flips are owned by {@link promoteProposal} /
  * {@link archiveProposal}. `decidedAt` defaults to now when the caller omits it.
+ *
+ * A `deferred` decision (left for human review) records `review_needed` in the
+ * improve ledger.
  *
  * Best-effort: a proposal that no longer exists (e.g. concurrently archived) is
  * skipped silently rather than throwing, so a gate run never aborts mid-batch.
@@ -1114,11 +892,20 @@ export function recordGateDecision(
     return withImmediateTransaction(db, () => {
       const existing = getStateProposal(db, id, stashDir);
       if (!existing || existing.status !== "pending") return undefined;
-      const updated: Proposal = {
-        ...existing,
-        gateDecision: { ...decision, decidedAt: decision.decidedAt ?? nowIso(ctx) },
-      };
+      const decidedAt = decision.decidedAt ?? nowIso(ctx);
+      const updated: Proposal = { ...existing, gateDecision: { ...decision, decidedAt } };
       upsertProposal(db, updated, stashDir);
+      if (decision.outcome === "deferred") {
+        recordImproveLedgerDecision(db, {
+          proposalId: updated.id,
+          stashDir,
+          ref: updated.ref,
+          source: updated.source,
+          outcome: "review_needed",
+          at: decidedAt,
+          detail: decision.reason,
+        });
+      }
       return updated;
     });
   });
@@ -1165,7 +952,11 @@ export function purgeOrphanProposals(
 
     if (!exists) {
       try {
-        archiveProposal(stashDir, p.id, "rejected", "Asset no longer exists on disk", ctx);
+        archiveProposal(stashDir, p.id, "rejected", "Asset no longer exists on disk", ctx, {
+          outcome: "auto-rejected",
+          reason: ASSET_MISSING_GATE_REASON,
+          gate: "orphan-purge",
+        });
         orphans.push({ id: p.id, ref: p.ref, reason: "asset_missing" });
         byType[parsed.type] = (byType[parsed.type] ?? 0) + 1;
       } catch (err) {
@@ -1198,8 +989,10 @@ export function purgeOrphanProposals(
  * Auto-expiring them keeps the live queue focused on actionable work; the
  * archive preserves the full audit trail.
  *
- * Each expired proposal is archived with status `rejected` and reason
- * `"expired: no action within retention window"`. A `proposal_expired` event
+ * Each expired proposal is archived with status `rejected`, reason
+ * `"expired: no action within retention window"` and an `expired` gate
+ * decision, and records `expired` in the improve ledger — a short grace, never
+ * the rejection window: nobody judged the content. A `proposal_expired` event
  * is appended for each expired proposal so downstream observability (events
  * dashboards, source-acceptance-rate aggregations) can see expiry separately
  * from explicit rejections.
@@ -1235,7 +1028,11 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
     if (ageMs < retentionMs) continue;
 
     try {
-      archiveProposal(stashDir, p.id, "rejected", "expired: no action within retention window", ctx);
+      archiveProposal(stashDir, p.id, "rejected", "expired: no action within retention window", ctx, {
+        outcome: "auto-rejected",
+        reason: EXPIRED_GATE_REASON,
+        gate: "retention",
+      });
       const ageDays = Math.floor(ageMs / MS_PER_DAY);
       expiredProposals.push({ id: p.id, ref: p.ref, ageDays });
       appendEvent({
@@ -1257,19 +1054,6 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
     }
   }
 
-  // Prune fingerprint rows past the same retention window (best-effort):
-  // ISO created_at strings compare lexicographically.
-  try {
-    const cutoffIso = new Date(nowMs - retentionMs).toISOString();
-    withProposalsDb(stashDir, ctx, (db) =>
-      db.prepare("DELETE FROM proposal_fingerprints WHERE stash_dir = ? AND created_at < ?").run(stashDir, cutoffIso),
-    );
-  } catch (err) {
-    warn(
-      `[proposals] expireStaleProposals: fingerprint prune failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
   return {
     checked: pending.length,
     expired: expiredProposals.length,
@@ -1279,8 +1063,17 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   };
 }
 
-function proposalHash(content: string | Buffer): string {
+/** SHA-256 hex digest of proposal/asset bytes. */
+export function proposalHash(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Hash of a proposal's primary content — what a `staged` gate decision
+ * records, so a later reader can tell the judged bytes from an edited retry.
+ */
+export function proposalContentHash(proposal: Proposal): string {
+  return proposalHash(proposalContent(proposal));
 }
 
 function proposalFileHash(filePath: string): string {
@@ -1379,6 +1172,15 @@ function persistProposalDecision(
         };
       }
       upsertProposal(db, next, stashDir);
+      recordImproveLedgerDecision(db, {
+        proposalId: next.id,
+        stashDir,
+        ref: next.ref,
+        source: next.source,
+        outcome: ledgerOutcomeForDecision(decision.operation === "accept" ? "accepted" : "reverted"),
+        at: decision.decidedAt,
+        ...(decision.operation === "revert" ? { detail: "reverted" } : {}),
+      });
       insertEventOnce(db, {
         eventType: decision.operation === "accept" ? "promoted" : "proposal_reverted",
         ts: decision.decidedAt,
@@ -1813,77 +1615,6 @@ export function preflightProposalPromotion(
   return { proposal: preparedProposal, repairedContent, ref, target, assetPath, stampedContent };
 }
 
-/**
- * The change-transaction pre-commit gate — the `BundleAdapter.validate()`
- * interface contract's OTHER stated consumer (`core/adapter/bundle-adapter.ts`
- * doc comment, alongside `lint --fix`). Runs the target's OWN adapter's
- * `validate()` over the ONE pending write `preflight` describes, with a
- * {@link createValidateContext} overlay carrying the proposal's about-to-be-
- * written bytes — so the adapter sees the bundle AS IT WOULD LOOK the instant
- * after this transaction commits, without ever touching disk.
- *
- * DELIBERATELY ADVISORY, not blocking (see the report for the full
- * rationale): the akm adapter's `missing-ref` check resolves prose refs
- * through the SAME core overlay `resolveRef` that closes the OKF/llm-wiki
- * lint gaps — and that resolver is proven to disagree with the legacy
- * `commands/lint/base-linter.ts#checkMissingRefs` resolver in one specific,
- * real case: a fully-qualified `bundle//conceptId` prose ref (or a bare
- * frontmatter xref) whose leading segment does NOT name a registered AKM
- * placement type. The legacy resolver treats an unrecognized type prefix as
- * "not a locally-checkable ref, skip it, never flag missing" (whole-hearted
- * leniency for cross-bundle / foreign-format refs); this module's core
- * resolver additionally tries the ref as a literal on-disk path — the
- * resolution non-akm adapters (OKF, llm-wiki) actually NEED for their own
- * same-component conceptIds — which means it CAN report `missing-ref` for a
- * foreign-typed prose ref the legacy checker always let through. Promoting a
- * proposal is a live, user-facing write path; blocking it on a diagnostic
- * that can disagree with the existing (already-tested, already-run)
- * `promotionLintBlockers` gate a few lines above is not a change to make
- * without a dedicated equivalence pass first. So: this computes and surfaces
- * the finding (visible via `warn`, and never thrown) without changing whether
- * ANY promotion succeeds or fails — proving the wiring end-to-end on real
- * proposal data while leaving today's blocking behavior completely
- * untouched. Never throws: a validate() failure here must not corrupt or
- * half-apply the transaction that follows.
- */
-async function runAdapterPreCommitCheck(config: AkmConfig, preflight: ProposalPromotionPreflight): Promise<void> {
-  try {
-    const adapterId = preflight.target.source.adapterId ?? "akm";
-    const adapter = adapterForId(adapterId);
-    if (!adapter) return;
-
-    const root = preflight.target.source.path;
-    const relPath = path.relative(root, preflight.assetPath).replace(/\\/g, "/");
-    if (!relPath || relPath.startsWith("..")) return; // resolved outside its own bundle root — nothing to check
-    const change: FileChange = {
-      path: relPath,
-      after: preflight.stampedContent,
-      op: fs.existsSync(preflight.assetPath) ? "update" : "create",
-    };
-    const extraRoots = resolveSourceEntries(root, config)
-      .map((source) => source.path)
-      .filter((sourcePath) => path.resolve(sourcePath) !== path.resolve(root));
-    const componentCtx = createValidateContext({ root, extraRoots, changes: [change] });
-    const diagnostics = await adapter.validate(
-      { id: preflight.target.selector ?? adapterId, adapter: adapterId, root, writable: true },
-      [change],
-      componentCtx,
-    );
-    if (diagnostics.length > 0) {
-      const summary = diagnostics.map((d) => `[${d.issue}] ${d.detail}`).join("; ");
-      warn(`[proposal] pre-commit adapter check for ${preflight.proposal.id} found (non-blocking): ${summary}`);
-    }
-  } catch (error) {
-    // Advisory only — never let a validate() failure interrupt or corrupt the
-    // promotion transaction that follows.
-    warn(
-      `[proposal] pre-commit adapter check for ${preflight.proposal.id} threw (ignored, non-blocking): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-}
-
 async function promoteProposalWithLease(
   stashDir: string,
   config: AkmConfig,
@@ -1954,12 +1685,10 @@ async function promoteProposalWithLease(
     );
   }
   const preflight = preflightProposalPromotion(config, proposal, { ...options, queueTarget: target }, ctx);
-  await runAdapterPreCommitCheck(config, preflight);
 
   const mutationTarget = prepareWriteTargetForMutation(target);
   const assetPath = resolveAssetFilePathSafe(mutationTarget.source, ref);
   if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
-  assertWriteTargetPathsClean(mutationTarget.source, [assetPath]);
   let backup: Buffer | undefined;
   if (fs.existsSync(assetPath)) {
     try {
@@ -2163,7 +1892,6 @@ async function revertProposalWithLease(
       "INVALID_FLAG_VALUE",
     );
   }
-  assertWriteTargetPathsClean(target.source, [assetPath]);
   const decidedAt = nowIso(ctx);
   writeProposalAssetFile(assetPath, backupContent.endsWith("\n") ? backupContent : `${backupContent}\n`);
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: [assetPath] });

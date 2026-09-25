@@ -4,17 +4,9 @@
 
 import { ConfigError } from "../../core/errors";
 import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
-import { assertFrozenExecutableIdentity } from "../../execution/executable-identity";
-import {
-  canonicalResolvedExecutionRequest,
-  decodeResolvedExecutionRequest,
-  type LoweringNotice,
-} from "../../execution/resolved-request";
-import {
-  dispatchLoweredExecutionRequest,
-  type LoweredExecutionRequest,
-  lowerResolvedExecutionRequestWithRunner,
-} from "../../integrations/agent/execution-lowering";
+import { canonicalResolvedExecutionRequest, type LoweringNotice } from "../../execution/resolved-request";
+import { type BuiltExecution, buildExecutionFromWire } from "../../integrations/agent/execution";
+import { runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { getHarness } from "../../integrations/harnesses";
 import type { FrozenWorkflowTarget } from "../ir/schema-v4";
@@ -60,12 +52,12 @@ export interface UnitDispatchRequest {
    * exec-unit.ts's RunExecUnitInput.eventSource -> childEnv, applied to the
    * allowlisted BASE only, so an authored `env:` binding still wins. A
    * "command" frozenTarget's `dispatchWorkflowExecution` (below) forwards it
-   * into `dispatchLoweredExecutionRequest`'s own `eventSource` option — but
+   * into `runExecution`'s own `eventSource` option — but
    * ONLY when {@link UnitDispatchRequest.env} does not already bind
    * `AKM_EVENT_SOURCE` itself (precedence fix, code review round 2; see
    * `forwardedDispatchEventSource`), so the two arms agree. When forwarded,
    * it applies the identical single-key child-env layering
-   * (execution-lowering.ts:998-1001) that the R-07 command-arm fix uses — so
+   * (`runExecution`, runner-dispatch.ts) that the R-07 command-arm fix uses — so
    * the "agent"/"sdk" arms observe it too. Typed as a bare `string` (not
    * `UsageEventSource`) — see run-workflow.ts's RunWorkflowOptions.eventSource
    * for why.
@@ -94,10 +86,9 @@ export type UnitDispatcher = (request: UnitDispatchRequest, feedback?: string) =
 export function prepareWorkflowExecution(
   request: UnitDispatchRequest & { frozenTarget: Extract<FrozenWorkflowTarget, { kind: "command" }> },
   prompt = request.prompt,
-): LoweredExecutionRequest {
+): BuiltExecution {
   const target = request.frozenTarget;
   if (target.cwdIdentity) assertFrozenDirectoryContained(target.cwdIdentity);
-  if (target.executable) assertFrozenExecutableIdentity(target.executable, `unit ${request.unitId} executable`);
   const wire = JSON.parse(canonicalResolvedExecutionRequest(target.request)) as Record<string, unknown>;
   const command = { ...(wire.command as Record<string, unknown>), content: prompt };
   const runtime = {
@@ -114,7 +105,7 @@ export function prepareWorkflowExecution(
   if (request.systemPrompt !== undefined) {
     wire.conversation = [{ role: "system", content: request.systemPrompt }];
   }
-  return lowerResolvedExecutionRequestWithRunner(decodeResolvedExecutionRequest(wire), target.runner);
+  return buildExecutionFromWire({ request: wire, runner: target.runner });
 }
 
 function message(err: unknown): string {
@@ -123,14 +114,13 @@ function message(err: unknown): string {
 
 /**
  * The `eventSource` value `dispatchWorkflowExecution` should forward into
- * `dispatchLoweredExecutionRequest`'s options, or `undefined` to forward
- * nothing.
+ * `runExecution`'s options, or `undefined` to forward nothing.
  *
  * Precedence fix (P1b Lane C code review, round 2). The gap-fix originally
  * forwarded `request.eventSource` unconditionally.
- * `dispatchLoweredExecutionRequest` applies a forwarded value as `env: {
- * ...lowered.options.env, AKM_EVENT_SOURCE: eventSource }`
- * (execution-lowering.ts:998-1001) — an unconditional override of that one
+ * `runExecution` applies a forwarded value as `env: {
+ * ...execution.options.env, AKM_EVENT_SOURCE: eventSource }`
+ * (runner-dispatch.ts) — an unconditional override of that one
  * key — and `lowered.options.env` IS the unit's own authored/resolved `env:`
  * binding (`request.env`, folded in by `prepareWorkflowExecution` above via
  * `request.runtime.environment`), so the unconditional forward let the
@@ -149,7 +139,7 @@ function message(err: unknown): string {
  *
  * Exported so this precedence rule is pinned directly:
  * `dispatchWorkflowExecution` itself has no injectable
- * `runAgent`/`executeRunner`/`chat` seam to exercise the decision end-to-end
+ * `runAgent`/`runSdk`/`chat` seam to exercise the decision end-to-end
  * without a live agent/LLM dispatch (see the P1b spec's Review log, which
  * records the same constraint for the gap-fix this corrects).
  */
@@ -224,10 +214,10 @@ export async function dispatchWorkflowExecution(
     };
   }
 
-  let result: Awaited<ReturnType<typeof dispatchLoweredExecutionRequest>>;
+  let result: Awaited<ReturnType<typeof runExecution>>;
   try {
     const eventSource = forwardedDispatchEventSource(request);
-    result = await dispatchLoweredExecutionRequest(lowered, {
+    result = await runExecution(lowered, {
       runOptions: {
         stdio: "captured",
         parseOutput: "text",
@@ -240,8 +230,8 @@ export async function dispatchWorkflowExecution(
       // "script"/"shell" unit's — but only when the unit's own authored
       // `env:` binding does not already set the name, so an authored binding
       // still wins, mirroring exec-unit.ts's childEnv guard.
-      // dispatchLoweredExecutionRequest applies a forwarded value as exactly
-      // one child-env key (execution-lowering.ts:998-1001) — the same
+      // runExecution applies a forwarded value as exactly one child-env key
+      // (runner-dispatch.ts) — the same
       // mechanism the R-07 command-arm fix (command-execution.ts) already
       // uses.
       ...(eventSource !== undefined ? { eventSource } : {}),

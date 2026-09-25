@@ -40,15 +40,9 @@ import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
-import type { ToolAuthorizer } from "../integrations/agent/execution-cascade";
-import {
-  acquireLoweredExecutionDispatchLease,
-  dispatchLoweredExecutionRequest,
-  type LoweredExecutionDispatchLease,
-  lowerResolvedExecutionRequestWithRunner,
-} from "../integrations/agent/execution-lowering";
-import { prepareInlineExecutionWithRunner } from "../integrations/agent/inline-execution";
+import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
+import { runExecution } from "../integrations/agent/runner-dispatch";
 import { type ChatCompletionConfig, type ChatMessage, isContextSizeError, LlmCallError } from "./client";
 import {
   isLlmFeatureEnabled,
@@ -141,12 +135,8 @@ export interface CallStructuredOptions<T> {
    * authorization precedes credential lookup and aliases are never re-run.
    */
   runner?: StructuredLlmRunner;
-  /** Operation-scoped credential capability shared across related calls. */
-  lease?: LoweredExecutionDispatchLease;
-  /** Additional exact invocation fields (notably tools) for the current call. */
+  /** Additional exact invocation fields for the current call. */
   current?: UnresolvedExecutionDefaults;
-  /** Operator tool-policy seam; evaluated during preparation before lowering. */
-  authorizeTools?: ToolAuthorizer;
   /** Receives the stable, secret-free notices emitted by the selected lowerer. */
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
   /** The chat messages to send. */
@@ -215,28 +205,9 @@ function requireTerminalUserMessage(messages: readonly ChatMessage[]): {
   };
 }
 
-function dispatchFailure(result: Awaited<ReturnType<typeof dispatchLoweredExecutionRequest>>): Error {
+function dispatchFailure(result: Awaited<ReturnType<typeof runExecution>>): Error {
   const message = result.error ?? result.stderr ?? result.reason ?? "LLM dispatch failed";
   return result.llmErrorCode ? new LlmCallError(message, result.llmErrorCode) : new Error(message);
-}
-
-/**
- * Validate one already-selected symbolic LLM runner before an operation makes
- * any durable mutation. Callers must apply their feature/authorization gates
- * first. Acquisition crosses the canonical prepare -> lower -> lease boundary,
- * so required credentials are snapshotted by the same central authority as a
- * real call without contacting the provider.
- */
-export async function preflightStructuredLlmRunner(
-  runner: StructuredLlmRunner,
-): Promise<LoweredExecutionDispatchLease> {
-  const prepared = prepareInlineExecutionWithRunner({
-    content: "Validate the selected LLM runner before operation dispatch.",
-    runner,
-    invocationKind: "direct",
-  });
-  const lowered = lowerResolvedExecutionRequestWithRunner(prepared.request, prepared.runner);
-  return acquireLoweredExecutionDispatchLease(lowered);
 }
 
 export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise<T> {
@@ -260,19 +231,16 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
 
   const prepareInvocation = (): (() => Promise<T>) => {
     const current = resolveStructuredCurrent(opts.current, request);
-    const prepared = prepareInlineExecutionWithRunner({
+    const prepared = resolveExecution({
       content: terminal.content,
       conversation: terminal.conversation,
       runner,
-      invocationKind: "direct",
       ...(current ? { current } : {}),
-      ...(opts.authorizeTools ? { authorizeTools: opts.authorizeTools } : {}),
     });
-    const lowered = lowerResolvedExecutionRequestWithRunner(prepared.request, prepared.runner);
+    const lowered = buildExecution(prepared.request, prepared.runner);
     opts.onNotices?.(lowered.notices);
     return async () => {
-      const result = await dispatchLoweredExecutionRequest(lowered, {
-        ...(opts.lease ? { lease: opts.lease } : {}),
+      const result = await runExecution(lowered, {
         ...(request?.chat ? { chat: request.chat } : {}),
         ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
         ...(own(request, "signal") ? { runOptions: { signal: request?.signal } } : {}),

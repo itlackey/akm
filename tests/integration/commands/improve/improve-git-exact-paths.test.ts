@@ -104,7 +104,6 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
           contradicted: 0,
           warnings: [],
         },
-        consolidationRan: false,
       };
     }) as never,
     runImproveLoopStageFn: (async () => ({

@@ -40,7 +40,6 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
-import { upgradeConfigVersion } from "./config-version-shim";
 import { resolveSchemaAt } from "./config-walker";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { migrateLegacySourceShape } from "./legacy-source-shape-shim";
@@ -219,18 +218,38 @@ export function acquireConfigReadFence(): { config: AkmConfig; release: () => vo
 /**
  * Run the per-file config pipeline every raw config object goes through
  * before it is either validated (the local/top-level file) or merged in as
- * an `extends` base: JSONC parse already done by the caller, then version
- * shim, then legacy `stashDir`/`sources[]`/`installed[]` shim, then the
- * legacy `extraParams` lift (#852). Unknown keys are not an error: the
- * schema drops them in memory. Shared by {@link parseAndValidateConfigText}
- * (the local file) and {@link resolveExtendsChain} (each base in the chain) so
- * a fleet-shared base config can carry its own old `configVersion` / legacy
- * shape independently of the file that extends it.
+ * an `extends` base: JSONC parse already done by the caller, then the
+ * `configVersion` read ({@link readConfigVersion}), then the legacy
+ * `stashDir`/`sources[]`/`installed[]` shim, then the legacy `extraParams`
+ * lift (#852). Unknown keys are not an error: the schema drops them in
+ * memory. Shared by {@link parseAndValidateConfigText} (the local file) and
+ * {@link resolveExtendsChain} (each base in the chain) so a fleet-shared base
+ * config can carry its own `configVersion` / legacy shape independently of
+ * the file that extends it.
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  const versioned = upgradeConfigVersion(parseConfigText(text, sourcePath), sourcePath);
+  const versioned = readConfigVersion(parseConfigText(text, sourcePath), sourcePath);
   const parsedRaw = migrateLegacySourceShape(versioned, sourcePath);
   return liftExtraParamsOrThrow(parsedRaw, sourcePath);
+}
+
+/**
+ * `configVersion` is read, never gated on. `"0.9.0"` is the only value akm
+ * has ever shipped, and a document without the field is that same document.
+ * Any other value is named once and the file is read as the current shape
+ * anyway; every ordinary config write and `akm migrate apply`'s `configFile`
+ * step then persist `"0.9.0"`.
+ */
+function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const version = raw.configVersion;
+  if (version === CURRENT_CONFIG_VERSION) return raw;
+  if (version !== undefined) {
+    warnOnce(
+      `config:config-version${sourcePath ? `:${sourcePath}` : ""}`,
+      `${sourcePath ?? "config.json"} declares configVersion ${JSON.stringify(version)}; this release reads it as ${CURRENT_CONFIG_VERSION}.`,
+    );
+  }
+  return { ...raw, configVersion: CURRENT_CONFIG_VERSION };
 }
 
 /**
@@ -367,11 +386,10 @@ function assertUniquePhysicalBundleRoots(config: AkmConfig, sourcePath?: string)
  * Parse raw config text and validate via Zod.
  * ({@link AkmConfigSchema}). Returns the merged-with-defaults AkmConfig.
  *
- * The schema accepts only the current config version. A known older version
- * is auto-upgraded in memory first (see `./config-version-shim`); anything
- * else — including anything newer — is rejected before the canonical shape
- * is validated. When the config sets `extends` (#945), its resolved chain is
- * deep-merged underneath before validation — see {@link resolveExtendsChain}.
+ * `configVersion` is read as the current version whatever it says (see
+ * {@link readConfigVersion}). When the config sets `extends` (#945), its
+ * resolved chain is deep-merged underneath before validation — see
+ * {@link resolveExtendsChain}.
  */
 export function parseAndValidateConfigText(text: string, sourcePath?: string): AkmConfig {
   const liftedConfig = runConfigFilePipeline(text, sourcePath);
@@ -910,8 +928,8 @@ export interface ConfigFileNormalization {
 
 /**
  * The migrator's one config step. The reader already tolerates every shape
- * akm has written (config-version shim, legacy source layout, `extraParams`
- * lift, unknown keys dropped); this writes that current shape back to
+ * akm has written (`configVersion` read as current, legacy source layout,
+ * `extraParams` lift, unknown keys dropped); this writes that current shape back to
  * `config.json` — the same body `mutateConfig` writes — so the tolerance
  * becomes durable. Reports without writing unless `apply` is set.
  */

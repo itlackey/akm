@@ -3,10 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { randomUUID } from "node:crypto";
-import { NotFoundError, TransientError, UsageError } from "../../core/errors";
-import { isSqliteContentionError, openStateDatabase, withImmediateTransaction } from "../../core/state-db";
+import { NotFoundError, UsageError } from "../../core/errors";
+import { openStateDatabase, withImmediateTransaction } from "../../core/state-db";
 import { borrowScopedStateDb, withStateDbScope } from "../../core/state-db-scope";
-import { sleepSync } from "../../runtime";
 import type { WorkflowRunStatus, WorkflowRunStepStatus } from "../../sources/types";
 import type { Database } from "../database";
 import { escapeLikePattern } from "../like-pattern";
@@ -34,16 +33,16 @@ export type WorkflowRunRow = {
   completed_at: string | null;
   agent_harness: string | null;
   agent_session_id: string | null;
+  /** Legacy column (run check-ins, removed). Read tolerantly, never written. */
   checkin_armed_at: string | null;
-  /** Frozen compiled plan — canonical plan JSON. NULL only on rejected pre-v4 rows. */
+  /** Frozen compiled plan — canonical plan JSON. Read tolerantly by `workflows/runtime/run-plan.ts`. */
   plan_json: string | null;
-  /** sha256 (hex) of the canonical plan JSON; integrity-checked on every load. */
+  /** sha256 (hex) of the canonical plan JSON at freeze. Informational; never gates a read. */
   plan_hash: string | null;
-  /** Persisted IR version. NULL only on rejected pre-v4 rows. */
+  /** The plan format the freezing release wrote. Informational; never gates a read. */
   plan_ir_version?: number | null;
-  /** Run-lease expiry (ISO-8601 UTC; migration 006, enforced since R2). NULL when no engine holds the run. */
+  /** Legacy columns (the database run lease, replaced by a per-run lock file). Read tolerantly, never written. */
   engine_lease_until: string | null;
-  /** Random holder id of the engine invocation driving the run. NULL when unleased. */
   engine_lease_holder: string | null;
   /** The parent run this run was spawned under (migration 023). NULL on a top-level run. */
   parent_run_id: string | null;
@@ -114,29 +113,16 @@ export type WorkflowRunUnitRow = {
   worktree_path: string | null;
   started_at: string | null;
   finished_at: string | null;
-  /**
-   * Most recent unit-level check-in heartbeat (migration 007): refreshed
-   * whenever a `running` unit's claim is (re)stamped. Distinct from
-   * `started_at` (the first claim); the stale-unit evaluator
-   * (`runtime/unit-checkin.ts`) reads it. NULL on never-heartbeated units,
-   * including plain engine-dispatched rows.
-   */
+  /** Legacy column (unit check-ins, removed). Read tolerantly, never written. */
   last_checkin_at: string | null;
   /**
    * Number of the latest append-only dispatch attempt projected for this unit.
    * Authoritative accounting reads `workflow_run_unit_attempts` directly.
    */
   attempts: number;
-  /**
-   * Claim owner of a `running` unit (migration 009, PR #714 review round 2): the
-   * session/holder token that took the unit. Heartbeating or finishing a
-   * live-claimed running row requires this holder; an expired claim
-   * ({@link claim_expires_at} in the past) is reclaimable by a new holder. NULL
-   * on plain engine-dispatched rows, which are never separately claimed.
-   */
+  /** Informational: `pid:<n>` of the process that reserved the unit's latest attempt. Nothing fences on it. */
   claim_holder: string | null;
-  /** Claim expiry (ISO-8601 UTC; migration 009). NULL when unclaimed. A claim is
-   * LIVE only while this is set and `>= now`; past that it is reclaimable. */
+  /** Informational: the reservation time stamped alongside {@link claim_holder}. Nothing fences on it. */
   claim_expires_at: string | null;
 };
 
@@ -179,11 +165,7 @@ export interface ReserveUnitAttemptV4Input {
   model: string | null;
   inputHash: string;
   worktreePath?: string | null;
-  claimHolder: string;
-  claimExpiresAt: string;
   now: string;
-  /** Engine-driven reservations are fenced by the run lease; direct calls are allowed only on an unleased run. */
-  leaseMode: "engine" | "direct";
 }
 
 export interface FinishUnitAttemptV4Input {
@@ -191,7 +173,6 @@ export interface FinishUnitAttemptV4Input {
   unitId: string;
   attempt: number;
   dispatchId: string;
-  claimHolder: string;
   status: Exclude<WorkflowRunUnitAttemptStatusV4, "running">;
   resultJson: string | null;
   tokens: number | null;
@@ -209,34 +190,20 @@ export interface WorkflowAttemptAccountingV4 {
   gateTokens: number;
 }
 
+/**
+ * `reserved`: a fresh attempt row was appended. `reclaimed`: the unit's latest
+ * attempt was still `running` (a previous process died mid-dispatch, or the
+ * same unit is being re-driven), so that attempt — same number, same stable
+ * `dispatch_id` — is handed back for at-least-once re-dispatch.
+ */
 export interface ReserveUnitAttemptV4Result {
-  kind: "reserved" | "existing" | "reclaimed" | "busy";
+  kind: "reserved" | "reclaimed";
   attempt: WorkflowRunUnitAttemptRowV4;
 }
 
-function assertAttemptReservationLease(
-  input: ReserveUnitAttemptV4Input,
-  run: { engine_lease_holder: string | null; engine_lease_until: string | null },
-): void {
-  if (input.leaseMode === "direct") {
-    if (run.engine_lease_holder === null) return;
-    throw new UsageError(
-      `Workflow run ${input.runId} is leased by another engine; direct durable dispatch reservation is forbidden.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-  }
-  if (run.engine_lease_holder !== input.claimHolder) {
-    throw new UsageError(
-      `Workflow run ${input.runId} lease holder changed; refusing a stale durable dispatch reservation.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-  }
-  if (run.engine_lease_until === null || run.engine_lease_until < input.now) {
-    throw new UsageError(
-      `Workflow run ${input.runId} engine lease expired before durable dispatch reservation.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-  }
+/** Informational `claim_holder` value stamped on attempt rows: the dispatching process. */
+function dispatchingProcess(): string {
+  return `pid:${process.pid}`;
 }
 
 /** Input row for {@link WorkflowRunsRepository.insertRun}. */
@@ -252,7 +219,6 @@ export interface InsertRunInput {
   updatedAt: string;
   agentHarness: string | null;
   agentSessionId: string | null;
-  checkinArmedAt: string | null;
 }
 
 /** Input row for {@link WorkflowRunsRepository.insertStep}. */
@@ -323,49 +289,6 @@ export interface ListRunsFilter {
    * is byte-identical regardless of this flag.
    */
   includeChildren?: boolean;
-}
-
-/**
- * Whether `error` is one of the specific SQLite conditions a run-lease
- * statement can throw under real cross-process contention on the same row:
- * the shared {@link isSqliteContentionError} classifier (SQLITE_BUSY/LOCKED,
- * "database is locked", "database table is locked", the phantom-BEGIN
- * marker) plus two corruption-shaped message texts a transient contention
- * blip has been observed producing on this specific race, "disk I/O error"
- * and "database disk image is malformed". Matching on this set alone is
- * never sufficient to call something lease contention — see
- * {@link WorkflowRunsRepository.acquireEngineLease}, which additionally
- * requires a fresh read confirming a live lease before substituting the
- * lease-held message for the original error.
- */
-function isLeaseContentionSqliteError(error: unknown): boolean {
-  if (isSqliteContentionError(error)) return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("disk I/O error") || message.includes("database disk image is malformed");
-}
-
-const LEASE_RETRY_ATTEMPTS = 4;
-const LEASE_RETRY_BASE_DELAY_MS = 15;
-
-/**
- * Retry a single lease statement across a short, bounded set of attempts when
- * it throws one of {@link isLeaseContentionSqliteError}'s conditions —
- * absorbing a blip that a fresh attempt on the same connection clears on its
- * own. Any other error, or the same error surviving every attempt, propagates
- * unchanged; this never converts a persistent failure into a false success.
- */
-function runLeaseStatementWithRetry<T>(fn: () => T): T {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < LEASE_RETRY_ATTEMPTS; attempt += 1) {
-    try {
-      return fn();
-    } catch (error) {
-      if (!isLeaseContentionSqliteError(error)) throw error;
-      lastError = error;
-      if (attempt < LEASE_RETRY_ATTEMPTS - 1) sleepSync(LEASE_RETRY_BASE_DELAY_MS * 2 ** attempt);
-    }
-  }
-  throw lastError;
 }
 
 /**
@@ -582,7 +505,7 @@ export class WorkflowRunsRepository {
 
   insertRun(input: InsertRunInput): void {
     // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-    // this 13-column list is hand-duplicated by publishChildWorkflowRun's own
+    // this 12-column list is hand-duplicated by publishChildWorkflowRun's own
     // INSERT below, which extends it with parent_run_id/parent_unit_id/
     // invocation_key. A signature refactor to share one INSERT builder was
     // considered and deliberately deferred — see
@@ -592,8 +515,8 @@ export class WorkflowRunsRepository {
       .prepare(
         `INSERT INTO workflow_runs (
           id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at,
-          agent_harness, agent_session_id, checkin_armed_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
+          agent_harness, agent_session_id
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -607,7 +530,6 @@ export class WorkflowRunsRepository {
         input.updatedAt,
         input.agentHarness,
         input.agentSessionId,
-        input.checkinArmedAt,
       );
   }
 
@@ -640,11 +562,7 @@ export class WorkflowRunsRepository {
   }
 
   markRunActive(runId: string, updatedAt: string): void {
-    this.db
-      .prepare(
-        "UPDATE workflow_runs SET status = 'active', updated_at = ?, engine_lease_holder = NULL, engine_lease_until = NULL WHERE id = ?",
-      )
-      .run(updatedAt, runId);
+    this.db.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(updatedAt, runId);
   }
 
   updateStepCompletion(input: {
@@ -670,31 +588,26 @@ export class WorkflowRunsRepository {
     currentStepId: string | null;
     updatedAt: string;
     completedAt: string | null;
-    checkinArmedAt: string;
     runId: string;
   }): void {
     this.db
       .prepare(
         `UPDATE workflow_runs
-           SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?, checkin_armed_at = ?
+           SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?
            WHERE id = ?`,
       )
-      .run(input.status, input.currentStepId, input.updatedAt, input.completedAt, input.checkinArmedAt, input.runId);
+      .run(input.status, input.currentStepId, input.updatedAt, input.completedAt, input.runId);
   }
 
   markRunAbandoned(runId: string, updatedAt: string): boolean {
     const result = this.db
       .prepare(
         `UPDATE workflow_runs
-           SET status = 'failed', updated_at = ?, completed_at = ?, checkin_armed_at = ?
+           SET status = 'failed', updated_at = ?, completed_at = ?
            WHERE id = ? AND status IN ('active', 'blocked')`,
       )
-      .run(updatedAt, updatedAt, updatedAt, runId);
+      .run(updatedAt, updatedAt, runId);
     return Number(result.changes) === 1;
-  }
-
-  rearmCheckin(runId: string, checkinArmedAt: string): void {
-    this.db.prepare("UPDATE workflow_runs SET checkin_armed_at = ? WHERE id = ?").run(checkinArmedAt, runId);
   }
 
   /**
@@ -797,15 +710,15 @@ export class WorkflowRunsRepository {
       if (existing) return existing;
 
       // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-      // the first 13 columns here must stay byte-identical to insertRun's own
+      // the first 12 columns here must stay byte-identical to insertRun's own
       // column list above (hand-duplicated, not shared, by deliberate choice
       // — see docs/architecture/decisions/0009-child-run-publication-column-parity.md).
       // Keep both column lists in sync by hand.
       db.prepare(
         `INSERT INTO workflow_runs (
           id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at,
-          agent_harness, agent_session_id, checkin_armed_at, parent_run_id, parent_unit_id, invocation_key
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          agent_harness, agent_session_id, parent_run_id, parent_unit_id, invocation_key
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         input.run.id,
         input.run.workflowRef,
@@ -818,7 +731,6 @@ export class WorkflowRunsRepository {
         input.run.updatedAt,
         input.run.agentHarness,
         input.run.agentSessionId,
-        input.run.checkinArmedAt,
         input.parentRunId,
         input.spawnedByUnitId,
         input.invocationKey,
@@ -868,133 +780,6 @@ export class WorkflowRunsRepository {
     );
   }
 
-  // ── engine run lease (migration 006 columns, R2 enforcement) ──────────────
-  //
-  // Single-driver invariant: at most one `akm workflow run` invocation drives
-  // a run at a time. The lease is (holder id, expiry); all timestamps are
-  // ISO-8601 UTC strings, which compare correctly with SQL `<` (lexicographic
-  // order matches chronological order for a fixed-format UTC ISO string).
-
-  /**
-   * Atomically claim the run lease: succeeds when the run is unleased OR the
-   * existing lease has expired (`engine_lease_until < now` — crash recovery).
-   * A live lease held by anyone (including a stale copy of the same holder)
-   * is NOT reclaimable through this method; the single UPDATE is the whole
-   * claim, so two racing invocations cannot both win.
-   *
-   * The UPDATE can throw instead of cleanly returning `changes: 0` under real
-   * cross-process contention on this row: a `SQLITE_BUSY`/`SQLITE_LOCKED`
-   * from two engines racing the same statement, occasionally surfacing as
-   * "database is locked" or even "database disk image is malformed" text that
-   * reads as corruption but is not. `runLeaseStatementWithRetry` absorbs a
-   * blip that a fresh attempt clears on its own. If it is still failing after
-   * every retry, the row is read fresh (a plain SELECT, far less likely to
-   * trip whatever the write hit) to get independent evidence of what is
-   * actually going on: a live lease there means this really was contention,
-   * so the caller gets the same lease-held message `akm workflow run` already
-   * shows for the clean (non-throwing) case, now with `RUN_LEASE_HELD`. No
-   * live lease — or the verifying read itself fails — means the error was
-   * never actually about the lease, so it is rethrown exactly as raised.
-   * Nothing here invents a diagnosis from error text alone or suppresses a
-   * genuine SQLite failure.
-   */
-  acquireEngineLease(runId: string, holder: string, until: string, now: string): boolean {
-    try {
-      const result = runLeaseStatementWithRetry(() =>
-        this.db
-          .prepare(
-            `UPDATE workflow_runs
-               SET engine_lease_holder = ?, engine_lease_until = ?
-               WHERE id = ? AND status = 'active'
-                 AND (engine_lease_holder IS NULL OR engine_lease_until IS NULL OR engine_lease_until < ?)`,
-          )
-          .run(holder, until, runId, now),
-      );
-      return Number(result.changes) > 0;
-    } catch (error) {
-      if (!isLeaseContentionSqliteError(error)) throw error;
-      const row = this.tryReadLeaseColumns(runId);
-      if (row?.engine_lease_holder && row.engine_lease_until && row.engine_lease_until >= now) {
-        throw new TransientError(
-          `Workflow run ${runId} is already being driven by engine ${row.engine_lease_holder} ` +
-            `(run lease expires ${row.engine_lease_until}). A second \`akm workflow run\` would race it — ` +
-            `wait for that invocation to finish or for the lease to expire.`,
-          "RUN_LEASE_HELD",
-        );
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Extend the lease expiry — only while `holder` still owns it. Returns
-   * false when the lease was lost (expired and claimed by another engine),
-   * so the caller can stop driving instead of racing the new owner. Wrapped
-   * in the same transient-error retry as {@link acquireEngineLease}; a
-   * renewal that still fails after retries is rethrown as-is (no confirmed
-   * "lost lease" diagnosis to substitute, unlike the acquire case above).
-   */
-  renewEngineLease(runId: string, holder: string, until: string): boolean {
-    const result = runLeaseStatementWithRetry(() =>
-      this.db
-        .prepare(
-          "UPDATE workflow_runs SET engine_lease_until = ? WHERE id = ? AND engine_lease_holder = ? AND status = 'active'",
-        )
-        .run(until, runId, holder),
-    );
-    return Number(result.changes) > 0;
-  }
-
-  /**
-   * Clear the lease only while `holder` still owns a non-failed run. Failed
-   * runs retain the final holder/expiry for forensics until explicit resume.
-   * Releasing an already-lost lease is a harmless no-op.
-   */
-  releaseEngineLease(runId: string, holder: string): void {
-    this.db
-      .prepare(
-        "UPDATE workflow_runs SET engine_lease_holder = NULL, engine_lease_until = NULL WHERE id = ? AND engine_lease_holder = ? AND status <> 'failed'",
-      )
-      .run(runId, holder);
-  }
-
-  /**
-   * Self-heal an engine lease its holder crashed without releasing: once
-   * `engine_lease_until` has passed, clear it so a read (`workflow status`,
-   * `workflow list`) stops reporting a run as engine-driven when the engine is
-   * long gone.
-   * The WHERE clause repeats the exact (holder, until) snapshot the caller
-   * read, so a lease renewed or re-acquired in between never gets clobbered —
-   * same compare-and-swap shape as the claim above. Never touches a lease
-   * that is still live.
-   */
-  reclaimExpiredEngineLease(runId: string, holder: string, until: string, now: string): boolean {
-    if (until >= now) return false;
-    const result = this.db
-      .prepare(
-        `UPDATE workflow_runs
-           SET engine_lease_holder = NULL, engine_lease_until = NULL
-           WHERE id = ? AND engine_lease_holder = ? AND engine_lease_until = ? AND engine_lease_until < ?`,
-      )
-      .run(runId, holder, until, now);
-    return Number(result.changes) > 0;
-  }
-
-  /** Best-effort lease-column read used only to confirm genuine contention after {@link acquireEngineLease} exhausts its retries. `undefined` on any failure — never a diagnosis, just "couldn't confirm". */
-  private tryReadLeaseColumns(
-    runId: string,
-  ): Pick<WorkflowRunRow, "engine_lease_holder" | "engine_lease_until"> | undefined {
-    try {
-      return (
-        (this.db.prepare("SELECT engine_lease_holder, engine_lease_until FROM workflow_runs WHERE id = ?").get(runId) as
-          | Pick<WorkflowRunRow, "engine_lease_holder" | "engine_lease_until">
-          | undefined) ?? undefined
-      );
-    } catch {
-      return undefined;
-    }
-  }
-
   // ── durable v4 append-only dispatch attempts (migration 022) ─────────────
 
   getUnitAttempts(runId: string, unitId: string): WorkflowRunUnitAttemptRowV4[] {
@@ -1039,22 +824,20 @@ export class WorkflowRunsRepository {
   }
 
   /**
-   * Reserve or reclaim one v4 external dispatch. The attempt row, legacy
-   * projection, and directly-paired started event share one IMMEDIATE
-   * transaction. Reclaim keeps the stable dispatch id and emits no duplicate
-   * start event: the external effect remains explicitly at-least-once.
+   * Reserve or reclaim one dispatch attempt. The attempt row, the unit
+   * projection, and the directly-paired started event share one IMMEDIATE
+   * transaction. A latest attempt still `running` is reclaimed in place —
+   * same attempt number, same stable dispatch id, no duplicate start event —
+   * so a re-dispatch after a crash stays explicitly at-least-once with an
+   * idempotency key a downstream can dedupe on. One process drives a run at a
+   * time (the per-run lock file in `workflows/exec/run-workflow.ts`), so a
+   * `running` attempt found here is never another live driver's.
    */
   reserveUnitAttempt(input: ReserveUnitAttemptV4Input): ReserveUnitAttemptV4Result {
+    const holder = dispatchingProcess();
     return this.immediateTransaction((db) => {
-      const run = db
-        .prepare("SELECT workflow_ref, status, engine_lease_holder, engine_lease_until FROM workflow_runs WHERE id = ?")
-        .get(input.runId) as
-        | {
-            workflow_ref: string;
-            status: string;
-            engine_lease_holder: string | null;
-            engine_lease_until: string | null;
-          }
+      const run = db.prepare("SELECT workflow_ref, status FROM workflow_runs WHERE id = ?").get(input.runId) as
+        | { workflow_ref: string; status: string }
         | undefined;
       if (!run || run.status !== "active") {
         throw new UsageError(
@@ -1062,7 +845,6 @@ export class WorkflowRunsRepository {
           "RESOURCE_ALREADY_EXISTS",
         );
       }
-      assertAttemptReservationLease(input, run);
 
       const latest = db
         .prepare(
@@ -1072,49 +854,7 @@ export class WorkflowRunsRepository {
             LIMIT 1`,
         )
         .get(input.runId, input.unitId) as WorkflowRunUnitAttemptRowV4 | undefined;
-      if (latest?.status === "running") {
-        if (latest.claim_holder === input.claimHolder) {
-          return { kind: "existing", attempt: latest };
-        }
-        const currentRunLeaseDisplacedClaim = run.engine_lease_holder === input.claimHolder;
-        const expired = latest.claim_expires_at < input.now;
-        if (!expired && !currentRunLeaseDisplacedClaim) {
-          return { kind: "busy", attempt: latest };
-        }
-        const reclaimed = db
-          .prepare(
-            `UPDATE workflow_run_unit_attempts
-                SET claim_holder = ?, claim_expires_at = ?
-              WHERE run_id = ? AND unit_id = ? AND attempt = ?
-                AND status = 'running' AND dispatch_id = ? AND claim_holder = ?
-                AND claim_expires_at = ?`,
-          )
-          .run(
-            input.claimHolder,
-            input.claimExpiresAt,
-            input.runId,
-            input.unitId,
-            latest.attempt,
-            latest.dispatch_id,
-            latest.claim_holder,
-            latest.claim_expires_at,
-          );
-        if (Number(reclaimed.changes) !== 1) {
-          throw new Error(`Durable attempt ${input.unitId} changed while its displaced claim was reclaimed.`);
-        }
-        db.prepare(
-          `UPDATE workflow_run_units
-              SET claim_holder = ?, claim_expires_at = ?, last_checkin_at = ?
-            WHERE run_id = ? AND unit_id = ? AND status = 'running'`,
-        ).run(input.claimHolder, input.claimExpiresAt, input.now, input.runId, input.unitId);
-        const attempt = db
-          .prepare(
-            `SELECT * FROM workflow_run_unit_attempts
-              WHERE run_id = ? AND unit_id = ? AND attempt = ?`,
-          )
-          .get(input.runId, input.unitId, latest.attempt) as WorkflowRunUnitAttemptRowV4;
-        return { kind: "reclaimed", attempt };
-      }
+      if (latest?.status === "running") return { kind: "reclaimed", attempt: latest };
 
       const attemptNumber = (latest?.attempt ?? 0) + 1;
       const dispatchId = randomUUID();
@@ -1138,8 +878,8 @@ export class WorkflowRunsRepository {
         input.inputHash,
         input.worktreePath ?? null,
         input.now,
-        input.claimHolder,
-        input.claimExpiresAt,
+        holder,
+        input.now,
       );
       db.prepare(
         `INSERT INTO workflow_run_units (
@@ -1165,7 +905,6 @@ export class WorkflowRunsRepository {
            failure_reason = NULL,
            session_id = NULL,
            finished_at = NULL,
-           last_checkin_at = NULL,
            attempts = excluded.attempts`,
       ).run(
         input.runId,
@@ -1180,8 +919,8 @@ export class WorkflowRunsRepository {
         input.inputHash,
         input.worktreePath ?? null,
         input.now,
-        input.claimHolder,
-        input.claimExpiresAt,
+        holder,
+        input.now,
         attemptNumber,
       );
       insertEventStrict(db, {
@@ -1208,7 +947,11 @@ export class WorkflowRunsRepository {
     });
   }
 
-  /** Commit one CAS-valid v4 terminal result, known usage, and finish event. */
+  /**
+   * Commit one terminal result, known usage, and finish event. Returns false
+   * when the attempt is no longer `running` (already finished) — a duplicate
+   * terminal callback never adds usage or a second event.
+   */
   finishUnitAttempt(input: FinishUnitAttemptV4Input): boolean {
     return this.immediateTransaction((db) => {
       const changed = db
@@ -1216,8 +959,7 @@ export class WorkflowRunsRepository {
           `UPDATE workflow_run_unit_attempts
               SET status = ?, result_json = ?, tokens = ?, failure_reason = ?,
                   session_id = ?, finished_at = ?
-            WHERE run_id = ? AND unit_id = ? AND attempt = ? AND dispatch_id = ?
-              AND claim_holder = ? AND status = 'running'`,
+            WHERE run_id = ? AND unit_id = ? AND attempt = ? AND dispatch_id = ? AND status = 'running'`,
         )
         .run(
           input.status,
@@ -1230,7 +972,6 @@ export class WorkflowRunsRepository {
           input.unitId,
           input.attempt,
           input.dispatchId,
-          input.claimHolder,
         );
       if (Number(changed.changes) !== 1) return false;
 
@@ -1245,8 +986,7 @@ export class WorkflowRunsRepository {
           `UPDATE workflow_run_units
               SET status = ?, result_json = ?, tokens = ?, failure_reason = ?,
                   session_id = ?, finished_at = ?
-            WHERE run_id = ? AND unit_id = ? AND status = 'running'
-              AND attempts = ? AND claim_holder = ?`,
+            WHERE run_id = ? AND unit_id = ? AND status = 'running' AND attempts = ?`,
         )
         .run(
           input.status,
@@ -1258,7 +998,6 @@ export class WorkflowRunsRepository {
           input.runId,
           input.unitId,
           input.attempt,
-          input.claimHolder,
         );
       if (Number(projection.changes) !== 1) {
         throw new Error(`Durable attempt ${input.unitId} has no matching live workflow_run_units projection.`);
@@ -1360,7 +1099,7 @@ export async function withWorkflowRunsRepo<T>(fn: (repo: WorkflowRunsRepository)
  * logically concurrent units cannot interleave statements on the shared handle
  * in a single-threaded event loop — sharing REMOVES in-process writer
  * contention instead of creating it. Cross-process arbitration (WAL,
- * `busy_timeout`, the run lease) is untouched. See `core/state-db-scope.ts` for
+ * `busy_timeout`, the per-run lock file) is untouched. See `core/state-db-scope.ts` for
  * the escaped-async-work guard.
  */
 export function withWorkflowRunsConnection<T>(fn: () => Promise<T>): Promise<T> {

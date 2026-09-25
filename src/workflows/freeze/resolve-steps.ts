@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { ConfigError, UsageError } from "../../core/errors";
-import { prepareInlineExecution } from "../../integrations/agent/inline-execution";
+import { NO_ENGINE_MESSAGE_SUFFIX } from "../../integrations/agent/engine-fallback";
+import { resolveExecution } from "../../integrations/agent/execution";
 import { sourceStepProgramUnit, sourceStepRef } from "../source-ir/program";
 import type { WorkflowSourceStep } from "../source-ir/schema";
 import { classifyWorkflowStepUses } from "../source-ir/semantics";
@@ -67,7 +68,7 @@ function rejectNonTaskBindingWith(source: WorkflowSourceStep, ref: string, kind:
   );
 }
 
-const NO_ENGINE_AVAILABLE_MESSAGE = "the fixed opencode-sdk fallback is unavailable";
+const NO_ENGINE_AVAILABLE_MESSAGE = NO_ENGINE_MESSAGE_SUFFIX;
 
 function isNoEngineAvailable(err: unknown): boolean {
   return err instanceof ConfigError && err.message.includes(NO_ENGINE_AVAILABLE_MESSAGE);
@@ -77,10 +78,9 @@ export function resolveJudge(source: WorkflowSourceStep, context: ResolutionCont
   const configuredEngine = context.config.workflow?.judgeEngine;
   const content = source.gate?.rubric?.trim() ?? "Judge workflow completion.";
   try {
-    const prepared = prepareInlineExecution({
+    const prepared = resolveExecution({
       content,
       config: context.config,
-      invocationKind: "workflow",
       ...(configuredEngine ? { current: { engine: configuredEngine } } : {}),
     });
     return commandResult(source, { onError: "fail", source: sourceStepRef(source) }, prepared, context);

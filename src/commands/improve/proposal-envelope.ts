@@ -20,12 +20,7 @@
  * Pinned by `tests/commands/improve/proposal-envelope.test.ts`.
  */
 
-import {
-  type CreateProposalInput,
-  type CreateProposalResult,
-  createProposal,
-  type ProposalsContext,
-} from "../proposal/repository";
+import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../proposal/repository";
 
 /**
  * The minimal run context {@link emitProposal} needs: where proposals are
@@ -42,11 +37,8 @@ export interface ProposalEmitContext {
 
 /**
  * Emit a proposal through the single improve envelope seam. Equivalent to
- * `createProposal(ctx.stashDir, input, ctx.proposalsCtx)`; returns either the
- * persisted {@link import("../proposal/repository").Proposal} or a
- * {@link import("../proposal/repository").CreateProposalSkipped} record when a
- * dedup/cooldown guard fires (detect with `isProposalSkipped`).
+ * `createProposal(ctx.stashDir, input, ctx.proposalsCtx)`.
  */
-export function emitProposal(ctx: ProposalEmitContext, input: CreateProposalInput): CreateProposalResult {
+export function emitProposal(ctx: ProposalEmitContext, input: CreateProposalInput): Proposal {
   return createProposal(ctx.stashDir, input, ctx.proposalsCtx);
 }

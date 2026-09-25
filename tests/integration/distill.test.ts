@@ -14,13 +14,7 @@ import path from "node:path";
 import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../../src/commands/improve/salience";
-import {
-  archiveProposal,
-  createProposal,
-  isProposalSkipped,
-  listProposals,
-  listProposalsReadOnly,
-} from "../../src/commands/proposal/repository";
+import { archiveProposal, createProposal, listProposals } from "../../src/commands/proposal/repository";
 import {
   detectDoubleFrontmatter,
   isValidDescription,
@@ -30,10 +24,10 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
-import { getDistillRejectedDir } from "../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
+import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -386,10 +380,8 @@ describe("akmDistill — rejected proposals tolerate legacy rows with no persist
     const rejected = createProposal(stash, {
       ref: "skills/duplicate",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(rejected)) throw new Error("unexpected skip seeding rejected proposal");
     archiveProposal(stash, rejected.id, "rejected", "not a real improvement");
 
     const db = openStateDatabase(getStateDbPath());
@@ -437,10 +429,8 @@ describe("akmDistill — rejected proposals exclude stale-target auto-rejects fr
     const staleRejected = createProposal(stash, {
       ref: "skills/dup-stale-vs-ordinary",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON.replace("Use `rg`", "STALE_TARGET_REJECTED_BODY_MARKER. Use `rg`") },
     });
-    if (isProposalSkipped(staleRejected)) throw new Error("unexpected skip seeding stale-target rejected proposal");
     archiveProposal(stash, staleRejected.id, "rejected", "stale-target: STALE_TARGET_REASON_MARKER", undefined, {
       outcome: "auto-rejected",
       reason: "stale-target",
@@ -450,10 +440,8 @@ describe("akmDistill — rejected proposals exclude stale-target auto-rejects fr
     const ordinaryRejected = createProposal(stash, {
       ref: "skills/dup-stale-vs-ordinary",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON.replace("Use `rg`", "ORDINARY_REJECTED_BODY_MARKER. Use `rg`") },
     });
-    if (isProposalSkipped(ordinaryRejected)) throw new Error("unexpected skip seeding ordinary rejected proposal");
     archiveProposal(stash, ordinaryRejected.id, "rejected", "ORDINARY_REJECTION_REASON_MARKER");
 
     let receivedPrompt = "";
@@ -1859,12 +1847,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
     expect(proposals[0]!.status).toBe("pending");
-    const rejectedDir = getDistillRejectedDir(stash);
-    const rejectedFiles = fs.readdirSync(rejectedDir);
-    expect(rejectedFiles).toHaveLength(1);
-    const rejectedContent = fs.readFileSync(path.join(rejectedDir, rejectedFiles[0]!), "utf8");
-    expect(rejectedContent).toContain("outcome: review_needed");
-    expect(rejectedContent).toContain("Lesson distilled from knowledge:foo");
+    expect(proposals[0]!.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)?.metadata?.outcome).toBe("review_needed");
@@ -1927,18 +1910,19 @@ describe("akmDistill — pipeline-fix integration", () => {
 // ── R3/G4: judge-verdict routing + output encoding salience ──────────────────
 
 describe("akmDistill — R3 judge verdict routing + G4 output encoding salience", () => {
-  test("generation and quality judging share the credential captured before distill mutations", async () => {
+  test("generation and quality judging each read the credential at dispatch; neither value is persisted", async () => {
     const stash = makeStashDir();
     const sourcePath = path.join(stash, "skills", "deploy.md");
     fs.writeFileSync(sourcePath, "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n");
     const config = configJudgeEnabled(stash);
     const engine = config.engines?.default;
     if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_DISTILL_LEASE_KEY";
-    const secret = "distill-lease-original-092";
+    engine.apiKey = "$AKM_DISTILL_ROTATING_KEY";
+    const secret = "distill-original-092";
+    const rotated = "distill-rotated-092";
     const observed: Array<string | undefined> = [];
 
-    const result = await withEnv({ AKM_DISTILL_LEASE_KEY: secret }, () =>
+    const result = await withEnv({ AKM_DISTILL_ROTATING_KEY: secret }, () =>
       akmDistill({
         ref: "skills/deploy",
         config,
@@ -1947,7 +1931,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
         readEventsFn: emptyEvents,
         chat: async (connection, messages) => {
           observed.push(connection.apiKey);
-          if (observed.length === 1) mutateScopedEnv("AKM_DISTILL_LEASE_KEY", undefined);
+          if (observed.length === 1) mutateScopedEnv("AKM_DISTILL_ROTATING_KEY", rotated);
           const joined = messages.map((message) => message.content).join("\n");
           if (joined.includes("Score this lesson")) {
             return JSON.stringify({ score: 4.5, reason: "adds new info" });
@@ -1958,8 +1942,11 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     );
 
     expect(result.outcome).toBe("queued");
-    expect(observed).toEqual([secret, secret]);
+    expect(observed).toEqual([secret, rotated]);
     expect(listProposals(stash)).toHaveLength(1);
+    const persisted = JSON.stringify(listProposals(stash));
+    expect(persisted).not.toContain(secret);
+    expect(persisted).not.toContain(rotated);
   });
 
   test("queued lesson stamps judgeConfidence on the event and content-scores the OUTPUT ref", async () => {
@@ -2024,16 +2011,11 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
   });
 });
 
-// ── R10: quality rejections persist as real proposal rows ────────────────────
+// ── Quality rejections land in the improve ledger ───────────────────────────
 
-describe("akmDistill — R10: quality rejections persist as proposals", () => {
-  test("quality_rejected mints a rejected proposal carrying the judge's reason; a same-ref+source+model retry hits fingerprint_match, a different-model retry hits rejection_backoff", async () => {
+describe("akmDistill — quality rejections land in the improve ledger", () => {
+  test("quality_rejected records the distill rejection window for the input, with the judge's reason, and queues nothing", async () => {
     const stash = makeStashDir();
-    // configJudgeEnabled's single engine ("test-model") is what
-    // applyDistillQualityGate resolves as distillRunner and passes through
-    // writeQualityRejection's proposalOpts.modelId at mint — the same §23.6
-    // fingerprint term computeProposalFingerprint hashes (repository.ts).
-    const modelId = "test-model";
     const result = await akmDistill({
       ref: "skills/deploy",
       config: configJudgeEnabled(stash),
@@ -2051,48 +2033,17 @@ describe("akmDistill — R10: quality rejections persist as proposals", () => {
 
     expect(result.outcome).toBe("quality_rejected");
     expect(result.score).toBe(1.5);
-    expect(result.proposalId).toBeDefined();
+    expect(result.proposalId).toBeUndefined();
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
 
-    // Not in the live (pending) queue…
-    expect(listProposals(stash)).toEqual([]);
-    // …but archived as `rejected`, carrying the judge's reason — through the
-    // same createProposal/archiveProposal path every other proposal takes, so
-    // fingerprint + backoff bookkeeping (repository.ts) ran for it too.
-    const rejected = listProposals(stash, { includeArchive: true, status: "rejected" });
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]!.status).toBe("rejected");
-    expect(rejected[0]!.source).toBe("distill");
-    expect(rejected[0]!.review?.reason).toBe("adds nothing new");
-    // The read-only path (used by buildDistillMessages' / reflect's Reflexion
-    // "previously rejected" context) sees the same row.
-    expect(
-      listProposalsReadOnly(stash, { ref: result.proposalRef, status: "rejected", includeArchive: true }),
-    ).toHaveLength(1);
-
-    // A retry for the SAME ref, source, and model reproduces the mint's
-    // §23.6 input fingerprint exactly (repository.ts computeProposalFingerprint),
-    // and checkFingerprintAndBackoff tests the fingerprint FIRST — so this is
-    // skipped by fingerprint_match, not rejection_backoff.
-    const sameModelRetry = createProposal(stash, {
-      ref: deriveLessonRef("skills/deploy"),
-      source: "distill",
-      modelId,
-      payload: { content: VALID_LESSON },
-    });
-    expect(isProposalSkipped(sameModelRetry)).toBe(true);
-    if (isProposalSkipped(sameModelRetry)) expect(sameModelRetry.reason).toBe("fingerprint_match");
-
-    // A retry with a DIFFERENT model changes the fingerprint, so
-    // fingerprint_match no longer fires; the 30d rejection_backoff window is
-    // what suppresses it instead.
-    const differentModelRetry = createProposal(stash, {
-      ref: deriveLessonRef("skills/deploy"),
-      source: "distill",
-      modelId: "other-model",
-      payload: { content: VALID_LESSON },
-    });
-    expect(isProposalSkipped(differentModelRetry)).toBe(true);
-    if (isProposalSkipped(differentModelRetry)) expect(differentModelRetry.reason).toBe("rejection_backoff");
+    const db = openStateDatabase();
+    try {
+      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      expect(row).toMatchObject({ outcome: "quality_rejected", detail: "adds nothing new" });
+      expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
+    } finally {
+      db.close();
+    }
   });
 
   test("review_needed mints a pending proposal (queued for human triage, not silently discarded)", async () => {

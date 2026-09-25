@@ -14,7 +14,6 @@
 
 import type { AkmConfig } from "../../core/config/config";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { LoweredExecutionDispatchLease } from "../../integrations/agent/execution-lowering";
 import type { ResolvedIndexPassExecution } from "../../llm/index-passes";
 import type { Database } from "../../storage/database";
 import type { SearchSource } from "../search/search-source";
@@ -92,21 +91,17 @@ export interface IndexRunContext {
   config: AkmConfig;
   /** Frozen standalone metadata-enrichment selection for this invocation. */
   enrichmentExecution: ResolvedIndexPassExecution;
-  /** Opaque credential snapshot held for the full metadata mutation scope. */
-  enrichmentLease?: LoweredExecutionDispatchLease;
   /** Stable, deduped lowering diagnostics accumulated across enrichment calls. */
   loweringNotices: Array<Readonly<LoweringNotice>>;
   /** All resolved stash source entries (primary + additional). */
   sources: SearchSource[];
   /** All source directory paths (derived from `sources`). */
   sourceDirs: string[];
-  /** Whether to perform a full rebuild (true) or incremental update (false). */
-  full: boolean;
   /** Whether the explicit post-index missing-file clean pass owns disappearance reporting. */
   clean: boolean;
   /**
-   * Whether `akm index --reembed` was passed: force a full purge + re-embed
-   * of every entry, bypassing the fingerprint-rename canary entirely (#955).
+   * Whether `akm index --reembed` was passed: purge every stored vector and
+   * re-embed all entries (a model change alone re-embeds incrementally).
    */
   reembed: boolean;
   /** Primary stash directory. */

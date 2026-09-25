@@ -24,7 +24,7 @@
  *   - DIRECT `driveChildWorkflowUnit(input)` calls, for the publication
  *     contract (A-07…A-17) and the drive contract's exact call-shape
  *     (A-24, A-25) — precise control over `target`/`childParams`/`inputHash`,
- *     including deliberately CORRUPTED ones (A-10…A-12), that a real
+ *     including deliberately CORRUPTED ones (A-11, A-12), that a real
  *     freeze/publish pipeline could never produce, plus a spy on the
  *     `runWorkflowSteps` reuse seam itself for the "what did we pass it"
  *     claims (B-N6, B-N7).
@@ -53,6 +53,7 @@
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import type { TaskInputBinding } from "../../../src/execution/input-contract";
 import * as runnerDispatchModule from "../../../src/integrations/agent/runner-dispatch";
@@ -63,7 +64,7 @@ import { computeChildInvocationKey } from "../../../src/workflows/exec/child-inv
 import { driveChildWorkflowUnit } from "../../../src/workflows/exec/child-workflow";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import * as runWorkflowModule from "../../../src/workflows/exec/run-workflow";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
+import { runWorkflowSteps, workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type WorkListInput } from "../../../src/workflows/exec/step-work";
 import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type {
@@ -72,9 +73,9 @@ import type {
   IrStepPlanV4,
   WorkflowPlanGraphV4,
 } from "../../../src/workflows/ir/schema-v4";
-import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
+import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
-import { freezeWorkflow } from "../../_helpers/workflow";
+import { freezeWorkflow, plantRunLock } from "../../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -244,7 +245,6 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
       updatedAt: now,
       agentHarness: parent.agentHarness,
       agentSessionId: parent.agentSessionId,
-      checkinArmedAt: null,
     });
     repo.insertSteps([
       {
@@ -444,28 +444,9 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
   });
 });
 
-// ── A-10…A-12: publication failures ─────────────────────────────────────────
+// ── A-11, A-12: publication failures ────────────────────────────────────────
 
-describe("A-10, A-11, A-12 — publication failures never publish a child row or event", () => {
-  test("A-10: a recomputed planHash mismatch fails the parent unit with child_workflow_publish_failed, naming the ref and both hashes; no child row", async () => {
-    const parent = await seedParentRun();
-    const childPlan = leafChildPlan();
-    const realHash = computePlanHash(childPlan);
-    const tamperedTarget = buildChildTarget(childPlan, { ref: "workflows/tampered-child" });
-    const target = { ...tamperedTarget, planHash: `${realHash.slice(0, -1)}0` } as unknown as FrozenChildWorkflowTarget;
-
-    const outcome = await driveChildWorkflowUnit(buildDriveInput({ parent, target, dispatcher: successDispatcher() }));
-
-    expect(outcome.ok).toBe(false);
-    expect(outcome.failureReason).toBe("child_workflow_publish_failed");
-    expect(outcome.error).toContain("workflows/tampered-child");
-    expect(outcome.error).toContain(realHash);
-    expect(outcome.error).toContain(target.planHash);
-
-    const children = await withWorkflowRunsRepo((repo) => repo.childRunsOf(parent.runId));
-    expect(children).toHaveLength(0);
-  });
-
+describe("A-11, A-12 — publication failures never publish a child row or event", () => {
   test("A-11: childParams violating the child plan's paramSchemas fails with child_workflow_publish_failed, carrying validateWorkflowParams' errors; no child row", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(paramChildPlan(), { ref: "workflows/param-child" });
@@ -496,8 +477,8 @@ describe("A-10, A-11, A-12 — publication failures never publish a child row or
     // pipeline could never produce, but this hand-built fixture can. This makes
     // publishChildWorkflowRun's own insertSteps() throw a raw SQLite error
     // *inside* its transaction — the "any other reason" class row A-12 asks for
-    // — while the planHash integrity check (step 1) and params validation
-    // (step 2) both still pass, since neither inspects step-id uniqueness.
+    // — while params validation (step 1) still passes, since it does not
+    // inspect step-id uniqueness.
     const duplicateStepId = childPlan.steps[0]!.stepId;
     const corruptPlan: WorkflowPlanGraphV4 = {
       ...childPlan,
@@ -875,7 +856,7 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
 });
 
 describe("A-22, A-23 — a child already blocked/failed from a previous attempt is not re-driven", () => {
-  test("A-22: a child already blocked is mapped identically to A-21 WITHOUT driving it — no lease taken, no new unit rows", async () => {
+  test("A-22: a child already blocked is mapped identically to A-21 WITHOUT driving it — no lock taken, no new unit rows", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(gatedChildPlan(), { ref: "workflows/pre-blocked-child" });
     const key = computeChildInvocationKey({
@@ -902,7 +883,6 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
           updatedAt: new Date().toISOString(),
           agentHarness: null,
           agentSessionId: null,
-          checkinArmedAt: null,
         },
         steps: frozenStepRows(childPlan).map((row) => ({ ...row, runId: childRunId })),
         planJson: canonicalJson(childPlan),
@@ -913,9 +893,6 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
     const beforeUnits = await withWorkflowRunsRepo((repo) =>
       repo.getUnitsForStep(childRunId, childPlan.steps[0]!.stepId),
     );
-    const beforeLease = await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId));
-    expect(beforeLease?.engine_lease_holder).toBeNull();
-
     const outcome = await driveChildWorkflowUnit(buildDriveInput({ parent, target, dispatcher: successDispatcher() }));
 
     expect(outcome.ok).toBe(false);
@@ -926,9 +903,8 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
       repo.getUnitsForStep(childRunId, childPlan.steps[0]!.stepId),
     );
     expect(afterUnits.length).toBe(beforeUnits.length);
-    const afterLease = await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId));
-    expect(afterLease?.engine_lease_holder).toBeNull();
-    expect(afterLease?.status).toBe("blocked");
+    expect(fs.existsSync(workflowRunLockPath(childRunId))).toBe(false);
+    expect((await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId)))?.status).toBe("blocked");
   });
 
   test("A-23: a child already failed is mapped identically to A-20 WITHOUT driving it", async () => {
@@ -958,7 +934,6 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
           updatedAt: new Date().toISOString(),
           agentHarness: null,
           agentSessionId: null,
-          checkinArmedAt: null,
         },
         steps: frozenStepRows(childPlan).map((row) => ({ ...row, runId: childRunId })),
         planJson: canonicalJson(childPlan),
@@ -972,14 +947,13 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
     expect(outcome.ok).toBe(false);
     expect(outcome.failureReason).toBe("child_workflow_failed");
     expect(outcome.childRun?.runId).toBe(childRunId);
-    const afterLease = await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId));
-    expect(afterLease?.engine_lease_holder).toBeNull();
-    expect(afterLease?.status).toBe("failed");
+    expect(fs.existsSync(workflowRunLockPath(childRunId))).toBe(false);
+    expect((await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId)))?.status).toBe("failed");
   });
 });
 
-describe("A-27 — a child whose lease is already held busies the parent unit", () => {
-  test("A-27: failure_reason is child_workflow_busy, message carries the holder and expiry, and the parent run stays resumable", async () => {
+describe("A-27 — a child whose run lock is already held busies the parent unit", () => {
+  test("A-27: failure_reason is child_workflow_busy, message carries the holder pid, and the parent run stays resumable", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/busy-child" });
     const key = computeChildInvocationKey({
@@ -1006,27 +980,22 @@ describe("A-27 — a child whose lease is already held busies the parent unit", 
           updatedAt: new Date().toISOString(),
           agentHarness: null,
           agentSessionId: null,
-          checkinArmedAt: null,
         },
         steps: frozenStepRows(childPlan).map((row) => ({ ...row, runId: childRunId })),
         planJson: canonicalJson(childPlan),
         planHash: target.planHash,
       }),
     );
-    const expiresAt = new Date(Date.now() + 60_000).toISOString();
-    const holderAcquired = await withWorkflowRunsRepo((repo) =>
-      repo.acquireEngineLease(childRunId, "other-driver-holder", expiresAt, new Date().toISOString()),
-    );
-    expect(holderAcquired).toBe(true);
+    const release = plantRunLock(childRunId);
 
     const outcome = await driveChildWorkflowUnit(
       buildDriveInput({ parent, target, inputHash: "h".repeat(64), dispatcher: successDispatcher() }),
     );
+    release();
 
     expect(outcome.ok).toBe(false);
     expect(outcome.failureReason).toBe("child_workflow_busy");
-    expect(outcome.error).toContain("other-driver-holder");
-    expect(outcome.error).toContain(expiresAt);
+    expect(outcome.error).toContain(`pid ${process.pid}`);
   });
 });
 

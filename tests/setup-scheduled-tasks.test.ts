@@ -20,7 +20,7 @@ import {
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
-import type { SchedulerBackendInspection } from "../src/tasks/scheduler-binding";
+import type { InstalledSchedulerBinding } from "../src/tasks/scheduler-binding";
 import {
   resolveScheduledTaskContext,
   schedulerContextDescriptor,
@@ -98,11 +98,10 @@ const EMPTY_SYNC_RESULT: TasksSyncResult = {
   failures: [],
 };
 
-const EMPTY_INSPECTION: SchedulerBackendInspection = { installed: [], artifacts: [] };
 function makeDeps(
   installed: Array<{ id: string; schedule: string; enabled: boolean; description?: string }>,
   syncResult: TasksSyncResult = EMPTY_SYNC_RESULT,
-  options: { inspection?: SchedulerBackendInspection } = {},
+  options: { inspection?: { installed: readonly InstalledSchedulerBinding[] } } = {},
 ) {
   const calls = {
     prepared: [] as PreparedSetupTask[][],
@@ -123,7 +122,7 @@ function makeDeps(
     },
     inspectInstalled: async () => {
       calls.inspectInstalledCalls += 1;
-      return options.inspection ?? EMPTY_INSPECTION;
+      return options.inspection ?? { installed: [] };
     },
   };
   return { deps, calls };
@@ -501,7 +500,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         list: listSetupTaskDefinitions,
         prepare: prepareSetupTaskDefinitions,
         sync: (deps, bundleTarget, syncOptions) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
-        inspectInstalled: async () => backend.inspectBindings!({}),
+        inspectInstalled: async () => ({ installed: await backend.list() }),
       });
 
       expect(exec.current()).toContain("task run orphan");
@@ -540,7 +539,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
           bundleTarget?: string,
           syncOptions?: Parameters<typeof akmTasksSync>[2],
         ) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
-        inspectInstalled: async () => backend.inspectBindings!({}),
+        inspectInstalled: async () => ({ installed: await backend.list() }),
       };
 
       // First run: select the embedded `extract` task and activate it.

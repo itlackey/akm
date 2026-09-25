@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
@@ -40,17 +39,15 @@ import { computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolida
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
   buildLatestFeedbackTsMap,
-  buildLatestProposalTsMap,
   buildUtilityMap,
   dedupeRefs,
   findAssetFilePath,
   isDistillCandidateRef,
   isLessonCandidate,
-  isSignalDeltaEligible,
   resolveImproveScope,
 } from "./eligibility";
 import { type AkmExtractResult, akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
-import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
+import { computeValenceScore } from "./feedback-valence";
 import type {
   AkmImproveOptions,
   ConsolidationPassResult,
@@ -58,9 +55,9 @@ import type {
   ImproveScope,
 } from "./improve-run-types";
 import type { ResolvedImprovePlan } from "./improve-strategies";
+import { isLedgerBlocked, type LedgerSnapshot, lastAttemptByRef, ledgerRowFor, loadLedgerSnapshot } from "./ledger";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
-  computeProxyAdequacy,
   getAllAssetOutcomes,
   getAssetOutcome,
   getOutcomeScoresByRef,
@@ -144,166 +141,44 @@ function assetTypeOf(ref: string): string {
 // The pre-loop preparation pipeline (consolidation, session-extract, validation/
 // repair, eligibility partitioning, selectors) extracted from improve.ts.
 
-/**
- * Run (or gate-skip) the memory consolidation pass.
- *
- * #551 — two coordinated changes live here:
- *
- *   1. STRUCTURAL: this runs before extract in the improve pipeline (see
- *      `runImprovePreparationStage`). Consolidation therefore only ever judges
- *      PRIOR-run memories; current-run extract promotions are invisible to it.
- *
- *   2. SMARTER POOL-DELTA GATE: even among on-disk files, a memory whose only
- *      post-`lastConsolidateTs` mtime bump came from its OWN promotion
- *      (i.e. it was just promoted in the immediately
- *      preceding run and has not had a full improve cycle to settle) does NOT
- *      count as "work to do". We exclude those paths from the pool-delta check
- *      using the `promoted` events already emitted with each promotion's
- *      `assetPath`. A genuinely-settled prior memory — one edited by feedback,
- *      reflect, manual edit, or simply older than the last consolidate — still
- *      triggers the run. This is gate-option (a) from the issue (same-run /
- *      adjacent-run promotion exclusion), chosen over option (b) because there
- *      is no `extract_completed` event in the data model to gate against;
- *      `promoted` events with `assetPath` already carry exactly the signal we
- *      need, so the fix is non-invasive and provably correct.
- */
 /** Whether/why the consolidation pass should run, computed with zero LLM calls. */
 interface ConsolidationEligibility {
-  /** Memory volume exceeded the threshold with an LLM available — forces the run. */
-  volumeTriggered: boolean;
-  /** Pool-delta gate: no memory changed since the last successful consolidate. */
-  consolidationOnCooldown: boolean;
   /** Profile explicitly disables consolidate. */
   consolidateDisabledByProfile: boolean;
   /** #553: eligible pool below the configured minimum size. */
   poolBelowMinSize: boolean;
   eligiblePoolSize: number;
   minPoolSize: number;
-  /** Timestamp of the most recent successful consolidate_completed event. */
-  lastConsolidationTs?: string;
 }
 
 /**
- * Evaluate the consolidation gate flags (volume trigger, #551 pool-delta
- * cooldown, profile disable, #553 min-pool-size) up front, before any LLM call.
- * Extracted verbatim from `runConsolidationPass` — logic is byte-identical.
+ * Evaluate the consolidation gate flags (profile disable, #553 min-pool-size)
+ * up front, before any LLM call. Which memories are worth judging is the
+ * improve ledger's call (`inspectConsolidationPool`): a memory judged inside
+ * its revisit window and unchanged since is not judged again.
  */
 function evaluateConsolidationEligibility(args: {
   options: AkmImproveOptions;
-  primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
   improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
-  eventsCtx?: EventsContext;
 }): ConsolidationEligibility {
-  const { options, primaryStashDir, memorySummary, improveProfile, resolvedPlan, eventsCtx } = args;
+  const { options, memorySummary, improveProfile, resolvedPlan } = args;
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
   const hasLlm = resolvedPlan.processes.consolidate.runner !== null;
   const volumeTriggered =
     typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
-
-  // 0.8.0 pool-delta gate for consolidate: re-eligible iff at least one
-  // memory file has been updated since the most recent successful
-  // consolidate_completed event. Time-based cooldowns produced the same
-  // synchronised-wave failure mode the reflect/distill cooldowns did; the
-  // pool-delta gate ties consolidation to actual work-to-do.
-  const sourceName = options.sourceName ?? options.writeTarget?.source.name ?? options.config?.defaultBundle ?? "stash";
-  const recentConsolidations = readEvents({ type: "consolidate_completed" }, eventsCtx);
-  const lastConsolidation = recentConsolidations.events
-    .filter((e) => e.metadata?.source === sourceName && Number(e.metadata?.processed) > 0)
-    .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-  const lastConsolidateTs =
-    typeof lastConsolidation?.metadata?.completedThrough === "string"
-      ? lastConsolidation.metadata.completedThrough
-      : lastConsolidation?.ts;
-
-  // #551 smarter gate: build the set of memory asset paths whose only delta
-  // since the last consolidate is their OWN promotion. Those files
-  // have not had a full improve cycle to settle, so they offer no merge /
-  // contradiction candidates yet — excluding them stops the gate firing on
-  // freshly-promoted single-source memories. We read `promoted` events emitted
-  // after the last consolidate; each carries the written `assetPath`.
-  const promotedSinceConsolidate = (() => {
-    const paths = new Set<string>();
-    try {
-      const promoted = readEvents(
-        {
-          type: "promoted",
-          ...(lastConsolidateTs ? { since: lastConsolidateTs } : {}),
-        },
-        eventsCtx,
-      ).events;
-      for (const e of promoted) {
-        const ap = e.metadata?.assetPath;
-        if (typeof ap === "string" && ap.length > 0) paths.add(path.resolve(ap));
-      }
-    } catch {
-      // best-effort: if the events query fails, fall back to no exclusions
-      // (preserves pre-#551 behaviour rather than over-skipping).
-    }
-    return paths;
-  })();
-
-  // Pool-delta: any memory file with mtime > lastConsolidateTs flags work to do,
-  // EXCEPT files whose only post-consolidate change was their own promotion.
-  // Using file mtime keeps this query DB-free and matches what the indexer
-  // already uses as the canonical `memory.updated_at` proxy.
-  //
-  // Bootstrap: when no successful consolidate_completed event has ever been
-  // recorded, we cannot evaluate the pool-delta — treat as eligible so a
-  // fresh stash runs consolidate once before the steady-state gate kicks in.
-  //
-  // R4: the volume override is bootstrap-only — it exists to force that same
-  // "fresh stash, consolidate once" run when the pool is already large enough
-  // that waiting for the steady-state gate would be wasteful. Once a
-  // consolidate_completed event exists, the pool-delta gate below governs on
-  // its own; a large eligible pool no longer bypasses it.
-  const memoryUpdatedAfterLastConsolidate = (() => {
-    if (!lastConsolidateTs) return true; // bootstrap path: never consolidated (volume override included).
-    if (!primaryStashDir) return false;
-    const memoriesDir = path.join(primaryStashDir, "memories");
-    if (!fs.existsSync(memoriesDir)) return false;
-    try {
-      const pending = [memoriesDir];
-      while (pending.length > 0) {
-        const current = pending.pop() as string;
-        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-          const filePath = path.join(current, entry.name);
-          if (entry.isDirectory()) {
-            pending.push(filePath);
-            continue;
-          }
-          if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-          if (promotedSinceConsolidate.has(path.resolve(filePath))) continue;
-          try {
-            if (fs.statSync(filePath).mtime.toISOString() > lastConsolidateTs) return true;
-          } catch {
-            // Ignore files that disappear during the scan.
-          }
-        }
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  })();
-
-  // R4: no longer `!volumeTriggered && ...` — the volume override only ever
-  // applies at bootstrap (see `memoryUpdatedAfterLastConsolidate` above), so
-  // the pool-delta result alone determines cooldown post-bootstrap.
-  const consolidationOnCooldown = !memoryUpdatedAfterLastConsolidate;
 
   // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
   const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
 
   // #553 minPoolSize guard: skip consolidation when the eligible memory pool is
   // below a minimum size, rather than spending an LLM pass on a handful of
-  // memories. This is an INDEPENDENT skip condition from #551's mtime pool-delta
-  // gate — either can skip. Default 0 (disabled) — every built-in strategy
-  // used to ship 500, which meant `akm improve --strategy consolidate`, typed
-  // by a human, silently did nothing on almost every real install. Evaluated
-  // against the eligible-pool count BEFORE entering the LLM loop so a skip
-  // costs ZERO LLM calls when an operator opts back into a floor.
+  // memories. Default 0 (disabled) — every built-in strategy used to ship 500,
+  // which meant `akm improve --strategy consolidate`, typed by a human,
+  // silently did nothing on almost every real install. Evaluated against the
+  // eligible-pool count BEFORE entering the LLM loop so a skip costs ZERO LLM
+  // calls when an operator opts back into a floor.
   const CONSOLIDATE_DEFAULT_MIN_POOL_SIZE = 0;
   const configuredMinPoolSize = improveProfile?.processes?.consolidate?.minPoolSize;
   const minPoolSize =
@@ -311,20 +186,12 @@ function evaluateConsolidationEligibility(args: {
   const eligiblePoolSize = typeof memorySummary.eligible === "number" ? memorySummary.eligible : 0;
   const userNamedStrategyOrScope = options.strategy !== undefined || resolveImproveScope(options.scope).mode === "ref";
   // volumeTriggered means the pool already exceeds the volume threshold (100),
-  // so a force-triggered run never trips the pool-size guard. The guard only
-  // engages when minPoolSize > 0 and the eligible pool is strictly below it.
+  // so a large pool never trips the pool-size guard. The guard only engages
+  // when minPoolSize > 0 and the eligible pool is strictly below it.
   const poolBelowMinSize =
     !volumeTriggered && !userNamedStrategyOrScope && minPoolSize > 0 && eligiblePoolSize < minPoolSize;
 
-  return {
-    volumeTriggered,
-    consolidationOnCooldown,
-    consolidateDisabledByProfile,
-    poolBelowMinSize,
-    eligiblePoolSize,
-    minPoolSize,
-    ...(lastConsolidateTs ? { lastConsolidationTs: lastConsolidateTs } : {}),
-  };
+  return { consolidateDisabledByProfile, poolBelowMinSize, eligiblePoolSize, minPoolSize };
 }
 
 /** Build the no-dispatch consolidation projection consumed by dry and live. */
@@ -345,14 +212,7 @@ function planConsolidationPass(args: {
 }): { eligibility: ConsolidationEligibility; plan: ImproveExecutionPlan["consolidation"] } {
   const { options, primaryStashDir, memorySummary, improveProfile, resolvedPlan, eventsCtx } = args;
   const processConfig = improveProfile?.processes?.consolidate;
-  const eligibility = evaluateConsolidationEligibility({
-    options,
-    primaryStashDir,
-    memorySummary,
-    improveProfile,
-    resolvedPlan,
-    eventsCtx,
-  });
+  const eligibility = evaluateConsolidationEligibility({ options, memorySummary, improveProfile, resolvedPlan });
   const effectiveOptions = {
     ...options.consolidateOptions,
     config: options.config,
@@ -376,7 +236,14 @@ function planConsolidationPass(args: {
         args.existingKnowledgeBodyHashes ?? loadExistingKnowledgeBodyHashes(primaryStashDir),
         { readOnly: eventsCtx?.readOnly === true },
       )
-    : { poolSize: 0, candidatePoolSize: 0, dedupPoolSize: 0, memories: [], prefilteredAlreadyPromoted: 0 };
+    : {
+        poolSize: 0,
+        candidatePoolSize: 0,
+        dedupPoolSize: 0,
+        memories: [],
+        prefilteredAlreadyPromoted: 0,
+        judgedUnchanged: 0,
+      };
   // #800/#957 round 3 — a credential-unavailable consolidate engine still
   // resolved a context length structurally; read it off the `engineUnavailable`
   // entry instead of falling back to the generic default, so a dry-run
@@ -392,7 +259,9 @@ function planConsolidationPass(args: {
   );
   const profilePassed = !eligibility.consolidateDisabledByProfile;
   const minimumPoolPassed = !eligibility.poolBelowMinSize;
-  const deltaPassed = !eligibility.consolidationOnCooldown;
+  // The improve ledger's delta: every remaining memory was judged within its
+  // revisit window and has not changed since.
+  const deltaPassed = pool.candidatePoolSize > 0 || pool.judgedUnchanged === 0;
   const nonEmptyPool = pool.candidatePoolSize > 0;
   const wouldRun = profilePassed && minimumPoolPassed && deltaPassed && nonEmptyPool;
   const reason = !profilePassed
@@ -400,7 +269,7 @@ function planConsolidationPass(args: {
     : !minimumPoolPassed
       ? `pool ${eligibility.eligiblePoolSize} is below minPoolSize ${eligibility.minPoolSize}`
       : !deltaPassed
-        ? "no memory updates since the last completed consolidation"
+        ? "every memory was judged recently and is unchanged since"
         : !nonEmptyPool
           ? "candidate pool is empty after narrowing"
           : "all consolidation gates pass";
@@ -437,10 +306,10 @@ function planConsolidationPass(args: {
         delta: {
           passed: deltaPassed,
           reason: !deltaPassed
-            ? "no updates since the last completed consolidation"
-            : eligibility.lastConsolidationTs
-              ? "memory pool has work"
-              : "no completed consolidation recorded yet (bootstrap)",
+            ? "every memory was judged recently and is unchanged since"
+            : pool.judgedUnchanged > 0
+              ? `${pool.judgedUnchanged} recently judged, unchanged memories skipped`
+              : "no memory was judged recently",
         },
       },
       wouldRun,
@@ -490,15 +359,7 @@ export async function runConsolidationPass(args: {
     eventsCtx,
     existingKnowledgeBodyHashes,
   });
-  const {
-    volumeTriggered,
-    consolidationOnCooldown,
-    consolidateDisabledByProfile,
-    poolBelowMinSize,
-    eligiblePoolSize,
-    minPoolSize,
-    lastConsolidationTs,
-  } = planned.eligibility;
+  const { consolidateDisabledByProfile, poolBelowMinSize, eligiblePoolSize, minPoolSize } = planned.eligibility;
 
   let consolidation: ConsolidateResult = {
     schemaVersion: 1,
@@ -534,8 +395,17 @@ export async function runConsolidationPass(args: {
       eventsCtx,
     );
     info(`[improve] consolidation skipped (pool ${eligiblePoolSize} < minPoolSize ${minPoolSize})`);
-  } else if (!consolidationOnCooldown) {
-    const consolidationStartedAt = new Date().toISOString();
+  } else if (!planned.plan.gates.delta.passed) {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: "memories/_consolidation",
+        metadata: { reason: "consolidation_no_memory_updates" },
+      },
+      eventsCtx,
+    );
+    info("[improve] consolidation skipped (every memory was judged recently and is unchanged)");
+  } else {
     consolidation = await withLlmStage(
       "consolidate",
       () =>
@@ -548,7 +418,6 @@ export async function runConsolidationPass(args: {
           // process-config reads honor `--profile <name>` instead of `default`.
           improveProfile,
           llmRunner: resolvedPlan.processes.consolidate.runner,
-          autoTriggered: volumeTriggered,
           // Reuse the hash set computed above instead of a second knowledge/
           // walk inside akmConsolidateInner (R2-1/R3-1).
           existingKnowledgeBodyHashes,
@@ -573,72 +442,9 @@ export async function runConsolidationPass(args: {
         }),
       { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
     );
-    const sourceName = options.sourceName ?? options.writeTarget?.source.name ?? baseConfig.defaultBundle ?? "stash";
-    const complete =
-      (consolidation.failedChunks ?? 0) === 0 &&
-      (consolidation.failedChunkMemories ?? 0) === 0 &&
-      (consolidation.failedPromotions ?? 0) === 0 &&
-      (consolidation.deferredMemories ?? 0) === 0;
-    // R4: advisory ops (merge/delete/contradict) are never auto-applied — see
-    // consolidate.ts — so a run that plans some is still a completed pass over
-    // the pool, not an incomplete one. Gating the event on zero advisory ops
-    // meant it was never emitted in practice, which kept the pool-delta gate
-    // permanently bootstrapped. Record the unapplied count for reporting
-    // instead of withholding the event.
-    const advisoryOpsUnapplied = consolidation.planned?.filter((op) => op.op !== "promote").length ?? 0;
-    if (consolidation.ok && !consolidation.dryRun && complete && consolidation.processed > 0) {
-      appendEvent(
-        {
-          eventType: "consolidate_completed",
-          ref: makeBundleRef(sourceName, "memories/_consolidation"),
-          metadata: {
-            processed: consolidation.processed,
-            source: sourceName,
-            completedThrough: consolidationStartedAt,
-            merged: consolidation.merged,
-            deleted: consolidation.deleted,
-            contradicted: consolidation.contradicted,
-            failedChunks: consolidation.failedChunks ?? 0,
-            durationMs: consolidation.durationMs,
-            advisoryOpsUnapplied,
-          },
-        },
-        eventsCtx,
-      );
-    }
-  } else {
-    appendEvent(
-      {
-        eventType: "improve_skipped",
-        ref: "memories/_consolidation",
-        metadata: {
-          reason: "consolidation_no_memory_updates",
-          lastEventTs: lastConsolidationTs ?? null,
-        },
-      },
-      eventsCtx,
-    );
-    info("[improve] consolidation skipped (no memory updates since last run)");
   }
 
-  // D9: track whether this was a qualifying consolidation cycle for R5's longitudinal collapse
-  // detector (loop-stages.ts, gated on this flag). `processed` counts memories the LLM JUDGED,
-  // not files consolidation WROTE — R4's advisory gate (consolidate.ts) means merge/delete/
-  // contradict ops are never auto-applied, and the only op that does execute, promote, calls
-  // emitProposal → createProposal, which persists to the `proposals` table in state.db, not to
-  // any file under the stash (src/commands/proposal/repository.ts). So `processed > 0` is the
-  // right gate here: the detector needs one snapshot per cycle where consolidate did work,
-  // regardless of whether that work produced a write. It would be the wrong gate for anything
-  // that needs to know whether a stash file changed, since promote/merge/delete/contradict never
-  // write one.
-  const consolidationRan =
-    !consolidateDisabledByProfile &&
-    !poolBelowMinSize &&
-    !consolidationOnCooldown &&
-    !consolidation.previewOnly &&
-    consolidation.processed > 0;
-
-  return { consolidation, consolidationRan, plan: planned.plan };
+  return { consolidation, plan: planned.plan };
 }
 
 interface ExtractPassPlan {
@@ -1011,8 +817,8 @@ async function runPreparationPrelude(
   const memoryBudget = assessMemoryIndexBudget(primaryStashDir);
   if (memoryBudget.warning) cleanupWarnings.push(memoryBudget.warning);
 
-  // Consolidation intentionally precedes extract so current-run promotions
-  // cannot force the pool-delta gate open (#551).
+  // Consolidation precedes extract so it only ever judges prior-run memories
+  // (#551): current-run promotions have not had an improve cycle to settle.
   const consolidationPass = planOnly
     ? (() => {
         const planned = planConsolidationPass({
@@ -1039,7 +845,6 @@ async function runPreparationPrelude(
             warnings: [],
             durationMs: 0,
           },
-          consolidationRan: false,
           plan: planned.plan,
         } satisfies ConsolidationPassResult;
       })()
@@ -1166,7 +971,13 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
 
   const recentErrors = seedRecentErrorWindows(schemaRepairs);
 
-  const snapshot = buildSnapshotManifest({ postCleanupRefs, validationFailureRefs, eventsCtx });
+  const snapshot = buildSnapshotManifest({
+    postCleanupRefs,
+    validationFailureRefs,
+    eventsCtx,
+    stashDir: primaryStashDir ?? options.stashDir,
+    readOnly: planOnly,
+  });
 
   const gathered = gatherCandidates({
     scope,
@@ -1190,11 +1001,17 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
     highSalienceRefs: gathered.highSalienceRefs,
   });
 
-  // Shared admission boundary for every synthetic fallback lane. Cleanup and
-  // structural validation are exclusive selectors: no later rank/replay state
-  // may re-create a candidate they removed. Keep the exact surviving objects
-  // so any admitted fallback preserves its index-resolved file/item provenance.
+  // Shared admission boundary for the rank fallback lane. Cleanup and
+  // structural validation are exclusive selectors: no later rank state may
+  // re-create a candidate they removed. Keep the exact surviving objects so an
+  // admitted fallback preserves its index-resolved file/item provenance.
   const fallbackEligibleRefs = postCleanupRefs.filter((candidate) => !validationFailureRefs.has(candidate.ref));
+  // The forgetting-safety lane bypasses the signal gate, never the ledger: a
+  // ref whose reflect row still holds a window stays out.
+  const forgettingEligibleRefs = fallbackEligibleRefs.filter(
+    (candidate) =>
+      !isLedgerBlocked(ledgerRowFor(snapshot.ledger, "reflect", candidate.ref, candidate.itemRef), snapshot.nowIso),
+  );
 
   const scored = scoreSalience({
     scope,
@@ -1208,22 +1025,15 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
     signalFiltered: gathered.signalFiltered,
     proactiveRefs: gathered.proactiveRefs,
     highSalienceRefs: gathered.highSalienceRefs,
-    forgettingEligibleRefs: fallbackEligibleRefs,
+    forgettingEligibleRefs,
     persist: !planOnly,
   });
 
-  // Replay is additive to the signal lanes, but it must not bypass selectors
-  // that have already removed a ref. Use the exact surviving objects so a
-  // replay admission preserves the index-resolved file/item provenance while
-  // excluding cleanup-pruned and structurally-invalid candidates.
   const filtered = await filterEligibility({
-    scope,
     options,
-    replayEligibleRefs: fallbackEligibleRefs,
     eventsCtx,
     mergedRefs: scored.mergedRefs,
     salienceMap: scored.salienceMap,
-    eligibilitySourceByRef,
     distillOnlyRefs: gathered.distillOnlyRefs,
     validationFailureRefs,
     summary: {
@@ -1244,12 +1054,12 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
   });
 
   // Gate counts are an exclusive, sequential accounting of the raw pool.
-  // Replay, proactive maintenance, high-salience, and forgetting-safety are
+  // Proactive maintenance, high-salience, and forgetting-safety are
   // legitimate signal-gate fallback lanes, so a ref admitted by any of them
   // was not removed by the signal gate. Derive this count from the actual
-  // pre-disk survivor set instead of the earlier lane-rescue snapshot; the
-  // latter is intentionally assembled before replay and is also broader than
-  // the effective pool when --require-feedback-signal suppresses fallbacks.
+  // pre-disk survivor set instead of the earlier lane-rescue snapshot, which
+  // is broader than the effective pool when --require-feedback-signal
+  // suppresses fallbacks.
   const signalRemoved = terminalSignalSkippedRefs.length;
 
   const totalReflectBlocked = terminalSignalSkippedRefs.length + gathered.distillOnlyRefs.length;
@@ -1270,7 +1080,8 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
     {
       name: "signal",
       removed: signalRemoved,
-      reason: "no fresh signal and no fallback lane selected the ref",
+      reason:
+        "no fresh signal since the last attempt (or an improve-ledger window) and no fallback lane selected the ref",
     },
     {
       name: "disk",
@@ -1302,11 +1113,9 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
     recentErrors,
     utilityMap: scored.utilityMap,
     consolidation: consolidationPass.consolidation,
-    consolidationRan: consolidationPass.consolidationRan,
     ...(gathered.proactiveMaintenanceSummary ? { proactiveMaintenance: gathered.proactiveMaintenanceSummary } : {}),
     planning: {
       gates: planningGates,
-      replayBudget: filtered.replayBudget,
       ...(gathered.proactivePlan ? { proactive: gathered.proactivePlan } : {}),
       consolidation: consolidationPass.plan,
       extract: { wouldRun: extractPlan.wouldRun, reason: extractPlan.reason },
@@ -1450,50 +1259,58 @@ function seedRecentErrorWindows(
   return recentErrors;
 }
 
-/** The signal-delta timestamp maps built once per run (pass: snapshot-manifest). */
+/** The signal-delta inputs built once per run (pass: snapshot-manifest). */
 interface SignalDeltaSnapshot {
   feedbackSinceCutoff: string;
+  nowIso: string;
   latestFeedbackTs: ReturnType<typeof buildLatestFeedbackTsMap>;
-  lastReflectProposalTs: ReturnType<typeof buildLatestProposalTsMap>;
-  lastDistillProposalTs: ReturnType<typeof buildLatestProposalTsMap>;
+  /** The improve ledger's reflect/distill rows for this stash. */
+  ledger: LedgerSnapshot;
+  /** Signal-delta cursors: `ref → last_attempt_at` from the ledger. */
+  lastReflectAttemptAt: Map<string, string>;
+  lastDistillAttemptAt: Map<string, string>;
 }
 
-/** Pass: snapshot-manifest — the three timestamp maps + the 30-day signal window. */
+/**
+ * Pass: snapshot-manifest — the feedback map, the 30-day signal window, and
+ * the improve ledger rows every lane selects against.
+ *
+ * A ref is re-eligible for a source iff feedback newer than its last attempt
+ * on that source (the ledger's `last_attempt_at`) has landed and the ledger
+ * holds no rejection window over it. Stable content with no new signal stays
+ * out of the queue regardless of clock time; only feedback newer than the
+ * 30-day window counts as current signal.
+ */
 export function buildSnapshotManifest(args: {
   postCleanupRefs: ImproveEligibleRef[];
   validationFailureRefs: Set<string>;
   eventsCtx?: EventsContext;
+  stashDir?: string;
+  readOnly?: boolean;
 }): SignalDeltaSnapshot {
-  const { postCleanupRefs, validationFailureRefs, eventsCtx } = args;
-  // ── Phase 2: signal-delta eligibility sets built EARLY ────────────────────
-  // 0.8.0 replaces the flat time-based cooldowns (which produced synchronised
-  // waves whenever many refs cooled at the same instant — see the 2026-05-26
-  // 54-ref simultaneous-reflect incident) with a *signal-delta* gate:
-  //
-  //   reflectEligible(ref) ≡ latestFeedbackTs(ref) > lastReflectProposalTs(ref)
-  //   distillEligible(ref) ≡ latestFeedbackTs(ref) > lastDistillProposalTs(ref)
-  //
-  // i.e. a ref is re-eligible iff new feedback has landed since the last
-  // proposal was generated for it. Stable content with no new signal stays
-  // out of the queue regardless of clock time; a sudden burst of feedback
-  // surfaces only the refs that the burst actually touches.
-  //
-  // The 30-day FEEDBACK_SIGNAL_WINDOW_DAYS bound still applies — only feedback
-  // events newer than that count as "current signal". Ancient one-off
-  // negatives don't permanently lock a ref into every run.
+  const { postCleanupRefs, validationFailureRefs, eventsCtx, stashDir } = args;
   const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
   const feedbackSinceCutoff = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
-
-  // Build the three timestamp maps once across the entire postCleanupRefs set.
-  // Per-ref queries would be N+1 and the planner is already the hottest path
-  // in `akm improve`.
-  const candidateRefs = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref)).map((r) => r.ref);
-  // Carry each candidate's item_ref into the feedback/proposal timestamp reads.
+  const candidates = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref));
+  // Carry each candidate's item_ref into the feedback read.
   const itemRefByRef = buildItemRefByRef(postCleanupRefs);
-  const latestFeedbackTs = buildLatestFeedbackTsMap(candidateRefs, feedbackSinceCutoff, itemRefByRef, eventsCtx);
-  const lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect", itemRefByRef, eventsCtx);
-  const lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill", itemRefByRef, eventsCtx);
-  return { feedbackSinceCutoff, latestFeedbackTs, lastReflectProposalTs, lastDistillProposalTs };
+  const latestFeedbackTs = buildLatestFeedbackTsMap(
+    candidates.map((r) => r.ref),
+    feedbackSinceCutoff,
+    itemRefByRef,
+    eventsCtx,
+  );
+  const ledger: LedgerSnapshot = stashDir
+    ? loadLedgerSnapshot({ eventsCtx, ...(args.readOnly ? { readOnly: true } : {}) }, stashDir, ["reflect", "distill"])
+    : new Map();
+  return {
+    feedbackSinceCutoff,
+    nowIso: new Date().toISOString(),
+    latestFeedbackTs,
+    ledger,
+    lastReflectAttemptAt: lastAttemptByRef(ledger, "reflect", candidates),
+    lastDistillAttemptAt: lastAttemptByRef(ledger, "distill", candidates),
+  };
 }
 
 /** Everything the candidate-gather pass hands the salience/eligibility passes. */
@@ -1534,7 +1351,7 @@ function gatherCandidates(args: {
   snapshot: SignalDeltaSnapshot;
 }): GatheredCandidates {
   const { scope, options, primaryStashDir, eventsCtx, improveProfile, resolvedPlan, postCleanupRefs, persist } = args;
-  const { feedbackSinceCutoff, lastReflectProposalTs, lastDistillProposalTs } = args.snapshot;
+  const { feedbackSinceCutoff, lastReflectAttemptAt, lastDistillAttemptAt } = args.snapshot;
 
   const partition = partitionBySignalDelta({
     scope,
@@ -1597,8 +1414,8 @@ function gatherCandidates(args: {
         resolvedPlan,
         eventsCtx,
         noFeedbackCandidates,
-        lastReflectProposalTs,
-        lastDistillProposalTs,
+        lastReflectAttemptAt,
+        lastDistillAttemptAt,
         retrievalCounts,
         lastUseMsForProactive,
         persist,
@@ -1614,7 +1431,7 @@ function gatherCandidates(args: {
         eventsCtx,
         noFeedbackCandidates,
         proactiveRefs,
-        lastReflectProposalTs,
+        lastReflectAttemptAt,
         persist,
       })
     : [];
@@ -1704,8 +1521,8 @@ function stampEligibilitySource(args: {
 
 /**
  * The signal-delta partition of postCleanupRefs into the four buckets (pass:
- * candidate-gather, phase 3). The 2026-05-26 54-ref incident semantics move
- * VERBATIM — see the phase-2/3 comments inside.
+ * candidate-gather, phase 3), read against the improve ledger — see the
+ * phase-3 comments inside.
  */
 export function partitionBySignalDelta(args: {
   scope: ImproveScope;
@@ -1722,7 +1539,16 @@ export function partitionBySignalDelta(args: {
   fullySkippedCount: number;
 } {
   const { scope, options, postCleanupRefs, validationFailureRefs } = args;
-  const { latestFeedbackTs, lastReflectProposalTs, lastDistillProposalTs } = args.snapshot;
+  const { latestFeedbackTs, ledger, nowIso } = args.snapshot;
+  // Eligible for a source iff feedback newer than the ledger's last attempt
+  // landed and no rejection window holds the ref. A newer signal lifts a
+  // revisit window, never a rejection.
+  const signalDeltaEligible = (candidate: ImproveEligibleRef, source: "reflect" | "distill"): boolean => {
+    const feedbackAt = latestFeedbackTs.get(candidate.ref);
+    if (!feedbackAt) return false;
+    const row = ledgerRowFor(ledger, source, candidate.ref, candidate.itemRef);
+    return feedbackAt > (row?.lastAttemptAt ?? "") && !isLedgerBlocked(row, nowIso, feedbackAt);
+  };
   // Refs the distill signal-delta gate rejected at planning time. The main
   // loop reads this to skip distill for these refs without re-checking
   // eligibility per iteration.
@@ -1741,7 +1567,9 @@ export function partitionBySignalDelta(args: {
   //                         skipped here: they are handed to the proactive
   //                         (Layer 2) and high-salience (Layer 3) fallbacks
   //                         below so never-rated assets can still be improved.
-  //                         Only refs those lanes decline are fully skipped.
+  //                         Only refs those lanes decline are fully skipped,
+  //                         and a ref whose reflect ledger row still holds a
+  //                         window (revisit or rejection) never enters it.
   //   fullySkippedCount   — has stale feedback but no signal delta → genuine
   //                         skip candidate, excluded from sort. Final skip
   //                         observability is emitted only after fallbacks.
@@ -1762,8 +1590,8 @@ export function partitionBySignalDelta(args: {
       continue;
     }
 
-    const reflectOk = isSignalDeltaEligible(r.ref, latestFeedbackTs, lastReflectProposalTs);
-    const distillOk = isSignalDeltaEligible(r.ref, latestFeedbackTs, lastDistillProposalTs);
+    const reflectOk = signalDeltaEligible(r, "reflect");
+    const distillOk = signalDeltaEligible(r, "distill");
     const isDistillCandidate = isDistillCandidateRef(r.ref, options.stashDir);
 
     if (reflectOk) {
@@ -1781,17 +1609,20 @@ export function partitionBySignalDelta(args: {
     } else if (distillOk && isDistillCandidate) {
       // Reflect blocked but distill passes → distill-only bucket.
       distillOnlyRefs.push(r);
-    } else if (!latestFeedbackTs.has(r.ref)) {
+    } else if (
+      !latestFeedbackTs.has(r.ref) &&
+      !isLedgerBlocked(ledgerRowFor(ledger, "reflect", r.ref, r.itemRef), nowIso)
+    ) {
       // Neither signal-delta gate passes AND there is no recent feedback signal
       // at all. Rather than skip outright, defer to the proactive-maintenance
       // and high-salience fallbacks below: a never-rated asset is exactly what
       // those lanes are meant to rescue. Refs those lanes decline are skipped there.
       noFeedbackPool.push(r);
     } else {
-      // Has feedback on record but no signal delta since the last proposal —
-      // genuinely a fully-skipped candidate. Count it as partition metadata;
-      // final observability waits until replay and every other fallback lane
-      // has had a chance to rescue it.
+      // Feedback on record but no signal delta since the last attempt, or a
+      // live ledger window — genuinely a fully-skipped candidate. Count it as
+      // partition metadata; final observability waits until every fallback
+      // lane has had a chance to rescue it.
       fullySkippedCount++;
     }
   }
@@ -1993,8 +1824,8 @@ function selectProactiveMaintenanceLane(args: {
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   noFeedbackCandidates: ImproveEligibleRef[];
-  lastReflectProposalTs: ReturnType<typeof buildLatestProposalTsMap>;
-  lastDistillProposalTs: ReturnType<typeof buildLatestProposalTsMap>;
+  lastReflectAttemptAt: Map<string, string>;
+  lastDistillAttemptAt: Map<string, string>;
   retrievalCounts: Map<string, number>;
   lastUseMsForProactive: Map<string, number>;
   persist: boolean;
@@ -2009,8 +1840,8 @@ function selectProactiveMaintenanceLane(args: {
     resolvedPlan,
     eventsCtx,
     noFeedbackCandidates,
-    lastReflectProposalTs,
-    lastDistillProposalTs,
+    lastReflectAttemptAt,
+    lastDistillAttemptAt,
     retrievalCounts,
     lastUseMsForProactive,
     persist,
@@ -2045,8 +1876,8 @@ function selectProactiveMaintenanceLane(args: {
 
     const selection = selectProactiveMaintenanceRefs({
       candidates: pmCandidates,
-      lastReflectTs: lastReflectProposalTs,
-      lastDistillTs: lastDistillProposalTs,
+      lastReflectTs: lastReflectAttemptAt,
+      lastDistillTs: lastDistillAttemptAt,
       retrievalCounts,
       // WS-1: wire lastUseMs so the recency decay term is genuine (plan §step 2).
       lastUseMs: lastUseMsForProactive,
@@ -2117,10 +1948,10 @@ function selectHighSalienceLane(args: {
   eventsCtx?: EventsContext;
   noFeedbackCandidates: ImproveEligibleRef[];
   proactiveRefs: ImproveEligibleRef[];
-  lastReflectProposalTs: ReturnType<typeof buildLatestProposalTsMap>;
+  lastReflectAttemptAt: Map<string, string>;
   persist: boolean;
 }): ImproveEligibleRef[] {
-  const { options, improveProfile, eventsCtx, noFeedbackCandidates, proactiveRefs, lastReflectProposalTs, persist } =
+  const { options, improveProfile, eventsCtx, noFeedbackCandidates, proactiveRefs, lastReflectAttemptAt, persist } =
     args;
   // ── Layer 3: HIGH-SALIENCE ADMISSION GATE (#608) ──────────────────────────
   // Zero-feedback refs whose encoding_salience (set at distill time by
@@ -2132,13 +1963,11 @@ function selectHighSalienceLane(args: {
   // reactive feedback. Requires state.db to have an asset_salience row — refs
   // without a row (pre-#608 assets still on the type-weight stub) are skipped.
   //
-  // Cooldown: a ref qualifies at most once — when no prior reflect proposal
-  // exists for it (`!lastReflectProposalTs.has`). Without this guard the lane
-  // re-selects the same high-salience refs on EVERY run (promotion emits a
-  // `promoted` event, not `feedback`, so the ref never leaves
-  // noFeedbackCandidates), burning LLM calls and churning the asset. This
-  // mirrors the same `!lastReflectProposalTs.has(r.ref)` once-per-asset
-  // semantics the other "rescue" lanes share.
+  // Once per asset: a ref qualifies only while the improve ledger has no
+  // reflect attempt for it (`!lastReflectAttemptAt.has`). Without this the
+  // lane re-selects the same high-salience refs on EVERY run (promotion emits
+  // a `promoted` event, not `feedback`, so the ref never leaves
+  // noFeedbackCandidates), burning LLM calls and churning the asset.
   //
   // Content-provenance gate (#644 follow-up): the row must ALSO carry a genuine
   // content-derived encoding score (`isContentEncodingRow`). Otherwise the lane
@@ -2175,7 +2004,7 @@ function selectHighSalienceLane(args: {
             row &&
             isContentEncodingRow(row) &&
             row.encoding_salience >= salienceThreshold &&
-            !lastReflectProposalTs.has(r.ref)
+            !lastReflectAttemptAt.has(r.ref)
           ) {
             qualifying.push({ ref: r, score: row.encoding_salience });
           }
@@ -2304,8 +2133,6 @@ function scoreSalience(args: {
   const pendingForgettingRefs = persistSalienceAndReportRanks({
     salienceMap,
     itemRefByRef,
-    utilityMap,
-    feedbackSummary,
     options,
     eventsCtx,
     nowForSalience,
@@ -2461,40 +2288,8 @@ function updateOutcomeScores(args: {
           }
           // Keep the normalization denominator within the writer's score bounds.
           maxOutcomeScore = Math.min(maxOutcomeScore, OUTCOME_SCORE_MAX);
-
-          // Proxy-adequacy tripwire (two-tailed): inverted (corr < −0.3) and
-          // dead (|corr| < 0.1 at n ≥ 500) both emit health events.
-          const adequacy = persist ? computeProxyAdequacy(allOutcomes) : undefined;
-          if (adequacy?.isInverted) {
-            appendEvent(
-              {
-                eventType: "outcome_proxy_inverted",
-                ref: undefined,
-                metadata: {
-                  correlation: adequacy.correlation,
-                  n: adequacy.n,
-                  note: "corr(outcome_score, accepted_change_rate) < −0.3: high-outcome_score assets have LOW accepted-change rates — the proxy's 'doing well' signal is inverted, so the coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
-                },
-              },
-              eventsCtx,
-            );
-          }
-          if (adequacy?.isDead) {
-            appendEvent(
-              {
-                eventType: "outcome_proxy_dead",
-                ref: undefined,
-                metadata: {
-                  correlation: adequacy.correlation,
-                  n: adequacy.n,
-                  note: "|corr(outcome_score, accepted_change_rate)| < 0.1 at n ≥ 500: outcome_score is statistically unrelated to improvement outcomes — the proxy is noise, not signal. Rank contributions derived from it are not currently informative.",
-                },
-              },
-              eventsCtx,
-            );
-          }
         } catch {
-          // best-effort: tripwire failure never blocks ranking
+          // best-effort: a failed max read leaves the normalisation at 0
         }
 
         // Convert raw outcome scores → normalised outcomeSalience values in [0,1].
@@ -2661,64 +2456,28 @@ function buildSalienceWriteKeyMaps(itemRefByRef: Map<string, string | undefined>
 function persistSalienceAndReportRanks(args: {
   salienceMap: Map<string, ReturnType<typeof computeSalience>>;
   itemRefByRef: Map<string, string | undefined>;
-  utilityMap: Map<string, number>;
-  feedbackSummary: Map<string, { hasSignal: boolean; positive: number; negative: number }>;
   options: AkmImproveOptions;
   eventsCtx?: EventsContext;
   nowForSalience: number;
   persist: boolean;
 }): string[] {
-  const { salienceMap, itemRefByRef, utilityMap, feedbackSummary, options, eventsCtx, nowForSalience, persist } = args;
+  const { salienceMap, itemRefByRef, options, eventsCtx, nowForSalience, persist } = args;
   // Chunk-5 flip F5e — the WRITE-key space. salienceMap stays keyed by each
   // candidate's own short `r.ref`; the state.db boundary keys by item_ref when
   // available and otherwise by conceptId.
   const { wk, normalizeStoredKey, refByWriteKey } = buildSalienceWriteKeyMaps(itemRefByRef);
   // Persist salience vectors to state.db (best-effort, non-blocking).
-  // The canonical store enables WS-3 homeostatic demotion and WS-2 outcome reads.
   //
   // Forgetting-safety report (plan §WS-1 step 7) — stash-wide rank comparison:
-  //
   // BEFORE persisting the new rankScores, read ALL existing rows from state.db
-  // (not just the per-run candidate pool). This gives stash-wide rank positions so
-  // the top-200/below-500 thresholds are meaningful.
+  // (not just the per-run candidate pool) as the old ranks, merge them with
+  // this run's salienceMap for the new ranks, and call buildRankChangeReport
+  // with stash-wide positions. This detects real rank drift — e.g. a
+  // retrieval-pattern shift causing a previously top-200 asset to slip below
+  // position 500. An empty table (first run) has no prior ordering to compare.
   //
-  // Two distinct scenarios:
-  //
-  // A. First WS-1 run (table empty): the old stash-wide combinedEligibilityScore
-  //    ordering was never persisted in state.db (asset_salience is a new WS-1 table).
-  //    However, the old formula's inputs are available in-scope for every candidate
-  //    in the current pool: utility comes from utilityMap and the attention term
-  //    from feedbackSummary (positive/negative counts). We reconstruct the old
-  //    combinedEligibilityScore = utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT
-  //    for every ref in salienceMap and rank them, giving a candidate-pool-scoped
-  //    old ordering. This is a partial reconstruction (only current-pool refs, not
-  //    stash-wide), but it is the most faithful comparison possible at cutover and
-  //    allows the top-200→below-500 forgetting guard to fire if the formula change
-  //    dramatically reorders the candidate pool.
-  //    WS-1 step 7 — the stash-wide
-  //    ordering was unreconstructable (no prior state.db snapshot), so this candidate-
-  //    pool partial reconstruction is the documented resolution for the first-run case.
-  //    Emit `improve_salience_first_run` to mark the cutover moment and include the
-  //    reconstructed comparison result in the metadata.
-  //
-  // B. Subsequent runs (table has rows): use ALL existing rows as old ranks, merge
-  //    them with the current run's salienceMap updates for new ranks, and call
-  //    buildRankChangeReport with stash-wide positions. This detects real rank drift
-  //    — e.g. a retrieval-pattern shift causing a previously top-200 asset to slip
-  //    below position 500.
-  //
-  // Measurement-protocol deferral (plan §269, Part-V):
-  // The Part-V T0 baseline (scripts/akm-eval + health report) and the throughput/
-  // quality gate are deferred pending owner sign-off. Full measurement requires a
-  // before/after `akm health` report. Owner-acknowledged deferral: WS-2 landing
-  // will re-introduce outcome salience and trigger the full re-tuning pass at that
-  // time. salience.ts already accepts outcomeSalience directly as an input
-  // (see SalienceInputs.outcomeSalience); no separate hook is needed.
-  //
-  // Forgetting-safety collection: populated inside scenario B below, consumed
-  // after the try/catch to union candidates into mergedRefs before the sort.
-  // Only refs from a real pre-existing ordering (scenario B) are collected;
-  // empty on scenario A or when no candidates dropped below the threshold.
+  // Forgetting-safety collection: consumed after the try/catch to union
+  // candidates into mergedRefs before the sort.
   let pendingForgettingRefs: string[] = [];
   try {
     if (!persist && !eventsCtx?.db) return pendingForgettingRefs;
@@ -2742,62 +2501,7 @@ function persistSalienceAndReportRanks(args: {
           existingAllScores.set(normalizeStoredKey.get(ref) ?? ref, score);
         }
 
-        if (existingAllScores.size === 0) {
-          // Scenario A: first WS-1 run — table empty.
-          //
-          // Reconstruct the old combinedEligibilityScore ordering for the current
-          // candidate pool using inputs that are already in-scope: utility from
-          // utilityMap and the attention term from feedbackSummary (positive/negative
-          // counts). Old formula: score = utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT.
-          //
-          // Limitation: this covers only the current-run candidate pool, not the full
-          // stash. The stash-wide ordering was never persisted (asset_salience is a new
-          // WS-1 table), so this is the most faithful comparison possible at cutover.
-          // WS-1 step 7.
-          const reconstructedOldScores = new Map<string, number>();
-          for (const ref of salienceMap.keys()) {
-            const utility = utilityMap.get(ref) ?? 0;
-            const fb = feedbackSummary.get(ref) ?? { positive: 0, negative: 0 };
-            const attention = computeValenceScore(fb).attention;
-            reconstructedOldScores.set(ref, utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT);
-          }
-
-          // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
-          const oldRanks = toRankPositions(reconstructedOldScores);
-          const newRanks = toRankPositions(new Map([...salienceMap.entries()].map(([ref, v]) => [ref, v.rankScore])));
-          const firstRunReport = buildRankChangeReport(oldRanks, newRanks);
-          if (firstRunReport.forgettingCandidates.length > 0) {
-            warn(
-              `[improve/salience] WS-1 first-run rank-change report: ${firstRunReport.forgettingCandidates.length} asset(s) fell from top-200 to below position 500 (cutover formula change). ` +
-                `Top drops: ${firstRunReport.forgettingCandidates
-                  .slice(0, 5)
-                  .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
-                  .join(", ")}`,
-            );
-            pendingForgettingRefs = firstRunReport.forgettingCandidates.map((e) => e.ref);
-          }
-          if (persist) {
-            appendEvent(
-              {
-                eventType: "improve_salience_first_run",
-                ref: undefined,
-                metadata: {
-                  candidateCount: salienceMap.size,
-                  note: "first WS-1 salience run — partial reconstruction of old combinedEligibilityScore ordering for candidate pool (stash-wide ordering not available); WS-1 step 7",
-                  forgettingCandidates: firstRunReport.forgettingCandidates.length,
-                  topDrops: firstRunReport.forgettingCandidates.slice(0, 10).map((e) => ({
-                    ref: e.ref,
-                    oldRank: e.oldRank,
-                    newRank: e.newRank,
-                  })),
-                },
-              },
-              eventsCtx,
-            );
-          }
-        } else {
-          // Scenario B: subsequent run — compare stash-wide old vs. new ranks.
-          //
+        if (existingAllScores.size > 0) {
           // Build new scores by merging the full table with this run's updates.
           // Refs in salienceMap override their stored value; refs not in this run
           // retain their stored value unchanged. This gives a complete stash-wide
@@ -2963,18 +2667,14 @@ export function applyForgettingSafety(args: {
 }
 
 /**
- * Pass: eligibility-filter — replay selection (#610), the no-op dampener sort,
- * coverage gaps, the disk-existence guard, the --limit slice, and the summary
- * info emits.
+ * Pass: eligibility-filter — the no-op dampener sort, coverage gaps, the
+ * disk-existence guard, the --limit slice, and the summary info emits.
  */
 async function filterEligibility(args: {
-  scope: ImproveScope;
   options: AkmImproveOptions;
-  replayEligibleRefs: ImproveEligibleRef[];
   eventsCtx?: EventsContext;
   mergedRefs: ImproveEligibleRef[];
   salienceMap: Map<string, ReturnType<typeof computeSalience>>;
-  eligibilitySourceByRef: Map<string, EligibilitySource>;
   distillOnlyRefs: ImproveEligibleRef[];
   validationFailureRefs: Set<string>;
   /** Pass-2 tallies consumed only by the end-of-stage summary info emits. */
@@ -2990,34 +2690,11 @@ async function filterEligibility(args: {
   coverageGaps: string[];
   limitRemoved: number;
   missingDiskCount: number;
-  replayBudget: number;
   preDiskRefs: ImproveEligibleRef[];
 }> {
-  const {
-    scope,
-    options,
-    replayEligibleRefs,
-    eventsCtx,
-    salienceMap,
-    eligibilitySourceByRef,
-    distillOnlyRefs,
-    persist,
-  } = args;
+  const { options, eventsCtx, mergedRefs, salienceMap, distillOnlyRefs, persist } = args;
   const { signalAndRetrievalRefs, signalFiltered } = args.summary;
   const validationFailureRefs = args.validationFailureRefs;
-
-  const replay = applyReplaySelection({
-    scope,
-    options,
-    plannedRefs: replayEligibleRefs,
-    eventsCtx,
-    mergedRefs: args.mergedRefs,
-    salienceMap,
-    eligibilitySourceByRef,
-    persist,
-  });
-  const mergedRefs = replay.mergedRefs;
-  const { replayRefSet, replayBudget } = replay;
 
   // Build no-op map for consolidation-selection dampener (plan §WS-1 step 8).
   // Reads consecutive_no_ops from the SAME pinned db handle used elsewhere in
@@ -3096,32 +2773,18 @@ async function filterEligibility(args: {
 
   // Re-split actionableRefs (sorted) into reflect-path vs distill-only-path while
   // preserving sort order. distillOnlyRefs participate in the sort so --limit
-  // picks them by score, not by arbitrary position.
-  // ── Phase 5: --limit applies to the post-cooldown actionable set ──────────
-  //
-  // #610 ADDITIVITY: replay-lane refs are budgeted SEPARATELY from the --limit
-  // fresh slice. Without this split, a high-rankScore replay ref could sort above
-  // a fresh ref in the single combined slice and STEAL its slot (violating AC2).
-  // We partition into the replay lane vs the rest, apply --limit to the
-  // non-replay (fresh) refs only, then APPEND up to `replayBudget` replay refs
-  // after the fresh slice. Sort order within each partition is preserved.
-  //
-  // Default replayBudget=0 reduces this to the exact pre-#610 expression: with no
-  // replay refs, `nonReplayLoop === allLoopRefs`, so `baseLoop === old slice` and
-  // `replayLoop.slice(0, 0) === []` — byte-identical.
+  // picks them by score, not by arbitrary position. --limit applies to the
+  // post-ledger actionable set.
   const selection = selectEffectiveImproveRefs({
     rankedRefs: actionableRefs,
     distillOnlyRefs,
     limit: options.limit,
-    replayBudget,
   });
   const loopRefs = selection.loopRefs;
   const distillOnlyRefsResult = selection.distillOnlyRefs;
 
   if (signalAndRetrievalRefs.length > 0) {
-    info(
-      `[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback${replayRefSet.size > 0 ? `, ${replayRefSet.size} replay` : ""})`,
-    );
+    info(`[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback)`);
   }
   if (validationFailureRefs.size > 0) {
     info(`[improve] ${validationFailureRefs.size} with validation failures excluded`);
@@ -3142,150 +2805,8 @@ async function filterEligibility(args: {
     coverageGaps,
     limitRemoved: selection.limitRemoved,
     missingDiskCount: assetMissingOnDisk.length,
-    replayBudget,
     preDiskRefs: sorted,
   };
-}
-
-/** The #610 bounded, additive replay-selection lane (eligibility-filter). */
-function applyReplaySelection(args: {
-  scope: ImproveScope;
-  options: AkmImproveOptions;
-  plannedRefs: ImproveEligibleRef[];
-  eventsCtx?: EventsContext;
-  mergedRefs: ImproveEligibleRef[];
-  salienceMap: Map<string, ReturnType<typeof computeSalience>>;
-  eligibilitySourceByRef: Map<string, EligibilitySource>;
-  persist: boolean;
-}): { mergedRefs: ImproveEligibleRef[]; replayRefSet: Set<string>; replayBudget: number } {
-  const { scope, options, plannedRefs, eventsCtx, salienceMap, eligibilitySourceByRef, persist } = args;
-  let mergedRefs = args.mergedRefs;
-  // ── REPLAY SELECTION layer (#610) ─────────────────────────────────────────
-  // Bounded, ADDITIVE replay budget: up to `replayBudget` top-salience refs are
-  // revisited even with zero reactive signal (no feedback, no retrieval) and
-  // regardless of cooldown — exactly like the forgetting-safety lane, replay is
-  // injected AFTER cooldown/signal-delta partitioning so it bypasses those gates.
-  //
-  // Strictly additive: the replay slice is appended AFTER the --limit fresh slice
-  // (see the loopRefs partition below), so it can never shrink the fresh-ref set.
-  // Replay is the WEAKEST lane — it only stamps refs no other lane already claimed,
-  // and budget is spent only on refs not already in mergedRefs (so a stronger lane
-  // never has its budget wasted or its label overwritten).
-  //
-  // Default replayBudget=0 ⇒ this whole block is a no-op (no DB open, no event,
-  // no mergedRefs mutation), preserving byte-identical pre-#610 selection behavior.
-  const replayBudget = (options.config ?? loadConfig()).improve?.salience?.replayBudget ?? 0;
-  const replayRefSet = new Set<string>();
-  if (replayBudget > 0 && scope.mode !== "ref" && !options.requireFeedbackSignal) {
-    try {
-      if (!persist && !eventsCtx?.db) return { mergedRefs, replayRefSet, replayBudget };
-      withStateDb(
-        (replayDb) => {
-          const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
-          const storedRankScores = getAllRankScores(replayDb);
-          const plannedByRef = new Map(plannedRefs.map((planned) => [planned.ref, planned]));
-          const plannedByItemRef = new Map<string, ImproveEligibleRef>();
-          for (const planned of plannedRefs) {
-            if (planned.itemRef) plannedByItemRef.set(planned.itemRef, planned);
-          }
-          // Replay can only revisit an entry selected into THIS invocation's
-          // source/type plan. Match durable item_ref rows by exact provenance;
-          // legacy bare rows may match the current plan's concept ref. Folding
-          // both spellings onto the planned ref also prevents duplicate budget
-          // spend when old and current state rows coexist.
-          const allRankScores = new Map<string, number>();
-          for (const [stateRef, score] of storedRankScores) {
-            const boundary = stateRef.indexOf("//");
-            if (options.sourceName && (boundary < 0 || stateRef.slice(0, boundary) !== options.sourceName)) continue;
-            const planned =
-              plannedByItemRef.get(stateRef) ?? (boundary < 0 ? plannedByRef.get(bareImproveRef(stateRef)) : undefined);
-            if (!planned) continue;
-            const previous = allRankScores.get(planned.ref);
-            if (previous === undefined || score > previous) allRankScores.set(planned.ref, score);
-          }
-          // Candidate universe = every current-plan salience match NOT already in the
-          // pool, ordered by rank_score desc with a deterministic ref-string tie-break
-          // (mirrors the main sort). Converged refs (consecutive_no_ops >= dampener
-          // threshold) are fully EXCLUDED — a stronger skip than the dampener (which
-          // only halves order).
-          let convergedSkipped = 0;
-          const candidates: Array<{ planned: ImproveEligibleRef; rankScore: number }> = [];
-          for (const [ref, rankScore] of allRankScores) {
-            if (alreadyInPool.has(ref)) continue;
-            const planned = plannedByRef.get(ref);
-            if (!planned) continue;
-            const noOps = readConsecutiveNoOpsForImproveRef(replayDb, ref, planned.itemRef);
-            if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
-              convergedSkipped++;
-              continue;
-            }
-            candidates.push({ planned, rankScore });
-          }
-          candidates.sort((a, b) =>
-            b.rankScore !== a.rankScore
-              ? b.rankScore - a.rankScore
-              : a.planned.ref < b.planned.ref
-                ? -1
-                : a.planned.ref > b.planned.ref
-                  ? 1
-                  : 0,
-          );
-          const candidatePool = candidates.length;
-          const selected = candidates.slice(0, replayBudget);
-          const newReplayRefs: ImproveEligibleRef[] = [];
-          for (const { planned } of selected) {
-            const ref = planned.ref;
-            replayRefSet.add(ref);
-            newReplayRefs.push({
-              ...planned,
-              eligibilitySource: "replay",
-            });
-            // Seed the salienceMap so the sort/effectiveScore can rank the replay ref.
-            if (!salienceMap.has(ref)) {
-              salienceMap.set(ref, {
-                encoding: 0,
-                outcome: 0,
-                retrieval: 0,
-                rankScore: allRankScores.get(ref) ?? 0,
-              });
-            }
-          }
-          if (newReplayRefs.length > 0) {
-            mergedRefs = dedupeRefs([...mergedRefs, ...newReplayRefs]);
-            // Replay is the WEAKEST lane: stamp 'replay' ONLY for refs not already
-            // keyed by a stronger lane.
-            for (const ref of replayRefSet) {
-              if (!eligibilitySourceByRef.has(ref)) eligibilitySourceByRef.set(ref, "replay");
-            }
-            for (const r of mergedRefs) {
-              r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
-            }
-          }
-          // Aggregated observability event (never per-ref).
-          if (persist) {
-            appendEvent(
-              {
-                eventType: "improve_replay_selected",
-                ref: undefined,
-                metadata: {
-                  count: newReplayRefs.length,
-                  budget: replayBudget,
-                  convergedSkipped,
-                  candidatePool,
-                },
-              },
-              eventsCtx,
-            );
-          }
-        },
-        { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
-      );
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-      // best-effort: if DB unavailable, replayRefSet stays empty
-    }
-  }
-  return { mergedRefs, replayRefSet, replayBudget };
 }
 
 /** The final disk-existence guard + its aggregated audit event (eligibility-filter). */

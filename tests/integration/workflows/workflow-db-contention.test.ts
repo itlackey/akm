@@ -158,9 +158,6 @@ describe("writer queue resilience (fault-injected write failure)", () => {
             model: null,
             inputHash: `hash-${unitId}`,
             now,
-            claimHolder: `direct:${unitId}`,
-            claimExpiresAt: new Date(Date.parse(now) + 90_000).toISOString(),
-            leaseMode: "direct",
           }),
         ),
       );

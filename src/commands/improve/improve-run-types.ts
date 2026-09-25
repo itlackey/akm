@@ -43,7 +43,6 @@
  */
 
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import type { EventEnvelope } from "../../core/events-types";
 import type {
   AkmDistillResult,
   AkmReflectResult,
@@ -219,14 +218,11 @@ export interface ImprovePreparationResult {
    */
   recentErrors: Record<string, string[]>;
   /**
-   * Consolidation result (#551). Consolidation now runs in the preparation
-   * stage BEFORE the session-extract pass, so it only ever judges memories
-   * promoted by PRIOR runs — files written by extract promotions in the
-   * current run do not exist yet when the pool-delta gate is evaluated.
+   * Consolidation result (#551). Consolidation runs in the preparation stage
+   * BEFORE the session-extract pass, so it only ever judges memories promoted
+   * by PRIOR runs.
    */
   consolidation: ConsolidateResult;
-  /** Whether the consolidation pass actually ran (vs profile-disabled / pool-delta skip). Drives R5's collapse detector. */
-  consolidationRan: boolean;
   /**
    * Layer 2 proactive-maintenance selector outcome, when the process ran.
    * Undefined when the process is disabled or the run is ref-scoped.
@@ -235,8 +231,6 @@ export interface ImprovePreparationResult {
   /** Read-only selector data projected into the public dry/live plan. */
   planning: {
     gates: ImprovePlanGate[];
-    /** Configured replay slots appended beyond the ordinary effective limit. */
-    replayBudget: number;
     proactive?: ImproveExecutionPlan["proactive"];
     consolidation: ImproveExecutionPlan["consolidation"];
     extract: { wouldRun: boolean; reason: string };
@@ -260,8 +254,6 @@ export interface ImprovePostLoopResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
-  /** R5: the collapse/churn detector's cycle snapshot, when this run qualified. */
-  cycleMetrics?: import("../../storage/repositories/canaries-repository").CycleMetricsRow;
 }
 
 export interface ImproveMaintenanceResult {
@@ -276,18 +268,12 @@ export interface ImproveMaintenanceResult {
 }
 
 /**
- * Result of the consolidation pass (#551).
- *
- * Consolidation moved OUT of the post-loop stage and into the preparation
- * stage, where it runs BEFORE the session-extract pass. This guarantees the
- * pool-delta gate (and akmConsolidate itself) only ever observe memories that
- * existed at the start of the run — files written by extract promotions in the
- * CURRENT run are not on disk yet, so they cannot make the gate fire.
+ * Result of the consolidation pass (#551). Consolidation runs in the
+ * preparation stage BEFORE the session-extract pass, so it only ever observes
+ * memories that existed at the start of the run.
  */
 export interface ConsolidationPassResult {
   consolidation: ConsolidateResult;
-  /** True iff consolidation actually processed memories this run (drives R5's collapse detector). */
-  consolidationRan: boolean;
   /** Pre-dispatch gate/pool/chunk projection shared with dry-run. */
   plan: ImproveExecutionPlan["consolidation"];
 }
@@ -345,8 +331,6 @@ export interface ImproveLoopState {
   distillOnlyRefs: ImproveEligibleRef[];
   /** Per-originator rolling error windows (O-5 / #378). */
   recentErrors: Record<string, string[]>;
-  /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
-  rejectedProposalsByRef: Map<string, EventEnvelope>;
   /** R-2 / #389: per-ref utility scores for self-consistency threshold check. */
   utilityMap: Map<string, number>;
 }

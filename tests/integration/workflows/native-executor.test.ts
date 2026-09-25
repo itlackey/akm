@@ -1205,12 +1205,13 @@ Do second.
     expect(dispatches).toBe(0);
   });
 
-  test("rejects a plan carrying the removed dependsOn key before dispatching", async () => {
+  test("a stored plan carrying the removed dependsOn key is abandoned before dispatching", async () => {
     // `dependsOn` was an IR-only surface no frontend ever emitted: ordering
     // comes from `sequenceIndex` and data dependencies from `inputs:` /
     // `steps.<id>.output` references. It is gone from `IrStepPlan`, so the
-    // strict decoder now refuses a hand-crafted plan that carries it — and
-    // refuses it BEFORE any unit is dispatched.
+    // decoder cannot read a hand-crafted plan that carries it — the engine
+    // abandons that run (a status change, never an exception) BEFORE any
+    // unit is dispatched.
     seedRun({
       params: { flavor: "vanilla" },
       steps: [
@@ -1223,16 +1224,16 @@ Do second.
     // the only way one can appear, so build it the way an attacker/drift would.
     outOfOrder.steps[0] = { ...outOfOrder.steps[0]!, dependsOn: ["second"] } as unknown as IrStepPlanV4;
     let dispatches = 0;
-    await expect(
-      runWorkflowSteps({
-        target: RUN_ID,
-        dispatcher: async () => {
-          dispatches++;
-          return { ok: true, text: "must not run" };
-        },
-        loadPlan: useFrozenPlan(outOfOrder),
-      }),
-    ).rejects.toThrow(/unknown key dependsOn/);
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not run" };
+      },
+      loadPlan: useFrozenPlan(outOfOrder),
+    });
+    expect(result.run.status).toBe("failed");
+    expect(result.warnings?.some((w) => w.includes("unknown key dependsOn") && w.includes("abandoned"))).toBe(true);
     expect(dispatches).toBe(0);
   });
 

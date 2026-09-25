@@ -188,8 +188,8 @@ child is re-read at dispatch time. Concretely:
   workflow depends on.
 
 See [Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#child-workflows)
-for the embedded-plan integrity chain (`irVersion`, `planHash`,
-`contentHash`) and why a tampered embedded child plan fails to decode.
+for how an embedded child plan is decoded (`irVersion`, `planHash`, and
+`contentHash` are recorded provenance, not re-verified).
 
 ### Composition limits
 
@@ -217,9 +217,9 @@ run and drives it to completion, or as far as it gets, before the parent
 step is finalized. The drive happens **inline, in the parent's own
 process**: it is the same engine `akm workflow run` uses on the child's
 frozen plan, not a separately scheduled job. Consequently, whatever aborts
-the parent's own dispatch — `Ctrl-C`, a `--timeout`, a budget ceiling, or
-the parent losing its run lease — also aborts the child drive; both runs
-are left resumable, never partially torn down.
+the parent's own dispatch — `Ctrl-C`, a `--timeout`, or a budget ceiling —
+also aborts the child drive; both runs are left resumable, never partially
+torn down.
 
 The child's final status maps onto the composing step and the parent run:
 
@@ -228,9 +228,9 @@ The child's final status maps onto the composing step and the parent run:
 | `completed` | completes; its output is the child's exported result — its declared `outputs:` (see [What a step's output is](#what-a-steps-output-is)), or `{runId, status}` when the child declares none | continues |
 | `failed` | `failed` | `failed` |
 | `blocked` | `blocked` | `blocked` |
-| aborted mid-drive (parent cancelled/timed out/lost its lease) | left unfinished, not finalized | active and resumable |
-| the child could not be published or its plan failed an integrity re-check | `failed` | `failed` |
-| another process already holds the child's run lease | `failed` | `failed` |
+| aborted mid-drive (parent cancelled/timed out) | left unfinished, not finalized | active and resumable |
+| the child could not be published (its params do not satisfy the child's declared `params:`) | `failed` | `failed` |
+| another process already holds the child's run lock | `failed` | `failed` |
 
 **Blocked-child recovery.** A blocked child blocks its composing step —
 `akm` does not resume a child for you, because a gate is a gate for a
@@ -531,12 +531,8 @@ unknown step, unknown param, bad path — at lint time.
 ### Params are not secret
 
 Run params are copied verbatim into every unit's dispatched instructions and
-are part of the unit's content-derived input hash — the same hash that makes
-resume-without-replay possible (see
-[Resume is journaled replay](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#resume-is-journaled-replay)).
-Redacting a param would change what gets hashed and make a resumed run
-diverge from the original, so params are **declared non-secret and
-un-redactable** by design: secrets belong in `env:` refs instead, which carry
+are stored on the run row and shown by `akm workflow status`, so params are
+**declared non-secret**: secrets belong in `env:` refs instead, which carry
 by name only through the plan and are resolved from akm's env/secret store
 at dispatch (see [Reference: Env & Secrets](https://github.com/itlackey/akm/blob/main/docs/reference/env-and-secrets.md)).
 
@@ -545,7 +541,9 @@ values that *look* like credentials — secret-suggesting key names (`token`,
 `password`, `apikey`, `credential`, …) or long, high-entropy strings matching
 known token prefixes — and surfaces a warning naming the param path and
 recommending an `env:` ref instead. This is advisory only: it never blocks a
-run and never mutates params, and false positives/negatives are expected.
+run and never mutates params, and false positives/negatives are expected. The
+same heuristic feeds the dispatch redaction set, so a unit result or
+diagnostic that echoes such a value is scrubbed before it is journaled.
 
 ## What a step's output is
 
@@ -1053,9 +1051,7 @@ request for whole-process inheritance; use exact named environment bindings
 and `pass_env:` instead. Both mechanisms are dispatch-significant, keep the
 visible environment surface bounded, and form part of the unit's input hash.
 
-The historical `inherit_env` spelling is unsupported. Pre-`irVersion`-5 stored
-plans are rejected; they are never upgraded or replayed through a second
-runtime.
+The historical `inherit_env` spelling is unsupported.
 
 ### What `akm show` reports for an exec step
 

@@ -3,18 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Additive durable workflow plan v4.
+ * Durable workflow plan (`irVersion` 5).
  *
- * This is the sole executable workflow plan. Older stored plans are rejected
- * at the run-storage boundary instead of being replayed through a second
- * runtime architecture.
+ * The decoder is structural and tolerant of provenance: a stored plan's
+ * `irVersion` is not gated (a plan frozen by another release that still has
+ * this shape decodes and runs), and the `contentHash`/`planHash` fields a
+ * freeze records are carried as data, not re-verified against the bytes.
  */
 
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { compareCodePoints } from "../../core/common";
 import { UsageError } from "../../core/errors";
-import { decodeFrozenExecutableIdentity, type FrozenExecutableIdentity } from "../../execution/executable-identity";
 import { INPUT_NAME_PATTERN, type TaskInputBinding } from "../../execution/input-contract";
 import {
   canonicalResolvedExecutionRequest,
@@ -22,8 +21,7 @@ import {
   type ResolvedExecutionRequestV1,
 } from "../../execution/resolved-request";
 import { decodeExecutionSourceIdentity, type ExecutionSourceIdentity } from "../../execution/source";
-import { decodeFrozenRunnerSpec } from "../../integrations/agent/execution-lowering";
-import type { RunnerSpec } from "../../integrations/agent/runner";
+import { decodeFrozenRunnerSpec, type RunnerSpec } from "../../integrations/agent/runner";
 import { parseReference } from "../program/expressions";
 import { PROGRAM_PARAM_NAME_PATTERN } from "../program/schema";
 import { utf8Bytes } from "../resource-limits";
@@ -87,7 +85,6 @@ export interface FrozenWorkflowCommandTarget {
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
   readonly cwdIdentity?: FrozenWorkflowDirectoryIdentity;
-  readonly executable?: FrozenExecutableIdentity;
   readonly gitCommitOid?: string;
   /** A composing step's frozen with: bindings against this task's declared inputs (P2b §3, A-N7). Absent, never [], when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
@@ -98,7 +95,6 @@ export interface FrozenWorkflowShellTarget {
   readonly contentHash: string;
   readonly exec: import("./schema").IrExecSpec;
   readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
-  readonly executable?: FrozenExecutableIdentity;
   readonly gitCommitOid?: string;
   /** A composing step's frozen with: bindings against this task's declared inputs (P2b §3, A-N7). Absent, never [], when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
@@ -115,7 +111,6 @@ export interface FrozenWorkflowScriptTarget {
   readonly byteLength: number;
   readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
   readonly materialization: "ephemeral-0700-delete";
-  readonly executable?: FrozenExecutableIdentity;
   readonly gitCommitOid?: string;
   /** A composing step's frozen with: bindings against this task's declared inputs (P2b §3, A-N7). Absent, never [], when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
@@ -236,7 +231,6 @@ export function decodeWorkflowPlanV4(
   budget: { embeddedBytes: number } = { embeddedBytes: 0 },
 ): WorkflowPlanGraphV4 {
   const raw = record(input, "plan");
-  if (raw.irVersion !== WORKFLOW_IR_V5_VERSION) fail("irVersion must be 5");
   assertKeys(
     raw,
     ["irVersion", "title", "params", "paramSchemas", "budget", "execution", "steps", "sourceReadSet", "outputs"],
@@ -245,7 +239,6 @@ export function decodeWorkflowPlanV4(
   if (!Object.hasOwn(raw, "sourceReadSet")) fail("sourceReadSet is required");
   const sourceReadSet = decodeSourceReadSet(raw.sourceReadSet);
   validateWorkflowPlanStructure(raw, {
-    expectedVersion: WORKFLOW_IR_V5_VERSION,
     planExtraKeys: ["sourceReadSet", "outputs"],
     unitExtraKeys: ["frozenTarget", "environment"],
     gateExtraKeys: ["frozenJudge"],
@@ -339,7 +332,6 @@ function decodeUnitV4(
   const frozenTarget = decodeFrozenTarget(
     raw.frozenTarget,
     raw as unknown as IrUnitNodeCore,
-    environment,
     requiredSources,
     depth,
     budget,
@@ -399,14 +391,13 @@ function decodeGateV4(value: unknown, stepId: string, requiredSources: Execution
 function decodeFrozenTarget(
   value: unknown,
   unit: IrUnitNodeCore,
-  environment: readonly FrozenWorkflowEnvironmentBinding[],
   requiredSources: ExecutionSourceIdentity[],
   depth: number,
   budget: { embeddedBytes: number },
 ): FrozenWorkflowTarget {
   const target = record(value, `unit ${unit.id} frozenTarget`);
   if (target.kind === "command") return decodeCommandTarget(target, unit, requiredSources);
-  if (target.kind === "shell") return decodeShellTarget(target, unit, environment);
+  if (target.kind === "shell") return decodeShellTarget(target, unit);
   if (target.kind === "script") return decodeScriptTarget(target, unit, requiredSources);
   if (target.kind === "child-workflow") return decodeChildWorkflowTarget(target, unit, depth, budget);
   fail(`unit ${unit.id} frozenTarget has unsupported kind ${String(target.kind)}`);
@@ -463,18 +454,9 @@ function decodeChildWorkflowTarget(
   const taskRef = target.taskRef as string | undefined;
   const inputBindings = decodeInputBindings(target.inputBindings, `unit ${unit.id} child workflow target`);
   const contentHash = digest(target.contentHash, `unit ${unit.id} child workflow contentHash`);
-  const expectedContentHash = childWorkflowContentHash({ ref: target.ref, planHash, via, taskRef, inputBindings });
-  if (contentHash !== expectedContentHash) {
-    fail(`unit ${unit.id} child workflow contentHash does not match its frozen dispatch`);
-  }
   const childDepth = depth + 1;
   const frozenPlan = decodeWorkflowPlanV4(target.frozenPlan, childDepth, budget);
-  const embeddedPlanJson = canonicalJsonLocal(frozenPlan);
-  const actualPlanHash = sha256(embeddedPlanJson);
-  if (actualPlanHash !== planHash) {
-    fail(`unit ${unit.id} child workflow embedded plan does not match its frozen planHash`);
-  }
-  budget.embeddedBytes += utf8Bytes(embeddedPlanJson);
+  budget.embeddedBytes += utf8Bytes(canonicalJsonLocal(frozenPlan));
   return Object.freeze({
     kind: "child-workflow",
     ref: target.ref,
@@ -485,28 +467,6 @@ function decodeChildWorkflowTarget(
     ...(taskRef !== undefined ? { taskRef } : {}),
     ...(inputBindings ? { inputBindings } : {}),
   });
-}
-
-/** §3.5's exact `contentHash` formula. */
-function childWorkflowContentHash(fields: {
-  ref: string;
-  planHash: string;
-  via: "direct" | "task";
-  taskRef?: string;
-  inputBindings?: readonly TaskInputBinding[];
-}): string {
-  return createHash("sha256")
-    .update("akm.workflow.child-workflow\0v1\0")
-    .update(
-      canonicalJsonLocal({
-        ref: fields.ref,
-        planHash: fields.planHash,
-        via: fields.via,
-        taskRef: fields.taskRef ?? null,
-        inputBindings: fields.inputBindings ?? null,
-      }),
-    )
-    .digest("hex");
 }
 
 function decodeCommandTarget(
@@ -537,8 +497,6 @@ function decodeCommandTarget(
     fail(`unit ${unit.id} resolved request runtime.environment is live and cannot be persisted`);
   }
   const contentHash = digest(target.contentHash, `unit ${unit.id} command contentHash`);
-  const actualContentHash = sha256(request.command.content);
-  if (contentHash !== actualContentHash) fail(`unit ${unit.id} command contentHash does not match request content`);
   const runner = decodeFrozenRunnerSpec(target.runner);
   if (
     target.concurrency !== undefined &&
@@ -559,20 +517,11 @@ function decodeCommandTarget(
     fail(`unit ${unit.id} inline command target ref must be null`);
   }
   if (request.persona) requiredSources.push(request.persona.source);
+  // `cwdIdentity` is optional on a command target; `executable` (a host
+  // binary identity older releases froze) is accepted and ignored.
   const cwdIdentity = Object.hasOwn(target, "cwdIdentity")
     ? decodeDirectoryIdentity(target.cwdIdentity, unit.id)
     : undefined;
-  const executable = Object.hasOwn(target, "executable")
-    ? decodeFrozenExecutableIdentity(target.executable, `unit ${unit.id} executable`)
-    : undefined;
-  if (runner.kind === "agent" && (cwdIdentity !== undefined || executable !== undefined)) {
-    if (!cwdIdentity || !executable) fail(`unit ${unit.id} CLI command target requires cwdIdentity and executable`);
-    if (runner.profile.bin !== executable.requested && runner.profile.bin !== executable.absolutePath) {
-      fail(`unit ${unit.id} executable does not match the frozen runner bin`);
-    }
-  } else if (runner.kind !== "agent" && executable !== undefined) {
-    fail(`unit ${unit.id} non-CLI target cannot carry a host executable`);
-  }
   const gitCommitOid = decodeGitCommitOid(target.gitCommitOid, unit);
   const inputBindings = decodeInputBindings(target.inputBindings, `unit ${unit.id} command target`);
   // Force the shared request canonicalizer across every accepted wire request.
@@ -585,17 +534,12 @@ function decodeCommandTarget(
     runner,
     ...(target.concurrency !== undefined ? { concurrency: target.concurrency as number } : {}),
     ...(cwdIdentity ? { cwdIdentity } : {}),
-    ...(executable ? { executable } : {}),
     ...(gitCommitOid ? { gitCommitOid } : {}),
     ...(inputBindings ? { inputBindings } : {}),
   });
 }
 
-function decodeShellTarget(
-  target: Record<string, unknown>,
-  unit: IrUnitNodeCore,
-  environment: readonly FrozenWorkflowEnvironmentBinding[],
-): FrozenWorkflowShellTarget {
+function decodeShellTarget(target: Record<string, unknown>, unit: IrUnitNodeCore): FrozenWorkflowShellTarget {
   assertKeys(
     target,
     ["kind", "contentHash", "exec", "cwdIdentity", "executable", "gitCommitOid", "inputBindings"],
@@ -603,29 +547,14 @@ function decodeShellTarget(
   );
   const exec = decodeWorkflowExecSpec(target.exec, `unit ${unit.id} shell target exec`);
   const cwdIdentity = decodeDirectoryIdentity(target.cwdIdentity, unit.id);
-  const executable = Object.hasOwn(target, "executable")
-    ? decodeFrozenExecutableIdentity(target.executable, `unit ${unit.id} executable`)
-    : undefined;
-  if (executable && exec.command[0] !== executable.requested && exec.command[0] !== executable.absolutePath) {
-    fail(`unit ${unit.id} shell executable does not match the frozen command`);
-  }
   const gitCommitOid = decodeGitCommitOid(target.gitCommitOid, unit);
   const contentHash = digest(target.contentHash, `unit ${unit.id} shell contentHash`);
-  // inputBindings deliberately sits OUTSIDE this preimage (P2b A-N7): identity
-  // coverage for a task-composed unit comes from computeUnitInputHash's own
-  // frozenTarget field (step-work.ts), which hashes this whole target anyway.
-  const expected = createHash("sha256")
-    .update("akm.workflow.shell.v1\0")
-    .update(canonicalJsonLocal({ exec, environment, cwdIdentity }))
-    .digest("hex");
-  if (contentHash !== expected) fail(`unit ${unit.id} shell contentHash does not match its frozen dispatch`);
   const inputBindings = decodeInputBindings(target.inputBindings, `unit ${unit.id} shell target`);
   return Object.freeze({
     kind: "shell",
     contentHash,
     exec,
     cwdIdentity,
-    ...(executable ? { executable } : {}),
     ...(gitCommitOid ? { gitCommitOid } : {}),
     ...(inputBindings ? { inputBindings } : {}),
   });
@@ -669,12 +598,8 @@ function decodeScriptTarget(
     fail(`unit ${unit.id} script byteLength does not match frozen bytes`);
   }
   const contentHash = digest(target.contentHash, `unit ${unit.id} script contentHash`);
-  if (contentHash !== sha256(bytes)) fail(`unit ${unit.id} script contentHash does not match frozen bytes`);
   if (target.materialization !== "ephemeral-0700-delete") fail(`unit ${unit.id} script materialization is invalid`);
   const cwdIdentity = decodeDirectoryIdentity(target.cwdIdentity, unit.id);
-  const executable = Object.hasOwn(target, "executable")
-    ? decodeFrozenExecutableIdentity(target.executable, `unit ${unit.id} executable`)
-    : undefined;
   const gitCommitOid = decodeGitCommitOid(target.gitCommitOid, unit);
   const inputBindings = decodeInputBindings(target.inputBindings, `unit ${unit.id} script target`);
   requiredSources.push({ ref: target.ref, bundle: "", adapter: "", file: "", hash: contentHash });
@@ -689,7 +614,6 @@ function decodeScriptTarget(
     byteLength: target.byteLength as number,
     cwdIdentity,
     materialization: "ephemeral-0700-delete",
-    ...(executable ? { executable } : {}),
     ...(gitCommitOid ? { gitCommitOid } : {}),
     ...(inputBindings ? { inputBindings } : {}),
   });
@@ -983,10 +907,6 @@ function literalLooksSecret(name: string, value: string): boolean {
 function digest(value: unknown, label: string): string {
   if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) fail(`${label} must be a SHA-256 digest`);
   return value;
-}
-
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function canonicalJsonLocal(value: unknown): string {

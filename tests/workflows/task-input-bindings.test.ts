@@ -942,10 +942,8 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     // changes is what `from: steps.collect.output.a` RESOLVES to — exactly
     // the value the unit actually receives (prompt "## Task inputs" block /
     // AKM_TASK_INPUTS / childParams). Under hashVersion 6 these two hashes
-    // were IDENTICAL (R-R15, the documented resume caveat); the taskInputs
-    // preimage field makes them differ, so a resume whose upstream journaled
-    // output was altered raises replay divergence instead of silently
-    // reusing the stale row.
+    // were IDENTICAL (R-R15); the taskInputs preimage field makes them differ,
+    // so the recorded (informational) input hash tells the two asks apart.
     writeCentralTaskFixture();
     writeWorkflow("case-resolved", [
       "      - id: collect",

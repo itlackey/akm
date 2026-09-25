@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane A TESTS — cancellation and leases across the parent/child boundary
+ * P3b Lane A TESTS — cancellation across the parent/child boundary
  * (docs/plans/specs/p3b-child-executor.md §2.4 "Cancellation, provenance,
  * nesting" rows A-28…A-30; §3.5 "Cancellation and leases"). This file owns
  * ONLY these three rows (A-31…A-36 belong to
@@ -28,29 +28,27 @@
  * signal" (§3.3.1) exactly as a real engine invocation would thread it.
  *
  * A-30 drives the FULL top-level engine on both levels (`runWorkflowSteps`
- * on a real parent whose one step composes a real child), using the SAME
- * `heartbeatScheduler` test seam and `abandonWorkflowRun`-forces-lease-loss
- * technique `tests/integration/workflows/run-lease.test.ts` already
- * establishes for "a lease lost mid-dispatch aborts in-flight dispatch and
- * throws loudly" — proving the cascade reaches all the way into the nested
- * child drive, not just the parent's own units.
+ * on a real parent whose one step composes a real child) and aborts the
+ * parent's caller signal while the child's unit is in flight — proving the
+ * cascade reaches all the way into the nested child drive, not just the
+ * parent's own units.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import type { TaskInputBinding } from "../../../src/execution/input-contract";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { driveChildWorkflowUnit } from "../../../src/workflows/exec/child-workflow";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
+import { runWorkflowSteps, workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type {
   FrozenChildWorkflowTarget,
   FrozenWorkflowTarget,
   WorkflowPlanGraphV4,
 } from "../../../src/workflows/ir/schema-v4";
-import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
-import { abandonWorkflowRun } from "../../../src/workflows/runtime/runs";
+import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow } from "../../_helpers/workflow";
 
@@ -148,7 +146,6 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
       updatedAt: now,
       agentHarness: null,
       agentSessionId: null,
-      checkinArmedAt: null,
     });
     repo.insertSteps([
       {
@@ -221,7 +218,7 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
     expect(counter.count).toBe(1);
   });
 
-  test("A-29: after the abort, the child's own lease is released and the child run stays active (resumable)", async () => {
+  test("A-29: after the abort, the child's own run lock is released and the child run stays active (resumable)", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(twoStepChildPlan(), { ref: "workflows/two-step-child-b" });
     const controller = new AbortController();
@@ -258,19 +255,16 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
     // Left active/resumable (§3.4's table): the aborted drive never finalized
     // the interrupted step, so the run derives "active", never "failed".
     expect(childRow?.status).toBe("active");
-    // The child's OWN runWorkflowAttempt `finally` releases its OWN lease on
-    // every exit path — asserted here as the property the child seam relies
-    // on, not re-derived: `akm workflow status` on the child shows no live
-    // lease immediately after this call returns.
-    expect(childRow?.engine_lease_holder).toBeNull();
-    expect(childRow?.engine_lease_until).toBeNull();
+    // The child's OWN runWorkflowAttempt `finally` releases its OWN run lock
+    // on every exit path, so a resume can drive it immediately.
+    expect(fs.existsSync(workflowRunLockPath(childRunId))).toBe(false);
   });
 });
 
-// ── A-30: a lost PARENT lease aborts the nested child drive too ────────────
+// ── A-30: aborting the PARENT drive aborts the nested child drive too ──────
 
-describe("A-30 — the parent losing its own run lease mid-dispatch aborts the child drive too", () => {
-  test("A-30: the heartbeat's lost-lease abort cascades into the child; the parent rejects loudly (assertAlive); the child is left resumable", async () => {
+describe("A-30 — aborting the parent's drive mid-dispatch aborts the child drive too", () => {
+  test("A-30: the parent's abort cascades into the child; both stop, and the child is left resumable", async () => {
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const childPlan = twoStepChildPlan();
@@ -344,13 +338,6 @@ describe("A-30 — the parent losing its own run lease mid-dispatch aborts the c
       db.close();
     }
 
-    // The tests/integration/workflows/run-lease.test.ts technique: capture the
-    // scheduled tick, learn when dispatch has genuinely started via a promise,
-    // then force the run non-'active' (abandonWorkflowRun) so the NEXT tick's
-    // renewEngineLease fails — exactly the same mechanism that file's own
-    // "an abandoned in-flight run rejects stale renewal, aborts continuation"
-    // test uses, reused here to prove the abort reaches the NESTED child too.
-    let tick: (() => Promise<void>) | undefined;
     let markChildDispatchStarted: (() => void) | undefined;
     let finishChildDispatch: ((value: { ok: true; text: string }) => void) | undefined;
     const childDispatchStarted = new Promise<void>((resolve) => {
@@ -360,30 +347,24 @@ describe("A-30 — the parent losing its own run lease mid-dispatch aborts the c
       finishChildDispatch = resolve;
     });
 
+    const controller = new AbortController();
     const running = runWorkflowSteps({
       target: parentRunId,
-      heartbeatScheduler: (scheduled) => {
-        tick = scheduled;
-        return () => {};
-      },
+      signal: controller.signal,
       dispatcher: async () => {
         markChildDispatchStarted?.();
-        // Parked, exactly like run-lease.test.ts's own "abandoned in-flight
-        // run" test: this dispatch does not resolve until finishChildDispatch
-        // is called below, AFTER the heartbeat tick has already marked the
-        // lease lost — so assertAlive() (checked the instant this in-flight
-        // dispatch settles) is the thing that throws, not this promise itself.
+        // Parked until the parent's signal has been aborted below.
         return childDispatchResult;
       },
     });
 
     await childDispatchStarted;
-    await abandonWorkflowRun(parentRunId);
-    if (!tick) throw new Error("heartbeat was not scheduled");
-    await tick();
-    finishChildDispatch?.({ ok: true, text: "stale result" });
+    controller.abort();
+    finishChildDispatch?.({ ok: true, text: "late result" });
 
-    await expect(running).rejects.toThrow(/lost its run lease mid-dispatch/);
+    const result = await running;
+    expect(result.aborted).toBe(true);
+    expect(result.run.status).toBe("active");
 
     // The child was published (dispatch reached it) and is left resumable —
     // never marked failed by an interrupted drive.
@@ -391,6 +372,6 @@ describe("A-30 — the parent losing its own run lease mid-dispatch aborts the c
     expect(children).toHaveLength(1);
     const childRow = await withWorkflowRunsRepo((repo) => repo.getRunById(children[0]!.id));
     expect(childRow?.status).toBe("active");
-    expect(childRow?.engine_lease_holder).toBeNull();
+    expect(fs.existsSync(workflowRunLockPath(children[0]!.id))).toBe(false);
   });
 });

@@ -47,15 +47,6 @@
  * at DIVERSITY_FLOOR_FRACTION of the maximum observed score, so rare-but-correct
  * assets cannot be permanently outcompeted by frequently-retrieved ones.
  *
- * ## Proxy-adequacy tripwire (health) — two-tailed
- *
- * We monitor `corr(outcome_score, accepted_change_rate)` across all rows.
- * If it goes below −0.3, "popular assets" and "assets that need improvement"
- * are the same set — the proxy is inverted and surfaced in the health report.
- * If |corr| < 0.1 at n ≥ 500, the proxy is DEAD — outcome_score carries no
- * information about improvement need at all (the live 2026-07 state: +0.0104
- * at n=5,706 rendered as healthy under the old one-tailed check).
- *
  * Note: there is no `outcomeLoop.enabled` config flag. The WS-2 outcome-loop block
  * in `improve.ts` runs on every improve pass. Profile-level disabling of specific
  * processes (consolidate, reflect, etc.) is handled by those processes' own config
@@ -276,90 +267,4 @@ export function outcomeScoreToSalience(outcomeScore: number, maxScore: number): 
   const normalised = clipped / maxScore;
   // Apply diversity floor.
   return Math.max(DIVERSITY_FLOOR_FRACTION, normalised);
-}
-
-// ── Proxy-adequacy tripwire ───────────────────────────────────────────────────
-
-/**
- * Dead-proxy threshold: |corr| below this means outcome_score carries no
- * information about improvement need (pure noise).
- */
-export const PROXY_DEAD_CORR_THRESHOLD = 0.1;
-
-/**
- * Minimum sample size before the dead-proxy check fires. Below this, a
- * near-zero correlation is indistinguishable from small-sample noise.
- */
-export const PROXY_DEAD_MIN_N = 500;
-
-export interface ProxyAdequacyResult {
-  /**
-   * Pearson correlation between outcome_score and accepted_change_rate.
-   * NaN when fewer than 3 rows or zero variance.
-   */
-  correlation: number;
-  /** Number of rows used in the computation. */
-  n: number;
-  /**
-   * When `true`, the proxy is inverted (popular = high-need): a 0.10+ rich
-   * signal is no longer deferrable, and the health report should warn.
-   */
-  isInverted: boolean;
-  /**
-   * When `true`, the proxy is DEAD: |correlation| < PROXY_DEAD_CORR_THRESHOLD
-   * at n ≥ PROXY_DEAD_MIN_N — outcome_score is statistically unrelated to
-   * improvement outcomes and must not be treated as a health signal. The old
-   * one-tailed check (inverted only) let the proxy decay from informative to
-   * random without ever alarming.
-   */
-  isDead: boolean;
-}
-
-/**
- * Compute `corr(outcome_score, accepted_change_rate)` across all asset_outcome
- * rows. Returns `{correlation: NaN, n, isInverted: false}` when there is
- * insufficient data (fewer than 3 rows or zero variance in either variable).
- *
- * A NEGATIVE correlation means: assets with a HIGH outcome_score have a LOW
- * accepted_change_rate — i.e. the assets the proxy rates as "doing well"
- * (frequently retrieved) are precisely the ones that rarely yield an accepted
- * improvement. That inverts the proxy: high outcome_score ≠ "doing well", so the
- * coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich
- * signal is due. (`isInverted = correlation < -0.3`.)
- */
-export function computeProxyAdequacy(rows: AssetOutcomeRow[]): ProxyAdequacyResult {
-  const n = rows.length;
-  if (n < 3) return { correlation: Number.NaN, n, isInverted: false, isDead: false };
-
-  // accepted_change_rate per row.
-  const xs = rows.map((r) => r.outcome_score);
-  const ys = rows.map((r) => r.accepted_change_count / Math.max(1, r.retrieval_count));
-
-  const meanX = xs.reduce((a, b) => a + b, 0) / n;
-  const meanY = ys.reduce((a, b) => a + b, 0) / n;
-
-  let covXY = 0;
-  let varX = 0;
-  let varY = 0;
-  for (let i = 0; i < n; i++) {
-    const dx = xs[i]! - meanX;
-    const dy = ys[i]! - meanY;
-    covXY += dx * dy;
-    varX += dx * dx;
-    varY += dy * dy;
-  }
-  covXY /= n;
-  varX /= n;
-  varY /= n;
-
-  const denom = Math.sqrt(varX) * Math.sqrt(varY);
-  if (denom < 1e-12) return { correlation: Number.NaN, n, isInverted: false, isDead: false };
-
-  const correlation = covXY / denom;
-  // Inverted proxy: negative correlation between outcome and accepted_change_rate
-  // means high-outcome assets are also high-need — the opposite of "useful".
-  const isInverted = correlation < -0.3;
-  // Dead proxy: near-zero correlation at scale — the score is noise.
-  const isDead = n >= PROXY_DEAD_MIN_N && Math.abs(correlation) < PROXY_DEAD_CORR_THRESHOLD;
-  return { correlation, n, isInverted, isDead };
 }

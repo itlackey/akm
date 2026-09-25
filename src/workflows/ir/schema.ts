@@ -128,15 +128,18 @@ const MAX_LIST_ITEMS = 1024;
 const MAX_STRING_LENGTH = 1_000_000;
 
 export interface WorkflowPlanStructureDecodeOptions {
-  readonly expectedVersion: number;
   readonly planExtraKeys?: readonly string[];
   readonly unitExtraKeys?: readonly string[];
   readonly gateExtraKeys?: readonly string[];
 }
-/** Validate the current durable execution graph. */
-export function validateWorkflowPlanStructure(input: unknown, options: WorkflowPlanStructureDecodeOptions): void {
-  if (!isRecord(input) || input.irVersion !== options.expectedVersion) {
-    fail(`irVersion must be ${options.expectedVersion}`);
+/**
+ * Validate the durable execution graph's structure. `irVersion` is recorded
+ * provenance, not a gate: any positive integer is accepted, and a plan whose
+ * shape this decoder understands runs whichever release froze it.
+ */
+export function validateWorkflowPlanStructure(input: unknown, options: WorkflowPlanStructureDecodeOptions = {}): void {
+  if (!isRecord(input) || !Number.isSafeInteger(input.irVersion) || (input.irVersion as number) < 1) {
+    fail("irVersion must be a positive integer");
   }
   assertJson(input);
   const plan = input as unknown as WorkflowPlanStructure;

@@ -9,13 +9,13 @@
  * scheduler, no second journal writer. It is reached from the ONE dispatch
  * seam in `native-executor.ts`'s `dispatchJournaledAttempt` (§3.2).
  *
- * Ordered algorithm (§3.3): (1) re-verify the embedded child plan's integrity;
- * (2) validate the resolved `with:` bindings against the child's declared
- * `params:`; (3) derive the deterministic invocation key; (4) publish the
- * child run idempotently (`publishChildWorkflowRun`, P3a); (5) read the
- * published row's status; (6) drive it with the SAME engine the top-level path
- * uses (`runWorkflowSteps`) unless it is already terminal-for-this-invocation
- * (`blocked`/`failed`, rows A-22/A-23); (7) map the child's FINAL status
+ * Ordered algorithm (§3.3): (1) validate the resolved `with:` bindings
+ * against the child's declared `params:`; (2) derive the deterministic
+ * invocation key; (3) publish the child run idempotently
+ * (`publishChildWorkflowRun`, P3a); (4) read the published row's status;
+ * (5) drive it with the SAME engine the top-level path uses
+ * (`runWorkflowSteps`) unless it is already terminal-for-this-invocation
+ * (`blocked`/`failed`, rows A-22/A-23); (6) map the child's FINAL status
  * through §3.4's table onto this unit's outcome.
  *
  * ## Why `runWorkflowSteps` is reached through a LAZY dynamic import, not a
@@ -39,7 +39,7 @@
  * sanctioned lazy-loading escape hatch"), registered in
  * `DYNAMIC_IMPORT_BASELINE` (scripts/lint-import-cycles.ts) as a genuine
  * lazy-load: the vast majority of workflow runs compose no child at all, so
- * loading `run-workflow.ts`'s full engine (lease heartbeat, retry loop) is
+ * loading `run-workflow.ts`'s full engine (run lock, retry loop) is
  * deferred until a `child-workflow` unit is actually dispatched. Bun/Node
  * cache a module on first dynamic import, so this costs nothing on repeat
  * calls, and it resolves the SAME module namespace object a test's
@@ -58,10 +58,10 @@ import { randomUUID } from "node:crypto";
 import { TransientError } from "../../core/errors";
 import { type WorkflowRunRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { validateWorkflowParams } from "../ir/params";
-import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
+import { canonicalPlanJson } from "../ir/plan-hash";
 import type { FrozenChildWorkflowTarget } from "../ir/schema-v4";
-import { frozenStepRows } from "../runtime/plan-classifier";
 import { workflowRunExportedResult } from "../runtime/run-outputs";
+import { frozenStepRows } from "../runtime/run-plan";
 import { computeChildInvocationKey } from "./child-invocation";
 import type { UnitOutcome } from "./step-work";
 import type { UnitDispatcher, UnitDispatchRequest } from "./unit-dispatch";
@@ -95,7 +95,6 @@ export interface DriveChildWorkflowContext {
   readonly workflowRef?: string;
   readonly params?: Record<string, unknown>;
   readonly evidence?: Record<string, Record<string, unknown> | undefined>;
-  readonly leaseHolder?: string;
 }
 
 /**
@@ -144,9 +143,9 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** `acquireRunLease`'s exact refusal shape (run-workflow.ts) — matched by text, since this module cannot import that private helper. */
+/** Another live process holds the child run's lock file (run-workflow.ts). */
 function isLeaseBusyError(err: unknown): boolean {
-  return err instanceof TransientError && err.message.includes("is already being driven by engine");
+  return err instanceof TransientError && err.code === "RUN_LEASE_HELD";
 }
 
 /** §3.4's exact `child_workflow_failed` message. */
@@ -164,8 +163,8 @@ function childWorkflowFailedMessage(input: {
 }
 
 /**
- * Steps 1-3 (spec §3.3): integrity re-check, param validation, and the
- * deterministic invocation key. Returns either the key or an already-shaped
+ * Steps 1-2 (spec §3.3): param validation and the deterministic invocation
+ * key. Returns either the key or an already-shaped
  * `child_workflow_publish_failed` outcome.
  */
 function precheckAndDeriveInvocationKey(
@@ -173,24 +172,7 @@ function precheckAndDeriveInvocationKey(
 ): { ok: true; invocationKey: string } | { ok: false; outcome: UnitOutcome } {
   const { request, target, ctx, childParams, inputHash } = input;
 
-  // Step 1 — integrity re-check (row A-10).
-  const recomputedPlanHash = computePlanHash(target.frozenPlan);
-  if (recomputedPlanHash !== target.planHash) {
-    return {
-      ok: false,
-      outcome: {
-        unitId: request.unitId,
-        ok: false,
-        failureReason: "child_workflow_publish_failed",
-        error:
-          `Workflow step "${request.stepId}" composes child workflow ${target.ref}, but its embedded plan's ` +
-          `recomputed hash (${recomputedPlanHash}) does not match the frozen target's planHash (${target.planHash}). ` +
-          "The frozen plan has been corrupted or tampered with.",
-      },
-    };
-  }
-
-  // Step 2 — resolved params against the child's declared param schemas (row A-11).
+  // Step 1 — resolved params against the child's declared param schemas (row A-11).
   const paramErrors = validateWorkflowParams(target.frozenPlan, childParams);
   if (paramErrors.length > 0) {
     return {
@@ -206,7 +188,7 @@ function precheckAndDeriveInvocationKey(
     };
   }
 
-  // Step 3 — the deterministic invocation key (B-N8: parentUnitId is request.unitId, the parent unit's journalBaseId).
+  // Step 2 — the deterministic invocation key (B-N8: parentUnitId is request.unitId, the parent unit's journalBaseId).
   return {
     ok: true,
     invocationKey: computeChildInvocationKey({
@@ -218,7 +200,7 @@ function precheckAndDeriveInvocationKey(
 }
 
 /**
- * Step 4/5 (spec §3.3): publish the child run idempotently and return the
+ * Step 3/4 (spec §3.3): publish the child run idempotently and return the
  * pre-drive status read (the returned row IS that read). B-N16: no
  * transaction open on this connection — this seam is reached from
  * dispatchJournaledAttempt, outside resumeWorkflowRun's and
@@ -253,7 +235,6 @@ async function publishChildRun(
           updatedAt: now,
           agentHarness: parentRow.agent_harness,
           agentSessionId: parentRow.agent_session_id,
-          checkinArmedAt: now,
         },
         steps: frozenStepRows(target.frozenPlan).map((row) => ({ ...row, runId: childRunId })),
         planJson: canonicalPlanJson(target.frozenPlan),
@@ -275,9 +256,9 @@ async function publishChildRun(
 }
 
 /**
- * Step 6 (spec §3.3): drive the published child run with the real engine,
+ * Step 5 (spec §3.3): drive the published child run with the real engine,
  * unless it is already terminal-for-this-invocation (`blocked`/`failed`,
- * rows A-22/A-23 — never re-driven, no lease taken). Returns the FINAL row
+ * rows A-22/A-23 — never re-driven, no lock taken). Returns the FINAL row
  * (re-read after the drive) or an already-shaped `child_workflow_busy` /
  * `child_workflow_drive_failed` outcome.
  */
@@ -344,13 +325,10 @@ async function driveChildRun(
     // handling") was false: no handling exists at this seam
     // (dispatchJournaledAttempt awaits this call with no try of its own),
     // so an uncaught throw here escaped all the way into the scheduler and
-    // was silently swallowed (R1, above). Reachable causes include the
-    // child's own LeaseHeartbeat.assertAlive() firing mid-drive,
-    // requireExecutableWorkflowPlan rejecting a
-    // tampered child plan_json, and the child's status changing between
-    // this function's own step 5 read and the drive's internal
-    // getNextWorkflowStep re-read — none of which match
-    // isLeaseBusyError's text. child_workflow_drive_failed is a SIBLING of
+    // was silently swallowed (R1, above). Reachable causes include a
+    // repository error mid-drive and the child's status changing between
+    // this function's own step 4 read and the drive's internal
+    // getNextWorkflowStep re-read — neither of which is a held lock. child_workflow_drive_failed is a SIBLING of
     // child_workflow_publish_failed (row A-10…A-12): same shape, same
     // errorMessage(err) content, but naming the child run id and ref
     // (already known at this point, unlike the publish arm above) since
@@ -377,7 +355,7 @@ async function driveChildRun(
 
 /**
  * `driveChildWorkflowUnit` — the ONE child drive (spec §3.3). Every failure
- * before step 6 (publication) produces `child_workflow_publish_failed`.
+ * before step 5 (publication) produces `child_workflow_publish_failed`.
  */
 export async function driveChildWorkflowUnit(input: DriveChildWorkflowInput): Promise<UnitOutcome> {
   const { request, ctx } = input;

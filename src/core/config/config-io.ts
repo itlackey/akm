@@ -156,8 +156,7 @@ function isTimestampedConfigBackup(name: string): boolean {
  * Keep the `keep` most-recently-modified entries of `dir` that `select`
  * admits and remove the rest. Best-effort: an unreadable dir is a no-op, an
  * unreadable entry sorts oldest (pruned first), and a failed removal is
- * retried by the next call. Shared by the config backups above and the task
- * migration snapshots (#897).
+ * retried by the next call.
  */
 export function pruneToNewest(dir: string, keep: number, select: (entry: fs.Dirent) => boolean): void {
   let entries: fs.Dirent[];

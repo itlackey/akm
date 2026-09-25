@@ -23,13 +23,14 @@
 import path from "node:path";
 import { loadConfig } from "../../core/config/config";
 import type { TaskInputBinding } from "../../execution/input-contract";
-import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import { lowerResolvedExecutionRequest } from "../../integrations/agent/execution-lowering";
+import type { LoweringNotice } from "../../execution/resolved-request";
+import { buildExecutionFromWire } from "../../integrations/agent/execution";
 import { collectWorkflowWarnings } from "../../workflows/ir/compile";
 import { compileResolveFreezeWorkflowV4 } from "../../workflows/ir/freeze-v4";
 import { computePlanHash } from "../../workflows/ir/plan-hash";
 import type {
   FrozenChildWorkflowTarget,
+  FrozenWorkflowCommandTarget,
   FrozenWorkflowEnvironmentBinding,
   FrozenWorkflowTarget,
   IrStepPlanV4,
@@ -129,22 +130,22 @@ function projectStep(
  * from its own already-frozen `request` (the identical computation
  * `freeze/targets/command.ts`'s `commandResult` already performs at freeze
  * time and discards) — walked over the whole plan, including gate judges and
- * recursively into every embedded child plan. Read-only: `lowerResolvedExecutionRequest`
- * takes no config it could write through and dispatches nothing.
+ * recursively into every embedded child plan. Read-only: `buildExecutionFromWire`
+ * reads no config and dispatches nothing.
  */
 function collectLoweringNotices(plan: WorkflowPlanGraphV4, config: ReturnType<typeof loadConfig>): LoweringNotice[] {
   const notices: LoweringNotice[] = [];
-  const lower = (request: ResolvedExecutionRequestV1): void => {
-    notices.push(...lowerResolvedExecutionRequest(request, config).notices);
+  const lower = (target: FrozenWorkflowCommandTarget): void => {
+    notices.push(...buildExecutionFromWire(target).notices);
   };
   for (const step of plan.steps) {
     const unit = stepUnit(step);
     if (unit) {
-      if (unit.frozenTarget.kind === "command") lower(unit.frozenTarget.request);
+      if (unit.frozenTarget.kind === "command") lower(unit.frozenTarget);
       else if (unit.frozenTarget.kind === "child-workflow")
         notices.push(...collectLoweringNotices(unit.frozenTarget.frozenPlan, config));
     }
-    if (step.gate.frozenJudge) lower(step.gate.frozenJudge.request);
+    if (step.gate.frozenJudge) lower(step.gate.frozenJudge);
   }
   return notices;
 }

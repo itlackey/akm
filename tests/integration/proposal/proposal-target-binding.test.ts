@@ -3,12 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
-import {
-  createProposal,
-  isProposalSkipped,
-  listProposals,
-  resolveProposalId,
-} from "../../../src/commands/proposal/repository";
+import { createProposal, listProposals, resolveProposalId } from "../../../src/commands/proposal/repository";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -100,11 +95,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "lessons/bound-secondary",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     expect(created.ref).toBe("team//lessons/bound-secondary");
     expect(created.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
@@ -121,11 +114,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "lessons/terminal-accept",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     await akmProposalAccept({
       queue: "team",
@@ -154,10 +145,8 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "lessons/git-default-fallback",
       source: "propose",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     expect(created.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
 
     const accepted = await akmProposalAccept({ queue: "team", id: created.id, config: cfg });
@@ -177,7 +166,6 @@ describe("proposal queue target binding", () => {
       createProposal(storage.stashDir, {
         ref: "stash//lessons/implicit-bound",
         source: "propose",
-        force: true,
         payload: { content: VALID_LESSON },
       }),
     ).toThrow(/configured bundle|bundle "stash" is not configured/i);
@@ -192,11 +180,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "lessons/target-conflict",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     await expect(akmProposalAccept({ queue: "team", target: "other", id: created.id, config: cfg })).rejects.toThrow(
       /bound to target|resolves to/,
@@ -213,7 +199,6 @@ describe("proposal queue target binding", () => {
       createProposal(primary, {
         ref: "team//lessons/wrong-root",
         source: "propose",
-        force: true,
         target: { source: "primary", root: primary },
         payload: { content: VALID_LESSON },
       }),
@@ -227,18 +212,15 @@ describe("proposal queue target binding", () => {
     const team = createProposal(queue, {
       ref: "team//lessons/shared",
       source: "propose",
-      force: true,
       target: { source: "team", root: queue },
       payload: { content: VALID_LESSON },
     });
     const other = createProposal(queue, {
       ref: "other//lessons/shared",
       source: "propose",
-      force: true,
       target: { source: "other", root: queue },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(team) || isProposalSkipped(other)) throw new Error("unexpected skip");
 
     expect(listProposals(queue, { ref: "lessons/shared" }).map((proposal) => proposal.id)).toEqual([team.id, other.id]);
     expect(listProposals(queue, { ref: "team//lessons/shared" }).map((proposal) => proposal.id)).toEqual([team.id]);
@@ -256,7 +238,6 @@ describe("proposal queue target binding", () => {
       createProposal(primary, {
         ref: "physical//lessons/configured-owner",
         source: "propose",
-        force: true,
         payload: { content: VALID_LESSON },
       }),
     ).toThrow(/bundle "physical" is not configured/i);
@@ -264,10 +245,8 @@ describe("proposal queue target binding", () => {
     const unqualified = createProposal(primary, {
       ref: "lessons/configured-default",
       source: "propose",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(unqualified)) throw new Error("unexpected skip");
     expect(unqualified.ref).toBe("primary//lessons/configured-default");
     expect(unqualified.proposedTarget).toEqual({ source: "primary", root: path.resolve(primary) });
   });
@@ -289,10 +268,8 @@ describe("proposal queue target binding", () => {
     const created = createProposal(primary, {
       ref: "collision//lessons/no-redirect",
       source: "propose",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     expect(created.ref).toBe("collision//lessons/no-redirect");
     expect(created.proposedTarget).toEqual({ source: "collision", root: path.resolve(collisionTarget) });
   });
@@ -306,11 +283,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "team//lessons/stale-target",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Bound content.", "Newer user content."), "utf8");
 
     await expect(akmProposalAccept({ queue: "team", id: created.id, config: cfg })).rejects.toThrow(
@@ -329,11 +304,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "team//lessons/bookkeeping-target",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     expect(created.beforeHashNormalized).toBeDefined();
 
     // Simulate a same-run improve bookkeeping rewrite of the target (distill's
@@ -362,11 +335,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "team//lessons/real-change-target",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     // A real body edit, not just bookkeeping — the normalized-hash guard must
     // still refuse this.
@@ -389,11 +360,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "team//lessons/legacy-normalized",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     expect(created.beforeHashNormalized).toBeDefined();
 
     // Simulate a proposal minted before `beforeHashNormalized` existed: strip
@@ -431,11 +400,9 @@ describe("proposal queue target binding", () => {
     const created = createProposal(team, {
       ref: "team//lessons/created-later",
       source: "propose",
-      force: true,
       target: { source: "team", root: team },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Bound content.", "User-created content."), "utf8");
 
     await expect(akmProposalAccept({ queue: "team", id: created.id, config: cfg })).rejects.toThrow(

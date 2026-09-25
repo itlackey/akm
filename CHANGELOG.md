@@ -62,7 +62,7 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   lint are removed; nothing needs registering for a key to be tolerated.
 - **`akm migrate apply` has one config step.** `configFile`
   (`normalizeConfigFile`) reads config.json through the same pipeline every
-  load runs (config-version shim, legacy source shape, `extraParams` lift)
+  load runs (`configVersion` read, legacy source shape, `extraParams` lift)
   and writes the current shape back under a backup, dropping unknown keys.
   It replaces the per-key `configLegacySourceShape`, `configExtraParams`,
   `configRetiredKeys` and `configSchedulerSourceIds` steps, the
@@ -115,6 +115,137 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   it — with explicit `Gap:` notes where the code does not meet the contract
   yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
   persisted data" section now points at this doc instead of a deleted file.
+
+- **Scheduler writes hold one lock and apply row by row.** `akm task sync`,
+  `add`, `enable`, `disable` and `prune --yes` hold one `O_EXCL` lock,
+  `$STATE/locks/scheduler.lock` (`src/tasks/scheduler-lock.ts`), for the
+  whole read–plan–write; a second scheduler command exits 75
+  (`SCHEDULER_LOCK_HELD`), and a lock left by a dead process is reclaimed.
+  Under it, sync reads the installed rows once and diffs by native id: a
+  missing row is installed, a changed row rewritten, a row whose source is
+  gone or no longer enabled removed. A row that fails to install or remove,
+  or two sources claiming one native id, is reported in `failures` (exit 1)
+  while every other row applies; the per-row compare-and-swap expectations
+  and whole-set rollback are gone. A task whose source stops parsing keeps
+  its installed row instead of being unscheduled by a YAML typo.
+  (`src/tasks/scheduler-sync.ts`, `src/commands/tasks/tasks.ts`)
+- **`akm task add` is "write, enable, sync".** It validates the task and
+  refuses an id already scheduled from another bundle before writing
+  anything, then writes the source, adds the ref to `scheduler.enabled`
+  (unless `--disabled`) and syncs the bundle. When the row cannot be
+  installed, add fails naming the cause and the task stays written and
+  enabled for the next `akm task sync` to retry; it no longer restores the
+  prior source and rows byte-for-byte. `--force` with fewer schedules removes
+  the dropped schedules' rows through the same sync, and `--rebind` means
+  what it means for `task sync`.
+- **Improve records what it tried in one ledger** (`improve_ledger`,
+  `src/storage/repositories/improve-ledger-repository.ts`). One row per
+  stash, ref and stage holds the last attempt, its outcome and when the ref
+  is next eligible, from one cadence table:
+
+  | Outcome | Next eligible | Lifted early by newer feedback? |
+  | --- | --- | --- |
+  | rejected, quality_rejected | 14 d reflect, 30 d distill, 7 d other stages | no |
+  | expired | 1 d | no |
+  | proposed, review_needed, unchanged, judged_no_action | 7 d | yes |
+  | accepted, failed | immediately | — |
+
+  Every stage reads it before any LLM call. It replaces proposal
+  fingerprints, the per-stage cooldowns, the distill reject files and the
+  event-timestamp cursors, which disagreed with one another (quality
+  rejections never reached the fingerprints; consolidate re-judged promoted
+  memories). Distill and consolidate now key by their input refs, so each
+  such input may be attempted once more after upgrading.
+- **`akm proposal drain` has one rule.** A proposal the quality judge passed
+  (a `staged` gate decision whose content hash still matches) is accepted, an
+  empty diff is rejected, and everything else goes to the judgment tier
+  (`processes.triage.judgment`) or waits for review. Extract and consolidate
+  proposals, which the `personal-stash` policy auto-accepted on size alone,
+  carry no judge stamp, so they now go to the judgment tier — or wait for
+  review when none is configured — instead of being accepted. The policies
+  and their flags are retired (see Removed).
+- **State migration `028-improve-ledger` creates the ledger and drops six
+  tables.** It backfills the ledger from each ref's latest proposal and drops
+  `proposal_fingerprints`, `improve_gate_thresholds`, `proposal_fs_imports`,
+  `consolidation_judged`, `improve_cycle_metrics` and `canary_queries`.
+  Because it drops schema, the first open after upgrading copies the
+  database to `state.db.pre-028-improve-ledger.bak` before it runs.
+- **Upgrading no longer rebuilds or re-embeds the search index (index layout
+  24).** The first writable open applies a layout change in place — added
+  columns, and a one-time rebuild of the two full-text tables from the stored
+  entries (about 2–3 s for 24k entries); embeddings, utility scores, the
+  enrichment cache and the graph are never dropped, and only a corrupt file
+  is rebuilt from scratch (#865). Both FTS5 tables are contentless, so
+  indexed text is stored once (153 MB of a 980 MB index on a 23.9k-entry
+  stash; a SQLite older than 3.43 keeps the previous layout). Each vector
+  records its model (`embeddings.model`): a model change re-embeds only the
+  entries missing a vector for the configured model, per batch and
+  resumably, replacing the purge, the #955 re-embed canary and
+  `embedding_salvage`. `akm index --full` keeps unchanged entries' vectors,
+  and a one-file change in a large directory re-persists only that file.
+  Readers serve an older or newer layout as-is and say so once on stderr. An
+  akm older than this release refuses a layout-24 index and asks to be
+  upgraded.
+- **Workflow runs are never refused for their plan's version or hash.** A
+  stored plan that decodes runs whatever release froze it; one that does not
+  is marked abandoned and `akm workflow run <ref>` starts afresh; only a
+  plan a newer akm froze is refused, naming the upgrade
+  (`WORKFLOW_IR_VERSION_UNSUPPORTED` is gone). One driver per run is a lock
+  file, `<data dir>/workflow-run-locks/<run id>.lock`: a second `akm workflow
+  run` exits 75 (`RUN_LEASE_HELD`) naming the holder's pid, and a dead pid's
+  lock is reclaimed at once — the database run lease, its heartbeat and the
+  check-ins are gone. Resume reuses every completed unit whatever its
+  recorded input hash, and warns when the workflow file changed since the
+  freeze. Executable identity (realpath, inode and hash captured at freeze,
+  checked at dispatch) is gone, so upgrading `claude` mid-run no longer
+  strands a run.
+- **Every execution goes through three plain functions:** `resolveExecution`
+  → `buildExecution` → `runExecution` (`src/integrations/agent/execution.ts`,
+  `runner-dispatch.ts`), replacing a 12-hop pipeline across 14 modules — the
+  cascade planner, authorized-plan and provenance checks, lowerer registry
+  and dispatch lease. Two behaviour changes: credentials are read at each
+  dispatch, so a key rotated mid-run is used on the next call instead of a
+  snapshot taken at the start; and an explicit `engine: null` in a task,
+  workflow or command layer means "no preference here" and falls through to
+  `defaults.engine` instead of forcing the `opencode-sdk` fallback.
+- **`state.db` opens on one connection.** The open creates the parent
+  directory, opens the file, applies the pragmas, reads the migration ledger
+  and runs every pending migration in one `BEGIN IMMEDIATE`; the read-only
+  preflight connection, the `/proc/self/fd` alias and the refusal of an empty
+  "unversioned" file are gone. Before a migration that drops schema runs on
+  an existing database, it is copied to `state.db.pre-<id>.bak`. Since any
+  open applies pending migrations, `akm health`'s `state-db-migrations` check
+  now reports what its own open applied (`evidence.applied`,
+  `evidence.backupPath`) and fails only when a migration could not be
+  applied.
+- **`akm health` drops checks nothing acted on.** Removed: the
+  `task-log-backing` hard check, the `pool-saturation` advisory, the six
+  research advisories (`outcome-proxy-adequacy`, `outcome-proxy-dead`,
+  `salience-uniformity-collapse`, `enrichment-lane-minting`,
+  `improve-churn-ratio`, `collapse-churn-detector`) and the report's
+  coverage, degradation and minting rollups.
+- **`configVersion` is read, never gated on.** A missing field or `"0.9.0"`
+  loads silently; any other value is named once and read as `0.9.0`.
+  `UNSUPPORTED_CONFIG_VERSION` and `src/core/config/config-version-shim.ts`
+  are gone.
+- **`akm migrate` converts a task file in one step, whatever its version.**
+  One planner (`scripts/akm-migrate/migrate/task-files.ts`) takes a v2, v3 or
+  v4 file still carrying `schedule[].enabled` to v4 in one pass, with one
+  backup directory per run (`$DATA/backups/tasks/<ts>-<uuid>`); `akm migrate
+  status` reports one `taskFiles` section instead of
+  `taskV3Migration`/`taskV4Migration`. The per-generation steps, their
+  convergence checks and backup pruning, and the writer-relocation step are
+  gone.
+- **Registry requests use plain `fetch()`.** DNS pinning — a Node child
+  process per request that resolved each registry host, rejected private
+  addresses and pinned the connection — is removed: a registry URL is the
+  built-in one or one an operator configured. `src/registry/network.ts`
+  retries network failures, timeouts, 429 and 5xx with backoff, caps the
+  body, and reports every failure as a classified error, never exit 70:
+  `REGISTRY_NOT_FOUND` and `REGISTRY_RESPONSE_INVALID` exit 1,
+  `REGISTRY_UNREACHABLE` exits 75, `REGISTRY_URL_INVALID` exits 78. A static
+  index whose `version` is not 2 or 3 is read with one warning instead of
+  refused.
 
 ### Added
 
@@ -176,6 +307,23 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   spell the old prefix. `--dry-run` shows the full plan (row counts,
   scheduler refs, content files, and the installed native scheduler rows a
   real run's sync would replace) without writing anything.
+
+### Removed
+
+- **Drain policies.** `processes.triage.policy` and
+  `processes.triage.maxDiffLines` (config) and `akm proposal drain --policy`
+  / `--max-diff-lines` are retired with `drain-policies.ts`; the flags now
+  fail as unknown (exit 2) and the keys are kept as unknown config keys.
+- **Improve machinery with no remaining reader:** the collapse detector with
+  its canary set (`scripts/refresh-canary-set.ts`) and cycle metrics, replay
+  selection, the outcome-proxy events, and the never-called anti-collapse
+  merge guards. Retired config keys (kept as unknown keys):
+  `processes.consolidate.antiCollapse.{maxGeneration, lexicalDiversityCheck,
+  mergeInformationFloor, minSpecificityRetention}`,
+  `improve.salience.replayBudget` and `improve.collapseDetector`. Retired
+  events: `improve_salience_first_run`, `improve_replay_selected`,
+  `collapse_detector_alert`, `improve_cycle_metrics_purged`,
+  `outcome_proxy_dead` and `outcome_proxy_inverted`.
 
 ### Fixed
 
@@ -244,26 +392,11 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   bump, so an older binary keeps reading it. A writable open realigns again
   if an older binary sharing the generation has written rows since.
 - **One bad scheduler-sync item, or one bad migration step, no longer fails
-  the whole operation.** `akm task sync` (`finalizeSchedulerSyncPlan`,
-  `src/tasks/scheduler-sync.ts`, and its per-bundle loop in
-  `buildSchedulerSyncPlan`, `src/commands/tasks/tasks.ts`) used to throw and
-  abort the entire reconciliation for: an installed binding it could not
-  prove a native fingerprint for (update or removal, including one installed
-  row of a disabled bundle being removed), a desired task/workflow whose id
-  collided with a different bundle's real installed entry, or — in an
-  unscoped, multi-bundle sync — one bundle's own source set failing to read
-  at all. Each of these is now excluded and reported in the sync result's
-  `failures: [{path, ref?, reason}]` (already returned, now also documented
-  — see `docs/reference/cli.md`), while every other binding and bundle in
-  the same sync still reconciles normally; a scoped sync (`--bundle`) has
-  only one bundle to isolate, so its failure rethrows the original error
-  instead of being reported, and an unscoped sync where every bundle fails
-  resolves with those failures on an otherwise-empty plan instead of
-  throwing. The one precondition that genuinely can't be attributed to a
-  single bundle — an incoherent or ambiguous backend read (a duplicate
-  installed id, a duplicate normalized native artifact, or installed/native
-  fingerprints that disagree) — is validated once, backend-wide, before any
-  bundle's own reconciliation begins, and still hard-fails the whole sync.
+  the whole operation.** `akm task sync` used to throw and abort the entire
+  reconciliation over one binding it could not reconcile or one bundle whose
+  sources failed to read; that binding or bundle is now reported in the sync
+  result's `failures: [{path, ref?, reason}]` (documented in
+  `docs/reference/cli.md`) while every other one still syncs (see Changed).
   `akm-migrate`'s
   `runMigration` (`scripts/akm-migrate/run-migrate.ts`) now runs every step
   under its own catch too: a step's own throw (or, under `apply`, its
@@ -312,6 +445,21 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   validate` reports such a file `converts` (`sourceVersion` still `4`)
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
+- **Lock contention exits 75, like `state.db` contention.** Another process
+  holding `akm.lock`'s write sentinel (`LOCKFILE_CONTENDED`, was a config
+  error, exit 78) or the asset-mutation writer lease past its wait
+  (`ASSET_MUTATION_LEASE_HELD`, was an unclassified error, exit 70) is now a
+  retry-shortly `TransientError`, exit 75.
+- **`akm health`'s `state.db` repair steps no longer corrupt the rebuilt
+  file.** `state-db-integrity` used to suggest `.dump` into a new file with
+  no writer stop; it now says to back up `state.db`, `.recover` it into
+  `state.new.db`, confirm that passes `quick_check`, stop every akm process,
+  delete `state.db-wal` and `state.db-shm`, then swap the new file in — a
+  leftover WAL replays onto the new database and corrupts it.
+- **The package launcher (`dist/akm`) passes `--scheduler-context` through to
+  the CLI** instead of re-validating the descriptor with a stale copy of its
+  schema, which rejected every descriptor 0.9.17 writes.
+  (`scripts/node-runtime/akm`)
 
 ## [0.9.17-alpha.3] - 2026-09-24
 

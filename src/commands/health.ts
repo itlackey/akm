@@ -6,15 +6,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { ConfigError, UsageError } from "../core/errors";
+import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { readEvents } from "../core/events";
-import { openLogsDatabase } from "../core/logs-db";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
-import { listExistingTableNames, listPendingStateMigrations, openStateDatabase } from "../core/state-db";
+import {
+  listExistingTableNames,
+  listPendingStateMigrations,
+  openStateDatabaseWithReport,
+  withStateDb,
+} from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
 import { probeLlmEndpoint } from "../llm/client";
 import type { Database } from "../storage/database";
+import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
 import { countImproveRunsSince } from "../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
@@ -22,7 +27,6 @@ import { getAllEntries } from "../storage/repositories/index-entries-repository"
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { getStateDbFreelistInfo, runStateDbQuickCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
-import { collectImproveAdvisories } from "./health/advisories";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -31,29 +35,25 @@ import {
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
+import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
+import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
 import { engineLastUsedSince, readLastEngineUsage } from "./health/engine-usage";
 import {
   buildImproveSkipSummary,
   computeWallTimeStats,
+  computeWindowProposalCoverage,
   countAgentFailureReasons,
+  emptyImproveMetrics,
   isAgentTaskHistoryRow,
   roundRate,
-  summarizeImproveCompleted,
   summarizeImproveRuns,
   taskFailureDetail,
 } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
-import {
-  computeDegradationMetrics,
-  computeDenominatorFixedCoverage,
-  computeEnrichmentMintingRollup,
-  probeStateDbRoundTrip,
-} from "./health/metrics";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
-import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
 import { buildPerRunSummaries } from "./health/task-runs";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
@@ -70,7 +70,7 @@ import {
   type WindowSpec,
 } from "./health/types";
 import { collectVersionDriftAdvisory } from "./health/version-drift";
-import { buildWindowMetrics, computeDeltas, partitionLogBackedRows, resolveWindowCompare } from "./health/windows";
+import { buildWindowMetrics, computeDeltas, resolveWindowCompare } from "./health/windows";
 
 export interface AkmHealthOptions {
   since?: string;
@@ -93,11 +93,6 @@ export interface AkmHealthOptions {
    * to a foreign/just-deleted DB. Purely additive: omitted ⇒ identical to before.
    */
   stateDbPath?: string;
-  /**
-   * Explicit logs.db path override (#579). Defaults to `getLogsDbPath()`.
-   * Same test-isolation rationale as {@link stateDbPath}.
-   */
-  logsDbPath?: string;
   /** Stash dir for the `stash-git-exposure` advisory. Defaults to `resolveStashDir()`. */
   stashDir?: string;
   /**
@@ -157,6 +152,67 @@ function validateAkmHealthOptions(options: AkmHealthOptions): void {
 // ── akmHealth phase helpers (chunk-9 WI-9.5b; file-level decompose following
 // the function's natural gather/advise/check/assemble phases) ───────────────
 
+/** Event type appended + read back by the state.db round-trip probe. */
+const HEALTH_PROBE_EVENT = "health_probe";
+
+/** Synthetic sentinel ref (ref-grammar decision D-R3): a colon-free
+ * `<subsystem>/_<marker>` label. `health` has no asset stash-subdir, so
+ * `health/_probe` names the subsystem. */
+const HEALTH_PROBE_REF = "health/_probe";
+
+/**
+ * Verify state.db can accept a write and read it back — WITHOUT leaving any
+ * permanent trace (R-030). Earlier versions appended a `health_probe` event
+ * on every `akm health` invocation and never removed it: a read-only health
+ * check ran on a cron would grow state.db without bound (the only purge is
+ * `improve`'s retention pass, which a health-only user never runs). The probe
+ * row inserted here is deleted again inside the SAME connection once the
+ * round trip is confirmed, so the net effect on the `events` table is always
+ * zero rows — the round trip still genuinely exercises append + read against
+ * the real table, it just doesn't accumulate.
+ */
+export function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: number | null; error?: string } {
+  const started = Date.now();
+  try {
+    return withStateDb(
+      (db) => {
+        const ts = new Date().toISOString();
+        const insertedId = insertEvent(db, {
+          eventType: HEALTH_PROBE_EVENT,
+          ts,
+          ref: HEALTH_PROBE_REF,
+          metadata: { source: "akm health" },
+        });
+        const durationMs = Date.now() - started;
+        if (insertedId === undefined) {
+          return { ok: false, durationMs, error: "probe event insert did not return a row id" };
+        }
+        // The round-trip matches on the exact (id, eventType, ref) triple
+        // written above, then removes the row regardless of outcome — a
+        // failed round trip must not leak a row any more than a successful
+        // one should.
+        let roundTripOk = false;
+        try {
+          const row = db
+            .prepare("SELECT 1 AS present FROM events WHERE id = ? AND event_type = ? AND ref = ?")
+            .get(insertedId, HEALTH_PROBE_EVENT, HEALTH_PROBE_REF) as { present: number } | undefined;
+          roundTripOk = row !== undefined;
+        } finally {
+          db.prepare("DELETE FROM events WHERE id = ?").run(insertedId);
+        }
+        if (!roundTripOk) {
+          return { ok: false, durationMs, error: "probe event was not readable after append" };
+        }
+        return { ok: true, durationMs };
+      },
+      { path: stateDbPath },
+    );
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return { ok: false, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 interface TaskHistoryPhase {
   tableNames: string[];
   missingTables: string[];
@@ -164,11 +220,8 @@ interface TaskHistoryPhase {
   stateDbIntegrity: ReturnType<typeof runStateDbQuickCheck>;
   stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
   taskRowCount: number;
-  taskRowsWithLogsCount: number;
-  existingLogRowsCount: number;
   stuckActiveRuns: number;
   stuckActiveTasks: { taskId: string; ageMs: number }[];
-  logBackingRate: number;
   taskFailRate: number;
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
   agentFailureRate: number;
@@ -228,13 +281,7 @@ function computeWorstTaskFailRate(
 }
 
 /** Table presence, the state.db round-trip probe, and task_history-derived rates. */
-function gatherTaskHistoryPhase(
-  db: Database,
-  logsDb: Database | undefined,
-  since: string,
-  stateDbPath: string,
-  now: () => number,
-): TaskHistoryPhase {
+function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string, now: () => number): TaskHistoryPhase {
   const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
   const tableNames = tables.map((row) => row.name).sort();
   const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
@@ -248,7 +295,6 @@ function gatherTaskHistoryPhase(
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
   const taskRows = queryTaskHistory(db, { since });
-  const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
   const stuckActiveRows = activeRows.filter((row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS);
@@ -261,7 +307,6 @@ function gatherTaskHistoryPhase(
     const detail = taskFailureDetail(row);
     return typeof detail?.reason === "string" && detail.reason.length > 0;
   });
-  const logBackingRate = taskRowsWithLogs.length === 0 ? 1 : existingLogRows.length / taskRowsWithLogs.length;
   const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
   const agentFailureRate = agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length;
 
@@ -272,11 +317,8 @@ function gatherTaskHistoryPhase(
     stateDbIntegrity,
     stateDbFreelist,
     taskRowCount: taskRows.length,
-    taskRowsWithLogsCount: taskRowsWithLogs.length,
-    existingLogRowsCount: existingLogRows.length,
     stuckActiveRuns: stuckActiveRows.length,
     stuckActiveTasks: dedupeStuckActiveTasks(stuckActiveRows, now),
-    logBackingRate,
     taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
     agentFailureRate,
@@ -327,7 +369,7 @@ function gatherSessionExtractionLedgerPhase(
 /**
  * Assemble the window's improve-pipeline summary: invoked/completed/skipped
  * counts from events, the per-run result_json aggregate, wall-time stats, and
- * the WS-5 coverage/degradation/enrichment-minting rollups.
+ * the accepted-proposal coverage rollup.
  */
 function gatherImproveSummaryPhase(
   db: Database,
@@ -338,55 +380,39 @@ function gatherImproveSummaryPhase(
   const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
   const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
   const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events;
-  const eventsMetrics = summarizeImproveCompleted(improveCompletedEvents);
   const { metrics: improveSummary } = summarizeImproveRuns(db, since);
   improveSummary.invoked = improveInvoked;
-  improveSummary.completed = eventsMetrics.completed;
+  improveSummary.completed = improveCompletedEvents.length;
   const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
   improveSummary.skipped = skipSummary.skipped;
   improveSummary.skipReasons = skipSummary.skipReasons;
   const perRunSummaries = buildPerRunSummaries(db, since);
   const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
-  improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
+  improveSummary.wallTime = computeWallTimeStats(wallTimes);
 
-  // WS-5: Compute denominator-fixed coverage and per-run degradation metrics
-  // for the main health path (not just window-compare mode).
+  // Accepted-proposal coverage for the main health path (not just
+  // window-compare mode) — same computation windows.ts uses per-window.
   const until = new Date(now()).toISOString();
-  const totalAssetsMain = improveSummary.memorySummary.eligible + improveSummary.memorySummary.derived;
-  improveSummary.coverage = computeDenominatorFixedCoverage(
-    db,
-    totalAssetsMain,
-    improveSummary.memorySummary.eligible,
-    since,
-    until,
-  );
-  const degradationMain = computeDegradationMetrics(db, since, until);
-  if (degradationMain) {
-    improveSummary.degradation = degradationMain;
-  }
-  improveSummary.enrichmentMinting = computeEnrichmentMintingRollup(db, since, until);
+  improveSummary.coverage = computeWindowProposalCoverage(db, since, until);
 
   return { improveSummary, perRunSummaries };
 }
 
 /**
- * The best-effort advisory groups beyond the health-check registry: improve
- * advisories, the `stash-git-exposure` probe, the 08 surfaces group
- * (binary-config-skew, egress-endpoints), `type-directory-disagreement`
- * (#831), `data-dir-usage` (#896), and `plugin-version` (itlackey/akm#832).
- * Order matches emission order in the returned array. A probe/filesystem
- * failure in any try/catch must not abort the health report — each group
- * degrades to "no advisory" independently.
+ * The best-effort advisory groups beyond the health-check registry: the
+ * `stash-git-exposure` probe, the 08 surfaces group (binary-config-skew,
+ * egress-endpoints), `type-directory-disagreement` (#831), `data-dir-usage`
+ * (#896), and `plugin-version` (itlackey/akm#832). Order matches emission
+ * order in the returned array. A probe/filesystem failure in any try/catch
+ * must not abort the health report — each group degrades to "no advisory"
+ * independently.
  */
 function gatherAncillaryAdvisories(
   db: Database,
-  stateDbPath: string,
-  since: string,
-  improveSummary: ImproveHealthMetrics,
   options: AkmHealthOptions,
   egressConfigView: EgressConfigView | undefined,
 ): HealthCheckResult[] {
-  const advisories: HealthCheckResult[] = [...collectImproveAdvisories(db, stateDbPath, since, improveSummary)];
+  const advisories: HealthCheckResult[] = [];
 
   const indexStateMismatch = detectIndexStateGenerationMismatch(db);
   if (indexStateMismatch) advisories.push(indexStateMismatch);
@@ -413,12 +439,10 @@ function gatherAncillaryAdvisories(
   // egress-endpoints). Best-effort — a filesystem probe failure must not abort
   // the health report.
   try {
-    advisories.push(
-      ...collectSurfacesAdvisories({
-        configPath: getConfigPath(),
-        config: egressConfigView,
-      }),
-    );
+    const configSkew = collectConfigSkewAdvisory(getConfigPath());
+    if (configSkew) advisories.push(configSkew);
+    const egress = collectEgressAdvisory(egressConfigView);
+    if (egress) advisories.push(egress);
   } catch {
     // Non-fatal.
   }
@@ -562,7 +586,6 @@ function resolveWindowComparePhase(
   db: Database,
   stateDbPath: string,
   now: () => number,
-  logsDb: Database | undefined,
 ): WindowComparePhaseResult {
   let windowSpecs: WindowSpec[] | undefined;
   if (options.windowCompare) {
@@ -578,7 +601,7 @@ function resolveWindowComparePhase(
     windowResults = windowSpecs.map((spec) => {
       const winSince = parseHealthSince(spec.since);
       const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now, logsDb);
+      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now);
       return {
         name: spec.name,
         since: winSince,
@@ -605,19 +628,13 @@ function resolveWindowComparePhase(
 }
 
 /**
- * The health report for a state.db a managed open cannot reach at all: either
- * the file is not readable (#791), or — the same shape, a different cause —
- * it holds a pending migration the managed open refuses to apply without
- * deliberate consent (`akm upgrade` / `akm migrate apply` are the
- * only two callers allowed to admit a historical-destructive migration; see
- * `beforeMigrationLocked` in `src/core/state/migrations.ts`).
+ * The health report for a state.db the open cannot reach at all: either the
+ * file is not readable (#791), or — the same shape, a different cause — the
+ * open failed while applying a pending migration, which is left pending.
  *
  * `akm health` is what an operator (or a bundler's boot check) runs when
  * something else is misbehaving, so it must survive either problem long
- * enough to NAME it. Previously an unreadable file was already handled this
- * way, but a pending migration was not: the managed open's refusal escaped as
- * a thrown `ConfigError` (exit 78) and crashed the whole command before any
- * check — including this one — could report anything.
+ * enough to NAME it rather than exit 78 before any check could report.
  *
  * Reported as a single hard-channel `fail` check — the run genuinely could
  * not open state.db, so every check that depends on it is skipped rather than
@@ -637,13 +654,9 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
       agentFailureRate: 0,
       agentFailureReasonCounts: {},
       stuckActiveRuns: 0,
-      logBackingRate: 0,
-      // `null`, not 0: the round-trip probe did not run, which is not the same
-      // as it running instantly.
-      probeRoundTripMs: null,
       llmUsage: emptyLlmUsageAggregate(),
     },
-    improve: summarizeImproveCompleted([]),
+    improve: emptyImproveMetrics(),
   };
 }
 
@@ -669,28 +682,24 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   const hardChecks: HealthCheckResult[] = [];
   const advisories: HealthCheckResult[] = [];
 
-  // #791: an UNREADABLE state.db, or one with a pending migration the
-  // managed open refuses to apply, are the two failures `akm health` most
-  // needs to be able to report, because this is the command an operator (or a
-  // bundler's boot check) runs to find out why everything else is behaving
-  // oddly. Dying here meant health could not diagnose that state at all — not
-  // even the checks that never touch state.db got to run. Report it as a
-  // finding instead.
-  let db: ReturnType<typeof openStateDatabase>;
+  // #791: an UNREADABLE state.db, or one whose pending migration failed to
+  // apply, are the two failures `akm health` most needs to be able to report,
+  // because this is the command an operator (or a bundler's boot check) runs
+  // to find out why everything else is behaving oddly. Report it as a finding
+  // instead of dying before any check runs. The open itself applies every
+  // pending migration; `state-db-migrations` reports what it applied.
+  let opened: ReturnType<typeof openStateDatabaseWithReport>;
   try {
-    db = openStateDatabase(stateDbPath);
+    opened = openStateDatabaseWithReport(stateDbPath);
   } catch (error) {
     const { access, code } = classifyPathAccess(stateDbPath);
     if (access === "inaccessible") {
       return degradedStateDbReport(unreadableStateDbCheck(describeInaccessiblePath(stateDbPath, code)), options);
     }
-    // The managed open's refusal of a pending historical-destructive
-    // migration is a plain `Error`, not a distinguishable error class — so
-    // confirm the cause via the read-only preflight (`listPendingStateMigrations`,
-    // which never applies anything) rather than pattern-matching the message.
-    // A ledger too broken to enumerate at all throws here too; in that case
-    // fall through to the generic config-error report below, since it is a
-    // genuinely different, rarer failure this check cannot explain.
+    // A migration that failed to apply rolled back and is still pending:
+    // name it from a read-only listing (which never applies anything) rather
+    // than pattern-matching the error text. A ledger too broken to enumerate
+    // throws here too and falls through to the generic config error below.
     let pendingMigrationsCheck: HealthCheckResult | undefined;
     try {
       pendingMigrationsCheck = runPendingStateMigrationsCheck(stateDbPath, { listPendingStateMigrations });
@@ -705,16 +714,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       "INVALID_CONFIG_FILE",
     );
   }
-
-  // logs.db backs the log-backing metric (#579). Best-effort: when it cannot
-  // be opened, partitionLogBackedRows falls back to the on-disk file check, so
-  // health never hard-fails on a missing/locked logs database.
-  let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
-  try {
-    logsDb = openLogsDatabase(options.logsDbPath);
-  } catch {
-    logsDb = undefined;
-  }
+  const { db } = opened;
 
   try {
     // Network probes overlap the local database phases below; awaited where consumed.
@@ -730,14 +730,14 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       cliVersion: pkgVersion,
     });
     schedulerBinaryDriftPromise.catch(() => undefined);
-    const taskHistory = gatherTaskHistoryPhase(db, logsDb, since, stateDbPath, now);
+    const taskHistory = gatherTaskHistoryPhase(db, since, stateDbPath, now);
     const { tableNames, missingTables, probe } = taskHistory;
 
     const { egressConfigView, thinkingOffEngines } = gatherEgressConfigPhase();
 
     const { improveSummary } = gatherImproveSummaryPhase(db, stateDbPath, since, now);
 
-    advisories.push(...gatherAncillaryAdvisories(db, stateDbPath, since, improveSummary, options, egressConfigView));
+    advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
 
@@ -772,16 +772,13 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       probe,
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
+      stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
       taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
-      taskRowsWithLogsCount: taskHistory.taskRowsWithLogsCount,
-      existingLogRowsCount: taskHistory.existingLogRowsCount,
-      logBackingRate: taskHistory.logBackingRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
-      sessionExtraction: improveSummary.sessionExtraction,
       sessionExtractionLedger,
       autoAccept: improveSummary.autoAccept,
       engineProbes,
@@ -805,8 +802,6 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       agentFailureRate: roundRate(taskHistory.agentFailureRate),
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
-      logBackingRate: roundRate(taskHistory.logBackingRate),
-      probeRoundTripMs: probe.durationMs,
       llmUsage,
     };
 
@@ -817,7 +812,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
     // ── Window-compare mode (Phase 3) ─────────────────────────────────────
-    const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now, logsDb);
+    const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
 
     // ── Per-run mode (Phase 2) ────────────────────────────────────────────
     let runs: ImproveRunSummary[] | undefined;
@@ -840,13 +835,6 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     };
   } finally {
     db.close();
-    if (logsDb) {
-      try {
-        logsDb.close();
-      } catch {
-        // best-effort
-      }
-    }
   }
 }
 

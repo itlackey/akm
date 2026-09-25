@@ -220,7 +220,5 @@ export function jsonBytes(value: unknown): number {
 // `ir/schema.ts`). A large plan is not a wrong plan: composing several
 // substantial workflows together is a legitimate, deliberate authoring
 // choice, and SQLite has no practical row-size problem here (its own
-// ceiling is ~1 GB) — there was nothing left for either cap to protect that
-// `planHash`/`contentHash` verification does not already cover. Both caps
-// are removed; the hash/canonical-JSON integrity checks they sat next to
-// are unchanged.
+// ceiling is ~1 GB). Both caps are removed, as is the hash re-verification
+// they sat next to: `planHash`/`contentHash` are recorded provenance now.

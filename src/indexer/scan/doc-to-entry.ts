@@ -119,7 +119,6 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   assignString(entry, "cwd", dj.cwd);
   if (dj.wikiRole !== undefined) entry.wikiRole = dj.wikiRole as IndexDocument["wikiRole"];
   assignStringList(entry, "sources", dj.sources);
-  if (typeof dj.generation === "number") entry.generation = dj.generation;
   assignStringList(entry, "evidenceSources", dj.evidenceSources);
   // D2 (#730): OKF v0.2 provenance promoteProposal stamps onto AKM-native
   // writes, carried via DOCUMENT_JSON_CARRIED_FIELDS (akm-adapter.ts) —

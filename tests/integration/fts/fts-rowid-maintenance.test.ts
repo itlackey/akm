@@ -3,10 +3,11 @@
 // classification rule.
 //
 // Covers the FTS rowid maintenance contract: entries_fts.rowid = entry_id,
-// entry_fragments_fts.rowid = entry_id * 2^20 + fragment_ordinal, the
-// one-time in-place realignment of pre-existing rows, re-detecting drift left
-// by an older writer sharing the same generation, and that a targeted delete
-// removes exactly its own entry's rows.
+// entry_fragments_fts.rowid = entry_id * 2^20 + fragment_ordinal, constant
+// upsert cost as the tables grow, and that a targeted delete removes exactly
+// its own entry's rows. (The layout-23 → 24 rebuild that establishes the
+// contract on an older index is covered by
+// tests/integration/indexer/index-layout-migration.test.ts.)
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,8 +18,7 @@ import { type IndexDocument, setMarkdownFragmentContent } from "../../../src/ind
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { deleteEntriesByIds, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import type { DbSearchResult } from "../../../src/storage/repositories/index-entry-types";
+import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { deleteFtsEntries, searchFts } from "../../../src/storage/repositories/index-fts-repository";
 
 const FRAGMENT_ROWID_ORDINAL_SPAN = 2 ** 20;
@@ -55,18 +55,19 @@ describe("FTS rowid maintenance", () => {
     try {
       const entryId = putEntry(db, "contract", "contractmarker");
 
-      const parentRow = db.prepare("SELECT rowid FROM entries_fts WHERE entry_id = ?").get(entryId) as {
-        rowid: number;
-      };
-      expect(parentRow.rowid).toBe(entryId);
+      const parentRows = db.prepare("SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'name:contract'").all();
+      expect(parentRows).toEqual([{ rowid: entryId }]);
 
       const fragmentRows = db
-        .prepare("SELECT rowid, fragment_ordinal FROM entry_fragments_fts WHERE entry_id = ? ORDER BY fragment_ordinal")
-        .all(entryId) as Array<{ rowid: number; fragment_ordinal: number }>;
-      expect(fragmentRows.length).toBeGreaterThan(0);
-      for (const row of fragmentRows) {
-        expect(row.rowid).toBe(entryId * FRAGMENT_ROWID_ORDINAL_SPAN + row.fragment_ordinal);
-      }
+        .prepare(
+          "SELECT rowid FROM entry_fragments_fts WHERE entry_fragments_fts MATCH 'contractmarker' ORDER BY rowid",
+        )
+        .all() as Array<{ rowid: number }>;
+      expect(fragmentRows.map((row) => row.rowid)).toEqual(
+        splitMarkdownFragments(fragmentBody("contractmarker")).map(
+          (fragment) => entryId * FRAGMENT_ROWID_ORDINAL_SPAN + fragment.ordinal,
+        ),
+      );
     } finally {
       closeDatabase(db);
     }
@@ -109,136 +110,6 @@ describe("FTS rowid maintenance", () => {
     }
   });
 
-  test("re-detects rowid drift left by an older writer after realignment, keeping the re-upserted entry searchable", () => {
-    const dbPath = tempDbPath();
-    const idA = (() => {
-      const db = openIndexDatabase(dbPath);
-      try {
-        const id = putEntry(db, "old-writer-a", "oldwritermarker");
-        putEntry(db, "old-writer-b", "keepbmarker");
-        putEntry(db, "old-writer-c", "keepcmarker");
-
-        // Simulate an older binary sharing this generation (0.9.15/0.9.16,
-        // or a rollback) re-upserting entry a's metadata after the layout is
-        // already realigned: delete by entry_id, then insert without an
-        // explicit rowid, exactly as the pre-realignment replaceFtsEntry
-        // did. FTS5 appends at max(rowid)+1, so this lands outside entry a's
-        // own rowid and leaves the table's highest-rowid row mismatched.
-        db.prepare("DELETE FROM entries_fts WHERE entry_id = ?").run(id);
-        db.prepare(
-          "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)",
-        ).run(id, "old-writer-a", "", "", "", "ordinary parent projection");
-        return id;
-      } finally {
-        closeDatabase(db);
-      }
-    })();
-
-    const db = openIndexDatabase(dbPath);
-    try {
-      // The meta key was already stamped, but the highest-rowid row no
-      // longer matches its entry_id, so this writable open must realign
-      // again rather than trust the stamp alone.
-      const parentRow = db.prepare("SELECT rowid FROM entries_fts WHERE entry_id = ?").get(idA) as {
-        rowid: number;
-      };
-      expect(parentRow.rowid).toBe(idA);
-
-      putEntry(db, "old-writer-d", "newentrymarker");
-
-      // Before the drift re-check, the old writer's stray row collided with
-      // this next upsert's `DELETE FROM entries_fts WHERE rowid = ?`,
-      // silently deleting entry a's only FTS row. The fragment search below
-      // joins `entries`, not `entries_fts`, so only the row count pins the
-      // parent projection itself.
-      const parentRows = db.prepare("SELECT COUNT(*) AS n FROM entries_fts WHERE entry_id = ?").get(idA) as {
-        n: number;
-      };
-      expect(parentRows.n).toBe(1);
-      expect(searchFts(db, "oldwritermarker", 5).map((hit) => hit.itemRef)).toEqual([
-        "fixture//knowledge/old-writer-a",
-      ]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("realigns pre-existing FTS rows to the rowid contract without disturbing search results", () => {
-    const dbPath = tempDbPath();
-    const markerA = "legacyamarker";
-    const markerC = "legacycmarker";
-    let before: DbSearchResult[];
-    const ids = (() => {
-      const db = openIndexDatabase(dbPath);
-      try {
-        const idA = putEntry(db, "legacy-a", markerA);
-        const idB = putEntry(db, "legacy-b", "legacybmarker");
-        const idC = putEntry(db, "legacy-c", markerC);
-
-        // Remove the middle entry so the survivors' entry ids (idA, idC) are
-        // no longer contiguous, then simulate rows written by the
-        // pre-realignment code path: wiped and reinserted without an
-        // explicit rowid, so FTS5 auto-assigns compact rowids (1, 2, ...)
-        // that diverge from entry_id for whichever entry lands second. A
-        // single surviving entry would make rowid 1 coincidentally equal
-        // entry id 1 and pass without realignment; this gap does not.
-        deleteEntriesByIds(db, [idB]);
-        db.exec("DELETE FROM entries_fts");
-        db.exec("DELETE FROM entry_fragments_fts");
-        for (const [id, name, marker] of [
-          [idA, "legacy-a", markerA],
-          [idC, "legacy-c", markerC],
-        ] as const) {
-          db.prepare(
-            "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)",
-          ).run(id, name, "", "", "", "ordinary parent projection");
-          for (const fragment of splitMarkdownFragments(fragmentBody(marker))) {
-            db.prepare(
-              "INSERT INTO entry_fragments_fts (entry_id, fragment_id, fragment_ordinal, content) VALUES (?, ?, ?, ?)",
-            ).run(id, fragment.fragmentId, fragment.ordinal, fragment.text.toLowerCase());
-          }
-        }
-        db.prepare("DELETE FROM index_meta WHERE key = 'ftsRowidLayout'").run();
-
-        // Captured on this still-open handle, before the writable reopen
-        // that triggers realignment: searchFts only reads entry_id /
-        // fragment_ordinal columns, so it reflects the pre-realignment rows
-        // exactly, via the same helper used to assert the "after" results.
-        before = [...searchFts(db, markerA, 5), ...searchFts(db, markerC, 5)];
-        return { idA, idC };
-      } finally {
-        closeDatabase(db);
-      }
-    })();
-
-    const db = openIndexDatabase(dbPath);
-    try {
-      expect(db.prepare("SELECT value FROM index_meta WHERE key = 'ftsRowidLayout'").get()).toEqual({ value: "2" });
-
-      for (const id of [ids.idA, ids.idC]) {
-        const parentRow = db.prepare("SELECT rowid FROM entries_fts WHERE entry_id = ?").get(id) as {
-          rowid: number;
-        };
-        expect(parentRow.rowid).toBe(id);
-
-        const fragmentRows = db
-          .prepare(
-            "SELECT rowid, fragment_ordinal FROM entry_fragments_fts WHERE entry_id = ? ORDER BY fragment_ordinal",
-          )
-          .all(id) as Array<{ rowid: number; fragment_ordinal: number }>;
-        expect(fragmentRows.length).toBeGreaterThan(0);
-        for (const row of fragmentRows) {
-          expect(row.rowid).toBe(id * FRAGMENT_ROWID_ORDINAL_SPAN + row.fragment_ordinal);
-        }
-      }
-
-      const after = [...searchFts(db, markerA, 5), ...searchFts(db, markerC, 5)];
-      expect(after).toEqual(before);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
   test("deleteFtsEntries removes exactly the target entry's FTS and fragment rows and no other's", () => {
     const db = openIndexDatabase(tempDbPath());
     try {
@@ -248,8 +119,17 @@ describe("FTS rowid maintenance", () => {
 
       deleteFtsEntries(db, [idB]);
 
-      const countFor = (table: string, entryId: number): number =>
-        (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE entry_id = ?`).get(entryId) as { c: number }).c;
+      const countFor = (table: string, entryId: number): number => {
+        const [start, end] =
+          table === "entries_fts"
+            ? [entryId, entryId + 1]
+            : [entryId * FRAGMENT_ROWID_ORDINAL_SPAN, (entryId + 1) * FRAGMENT_ROWID_ORDINAL_SPAN];
+        return (
+          db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE rowid >= ? AND rowid < ?`).get(start, end) as {
+            c: number;
+          }
+        ).c;
+      };
 
       expect(countFor("entries_fts", idB)).toBe(0);
       expect(countFor("entry_fragments_fts", idB)).toBe(0);

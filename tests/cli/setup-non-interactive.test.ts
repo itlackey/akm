@@ -63,11 +63,12 @@ describe("akm setup without a TTY", () => {
 
 /**
  * `setup` is allowlisted in `shouldBypassConfigStartup` (src/cli.ts) so the
- * CLI's own startup config load never blocks it — but its FIRST action was
+ * CLI's own startup config load never blocks it — but its FIRST action is
  * still `assertSetupConfigPreflight()` re-reading and re-validating that same
- * config, dying with the generic "Unsupported configVersion" error the
- * normal startup path throws. Setup must fail with an actionable current-schema
- * message without interpreting or changing the obsolete file.
+ * config, dying with the same `INVALID_CONFIG_FILE` error the normal startup
+ * path throws for a config that fails schema validation. Setup must fail with
+ * an actionable current-schema message without interpreting or changing the
+ * obsolete file.
  */
 describe("akm setup against a config akm 0.9 cannot load", () => {
   let cleanup: Cleanup | undefined;
@@ -84,9 +85,9 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
     cleanup = undefined;
   });
 
-  test("--yes refuses a pre-0.9 config with a setup-specific, actionable hint", async () => {
+  test("--yes refuses a schema-invalid config with a setup-specific, actionable hint", async () => {
     const configPath = getConfigPath();
-    const original = '{"configVersion":"0.8.0","stashDir":"/home/user/old-stash"}\n';
+    const original = '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}\n';
     fs.writeFileSync(configPath, original);
 
     const { code, stderr } = await runCliCapture(["setup", "--yes"]);
@@ -94,7 +95,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
     expect(code).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("UNSUPPORTED_CONFIG_VERSION");
+    expect(parsed.code).toBe("INVALID_CONFIG_FILE");
     expect(parsed.error).toContain("did not load");
     expect(parsed.error).toContain("left untouched");
     expect(parsed.hint).toContain("current config schema");
@@ -117,7 +118,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
   test("every non-interactive entry point refuses before doing any work", async () => {
     const configPath = getConfigPath();
-    fs.writeFileSync(configPath, '{"configVersion":"0.8.0"}\n');
+    fs.writeFileSync(configPath, '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}\n');
 
     for (const args of [
       ["setup", "--yes"],
@@ -132,7 +133,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
   test("never creates a bundle directory or writes a config backup", async () => {
     const configPath = getConfigPath();
-    fs.writeFileSync(configPath, '{"configVersion":"0.8.0"}\n');
+    fs.writeFileSync(configPath, '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}\n');
     const stash = path.join(process.env.HOME as string, "akm");
 
     await runCliCapture(["setup", "--yes"]);

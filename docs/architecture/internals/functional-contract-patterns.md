@@ -211,38 +211,29 @@ The purpose of these patterns is to remove concrete duplication and switchboard 
 
 ---
 
-## 3.9 Resolved-Request Lowering and Runner Dispatch Contract
+## 3.9 Execution Pipeline Contract
 
-The 0.9.2 engine boundary has two deliberately separate levels:
+Every execution crosses the same plain functions:
 
-1. `prepareResolvedExecution()` / `prepareInlineExecution()` adapt rendered
-   work into the common cascade and produce an authorized, branded
-   `ResolvedExecutionRequestV1` with an exact model and inference object.
-2. `lowerResolvedExecutionRequest()` selects an engine-owned lowerer. Agent
-   implementations are derived structurally from `HARNESS_REGISTRY`; direct
-   LLM is the remaining registered lowerer. This registry records executable
-   implementations, not predicted model/provider capabilities.
-3. Each lowerer owns its transport projection and reports stable translated
-   and untranslated field paths. Untranslated selected fields produce
-   structured, secret-free notices and do not prevent optimistic dispatch.
-4. `lowerResolvedExecutionRequestWithRunner()` performs the same projection
-   from already-frozen symbolic runner material without reading live config,
-   aliases, environment variables, credentials, or transports.
-5. `dispatchLoweredExecutionRequest()` is the only authority that accepts a
-   registered lowered request. It delegates to `executeRunner()`, the
-   exhaustive (`assertNever`-checked) low-level switch over `RunnerSpec`
-   (`llm | agent | sdk`).
-6. `executeRunner()` materializes symbolic LLM or SDK-fallback credentials only
-   for the final call and redacts their values from the result. Agent and SDK
-   use the common profile runners; direct LLM supplies the bounded chat handler
-   created by the lowerer.
+1. `resolveExecution()` selects the engine (nearest layer, `defaults.engine`,
+   then the `opencode-sdk` fallback), merges the engine's defaults with the
+   caller's layers (nearest wins), expands a `models.json` alias once,
+   authorizes tools against `execution.allowedTools`, and returns the
+   `ResolvedExecutionRequestV1`, the engine's `RunnerSpec` with the request
+   applied, and per-field provenance. Credentials stay symbolic.
+2. `buildExecution()` hands the request to the harness's own builder (derived
+   from `HARNESS_REGISTRY`), or builds chat messages for a direct LLM. A field
+   the transport cannot carry becomes a secret-free notice; a tool policy it
+   cannot enforce, or a denied tool selection, is a pre-dispatch error.
+3. `buildExecutionFromWire()` does the same from a journaled
+   `{ request, runner }` without reading config, aliases, environment
+   variables, or credentials — workflow resume.
+4. `runExecution()` reads credentials for the call, runs the agent CLI, the
+   OpenCode SDK, or the chat transport (an exhaustive switch over
+   `llm | agent | sdk`), and redacts every secret the child could have seen.
 
-The lowerer boundary, rather than `RunnerSpec` alone, is the required seam for
-user/model work. A prompt-free interactive native-agent launch is the narrow
-exception because it carries no command, persona, model, tools, or other model
-payload to lower. Task-v3 and durable workflow-v4 adapters use this same seam;
-resume lowers already-frozen material without consulting live resolution
-inputs.
+A prompt-free interactive native-agent launch (`akm agent`) resolves its
+engine directly; it carries no request to build.
 
 Diagnostic provenance is field metadata (`field`, `layer`, `kind`, `via`), not
 resolved values or content. Lowering notices are secret-free records with a

@@ -5,9 +5,8 @@
 /**
  * Ambient, run-scoped state.db connection reuse.
  *
- * `openStateDatabase` is NOT cheap: every call opens
- * a throwaway read-only preflight handle to assert the migration ledger, then
- * opens the real handle and applies pragmas. Paying that per repository call
+ * `openStateDatabase` is not free: every call opens a handle, applies the
+ * pragmas and reads the migration ledger. Paying that per repository call
  * — twice per dispatched workflow unit (insert + finish), plus once per
  * `appendEvent` (two events per unit) — is the dominant cost of a wide `map`
  * fan-out.

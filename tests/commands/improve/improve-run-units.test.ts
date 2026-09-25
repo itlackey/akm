@@ -20,6 +20,8 @@ import {
   refilterProactiveLoopRefs,
 } from "../../../src/commands/improve/improve";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
+import { openStateDatabase } from "../../../src/core/state-db";
+import { recordImproveLedger } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeStashDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -79,30 +81,58 @@ describe("buildDryRunResult — the P3 envelope", () => {
   });
 });
 
-describe("refilterProactiveLoopRefs — post-lock cooldown re-filter", () => {
+describe("refilterProactiveLoopRefs — post-lock improve-ledger re-filter", () => {
   test("no proactive refs → the SAME array instance passes through", () => {
-    disposers.push(sandboxXdgDataHome(), makeStashDir());
+    const stash = makeStashDir();
+    disposers.push(sandboxXdgDataHome(), stash);
     const loopRefs: ImproveEligibleRef[] = [
       { ref: "memories/a", reason: "scope-type", eligibilitySource: "signal-delta" },
     ];
 
-    const out = refilterProactiveLoopRefs(loopRefs, {});
+    const out = refilterProactiveLoopRefs(loopRefs, {}, { stashDir: stash.dir });
 
     expect(out).toBe(loopRefs);
   });
 
-  test("proactive refs with no fresher proposals stay due (nothing dropped)", () => {
-    disposers.push(sandboxXdgDataHome(), makeStashDir());
+  test("proactive refs with no fresher attempts stay due (nothing dropped)", () => {
+    const stash = makeStashDir();
+    disposers.push(sandboxXdgDataHome(), stash);
     const loopRefs: ImproveEligibleRef[] = [
       { ref: "memories/a", reason: "scope-type", eligibilitySource: "signal-delta" },
       { ref: "memories/b", reason: "scope-type", eligibilitySource: "proactive" },
     ];
 
-    // Empty sandboxed event store → no proposal timestamps → the proactive
-    // ref is still due → the original loopRefs array passes through unchanged.
-    const out = refilterProactiveLoopRefs(loopRefs, {});
+    // Empty sandboxed ledger → no attempt timestamps → the proactive ref is
+    // still due → the original loopRefs array passes through unchanged.
+    const out = refilterProactiveLoopRefs(loopRefs, {}, { stashDir: stash.dir });
 
     expect(out).toBe(loopRefs);
     expect(out.map((r) => r.ref)).toEqual(["memories/a", "memories/b"]);
+  });
+
+  test("a proactive ref another run attempted since planning is dropped", () => {
+    const xdg = sandboxXdgDataHome();
+    const stash = makeStashDir();
+    disposers.push(xdg, stash);
+    const db = openStateDatabase();
+    try {
+      recordImproveLedger(db, {
+        stashDir: stash.dir,
+        ref: "memories/b",
+        source: "reflect",
+        outcome: "unchanged",
+        at: new Date().toISOString(),
+      });
+    } finally {
+      db.close();
+    }
+    const loopRefs: ImproveEligibleRef[] = [
+      { ref: "memories/a", reason: "scope-type", eligibilitySource: "signal-delta" },
+      { ref: "memories/b", reason: "scope-type", eligibilitySource: "proactive" },
+    ];
+
+    const out = refilterProactiveLoopRefs(loopRefs, {}, { stashDir: stash.dir });
+
+    expect(out.map((r) => r.ref)).toEqual(["memories/a"]);
   });
 });

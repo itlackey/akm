@@ -58,7 +58,7 @@
  *   - a real-shaped 0.8 config carrying the retired `stashDir`/`sources[]`/
  *     `installed[]` trio together (#863) — read via the in-memory bundles
  *     shim (`legacy-source-shape-shim.ts`, same pattern as the task-source
- *     v2/v3 and configVersion shims elsewhere in this file), with
+ *     v2/v3 shim elsewhere in this file), with
  *     `akm migrate apply` as the on-disk rewrite path rather than a
  *     precondition for reading.
  *   - downstream-consumer fixtures for OpenPalm (a real, if unofficial,
@@ -67,12 +67,11 @@
  *     `uses:`/`with:`, `timeout:`, optional `schedule:`) — static files
  *     proving akm doesn't tighten its schema in a way that breaks a real
  *     consumer.
- *   - a v22 derived index carrying a LIVE embedding (#955, `index-v22-with-
- *     embedding.sql`) — the v22->v23 generation rebuild
- *     (`rebuildIncompatibleIndexGeneration`, `index-schema.ts`) salvages the
- *     vector into `embedding_salvage` before dropping `embeddings`, and the
- *     next embedding pass (`generateEmbeddingsForDb`) hands it straight back
- *     to the re-walked entry with zero provider calls.
+ *   - a v22 derived index carrying a LIVE embedding (`index-v22-with-
+ *     embedding.sql`) — the writable opener (`ensureSchema`,
+ *     `index-schema.ts`) migrates it in place, keeping the entry and its
+ *     vector (labelled with the model it was generated under), so the next
+ *     embedding pass (`generateEmbeddingsForDb`) makes zero provider calls.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates the `--scheduler-context` marker
@@ -88,13 +87,12 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectMigrationPlan } from "../../scripts/akm-migrate/task-migrate";
+import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
-import { createProposal as createProposalImpl, isProposalSkipped } from "../../src/commands/proposal/repository";
+import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
 import {
   loadConfig,
-  loadUserConfig,
   normalizeConfigFile,
   parseAndValidateConfigText,
   resetConfigCache,
@@ -106,6 +104,7 @@ import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embedding
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
+import { searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
@@ -149,7 +148,7 @@ function migrateLegacyTask(filePath: string, yaml: string) {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("v22 parent-only index is rebuilt as v23 fragment-capable derived state", () => {
+  test("v22 parent-only index is migrated in place: its entries stay searchable and fragment tables are added", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -162,9 +161,8 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         expect(
           upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get(),
         ).toBeDefined();
-        // index.db is regenerable: no v22 parent row survives to be queried
-        // under a mixed schema; the following index walk re-populates both.
-        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 0 });
+        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 1 });
+        expect(searchFts(upgraded, "evidence", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/v22-note"]);
       } finally {
         closeDatabase(upgraded);
       }
@@ -173,7 +171,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     }
   });
 
-  test("#955: a v22 embedding survives the v23 generation bump via salvage and is reused with zero provider calls", async () => {
+  test("a v22 embedding survives the upgrade in place, labelled with its model, with zero provider calls", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-embedding-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -181,53 +179,25 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       legacy.exec(readFixture("index-v22-with-embedding.sql"));
       legacy.close();
 
-      // Opening under the current binary rebuilds entries/embeddings/FTS
-      // (index.db is regenerable) but the embedding_salvage table is exempt
-      // from the drop list — the vector salvaged just before `embeddings`
-      // was dropped survives the rebuild.
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 1 });
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 1 });
+        expect(upgraded.prepare("SELECT model FROM embeddings").all()).toEqual([{ model: "local:test-model" }]);
 
-        // The next index run re-walks the stash and re-inserts the SAME
-        // (unchanged) content — same search_text, new id.
-        upgraded
-          .prepare(
-            `INSERT INTO entries
-               (item_ref, bundle_id, component_id, concept_id, adapter_id, type,
-                file_path, content_hash, document_json, search_text, derived_from)
-             VALUES (?, 'stash', 'stash', 'knowledge/v22-embedded', 'akm', 'knowledge',
-                     '/fixture/v22-embedded.md', NULL, ?, ?, NULL)`,
-          )
-          .run(
-            "stash//knowledge/v22-embedded",
-            JSON.stringify({ name: "v22-embedded", type: "knowledge" }),
-            "v22-embedded prior release parent row with an embedding whole body evidence",
-          );
-
-        // A throwing embedder proves the vector came back from salvage, not
-        // a provider call — `rebuildIncompatibleIndexGeneration` clears
-        // `embeddingFingerprint` along with the rest of `index_meta`, so this
-        // relies only on the fingerprint the config below derives matching
-        // what the fixture salvaged under ("local:test-model").
         overrideSeam(_setEmbedderForTests, {
           embedBatch: async () => {
-            throw new Error("the provider must never be called — the vector should come back from salvage");
+            throw new Error("the provider must never be called — the stored vector is still current");
           },
         });
-        const messages: string[] = [];
         const result = await generateEmbeddingsForDb(
           upgraded,
           { semanticSearchMode: "auto", embedding: { localModel: "test-model" } },
-          (event) => messages.push(event.message),
+          () => {},
         );
 
         expect(result.success).toBe(true);
-        expect(messages.some((m) => m.includes("Reused 1 embedding"))).toBe(true);
         expect(getEmbeddingCount(upgraded)).toBe(1);
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 0 });
         const row = upgraded.prepare("SELECT embedding FROM embeddings LIMIT 1").get() as
           | { embedding: Buffer }
           | undefined;
@@ -359,7 +329,6 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           {
             ref: "lessons/corpus-healthy",
             source: "reflect",
-            force: true,
             payload: {
               content:
                 "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg over grep.\n",
@@ -368,7 +337,6 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           },
           undefined,
         );
-        if (isProposalSkipped(healthy)) throw new Error("unexpected skip for the healthy fixture");
 
         // Insert real-shaped legacy rows directly (createProposal always
         // mints the full current envelope — it cannot produce these shapes;
@@ -607,7 +575,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
       },
     });
 
-    expect(() => inspectMigrationPlan()).toThrow(/openpalm.*stash.*same physical content root/i);
+    expect(() => inspectTaskFilesMigration()).toThrow(/openpalm.*stash.*same physical content root/i);
   });
 });
 
@@ -835,43 +803,6 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
   });
 });
 
-// ── configVersion (#863) ─────────────────────────────────────────────────
-//
-// SYNTHETIC entry, appended as its own top-level block per the merge note in
-// #863: `"0.9.0"` is the only `configVersion` akm has ever shipped, so there
-// is no REAL prior-release shape to add here yet (unlike every fixture
-// above). `config-0.0.1.json` stands in for one to prove out the
-// `configVersion` read-shim mechanism (`src/core/config/config-version-shim.ts`)
-// BEFORE a real bump ever needs it — see that file's module doc and
-// `tests/fixtures/previous-release-corpus/README.md`. Replace this fixture
-// with a real one, and this comment, the day a real `configVersion` bump ships.
-describe("previous-release corpus — configVersion (#863, synthetic placeholder)", () => {
-  beforeEach(() => resetConfigCache());
-  afterEach(() => resetConfigCache());
-
-  test("a synthetic pre-0.9.0 config.json (root-level defaultEngine) reads via `loadUserConfig()` without throwing", () => {
-    const fixture = readFixture("config-0.0.1.json");
-    const configPath = getConfigPath();
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, fixture);
-
-    setQuiet(false);
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      let config: ReturnType<typeof loadUserConfig> | undefined;
-      expect(() => {
-        config = loadUserConfig();
-      }).not.toThrow();
-      expect(config?.configVersion).toBe("0.9.0");
-      expect(config?.defaults?.llmEngine).toBe("fast");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      warnSpy.mockRestore();
-      resetQuiet();
-    }
-  });
-});
-
 // ── pre-`--scheduler-context` crontab row (akm < 0.9.2, #881) ──────────────
 //
 // The REAL shape a pre-0.9.2 install wrote to the user's crontab: the row is
@@ -941,8 +872,8 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
         envPath: false,
       });
 
-      const inspected = await backend.inspectBindings?.({});
-      expect(inspected?.installed.map((entry) => entry.id)).toEqual(["ping"]);
+      const inspected = await backend.list();
+      expect(inspected.map((entry) => entry.id)).toEqual(["ping"]);
 
       const preview = await akmTasksSyncPlan({ backend });
       expect(preview).toMatchObject({

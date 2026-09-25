@@ -117,34 +117,11 @@ export type EventType =
    */
   | "improve_salience_rank_change"
   /**
-   * WS-1 first-run marker. Emitted on the very first improve run when the
-   * asset_salience table is empty — no pre-existing baseline exists to compare
-   * against (the old combinedEligibilityScore ordering was not captured in state.db).
-   * Metadata carries `{candidateCount, note}`.
-   */
-  | "improve_salience_first_run"
-  /**
-   * #610 — bounded replay budget selection. Emitted once per improve run when a
-   * replay budget is configured. Metadata carries `{count, budget,
-   * convergedSkipped, candidatePool}` (aggregated, never per-ref).
-   */
-  | "improve_replay_selected"
-  /**
    * #626 — emitted once per extract run when the pre-LLM triage gate is enabled
    * and evaluated at least one session. Counts-only metadata: `{evaluated,
    * passed, triagedOut, sourceRun}` (aggregated, never per-session).
    */
   | "extract_triaged"
-  /**
-   * R5 — emitted (rarely) by the collapse/churn detector when a cycle trips an
-   * alert rule. Metadata carries `{kind, detail, metrics, canarySetId, runId}`
-   * where `kind` ∈ collapse-recall | collapse-entropy | collapse-shrink |
-   * churn | merge-floor. Cycle history itself lives in `improve_cycle_metrics`
-   * (365-day retention), not the events log.
-   */
-  | "collapse_detector_alert"
-  /** R5 — emitted by the maintenance purge when improve_cycle_metrics rows past retention are deleted. Metadata: `{purgedCount, retentionDays}`. */
-  | "improve_cycle_metrics_purged"
   /**
    * R0 — emitted by `vacuumStateDbIfReclaimable`
    * (src/storage/state-db-integrity.ts) after a `VACUUM` triggered by a

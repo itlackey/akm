@@ -53,16 +53,13 @@ import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import {
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-} from "../../integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, isJsonSchemaKnownUnsupported } from "../../llm/client";
-import { callStructured, preflightStructuredLlmRunner } from "../../llm/structured-call";
+import { callStructured } from "../../llm/structured-call";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import {
@@ -73,7 +70,7 @@ import {
   upsertExtractedSession,
 } from "../../storage/repositories/extract-sessions-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
-import { isProposalSkipped, type ProposalsContext } from "../proposal/repository";
+import type { ProposalsContext } from "../proposal/repository";
 import { resolveImproveLlmExecution } from "./execution";
 import {
   buildExtractPrompt,
@@ -83,6 +80,7 @@ import {
   parseExtractPayload,
 } from "./extract-prompt";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot } from "./ledger";
 import { emitProposal } from "./proposal-envelope";
 import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
 import {
@@ -306,10 +304,6 @@ export interface ResolvedExtractPlan {
 }
 
 type ExtractLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
-type ExtractSessionSummaryGenerator = (
-  data: SessionData,
-  lease?: LoweredExecutionDispatchLease,
-) => ReturnType<SessionSummaryGenerator>;
 
 function cloneAndFreeze<T>(value: T): Readonly<T> {
   const clone = structuredClone(value);
@@ -784,7 +778,6 @@ interface ExtractSessionRunCtx {
   stashDir: string;
   config: AkmConfig;
   llmRunner: ExtractLlmRunner;
-  lease: LoweredExecutionDispatchLease | undefined;
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
   getNotices: () => readonly Readonly<LoweringNotice>[];
   chat: AkmExtractOptions["chat"];
@@ -797,7 +790,7 @@ interface ExtractSessionRunCtx {
   sessionIndexing: {
     enabled: boolean;
     minDurationMinutes: number;
-    generate: ExtractSessionSummaryGenerator;
+    generate: SessionSummaryGenerator;
   };
   signal: AbortSignal | undefined;
   /**
@@ -844,14 +837,13 @@ const EXTRACT_LLM_UNAVAILABLE = Symbol("extract-llm-unavailable");
 async function runSessionExtractionLlmCall(args: {
   config: AkmConfig;
   llmRunner: ExtractLlmRunner;
-  lease: LoweredExecutionDispatchLease;
   chat: AkmExtractOptions["chat"];
   prompt: string;
   timeoutMs: number | null;
   signal: AbortSignal | undefined;
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }): Promise<SessionExtractionLlmCallResult> {
-  const { config, llmRunner, lease, chat, prompt, timeoutMs, signal, onNotices } = args;
+  const { config, llmRunner, chat, prompt, timeoutMs, signal, onNotices } = args;
   try {
     const result = await runStructured<ExtractPayload>({
       dispatch: async (feedback) => {
@@ -860,7 +852,6 @@ async function runSessionExtractionLlmCall(args: {
           feature: "session_extraction",
           akmConfig: config,
           runner: llmRunner,
-          lease,
           messages: [{ role: "user", content }],
           request: {
             timeoutMs,
@@ -982,14 +973,12 @@ async function maybeWriteSessionAsset(
   runCtx: ExtractSessionRunCtx,
   session: ExtractSessionInput,
 ): Promise<{ sessionAssetRef?: string; sessionLogPath?: string; warning?: string }> {
-  const { stashDir, lease, sessionIndexing, dryRun } = runCtx;
+  const { stashDir, sessionIndexing, dryRun } = runCtx;
   const { data } = session.gate;
   if (!sessionIndexing.enabled || dryRun) return {};
   if (!sessionMeetsDurationGate(data, sessionIndexing.minDurationMinutes)) return {};
   try {
-    const result = await writeSessionAsset(data, stashDir, (summaryData) =>
-      sessionIndexing.generate(summaryData, lease),
-    );
+    const result = await writeSessionAsset(data, stashDir, (summaryData) => sessionIndexing.generate(summaryData));
     if (result.written) {
       // Write-path indexing (itself fail-open): standalone `akm extract`
       // (session-end hook) has no post-loop reindex to pick this file up.
@@ -1015,7 +1004,6 @@ async function processSession(
     stashDir,
     config,
     llmRunner,
-    lease,
     onNotices,
     getNotices,
     chat,
@@ -1030,7 +1018,6 @@ async function processSession(
   const { sessionRef, gate } = session;
   const warnings: string[] = [];
   const { data, filtered, contentHash } = gate;
-  if (!lease) throw new TypeError("extract model work requires an operation dispatch lease");
 
   const prompt = buildExtractPrompt({
     data,
@@ -1042,7 +1029,6 @@ async function processSession(
   const extraction = await runSessionExtractionLlmCall({
     config,
     llmRunner,
-    lease,
     chat,
     prompt,
     timeoutMs,
@@ -1114,11 +1100,20 @@ async function processSession(
     };
   }
 
-  // §23.6 fingerprint model-id term: the profile resolved for this session's
-  // LLM call (best-effort — an unconfigured profile leaves the term empty).
-  const extractModelId = llmRunner.connection.model;
+  // A candidate the improve ledger already holds a live window for (proposed
+  // and pending, or recently rejected) is not queued again.
+  const ledgerAccess = { proposalsCtx: ctx, eventsCtx, ...(dryRun ? { readOnly: true } : {}) };
+  const ledger = loadLedgerSnapshot(ledgerAccess, stashDir, ["extract"]);
+  const nowIso = new Date().toISOString();
   for (const candidate of payload.candidates) {
     const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
+    const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
+    if (isLedgerBlocked(ledgerRow, nowIso)) {
+      warnings.push(
+        `candidate ${candidate.type}:${candidate.name} skipped: ${ledgerRow?.outcome} until ${ledgerRow?.nextEligibleAt}`,
+      );
+      continue;
+    }
     if (dryRun) {
       proposalIds.push(`dry-run:${built.ref}`);
       continue;
@@ -1131,9 +1126,7 @@ async function processSession(
           ref,
           source: "extract",
           sourceRun,
-          // §23.6 fingerprint model-id term (WI-6.4). The LLM already ran for
-          // this session, so the profile is resolvable; guard anyway.
-          ...(extractModelId ? { modelId: extractModelId } : {}),
+          attemptedRefs: [ref],
           payload: {
             content,
             frontmatter: {
@@ -1146,11 +1139,7 @@ async function processSession(
           },
         },
       );
-      if (isProposalSkipped(result)) {
-        warnings.push(`candidate ${candidate.type}:${candidate.name} skipped: ${result.reason}: ${result.message}`);
-      } else {
-        proposalIds.push(result.id);
-      }
+      proposalIds.push(result.id);
     } catch (err) {
       warnings.push(
         `candidate ${candidate.type}:${candidate.name} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1207,7 +1196,6 @@ interface ExtractSessionLoopArgs {
   stashDir: string;
   config: AkmConfig;
   llmRunner: ExtractLlmRunner;
-  lease: LoweredExecutionDispatchLease | undefined;
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
   getNotices: () => readonly Readonly<LoweringNotice>[];
   chat: AkmExtractOptions["chat"];
@@ -1216,7 +1204,7 @@ interface ExtractSessionLoopArgs {
   maxTotalChars: number | undefined;
   minContentChars: number;
   triage: { enabled: boolean; minScore: number };
-  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: ExtractSessionSummaryGenerator };
+  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: SessionSummaryGenerator };
   extractStandardsContext: string;
   /** Mutated in place with run-level (non-session) warnings. */
   topLevelWarnings: string[];
@@ -1342,7 +1330,6 @@ async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<Extr
     stashDir,
     config,
     llmRunner,
-    lease,
     onNotices,
     getNotices,
     chat,
@@ -1359,7 +1346,6 @@ async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<Extr
     stashDir,
     config,
     llmRunner,
-    lease,
     onNotices,
     getNotices,
     chat,
@@ -1525,7 +1511,7 @@ interface ExtractRunConfig {
   maxSessionsPerRun: number;
   effectiveSince: string | undefined;
   triage: { enabled: boolean; minScore: number };
-  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: ExtractSessionSummaryGenerator };
+  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: SessionSummaryGenerator };
 }
 
 /**
@@ -1613,13 +1599,12 @@ function resolveExtractRunConfig(
   // same fail-open `callStructured` seam as the rest of extract. Returns
   // `undefined` on disablement / timeout / error so no asset is written.
   // Tests inject a fake.
-  const defaultSessionSummaryGenerator: ExtractSessionSummaryGenerator = async (data, lease) => {
+  const defaultSessionSummaryGenerator: SessionSummaryGenerator = async (data) => {
     let raw = "";
     await callStructured<string>({
       feature: "session_extraction",
       akmConfig: config,
       runner: llmRunner,
-      ...(lease ? { lease } : {}),
       messages: [{ role: "user", content: buildSessionSummaryPrompt(data) }],
       request: {
         timeoutMs,
@@ -1944,7 +1929,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // Eligible dry-runs still dispatch to produce their candidate preview. Only
   // deterministic no-work plans are credential-free. Materialize once after
   // every read-only gate and before opening live state or acquiring a lock.
-  const dispatchLease = modelPlanCount > 0 ? await preflightStructuredLlmRunner(llmRunner) : undefined;
+  if (modelPlanCount > 0) assertRunnerCredentials(llmRunner);
   let stateDb: Database | undefined;
   let loopResult: ExtractSessionLoopResult;
   try {
@@ -1973,7 +1958,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       stashDir,
       config,
       llmRunner,
-      lease: dispatchLease,
       onNotices,
       getNotices,
       chat: options.chat,
@@ -1994,7 +1978,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         // best-effort close
       }
     }
-    if (dispatchLease) disposeLoweredExecutionDispatchLease(dispatchLease);
   }
   const { sessions, processedCount, skippedCount, allProposalIds } = loopResult;
   if (loopResult.deferred > 0) {

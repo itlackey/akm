@@ -28,7 +28,7 @@ import { validateProposal } from "../../../src/commands/proposal/validators/prop
 import type { AkmConfig, LlmProfileConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { getStateDbPath } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import { _setChatCompletionForTests } from "../../../src/llm/client";
@@ -235,27 +235,25 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     expect(fs.existsSync(defaultStateDbPath)).toBe(false);
   });
 
-  test.each([
-    { mutation: "deletion", nextCredential: undefined },
-    { mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("direct generation and refinement survive ambient credential $mutation", async ({ nextCredential }) => {
+  test("direct generation and refinement each read the credential current at that call", async () => {
     const stash = makeStashDir();
     const original = "reflect-direct-original-secret";
+    const rotated = "reflect-direct-rotated-secret";
     const observed: Array<string | undefined> = [];
     const source =
-      "---\ndescription: Preserve direct operation credentials\n---\n\n# Existing\n\nKeep the credential snapshot stable across refinement.\n";
-    const result = await withEnv({ AKM_REFLECT_DIRECT_LEASE_KEY: original }, () =>
+      "---\ndescription: Read direct operation credentials per call\n---\n\n# Existing\n\nPick up a rotated credential during refinement.\n";
+    const result = await withEnv({ AKM_REFLECT_DIRECT_ROTATING_KEY: original }, () =>
       akmReflect({
-        ref: "knowledge/direct-lease",
+        ref: "knowledge/direct-rotation",
         assetContent: source,
         stashDir: stash,
-        config: reflectLlmConfig(fakeLlmConnection(), "$AKM_REFLECT_DIRECT_LEASE_KEY"),
+        config: reflectLlmConfig(fakeLlmConnection(), "$AKM_REFLECT_DIRECT_ROTATING_KEY"),
         maxRefineIters: 2,
         chat: async (connection) => {
           observed.push(connection.apiKey);
-          if (observed.length === 1) mutateScopedEnv("AKM_REFLECT_DIRECT_LEASE_KEY", nextCredential);
+          if (observed.length === 1) mutateScopedEnv("AKM_REFLECT_DIRECT_ROTATING_KEY", rotated);
           return JSON.stringify({
-            content: "# Existing\n\nKeep the credential snapshot stable across every refinement call.\n",
+            content: "# Existing\n\nPick up a rotated credential on every refinement call.\n",
             confidence: 0.9,
             frontmatterPatch: { description: null, when_to_use: null },
           });
@@ -264,7 +262,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     );
 
     expect(result.ok).toBe(true);
-    expect(observed).toEqual([original, original]);
+    expect(observed).toEqual([original, rotated]);
   });
 
   test("when responseSchema is provided and no test-seam `chat` is set, chatCompletion receives the schema", async () => {
@@ -938,6 +936,22 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(judgeCalls).toBe(1);
     const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
     expect(completed?.metadata?.repairAttempts).toBe(0);
+    // The rejection lands in the improve ledger with the reflect window, so
+    // candidate selection does not re-generate it for 14 days.
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = db
+        .prepare(
+          "SELECT outcome, detail, last_attempt_at, next_eligible_at FROM improve_ledger WHERE ref = ? AND source = 'reflect'",
+        )
+        .get("lessons/quality-reject") as
+        | { outcome: string; detail: string; last_attempt_at: string; next_eligible_at: string }
+        | undefined;
+      expect(row).toMatchObject({ outcome: "quality_rejected", detail: "The revision is not useful." });
+      expect(Date.parse(row?.next_eligible_at ?? "") - Date.parse(row?.last_attempt_at ?? "")).toBe(14 * 86_400_000);
+    } finally {
+      db.close();
+    }
   });
 });
 

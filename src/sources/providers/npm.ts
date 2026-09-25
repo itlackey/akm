@@ -16,7 +16,7 @@ import path from "node:path";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir } from "../../core/paths";
-import { npmArtifactNetworkPolicy, parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
+import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { ParsedNpmRef } from "../../registry/types";
 import type { SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
@@ -137,7 +137,7 @@ async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<S
   let installRoot: string;
   let stashRoot: string;
   try {
-    await downloadArchive(resolved.artifactUrl, archivePath, npmArtifactNetworkPolicy(resolved));
+    await downloadArchive(resolved.artifactUrl, archivePath);
     verifyArchiveIntegrity(archivePath, resolved.resolvedRevision, resolved.source);
     integrity = await computeFileHash(archivePath);
     extractTarGzSecure(archivePath, extractedDir);

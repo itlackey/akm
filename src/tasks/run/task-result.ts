@@ -51,7 +51,7 @@ import type { SpawnFn } from "../../core/subprocess";
 import type { InputFlag } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunAgentOptions } from "../../integrations/agent";
-import type { DispatchLoweredExecutionOptions } from "../../integrations/agent/execution-lowering";
+import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import type { chatCompletion } from "../../llm/client";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext, TaskInvocation } from "../model/invocation";
@@ -100,7 +100,7 @@ export interface RunTaskOptions {
   /** Configured adapter for the selected component root. */
   adapterId?: string;
   /** Override the common command dispatch's agent runner (tests). */
-  runAgentImpl?: DispatchLoweredExecutionOptions["runAgent"];
+  runAgentImpl?: RunExecutionOptions["runAgent"];
   /**
    * Override the workflow orchestrator (tests). Defaults to
    * {@link runWorkflowSteps}.

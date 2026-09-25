@@ -28,7 +28,6 @@ import { resolveImproveExecution } from "../improve/execution";
 import { extractCommand } from "../improve/extract-cli";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 import { drainProposals } from "./drain";
-import { resolveDrainPolicy } from "./drain-policies";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -374,13 +373,10 @@ const proposalShowCommand = defineJsonCommand({
 const proposalDrainCommand = defineJsonCommand({
   meta: {
     name: "drain",
-    description: "Drain the standing pending proposal backlog using a deterministic triage policy",
+    description:
+      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review",
   },
   args: {
-    policy: {
-      type: "string",
-      description: "Built-in preset (personal-stash|conservative|manual) or path to a policy file",
-    },
     "dry-run": {
       type: "boolean",
       description: "List what would be accepted/rejected/deferred without writing.",
@@ -395,10 +391,6 @@ const proposalDrainCommand = defineJsonCommand({
     "max-accepts": {
       type: "string",
       description: "Hard per-run accept ceiling. Accepts beyond this are reported as skippedByCap.",
-    },
-    "max-diff-lines": {
-      type: "string",
-      description: "Defer (never promote) accepts whose proposed content exceeds this many lines.",
     },
     "older-than": {
       type: "string",
@@ -417,7 +409,7 @@ const proposalDrainCommand = defineJsonCommand({
     },
     strategy: {
       type: "string",
-      description: "Read the triage block (policy, applyMode, ceilings, judgment) from this improve strategy.",
+      description: "Read the triage block (applyMode, ceilings, judgment) from this improve strategy.",
     },
   },
   async run({ args, rawArgs }) {
@@ -432,7 +424,6 @@ const proposalDrainCommand = defineJsonCommand({
     const selectedStrategy = resolveImproveStrategy(args.strategy as string | undefined, cfg);
     const triageConfig = selectedStrategy.config.processes?.triage;
 
-    const policy = resolveDrainPolicy((args.policy as string | undefined) ?? triageConfig?.policy);
     const dryRun = args["dry-run"] === true;
     const applyMode: "queue" | "promote" = args.promote === true ? "promote" : (triageConfig?.applyMode ?? "queue");
 
@@ -440,9 +431,6 @@ const proposalDrainCommand = defineJsonCommand({
       parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ??
       triageConfig?.maxAcceptsPerRun ??
       25;
-    const maxDiffLines =
-      parsePositiveIntFlag(args["max-diff-lines"] as string | undefined, "--max-diff-lines") ??
-      triageConfig?.maxDiffLines;
 
     const rawOlderThan = parsePositiveIntFlag(args["older-than"] as string | undefined, "--older-than");
     const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
@@ -451,7 +439,7 @@ const proposalDrainCommand = defineJsonCommand({
     if (applyMode === "promote" && !dryRun) {
       const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
-        `Drain and promote matching pending proposals under policy "${policy.name}"? Promotions commit to git and cannot be batch-reverted.`,
+        "Drain and promote judge-passed pending proposals? Promotions commit to git and cannot be batch-reverted.",
         { yes: args.yes === true },
       );
       if (!confirmed) {
@@ -516,11 +504,9 @@ const proposalDrainCommand = defineJsonCommand({
         drainProposals({
           stashDir,
           config: cfg,
-          policy,
           applyMode,
           maxAccepts,
           dryRun,
-          ...(maxDiffLines !== undefined ? { maxDiffLines } : {}),
           ...(excludeIds ? { excludeIds } : {}),
           judgment,
         }),
@@ -535,7 +521,6 @@ const proposalDrainCommand = defineJsonCommand({
     output("proposal-drain", {
       schemaVersion: 1,
       ok: true,
-      policy: policy.name,
       applyMode,
       dryRun,
       strategy: selectedStrategy.name,

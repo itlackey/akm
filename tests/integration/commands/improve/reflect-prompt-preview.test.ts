@@ -15,7 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { improveCommand } from "../../../../src/commands/improve/improve-cli";
 import { akmReflect, renderReflectPromptPreview } from "../../../../src/commands/improve/reflect";
-import { archiveProposal, createProposal, isProposalSkipped } from "../../../../src/commands/proposal/repository";
+import { archiveProposal, createProposal } from "../../../../src/commands/proposal/repository";
 import { appendEvent } from "../../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
@@ -168,10 +168,8 @@ describe("readRejectedProposals tolerates legacy rows with no persisted changes 
     const rejected = createProposal(stashDir, {
       ref: "lessons/test-lesson",
       source: "reflect",
-      force: true,
       payload: { content: rejectedContent },
     });
-    if (isProposalSkipped(rejected)) throw new Error("unexpected skip seeding rejected proposal");
     archiveProposal(stashDir, rejected.id, "rejected", "not a real improvement");
 
     const db = openStateDatabase(getStateDbPath());
@@ -218,13 +216,11 @@ describe("readRejectedProposals excludes stale-target auto-rejects from the Refl
     const staleRejected = createProposal(stashDir, {
       ref: "lessons/test-lesson",
       source: "reflect",
-      force: true,
       payload: {
         content:
           "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nSTALE_TARGET_REJECTED_BODY_MARKER.\n",
       },
     });
-    if (isProposalSkipped(staleRejected)) throw new Error("unexpected skip seeding stale-target rejected proposal");
     archiveProposal(stashDir, staleRejected.id, "rejected", "stale-target: STALE_TARGET_REASON_MARKER", undefined, {
       outcome: "auto-rejected",
       reason: "stale-target",
@@ -234,13 +230,11 @@ describe("readRejectedProposals excludes stale-target auto-rejects from the Refl
     const ordinaryRejected = createProposal(stashDir, {
       ref: "lessons/test-lesson",
       source: "reflect",
-      force: true,
       payload: {
         content:
           "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nORDINARY_REJECTED_BODY_MARKER.\n",
       },
     });
-    if (isProposalSkipped(ordinaryRejected)) throw new Error("unexpected skip seeding ordinary rejected proposal");
     archiveProposal(stashDir, ordinaryRejected.id, "rejected", "ORDINARY_REJECTION_REASON_MARKER");
 
     const config = withTestImproveLlm(makeConfig(stashDir));

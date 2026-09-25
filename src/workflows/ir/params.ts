@@ -124,9 +124,8 @@ export function validateWorkflowParams(plan: WorkflowParameterPlan, params: Reco
  * Run-integrity assert (reviewer #12): the journaled `params_json`
  * row must STILL satisfy the frozen param schemas. `startWorkflowRun` already
  * validated the params it stored, so a violation here means the row was edited
- * after the run started — loud corruption, exactly like the frozen-plan hash
- * mismatch and the tampered-params replay-divergence path. Refuse to describe
- * or drive the run rather than resolve prompts from schema-violating params.
+ * after the run started. Refuse to drive the run rather than resolve prompts
+ * from schema-violating params.
  */
 export function assertRunParamsSatisfyPlan(
   runId: string,

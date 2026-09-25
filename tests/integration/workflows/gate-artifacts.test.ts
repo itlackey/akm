@@ -760,7 +760,6 @@ async function journalRow(row: {
 }): Promise<void> {
   await withWorkflowRunsRepo((repo) => {
     const now = new Date().toISOString();
-    const claimHolder = `direct:${row.unitId}`;
     const reserved = repo.reserveUnitAttempt({
       runId: RUN_ID,
       unitId: row.unitId,
@@ -773,16 +772,12 @@ async function journalRow(row: {
       model: null,
       inputHash: row.inputHash ?? `test:${row.unitId}`,
       now,
-      claimHolder,
-      claimExpiresAt: new Date(Date.parse(now) + 90_000).toISOString(),
-      leaseMode: "direct",
     }).attempt;
     repo.finishUnitAttempt({
       runId: RUN_ID,
       unitId: row.unitId,
       attempt: reserved.attempt,
       dispatchId: reserved.dispatch_id,
-      claimHolder,
       status: row.status,
       resultJson: row.resultJson,
       tokens: null,

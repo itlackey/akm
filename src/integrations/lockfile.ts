@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
-import { ConfigError, rethrowIfTestIsolationError } from "../core/errors";
+import { ConfigError, rethrowIfTestIsolationError, TransientError } from "../core/errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
@@ -85,11 +85,12 @@ async function acquireLockSentinel(): Promise<() => void> {
     if (probe.state === "stale" && reclaimStaleLock(sentinelPath, probe)) {
       continue; // Reclaimed — retry immediately.
     }
-    // Another process holds the lock.
+    // Another process holds the lock: ordinary contention, exit 75, not a
+    // config error a supervisor should stop retrying on.
     if (Date.now() >= deadline) {
-      throw new ConfigError(
+      throw new TransientError(
         `Could not acquire lockfile sentinel at ${sentinelPath} after ${(timeoutMs / 1000).toFixed(1)}s; refusing to write without exclusive ownership.`,
-        "INVALID_CONFIG_FILE",
+        "LOCKFILE_CONTENDED",
       );
     }
     if (!announced) {

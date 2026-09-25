@@ -11,14 +11,11 @@
  * path restarting instead of resuming):
  *
  *  - a plain `akm index` (no `--full`) after an interrupted pass embeds only
- *    the entries still missing a vector — no purge, no canary (the
- *    fingerprint never changed, so that whole branch of
- *    `generateEmbeddingsForDb` never runs);
- *  - a subsequent `akm index --full` reuses the already-embedded entries via
- *    salvage (#955 — the full rebuild's own salvage-before-discard step)
- *    and sends a provider request only for the entries that were never
- *    embedded at all because the interruption landed before they were
- *    reached.
+ *    the entries still missing a vector — nothing is purged;
+ *  - a subsequent `akm index --full` keeps the already-embedded entries (a
+ *    full run preserves entry ids, so their vectors stay attached) and sends
+ *    a provider request only for the entries that were never embedded at all
+ *    because the interruption landed before they were reached.
  *
  * Integration-scoped (ORG-03/06): drives `akmIndex` end-to-end against a
  * real index.db.
@@ -56,10 +53,6 @@ type EmbedBatchMock = (
 
 function stableVec(i: number): EmbeddingVector {
   return [1 + i, 2 + i, 3 + i];
-}
-
-function salvageRowCount(db: Database): number {
-  return (db.prepare("SELECT COUNT(*) AS c FROM embedding_salvage").get() as { c: number }).c;
 }
 
 let stashDir = "";
@@ -125,7 +118,7 @@ async function writeFiveAndInterruptAfterThree(): Promise<void> {
 }
 
 describe("index resumability after an interrupted embedding phase (#956)", () => {
-  test("a plain `akm index` (no --full) resume embeds only the remaining entries — no purge, no canary", async () => {
+  test("a plain `akm index` (no --full) resume embeds only the remaining entries — no purge", async () => {
     await writeFiveAndInterruptAfterThree();
 
     let calls = 0;
@@ -151,12 +144,10 @@ describe("index resumability after an interrupted embedding phase (#956)", () =>
     expect(resumed.verification.ok).toBe(true);
 
     // Exactly one provider call, for exactly the 2 entries still missing a
-    // vector — the 3 already committed are untouched (no purge), and no
-    // canary probe ran first (the fingerprint never changed, so
-    // generateEmbeddingsForDb's rename branch never executes at all).
+    // vector — the 3 already committed are untouched (no purge).
     expect(calls).toBe(1);
     expect(lastTextCount).toBe(2);
-    expect(messages.some((m) => m.includes("already embedded") || m.includes("renamed"))).toBe(false);
+    expect(messages.some((m) => m.includes("Re-embedding"))).toBe(false);
 
     const db = openDb();
     try {
@@ -166,7 +157,7 @@ describe("index resumability after an interrupted embedding phase (#956)", () =>
     }
   });
 
-  test("a subsequent `akm index --full` reuses the interrupted run's embeddings via salvage, and embeds only what was never reached", async () => {
+  test("a subsequent `akm index --full` keeps the interrupted run's embeddings and embeds only what was never reached", async () => {
     await writeFiveAndInterruptAfterThree();
 
     let calls = 0;
@@ -191,17 +182,16 @@ describe("index resumability after an interrupted embedding phase (#956)", () =>
     });
     expect(full.verification.ok).toBe(true);
 
-    // The 3 already-embedded entries are salvaged across the full rebuild's
-    // purge-and-recreate (#955) — only the 2 the interrupted pass never
-    // reached go to the provider.
+    // A full run keeps entry ids, so the 3 already-embedded entries keep
+    // their vectors — only the 2 the interrupted pass never reached go to the
+    // provider.
     expect(calls).toBe(1);
     expect(lastTextCount).toBe(2);
-    expect(messages.some((m) => m.includes("Reused 3 embedding"))).toBe(true);
+    expect(messages.some((m) => m.includes("Re-embedding"))).toBe(false);
 
     const db = openDb();
     try {
       expect(getEmbeddingCount(db)).toBe(5);
-      expect(salvageRowCount(db)).toBe(0);
     } finally {
       closeDatabase(db);
     }

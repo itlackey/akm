@@ -252,7 +252,7 @@ const tasksAddCommand = defineJsonCommand({
     force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
     rebind: {
       type: "boolean",
-      description: "Explicitly permit scheduler creation from this ineligible local invocation",
+      description: "Also point the bundle's installed scheduler rows at this akm invocation (as `task sync --rebind`)",
       default: false,
     },
   },
@@ -396,13 +396,13 @@ export function taskSyncDryRunExitCode(preview: {
 const tasksSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
-    description: "Atomically preflight and reconcile a bundle's task/workflow schedules with the OS scheduler",
+    description: "Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
   },
   args: {
     ...bundleArg,
     rebind: {
       type: "boolean",
-      description: "Replace installed bindings with the current invocation",
+      description: "Point installed rows at this akm invocation instead of keeping their launcher",
       default: false,
     },
     "dry-run": {

@@ -66,8 +66,8 @@ flowchart TD
             REFLECT_B --> REFLECT_C[readRecentFeedback\nbuildSchemaHints for lessons]
             REFLECT_C --> REFLECT_D[buildReflectPrompt]
             REFLECT_D --> REFLECT_E{RunnerSpec kind?}
-            REFLECT_E -- sdk --> REFLECT_SDK[executeRunner\nin-process SDK call]
-            REFLECT_E -- spawn --> REFLECT_SPAWN[executeRunner\nspawn agent CLI binary\ncaptured stdout]
+            REFLECT_E -- sdk --> REFLECT_SDK[runExecution\nin-process SDK call]
+            REFLECT_E -- spawn --> REFLECT_SPAWN[runExecution\nspawn agent CLI binary\ncaptured stdout]
             REFLECT_SDK --> REFLECT_F
             REFLECT_SPAWN --> REFLECT_F[parseAgentProposalPayload\nextract JSON from stdout]
             REFLECT_F --> REFLECT_G[createProposal\nstate.db proposals row\nsource: reflect]
@@ -172,7 +172,7 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
 3. Resolve the selected strategy's `reflect.engine`, falling back to `defaults.llmEngine`.
 4. For skill refs, load the canonical derived lesson (`lessons/<type>-<name>-lesson`) plus any lesson files whose frontmatter `sources` cite the skill ref.
 5. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
-6. Dispatch the frozen `RunnerSpec` through `executeRunner`. Unattended improve
+6. Dispatch the frozen `RunnerSpec` through `runExecution`. Unattended improve
    requires an LLM engine; explicit interactive uses may select an agent engine.
 7. Parse stdout: `parseAgentProposalPayload` strips `<think>` blocks and code fences, then JSON-parses the output. Falls back to raw markdown detection if JSON parse fails.
 8. Write the proposal: `createProposal(stash, { ref, source: "reflect", payload: { content, frontmatter } })`.

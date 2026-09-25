@@ -3,42 +3,26 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The whole migration, in order, as one plan: legacy config lift, pending
- * state.db migrations, native scheduler activation capture, task v2 -> v3,
- * task v3 -> task source v4, then the stash-scoped residue sweeps.
- * `akm-migrate status` / `apply [--dry-run]`
- * print exactly this; `akm migrate` and `akm upgrade` spawn that executable
- * and re-emit it. Every historical shape lives here or under `./migrate/`,
- * so the CLI proper only ever reads current schemas.
+ * The whole migration, in order, as one plan: config.json in its current
+ * shape, pending state.db migrations, task files to task source v4, then the
+ * residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
+ * it. Every historical shape lives here or under `./migrate/`, so the CLI
+ * proper only ever reads current schemas.
  */
 
 import { resolveStashDir } from "../../src/core/common";
-import {
-  bundleContentRoots,
-  bundleKeyForContentRoot,
-  type ConfigFileNormalization,
-  loadConfig,
-  normalizeConfigFile,
-  resetConfigCache,
-} from "../../src/core/config/config";
+import { type ConfigFileNormalization, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
-import { type DeadResidueEntry, type DeadResidueRemoval, findDeadResidueEntries, removeDeadResidue } from "./migrate/dead-residue";
 import {
-  applyWriterRelocation,
-  findWriterRelocationEntries,
-  type WriterRelocationApplyResult,
-  type WriterRelocationPlan,
-} from "./migrate/writer-relocation";
-import {
-  applyTaskV3Migration,
-  applyTaskV4Migration,
-  inspectMigrationPlan,
-  inspectTaskV4MigrationStatus,
-  type MigrationPlan,
-  type TaskV4MigrationStatus,
-} from "./task-migrate";
+  type DeadResidueEntry,
+  type DeadResidueRemoval,
+  findDeadResidueEntries,
+  removeDeadResidue,
+} from "./migrate/dead-residue";
+import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
@@ -70,19 +54,12 @@ export interface CombinedMigrationPlan {
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
-  taskV3Migration?: MigrationPlan["taskV3Migration"];
-  taskV4Migration?: TaskV4MigrationStatus["taskV4Migration"];
+  taskFiles?: TaskFilesMigrationStatus["taskFiles"];
+  /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
-  taskV4BackupPath?: string;
-  taskV4Applied?: number;
   deadResidue?: { pending: DeadResidueEntry[] } | { removed: DeadResidueRemoval[] };
-  // Keyed by bundle id (the default stash first, then every other
-  // filesystem-backed bundle) — one filesystem bundle can trail live writer
-  // residue as easily as another (itlackey/akm#890).
-  writerRelocation?: { pending: Record<string, WriterRelocationPlan> } | { relocated: Record<string, WriterRelocationApplyResult> };
 }
-
 
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
   if (left === "blocked" || right === "blocked") return "blocked";
@@ -112,11 +89,11 @@ function statusWithFailedSteps(status: MigrationStatus, failedSteps: readonly Fa
  * a step that fails to WRITE can usually still report what it would have
  * done; if even that throws, the section is simply absent and `failedSteps`
  * is the only record of it. A later step that genuinely needs an earlier
- * one that failed (e.g. reading config the lift above couldn't finish
- * rewriting, or the stash dir itself) throws too, on its own turn, and is
- * caught here exactly the same way — no separate dependency bookkeeping
- * needed. One helper covers sync and async actions alike, since every
- * caller already runs inside the async `runMigration`.
+ * one that failed (e.g. reading config the rewrite above couldn't finish,
+ * or the stash dir itself) throws too, on its own turn, and is caught here
+ * exactly the same way — no separate dependency bookkeeping needed. One
+ * helper covers sync and async actions alike, since every caller already
+ * runs inside the async `runMigration`.
  */
 // Exported (only) so tests/migrate/run-migrate-poisoned-step.test.ts can pin
 // the isolation guarantee directly, against synthetic steps, instead of only
@@ -152,68 +129,6 @@ function stashDirIfConfigured(): string | undefined {
 }
 
 /**
- * Every LOCAL bundle directory the writer-relocation step must cover: the
- * default stash first (if one is configured or the platform default exists),
- * then every other bundle in the `bundles` map backed by a plain filesystem
- * `path` — each exactly once, even when two bundle entries resolve to the
- * same directory (itlackey/akm#890).
- *
- * A `git`/`website`/`npm` bundle source is a REMOTE fetched into `$CACHE`,
- * not a directory the user (or an old akm) could have written `.akm/*`
- * residue into directly — `bundleContentRoots` already only returns entries
- * carrying a `path`, so those bundles are skipped here with no network call
- * and no `ensureSourceCaches` (which would make one to materialize them).
- */
-function writerRelocationTargets(defaultStashDir: string | undefined): { id: string; dir: string }[] {
-  const config = loadConfig();
-  const seen = new Set<string>();
-  const targets: { id: string; dir: string }[] = [];
-  if (defaultStashDir !== undefined) {
-    targets.push({ id: bundleKeyForContentRoot(config, defaultStashDir) ?? "default", dir: defaultStashDir });
-    seen.add(defaultStashDir);
-  }
-  for (const { id, contentRoot } of bundleContentRoots(config)) {
-    if (seen.has(contentRoot)) continue;
-    seen.add(contentRoot);
-    targets.push({ id, dir: contentRoot });
-  }
-  return targets;
-}
-
-/**
- * `apply`'s writer-relocation pass, one filesystem bundle target at a time:
- * one bundle's relocation throwing must not cost every OTHER bundle its
- * relocation too, so each target runs under its own {@link migrationStep}
- * rather than one `.map()` that aborts on the first throw. A failed target
- * is simply absent from the returned record; `failedSteps` (keyed
- * `writerRelocation:<id>`) is its only report.
- */
-async function relocateWriters(
-  failedSteps: FailedMigrationStep[],
-  targets: readonly { id: string; dir: string }[],
-): Promise<Record<string, WriterRelocationApplyResult>> {
-  const relocated: Record<string, WriterRelocationApplyResult> = {};
-  for (const { id, dir } of targets) {
-    const result = await migrationStep(failedSteps, `writerRelocation:${id}`, () => applyWriterRelocation(dir));
-    if (result !== undefined) relocated[id] = result;
-  }
-  return relocated;
-}
-
-/** {@link relocateWriters}, for the read-only preview. */
-async function findWriterRelocations(
-  failedSteps: FailedMigrationStep[],
-  targets: readonly { id: string; dir: string }[],
-): Promise<Record<string, WriterRelocationPlan>> {
-  const pending: Record<string, WriterRelocationPlan> = {};
-  for (const { id, dir } of targets) {
-    const result = await migrationStep(failedSteps, `writerRelocation:${id}`, () => findWriterRelocationEntries(dir));
-    if (result !== undefined) pending[id] = result;
-  }
-  return pending;
-}
-
-/**
  * Run every migration step and return the combined plan. `apply: false` is
  * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
  * under its own lock and backup.
@@ -238,45 +153,22 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyStateMigrations() : { pending: listPendingStateMigrations() }),
     apply ? () => ({ pending: listPendingStateMigrations() }) : undefined,
   );
-
-  // Capture activation from the host's proven native scheduler state before
-  // task source migration removes the retired bundle-authored enabled flags.
-
+  const taskFiles = await migrationStep(
+    failedSteps,
+    "taskFiles",
+    () => (apply ? applyTaskFilesMigration() : inspectTaskFilesMigration()),
+    apply ? () => inspectTaskFilesMigration() : undefined,
+  );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
   const stashDir = await migrationStep(failedSteps, "stashDir", () => stashDirIfConfigured());
-  const taskV3 = await migrationStep(
-    failedSteps,
-    "taskV3Migration",
-    () => (apply ? applyTaskV3Migration() : inspectMigrationPlan()),
-    apply ? () => inspectMigrationPlan() : undefined,
-  );
-  const taskV4 = await migrationStep(
-    failedSteps,
-    "taskV4Migration",
-    () => (apply ? applyTaskV4Migration() : inspectTaskV4MigrationStatus()),
-    apply ? () => inspectTaskV4MigrationStatus() : undefined,
-  );
-  const stashSections: Pick<CombinedMigrationPlan, "deadResidue" | "writerRelocation"> = {};
   const deadResidue = await migrationStep(
     failedSteps,
     "deadResidue",
     () => (apply ? { removed: removeDeadResidue(stashDir) } : { pending: findDeadResidueEntries(stashDir) }),
     apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
   );
-  if (deadResidue !== undefined) stashSections.deadResidue = deadResidue;
-  // `writerRelocationTargets` calls `loadConfig()`, which throws for a
-  // config the schema rejects (e.g. a non-string bundle `path`) — its own
-  // step, so that throw is this step's failure rather than ending the run
-  // before the sections above are returned.
-  const relocationTargets =
-    (await migrationStep(failedSteps, "writerRelocationTargets", () => writerRelocationTargets(stashDir))) ?? [];
-  if (relocationTargets.length > 0) {
-    stashSections.writerRelocation = apply
-      ? { relocated: await relocateWriters(failedSteps, relocationTargets) }
-      : { pending: await findWriterRelocations(failedSteps, relocationTargets) };
-  }
 
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
@@ -286,23 +178,17 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      worstStatus(
-        worstStatus(worstStatus(taskV3?.status ?? "blocked", taskV4?.status ?? "blocked"), stateStatus),
-        configFileStatus,
-      ),
+      worstStatus(worstStatus(taskFiles?.status ?? "blocked", stateStatus), configFileStatus),
       failedSteps,
     ),
-    blockers: [...(taskV3?.blockers ?? []), ...(taskV4?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-    taskV3Migration: taskV3?.taskV3Migration,
-    taskV4Migration: taskV4?.taskV4Migration,
-    ...(taskV3?.backupPath !== undefined ? { backupPath: taskV3.backupPath } : {}),
-    ...(taskV3?.applied !== undefined ? { applied: taskV3.applied } : {}),
-    ...(taskV4?.backupPath !== undefined ? { taskV4BackupPath: taskV4.backupPath } : {}),
-    ...(taskV4?.applied !== undefined ? { taskV4Applied: taskV4.applied } : {}),
-    ...stashSections,
+    ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
+    ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
+    ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
+    ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }
 

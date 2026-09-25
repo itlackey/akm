@@ -3,32 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R-R15 (PR #844 review finding F6) — a reference binding's RESOLVED value is
- * part of the unit's durable input identity (`hashVersion` 7), so a resumed
- * invocation whose upstream journaled output changed raises REPLAY DIVERGENCE
- * instead of silently reusing the stale completed row.
- *
- * Under `hashVersion` 6 a `{kind:"reference"}` binding reached the preimage
- * only as its authored shape inside `frozenTarget.inputBindings` — never its
- * resolved value — so the exact sequence exercised here (same frozen step,
- * upstream evidence `VALUE-ONE` then `VALUE-TWO`) computed the SAME unit hash
- * twice, dispatched zero units on the second invocation, and promoted the
- * journaled `RESULT-FROM-VALUE-ONE` as fresh evidence
- * (docs/plans/specs/p4-deletions-closeout.md §8 criterion 8, "MET WITH
- * CAVEAT"). The `taskInputs` preimage field closes that: the second
- * invocation now recomputes a DIFFERENT hash for the same content-derived
- * unit id, which is exactly the tampered-journal shape the executor's
- * replay-divergence guard exists to catch loudly (native-executor.ts module
- * doc: "a journaled COMPLETED row whose unit_id matches but whose input_hash
- * differs is a hard step failure, never a silent re-dispatch").
+ * R-R15 (PR #844 review finding F6) — a reference binding's RESOLVED value
+ * reaches the unit's prompt and its (informational) input hash, `hashVersion`
+ * 7. Resume skips a completed unit by id: a resumed invocation whose upstream
+ * journaled output changed reuses the completed row rather than re-running
+ * work that already ran; a fresh run is what picks up new upstream output.
  *
  * Setup mirrors tests/integration/workflows/exec-unit.test.ts (sandbox +
  * seedWorkflowRun + storeFrozenWorkflowPlan + executeStepPlan with an
- * injected counting dispatcher); the divergence-message pins mirror
- * exec-unit.test.ts's own replay-divergence case. `inputBindings` are grafted
- * onto the frozen consume step post-freeze (chaos.test.ts's plant-the-exact-
- * durable-state pattern) so the fixture needs no task source / indexer pass —
- * the executor consumes only the frozen plan it is handed.
+ * injected counting dispatcher). `inputBindings` are grafted onto the frozen
+ * consume step post-freeze (chaos.test.ts's plant-the-exact-durable-state
+ * pattern) so the fixture needs no task source / indexer pass — the executor
+ * consumes only the frozen plan it is handed.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -120,8 +106,8 @@ function invoke(step: IrStepPlanV4, upstreamOutput: string, dispatcher: ReturnTy
   });
 }
 
-describe("R-R15 — resolved task inputs participate in durable replay identity (hashVersion 7)", () => {
-  test("resume with an unchanged bound value reuses the journaled row; a changed bound value is hard replay divergence, never stale reuse", async () => {
+describe("R-R15 — resolved task inputs reach the prompt and input hash; resume skips completed units", () => {
+  test("resume reuses the journaled row whether or not the bound value changed", async () => {
     const step = seedBoundConsumeStep();
 
     // Pure layer, the repro's defect assertion INVERTED: the same frozen
@@ -162,19 +148,13 @@ describe("R-R15 — resolved task inputs participate in durable replay identity 
     expect(r2.evidence.output).toBe("RESULT-FROM-VALUE-ONE");
 
     // Invocation 3 (resume where the upstream journaled artifact now says
-    // VALUE-TWO — the R-R15 shape: durable state altered under a frozen
-    // plan): the same unit id recomputes a different input hash, and the
-    // completed loop-1 row with the stale hash is a HARD step failure with
-    // the executor's replay-divergence message — nothing dispatches, and the
-    // stale RESULT-FROM-VALUE-ONE is NOT promoted as evidence. Under
-    // hashVersion 6 this invocation returned ok with zero dispatches and the
-    // stale text as evidence.output.
+    // VALUE-TWO): the same unit id recomputes a different input hash, which
+    // is informational — the completed row is still the unit's result, so
+    // nothing dispatches.
     const d3 = countingDispatcher("RESULT-FROM-VALUE-TWO");
     const r3 = await invoke(step, "VALUE-TWO", d3);
-    expect(r3.ok).toBe(false);
+    expect(r3.ok).toBe(true);
     expect(d3.count()).toBe(0);
-    expect(r3.summary).toContain("replay divergence");
-    expect(r3.summary).toContain("journaled with different inputs");
-    expect(r3.evidence.output).toBeUndefined();
+    expect(r3.evidence.output).toBe("RESULT-FROM-VALUE-ONE");
   });
 });

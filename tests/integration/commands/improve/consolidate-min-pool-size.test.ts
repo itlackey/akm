@@ -26,8 +26,10 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { _setChatCompletionForTests } from "../../../../src/llm/client";
+import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 import { overrideSeam } from "../../../_helpers/seams";
@@ -76,6 +78,15 @@ async function runImprove(
   });
 }
 
+function consolidateLedgerRows() {
+  const db = openStateDatabase();
+  try {
+    return listImproveLedgerRows(db, stashDir, ["consolidate"]);
+  } finally {
+    db.close();
+  }
+}
+
 function poolBelowMinSizeEvents() {
   return readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
     (e) => e.metadata?.reason === "pool_below_min_size",
@@ -102,9 +113,7 @@ describe("#553 consolidate minPoolSize guard", () => {
       writeMemory("only-mem", "A single memory — well below the guard.");
       await akmIndex({ stashDir, full: true });
 
-      // No prior consolidate_completed event exists, so the #551 mtime-delta
-      // gate would normally treat this as the bootstrap "run once" path. The
-      // #553 pool guard must preempt it: pool size 1 < minPoolSize 3.
+      // The #553 pool guard preempts the pass: pool size 1 < minPoolSize 3.
       await runImprove(configWithMinPoolSize(3));
 
       const skips = poolBelowMinSizeEvents();
@@ -112,11 +121,10 @@ describe("#553 consolidate minPoolSize guard", () => {
       expect(skips[0]?.metadata?.poolSize).toBe(1);
       expect(skips[0]?.metadata?.minPoolSize).toBe(3);
 
-      // Zero LLM work: consolidation never entered, so no consolidate_completed
-      // event was recorded and no `consolidation_no_memory_updates` (mtime-gate)
-      // event fired either — the pool guard short-circuited before both.
-      const completed = readEvents({ type: "consolidate_completed" }).events;
-      expect(completed.length).toBe(0);
+      // Zero LLM work: consolidation never entered, and no
+      // `consolidation_no_memory_updates` (ledger delta) event fired either —
+      // the pool guard short-circuited first.
+      expect(consolidateLedgerRows()).toEqual([]);
       const mtimeSkips = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
         (e) => e.metadata?.reason === "consolidation_no_memory_updates",
       );
@@ -133,9 +141,8 @@ describe("#553 consolidate minPoolSize guard", () => {
       }
       await akmIndex({ stashDir, full: true });
 
-      // Pool size 5 >= minPoolSize 3 → the pool guard is inert. With no LLM
-      // configured the pass proceeds past the guard into the mtime/cooldown gate
-      // (the #551 behaviour); crucially, NO pool_below_min_size event.
+      // Pool size 5 >= minPoolSize 3 → the pool guard is inert; crucially, NO
+      // pool_below_min_size event.
       await runImprove(configWithMinPoolSize(3));
 
       expect(poolBelowMinSizeEvents().length).toBe(0);
@@ -182,7 +189,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     TIMEOUT_MS,
   );
 
-  test("completes the pass despite a retired advisory op in the response, recording zero unapplied (R4 + R12a)", async () => {
+  test("completes the pass despite a retired advisory op in the response, and records every judged memory (R4 + R12a)", async () => {
     writeMemory(
       "primary",
       "A substantive primary memory that remains unchanged while its proposed merge awaits review. Its promotion proposal may succeed, but that cannot complete the pending merge.",
@@ -195,8 +202,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     // R12a: the schema/prompt no longer offer merge/delete/contradict — this
     // mocked response simulates a non-schema-honouring model returning one
     // anyway. `isValidOp` rejects it (skipped with a warning), so it never
-    // reaches `planned` and `advisoryOpsUnapplied` — permanently 0 now that
-    // the schema is promote-only — must not regress to counting it in.
+    // reaches `planned`.
     overrideSeam(_setChatCompletionForTests, async () =>
       JSON.stringify({
         operations: [
@@ -221,15 +227,40 @@ describe("#553 consolidate minPoolSize guard", () => {
 
     expect(result.consolidation?.promoted).toHaveLength(1);
     expect(result.consolidation?.warnings.some((w) => w.includes("skipping invalid operation"))).toBe(true);
-    // R4: the pass still completes even when the model plan carries an op the
-    // apply loop cannot act on — gating the completion event on "zero
-    // advisory ops" meant it was never emitted in practice.
-    const completed = readEvents({ type: "consolidate_completed" }).events;
-    expect(completed).toHaveLength(1);
-    expect(completed[0]?.metadata?.advisoryOpsUnapplied).toBe(0);
+    // The promoted memory's ledger row came with its proposal; the other
+    // judged memory is recorded as judged with no action.
+    const rows = new Map(consolidateLedgerRows().map((row) => [row.ref, row.outcome]));
+    expect(rows.get("memories/primary")).toBe("proposed");
+    expect(rows.get("memories/secondary")).toBe("judged_no_action");
   });
 
-  test("failed promotion proposal emission does not advance the consolidation watermark", async () => {
+  test("a memory judged recently and unchanged is not judged again; editing it brings it back", async () => {
+    writeMemory("steady", "A steady memory the model has already looked at and found nothing to do with.");
+    writeMemory("edited", "A memory that will be edited after its first judgement.");
+    await akmIndex({ stashDir, full: true });
+    overrideSeam(_setChatCompletionForTests, async () => JSON.stringify({ operations: [] }));
+
+    const first = await runImprove(configWithMinPoolSize(0));
+    expect(first.consolidation?.processed).toBe(2);
+    expect(consolidateLedgerRows().map((row) => row.outcome)).toEqual(["judged_no_action", "judged_no_action"]);
+
+    const second = await runImprove(configWithMinPoolSize(0));
+    expect(second.consolidation?.processed ?? 0).toBe(0);
+    const deltaSkips = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
+      (e) => e.metadata?.reason === "consolidation_no_memory_updates",
+    );
+    expect(deltaSkips).toHaveLength(1);
+
+    const editedPath = path.join(stashDir, "memories", "edited.md");
+    writeMemory("edited", "A memory that was edited after its first judgement, so it is worth another look.");
+    const later = new Date(Date.now() + 5_000);
+    fs.utimesSync(editedPath, later, later);
+
+    const third = await runImprove(configWithMinPoolSize(0));
+    expect(third.consolidation?.processed).toBe(1);
+  });
+
+  test("a promotion that fails to persist leaves the memory unrecorded, so the next run retries it", async () => {
     writeMemory(
       "primary",
       "A substantive memory whose promotion must remain retryable when proposal persistence is temporarily unavailable.",
@@ -254,7 +285,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     const result = await runImprove(configWithMinPoolSize(0), { proposalsCtx: { dbPath: unusableDbPath } });
 
     expect(result.consolidation?.failedPromotions).toBe(1);
-    expect(readEvents({ type: "consolidate_completed" }).events).toEqual([]);
+    expect(consolidateLedgerRows()).toEqual([]);
   });
 
   test(

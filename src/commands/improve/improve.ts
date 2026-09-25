@@ -6,11 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { assertNever } from "../../core/assert";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
-import { daysToMs } from "../../core/common";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
-import type { EventEnvelope } from "../../core/events-types";
 import type { LockOwnership } from "../../core/file-lock";
 import type {
   AkmImproveResult,
@@ -48,13 +46,11 @@ import { getEntryCount } from "../../storage/repositories/index-entries-reposito
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageCrossTab } from "../health/llm-usage";
 import { type DrainResult, drainProposals } from "../proposal/drain";
-import { resolveDrainPolicy } from "../proposal/drain-policies";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import { type AutonomyLane, describeGatedLanes, isAutonomyLaneAllowed } from "./autonomy-gate";
 import { akmDistill } from "./distill";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
-  buildLatestProposalTsMap,
   collectEligibleRefs,
   collectEligibleRefsReadOnly,
   memoryCleanupParentRef,
@@ -78,6 +74,7 @@ import {
   shouldSkipRef,
 } from "./improve-strategies";
 import { buildImproveUsageReport } from "./improve-usage-report";
+import { lastAttemptByRef, loadLedgerSnapshot } from "./ledger";
 import { improveLockPath, releaseImproveLock, tryAcquireImproveLock } from "./locks";
 // The cycle loop / post-loop / maintenance stages live in ./loop-stages.
 import { runImproveLoopStage, runImprovePostLoopStage } from "./loop-stages";
@@ -1134,7 +1131,6 @@ function buildResultExecutionPlan(
     distillOnlyRefs: distillOnlySet,
     configuredLimits,
     effectiveLimit,
-    replayBudget: preparation.planning.replayBudget,
     gates: [profileGate, ...preparation.planning.gates],
     processes,
     ...(proactive ? { proactive } : {}),
@@ -1168,7 +1164,6 @@ function buildResultExecutionPlan(
       configuredMode: configuredTriage?.applyMode ?? "queue",
       mode: triageConfig?.applyMode ?? "queue",
       maxAcceptsPerRun: configuredTriage?.maxAcceptsPerRun ?? 25,
-      ...(configuredTriage?.maxDiffLines !== undefined ? { maxDiffLines: configuredTriage.maxDiffLines } : {}),
     },
   });
 }
@@ -1183,7 +1178,6 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
     } else {
       try {
         const triageConfig = improveProfile.processes?.triage;
-        const policy = resolveDrainPolicy(triageConfig?.policy);
         const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
         const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
         triageDrain = await withLlmStage(
@@ -1193,12 +1187,10 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
               stashDir: primaryStashDir,
               ...(options.target ? { target: options.target } : {}),
               config: options.config,
-              policy,
               applyMode,
               maxAccepts,
               dryRun: false,
               excludeIds: new Set<string>(),
-              ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
               judgment: resolvedPlan.triageJudgment,
             }),
           { engine: resolvedPlan.triageJudgment?.engine, process: "triage.judgment" },
@@ -1359,41 +1351,25 @@ function makeCommitStashBatch(deps: {
   };
 }
 
-/** D6: pre-load the last 30 days of proposal_rejected events once per run. */
-function preloadRejectedProposals(): Map<string, EventEnvelope> {
-  // D6: pre-load all proposal_rejected events from the last 30 days once,
-  // so the per-asset loop can use a Map lookup instead of N DB round trips.
-  const REJECTED_PROPOSAL_WINDOW_MS = daysToMs(30);
-  const rejectedProposalSince = new Date(Date.now() - REJECTED_PROPOSAL_WINDOW_MS).toISOString();
-  const allRejectedProposalEvents = readEvents({ type: "proposal_rejected", since: rejectedProposalSince }).events;
-  const rejectedProposalsByRef = new Map<string, EventEnvelope>();
-  for (const e of allRejectedProposalEvents) {
-    if (e.ref && (!rejectedProposalsByRef.has(e.ref) || e.ts > (rejectedProposalsByRef.get(e.ref)?.ts ?? ""))) {
-      rejectedProposalsByRef.set(e.ref, e);
-    }
-  }
-  return rejectedProposalsByRef;
-}
-
 /**
- * Post-lock proactive cooldown re-filter: re-read cooldown timestamps
- * immediately before the loop so external proposal writes that occurred
- * before this run acquired its lock are visible.
+ * Post-lock proactive re-filter: re-read the improve ledger immediately before
+ * the loop so attempts another run recorded before this run acquired its lock
+ * are visible.
  */
 export function refilterProactiveLoopRefs(
   loopRefs: ImprovePreparationResult["loopRefs"],
   improveProfile: import("../../core/config/config").ImproveProfileConfig,
+  ledgerAccess: { stashDir?: string; eventsCtx?: EventsContext },
 ): ImprovePreparationResult["loopRefs"] {
-  // Re-read cooldown timestamps immediately before execution so external
-  // proposal writes that occurred before this run acquired its lock are visible.
   const proactiveLoopRefs = loopRefs.filter((r) => r.eligibilitySource === "proactive");
   let postLockLoopRefs = loopRefs;
-  if (proactiveLoopRefs.length > 0) {
-    const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
-    // Correlate proposal timestamps on each candidate's durable key.
-    const proactiveItemRefByRef = new Map(proactiveLoopRefs.map((r) => [r.ref, r.itemRef] as const));
-    const freshReflectTs = buildLatestProposalTsMap(proactiveRefStrs, "reflect", proactiveItemRefByRef);
-    const freshDistillTs = buildLatestProposalTsMap(proactiveRefStrs, "distill", proactiveItemRefByRef);
+  if (proactiveLoopRefs.length > 0 && ledgerAccess.stashDir) {
+    const ledger = loadLedgerSnapshot({ eventsCtx: ledgerAccess.eventsCtx }, ledgerAccess.stashDir, [
+      "reflect",
+      "distill",
+    ]);
+    const freshReflectTs = lastAttemptByRef(ledger, "reflect", proactiveLoopRefs);
+    const freshDistillTs = lastAttemptByRef(ledger, "distill", proactiveLoopRefs);
     const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
     const stillDue = new Set(
       filterProactiveDue(proactiveLoopRefs, freshReflectTs, freshDistillTs, pmDueDays, Date.now()).map((r) => r.ref),
@@ -1463,10 +1439,6 @@ async function runPostLoopStageOrSkip(args: {
     budgetSignal: budgetAbortController.signal,
     improveProfile,
     resolvedPlan,
-    consolidationRan: preparation.consolidationRan,
-    // R5: floor violations from this run's consolidate pass, for the collapse
-    // detector's merge-floor advisory.
-    consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
   });
 }
 
@@ -1578,7 +1550,6 @@ async function runImproveStageSequence(args: {
   let consolidation!: ConsolidateResult;
   let memoryInference: ImprovePostLoopResult["memoryInference"];
   let graphExtraction: ImprovePostLoopResult["graphExtraction"];
-  let cycleMetrics: ImprovePostLoopResult["cycleMetrics"];
   // Summed counters/durations.
   let reflectsWithErrorContext = 0;
   let memoryInferenceDurationMs = 0;
@@ -1612,10 +1583,11 @@ async function runImproveStageSequence(args: {
       });
     preparation = await runPreparation();
 
-    const rejectedProposalsByRef = preloadRejectedProposals();
-
     const runLoop = () => {
-      const postLockLoopRefs = refilterProactiveLoopRefs(preparation.loopRefs, improveProfile);
+      const postLockLoopRefs = refilterProactiveLoopRefs(preparation.loopRefs, improveProfile, {
+        stashDir: primaryStashDir ?? options.stashDir,
+        eventsCtx,
+      });
 
       return runImproveLoopStageImpl({
         ctx,
@@ -1630,7 +1602,6 @@ async function runImproveStageSequence(args: {
         distillCooledRefs: preparation.distillCooledRefs,
         distillOnlyRefs: preparation.distillOnlyRefs,
         recentErrors: preparation.recentErrors,
-        rejectedProposalsByRef,
         utilityMap: preparation.utilityMap,
         startMs,
         budgetMs,
@@ -1661,7 +1632,6 @@ async function runImproveStageSequence(args: {
     // Result objects (single pass — no cycle accumulation).
     memoryInference = postLoopResult.memoryInference;
     graphExtraction = postLoopResult.graphExtraction;
-    if (postLoopResult.cycleMetrics) cycleMetrics = postLoopResult.cycleMetrics;
     // Summed counters/durations.
     memoryInferenceDurationMs += postLoopResult.memoryInferenceDurationMs;
     graphExtractionDurationMs += postLoopResult.graphExtractionDurationMs;
@@ -1693,7 +1663,6 @@ async function runImproveStageSequence(args: {
     consolidation,
     memoryInference,
     graphExtraction,
-    cycleMetrics,
     reflectsWithErrorContext,
     memoryInferenceDurationMs,
     graphExtractionDurationMs,
@@ -1741,7 +1710,6 @@ function finalizeImproveResult(args: {
     consolidation,
     memoryInference,
     graphExtraction,
-    cycleMetrics,
     reflectsWithErrorContext,
     memoryInferenceDurationMs,
     graphExtractionDurationMs,
@@ -1867,7 +1835,6 @@ function finalizeImproveResult(args: {
     // (absent — not zero — when the index was already fresh and no inline
     // rebuild was needed).
     ...(ensureIndexDurationMs !== undefined ? { ensureIndexDurationMs } : {}),
-    ...(cycleMetrics ? { cycleMetrics } : {}),
     ...(orphansPurged !== undefined ? { orphansPurged } : {}),
     ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
     reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,

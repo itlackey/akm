@@ -26,11 +26,11 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
-import { disposeLoweredExecutionDispatchLease } from "../../integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
-import { callStructured, preflightStructuredLlmRunner } from "../../llm/structured-call";
-import { createProposal, isProposalSkipped } from "../proposal/repository";
+import { callStructured } from "../../llm/structured-call";
+import { createProposal } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -238,114 +238,101 @@ export async function runSchemaRepairPass(
     return { repairs, repairedRefs };
   }
 
-  const dispatchLease = await preflightStructuredLlmRunner(llmRunner);
-  try {
-    for (const repair of pendingErrors) {
-      appendEvent({
-        eventType: "schema_repair_invoked",
-        ref: repair.ref,
-        metadata: { outcome: "error", reason: repair.reason, error: repair.error },
+  assertRunnerCredentials(llmRunner);
+  for (const repair of pendingErrors) {
+    appendEvent({
+      eventType: "schema_repair_invoked",
+      ref: repair.ref,
+      metadata: { outcome: "error", reason: repair.reason, error: repair.error },
+    });
+    repairs.push(repair);
+  }
+
+  for (const { failure, frontmatter: fm, fieldList, messages } of eligibleRepairs) {
+    let loweringNotices: readonly Readonly<LoweringNotice>[] = [];
+    const noticeFields = (): { notices?: readonly Readonly<LoweringNotice>[] } =>
+      loweringNotices.length > 0 ? { notices: loweringNotices } : {};
+    try {
+      info(`[improve] schema-repair ${failure.ref} (${fieldList})`);
+      const llmResponse = await callStructured<string>({
+        feature: "schema_repair",
+        runner: llmRunner,
+        messages,
+        ...(chatFn ? { request: { chat: chatFn } } : {}),
+        onNotices: (value) => {
+          loweringNotices = value;
+        },
+        parse: (rawResponse) => rawResponse ?? "",
+        onError: () => "",
+        fallback: "",
       });
-      repairs.push(repair);
-    }
 
-    for (const { failure, frontmatter: fm, fieldList, messages } of eligibleRepairs) {
-      let loweringNotices: readonly Readonly<LoweringNotice>[] = [];
-      const noticeFields = (): { notices?: readonly Readonly<LoweringNotice>[] } =>
-        loweringNotices.length > 0 ? { notices: loweringNotices } : {};
-      try {
-        info(`[improve] schema-repair ${failure.ref} (${fieldList})`);
-        const llmResponse = await callStructured<string>({
-          feature: "schema_repair",
-          runner: llmRunner,
-          lease: dispatchLease,
-          messages,
-          ...(chatFn ? { request: { chat: chatFn } } : {}),
-          onNotices: (value) => {
-            loweringNotices = value;
-          },
-          parse: (rawResponse) => rawResponse ?? "",
-          onError: () => "",
-          fallback: "",
-        });
-
-        const parsed = parseEmbeddedJsonResponse<Record<string, string>>(llmResponse.trim());
-        if (!parsed) {
-          repairs.push({
-            ref: failure.ref,
-            reason: failure.reason,
-            outcome: "error",
-            error: "LLM returned unparseable JSON for schema repair",
-            ...noticeFields(),
-          });
-          continue;
-        }
-
-        const newFm = { ...fm.data };
-        if (parsed.description) newFm.description = parsed.description;
-        if (parsed.when_to_use) newFm.when_to_use = parsed.when_to_use;
-        const newContent = assembleAsset(newFm, fm.content);
-
-        // M-3 / #387: Route through proposal queue instead of writing directly to
-        // disk. This restores akm's safety invariant — the proposal queue is the
-        // only path to a committed asset write. LLM-generated `description` /
-        // `when_to_use` fields can be incorrect; routing through the queue makes
-        // them human-reviewable before they affect search ranking and curate hints.
-        // mem0 open gaps (arXiv:2504.19413) — any LLM write to a memory field
-        // should be human-reviewable.
-        const proposalResult = createProposal(stashDir, {
-          ref: failure.ref,
-          source: "schema-repair",
-          // §23.6 fingerprint model-id term (WI-6.4).
-          modelId: llmRunner.connection.model,
-          payload: {
-            content: newContent,
-            ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),
-          },
-        });
-
-        if (isProposalSkipped(proposalResult)) {
-          info(`[improve] schema-repair proposal skipped for ${failure.ref}: ${proposalResult.message}`);
-          repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped", ...noticeFields() });
-          continue;
-        }
-
-        info(`[improve] schema-repair queued: ${failure.ref} (proposal id: ${proposalResult.id})`);
-        appendEvent({
-          eventType: "schema_repair_invoked",
-          ref: failure.ref,
-          metadata: {
-            outcome: "queued",
-            reason: failure.reason,
-            proposalId: proposalResult.id,
-            ...noticeFields(),
-          },
-        });
-        repairs.push({
-          ref: failure.ref,
-          reason: failure.reason,
-          outcome: "queued",
-          proposalId: proposalResult.id,
-          ...noticeFields(),
-        });
-      } catch (e) {
-        if (e instanceof ConfigError) throw e;
-        appendEvent({
-          eventType: "schema_repair_invoked",
-          ref: failure.ref,
-          metadata: { outcome: "error", reason: failure.reason, error: String(e), ...noticeFields() },
-        });
+      const parsed = parseEmbeddedJsonResponse<Record<string, string>>(llmResponse.trim());
+      if (!parsed) {
         repairs.push({
           ref: failure.ref,
           reason: failure.reason,
           outcome: "error",
-          error: String(e),
+          error: "LLM returned unparseable JSON for schema repair",
           ...noticeFields(),
         });
+        continue;
       }
+
+      const newFm = { ...fm.data };
+      if (parsed.description) newFm.description = parsed.description;
+      if (parsed.when_to_use) newFm.when_to_use = parsed.when_to_use;
+      const newContent = assembleAsset(newFm, fm.content);
+
+      // M-3 / #387: Route through proposal queue instead of writing directly to
+      // disk. This restores akm's safety invariant — the proposal queue is the
+      // only path to a committed asset write. LLM-generated `description` /
+      // `when_to_use` fields can be incorrect; routing through the queue makes
+      // them human-reviewable before they affect search ranking and curate hints.
+      // mem0 open gaps (arXiv:2504.19413) — any LLM write to a memory field
+      // should be human-reviewable.
+      const proposalResult = createProposal(stashDir, {
+        ref: failure.ref,
+        source: "schema-repair",
+        payload: {
+          content: newContent,
+          ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),
+        },
+      });
+
+      info(`[improve] schema-repair queued: ${failure.ref} (proposal id: ${proposalResult.id})`);
+      appendEvent({
+        eventType: "schema_repair_invoked",
+        ref: failure.ref,
+        metadata: {
+          outcome: "queued",
+          reason: failure.reason,
+          proposalId: proposalResult.id,
+          ...noticeFields(),
+        },
+      });
+      repairs.push({
+        ref: failure.ref,
+        reason: failure.reason,
+        outcome: "queued",
+        proposalId: proposalResult.id,
+        ...noticeFields(),
+      });
+    } catch (e) {
+      if (e instanceof ConfigError) throw e;
+      appendEvent({
+        eventType: "schema_repair_invoked",
+        ref: failure.ref,
+        metadata: { outcome: "error", reason: failure.reason, error: String(e), ...noticeFields() },
+      });
+      repairs.push({
+        ref: failure.ref,
+        reason: failure.reason,
+        outcome: "error",
+        error: String(e),
+        ...noticeFields(),
+      });
     }
-  } finally {
-    disposeLoweredExecutionDispatchLease(dispatchLease);
   }
 
   return { repairs, repairedRefs };

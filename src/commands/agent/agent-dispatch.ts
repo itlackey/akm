@@ -27,7 +27,7 @@ import {
   NO_ENGINE_REMEDY,
   withEngineFallback,
 } from "../../integrations/agent/engine-fallback";
-import { executeInteractiveAgentInvocation } from "../../integrations/agent/execution-lowering";
+import { executeInteractiveAgentInvocation } from "../../integrations/agent/runner-dispatch";
 import { executeCommandInvocation, type PrepareCommandInvocationOptions } from "../command/command-execution";
 
 export interface AkmAgentDispatchOptions {

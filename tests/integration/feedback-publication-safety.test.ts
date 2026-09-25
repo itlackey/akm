@@ -43,26 +43,7 @@ beforeEach(async () => {
 afterEach(() => storage.cleanup());
 
 describe("feedback lesson publication", () => {
-  test("a dirty lesson path warns and skips lesson credit after retaining the feedback event", async () => {
-    fs.appendFileSync(lessonPath, "user work\n");
-
-    const result = await runCliCapture([
-      "feedback",
-      "memories/note",
-      "--positive",
-      "--applied-to",
-      "team//lessons/credited",
-      "--format",
-      "json",
-    ]);
-
-    expect(result.code).toBe(0);
-    expect(result.stderr).toMatch(/staged or unstaged work/i);
-    expect(fs.readFileSync(lessonPath, "utf8")).not.toContain("lessonStrength");
-    expect(readEvents({ type: "feedback", ref: memoryRef }).events).toHaveLength(1);
-  });
-
-  test("an unchanged credit returns before Git preflight even when the lesson is dirty", async () => {
+  test("an unchanged credit succeeds quietly, even when the lesson is dirty", async () => {
     fs.writeFileSync(
       lessonPath,
       `---\ndescription: credited lesson\nlessonStrength:\n  - ${memoryRef}\n---\nUse it.\nuser work\n`,

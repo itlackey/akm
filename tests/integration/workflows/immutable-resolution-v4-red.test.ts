@@ -239,45 +239,17 @@ describe("workflow v4 common target resolution", () => {
     const started = await startWorkflowRun("workflows/native-targets");
     const plan = await persistedPlan(started.run.id);
     const [run, script] = targets(plan);
-    expect(run).toMatchObject({
-      kind: "shell",
-      executable: expect.objectContaining({ absolutePath: expect.stringMatching(/^\//), sha256: expect.any(String) }),
-    });
+    // The executable is resolved at dispatch (an upgraded binary never
+    // strands a run), so the frozen command stays as authored.
+    expect(run).toMatchObject({ kind: "shell", exec: { command: ["sh", "-c", "printf exact-run"] } });
     expect(script).toMatchObject({
       kind: "script",
       ref: expect.stringMatching(/\/\/scripts\/exact\.sh$/),
       bytesBase64: Buffer.from("#!/bin/sh\nprintf exact-script\n").toString("base64"),
       materialization: "ephemeral-0700-delete",
-      executable: expect.objectContaining({ absolutePath: expect.stringMatching(/^\//), sha256: expect.any(String) }),
     });
-  });
-
-  test("rejects a configured CLI whose executable cannot be frozen before creating a run", async () => {
-    writeSandboxConfig({
-      engines: { missing: { kind: "agent", platform: "claude", bin: "akm-wp7-definitely-missing" } },
-      defaults: { engine: "missing" },
-      workflow: { judgeEngine: "missing" },
-    });
-    resetConfigCache();
-    write(
-      storage.stashDir,
-      "workflows/missing-bin.md",
-      [
-        "---",
-        "type: workflow",
-        "steps:",
-        "  - id: run",
-        "---",
-        "",
-        "## run",
-        "",
-        "Run with a missing executable.",
-        "",
-      ].join("\n"),
-    );
-    const before = await establishStateBaseline();
-    await expect(startWorkflowRun("workflows/missing-bin")).rejects.toThrow(/executable|missing|PATH|resolve/i);
-    expect(mutationCounts()).toEqual(before);
+    expect(Object.hasOwn(run ?? {}, "executable")).toBe(false);
+    expect(Object.hasOwn(script ?? {}, "executable")).toBe(false);
   });
 });
 

@@ -8,25 +8,39 @@
  * walks the frozen plan and dispatches every unit itself. Every step
  * advances through `completeWorkflowStep` (never a direct step-row write),
  * the plan is read from its frozen `plan_json` row rather than live source,
- * a run lease enforces one driving engine invocation at a time, gate loops
- * are bounded, and the SDK dispatch registry is drained in a `finally` on
- * every exit path so no child process keeps the event loop open.
+ * one O_EXCL lock file per run id keeps a second `akm workflow run` off a
+ * run another process is driving (a dead holder's lock is reclaimed by pid
+ * liveness), gate loops are bounded, and the SDK dispatch registry is drained
+ * in a `finally` on every exit path so no child process keeps the event loop
+ * open.
  *
  * See docs/architecture/decisions/0011-engine-run-loop-invariants.md for the
  * full design history behind each of these invariants.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { TransientError, UsageError } from "../../core/errors";
+import { type LockOwnership, releaseLock } from "../../core/file-lock";
+import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunStepState, WorkflowRunSummary } from "../../sources/types";
+import { resolveStorageLocations } from "../../storage/locations";
 import { withWorkflowRunsConnection, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { assertRunParamsSatisfyPlan, type WorkflowParameterFlag } from "../ir/params";
 import { computePlanHash } from "../ir/plan-hash";
 import { decodeWorkflowPlanV4, type IrStepPlanV4, type WorkflowPlanGraphV4 } from "../ir/schema-v4";
-import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
-import { completeWorkflowStep, getNextWorkflowStep, resumeWorkflowRun, type WorkflowNextResult } from "../runtime/runs";
+import { readRunPlan } from "../runtime/run-plan";
+import {
+  abandonWorkflowRun,
+  completeWorkflowStep,
+  getNextWorkflowStep,
+  resumeWorkflowRun,
+  type WorkflowNextResult,
+} from "../runtime/runs";
+import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
 import { frozenSummaryJudge } from "./frozen-judge";
 import { mergeLoweringNotices } from "./lowering-notices";
@@ -75,8 +89,8 @@ export interface RunWorkflowOptions {
   /** Test seam / backend override for unit dispatch. */
   dispatcher?: UnitDispatcher;
   /**
-   * Test seam: plan loader. Default: the run row's FROZEN plan (`plan_json`
-   * + `plan_hash` integrity check, migration 006).
+   * Test seam: asserts the injected plan is the run row's frozen plan. The
+   * frozen `plan_json` row is always what executes.
    */
   loadPlan?: (workflowRef: string) => Promise<WorkflowPlanGraphV4>;
   /** Test seam for the engine concurrency cap. */
@@ -88,14 +102,6 @@ export interface RunWorkflowOptions {
    * step. Injected primarily for tests.
    */
   summaryJudge?: SummaryJudge | null;
-  /**
-   * Test seam: schedules the lease-heartbeat's periodic renewal tick while a
-   * step dispatches. Receives the (async) tick fn, returns a stop function
-   * called in the `finally`. Defaults to a `setInterval` at
-   * {@link HEARTBEAT_INTERVAL_MS} (unref'd so it never keeps the process
-   * alive). Injected by tests to drive ticks deterministically.
-   */
-  heartbeatScheduler?: HeartbeatScheduler;
   /**
    * Process-lifecycle disposal seam (owner finding 4 — leaked dispatch
    * handles). The SDK dispatch path caches `opencode serve` CHILD PROCESSES in
@@ -123,9 +129,8 @@ export interface RunWorkflowOptions {
    * `childEnv` for a "script"/"shell" unit — applied to the allowlisted BASE
    * only, so an ambient value already present and an authored `env:` binding
    * both still win — and via the same `UnitDispatchRequest.eventSource` ->
-   * `dispatchWorkflowExecution`'s `dispatchLoweredExecutionRequest`
-   * `eventSource` option (execution-lowering.ts's single-key child-env
-   * layering) for a "command" unit, so the agent/sdk arms observe it too —
+   * `dispatchWorkflowExecution`'s `runExecution` `eventSource` option
+   * (runner-dispatch.ts's single-key child-env layering) for a "command" unit, so the agent/sdk arms observe it too —
    * gated the same way there (precedence fix, code review round 2; see
    * unit-dispatch.ts's `forwardedDispatchEventSource`): an authored `env:`
    * binding on the unit still wins, in agreement with the script/shell arm
@@ -198,9 +203,11 @@ export interface RunWorkflowResult {
   /** Deduped safe diagnostics from work lowered during this invocation only. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
-   * Non-fatal notices from creating the run in THIS invocation — currently the
-   * implicit engine fallback announcement. Absent when the run already existed,
-   * so a resume never re-announces it.
+   * Non-fatal notices from THIS invocation: creating the run (the implicit
+   * engine fallback announcement — never re-surfaced on a resume), resuming a
+   * run whose authored source changed since it was frozen (the run continues
+   * on the frozen plan), or abandoning a run whose frozen plan this akm can
+   * no longer decode (the message names the recovery).
    */
   warnings?: string[];
 }
@@ -239,7 +246,15 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     stepsProcessed += result.stepsProcessed;
     const notices = mergeLoweringNotices(...executed.map((step) => step.notices));
     const aggregate = { ...result, executed, stepsProcessed, ...(notices ? { notices } : {}) };
-    if (result.run.status !== "failed" || result.aborted || result.gateRejection || remainingRetries <= 0) {
+    // An attempt that executed nothing (an abandoned, undecodable plan) has no
+    // failed step for a retry to re-open.
+    if (
+      result.run.status !== "failed" ||
+      result.aborted ||
+      result.gateRejection ||
+      result.executed.length === 0 ||
+      remainingRetries <= 0
+    ) {
       return aggregate;
     }
     if (remainingSteps !== undefined) {
@@ -266,15 +281,6 @@ async function runWorkflowAttempt(
     parameterFlags: options.parameterFlags,
     newRun: options.newRun,
   });
-  // Version/canonical/hash validation precedes every executable mutation,
-  // including lease acquisition. Historical rows remain inspectable/abandonable.
-  if (!next.done) {
-    await withWorkflowRunsRepo((repo) => {
-      const row = repo.getRunById(next.run.id);
-      if (!row) throw new UsageError(`Workflow run ${next.run.id} was not found.`);
-      requireExecutableWorkflowPlan(row);
-    });
-  }
 
   // Refuse non-active runs BEFORE any dispatch — completeWorkflowStep would
   // reject the completion anyway, but only after the units already ran (and
@@ -286,70 +292,70 @@ async function runWorkflowAttempt(
     );
   }
 
-  // Run lease (R2 single-driver enforcement): claim the run BEFORE any
-  // dispatch — a second `akm workflow run` on a live-leased run refuses up
-  // front instead of racing the first engine's spine. An expired lease is
-  // claimable (crash recovery). Released in the finally below; renewed
-  // between steps inside the loop. A done run takes no lease: nothing will
-  // dispatch, and the status re-read below must stay a pure no-op.
+  // One driver per run: the per-run lock file is taken BEFORE the plan is
+  // read or anything dispatches, so a second `akm workflow run` on a run
+  // another process is driving refuses up front (exit 75) instead of racing
+  // its spine. A done run takes no lock: nothing will dispatch.
   const runId = next.run.id;
-  const leaseHolder = randomUUID();
-  const leased = !next.done;
-  if (leased) {
-    await acquireRunLease(runId, leaseHolder);
-  }
-  // Lease heartbeat (P1 fix): the lease TTL is renewed BETWEEN steps, but a
-  // single unit's dispatch can outlive the TTL (the default unit timeout is 10
-  // minutes, > the 90s lease). An unheartbeated lease would silently expire
-  // mid-dispatch, letting a second `akm workflow run` claim the run and
-  // re-dispatch the same units — the two engines clobber each other's journal
-  // rows and double-run side effects. A timer INSIDE this invocation renews the
-  // lease while dispatch is in flight; it is cleared in the `finally`, so it
-  // dies with the process — exactly when the lease SHOULD become claimable
-  // after TTL. A renewal that fails (the lease was genuinely stolen after an
-  // expiry, e.g. the process was suspended) aborts dispatch and fails the run
-  // loudly rather than keep double-driving.
-  const heartbeat = leased
-    ? new LeaseHeartbeat(runId, leaseHolder, options.heartbeatScheduler, options.signal)
-    : undefined;
-  heartbeat?.start();
+  const lock = next.done ? undefined : acquireWorkflowRunLock(runId);
   try {
+    let plan: WorkflowPlanGraphV4 | undefined;
+    const warnings: string[] = [...(next.startWarnings ?? [])];
+    if (!next.done) {
+      const row = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
+      if (!row) throw new UsageError(`Workflow run ${runId} was not found.`);
+      const read = readRunPlan(row);
+      if (!read.ok) {
+        // A newer akm's run is left untouched for that akm.
+        if (read.newer) throw new UsageError(read.problem);
+        // Otherwise a frozen plan this akm cannot decode is a status change,
+        // not an exception: the run is abandoned and the message names how to
+        // start afresh.
+        const abandoned = await abandonWorkflowRun(runId);
+        const message = `${read.problem} The run was abandoned; start a new run with 'akm workflow run ${row.workflow_ref}'.`;
+        return {
+          run: abandoned.run,
+          executed: [],
+          stepsProcessed: 0,
+          warnings: [...warnings, message],
+          ...(next.resumed ? { resumed: true as const } : {}),
+        };
+      }
+      plan = read.plan;
+      if (!next.autoStarted) {
+        const drift = await workflowSourceDriftWarning(runId, row.workflow_ref, plan);
+        if (drift) warnings.push(drift);
+      }
+    }
     // Run-wide state.db connection scope: `executeStepPlan` already opens one
     // per STEP, so widening it to the whole drive loop additionally folds the
-    // spine writes (`completeWorkflowStep`), the per-step lease renewals, the
-    // journal reads, and `finalizeExecutedStep`'s gate-row journaling onto that
-    // one handle — `openStateDatabase` costs a maintenance-activity lockfile
-    // plus a read-only ledger preflight on EVERY call. Nesting is an idempotent
-    // join (`core/state-db-scope.ts`): the inner per-step scope reuses this
-    // handle and does not close it, and this scope's own `finally` closes on
-    // every exit path (return, throw, abort), after which escaped async work
+    // spine writes (`completeWorkflowStep`), the journal reads, and
+    // `finalizeExecutedStep`'s gate-row journaling onto that one handle —
+    // `openStateDatabase` costs a maintenance-activity lockfile plus a
+    // read-only ledger preflight on EVERY call. Nesting is an idempotent join
+    // (`core/state-db-scope.ts`): the inner per-step scope reuses this handle
+    // and does not close it, and this scope's own `finally` closes on every
+    // exit path (return, throw, abort), after which escaped async work
     // transparently falls back to opening its own connection.
-    const result = await withWorkflowRunsConnection(() =>
-      driveRun(options, next, leaseHolder, heartbeat, liveEvidence),
-    );
-    // Creation-time notices reach the caller only here: the run row has no
-    // warnings column, and a later invocation of the same run must stay silent
-    // about a decision it did not make. `driveRun` never sets `warnings` or
-    // `resumed` — both are properties of THIS resolution of `target`, not of
-    // the run row (#919).
+    const result = await withWorkflowRunsConnection(() => driveRun(options, next, plan, liveEvidence));
+    // Creation/resume-time notices reach the caller only here: the run row
+    // has no warnings column, and a later invocation of the same run must
+    // stay silent about a decision it did not make. `driveRun` never sets
+    // `warnings` or `resumed` — both are properties of THIS resolution of
+    // `target`, not of the run row (#919).
     return {
       ...result,
       ...(next.resumed ? { resumed: true as const } : {}),
-      ...(next.startWarnings?.length ? { warnings: next.startWarnings } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   } finally {
-    heartbeat?.stop();
     try {
-      if (leased) {
-        await withWorkflowRunsRepo((repo) => {
-          repo.releaseEngineLease(runId, leaseHolder);
-        });
-      }
+      if (lock) releaseLock(lock);
     } finally {
       // Process-lifecycle drain (owner finding 4): release any cached SDK server
       // child processes so a one-shot CLI invocation exits cleanly instead of
-      // hanging on the leaked handle. Runs even if lease release itself fails;
-      // a teardown-time repository error must not skip dispatch cleanup.
+      // hanging on the leaked handle. Runs even if the lock release itself
+      // fails; a teardown-time error must not skip dispatch cleanup.
       try {
         await (options.disposeDispatchResources ?? disposeDispatchResources)();
       } catch {
@@ -359,173 +365,63 @@ async function runWorkflowAttempt(
   }
 }
 
-/** Lease lifetime: long enough to survive slow steps between renewals, short
- * enough that a crashed engine frees the run quickly. Renewed per step. */
-const RUN_LEASE_TTL_MS = 90_000;
-
-function leaseExpiry(): string {
-  return new Date(Date.now() + RUN_LEASE_TTL_MS).toISOString();
+/** The per-run lock file: `<data dir>/workflow-run-locks/<run id>.lock`, next to `state.db`. */
+export function workflowRunLockPath(runId: string): string {
+  return path.join(path.dirname(resolveStorageLocations().stateDb), "workflow-run-locks", `${runId}.lock`);
 }
 
 /**
- * Atomically claim the run lease or refuse with a TransientError naming the
- * current holder + expiry (#948 addendum — moved off UsageError, exit 75).
- * The single-UPDATE claim in the repository is the arbiter — two racing
- * invocations cannot both win.
+ * Take the run's O_EXCL lock file, or refuse with `RUN_LEASE_HELD` (exit 75)
+ * naming the live holder. A lock whose holder pid is dead is reclaimed by
+ * `tryAcquireRunLock` before this refuses, so a crashed engine never wedges
+ * a run; nothing here expires by age.
  */
-async function acquireRunLease(runId: string, holder: string): Promise<void> {
-  await withWorkflowRunsRepo((repo) => {
-    if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
-    const row = repo.getRunById(runId);
-    throw new TransientError(
-      `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
-        `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
-        `wait for that invocation to finish or for the lease to expire.`,
-      "RUN_LEASE_HELD",
-    );
-  });
+function acquireWorkflowRunLock(runId: string): LockOwnership {
+  const result = tryAcquireRunLock(workflowRunLockPath(runId), { label: `workflow run ${runId}` });
+  if (result.state === "acquired") return result.ownership;
+  const since = result.holder.startedAt ? `, since ${result.holder.startedAt}` : "";
+  throw new TransientError(
+    `Workflow run ${runId} is already being driven by another akm process ` +
+      `(pid ${formatLockHolderPid(result.holder)}${since}). A second \`akm workflow run\` would race it — ` +
+      "wait for that invocation to finish.",
+    "RUN_LEASE_HELD",
+  );
 }
 
 /**
- * Renew the lease between steps. Losing the lease mid-run (it expired during
- * a long step and another engine claimed it) is a hard stop: the new owner
- * drives the spine now, and continuing would race it.
+ * Resume re-reads the authored workflow source and says so, once, when it no
+ * longer matches the bytes the plan was frozen from. The run keeps executing
+ * the frozen plan either way — that is the whole safety the freeze buys — and
+ * the warning tells the operator a fresh run is what picks up the edit.
  */
-async function renewRunLease(runId: string, holder: string): Promise<void> {
-  await withWorkflowRunsRepo((repo) => {
-    if (repo.renewEngineLease(runId, holder, leaseExpiry())) return;
-    const row = repo.getRunById(runId);
-    throw new UsageError(
-      `Workflow run ${runId} lost its run lease (now held by ${row?.engine_lease_holder ?? "(nobody)"}). ` +
-        `Another engine invocation claimed the run after this one's lease expired — stopping to avoid racing it.`,
-    );
-  });
-}
-
-/** Renew mid-dispatch this often. Well under the TTL so a slow/skipped tick
- * still leaves ample margin before the lease would expire. */
-const HEARTBEAT_INTERVAL_MS = RUN_LEASE_TTL_MS / 3;
-
-/**
- * Schedules the heartbeat's periodic renewal tick; returns a stop function.
- * The tick is async (a repository renewal); the default wrapper fires it and
- * ignores the returned promise (setInterval semantics).
- */
-export type HeartbeatScheduler = (tick: () => Promise<void>) => () => void;
-
-/** Real timer: an unref'd interval so a live heartbeat never keeps the process alive. */
-function defaultHeartbeatScheduler(tick: () => Promise<void>): () => void {
-  const id = setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS);
-  (id as unknown as { unref?: () => void }).unref?.();
-  return () => clearInterval(id);
-}
-
-/**
- * Keeps the run lease alive while a step dispatches (P1 fix — the between-step
- * renewal cannot cover a unit that runs longer than the TTL). A timer inside
- * the engine invocation renews the lease through the holder-guarded
- * {@link renewEngineLease}; the heartbeat owns an {@link AbortController}
- * (chained onto the caller's signal) that becomes the effective DISPATCH
- * signal, so a lost lease aborts in-flight dispatch PROMPTLY. After the abort,
- * {@link assertAlive} throws a loud UsageError, so the engine stops instead of
- * continuing to drive a run another engine now owns. No background daemon: the
- * timer is cleared in the caller's `finally` and dies with the process.
- */
-class LeaseHeartbeat {
-  private readonly controller = new AbortController();
-  private readonly detachUpstream: (() => void) | undefined;
-  private readonly schedule: HeartbeatScheduler;
-  private cancel: (() => void) | undefined;
-  private renewing = false;
-  /** Set once a renewal failed — the lease was stolen after a genuine expiry. */
-  private lost = false;
-  /** The holder that stole the lease, captured for the loud error. */
-  private stolenBy: string | null = null;
-
-  constructor(
-    private readonly runId: string,
-    private readonly holder: string,
-    scheduler: HeartbeatScheduler | undefined,
-    upstream: AbortSignal | undefined,
-  ) {
-    this.schedule = scheduler ?? defaultHeartbeatScheduler;
-    // A caller abort (Ctrl-C, budget) must abort dispatch too; chain it into
-    // the effective signal. Distinct from a lost lease: a caller abort does
-    // NOT set `lost`, so `assertAlive` stays quiet and the existing graceful
-    // break on `options.signal` handles it.
-    if (upstream) {
-      if (upstream.aborted) {
-        this.controller.abort();
-      } else {
-        const onAbort = () => this.controller.abort();
-        upstream.addEventListener("abort", onAbort, { once: true });
-        this.detachUpstream = () => upstream.removeEventListener("abort", onAbort);
-      }
-    }
-  }
-
-  /** The effective dispatch signal: aborts on a lost lease OR a caller abort. */
-  get signal(): AbortSignal {
-    return this.controller.signal;
-  }
-
-  start(): void {
-    this.cancel ??= this.schedule(() => this.tick());
-  }
-
-  /** One renewal attempt. A failure marks the lease lost and aborts dispatch. */
-  private async tick(): Promise<void> {
-    if (this.lost || this.renewing || this.controller.signal.aborted) return;
-    this.renewing = true;
-    try {
-      const renewed = await withWorkflowRunsRepo((repo) =>
-        repo.renewEngineLease(this.runId, this.holder, leaseExpiry()),
-      );
-      if (!renewed) {
-        this.stolenBy = await withWorkflowRunsRepo((repo) => repo.getRunById(this.runId)?.engine_lease_holder ?? null);
-        this.loseLease();
-      }
-    } catch {
-      // A renewal that THREW (a DB error / connection failure, or the follow-up
-      // getRunById itself throwing) is treated exactly like a stolen lease: we
-      // can no longer PROVE we still hold it, so abort in-flight dispatch and let
-      // `assertAlive` stop the engine loudly. Swallowing the error here is what
-      // keeps the fire-and-forget `void tick()` in the default scheduler from
-      // leaking an unhandled promise rejection.
-      this.loseLease();
-    } finally {
-      this.renewing = false;
-    }
-  }
-
-  /** Mark the lease lost, stop the timer, and abort in-flight dispatch — the new
-   * owner drives the spine now (or, on a renewal error, we can no longer prove we
-   * do). Idempotent: repeated calls are harmless. */
-  private loseLease(): void {
-    this.lost = true;
-    this.stop();
-    this.controller.abort();
-  }
-
-  /**
-   * Throw loudly if a heartbeat renewal failed. Called at dispatch boundaries:
-   * a lost lease means another engine claimed the run mid-step, so continuing
-   * (completing steps, dispatching more units) would double-drive it.
-   */
-  assertAlive(): void {
-    if (!this.lost) return;
-    throw new UsageError(
-      `Workflow run ${this.runId} lost its run lease mid-dispatch (heartbeat renewal failed; lease now held by ` +
-        `${this.stolenBy ?? "(nobody)"}). Another engine invocation claimed the run after this one's lease expired — ` +
-        `aborting to avoid double-driving it.`,
+async function workflowSourceDriftWarning(
+  runId: string,
+  workflowRef: string,
+  plan: WorkflowPlanGraphV4,
+): Promise<string | undefined> {
+  const frozen = plan.sourceReadSet.find((snapshot) => snapshot.identity.ref === workflowRef);
+  if (!frozen) return undefined;
+  let sourcePath: string;
+  try {
+    sourcePath = (await loadWorkflowAsset(workflowRef)).path;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return (
+      `Workflow run ${runId}: the authored source ${workflowRef} could not be re-read (${detail}); ` +
+      "continuing with the frozen plan."
     );
   }
-
-  stop(): void {
-    this.cancel?.();
-    this.cancel = undefined;
-    this.detachUpstream?.();
+  let current: string;
+  try {
+    current = createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex");
+  } catch {
+    return `Workflow run ${runId}: ${sourcePath} is no longer readable; continuing with the frozen plan.`;
   }
+  if (current === frozen.identity.hash) return undefined;
+  return (
+    `Workflow run ${runId}: ${workflowRef} (${sourcePath}) has changed since this run was frozen; ` +
+    `continuing with the frozen plan. Start a new run with 'akm workflow run ${workflowRef} --new' to pick up the edit.`
+  );
 }
 
 /**
@@ -591,8 +487,8 @@ async function seedRunAccountingFromJournal(runId: string): Promise<{ unitsDispa
 }
 
 /**
- * The decoded/hash-verified row plan is the sole execution authority. The
- * loader seam may assert an expected plan in tests, but can never replace it.
+ * The row plan is the sole execution authority. The loader seam may assert an
+ * expected plan in tests, but can never replace it.
  *
  * Reviewer #12: the journaled params row must still satisfy the frozen param
  * schemas before the engine resolves any unit prompt from it, so
@@ -602,8 +498,8 @@ async function seedRunAccountingFromJournal(runId: string): Promise<{ unitsDispa
 async function loadAuthoritativeRunPlan(
   options: RunWorkflowOptions,
   next: WorkflowNextResult,
+  stored: WorkflowPlanGraphV4,
 ): Promise<WorkflowPlanGraphV4> {
-  const stored = await loadStoredPlan(next.run.id);
   if (options.loadPlan) {
     const expected = decodeWorkflowPlanV4(await options.loadPlan(next.run.workflowRef));
     if (computePlanHash(expected) !== computePlanHash(stored))
@@ -625,9 +521,8 @@ async function skipUnselectedRouteTarget(input: {
   skipInfo: RouteSkipInfo;
   routeUnselected: Map<string, RouteSkipInfo>;
   executed: ExecutedStepReport[];
-  leaseHolder: string;
 }): Promise<WorkflowNextResult> {
-  const { runId, stepId, stepPlan, skipInfo, routeUnselected, executed, leaseHolder } = input;
+  const { runId, stepId, stepPlan, skipInfo, routeUnselected, executed } = input;
   // Cascade (peer review R1): a skipped step that is ITSELF a router
   // never evaluates its route, so none of its declared targets were
   // selected — mark them all skip-on-reach too (a target another
@@ -641,7 +536,7 @@ async function skipUnselectedRouteTarget(input: {
       ? `Skipped by route: step "${skipInfo.router}" was itself skipped, so none of its branch targets run.`
       : `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
   executed.push({ stepId, ok: true, unitCount: 0, failedUnits: 0, summary: notes });
-  await completeWorkflowStep({ runId, stepId, status: "skipped", notes, leaseHolder });
+  await completeWorkflowStep({ runId, stepId, status: "skipped", notes });
   return getNextWorkflowStep(runId);
 }
 
@@ -652,8 +547,8 @@ async function skipUnselectedRouteTarget(input: {
  * (`<step>.gate:l<n>`, complete:false) must resume at loop n+1 with the
  * stored corrective feedback threaded into the unit prompts; without this
  * the engine restarts at loop 1, reuses the rejected loop-1 rows, overwrites
- * `<step>.gate:l1`, and re-judges the stale artifact — breaking journaled
- * replay and making the resumed run diverge from the interrupted one. The rows
+ * `<step>.gate:l1`, and re-judges the stale artifact instead of continuing
+ * where the interrupted run stopped. The rows
  * are re-read per step (NOT the once-at-start budget seed) so a step reached
  * later within THIS same invocation still starts fresh at loop 1.
  *
@@ -662,7 +557,7 @@ async function skipUnselectedRouteTarget(input: {
  * rows are journaled under the step's own id, so the narrow query returns a
  * superset of what they read. Re-reading the whole run journal here would
  * re-materialize every earlier step's `result_json` — synchronously, blocking
- * the event loop the lease heartbeat and abort handling share — once per step.
+ * the event loop abort handling shares — once per step.
  */
 async function recoverGateLoopState(
   runId: string,
@@ -704,10 +599,6 @@ interface StepDriveContext {
   routeSelected: Set<string>;
   routeUnselected: Map<string, RouteSkipInfo>;
   summaryJudge: SummaryJudge | null;
-  leaseHolder: string;
-  heartbeat: LeaseHeartbeat | undefined;
-  /** The effective dispatch signal: the heartbeat's controller while leased, else the caller signal. */
-  dispatchSignal: AbortSignal | undefined;
 }
 
 /**
@@ -753,7 +644,7 @@ async function executeStepSubgraph(
   ctx: StepDriveContext,
   loop: { gateLoop: number; gateFeedback: GateFeedback | undefined; unitsDispatched: number; tokensUsed: number },
 ): Promise<StepExecutionResult> {
-  const { options, next, plan, stepPlan, step, evidence, leaseHolder, dispatchSignal } = ctx;
+  const { options, next, plan, stepPlan, step, evidence } = ctx;
   const { gateLoop, gateFeedback, unitsDispatched, tokensUsed } = loop;
   return !stepPlan.root && stepPlan.route
     ? {
@@ -765,7 +656,6 @@ async function executeStepSubgraph(
       }
     : await executeStepPlan(stepPlan, {
         runId: next.run.id,
-        leaseHolder,
         workflowRef: next.run.workflowRef,
         params: next.run.params ?? {},
         evidence,
@@ -779,9 +669,7 @@ async function executeStepSubgraph(
         // F-1 (spec §5.2 point 2): threaded to an exec unit's child env;
         // undefined for every non-task caller (byte-identical, RunWorkflowOptions doc).
         ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
-        // The heartbeat's signal is the effective dispatch signal: a lost
-        // lease (or a caller abort) aborts in-flight units promptly.
-        ...(dispatchSignal ? { signal: dispatchSignal } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
         ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
         maxConcurrency: Math.min(
           options.maxConcurrency ?? Number.POSITIVE_INFINITY,
@@ -808,7 +696,7 @@ async function runStepGateLoop(
   totals: { unitsDispatched: number; tokensUsed: number },
 ): Promise<StepGateLoopOutcome> {
   const { options, next, stepPlan, step, evidence, executed, routeSelected, routeUnselected } = ctx;
-  const { summaryJudge, leaseHolder, heartbeat } = ctx;
+  const { summaryJudge } = ctx;
   const { startLoop, maxLoops } = gate;
   let { unitsDispatched, tokensUsed } = totals;
   let gateFeedback: GateFeedback | undefined = gate.seededFeedback;
@@ -821,15 +709,7 @@ async function runStepGateLoop(
   });
 
   for (let gateLoop = startLoop; gateLoop <= maxLoops; gateLoop++) {
-    // A loop re-execution dispatches a fresh round of units — renew the
-    // lease so a long evaluator-optimizer cycle cannot outlive the TTL.
-    if (gateLoop > 1) await renewRunLease(next.run.id, leaseHolder);
-
     const result = await executeStepSubgraph(ctx, { gateLoop, gateFeedback, unitsDispatched, tokensUsed });
-    // If the heartbeat lost the lease WHILE this step dispatched, another
-    // engine now owns the run — stop loudly BEFORE finalizing the step
-    // (completeWorkflowStep would race the new owner's spine).
-    heartbeat?.assertAlive();
     unitsDispatched = result.unitsDispatched;
     if (result.tokensUsed !== undefined) tokensUsed = result.tokensUsed;
     if (options.signal?.aborted) return outcome({ kind: "aborted" });
@@ -866,18 +746,11 @@ async function runStepGateLoop(
         routeUnselected,
         summaryJudge,
         signal: options.signal,
-        // The judge runs under the DISPATCH signal, so the completion path must
-        // see it too: an abort delivered there (a lost lease, a caller Ctrl-C)
-        // is an interruption, not a verifier outage.
-        ...(ctx.dispatchSignal ? { dispatchSignal: ctx.dispatchSignal } : {}),
-        leaseHolder,
       });
     } catch (error) {
-      heartbeat?.assertAlive();
       if (options.signal?.aborted) return outcome({ kind: "aborted" });
       throw error;
     }
-    heartbeat?.assertAlive();
 
     if (finalize.kind === "retry") {
       // Re-execute the subgraph with the judge/validation feedback threaded
@@ -953,12 +826,12 @@ async function runStepGateLoop(
   );
 }
 
-/** The engine loop proper — runs under the lease held by `runWorkflowSteps`. */
+/** The engine loop proper — runs under the per-run lock `runWorkflowAttempt` holds. */
 async function driveRun(
   options: RunWorkflowOptions,
   initial: WorkflowNextResult,
-  leaseHolder: string,
-  heartbeat: LeaseHeartbeat | undefined,
+  /** The run row's decoded frozen plan; undefined only for a done run, which drives nothing. */
+  storedPlan: WorkflowPlanGraphV4 | undefined,
   /**
    * The COMPLETE in-memory evidence of every step THIS call has completed,
    * keyed by step id, preferred over the re-read row when the downstream scope
@@ -975,11 +848,8 @@ async function driveRun(
   liveEvidence: Map<string, Record<string, unknown>>,
 ): Promise<RunWorkflowResult> {
   let next = initial;
-  if (initial.done) return completedRunResult(initial.run.id);
+  if (initial.done || !storedPlan) return completedRunResult(initial.run.id);
 
-  // The effective dispatch signal: the heartbeat's controller (a lost lease or
-  // a caller abort aborts it) while leased, else the raw caller signal.
-  const dispatchSignal = heartbeat?.signal ?? options.signal;
   const executed: ExecutedStepReport[] = [];
   let gateRejection: RunWorkflowResult["gateRejection"];
   let judgeFailure: RunWorkflowResult["judgeFailure"];
@@ -994,7 +864,7 @@ async function driveRun(
 
   let { unitsDispatched, tokensUsed } = await seedRunAccountingFromJournal(next.run.id);
 
-  const plan = await loadAuthoritativeRunPlan(options, next);
+  const plan = await loadAuthoritativeRunPlan(options, next, storedPlan);
 
   // Live-evidence retention is decided at SET time, from the frozen plan alone:
   // a completed step's complete artifact is held only while some other step's
@@ -1023,18 +893,11 @@ async function driveRun(
   }
 
   while (!next.done && next.step && next.run.status === "active" && stepsProcessed < maxSteps) {
-    // A LOST lease (the heartbeat's renewal failed mid-step) is a loud stop —
-    // another engine owns the spine now. A caller abort (options.signal) is a
-    // graceful break, distinct from a lost lease.
-    heartbeat?.assertAlive();
+    // A caller abort (options.signal) is a graceful break.
     if (options.signal?.aborted) {
       aborted = true;
       break;
     }
-    // Renew the run lease between steps (a fresh 90s window per iteration).
-    // Losing it (expired mid-step + claimed by another engine) throws — the
-    // new owner drives the spine now.
-    await renewRunLease(next.run.id, leaseHolder);
     const step = next.step;
     const stepPlan = plan.steps.find((s) => s.stepId === step.id);
     if (!stepPlan) {
@@ -1054,7 +917,6 @@ async function driveRun(
         skipInfo,
         routeUnselected,
         executed,
-        leaseHolder,
       });
       continue;
     }
@@ -1093,7 +955,7 @@ async function driveRun(
     // verify. No gate loop is consumed and nothing is dispatched.
     let summaryJudge: SummaryJudge | null;
     try {
-      summaryJudge = workflowSummaryJudge(options, stepPlan, dispatchSignal, {
+      summaryJudge = workflowSummaryJudge(options, stepPlan, options.signal, {
         runId: next.run.id,
         stepId: step.id,
       });
@@ -1106,7 +968,6 @@ async function driveRun(
         runId: next.run.id,
         stepId: step.id,
         cause: `the verification judge could not be resolved from the frozen plan${detail}`,
-        leaseHolder,
       });
       executed.push({ stepId: step.id, ok: false, unitCount: 0, failedUnits: 0, summary: notes });
       judgeFailure = { stepId: step.id, message: notes };
@@ -1127,9 +988,6 @@ async function driveRun(
         routeSelected,
         routeUnselected,
         summaryJudge,
-        leaseHolder,
-        heartbeat,
-        dispatchSignal,
       },
       { startLoop, maxLoops, seededFeedback },
       { unitsDispatched, tokensUsed },
@@ -1163,23 +1021,4 @@ async function driveRun(
     ...(childBlocked ? { childBlocked } : {}),
     ...(aborted ? { aborted: true as const } : {}),
   };
-}
-
-/**
- * Load the plan a run executes (frozen-plan contract, migration 006):
- *
- *   - `plan_json` present → parse it and verify `plan_hash` (sha256 of the
- *     canonical JSON). A mismatch means the journaled plan was tampered with
- *     or corrupted — fail loudly, never silently recompile. The workflow
- *     asset file is NEVER touched on this path.
- * Missing and non-current plans fail validation and are never rebuilt from a
- * mutable source asset.
- */
-async function loadStoredPlan(runId: string): Promise<WorkflowPlanGraphV4> {
-  const row = await withWorkflowRunsRepo((repo) => {
-    const run = repo.getRunById(runId);
-    return run;
-  });
-  if (!row) throw new UsageError(`Workflow run ${runId} was not found.`);
-  return requireExecutableWorkflowPlan(row);
 }

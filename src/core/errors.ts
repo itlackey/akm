@@ -5,12 +5,13 @@
 /**
  * Typed error classes for structured exit code classification.
  *
- * - ConfigError    -> exit 78  (configuration / environment problems)
- * - UsageError     -> exit 2   (bad CLI arguments or invalid input)
- * - NotFoundError  -> exit 1   (requested resource missing)
- * - TransientError -> exit 75  (sysexits EX_TEMPFAIL — retry shortly; another
- *                                akm process holds a lock or is writing
- *                                state.db right now, not a bad command line)
+ * Each class maps to one process exit code through its `kind`; the numeric
+ * table lives in ONE place, `EXIT_CODES` in `src/cli/shared.ts`
+ * (`classifyExitCode` there does the mapping), and is not repeated here.
+ * ConfigError is configuration / environment, UsageError is bad CLI input,
+ * NotFoundError is a missing resource or a command-reported failure, and
+ * TransientError is ordinary contention or an unreachable service that a
+ * retry can fix.
  *
  * Each error carries a machine-readable `code` field. Codes are stable
  * identifiers safe to consume from scripts and JSON output. Existing throw
@@ -35,10 +36,8 @@ export type ConfigErrorCode =
   // empty-but-successful result for an index that is sitting right there (#791).
   | "DATA_DIR_UNREADABLE"
   | "INDEX_SCHEMA_INCOMPATIBLE"
-  | "EMBEDDING_NOT_CONFIGURED"
   | "LLM_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
-  | "UNSUPPORTED_CONFIG_VERSION"
   | "UNKNOWN_IMPROVE_STRATEGY"
   | "DANGEROUS_ENV_AUDIT_FAILED"
   | "EXECUTION_NOT_AUTHORIZED"
@@ -62,7 +61,10 @@ export type ConfigErrorCode =
   // A `secret://<name>` apiKey reference did not resolve to a stored value —
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
-  | "SECRET_REFERENCE_UNRESOLVED";
+  | "SECRET_REFERENCE_UNRESOLVED"
+  // A registry URL akm was asked to fetch is unusable before any request is
+  // made: not http(s), carries userinfo, or `AKM_NPM_REGISTRY` does not parse.
+  | "REGISTRY_URL_INVALID";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
@@ -72,7 +74,6 @@ export type UsageErrorCode =
   | "INVALID_DETAIL_VALUE"
   | "INVALID_SHAPE_VALUE"
   | "INVALID_JSON_CONFIG_VALUE"
-  | "UNKNOWN_CONFIG_KEY"
   | "INVALID_JSON_ARGUMENT"
   | "MISSING_REQUIRED_ARGUMENT"
   | "MISSING_OR_AMBIGUOUS_TARGET"
@@ -80,7 +81,6 @@ export type UsageErrorCode =
   | "PATH_ESCAPE_VIOLATION"
   | "RESOURCE_ALREADY_EXISTS"
   | "TASK_SCHEMA_VERSION_UNSUPPORTED"
-  | "WORKFLOW_IR_VERSION_UNSUPPORTED"
   | "INVALID_PROPOSAL"
   | "NON_INTERACTIVE_REQUIRES_YES"
   // citty's own CLIError (unknown top-level command or subcommand), reclassified
@@ -127,14 +127,7 @@ export type UsageErrorCode =
   // (spec docs/plans/specs/p4-deletions-closeout.md §3.2.7); §5.2 gives it a
   // live consumer in `prepare/script-capture.ts`'s interpreter rejections
   // (a later commit in this same phase — not yet wired as of this file).
-  | "TASK_TARGET_UNSUPPORTED"
-  // P3b (docs/plans/specs/p3b-child-executor.md §4.3, B-N13): a declared
-  // `outputs:` entry could not be resolved at run completion — a missing
-  // reference, a truncated source artifact, or a schema violation. Thrown
-  // from `completeWorkflowStep`'s write transaction, which SQLite rolls back
-  // whole: the step stays pending, the run stays active, fail-before-mutation
-  // preserved.
-  | "WORKFLOW_OUTPUT_INVALID";
+  | "TASK_TARGET_UNSUPPORTED";
 
 /**
  * Stable, machine-readable codes for TransientError — a retryable-shortly
@@ -144,12 +137,9 @@ export type UsageErrorCode =
  * contract a cron wrapper or scheduler can branch on.
  */
 export type TransientErrorCode =
-  // A run's single-driver engine lease (R2) is live and held by another
-  // engine invocation — refusing to acquire it (`akm workflow run` racing an
-  // in-flight one) or to advance its step spine manually (`akm workflow
-  // complete` racing the engine). Moved off UsageError by the #948 addendum:
-  // a held lease is not a bad command line, it is ordinary contention a
-  // caller can retry once the named expiry passes.
+  // Another live akm process holds this workflow run's lock file (`akm
+  // workflow run` racing an in-flight one). Not a bad command line: ordinary
+  // contention a caller can retry once that process finishes.
   | "RUN_LEASE_HELD"
   // #948: `withImmediateTransaction`/`beginImmediateTransaction`
   // (src/core/state-db.ts) exhausted every BEGIN IMMEDIATE retry attempt and
@@ -180,18 +170,41 @@ export type TransientErrorCode =
   // exit 78 and telling a supervisor to stop retrying a normal lock
   // collision. Thrown from `tryAcquireImproveLockUnlocked` when the lock is
   // held by a live PID and `--skip-if-locked` was not passed.
-  | "IMPROVE_LOCK_HELD";
+  | "IMPROVE_LOCK_HELD"
+  // Another live akm process held `akm.lock`'s write sentinel for the whole
+  // 30 s acquisition window (`src/integrations/lockfile.ts`). Previously a
+  // ConfigError (exit 78) for what is a timing collision, not a bad config.
+  | "LOCKFILE_CONTENDED"
+  // The asset-mutation lease (`src/indexer/index-writer-lock.ts`) stayed held
+  // by a live process for the whole wait window. Previously a bare Error
+  // (exit 70) for the same ordinary contention.
+  | "ASSET_MUTATION_LEASE_HELD"
+  // The one lock around native scheduler writes (`src/tasks/scheduler-lock.ts`)
+  // is held by another live akm process running `task sync|add|enable|
+  // disable|prune`. Ordinary contention: retry once it finishes.
+  | "SCHEDULER_LOCK_HELD"
+  // A registry request failed for a reason a retry can fix: the connection,
+  // DNS lookup or TLS handshake failed, the request timed out, or the server
+  // answered 429/5xx after the boundary's own retries (`src/registry/network.ts`).
+  | "REGISTRY_UNREACHABLE";
 
 /** Stable, machine-readable codes for NotFoundError. */
 export type NotFoundErrorCode =
   | "ASSET_NOT_FOUND"
-  | "STASH_NOT_FOUND"
   | "SOURCE_NOT_FOUND"
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "DANGEROUS_ENV_KEY"
   | "FILE_NOT_FOUND"
-  | "IMPROVE_RUN_NOT_FOUND";
+  | "IMPROVE_RUN_NOT_FOUND"
+  // The registry answered, but not with the thing asked for: HTTP 404/410, or
+  // metadata that names no such version, dist-tag, or default branch.
+  | "REGISTRY_NOT_FOUND"
+  // The registry answered with something akm cannot use: a non-OK status that
+  // is neither not-found nor transient, a body that is not JSON or exceeds the
+  // byte cap, an index without a `stashes` array, or npm metadata whose
+  // tarball is missing or sits on a different origin than the registry.
+  | "REGISTRY_RESPONSE_INVALID";
 
 /**
  * Default hint for each ConfigError code. Keep these short, actionable, and
@@ -206,7 +219,6 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "The data directory is not readable by the user running akm. Check its owner and mode, or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user owns.",
   INDEX_SCHEMA_INCOMPATIBLE:
     "Run `akm index --full` to rebuild the derived index from the currently materialized sources.",
-  EMBEDDING_NOT_CONFIGURED: 'Run `akm config set embedding \'{"endpoint":"...","model":"..."}\'` to enable embeddings.',
   LLM_NOT_CONFIGURED:
     'Run `akm setup` or configure an `engines` entry with `kind: "llm"`, then select it with `defaults.llmEngine`.',
   TEST_ISOLATION_MISSING:
@@ -218,6 +230,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   EXECUTION_NOT_AUTHORIZED: "Change the selected tools or update the machine/user execution policy, then retry.",
   SECRET_REFERENCE_UNRESOLVED:
     "Check the secret exists (`akm secret list`) and the name after `secret://` matches, or run `akm secret set <name> <value>` to store it.",
+  REGISTRY_URL_INVALID:
+    "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_REGISTRY_URL / AKM_NPM_REGISTRY variable that supplied it.",
 };
 
 // Code-review finding: COMPOSITION_INVALID covers several unrelated causes
@@ -283,25 +297,24 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",
   TASK_TARGET_UNSUPPORTED:
     "Task definitions support command, script, workflow, and shell (run:) targets; akm/command is layered by callers.",
-  // P3a (docs/plans/specs/p3a-plan-v5-child-freeze.md §3.2, A-N2): the
-  // complete-or-abandon policy for a stored pre-irVersion-5 run.
-  WORKFLOW_IR_VERSION_UNSUPPORTED:
-    "Abandon the run with `akm workflow abandon <id>`, then start it again from the workflow source — a frozen plan this akm cannot execute is not re-executable in place.",
-  // P3b (docs/plans/specs/p3b-child-executor.md §4.3).
-  WORKFLOW_OUTPUT_INVALID:
-    "Check each `outputs:` entry's `from:` against the step artifact it names, and its `schema:` against the value that step actually promotes.",
 };
 
 /** Default hint for each TransientErrorCode. */
 const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
-  RUN_LEASE_HELD:
-    "Wait for the named engine invocation to finish or for the lease to expire, then retry. `akm workflow status <id>` shows the current lease.",
+  RUN_LEASE_HELD: "Wait for the akm process driving this run (the named pid) to finish, then retry.",
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
   INDEX_DB_CONTENDED:
     "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
+  LOCKFILE_CONTENDED: "Another akm process is updating its bundle lockfile right now. Wait a few seconds and retry.",
+  ASSET_MUTATION_LEASE_HELD:
+    "Another akm process is writing bundle content right now. Wait for it to finish and retry.",
+  SCHEDULER_LOCK_HELD:
+    "Another `akm task sync`, `add`, `enable`, `disable` or `prune` is writing the scheduler right now. Wait for it to finish and retry.",
+  REGISTRY_UNREACHABLE:
+    "The registry did not answer in time. Check the network and the registry URL (`akm registry list`), then retry.",
 };
 
 /** Default hint for each NotFoundError code. */
@@ -316,6 +329,8 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   FILE_NOT_FOUND: "Check the path exists and is readable.",
   IMPROVE_RUN_NOT_FOUND:
     "Run `akm improve` first, or `akm improve report --since 30d` to see recent run ids in `runIds`.",
+  REGISTRY_NOT_FOUND:
+    "Check the ref's spelling and version; `akm search <query> --from registry` lists installable refs.",
 };
 
 /**

@@ -8,18 +8,19 @@ import path from "node:path";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
+import { runWorkflowSteps, workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
 /**
  * Runtime crash-window RED tests for durable plan v4.
  *
- * These exercise the real start → lease → native executor path. They assert
- * local journal exactness while deliberately demonstrating that external work
- * is at-least-once: if driver A dies after an external side effect and driver B
- * reclaims the expired reservation, both calls receive the same stable
- * `dispatchId`. Only B's CAS-valid finish may persist outcome/usage/event data.
+ * These exercise the real start → run lock → native executor path. They
+ * assert local journal exactness while deliberately demonstrating that
+ * external work is at-least-once: if driver A dies after an external side
+ * effect and driver B reclaims its still-running reservation, both calls
+ * receive the same stable `dispatchId`. Only the first terminal write persists
+ * outcome/usage/event data.
  */
 
 interface AttemptRow {
@@ -114,18 +115,9 @@ function lifecycleEvents(runId: string): Array<EventRow & { metadata: Record<str
   }
 }
 
+/** Simulate driver A dying: its run lock goes away, as a dead pid's lock is reclaimed on the next acquire. */
 function expireDriver(runId: string): void {
-  const db = openStateDatabase(getStateDbPath());
-  try {
-    db.transaction(() => {
-      db.prepare("UPDATE workflow_runs SET engine_lease_until = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(runId);
-      db.prepare(
-        "UPDATE workflow_run_unit_attempts SET claim_expires_at = '2000-01-01T00:00:00.000Z' WHERE run_id = ? AND status = 'running'",
-      ).run(runId);
-    })();
-  } finally {
-    db.close();
-  }
+  fs.rmSync(workflowRunLockPath(runId), { force: true });
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -144,7 +136,6 @@ describe("durable v4 runtime attempt protocol", () => {
 
     const result = await runWorkflowSteps({
       target: started.run.id,
-      heartbeatScheduler: () => () => {},
       dispatcher: async (request): Promise<UnitDispatchResult> => {
         seen.push(request as DispatchRequestV4);
         return {
@@ -193,7 +184,6 @@ describe("durable v4 runtime attempt protocol", () => {
 
     const firstRun = runWorkflowSteps({
       target: started.run.id,
-      heartbeatScheduler: () => () => {},
       dispatcher: async (request) => {
         const durable = request as DispatchRequestV4;
         // Represents an external shell/LLM side effect that happened before
@@ -212,13 +202,12 @@ describe("durable v4 runtime attempt protocol", () => {
       ]);
       expect(lifecycleEvents(started.run.id).map((event) => event.event_type)).toEqual(["workflow_unit_started"]);
 
-      // Simulate process A's expired lease/claim. Process B is allowed to
+      // Simulate process A dying. Process B is allowed to
       // re-invoke externally (at-least-once) but MUST reuse attempt 1's stable
       // dispatchId so an idempotent downstream can deduplicate it.
       expireDriver(started.run.id);
       const secondRun = await runWorkflowSteps({
         target: started.run.id,
-        heartbeatScheduler: () => () => {},
         dispatcher: async (request) => {
           const durable = request as DispatchRequestV4;
           externalCalls.push({ driver: "b", dispatchId: durable.dispatchId, attempt: durable.attempt });
@@ -237,7 +226,7 @@ describe("durable v4 runtime attempt protocol", () => {
         attempt: 1,
       });
 
-      // Driver A returns after B committed. Its stale holder cannot overwrite
+      // Driver A returns after B committed. Its late finish cannot overwrite
       // B's terminal outcome or add 101 more tokens/a second finished event.
       releaseFirst.resolve({
         ok: true,

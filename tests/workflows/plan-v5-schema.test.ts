@@ -46,7 +46,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { UsageError } from "../../src/core/errors";
 import { canonicalJson, canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { decodeWorkflowPlanV4 } from "../../src/workflows/ir/schema-v4";
 import { freezeWorkflow } from "../_helpers/workflow";
@@ -190,77 +189,24 @@ describe("plan irVersion 5 — a child-workflow frozen target decodes (A-01, A-0
   });
 });
 
-describe("embedded-plan integrity at decode (A-20…A-23, §2.7)", () => {
-  test("a tampered embedded child plan (planHash no longer matches) fails decode, while the untampered plan decodes", () => {
-    const childPlan = freshUnitPlan("workflows/child-tamper-plan.md");
-    const planHash = computePlanHash(childPlan);
-    const childTarget = buildChildTarget({ ref: "workflows/child", planHash, frozenPlan: childPlan, via: "direct" });
-    const valid = embedChildTarget(freshUnitPlan("workflows/parent-tamper-plan.md"), childTarget);
-
-    // Corrupt the embedded PLAN BYTES only — planHash and contentHash stay
-    // the (now stale) values computed against the untampered plan, exactly
-    // the corruption row A-20 describes.
-    const tampered = JSON.parse(JSON.stringify(valid));
-    tampered.steps[0].root.frozenTarget.frozenPlan.title = `${tampered.steps[0].root.frozenTarget.frozenPlan.title}-tampered`;
-
-    expect(() => decodeWorkflowPlanV4(valid)).not.toThrow();
-    expect(() => decodeWorkflowPlanV4(tampered)).toThrow(UsageError);
-    try {
-      decodeWorkflowPlanV4(tampered);
-      throw new Error("expected decode to reject the tampered embedded plan");
-    } catch (error) {
-      expect(error).toBeInstanceOf(UsageError);
-      // A-N2: the corrupt-plan family keeps INVALID_JSON_ARGUMENT — every
-      // sibling decoder in schema-v4.ts's fail() throws this same code.
-      expect((error as UsageError).code).toBe("INVALID_JSON_ARGUMENT");
-    }
-  });
-
-  test("a tampered contentHash fails decode, while the untampered plan decodes", () => {
-    const childPlan = freshUnitPlan("workflows/child-tamper-content.md");
-    const planHash = computePlanHash(childPlan);
-    const childTarget = buildChildTarget({ ref: "workflows/child", planHash, frozenPlan: childPlan, via: "direct" });
-    const valid = embedChildTarget(freshUnitPlan("workflows/parent-tamper-content.md"), childTarget);
-
-    const tampered = JSON.parse(JSON.stringify(valid));
-    const original = tampered.steps[0].root.frozenTarget.contentHash as string;
-    tampered.steps[0].root.frozenTarget.contentHash = original.startsWith("0")
-      ? `1${original.slice(1)}`
-      : `0${original.slice(1)}`;
-
-    expect(() => decodeWorkflowPlanV4(valid)).not.toThrow();
-    expect(() => decodeWorkflowPlanV4(tampered)).toThrow(UsageError);
-    try {
-      decodeWorkflowPlanV4(tampered);
-      throw new Error("expected decode to reject the tampered contentHash");
-    } catch (error) {
-      expect(error).toBeInstanceOf(UsageError);
-      expect((error as UsageError).code).toBe("INVALID_JSON_ARGUMENT");
-    }
-  });
-
-  test("an embedded child declaring an irVersion other than 5 fails decode", () => {
-    // Build the child plan with the WRONG version, then hash/sign it
-    // self-consistently (so the failure is isolated to the version check,
-    // not a hash mismatch — A-20 covers that separately).
-    const wrongVersionChild = { ...freshUnitPlan("workflows/child-wrong-version.md"), irVersion: 4 };
-    const planHash = computePlanHash(wrongVersionChild);
+describe("embedded child plans at decode (A-20…A-23, §2.7)", () => {
+  test("an embedded child's planHash, contentHash and irVersion are recorded, not gates: stale hashes and an older irVersion decode", () => {
+    const childPlan = freshUnitPlan("workflows/child-provenance.md");
     const childTarget = buildChildTarget({
       ref: "workflows/child",
-      planHash,
-      frozenPlan: wrongVersionChild,
+      planHash: computePlanHash(childPlan),
+      frozenPlan: childPlan,
       via: "direct",
     });
-    const parentPlanJson = embedChildTarget(freshUnitPlan("workflows/parent-wrong-version.md"), childTarget);
+    const plan = JSON.parse(
+      JSON.stringify(embedChildTarget(freshUnitPlan("workflows/parent-provenance.md"), childTarget)),
+    );
+    const target = plan.steps[0].root.frozenTarget;
+    target.frozenPlan.title = `${target.frozenPlan.title}-edited`;
+    target.frozenPlan.irVersion = 4;
+    target.contentHash = "0".repeat(64);
 
-    expect(() => decodeWorkflowPlanV4(parentPlanJson)).toThrow(UsageError);
-    try {
-      decodeWorkflowPlanV4(parentPlanJson);
-      throw new Error("expected decode to reject a non-5 embedded irVersion");
-    } catch (error) {
-      expect(error).toBeInstanceOf(UsageError);
-      expect((error as UsageError).code).toBe("INVALID_JSON_ARGUMENT");
-    }
+    expect(() => decodeWorkflowPlanV4(plan)).not.toThrow();
   });
 
   test("a chain nested past the former composition depth bound (10 descendant levels) still decodes — depth is unbounded at decode time", () => {

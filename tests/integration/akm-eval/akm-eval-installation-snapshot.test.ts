@@ -173,7 +173,7 @@ function rewriteSnapshotConfig(snapshotDir: string, mutate: (config: Record<stri
 const describePosix = process.platform === "win32" ? describe.skip : describe;
 
 describePosix("akm-eval installation snapshots", () => {
-  test("rejects a stamped noncanonical index generation before capturing or publishing it", () => {
+  test("rejects an index without a readable entries table before capturing or publishing it", () => {
     const sandbox = makeSandboxDir("akm-eval-snapshot-index-generation");
     const fixture = createFixture(sandbox.dir);
     const snapshotDir = path.join(sandbox.dir, "snapshot");
@@ -182,12 +182,12 @@ describePosix("akm-eval installation snapshots", () => {
       const indexPath = path.join(fixture.dataDir, "index.db");
       const hostile = new Database(indexPath);
       try {
-        hostile.exec("ALTER TABLE entries ADD COLUMN entry_key TEXT GENERATED ALWAYS AS (item_ref) VIRTUAL");
+        hostile.exec("DROP TABLE entries");
       } finally {
         hostile.close();
       }
 
-      expect(() => capture(fixture, snapshotDir)).toThrow(/incompatible derived index generation/);
+      expect(() => capture(fixture, snapshotDir)).toThrow(/no entries table this akm reads/);
       expect(fs.existsSync(snapshotDir)).toBe(false);
       expect(stagingEntries(sandbox.dir, path.basename(snapshotDir))).toEqual([]);
     } finally {
@@ -216,10 +216,9 @@ describePosix("akm-eval installation snapshots", () => {
         .run(fixture.bundleRoots.personal ?? "");
       state
         ?.prepare(
-          `INSERT INTO proposal_fingerprints
-           (stash_dir, fingerprint, ref, source, created_at)
-         VALUES (?, 'snapshot-fingerprint', 'personal//memories/preference', 'reflect',
-                 '2026-01-01T00:00:00.000Z')`,
+          `INSERT INTO improve_ledger
+           (stash_dir, ref, source, last_attempt_at, outcome)
+         VALUES (?, 'personal//memories/preference', 'reflect', '2026-01-01T00:00:00.000Z', 'unchanged')`,
         )
         .run(fixture.bundleRoots.personal ?? "");
       state
@@ -292,9 +291,7 @@ describePosix("akm-eval installation snapshots", () => {
           stash_dir: canonicalRoot,
         });
         expect(
-          snapshotState
-            .query("SELECT stash_dir FROM proposal_fingerprints WHERE fingerprint = 'snapshot-fingerprint'")
-            .get(),
+          snapshotState.query("SELECT stash_dir FROM improve_ledger WHERE ref = 'personal//memories/preference'").get(),
         ).toEqual({ stash_dir: canonicalRoot });
         expect(snapshotState.query("SELECT stash_dir FROM improve_runs WHERE id = 'snapshot-run'").get()).toEqual({
           stash_dir: canonicalRoot,
@@ -342,7 +339,7 @@ describePosix("akm-eval installation snapshots", () => {
         );
         expect(
           materializedState
-            .query("SELECT stash_dir FROM proposal_fingerprints WHERE fingerprint = 'snapshot-fingerprint'")
+            .query("SELECT stash_dir FROM improve_ledger WHERE ref = 'personal//memories/preference'")
             .get(),
         ).toEqual({ stash_dir: materializedRoot });
         expect(materializedState.query("SELECT stash_dir FROM improve_runs WHERE id = 'snapshot-run'").get()).toEqual({
@@ -491,7 +488,7 @@ describePosix("akm-eval installation snapshots", () => {
     }
   });
 
-  test("accepts current JSONC config and rejects non-current schema", () => {
+  test("accepts current JSONC config and a legacy configVersion alike", () => {
     const sandbox = makeSandboxDir("akm-eval-snapshot-jsonc");
     const fixture = createFixture(sandbox.dir);
     try {
@@ -508,8 +505,10 @@ describePosix("akm-eval installation snapshots", () => {
       );
       expect(() => capture(fixture, path.join(sandbox.dir, "jsonc-snapshot"))).not.toThrow();
 
+      // configVersion is read, never gated on: any other value is named once
+      // (a warning) and read as current, same as the normal config loader.
       writeConfig(fixture, { ...config, configVersion: "0.8.0" });
-      expect(() => capture(fixture, path.join(sandbox.dir, "old-snapshot"))).toThrow(/Unsupported configVersion/);
+      expect(() => capture(fixture, path.join(sandbox.dir, "old-snapshot"))).not.toThrow();
     } finally {
       closeFixture(fixture);
       sandbox.cleanup();

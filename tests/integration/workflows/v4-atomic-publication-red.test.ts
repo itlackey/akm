@@ -26,7 +26,7 @@ import {
 } from "../../../src/storage/repositories/workflow-runs-repository";
 import { canonicalJson, canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import { decodeWorkflowPlanV4, type WorkflowPlanGraphV4 } from "../../../src/workflows/ir/schema-v4";
-import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
+import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
@@ -167,7 +167,6 @@ function publicationInput(plan: WorkflowPlanGraphV4, revalidateSources: () => vo
       updatedAt: NOW,
       agentHarness: null,
       agentSessionId: null,
-      checkinArmedAt: NOW,
     },
     steps,
     planJson: canonicalPlanJson(plan),

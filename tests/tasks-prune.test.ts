@@ -5,14 +5,13 @@
 /**
  * `akm task prune` (#851): reclaim installed scheduler entries `sync` can
  * never see because their own `--scheduler-context` descriptor doesn't
- * resolve to a live bundle (#846's `belongsToBundle` deliberately excludes
- * them rather than guessing ownership).
+ * resolve to a live bundle (#846's ownership attribution deliberately
+ * excludes them rather than guessing).
  *
  * Mirrors tests/integration/tasks-sync-dry-run.test.ts's harness: a real
  * `CRON_BACKEND` wired to an in-memory `CronExec`, so these tests exercise
- * the exact production path (`akmTasksPrune` -> `buildSchedulerRemoveOperation`
- * -> `applySchedulerTransaction`) with zero interaction with any real
- * crontab/plist/schtasks state.
+ * the exact production path (`akmTasksPrune` -> the backend's `uninstall`)
+ * with zero interaction with any real crontab/plist/schtasks state.
  *
  * ABSOLUTE SAFETY REQUIREMENTS this file exists to prove:
  *   1. Default invocation (no --yes, no --id) makes ZERO scheduler writes —

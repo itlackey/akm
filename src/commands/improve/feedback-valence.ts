@@ -24,12 +24,6 @@
  * score and lane. All DB access stays in the caller.
  */
 
-/** Weight on utility in the combined eligibility score. Utility is dominant. */
-export const UTILITY_WEIGHT = 0.7;
-
-/** Weight on the feedback attention term in the combined eligibility score. */
-export const FEEDBACK_WEIGHT = 0.3;
-
 export interface FeedbackCounts {
   positive: number;
   negative: number;

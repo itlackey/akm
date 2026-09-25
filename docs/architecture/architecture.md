@@ -393,72 +393,53 @@ either `kind: "llm"` (an OpenAI-compatible chat-completions connection) or
 internal transport kind for an `opencode-sdk` agent engine, not a public engine
 kind.
 
-Current non-interactive execution follows this common shape:
+Every execution — direct commands, tasks, workflows, improve, proposals, and
+index passes — takes the same four steps
+(`src/integrations/agent/execution.ts`, `runner-dispatch.ts`):
 
 ```text
 adapter-rendered or anonymous work
-  -> prepareResolvedExecution / prepareInlineExecution
-  -> planExecutionCascade
-  -> authorized ResolvedExecutionRequestV1 with exact model/inference
-  -> lowerResolvedExecutionRequest
-  -> dispatchLoweredExecutionRequest
-  -> executeRunner -> agent CLI, OpenCode SDK, or direct LLM transport
+  -> resolveExecution(input)          -> { request, runner (a RunnerSpec), provenance }
+  -> buildExecution(request, runner)  -> harness argv inputs or chat messages
+  -> runExecution(built, options)     -> agent CLI, OpenCode SDK, or direct LLM
 ```
 
-The cascade applies installation -> selected engine -> selected agent ->
-selected command -> invocation defaults -> current invocation, preserving
-omitted, explicit `null`, zero, and empty values. A recognized model-map alias
-expands as defaults at the layer that selected it; explicit sibling and nearer
-fields then win. The request records the exact final model ID. Lowering calls
-`resolveEngine()` once for symbolic transport/profile material and projects
-that request-owned exact model into it; transports never resolve aliases.
-Tool selection uses the same nearest-explicit rule. Production preparation
-authorizes a nonempty request against the host-local
-`execution.allowedTools` ceiling before lowering; no asset grants itself a
-tool. Command/persona frontmatter cannot supply workspace, environment, or
-opaque runtime fields.
+`resolveExecution` picks the engine from an ordered list — the nearest layer
+that names one, then `defaults.engine`, then the implicit `opencode-sdk`
+fallback when its binary is present — and merges one set of defaults, nearest
+wins: the selected engine's own model/inference/timeout/workspace, then the
+persona, the command, the invocation defaults, and the current call. Omitted,
+explicit `null`, zero, and empty values stay distinct. A recognized
+`models.json` alias expands once, at the layer that chose it; the request
+records the exact final model. Tools are authorized against the host-local
+`execution.allowedTools` ceiling; no asset grants itself a tool. The result's
+`provenance` names the layer behind each field (`akm task explain`,
+`command run --dry-run`).
 
-Agent lowerers are a structural implementation registry derived from
-`HARNESS_REGISTRY`: OpenCode, Claude, OpenCode SDK, Codex, Copilot, Pi, Gemini,
-Aider, Amazon Q, and OpenHands each register a lowerer, and direct LLM is the
-remaining lowering arm. This is not a model/provider capability matrix. Each
-lowerer translates what its transport actually implements, returns sorted
-translated/untranslated field paths, emits a stable structured notice for
-every ordinary selected field it does not translate. A tool policy that the
-chosen transport cannot enforce is a pre-dispatch configuration error; other
-notices may still dispatch optimistically. A provider or harness rejection is a runtime failure; invalid
-configuration and authorization denial remain pre-dispatch failures.
+`buildExecution` hands the request to the selected harness's own builder
+(registered on `HARNESS_REGISTRY`), or builds chat messages for a direct LLM.
+A tool policy the transport cannot enforce, or a denied tool selection, stops
+here; any other field the transport cannot carry becomes a secret-free
+`untranslated-field` notice and dispatch continues.
 
-Lowering notices are fixed, secret-free records (`code`, `severity`,
-`adapter`, optional `field`, fixed `message`, and optional safe structured
-`details`). They never copy prompt content, environment values, credential
-values, or provider error bodies. Command, task, improve, proposal, index, and
-current workflow execution surfaces carry these records in live result or
-diagnostic output. Current persisted workflow result/evidence fields
-deliberately exclude them; no future persistence ownership is implied here.
-
-LLM and SDK-fallback credentials remain symbolic descriptors in engine
-transport and frozen runner material; secret values never enter the resolved
-request. `executeRunner()` materializes the current value only at final
-dispatch and scrubs it from transport results. The
-`lowerResolvedExecutionRequestWithRunner()` entry point lowers an already
-frozen `RunnerSpec` without consulting live config, model maps, environment
-variables, credentials, or transports; current workflow units/judges and
-structured model-work adapters use that config-free path.
-
-`executeRunner()` remains the sole exhaustive low-level switch over the
-`RunnerSpec` transport union. It is below, not instead of, the resolved-request
-lowering boundary. The only public execution exemption is an explicitly
-prompt-free interactive `akm agent` launch, which has no user/model payload to
-resolve or lower. An explicit missing or incompatible engine is an error and
-never falls through to another configured engine.
+Credentials stay symbolic (an env descriptor, an `apiKeyFile` path, or a
+`secret://` reference) in everything `resolveExecution` returns, so a request
+and runner can be journaled. `runExecution()` reads the current value at each
+dispatch and scrubs it, with every other secret-looking value the child could
+see, from the result. Workflow resume calls `buildExecutionFromWire()` on the
+journaled `{ request, runner }` and never reads config, `models.json`, or
+credentials, so a config edit after the freeze cannot change a resumed unit.
+The prompt-free interactive `akm agent` launch resolves its engine directly.
+An explicit missing or incompatible engine is an error and never falls
+through to another configured engine.
 
 Task-v3 execution and durable workflow-v4 dispatch use this runtime boundary.
 Markdown and GitHub-shaped YAML compile through source IR v1; new starts freeze
-v4-family `irVersion: 5`, and only `irVersion: 5` plans execute.
-Pre-`irVersion`-5 stored plans are rejected; start a new
-run from current source. AKM does not support full GitHub Actions semantics or
-arbitrary remote action execution.
+v4-family `irVersion: 5`. A stored plan that decodes runs whatever release
+froze it; one that does not is marked abandoned and `akm workflow run <ref>`
+starts afresh. Only a plan a newer akm froze is refused, naming the upgrade.
+AKM does not support full GitHub Actions semantics or arbitrary remote action
+execution.
 
 ### In-tree LLM helpers (`src/llm/`)
 
@@ -518,14 +499,12 @@ and directs operators to the explicit preview/apply migrator. Task source v4
 command, workflow, script, and shell targets use the common resolved/lowered
 execution boundary. Historical task-run metadata remains readable.
 
-Long-lived mutable operations coordinate start ownership through one maintenance
-barrier. Index writers, improve/extract process locks, lockfile writers, and
-workflow lease claims acquire their own lock or lease while holding that short
-barrier section, then release the barrier for the operation's duration.
-Canonical `state.db` handles register an activity the same way and retain that
-activity until close, covering task, event, proposal, workflow-run, and other
-durable-state access. Scoped barrier ownership is reentrant for nested
-repository opens in the same synchronous or asynchronous execution context.
+Long-lived mutable operations each take their own lock file, one `O_EXCL`
+create (`src/core/file-lock.ts`): index writers, improve and extract process
+locks, lockfile writers, the scheduler lock, and each workflow run's lock. A
+lock whose holder process is gone is reclaimed. There is no shared barrier or
+activity registry around them; `state.db` writers serialize on SQLite's own
+`BEGIN IMMEDIATE`.
 
 ---
 
@@ -542,11 +521,10 @@ repository opens in the same synchronous or asynchronous execution context.
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
-| `src/execution/resolved-request.ts` | branded, versioned resolved execution request and strict canonical wire form |
-| `src/integrations/agent/execution-preparation.ts` | caller adapter into the common cascade/model-map resolver |
-| `src/integrations/agent/execution-lowering.ts` | optimistic engine lowering, structural lowerer inventory, and lowered dispatch authority |
-| `src/integrations/agent/request-lowering.ts` | shared factory used by harness-owned resolved-request lowerers |
-| `src/integrations/agent/inline-execution.ts` | anonymous-work adapters for live config and already-frozen runner material |
+| `src/execution/resolved-request.ts` | the versioned resolved execution request and its canonical wire form (tolerant decode) |
+| `src/integrations/agent/execution.ts` | `resolveExecution` (engine, layers, model alias, tools) and `buildExecution` / `buildExecutionFromWire` |
+| `src/integrations/agent/runner-dispatch.ts` | `runExecution`: reads credentials at dispatch, runs agent/SDK/LLM, redacts the result |
+| `src/integrations/agent/request-lowering.ts` | shared factory for the harness-owned request builders |
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |

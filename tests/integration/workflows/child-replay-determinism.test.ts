@@ -8,17 +8,15 @@
  * deterministic-state companion to
  * tests/integration/workflow-child-crash-windows.test.ts — mirroring
  * tests/integration/workflows/chaos.test.ts's own patterns exactly: a
- * dispatcher-call-count spy proves reuse, and a directly-tampered journal row
- * proves the divergence guard is unchanged.
+ * dispatcher-call-count spy proves reuse, and a directly-seeded completed
+ * journal row proves resume skips a completed composing unit.
  *
  * RED phase: the child executor is not wired yet (see the crash-windows
  * sibling file's header for the exact mechanism), so C-05/C-06 fail today —
  * not because reuse is broken, but because there is no child run for a
  * composing step to promote in the first place; the run never reaches the
- * shape these assertions describe. C-07 is a PRESERVE row exercising the
- * EXISTING, target-kind-agnostic replay-divergence guard directly against a
- * seeded journal row — no live child needed — so it is a genuine regression
- * pin, not new behavior, and is expected to hold already. This file
+ * shape these assertions describe. C-07 seeds a completed composing-unit row
+ * directly — no live child needed — and pins that resume reuses it. This file
  * references only already-existing, already-typed APIs (`runWorkflowSteps`,
  * `startWorkflowRun`, `resumeWorkflowRun`, `getWorkflowStatus`,
  * `withWorkflowRunsRepo`'s `childRunsOf`/`getUnitsForStep`,
@@ -280,11 +278,10 @@ describe("a resumed parent replays a completed composing step without re-driving
   });
 });
 
-// ── C-07: a tampered input_hash on the composing unit fails resume loudly ──
-// ── (PRESERVE — the existing, target-kind-agnostic guard) ──────────────────
+// ── C-07: resume skips a completed composing unit ───────────────────────────
 
-describe("a tampered input_hash on the composing unit fails resume loudly, unchanged (C-07, PRESERVE)", () => {
-  test("engine resume fails the run loudly, naming the tampered composing unit — the child is never touched", async () => {
+describe("resume skips a completed composing unit whatever input_hash it recorded (C-07)", () => {
+  test("the journaled child result is reused; no child is published or driven", async () => {
     writeChildLeaf("tamper-leaf");
     writeSoloComposingParent("tamper-parent", "workflows/tamper-leaf");
     await akmIndex({ stashDir: storage.stashDir, full: true });
@@ -297,16 +294,14 @@ describe("a tampered input_hash on the composing unit fails resume loudly, uncha
     if (!work.ok) throw new Error(work.error);
     const composingUnitId = work.list.units[0]!.journalBaseId;
 
-    // Tamper: a completed composing-unit row whose input_hash cannot have
-    // come from the frozen plan (a corrupted / hand-edited journal) — the
-    // identical fixture chaos.test.ts's own "replay divergence under a
-    // tampered journal" test uses, applied to a child-workflow-targeted unit.
+    // A completed composing-unit row whose input_hash no invocation would
+    // compute today (an older release's row, a hand edit).
     seedCompletedUnitRow({
       runId,
       unitId: composingUnitId,
       stepId: "dispatch",
       inputHash: "deadbeefdeadbeef",
-      resultJson: JSON.stringify({ runId: "stale-child-run-id", status: "completed" }),
+      resultJson: JSON.stringify({ runId: "earlier-child-run-id", status: "completed" }),
     });
 
     const dispatched = new Set<string>();
@@ -319,15 +314,10 @@ describe("a tampered input_hash on the composing unit fails resume loudly, uncha
       },
     });
 
-    // Hard failure regardless of on_error — never a silent re-dispatch, and
-    // never a silent re-drive of a child either.
-    expect(result.run.status).toBe("failed");
-    expect(result.executed[0]?.ok).toBe(false);
-    expect(result.executed[0]?.summary).toContain(composingUnitId);
-    expect(result.executed[0]?.summary).toContain("replay divergence");
-
-    // The divergence check fires before driveChildWorkflowUnit would ever
-    // run — no child row is published for the tampered attempt.
+    expect(result.run.status).toBe("completed");
+    expect(result.executed[0]?.ok).toBe(true);
+    // The completed row IS the unit's result: no child row is published and
+    // nothing dispatches.
     const children = await withWorkflowRunsRepo((repo) => repo.childRunsOf(runId));
     expect(children).toEqual([]);
     expect(dispatched.size).toBe(0);

@@ -170,7 +170,7 @@ describe("proposal consumers lower resolved execution requests", () => {
     expect(result.notices).toBeUndefined();
   });
 
-  test("proposal dispatch uses the preflight credential when it is replaced before the provider call", async () => {
+  test("proposal dispatch reads the credential at dispatch, after the preflight", async () => {
     const stashDir = proposalStash();
     const secret = "proposal-lease-original-092";
     const replacement = "proposal-lease-replacement-092";
@@ -211,7 +211,7 @@ describe("proposal consumers lower resolved execution requests", () => {
     );
 
     expect(dispatchReady).toBe(true);
-    expect(authorization as string | null).toBe(`Bearer ${secret}`);
+    expect(authorization as string | null).toBe(`Bearer ${replacement}`);
     expect(result.ok).toBe(true);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(replacement);

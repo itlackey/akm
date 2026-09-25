@@ -7,7 +7,7 @@
  *
  * Opens/closes the index database, arming the sqlite-vec extension and (for the
  * managed open path) running `ensureSchema`. This module lives BELOW the
- * indexer, so the storage loan helpers (`index-db.ts`, `registry-cache.ts`)
+ * indexer, so the storage loan helpers (`index-db.ts`, `registry-index-cache-repository.ts`)
  * import their opener from a sibling here instead of reaching up into the
  * indexer — inverting the old storage→indexer arrow.
  */
@@ -23,7 +23,7 @@ import { openDatabase } from "../database";
 import { openManagedDatabase } from "../managed-db";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../sqlite-pragmas";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../sqlite-read-snapshot";
-import { CANONICAL_INDEX_DB_VERSION, classifyIndexGeneration, isCanonicalIndexGeneration } from "./index-entry-schema";
+import { CANONICAL_INDEX_DB_VERSION } from "./index-entry-schema";
 import { ensureSchema } from "./index-schema";
 import { loadVecExtension, warnIfVecMissing } from "./index-vec-repository";
 
@@ -75,10 +75,9 @@ export function openIndexDatabase(
     // (see src/core/state-db.ts's "Why a separate database from index.db"
     // note) — so real on-disk corruption is recovered by deleting the file
     // and rebuilding, not by surfacing a raw SQLITE_CORRUPT to the caller or
-    // quietly falling through to an unreadable index. This mirrors the
-    // existing stale-version-marker rebuild below, one layer further down
-    // (that path opens fine and rewrites tables in place; corruption prevents
-    // even opening, so the file itself has to go first).
+    // quietly falling through to an unreadable index (#865). This is the ONE
+    // from-scratch rebuild: an older layout is migrated in place by
+    // ensureSchema, never dropped.
     if (!isCorruptionError(error)) throw error;
     warn(`Index database is corrupt at ${resolvedPath} — rebuilding.`);
     for (const suffix of ["", "-wal", "-shm"]) {
@@ -117,10 +116,8 @@ function resolveConfiguredEmbeddingDim(): number | undefined {
 }
 
 export function openExistingDatabase(dbPath?: string): Database {
-  // Existing-DB callers do not mutate schema or embedding metadata on open.
-  // They do validate the exact current derived generation before returning a
-  // handle, so no current reader can accidentally serve a populated legacy
-  // table and fail later on its first canonical-column query.
+  // Existing-DB callers do not mutate schema or embedding metadata on open;
+  // they serve whatever layout is on disk (see noteIndexLayout).
   //
   // "Existing" is load-bearing: a missing file throws instead of being
   // created. Create-on-open used to leave a schema-less index.db behind (a
@@ -141,37 +138,34 @@ export function openExistingDatabase(dbPath?: string): Database {
     },
     create: false,
   });
-  try {
-    assertCanonicalIndexGeneration(db, resolvedPath);
-    return db;
-  } catch (error) {
-    db.close();
-    throw error;
-  }
+  noteIndexLayout(db, resolvedPath);
+  return db;
 }
 
 /**
- * Read callers must never receive a known-incompatible derived index.  The
- * writable opener owns rebuilding an older generation; a reader can only
- * report the one action that is safe for the direction of the mismatch.
+ * A reader never refuses an index over its layout marker. An older layout is
+ * served as-is (the FTS readers understand both layouts, and a missing table
+ * degrades at the caller — keyword-only search, an inline rebuild, or a "run
+ * akm index" notice); the next writable open migrates it in place. A newer
+ * layout is served the same way. One line names the situation per process.
  */
-function assertCanonicalIndexGeneration(db: Database, resolvedPath: string): void {
-  if (isCanonicalIndexGeneration(db)) return;
-  const classification = classifyIndexGeneration(db);
-  const stored = classification.storedVersion ?? "unknown";
-  if (classification.status === "newer") {
-    throw new ConfigError(
-      `Index database at ${resolvedPath} was built by a newer akm (stored generation ${stored}; ` +
-        `this binary understands ${CANONICAL_INDEX_DB_VERSION}). Upgrade akm to use this index.`,
-      "INDEX_SCHEMA_INCOMPATIBLE",
-      "Upgrade akm to a version that understands this index generation.",
-    );
+function noteIndexLayout(db: Database, resolvedPath: string): void {
+  let stored: number;
+  try {
+    const row = db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string } | undefined;
+    if (!row) return;
+    stored = Number(row.value);
+  } catch {
+    return;
   }
-  throw new ConfigError(
-    `Index database at ${resolvedPath} is not usable with this akm's derived schema (stored generation ${stored}; ` +
-      `this binary understands ${CANONICAL_INDEX_DB_VERSION}). Run 'akm index' to rebuild it.`,
-    "INDEX_SCHEMA_INCOMPATIBLE",
-    "Run `akm index` to rebuild the derived index from the currently materialized sources.",
+  if (!Number.isFinite(stored) || stored === CANONICAL_INDEX_DB_VERSION) return;
+  warnOnce(
+    `index-db-layout:${resolvedPath}`,
+    stored < CANONICAL_INDEX_DB_VERSION
+      ? `Index database at ${resolvedPath} uses an older layout (${stored}; this akm writes ${CANONICAL_INDEX_DB_VERSION}). ` +
+          "Serving it as-is; the next 'akm index' migrates it in place."
+      : `Index database at ${resolvedPath} was written by a newer akm (layout ${stored}; this binary understands ` +
+          `${CANONICAL_INDEX_DB_VERSION}). Serving what it can — upgrade akm to use the full index.`,
   );
 }
 
@@ -242,7 +236,7 @@ export function openReadonlyExistingDatabase(
   // connection, so apply just that one.
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    assertCanonicalIndexGeneration(db, resolvedPath);
+    noteIndexLayout(db, resolvedPath);
     return db;
   } catch (error) {
     db.close();

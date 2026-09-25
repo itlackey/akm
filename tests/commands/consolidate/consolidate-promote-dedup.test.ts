@@ -30,7 +30,7 @@ import { emitPromotionProposal, loadExistingKnowledgeBodyHashes } from "../../..
 import { mergePlans } from "../../../src/commands/improve/consolidate/merge";
 import type { ConsolidateOperation, ConsolidatePromoteOp } from "../../../src/commands/improve/consolidate/types";
 import { cacheHash } from "../../../src/commands/improve/content-hash";
-import { createProposal, isProposalSkipped, listProposals } from "../../../src/commands/proposal/repository";
+import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { resolveWriteTarget } from "../../../src/core/write-source";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../src/indexer/installations";
@@ -165,7 +165,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const stash = makeStashDir();
 
     // Create the first proposal.
-    const result = createProposal(stash, {
+    createProposal(stash, {
       ref: "knowledge/paged-review-efficiency",
       source: "consolidate",
       payload: {
@@ -173,7 +173,6 @@ describe("content-hash dedup — identical content blocked regardless of target 
         frontmatter: { description: "Reusable efficiency knowledge" },
       },
     });
-    expect(isProposalSkipped(result)).toBe(false);
 
     // Load all pending consolidate proposals.
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
@@ -198,12 +197,11 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const content2 = `---\ndescription: Pattern B\n---\n\nContent for pattern B — completely different.\n`;
 
     // Create a proposal for content1.
-    const result1 = createProposal(stash, {
+    createProposal(stash, {
       ref: "knowledge/pattern-a",
       source: "consolidate",
       payload: { content: content1, frontmatter: { description: "Pattern A" } },
     });
-    expect(isProposalSkipped(result1)).toBe(false);
 
     // content2 should NOT match the hash of content1.
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
@@ -222,12 +220,11 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const SHARED_CONTENT = `---\ndescription: Shared knowledge\n---\n\nSome reusable content.\n`;
 
     // Create a 'distill' proposal with the same content.
-    const distillResult = createProposal(stash, {
+    createProposal(stash, {
       ref: "knowledge/shared-knowledge",
       source: "distill",
       payload: { content: SHARED_CONTENT, frontmatter: { description: "Shared knowledge" } },
     });
-    expect(isProposalSkipped(distillResult)).toBe(false);
 
     // The consolidate guard should only check consolidate proposals.
     const pendingConsolidate = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
@@ -272,11 +269,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
         source: "consolidate",
         payload: { content: IDENTICAL_CONTENT, frontmatter: { description: "Review efficiency patterns" } },
       });
-      if (isProposalSkipped(result)) {
-        skippedRefs.push(ref);
-      } else {
-        createdIds.push(result.id);
-      }
+      createdIds.push(result.id);
     }
 
     // Only the first ref's proposal should have been created.

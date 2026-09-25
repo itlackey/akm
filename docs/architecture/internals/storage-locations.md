@@ -107,27 +107,28 @@ journal mode. Foreign-key policy is called out per database below.
 ### `$DATA/index.db` — Main Search Index
 
 Schema managed by `ensureSchema()` (`src/storage/repositories/index-schema.ts`).
-The current derived generation is exactly v23: `index_meta.version`, the
-complete canonical `entries` fingerprint, and the exact logical
-`entries_fts`/`entry_fragments`/`entry_fragments_fts` surfaces must all match.
-It uses the shared opening pragma policy above with foreign keys ON and
-optionally loads the `sqlite-vec` extension for fast ANN (approximate
-nearest-neighbour) vector search.
+The current layout is 24 (`index_meta.version`, a layout marker, not a
+compatibility gate). It uses the shared opening pragma policy above with
+foreign keys ON and optionally loads the `sqlite-vec` extension for fast ANN
+(approximate nearest-neighbour) vector search.
 
 Opened by:
-- `openIndexDatabase()` — managed schema initialization and generation rebuild,
-  called by `akm index` and other index writers
-- `openExistingDatabase()` — no schema mutation; validates the exact current
-  generation before returning a handle to search/show/curate and other readers
+- `openIndexDatabase()` — managed schema initialization, called by `akm index`
+  and other index writers. Schema changes are applied in place: `CREATE ... IF
+  NOT EXISTS`, `ALTER TABLE ... ADD COLUMN`, and a one-time rebuild of the FTS
+  tables from `entries` when they still carry the layout-23 content copies.
+  `embeddings`, `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are
+  never dropped to cross a layout change.
+- `openExistingDatabase()` / `openReadonlyExistingDatabase()` — no schema
+  mutation; serve whatever layout is on disk (an older or newer marker is
+  named once on stderr, never refused).
 
-**Retention:** `index.db` is a fully regenerable derived cache. A missing or
-noncanonical v23 `entries` fingerprint or required logical search surface
-causes the managed opener to discard the entry-dependent derived generation and
-create the exact current schema; the indexer then repopulates it from current
-sources and durable usage state. Existing/read-only openers reject a
-noncanonical generation. This path never modifies `state.db`.
-`clearStaleCacheEntries()` removes orphaned LLM cache rows within a current
-generation.
+**Retention:** `index.db` is a regenerable derived cache. The one
+from-scratch rebuild is on-disk corruption (`SQLITE_CORRUPT`, #865): the file
+is deleted and rebuilt. An `entries` table older than layout 21 (no
+`item_ref`) has its entries-keyed tables recreated; graph data and the LLM
+enrichment cache are kept. This path never modifies `state.db`.
+`clearStaleCacheEntries()` removes orphaned LLM cache rows.
 
 #### Table: `index_meta`
 
@@ -136,7 +137,7 @@ generation.
 | `key` | TEXT PRIMARY KEY | Metadata key |
 | `value` | TEXT NOT NULL | String-encoded value |
 
-Known keys: `version` (stored DB_VERSION), `embeddingDim` (e.g. `"384"`), `hasEmbeddings` (`"0"` or `"1"`).
+Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `embeddingDim` (e.g. `"384"`), `hasEmbeddings` (`"0"` or `"1"`).
 
 #### Table: `entries`
 
@@ -161,7 +162,11 @@ Indexes: the UNIQUE `item_ref` constraint plus `idx_entries_bundle` on
 
 #### Virtual Table: `entries_fts` (FTS5)
 
-BM25-weighted full-text search. Tokenizer: `porter unicode61`.
+BM25-weighted full-text search. Tokenizer: `porter unicode61`. Contentless
+(`content=''`, `contentless_delete=1`): FTS5 stores only the inverted index,
+the text lives once in `entries`, and a row is addressed by its rowid. A
+SQLite older than 3.43 (no `contentless_delete`) gets the layout-23
+content-bearing table instead; readers and writers handle both.
 
 | Column | BM25 weight |
 |---|---|
@@ -176,12 +181,7 @@ transaction as its `entries` upsert. Deletes remove the FTS row before the
 parent entry. There is no caller-managed FTS dirty queue; a full FTS rebuild is
 reserved for explicit recovery of regenerable index state.
 
-Rows carry an explicit `rowid = entry_id`, so a per-entry delete is a
-rowid lookup instead of a full-table scan of the `entry_id UNINDEXED` column.
-A one-time in-place realignment rebuilds any older index.db's rows onto this
-contract at the next writable open (`index_meta.ftsRowidLayout`), and that
-same open re-checks the contract on the table's highest-rowid row and
-realigns again if a writer sharing this generation left it unaligned.
+Rows carry `rowid = entry_id`, so a per-entry delete is a rowid lookup.
 
 #### Table: `entry_fragments`
 
@@ -197,8 +197,10 @@ parent's FTS projections.
 #### Virtual Table: `entry_fragments_fts` (FTS5)
 
 Separate lexical body-fragment population. Tokenizer: `porter unicode61`.
-Its rows carry `entry_id UNINDEXED`, `fragment_id UNINDEXED`,
-`fragment_ordinal UNINDEXED`, and searchable `content`. Parent metadata is not
+Contentless like `entries_fts`: only `content` is indexed, and the owning
+entry and fragment ordinal are decoded from the rowid (the declared
+`entry_id`/`fragment_id`/`fragment_ordinal` UNINDEXED columns read back NULL;
+the fragment id is resolved from `entry_fragments.safe_markdown`). Parent metadata is not
 copied onto fragment rows, preserving the parent FTS conjunction semantics and
 keeping the two BM25 populations independently calibrated. Search selects one
 fragment per matching parent and merges it with parent results; `fragment_id`
@@ -214,27 +216,16 @@ scan of the `entry_id UNINDEXED` column.
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY | Matches `entries.id` |
 | `embedding` | BLOB NOT NULL | Float32 vector, little-endian IEEE-754 |
+| `model` | TEXT | Embedding model fingerprint the vector was generated under; NULL (rows from before layout 24 that no pass had labelled) is served as the current model |
 
-Used by JS cosine-similarity fallback when `sqlite-vec` is absent.
+The embedding pass's cursor: an entry is (re-)embedded when it has no row for
+the configured model. `upsertEntry` deletes the row when an entry's search
+text changes. Readers serve only rows of the current model. Used directly by
+the JS cosine-similarity fallback when `sqlite-vec` is absent.
 
 #### Virtual Table: `entries_vec` (conditional)
 
-Created only when `sqlite-vec` is loadable. Columns: `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`. Dropped and recreated if embedding dimension changes.
-
-#### Table: `embedding_salvage` (#955)
-
-| Column | Type | Notes |
-|---|---|---|
-| `content_hash` | TEXT PRIMARY KEY | `sha256(entries.search_text)` |
-| `fingerprint` | TEXT NOT NULL | The `embeddingFingerprint` the salvaged vector was generated under |
-| `embedding` | BLOB NOT NULL | Float32 vector, little-endian IEEE-754 — copied verbatim from `embeddings.embedding` |
-| `salvaged_at` | TEXT NOT NULL | ISO-8601 timestamp of the discard that salvaged this row |
-
-Transient and self-emptying, not a second embedding cache: rows are written
-only at the two points that discard `embeddings` wholesale (a full-index
-rebuild, a generation bump) and are consumed — or the whole table purged —
-by the very next embedding pass. See "Embedding reuse across rebuilds" in
-[Indexing](indexing.md#embedding-phase).
+Created only when `sqlite-vec` is loadable. Columns: `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`. A mirror of the current model's `embeddings` rows: recreated at the new width when the dimension changes, emptied when the model changes, and refilled by the embedding pass.
 
 #### Workflow source indexing
 
@@ -293,8 +284,8 @@ global fallback / cold-start signal.
 See [Utility Score Pipeline](#utility-score-pipeline) below.
 
 `usage_events` (search/show/feedback telemetry) is **not** an `index.db` table;
-it lives in `state.db` so an index-generation rebuild cannot discard durable
-usage history. See the `state.db` section below.
+it lives in `state.db` so deleting or rebuilding `index.db` cannot discard
+durable usage history. See the `state.db` section below.
 
 #### Table: `registry_index_cache`
 
@@ -590,7 +581,6 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `select` | `akm show` (when preceded by search within 60s) | `query`, `searchTs`, `rankPosition` |
 | `improve_invoked` | `akm improve` | `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_skipped` | `akm improve` (cooldown guards) | `reason` (reflect_cooldown\|distill_cooldown\|consolidation_cooldown\|budget_exhausted), `cooldownDays`, `lastEventTs` |
-| `consolidate_completed` | `akm improve` (post-consolidation) | `processed`, `merged` |
 | `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (queued\|error), `reason`, `proposalId?`, `error?` |
 | `reflect_completed` | reflect pass inside `akm improve` (after proposal created) | `proposalId`, `source` |
 | `workflow_started` | workflow engine | `runId` |
@@ -605,9 +595,6 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | Consumer | Filter used | Purpose |
 |---|---|---|
 | `akm improve` | `feedback` within 30d | Signal-filter candidate selection |
-| `akm improve` | `reflect_invoked` per ref | Reflect cooldown guard (7d / 14d / 3d tier) |
-| `akm improve` | `distill_invoked` per ref | Distill cooldown guard (30d) |
-| `akm improve` | `consolidate_completed` | Consolidation cooldown guard (14d) |
 | `akm improve` | `schema_repair_invoked` per ref | Schema repair cooldown guard (7d) |
 | `akm improve` (distill pass) | `feedback` per ref | Builds LLM prompt context (last 20 events) |
 | `akm improve` (reflect pass) | `feedback` per ref | Builds agent prompt context (last 10 per-ref / 20 global) |
@@ -693,7 +680,7 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 | `$STASH/.akm/archive/<ts>-<i>-<name>.md` | Legacy consolidation archive. Current advisory consolidation does not create or manage these files. | Dead residue (itlackey/akm#889); reported by `akm migrate status`, removed by `akm migrate apply` |
 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Legacy pre-0.9 consolidation backups; current advisory consolidation does not create them. | Safe to remove after review |
 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Belief-state archived memory files + `cleanup.md` audit record | No cleanup |
-| `$STATE/improve/distill-rejected/<stash>/<ts>-<lessonRef>.md` | Lessons that failed the LLM-as-judge quality gate. Frontmatter: `{ score, reason }`. Moved out of `$STASH/.akm/distill-rejected/` (itlackey/akm#890). | No cleanup |
+| `$DATA/state.db` (`improve_ledger` table) | One row per `(stash_dir, ref, source)`: what an improve stage last did with the asset (`outcome`: proposed, accepted, rejected, quality_rejected, review_needed, expired, unchanged, failed, judged_no_action), when (`last_attempt_at`), and when it may try again (`next_eligible_at`). Every stage's candidate selection reads it before any model call (`src/storage/repositories/improve-ledger-repository.ts`). Replaces the cooldown events, `proposal_fingerprints`, and the `$STATE/improve/distill-rejected/` files. | One row per asset and stage (upserted) |
 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | Regression eval cases captured from rejected distill/proposal output. Moved out of `$STASH/.akm/eval-cases/` (itlackey/akm#890). | No cleanup |
 | `$STATE/improve/measurement/verdicts/<stash>/verdict-<ts>.{json,md}` | `akm-eval-proactive-verdict` reports. Moved out of `$STASH/.akm/measurement/verdicts/` (itlackey/akm#890); the pilot treatment file stays at `$STASH/.akm/measurement/` (manually-authored input, not a writer output). | No cleanup |
 | `$STASH/memories/MEMORY.md` | Human-maintained memory index. Budget: warn at 180 lines, hard cap at 200. Read-only for akm (not written by current code). | Manual |
@@ -853,7 +840,7 @@ not affect ranking, salience, real-query labels, or GRR.
 | 12 | `$DATA/state.db` (`proposals` table) | SQLite | Proposal queue; archival is a `status` change, not a separate directory |
 | 19 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Markdown | Legacy consolidation backups; no longer created |
 | 20 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Markdown | Belief-state archived memories |
-| 21 | `$STATE/improve/distill-rejected/<stash>/<ts>-<ref>.md` | FM+Markdown | Quality-gate rejected lessons |
+| 21 | `$DATA/state.db` (`improve_ledger` table) | SQLite | Improve attempt ledger (outcome + next eligible time per asset and stage) |
 | 22 | `$STATE/locks/<stash>/improve.lock` | JSON | Improve run mutex |
 | 23 | `$STASH/{skills,commands,agents,...}/` | FM+Markdown | Asset files (working bundle) |
 | 24 | `$STASH/wikis/<name>/` | Markdown | `llm-wiki`-adapter bundle content (schema/index/log + `raw/` + `pages/`) |
@@ -879,4 +866,4 @@ not affect ranking, salience, real-query labels, or GRR.
 
 ---
 
-Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getStateDbPathInDataDir`, `getSemanticStatusPath`, `getStateDir`, `getStashStateKey`, and the per-stash `$STATE`/`$CACHE` writer helpers `getDistillRejectedDir`, `getEvalCasesDir`, `getMeasurementVerdictsDir`, `getUnresolvedSourcesDir`, `getStashLocksDir`).
+Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getStateDbPathInDataDir`, `getSemanticStatusPath`, `getStateDir`, `getStashStateKey`, and the per-stash `$STATE`/`$CACHE` writer helpers `getEvalCasesDir`, `getMeasurementVerdictsDir`, `getUnresolvedSourcesDir`, `getStashLocksDir`).

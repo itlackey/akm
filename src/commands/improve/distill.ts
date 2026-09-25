@@ -69,23 +69,14 @@ import { withStateDb } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
-import {
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-} from "../../integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
-import { callStructured, preflightStructuredLlmRunner } from "../../llm/structured-call";
+import { callStructured } from "../../llm/structured-call";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
-import { type EligibilitySource, isStaleTargetRejection } from "../proposal/proposal-types";
-import {
-  isProposalSkipped,
-  listProposals,
-  listProposalsReadOnly,
-  type Proposal,
-  type ProposalsContext,
-} from "../proposal/repository";
+import { type EligibilitySource, isProceduralRejection } from "../proposal/proposal-types";
+import { listProposals, listProposalsReadOnly, type Proposal, type ProposalsContext } from "../proposal/repository";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./content-hash";
 import {
   autoRepairLessonFrontmatter,
@@ -104,6 +95,7 @@ import {
   fetchTopSimilarLessons,
   persistOutputEncodingSalience,
   runLessonQualityJudge,
+  stageJudgedProposal,
   writeQualityRejection,
 } from "./distill/quality-gate";
 import { buildClsContext, checkDistillFidelity, DEFAULT_CLS_ADJACENT_COUNT } from "./distill-guards";
@@ -963,135 +955,121 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     onNotices: collectNotices,
   } satisfies PromoteMemoryContext;
   const promotionPlan = await planMemoryKnowledgePromotion(promotionContext);
-  let dispatchLease: LoweredExecutionDispatchLease | undefined;
-
-  try {
-    // Memory→knowledge promotion branch (D-1/#369). When the target ref is a
-    // reinforced memory, distill graduates it into a knowledge proposal instead
-    // of a lesson — the whole branch (LLM contradiction-merge, quality gate,
-    // proposal creation, event emit) lives in `promoteMemoryToKnowledge` and is
-    // terminal when it fires. A `null` return means "not a promotion candidate";
-    // fall through to the ordinary lesson/knowledge distillation path.
-    if (promotionPlan && distillRunner && memoryKnowledgePromotionRequiresDispatch(promotionContext, promotionPlan)) {
-      dispatchLease = await preflightStructuredLlmRunner(distillRunner);
-    }
-    const promotionResult = await promoteMemoryToKnowledge(
-      { ...promotionContext, ...(dispatchLease ? { lease: dispatchLease } : {}) },
-      promotionPlan,
-    );
-    if (promotionResult) {
-      await persistInputSalience();
-      return withNotices(promotionResult);
-    }
-
-    const effectiveProposalKind = targetKind === "knowledge" ? "knowledge" : "lesson";
-    const effectiveLessonRef =
-      effectiveProposalKind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
-
-    const messages = await buildDistillMessages({
-      options,
-      stash,
-      inputRef,
-      assetContent: assetState.assetContent,
-      feedback,
-      effectiveProposalKind,
-      effectiveLessonRef,
-      fetchSimilarLessonsFn,
-    });
-
-    if (!dispatchLease && distillRunner) dispatchLease = await preflightStructuredLlmRunner(distillRunner);
-
-    const { raw, fallbackReason } = await runDistillLlmCall({
-      config,
-      options,
-      distillRunner,
-      lease: dispatchLease,
-      messages,
-      effectiveProposalKind,
-      onNotices: collectNotices,
-    });
+  // Memory→knowledge promotion branch (D-1/#369). When the target ref is a
+  // reinforced memory, distill graduates it into a knowledge proposal instead
+  // of a lesson — the whole branch (LLM contradiction-merge, quality gate,
+  // proposal creation, event emit) lives in `promoteMemoryToKnowledge` and is
+  // terminal when it fires. A `null` return means "not a promotion candidate";
+  // fall through to the ordinary lesson/knowledge distillation path.
+  if (promotionPlan && distillRunner && memoryKnowledgePromotionRequiresDispatch(promotionContext, promotionPlan)) {
+    assertRunnerCredentials(distillRunner);
+  }
+  const promotionResult = await promoteMemoryToKnowledge(promotionContext, promotionPlan);
+  if (promotionResult) {
     await persistInputSalience();
+    return withNotices(promotionResult);
+  }
 
-    if (raw === null || raw.trim() === "") {
-      return withNotices(
-        distillEmptyResponseResult({
-          fallbackReason,
-          inputRef,
-          durableInputRef,
-          ...(options.itemRef ? { itemRef: options.itemRef } : {}),
-          effectiveLessonRef,
-          effectiveProposalKind,
-          exclusionSet,
-          filteredFeedbackCount,
-          feedbackFullyFiltered,
-          eligMeta,
-          eventsCtx: options.eventsCtx,
-        }),
-      );
-    }
+  const effectiveProposalKind = targetKind === "knowledge" ? "knowledge" : "lesson";
+  const effectiveLessonRef =
+    effectiveProposalKind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
 
-    const assembled = assembleAndValidateDistillContent({
-      raw,
-      effectiveProposalKind,
-      inputRef,
-      durableInputRef,
-      ...(options.itemRef ? { itemRef: options.itemRef } : {}),
-      effectiveLessonRef,
-      exclusionSet,
-      filteredFeedbackCount,
-      eligMeta,
-      eventsCtx: options.eventsCtx,
-      stash,
-      ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
-      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-    });
-    if ("rejection" in assembled) return withNotices(assembled.rejection);
-    const { content, descriptionSwapped } = assembled;
+  const messages = await buildDistillMessages({
+    options,
+    stash,
+    inputRef,
+    assetContent: assetState.assetContent,
+    feedback,
+    effectiveProposalKind,
+    effectiveLessonRef,
+    fetchSimilarLessonsFn,
+  });
 
-    const gate = await applyDistillQualityGate({
-      config,
-      options,
-      content,
-      assetContent: assetState.assetContent,
-      chat,
-      distillRunner,
-      lease: dispatchLease,
-      fetchSimilarLessonsFn,
-      stash,
-      inputRef,
-      effectiveLessonRef,
-      exclusionSet,
-      filteredFeedbackCount,
-      feedbackFullyFiltered,
-      onNotices: collectNotices,
-    });
-    if ("rejection" in gate) return withNotices(gate.rejection);
-    const lessonJudgeConfidence = gate.confidence;
+  const { raw, fallbackReason } = await runDistillLlmCall({
+    config,
+    options,
+    distillRunner,
+    messages,
+    effectiveProposalKind,
+    onNotices: collectNotices,
+  });
+  await persistInputSalience();
 
+  if (raw === null || raw.trim() === "") {
     return withNotices(
-      await emitDistillLessonProposal({
-        content,
-        options,
-        distillRunner,
-        assetContent: assetState.assetContent,
+      distillEmptyResponseResult({
+        fallbackReason,
         inputRef,
         durableInputRef,
+        ...(options.itemRef ? { itemRef: options.itemRef } : {}),
         effectiveLessonRef,
         effectiveProposalKind,
-        stash,
         exclusionSet,
         filteredFeedbackCount,
         feedbackFullyFiltered,
-        lessonJudgeConfidence,
-        existingRefVocabulary: assetState.existingRefVocabulary,
-        outcomeWeightEnabled,
-        descriptionSwapped,
         eligMeta,
+        eventsCtx: options.eventsCtx,
       }),
     );
-  } finally {
-    if (dispatchLease) disposeLoweredExecutionDispatchLease(dispatchLease);
   }
+
+  const assembled = assembleAndValidateDistillContent({
+    raw,
+    effectiveProposalKind,
+    inputRef,
+    durableInputRef,
+    ...(options.itemRef ? { itemRef: options.itemRef } : {}),
+    effectiveLessonRef,
+    exclusionSet,
+    filteredFeedbackCount,
+    eligMeta,
+    eventsCtx: options.eventsCtx,
+    stash,
+    ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
+    ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+  });
+  if ("rejection" in assembled) return withNotices(assembled.rejection);
+  const { content, descriptionSwapped } = assembled;
+
+  const gate = await applyDistillQualityGate({
+    config,
+    options,
+    content,
+    assetContent: assetState.assetContent,
+    chat,
+    distillRunner,
+    fetchSimilarLessonsFn,
+    stash,
+    inputRef,
+    effectiveLessonRef,
+    exclusionSet,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+    onNotices: collectNotices,
+  });
+  if ("rejection" in gate) return withNotices(gate.rejection);
+  const lessonJudgeConfidence = gate.confidence;
+
+  return withNotices(
+    await emitDistillLessonProposal({
+      content,
+      options,
+      assetContent: assetState.assetContent,
+      inputRef,
+      durableInputRef,
+      effectiveLessonRef,
+      effectiveProposalKind,
+      stash,
+      exclusionSet,
+      filteredFeedbackCount,
+      feedbackFullyFiltered,
+      lessonJudgeConfidence,
+      existingRefVocabulary: assetState.existingRefVocabulary,
+      outcomeWeightEnabled,
+      descriptionSwapped,
+      eligMeta,
+    }),
+  );
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1106,7 +1084,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 async function emitDistillLessonProposal(args: {
   content: string;
   options: AkmDistillOptions;
-  distillRunner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
   assetContent: string | null;
   inputRef: string;
   durableInputRef: string;
@@ -1124,7 +1101,6 @@ async function emitDistillLessonProposal(args: {
 }): Promise<AkmDistillResult> {
   const {
     options,
-    distillRunner,
     assetContent,
     inputRef,
     durableInputRef,
@@ -1173,7 +1149,7 @@ async function emitDistillLessonProposal(args: {
           {
             ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
             ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-            ...(distillRunner?.connection.model ? { modelId: distillRunner.connection.model } : {}),
+            ledgerRef: options.itemRef ?? durableInputRef,
           },
         );
       }
@@ -1195,15 +1171,10 @@ async function emitDistillLessonProposal(args: {
   };
   delete frontmatterWithXrefs.sources;
   content = assembleAsset(frontmatterWithXrefs, parsed.content);
-  const proposalResult2 = emitProposal(
+  let proposal2: Proposal = emitProposal(
     { stashDir: stash, proposalsCtx: options.ctx },
     {
       ref: effectiveLessonRef,
-      // §23.6 fingerprint model-id term (WI-6.4). Uses the RESOLVED connection
-      // (profile/config fallback included), not the raw option — a standalone
-      // `akm distill` run must fingerprint under the model that actually
-      // generated the content, matching the promote-memory branch.
-      ...(distillRunner?.connection.model ? { modelId: distillRunner.connection.model } : {}),
       source: "distill",
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: {
@@ -1213,37 +1184,13 @@ async function emitDistillLessonProposal(args: {
       ...(lessonJudgeConfidence !== undefined ? { confidence: lessonJudgeConfidence } : {}),
       // Attribution tagging: persist the eligibility lane on the proposal.
       ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
+      // The improve ledger keys the attempt by the input asset, not the lesson.
+      attemptedRefs: [options.itemRef ?? durableInputRef],
     },
   );
+  // A judge scored this content (confidence is set only on a real pass).
+  if (lessonJudgeConfidence !== undefined) proposal2 = stageJudgedProposal(stash, proposal2, options.ctx);
 
-  if (isProposalSkipped(proposalResult2)) {
-    appendEvent(
-      {
-        eventType: "distill_invoked",
-        // Use item_ref when resolved, otherwise the input conceptId.
-        ref: options.itemRef ?? durableInputRef,
-        metadata: {
-          outcome: "skipped" as const,
-          proposalRef: effectiveLessonRef,
-          message: proposalResult2.message,
-          skipReason: proposalResult2.reason,
-          ...eligMeta,
-        },
-      },
-      options.eventsCtx,
-    );
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "skipped",
-      inputRef,
-      proposalRef: effectiveLessonRef,
-      skipReason: proposalResult2.reason,
-      message: proposalResult2.message,
-    };
-  }
-
-  const proposal2: Proposal = proposalResult2;
   // G4: content-score the distilled OUTPUT so it carries a real encoding
   // salience (encoding_source='content') from creation — lessons never get
   // another chance (they are refused as distill inputs).
@@ -1429,6 +1376,7 @@ function assembleAndValidateDistillContent(args: {
         {
           ...(proposalsCtx ? { proposalsCtx } : {}),
           ...(sourceRun !== undefined ? { sourceRun } : {}),
+          ledgerRef: itemRef ?? durableInputRef,
         },
       ),
     };
@@ -1448,12 +1396,11 @@ async function runDistillLlmCall(args: {
   config: AkmConfig;
   options: AkmDistillOptions;
   distillRunner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-  lease: LoweredExecutionDispatchLease | undefined;
   messages: ChatMessage[];
   effectiveProposalKind: "lesson" | "knowledge";
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }): Promise<{ raw: string | null; fallbackReason: "disabled" | "timeout" | "error" | undefined }> {
-  const { config, options, distillRunner, lease, messages, effectiveProposalKind, onNotices } = args;
+  const { config, options, distillRunner, messages, effectiveProposalKind, onNotices } = args;
   const distillSchema =
     effectiveProposalKind === "knowledge" ? DISTILL_KNOWLEDGE_JSON_SCHEMA : DISTILL_LESSON_JSON_SCHEMA;
   let fallbackReason: "disabled" | "timeout" | "error" | undefined;
@@ -1483,7 +1430,6 @@ async function runDistillLlmCall(args: {
     // Safe: when the gate is open, distillRunner is defined (guard above); when
     // it is closed, the transport never runs and the runner is never read.
     runner: distillRunner as Extract<RunnerSpec, { kind: "llm" }>,
-    ...(lease ? { lease } : {}),
     messages,
     request:
       options.chat === undefined
@@ -1606,7 +1552,6 @@ async function applyDistillQualityGate(args: {
   assetContent: string | null;
   chat: typeof chatCompletion | undefined;
   distillRunner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-  lease: LoweredExecutionDispatchLease | undefined;
   fetchSimilarLessonsFn: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
   stash: string;
   inputRef: string;
@@ -1623,7 +1568,6 @@ async function applyDistillQualityGate(args: {
     assetContent,
     chat,
     distillRunner,
-    lease,
     fetchSimilarLessonsFn,
     stash,
     inputRef,
@@ -1641,7 +1585,6 @@ async function applyDistillQualityGate(args: {
   const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat, {
     ...(similarLessons.length > 0 ? { similarLessons } : {}),
     ...(distillRunner ? { llmRunner: distillRunner } : {}),
-    ...(lease ? { lease } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     onNotices,
   });
@@ -1649,7 +1592,7 @@ async function applyDistillQualityGate(args: {
     const proposalOpts = {
       ...(options.ctx ? { proposalsCtx: options.ctx } : {}),
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-      ...(distillRunner?.connection.model ? { modelId: distillRunner.connection.model } : {}),
+      ledgerRef: options.itemRef ?? durableImproveRef(inputRef),
     };
     if (judgeResult.reviewNeeded) {
       return {
@@ -1772,7 +1715,7 @@ async function buildDistillMessages(args: {
     { ref: inputRef, status: "rejected", includeArchive: true },
     options.ctx,
   )
-    .filter((p) => !isStaleTargetRejection(p))
+    .filter((p) => !isProceduralRejection(p))
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
     .slice(0, MAX_REJECTED_PROPOSALS)
     .map((p) => ({

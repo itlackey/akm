@@ -505,18 +505,6 @@ export function renameEntriesBundleId(db: Database, oldBundleId: string, newBund
 }
 
 /**
- * Delete the complete regenerable entry generation through the same child-row
- * authority used by targeted deletes. The caller may retain cross-database
- * usage events so the finalize pass can relink them to the new row ids.
- */
-export function deleteAllEntries(db: Database, options: { cleanupUsageEvents?: boolean } = {}): number[] {
-  return db.transaction(() => {
-    const rows = db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>;
-    return deleteEntryRows(db, rows, options);
-  })();
-}
-
-/**
  * Diff-persist orphan delete: remove every entry under `dirPath` whose durable
  * `item_ref` is not in `keepRefs`.
  *

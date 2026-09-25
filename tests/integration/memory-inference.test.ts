@@ -529,25 +529,26 @@ describe("runMemoryInferencePass — enabled", () => {
     expect(parseFrontmatter(fs.readFileSync(parentPath, "utf8")).data.inferenceProcessed).toBeUndefined();
   });
 
-  test("multiple inferred memories use the operation credential after the environment entry is removed", async () => {
-    const firstParent = writeMemory("lease-first", {}, "First body.");
-    const secondParent = writeMemory("lease-second", {}, "Second body.");
-    const secret = "memory-lease-original-092";
+  test("each inferred memory's dispatch reads the credential current at that call; none is written", async () => {
+    const firstParent = writeMemory("rotation-first", {}, "First body.");
+    const secondParent = writeMemory("rotation-second", {}, "Second body.");
+    const secret = "memory-original-092";
+    const rotated = "memory-rotated-092";
     const config: AkmConfig = {
       semanticSearchMode: "off",
       engines: {
         memory: {
           kind: "llm",
-          endpoint: "https://memory-lease.invalid/v1/chat/completions",
+          endpoint: "https://memory-rotation.invalid/v1/chat/completions",
           model: "provider/exact-memory",
-          apiKey: "$AKM_MEMORY_LEASE_KEY",
+          apiKey: "$AKM_MEMORY_ROTATING_KEY",
         },
       },
       index: { defaults: { engine: "memory" }, memory: { enabled: true } },
     };
     const authorization: Array<string | null> = [];
 
-    const result = await withEnv({ AKM_MEMORY_LEASE_KEY: secret }, () =>
+    const result = await withEnv({ AKM_MEMORY_ROTATING_KEY: secret }, () =>
       withMockedFetch(
         () =>
           runMemoryInferencePassImpl({
@@ -557,7 +558,7 @@ describe("runMemoryInferencePass — enabled", () => {
           }),
         (_url, init) => {
           authorization.push(new Headers(init?.headers).get("authorization"));
-          if (authorization.length === 1) mutateScopedEnv("AKM_MEMORY_LEASE_KEY", undefined);
+          if (authorization.length === 1) mutateScopedEnv("AKM_MEMORY_ROTATING_KEY", rotated);
           return Response.json({
             choices: [
               {
@@ -572,9 +573,15 @@ describe("runMemoryInferencePass — enabled", () => {
     );
 
     expect(result.writtenFacts).toBe(2);
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${rotated}`]);
     expect(parseFrontmatter(fs.readFileSync(firstParent, "utf8")).data.inferenceProcessed).toBe(true);
     expect(parseFrontmatter(fs.readFileSync(secondParent, "utf8")).data.inferenceProcessed).toBe(true);
+    for (const file of fs.readdirSync(tmpStash, { recursive: true, withFileTypes: true })) {
+      if (!file.isFile()) continue;
+      const text = fs.readFileSync(path.join(file.parentPath, file.name), "utf8");
+      expect(text).not.toContain(secret);
+      expect(text).not.toContain(rotated);
+    }
   });
 
   test("required symbolic credential failure leaves every earlier and later parent and derived asset unchanged", async () => {

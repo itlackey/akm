@@ -165,7 +165,6 @@ function publicationInput(options: {
     updatedAt: createdAt,
     agentHarness: null,
     agentSessionId: null,
-    checkinArmedAt: null,
   };
   const steps: InsertStepInput[] = [
     {
@@ -206,9 +205,9 @@ function rawInsertChildRun(db: Database, input: PublishChildWorkflowRunInputCont
   db.prepare(
     `INSERT INTO workflow_runs (
       id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id,
-      created_at, updated_at, agent_harness, agent_session_id, checkin_armed_at,
+      created_at, updated_at, agent_harness, agent_session_id,
       plan_json, plan_hash, plan_ir_version, parent_run_id, parent_unit_id, invocation_key
-    ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
   ).run(
     input.run.id,
     input.run.workflowRef,
@@ -221,7 +220,6 @@ function rawInsertChildRun(db: Database, input: PublishChildWorkflowRunInputCont
     input.run.updatedAt,
     input.run.agentHarness,
     input.run.agentSessionId,
-    input.run.checkinArmedAt,
     input.planJson,
     input.planHash,
     input.parentRunId,

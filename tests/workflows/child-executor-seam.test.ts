@@ -153,7 +153,6 @@ async function seedParentRun(input: { runId: string; stepId: string }): Promise<
       updatedAt: now,
       agentHarness: null,
       agentSessionId: null,
-      checkinArmedAt: null,
     });
     repo.insertSteps([
       {

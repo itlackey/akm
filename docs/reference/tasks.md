@@ -184,9 +184,9 @@ immediately sync the affected bundle. `akm task add` enables its new task by
 default; `--disabled` writes the same task source but does not list it.
 
 `akm task run <id>` executes a task immediately, including a disabled task.
-`akm task sync` scans every enabled configured bundle, selects only locally
-activated task/workflow refs, validates the complete desired set, and then
-atomically reconciles scheduler state. `--bundle <name>` narrows that pass to
+`akm task sync` scans every enabled configured bundle, reads only locally
+activated task/workflow refs, and reconciles the native scheduler one row at a
+time (see [Operations](#operations)). `--bundle <name>` narrows that pass to
 one active bundle. If every configured bundle is disabled, sync removes the
 attributable native entries without reading task content. Workflow targets
 create a fresh durable workflow freeze at fire time.
@@ -425,14 +425,34 @@ for full before/after examples and recovery guidance.
   decision it needs. A `version: 4` file whose only defect is a retired
   `schedule[].enabled` also reports `converts` (`sourceVersion` still `4`)
   — it read through the shim too, not the direct v4 path.
-- `akm task add` writes a task source v4 document and installs it after
-  validation. `--params` renders typed `inputs:` declarations instead of a
-  `with:` bag; `--schedule` is required on every invocation. `--disabled`
-  leaves the new ref absent from local scheduler activation.
+- `akm task add` validates a task source v4 document, writes it, adds its ref
+  to local scheduler activation, and syncs its bundle. `--params` renders
+  typed `inputs:` declarations instead of a `with:` bag; `--schedule` is
+  required on every invocation. `--disabled` writes the same source but
+  leaves the ref out of activation. `--force` overwrites an existing task of
+  the same id; without it add refuses. Add also refuses, before writing
+  anything, when the id is already scheduled from another bundle or
+  installation. If the row itself cannot be installed, add fails and says so;
+  the task stays written and enabled, and the next `akm task sync` retries it.
 - `akm task history` reads durable run history from `state.db`.
 - `akm task enable <ref>` / `akm task disable <ref>` change only local
   scheduler config, then reconcile that bundle.
 - Delete the `.yml` source and sync to remove its derived binding(s).
+- `akm task sync` reads the installed rows once, compares each against what
+  its source renders, and installs, rewrites, or removes rows one at a time.
+  A row that fails to install or remove is reported in `failures` and every
+  other row still applies. A source that fails to parse is reported the same
+  way, and its installed row is left exactly as it is. Rows akm cannot attribute to a bundle this sync covers —
+  another bundle's, another installation's (the row's own descriptor names a
+  different bundle path), or anything outside akm's `# akm:task` markers,
+  `com.akm.task.` labels, or `\akm\` task folder — are never touched. A
+  Task Scheduler row is compared by the fingerprint akm writes into its
+  `<Source>` plus its enabled state, so an edit made in Task Scheduler that
+  keeps that fingerprint is left alone.
+- `akm task sync`, `add`, `enable`, `disable`, and `prune --yes` hold one lock
+  file, `$STATE/locks/scheduler.lock`, while they read and write the native
+  scheduler. A second one started meanwhile exits 75 (retry shortly); a lock
+  left by a process that is no longer running is reclaimed.
 - `akm task sync --dry-run` previews the reconcile (adds/updates/removes,
   removals annotated with their owning bundle) without writing to the
   scheduler; exits non-zero when removals are pending.
@@ -443,8 +463,12 @@ for full before/after examples and recovery guidance.
   Defaults to a dry-run preview (zero writes); `--yes` executes it; `--id
   <id1,id2,...>` scopes to specific ids and refuses any id that isn't a
   current orphan candidate.
-- Use `akm task sync --rebind` only when deliberately changing the captured
-  AKM runtime, then verify with `akm task doctor`.
+- A plain sync keeps each installed row's launcher. Use
+  `akm task sync --rebind` only when deliberately changing the captured AKM
+  runtime, then verify with `akm task doctor`. When the launcher sync writes
+  runs akm from a source checkout (`src/cli.ts`, a local build, or a package
+  inside a git work tree), sync says so once: scheduled runs then run
+  whatever the checkout holds.
 - `akm task sync` writes one `PATH=` line inside a `# akm:env BEGIN`/`END`
   section directly above the first akm task block in the crontab (on macOS,
   an `EnvironmentVariables` entry in each plist). It is the PATH of the shell

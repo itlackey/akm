@@ -5,47 +5,28 @@
 /**
  * Shared SQLite migration engine.
  *
- * SQLite schemas evolve through this transaction-per-migration runner backed
- * by a `schema_migrations` ledger.
+ * SQLite schemas evolve through this runner backed by a `schema_migrations`
+ * ledger. Each caller supplies only its own `MIGRATIONS` array (state.db:
+ * `src/core/state/migrations.ts`; logs.db: `src/core/logs-db.ts`).
  *
- * This module factors that runner out once. Each caller supplies only its own
- * `MIGRATIONS` array.
- *
- * Ledger/transaction contract:
+ * Ledger contract:
  *   - `id` is permanent and must never be reused.
- *   - Applied IDs must be an exact ordered prefix of the registry.
- *   - Each `up` body and its ledger insert commit in the same transaction.
- *   - Migration bodies run only after `BEGIN IMMEDIATE` is observably active,
- *     and the transaction must remain active through the body's completion.
- *   - The caller owns semantic safety classification and any policy gate;
- *     this generic engine intentionally does not infer risk from SQL text.
+ *   - Applied IDs must be an exact ordered prefix of the registry. A ledger
+ *     that runs PAST the registry (migrated by a newer akm) is fine: nothing is
+ *     pending. A ledger that DIVERGES from it is refused
+ *     ({@link assertMigrationLedger}).
+ *   - Every pending migration and its ledger row commit in ONE `BEGIN IMMEDIATE`
+ *     transaction ({@link runMigrations}), so a failure part-way leaves the
+ *     database exactly as it was.
  */
 
-import { sleepSync } from "../../runtime";
 import type { Database } from "../database";
+import { withImmediateTransaction } from "../sqlite-transaction";
 
-/**
- * A single, append-only schema migration.
- *
- * @see The migration-safety contract in this module's header.
- */
+/** A single, append-only schema migration. */
 export interface Migration {
   id: string;
   up: string;
-}
-
-/**
- * Options for {@link runMigrations}.
- */
-export interface RunMigrationsOptions {
-  /** Called before creating a missing ledger table while the initialization writer lock is held. */
-  beforeLedgerInitializationLocked?: (db: Database) => void;
-  /** Called immediately before each pending migration; an initial locked prefix may already own its transaction. */
-  beforeMigration?: (migration: Migration) => void;
-  /** Called after the pending-ID recheck while the migration's writer lock is held. */
-  beforeMigrationLocked?: (migration: Migration, db: Database) => void;
-  /** Hold ledger initialization and every pending migration through this ID in one writer transaction. */
-  lockInitialMigrationPrefixThrough?: string;
 }
 
 export type MigrationLedgerStatus = "old" | "current" | "newer" | "inconsistent";
@@ -129,7 +110,7 @@ export function inspectMigrationLedger(db: Database, migrations: readonly Migrat
  * it has no pending migration to run. Callers that want to tell an operator
  * about the skew read {@link MigrationLedgerState.status}.
  *
- * A `inconsistent` ledger is different: this binary has a migration that was
+ * An `inconsistent` ledger is different: this binary has a migration that was
  * never applied and something else was applied in its place, so running the
  * pending set could conflict with schema it cannot see. That still refuses.
  */
@@ -150,10 +131,7 @@ export function assertMigrationLedger(db: Database, migrations: readonly Migrati
   return state;
 }
 
-/**
- * Create the migrations ledger table if it does not exist. Must be called
- * unconditionally on every open so a fresh database bootstraps correctly.
- */
+/** Create the migrations ledger table if it does not exist. */
 export function ensureMigrationsTable(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -163,160 +141,35 @@ export function ensureMigrationsTable(db: Database): void {
   `);
 }
 
+/** The registry entries not yet recorded in the ledger, in order. Throws on a divergent ledger. */
+export function pendingMigrations(db: Database, migrations: readonly Migration[]): readonly Migration[] {
+  return migrations.slice(assertMigrationLedger(db, migrations).migrationIds.length);
+}
+
 /**
- * Apply every pending migration, normally one transaction per migration.
+ * Apply every pending migration in one `BEGIN IMMEDIATE` transaction.
  *
- * Each migration is applied in its own transaction so a failure in migration N
- * does not roll back already-applied migrations 1..N-1. The migration row is
- * inserted after the DDL succeeds in the same transaction, so a crash rolls
- * back both that migration's SQL and its ledger row. A caller may explicitly
- * group the initial prefix when ledger initialization and dependent early
- * migrations form one safety boundary.
- *
- * @param db          The open SQLite database.
- * @param migrations  The module's ordered, append-only migration list.
- * @param opts        Migration execution options.
+ * A database with nothing pending is only read, never write-locked. Otherwise
+ * the write lock is taken up front — a second process bootstrapping the same
+ * database WAITS for the first to commit instead of racing it — and the
+ * pending set is re-read under that lock, so the process that lost the race
+ * finds nothing left to do rather than re-running DDL. Each migration's ledger
+ * row is inserted right after its SQL inside the same transaction: a failing
+ * migration rolls back every migration this call applied, and their ledger
+ * rows with them. Contention that outlasts every BEGIN retry surfaces as
+ * `TransientError("STATE_DB_CONTENDED")` (`../sqlite-transaction`). Returns the
+ * IDs this call applied, in order — empty when another process got there first.
  */
-export function runMigrations(db: Database, migrations: readonly Migration[], opts?: RunMigrationsOptions): void {
-  assertMigrationRegistry(migrations);
-  const lockedPrefixThrough = opts?.lockInitialMigrationPrefixThrough;
-  const lockedPrefixEnd = lockedPrefixThrough
-    ? migrations.findIndex((migration) => migration.id === lockedPrefixThrough)
-    : -1;
-  if (lockedPrefixThrough && lockedPrefixEnd < 0) {
-    throw new Error(`Initial locked migration prefix ends at unknown migration ID ${lockedPrefixThrough}.`);
-  }
-
-  if (lockedPrefixEnd >= 0) {
-    withImmediateWriteLock(db, () => {
-      if (!migrationLedgerExists(db)) {
-        opts?.beforeLedgerInitializationLocked?.(db);
-        ensureMigrationsTable(db);
-      }
-      assertMigrationLedger(db, migrations);
-      for (const migration of migrations.slice(0, lockedPrefixEnd + 1)) {
-        const already = db.prepare("SELECT 1 FROM schema_migrations WHERE id = ?").get(migration.id);
-        if (already) continue;
-        opts?.beforeMigration?.(migration);
-        opts?.beforeMigrationLocked?.(migration, db);
-        db.exec(migration.up);
-        db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
-      }
-    });
-    assertMigrationLedger(db, migrations);
-  } else if (migrationLedgerExists(db)) {
-    assertMigrationLedger(db, migrations);
-  } else {
-    withImmediateWriteLock(db, () => {
-      if (migrationLedgerExists(db)) return;
-      opts?.beforeLedgerInitializationLocked?.(db);
-      ensureMigrationsTable(db);
-    });
-    assertMigrationLedger(db, migrations);
-  }
-
-  const appliedRows = db.prepare("SELECT id FROM schema_migrations ORDER BY rowid").all() as Array<{ id: string }>;
-  const applied = new Set(appliedRows.map((r) => r.id));
-
-  for (const migration of migrations) {
-    if (applied.has(migration.id)) continue;
-
-    opts?.beforeMigration?.(migration);
-
-    withImmediateWriteLock(db, () => {
-      // Re-check under the write lock. `applied` is a snapshot taken before the
-      // loop, so two processes bootstrapping the same fresh DB concurrently
-      // (both see existed=false) could each decide
-      // to apply migration N. The first commits; the second must not re-run the
-      // DDL and must not hit a UNIQUE violation on the ledger insert.
-      const already = db.prepare("SELECT 1 FROM schema_migrations WHERE id = ?").get(migration.id);
-      if (already) return;
-      opts?.beforeMigrationLocked?.(migration, db);
+export function runMigrations(db: Database, migrations: readonly Migration[]): string[] {
+  if (pendingMigrations(db, migrations).length === 0) return [];
+  return withImmediateTransaction(db, () => {
+    ensureMigrationsTable(db);
+    const applied: string[] = [];
+    for (const migration of pendingMigrations(db, migrations)) {
       db.exec(migration.up);
       db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
-    });
-    applied.add(migration.id);
-  }
-}
-
-/** Attempts to acquire the write lock before giving up to the caller. */
-const IMMEDIATE_LOCK_MAX_ATTEMPTS = 5;
-
-function isRetryableImmediateBeginError(error: unknown): boolean {
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return (
-    message.includes("database is locked") ||
-    message.includes("database table is locked") ||
-    message.includes("did not open a transaction")
-  );
-}
-
-function sleepImmediateRetry(ms: number): void {
-  if (ms <= 0) return;
-  sleepSync(ms);
-}
-
-/**
- * Run `fn` inside a `BEGIN IMMEDIATE` transaction.
- *
- * The write lock is taken up front rather than upgraded from a read lock, so a
- * second process bootstrapping the same database WAITS for the first to commit
- * instead of racing it. `db.transaction()` opens a DEFERRED transaction, which
- * only takes the write lock on first write — leaving the read-then-write gap
- * this guards.
- *
- * Deliberately local rather than reusing `withImmediateTransaction` from
- * core/state-db: that module imports this one, so the dependency cannot be
- * pointed the other way.
- */
-function withImmediateWriteLock(db: Database, fn: () => void): void {
-  if (db.inTransaction) {
-    fn();
-    return;
-  }
-  let lastBeginErr: unknown;
-  for (let attempt = 1; attempt <= IMMEDIATE_LOCK_MAX_ATTEMPTS; attempt++) {
-    try {
-      db.exec("BEGIN IMMEDIATE");
-      if (!db.inTransaction) {
-        throw new Error("BEGIN IMMEDIATE did not open a transaction (phantom contention state)");
-      }
-    } catch (err) {
-      lastBeginErr = err;
-      if (isRetryableImmediateBeginError(err) && attempt < IMMEDIATE_LOCK_MAX_ATTEMPTS) {
-        if (db.inTransaction) {
-          try {
-            db.exec("ROLLBACK");
-          } catch {
-            // Transaction already gone; retrying is safe because fn has not run.
-          }
-        }
-        sleepImmediateRetry(2 ** (attempt - 1));
-        continue;
-      }
-      throw err;
+      applied.push(migration.id);
     }
-    try {
-      fn();
-      if (!db.inTransaction) {
-        throw new Error(
-          "Migration write lock invariant violated: transaction opened by BEGIN IMMEDIATE was no longer active after the migration body ran; refusing to COMMIT (writes may have escaped serialization)",
-        );
-      }
-      db.exec("COMMIT");
-      return;
-    } catch (err) {
-      if (db.inTransaction) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {
-          // Already rolled back by SQLite (e.g. the statement aborted the txn).
-        }
-      }
-      throw err;
-    }
-  }
-  throw lastBeginErr instanceof Error
-    ? lastBeginErr
-    : new Error(`could not acquire the migration write lock after ${IMMEDIATE_LOCK_MAX_ATTEMPTS} attempts`);
+    return applied;
+  });
 }

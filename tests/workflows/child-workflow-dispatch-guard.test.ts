@@ -52,9 +52,9 @@
  * No live agent/LLM/exec dispatch is needed to exercise this: the guard is a
  * synchronous check on `request.frozenTarget.kind` at the very top of
  * `dispatchWorkflowExecution`, before anything touches
- * `lowerResolvedExecutionRequestWithRunner` / `dispatchLoweredExecutionRequest`
+ * `buildExecutionFromWire` / `runExecution`
  * — mirrors `tests/workflows/unit-dispatch-event-source.test.ts`'s existing
- * "no injectable runAgent/executeRunner/chat seam, so pin the fix at the
+ * "no injectable runAgent/runSdk/chat seam, so pin the fix at the
  * exact point the decision is made" approach for this same module.
  */
 

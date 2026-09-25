@@ -20,11 +20,9 @@
  *      DIRTY → it is RETAINED (the caller logs the path) so uncollected work
  *      is never destroyed.
  *   4. {@link sweepStaleWorktrees} — opportunistic, at most once per process:
- *      an age-based GC of run roots and retained trees that outlived their run.
- *      Age alone cannot see a unit that is still running in ANOTHER process, so
- *      every live worktree carries a liveness lease (pid + host + path) in
- *      git's own administrative directory for it, and the sweep skips a tree
- *      whose lease holder is still running.
+ *      an age-based GC of run roots and retained trees that outlived their run
+ *      (a week — far past any unit's own timeout, so a tree still in use is
+ *      never that old).
  *
  * What "uncollected work" means (the honest contract): the clean probe is
  * `git status --porcelain` WITHOUT `--ignored`, so it counts tracked-file
@@ -51,8 +49,8 @@
  *     add/prune/remove per repository is ever in flight;
  *   • those git calls are ASYNC ({@link runManagedSubprocess}) rather than
  *     `spawnSync`, so a unit waiting on a git lock parks a promise instead of
- *     wedging the whole event loop (and with it every other in-flight unit,
- *     the lease heartbeat, and abort handling).
+ *     wedging the whole event loop (and with it every other in-flight unit
+ *     and abort handling).
  *
  * The two sync git shell-outs that remain — {@link isGitAvailable} and
  * {@link assertGitWorkTree} — are read-only, take no repo lock, and run
@@ -70,7 +68,7 @@ import type { Dirent } from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isProcessAlive, isWithinAsync, safeRealpathAsync } from "../../core/common";
+import { isWithinAsync, safeRealpathAsync } from "../../core/common";
 import { serializeByKey } from "../../core/concurrent";
 import { runManagedSubprocess } from "../../core/subprocess";
 import { warn } from "../../core/warn";
@@ -311,10 +309,6 @@ async function pathExists(p: string): Promise<boolean> {
  * the prune and the add form ONE critical section against the base repo's
  * administrative state, so a concurrent unit's prune can never land between
  * another unit's prune and its add.
- *
- * A successful add takes a liveness lease ({@link acquireWorktreeLease}) so the
- * GC sweep — in this process or another one — never collects the tree while the
- * unit is still running in it.
  */
 export async function createUnitWorktree(
   baseDir: string,
@@ -336,7 +330,7 @@ export async function createUnitWorktree(
         if (status.ok && status.stdout.trim() === "") {
           // Async on purpose: a recursive delete of a whole leftover checkout
           // inside this critical section would otherwise block the event loop
-          // (every other in-flight unit, the lease heartbeat, abort handling).
+          // (every other in-flight unit, abort handling).
           await fsp.rm(dest, { recursive: true, force: true });
         } else {
           preservedLeftover = await moveLeftoverAside(dest);
@@ -373,7 +367,6 @@ export async function createUnitWorktree(
         ...(preservedLeftover !== undefined ? { preservedLeftover } : {}),
       };
     }
-    await acquireWorktreeLease(dest);
     return { ok: true, path: dest, ...(preservedLeftover !== undefined ? { preservedLeftover } : {}) };
   });
 }
@@ -419,13 +412,9 @@ export async function cleanupUnitWorktree(baseDir: string, worktreePath: string)
     await removeRunRootIfEmpty(worktreePath);
     return { removed: true, dirty: false };
   }
-  // It refused, so the tree stays on disk — drop its lease, since no unit is
-  // using it any more and the sweep must be free to collect it once it is
-  // stale. (A successful removal took the whole admin directory, lease with it.)
-  await releaseWorktreeLease(worktreePath);
-  // Ask the probe WHY it refused rather than parsing git's message, whose
-  // wording varies with version and locale — and which the caller's warn text
-  // has never been written against.
+  // It refused, so the tree stays on disk. Ask the probe WHY it refused rather
+  // than parsing git's message, whose wording varies with version and locale —
+  // and which the caller's warn text has never been written against.
   const status = await git(worktreePath, ["status", "--porcelain"]);
   if (!status.ok) {
     return { removed: false, dirty: false, error: status.error };
@@ -434,101 +423,6 @@ export async function cleanupUnitWorktree(baseDir: string, worktreePath: string)
     return { removed: false, dirty: true };
   }
   return { removed: false, dirty: false, error: removed.error };
-}
-
-// ── Liveness leases ─────────────────────────────────────────────────────────
-
-/** Marker file, inside a worktree's git admin dir, naming the process using it. */
-const LEASE_FILE_NAME = "akm-lease";
-
-interface WorktreeLease {
-  pid: number;
-  host: string;
-  /**
-   * Resolved path the lease was taken for. Git reuses an admin directory name
-   * once the previous registration is pruned, so a moved-aside
-   * `.retained-<ts>` copy still points at what is now a DIFFERENT worktree's
-   * admin dir; without this check it would inherit that worktree's liveness.
-   */
-  path: string;
-}
-
-/**
- * Path of `p`'s git administrative directory (`<repo>/.git/worktrees/<name>`),
- * read from the `.git` FILE every linked worktree carries. Undefined when `p`
- * is not a readable linked worktree.
- */
-async function worktreeAdminDir(p: string): Promise<string | undefined> {
-  let contents: string;
-  try {
-    contents = await fsp.readFile(path.join(p, ".git"), "utf8");
-  } catch {
-    return undefined;
-  }
-  const gitdir = /^gitdir:[ \t]*(\S.*)$/m.exec(contents)?.[1];
-  return gitdir?.trim();
-}
-
-/**
- * Record this process as the user of `worktreePath`, so {@link
- * sweepStaleWorktrees} can tell a live worktree from an abandoned one.
- *
- * The marker lives in git's administrative directory for the worktree, never in
- * the checkout: an untracked file inside the tree would make it probe DIRTY (and
- * be retained forever), while git's own `worktree remove`/`prune` delete the
- * admin dir — lease included — with no extra bookkeeping here. Best effort: a
- * lease that cannot be written only leaves the tree collectible once stale,
- * which is the pre-lease behaviour.
- */
-async function acquireWorktreeLease(worktreePath: string): Promise<void> {
-  const adminDir = await worktreeAdminDir(worktreePath);
-  if (adminDir === undefined) return;
-  const lease: WorktreeLease = {
-    pid: process.pid,
-    host: os.hostname(),
-    path: await safeRealpathAsync(worktreePath),
-  };
-  try {
-    await fsp.writeFile(path.join(adminDir, LEASE_FILE_NAME), JSON.stringify(lease));
-  } catch {
-    /* best effort — see above */
-  }
-}
-
-/** Drop the lease of a worktree this process is done with but is not removing. */
-async function releaseWorktreeLease(worktreePath: string): Promise<void> {
-  const adminDir = await worktreeAdminDir(worktreePath);
-  if (adminDir === undefined) return;
-  try {
-    await fsp.rm(path.join(adminDir, LEASE_FILE_NAME), { force: true });
-  } catch {
-    /* best effort — a stale lease only delays the sweep by one run of it */
-  }
-}
-
-/**
- * True when a still-running process holds `candidate`'s lease — the guard age
- * cannot provide. A unit that runs longer than the sweep threshold while
- * writing only inside subdirectories leaves the worktree ROOT's mtime at
- * creation time, so another akm process minting a worktree would otherwise
- * delete a tree that is still in use.
- *
- * A lease from a dead pid, from another host (where the pid means nothing), or
- * for a different path is NOT liveness: crashed runs and retained dirty trees
- * stay collectible, which is the whole point of the sweep.
- */
-async function isWorktreeLeaseLive(candidate: string): Promise<boolean> {
-  const adminDir = await worktreeAdminDir(candidate);
-  if (adminDir === undefined) return false;
-  let lease: Partial<WorktreeLease>;
-  try {
-    lease = JSON.parse(await fsp.readFile(path.join(adminDir, LEASE_FILE_NAME), "utf8")) as Partial<WorktreeLease>;
-  } catch {
-    return false;
-  }
-  if (lease.host !== os.hostname()) return false;
-  if (lease.path !== (await safeRealpathAsync(candidate))) return false;
-  return isProcessAlive(lease.pid);
 }
 
 // ── Garbage collection ──────────────────────────────────────────────────────
@@ -583,10 +477,8 @@ export interface SweepStaleWorktreesOptions {
  *
  * Safety invariants: it only ever descends two levels from `root`; entries
  * that are not real directories (symlinks included — `Dirent.isDirectory()`
- * reflects `lstat`) are skipped, never followed; a stale-looking candidate
- * whose {@link isWorktreeLeaseLive} lease holder is still running is skipped
- * (age alone cannot see a unit in flight in another process); and every
- * candidate is re-verified with {@link isWithin} against the resolved root
+ * reflects `lstat`) are skipped, never followed; and every candidate is
+ * re-verified with {@link isWithin} against the resolved root
  * before removal.
  * Deleting a directory leaves its registration in whatever base repo minted
  * it; the next run's `git worktree prune` on that repo reaps it.
@@ -622,7 +514,6 @@ export async function sweepStaleWorktrees(opts: SweepStaleWorktreesOptions = {})
       const candidate = path.join(runRoot, entry.name);
       if (!(await isWithinAsync(candidate, root))) continue;
       if (now - (await lastActivityMs(candidate, entry.name)) < maxAgeMs) continue;
-      if (await isWorktreeLeaseLive(candidate)) continue;
       try {
         await fsp.rm(candidate, { recursive: true, force: true });
         removed.push(candidate);

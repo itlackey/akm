@@ -8,7 +8,6 @@ import { formatSearchPlain } from "../../src/output/text/helpers";
 import { seedStoredGraph } from "../_helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
-const REGISTRY_FIXTURE_PRELOAD = path.join(__dirname, "..", "fixtures", "registry-network", "loopback-preload.ts");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -78,7 +77,7 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   // shapes, not semantic ranking.
   writeConfig(xdgConfig, { configVersion: "0.9.0", semanticSearchMode: "off", ...(config ?? {}) });
 
-  const child = spawn("bun", ["--preload", REGISTRY_FIXTURE_PRELOAD, CLI, ...args], {
+  const child = spawn("bun", [CLI, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,

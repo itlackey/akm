@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { freezeExecutableIdentity } from "../../../execution/executable-identity";
 import { prepareScriptTarget } from "../../../tasks/prepare/prepare-script-target";
 import type { PreparedTaskV3Execution } from "../../../tasks/prepare/prepared-execution";
 import type { FrozenWorkflowEnvironmentBinding, FrozenWorkflowScriptTarget } from "../../ir/schema-v4";
@@ -65,9 +64,7 @@ export function scriptResult(
   context: ResolutionContext,
   literals: readonly FrozenWorkflowEnvironmentBinding[],
 ): ResolvedDispatch {
-  const requestedExecutable = scriptExecutable(prepared.interpreter);
-  const executable = freezeExecutableIdentity(requestedExecutable, { cwd: prepared.cwdIdentity.realCwd });
-  const authoredExec: ProgramExec = { command: [executable.absolutePath, "<frozen-script>"] };
+  const authoredExec: ProgramExec = { command: [scriptExecutable(prepared.interpreter), "<frozen-script>"] };
   const exec = freezeExecSpec(source, authoredExec, context);
   const environment = Object.freeze([...literals, ...freezeEnvironment(source, authoredExec, context)]);
   const target: FrozenWorkflowScriptTarget = Object.freeze({
@@ -81,7 +78,6 @@ export function scriptResult(
     byteLength: prepared.byteLength,
     cwdIdentity: prepared.cwdIdentity,
     materialization: "ephemeral-0700-delete",
-    executable,
     ...gitIdentity(baseUnit, prepared.cwdIdentity.realRoot),
   });
   return {

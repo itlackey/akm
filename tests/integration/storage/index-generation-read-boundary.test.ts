@@ -1,84 +1,87 @@
-// This integration suite opens real index.db files to pin the read-generation boundary (#934).
+// This integration suite opens real index.db files to pin that no opener refuses an index over its layout marker.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ConfigError } from "../../../src/core/errors";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
 import {
   closeDatabase,
   openExistingDatabase,
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
+import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
 import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
-function stampGeneration(dbPath: string, version: string): void {
+function stampGeneration(dbPath: string, version: string | undefined): void {
   const db = openIndexDatabase(dbPath);
   try {
-    db.prepare("UPDATE index_meta SET value = ? WHERE key = 'version'").run(version);
+    if (version === undefined) db.exec("DELETE FROM index_meta WHERE key = 'version'");
+    else db.prepare("UPDATE index_meta SET value = ? WHERE key = 'version'").run(version);
   } finally {
     closeDatabase(db);
   }
 }
 
-function expectIncompatibleOpen(open: () => unknown, expectedAction: RegExp): void {
-  let raised: unknown;
+function expectServed(open: () => ReturnType<typeof openExistingDatabase> | undefined): void {
+  const db = open();
+  if (!db) throw new Error("expected a queryable handle");
   try {
-    open();
-  } catch (error) {
-    raised = error;
+    expect(getEntryCount(db)).toBe(0);
+  } finally {
+    closeDatabase(db);
   }
-  expect(raised).toBeInstanceOf(ConfigError);
-  expect((raised as ConfigError).code).toBe("INDEX_SCHEMA_INCOMPATIBLE");
-  expect((raised as Error).message).toMatch(expectedAction);
-  // This must be the single actionable boundary diagnostic, not a later
-  // SQLite failure leaked by a caller that received an incompatible handle.
-  expect((raised as Error).message).not.toMatch(/no such table|SQLITE/i);
 }
 
-describe("incompatible index readers (#934)", () => {
+describe("index readers never refuse over the layout marker", () => {
   let storage: IsolatedAkmStorage;
-  afterEach(() => storage?.cleanup());
+  let warnings: string[] = [];
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    storage?.cleanup();
+  });
+
+  function setup(version: string | undefined): string {
+    storage = withIsolatedAkmStorage();
+    const dbPath = path.join(storage.root, "index.db");
+    stampGeneration(dbPath, version);
+    warnings = [];
+    _setWarnSinkForTests((_level, args) => warnings.push(args.map(String).join(" ")));
+    return dbPath;
+  }
 
   test("preserves the absent-index result for the read-only opener", () => {
     storage = withIsolatedAkmStorage();
     expect(openReadonlyExistingDatabase(path.join(storage.root, "absent.db"))).toBeUndefined();
   });
 
-  test("rejects an older generation before either reader returns a queryable handle", () => {
-    storage = withIsolatedAkmStorage();
-    const dbPath = path.join(storage.root, "index.db");
-    stampGeneration(dbPath, String(CANONICAL_INDEX_DB_VERSION - 1));
-
-    expectIncompatibleOpen(() => openExistingDatabase(dbPath), /Run 'akm index'/);
-    expectIncompatibleOpen(() => openReadonlyExistingDatabase(dbPath), /Run 'akm index'/);
+  test("an older layout is served by both readers with one line naming akm index", () => {
+    const dbPath = setup(String(CANONICAL_INDEX_DB_VERSION - 1));
+    expectServed(() => openExistingDatabase(dbPath));
+    expectServed(() => openReadonlyExistingDatabase(dbPath));
+    expect(warnings.filter((line) => line.includes("older layout"))).toHaveLength(1);
+    expect(warnings[0]).toContain("akm index");
   });
 
-  test("rejects a newer generation with an upgrade action, never an older-binary rebuild action", () => {
-    storage = withIsolatedAkmStorage();
-    const dbPath = path.join(storage.root, "index.db");
-    stampGeneration(dbPath, String(CANONICAL_INDEX_DB_VERSION + 1));
-
-    expectIncompatibleOpen(() => openExistingDatabase(dbPath), /upgrade akm/i);
-    expectIncompatibleOpen(() => openReadonlyExistingDatabase(dbPath), /upgrade akm/i);
-    expectIncompatibleOpen(() => openIndexDatabase(dbPath), /upgrade akm/i);
-    try {
-      openExistingDatabase(dbPath);
-    } catch (error) {
-      expect((error as Error).message).not.toMatch(/Run 'akm index'/);
-    }
+  test("a newer layout is served by every opener, naming the upgrade", () => {
+    const dbPath = setup(String(CANONICAL_INDEX_DB_VERSION + 1));
+    expectServed(() => openExistingDatabase(dbPath));
+    expectServed(() => openReadonlyExistingDatabase(dbPath));
+    expectServed(() => openIndexDatabase(dbPath));
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.every((line) => /upgrade akm/i.test(line))).toBe(true);
   });
 
-  test("classifies a missing generation marker with the older/unknown rebuild action", () => {
-    storage = withIsolatedAkmStorage();
-    const dbPath = path.join(storage.root, "index.db");
+  test("a missing layout marker is served, and the writable open stamps it", () => {
+    const dbPath = setup(undefined);
+    expectServed(() => openReadonlyExistingDatabase(dbPath));
     const db = openIndexDatabase(dbPath);
     try {
-      db.exec("DELETE FROM index_meta WHERE key = 'version'");
+      expect((db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string }).value).toBe(
+        String(CANONICAL_INDEX_DB_VERSION),
+      );
     } finally {
       closeDatabase(db);
     }
-
-    expectIncompatibleOpen(() => openExistingDatabase(dbPath), /Run 'akm index'/);
   });
 });

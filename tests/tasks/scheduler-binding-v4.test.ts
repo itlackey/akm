@@ -13,7 +13,6 @@ describe("compileTaskSchedulerBindings — activation is external to task source
     const input: CompileTaskSchedulerBindingsInput = {
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
-      bundleTarget: "team",
       schedules: [
         { cron: "0 6 * * *", source: "schedule[0].cron", ordinal: 0 },
         { cron: "30 18 * * 1-5", source: "schedule[1].cron", ordinal: 1 },
@@ -28,7 +27,6 @@ describe("compileTaskSchedulerBindings — activation is external to task source
     const [binding] = compileTaskSchedulerBindings({
       id: "nightly",
       qualifiedRef: "team//tasks/nightly",
-      bundleTarget: "team",
       schedules: [{ cron: "0 2 * * *", source: "akm.schedule", ordinal: 0 }],
     });
 

@@ -471,33 +471,34 @@ describe("runGraphExtractionPass — standalone index engine gating", () => {
     });
   });
 
-  test("single-file graph dispatches keep the preflight credential after removal", async () => {
+  test("single-file graph dispatches each read the credential current at that call", async () => {
     writeFile("memories/a.md", {}, "Alice works with Bob.");
     writeFile("memories/b.md", {}, "Carol supports Service C.");
     extractor = (body) => ({ entities: [body.includes("Alice") ? "Alice" : "Carol"], relations: [] });
     const cfg = configWithLlm({
-      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_LEASE_SINGLE_KEY" } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_SINGLE_KEY" } },
       index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 1 } },
     });
     const secret = "graph-single-original-092";
+    const rotated = "graph-single-rotated-092";
     const authorization: Array<string | null> = [];
     onLlmRequest = (request) => {
       authorization.push(request.headers.get("authorization"));
-      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_LEASE_SINGLE_KEY", undefined);
+      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_SINGLE_KEY", rotated);
     };
 
-    const result = await withEnv({ AKM_GRAPH_LEASE_SINGLE_KEY: secret }, () =>
-      withGraphDb("single-lease", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
+    const result = await withEnv({ AKM_GRAPH_SINGLE_KEY: secret }, () =>
+      withGraphDb("single-rotation", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
     );
     expect(result).toMatchObject({ considered: 2, extracted: 2, written: true });
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${rotated}`]);
   });
 
-  test("batched graph dispatches keep the original credential after replacement", async () => {
+  test("batched graph dispatches pick up a replaced credential on the next call", async () => {
     for (const name of ["a", "b", "c", "d"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
     extractor = (body) => ({ entities: [body.slice(-2)], relations: [] });
     const cfg = configWithLlm({
-      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_LEASE_BATCH_KEY" } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_BATCH_KEY" } },
       index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 2 } },
     });
     const secret = "graph-batch-original-092";
@@ -505,39 +506,40 @@ describe("runGraphExtractionPass — standalone index engine gating", () => {
     const authorization: Array<string | null> = [];
     onLlmRequest = (request) => {
       authorization.push(request.headers.get("authorization"));
-      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_LEASE_BATCH_KEY", replacement);
+      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_BATCH_KEY", replacement);
     };
 
-    const result = await withEnv({ AKM_GRAPH_LEASE_BATCH_KEY: secret }, () =>
-      withGraphDb("batch-lease", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
+    const result = await withEnv({ AKM_GRAPH_BATCH_KEY: secret }, () =>
+      withGraphDb("batch-rotation", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
     );
     expect(result).toMatchObject({ considered: 4, extracted: 4, written: true });
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${replacement}`]);
   });
 
-  test("queued and sweep graph calls share one credential snapshot", async () => {
+  test("queued and sweep graph calls each read the credential at dispatch", async () => {
     const queuedPath = writeFile("memories/a-queued.md", {}, "Queued Alice body.");
     writeFile("memories/b-sweep.md", {}, "Sweep Bob body.");
     extractor = (body) => ({ entities: [body.includes("Alice") ? "Alice" : "Bob"], relations: [] });
     const cfg = configWithLlm({
-      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_LEASE_QUEUE_KEY" } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_QUEUE_KEY" } },
       index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 1 } },
     });
     const secret = "graph-queue-original-092";
+    const rotated = "graph-queue-rotated-092";
     const authorization: Array<string | null> = [];
     onLlmRequest = (request) => {
       authorization.push(request.headers.get("authorization"));
-      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_LEASE_QUEUE_KEY", undefined);
+      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_QUEUE_KEY", rotated);
     };
 
-    const result = await withEnv({ AKM_GRAPH_LEASE_QUEUE_KEY: secret }, () =>
-      withGraphDb("queue-lease", (db) => {
+    const result = await withEnv({ AKM_GRAPH_QUEUE_KEY: secret }, () =>
+      withGraphDb("queue-rotation", (db) => {
         enqueueGraphExtraction(db, tmpStash, queuedPath, computeBodyHash("Queued Alice body."), 10);
         return runGraphExtractionPass({ config: cfg, sources: sources(), db });
       }),
     );
     expect(result.written).toBe(true);
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${rotated}`]);
   });
 
   test("an all-cache-hit sweep does not materialize a required credential", async () => {

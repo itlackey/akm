@@ -175,9 +175,8 @@ describe("#12 — journaled params must still satisfy the frozen schemas (execut
   });
 
   test("a benign params edit that still satisfies the schema is NOT flagged as corruption", async () => {
-    // Consistent with the tampered-params replay-divergence contract: only a
-    // SCHEMA violation is loud corruption here; a same-type value change stays a
-    // (separately-detected) replay divergence, not a params integrity failure.
+    // Only a SCHEMA violation is loud corruption here; a same-type value change
+    // is just the params the run now executes with.
     writeProgram("param-guard", PARAM_GUARD_WF);
     const started = await startWorkflowRun("workflows/param-guard", { files: ["a.ts"], mode: "fast" });
     const tampered = { files: ["a.ts", "b.ts"], mode: "slow" };

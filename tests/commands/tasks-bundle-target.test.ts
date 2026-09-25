@@ -83,8 +83,8 @@ function cron() {
 
 /**
  * #846: `SCHEDULED_CONTEXT` above is an intentionally unwritable fake path
- * (exercising special-character handling in the default cron line), so
- * belongsToBundle's owning-path check could never resolve it. Tests that
+ * (exercising special-character handling in the default cron line), so the
+ * primary bundle's owning-path check could never resolve it. Tests that
  * need a primary-bundle entry to actually be recognized as this stash's
  * own across more than one sync use this real, writable context instead.
  */
@@ -247,12 +247,17 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(cronBody(exec.current(), "secondary")).toBeUndefined();
   });
 
-  test("plain sync rejects cross-bundle native-id collisions before mutation", async () => {
+  test("plain sync reports two bundles claiming one native id and installs neither", async () => {
     writeTaskFile(iso.stashDir, "same", taskYaml());
     writeTaskFile(work.dir, "same", taskYaml());
+    writeTaskFile(work.dir, "other", taskYaml());
 
-    await expect(akmTasksSync({ backend: cron() })).rejects.toThrow(/claimed by both|rename one task/i);
-    expect(exec.current()).toBe("");
+    const result = await akmTasksSync({ backend: cron() });
+
+    expect(result.installed).toEqual(["other"]);
+    expect(result.failures.map((failure) => failure.ref).sort()).toEqual(["stash//tasks/same", "work//tasks/same"]);
+    expect(result.failures[0]?.reason).toMatch(/is claimed by .*Rename one task/);
+    expect(cronBody(exec.current(), "same")).toBeUndefined();
   });
 
   test("add --bundle on a NON-writable bundle fails with a writable-enforcement error", async () => {

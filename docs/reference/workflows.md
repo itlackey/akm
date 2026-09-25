@@ -46,14 +46,11 @@ artifacts, and exec vocabulary. The YAML adapter accepts the documented local
 `name`/`on`/`jobs` subset. `.yaml` is not a workflow source.
 
 Both adapters produce strict source IR version 1. New starts resolve source
-owners and executable targets, then freeze durable plan `irVersion` 5. Only
-the current `irVersion` executes: a run frozen at an older version keeps
-`status`, `list`, and `abandon` working, but `resume`/`next`/`complete`/`run`
-fail closed — abandon it and start a new run from current source. See
-[Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#resume-is-journaled-replay)
-for the exact policy and
-[Migrating from akm 0.9.1 to 0.9.2](https://github.com/itlackey/akm/blob/main/docs/migration/v0.9.1-to-v0.9.2.md#workflow-cutover)
-if you are upgrading with runs in flight.
+owners and executable targets, then freeze durable plan `irVersion` 5. A
+stored plan is read back as it is: one frozen at another `irVersion` that
+still decodes runs, and one this akm cannot decode is abandoned by
+`akm workflow run` with a message naming how to start a new run. See
+[Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#resume-skips-completed-units).
 
 A step can compose another workflow as a child — directly
 (`uses: workflows/<ref>`) or through a task whose own target is a workflow

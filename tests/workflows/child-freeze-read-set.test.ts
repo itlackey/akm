@@ -35,7 +35,7 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { compileResolveFreezeWorkflowV4 } from "../../src/workflows/ir/freeze-v4";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { decodeWorkflowPlanV4, type FrozenWorkflowTarget } from "../../src/workflows/ir/schema-v4";
-import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
+import { frozenStepRows } from "../../src/workflows/runtime/run-plan";
 import { listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
@@ -230,7 +230,6 @@ describe("editing child source between parent freeze and parent publication fail
             updatedAt: now,
             agentHarness: null,
             agentSessionId: null,
-            checkinArmedAt: null,
           },
           steps: frozenStepRows(frozen.plan).map((step) => ({ runId, ...step })),
           planJson: canonicalPlanJson(frozen.plan),

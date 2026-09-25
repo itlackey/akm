@@ -408,12 +408,11 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-
 
 describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
   // `test-llm` (writeWorkflowTestConfig) declares no `supportsJsonSchema`, so
-  // the existing, unmodified-by-P3b direct-LLM lowerer
-  // (src/integrations/agent/execution-lowering.ts's lowerLlm) rejects this
-  // step's declared unit output: schema with a real "untranslated-field"
-  // notice. That notice is computed TODAY at freeze time
-  // (freeze/targets/command.ts's commandResult calls
-  // lowerResolvedExecutionRequest) and silently discarded — it is exactly the
+  // the direct-LLM builder (src/integrations/agent/execution.ts's buildLlm)
+  // rejects this step's declared unit output: schema with a real
+  // "untranslated-field" notice. That notice is computed at freeze time
+  // (freeze/targets/command.ts's commandResult builds the execution) and was
+  // once silently discarded — it is exactly the
   // freeze-time notice row B-57 requires `akm workflow plan` to surface,
   // through the same {code, severity, adapter, field, message} projection
   // `akm workflow run` already renders (tests/output-workflow-lowering-notices.test.ts).

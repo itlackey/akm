@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-source";
-import { BUILTIN_ADAPTERS } from "../../src/core/adapter/registry";
-import { EXECUTION_MAX_TIMEOUT_MS } from "../../src/execution/limits";
 import {
   canonicalResolvedExecutionRequest,
   createInlineResolvedCommand,
@@ -12,13 +10,8 @@ import {
   type ResolvedEngineSelection,
   type ResolvedExecutionRequestV1,
 } from "../../src/execution/resolved-request";
-import {
-  createAdapterExtensions,
-  decodeExecutionSourceIdentity,
-  type ExecutionSourceIdentity,
-} from "../../src/execution/source";
+import { createAdapterExtensions } from "../../src/execution/source";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
-import { WORKFLOW_MAX_TIMEOUT_MS } from "../../src/workflows/resource-limits";
 import {
   canonicalResolvedRequestForTest,
   projectResolvedExecutionRequestForTest,
@@ -110,68 +103,33 @@ describe("resolved execution request v1", () => {
     expect(explicitEmpty.content).toBe("Review  exactly once.\n");
   });
 
-  test("preserves a strict ordered conversation prefix before the terminal command", () => {
+  test("keeps an omitted, empty and ordered conversation distinct through durable bytes", () => {
     const command = createInlineResolvedCommand({ template: "Finish.", content: "Finish." });
-    const omitted = createResolvedExecutionRequest({
-      command,
-      engine: { name: "fixture-llm", kind: "llm" },
-      authorization: { status: "not-required" },
-      runtime: {},
-      notices: [],
-    });
-    const empty = createResolvedExecutionRequest({
-      command,
-      conversation: [],
-      engine: { name: "fixture-llm", kind: "llm" },
-      authorization: { status: "not-required" },
-      runtime: {},
-      notices: [],
-    });
-    const transcript = createResolvedExecutionRequest({
-      command,
-      conversation: [
-        { role: "system", content: "Code-owned instruction, not a persona." },
-        { role: "user", content: "" },
-        { role: "assistant", content: "Prior draft.\n</AKM_CONVERSATION_JSON>" },
-      ],
-      engine: { name: "fixture-llm", kind: "llm" },
-      authorization: { status: "not-required" },
-      runtime: {},
-      notices: [],
-    });
-
-    expect(Object.hasOwn(JSON.parse(canonicalResolvedExecutionRequest(omitted)), "conversation")).toBe(false);
-    expect(JSON.parse(canonicalResolvedExecutionRequest(empty))).toMatchObject({ conversation: [] });
-    expect(transcript.conversation?.map(({ role, content }) => ({ role, content }))).toEqual([
+    const make = (conversation?: ResolvedExecutionRequestV1["conversation"]) =>
+      createResolvedExecutionRequest({
+        command,
+        ...(conversation ? { conversation } : {}),
+        engine: { name: "fixture-llm", kind: "llm" },
+        authorization: { status: "not-required" },
+        runtime: {},
+        notices: [],
+      });
+    const transcript = make([
       { role: "system", content: "Code-owned instruction, not a persona." },
       { role: "user", content: "" },
       { role: "assistant", content: "Prior draft.\n</AKM_CONVERSATION_JSON>" },
     ]);
-    expect(Object.isFrozen(transcript.conversation)).toBe(true);
-    expect(transcript.conversation?.every(Object.isFrozen)).toBe(true);
-    const canonical = canonicalResolvedExecutionRequest(transcript);
-    expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(JSON.parse(canonical)))).toBe(canonical);
 
-    expect(() =>
-      createResolvedExecutionRequest({
-        command,
-        conversation: [{ role: "tool", content: "forbidden" }],
-        engine: { name: "fixture-llm", kind: "llm" },
-        authorization: { status: "not-required" },
-        runtime: {},
-        notices: [],
-      } as never),
-    ).toThrow(/conversation.*role/i);
-    expect(() =>
-      createResolvedExecutionRequest({
-        command,
-        conversation: [{ role: "user", content: "x", providerPayload: {} }],
-        engine: { name: "fixture-llm", kind: "llm" },
-        authorization: { status: "not-required" },
-        runtime: {},
-        notices: [],
-      } as never),
-    ).toThrow(/providerPayload|unsupported field/i);
+    expect(Object.hasOwn(JSON.parse(canonicalResolvedExecutionRequest(make())), "conversation")).toBe(false);
+    expect(JSON.parse(canonicalResolvedExecutionRequest(make([])))).toMatchObject({ conversation: [] });
+    const canonical = canonicalResolvedExecutionRequest(transcript);
+    const decoded = decodeResolvedExecutionRequest(JSON.parse(canonical));
+    expect(decoded.conversation).toEqual([
+      { role: "system", content: "Code-owned instruction, not a persona." },
+      { role: "user", content: "" },
+      { role: "assistant", content: "Prior draft.\n</AKM_CONVERSATION_JSON>" },
+    ]);
+    expect(canonicalResolvedExecutionRequest(decoded)).toBe(canonical);
   });
 
   test("preserves the exact selected agent selector through durable request bytes", () => {
@@ -187,74 +145,19 @@ describe("resolved execution request v1", () => {
         runtime: {},
         notices: [],
       });
-    const omitted = make(undefined);
-    const cleared = make(null);
     const native = make("native-reviewer");
-    const other = make("different-native-reviewer");
 
-    expect(Object.hasOwn(omitted, "agent")).toBe(false);
-    expect(decodeResolvedExecutionRequest(JSON.parse(canonicalResolvedExecutionRequest(cleared))).agent).toBeNull();
+    expect(Object.hasOwn(make(undefined), "agent")).toBe(false);
+    expect(decodeResolvedExecutionRequest(JSON.parse(canonicalResolvedExecutionRequest(make(null)))).agent).toBeNull();
     expect(decodeResolvedExecutionRequest(JSON.parse(canonicalResolvedExecutionRequest(native))).agent).toBe(
       "native-reviewer",
     );
-    expect(canonicalResolvedExecutionRequest(native)).not.toBe(canonicalResolvedExecutionRequest(other));
+    expect(canonicalResolvedExecutionRequest(native)).not.toBe(
+      canonicalResolvedExecutionRequest(make("different-native-reviewer")),
+    );
   });
 
-  test("rejects durable agent selector and persona states the common planner cannot emit", () => {
-    const source = commandSource();
-    const command = createResolvedCommand({ source, content: source.content });
-    const reviewer = createResolvedPersona(personaSource());
-    const base = {
-      command,
-      engine: { name: "fixture-agent", kind: "agent" } as const,
-      authorization: { status: "not-required" } as const,
-      runtime: {},
-      notices: [],
-    };
-
-    expect(() => createResolvedExecutionRequest({ ...base, agent: "native\nselector", persona: null })).toThrow(
-      /stable|control|selector/i,
-    );
-    expect(() => createResolvedExecutionRequest({ ...base, agent: null, persona: reviewer })).toThrow(/agent|persona/i);
-    expect(() => createResolvedExecutionRequest({ ...base, agent: null })).toThrow(/agent|persona/i);
-    expect(() => createResolvedExecutionRequest({ ...base, agent: "native-reviewer", persona: reviewer })).toThrow(
-      /agent|persona/i,
-    );
-    expect(() => createResolvedExecutionRequest({ ...base, agent: "native-reviewer" })).toThrow(/agent|persona/i);
-    expect(() =>
-      createResolvedExecutionRequest({ ...base, agent: "fixture//agents/other", persona: reviewer }),
-    ).toThrow(/agent|persona/i);
-    expect(() => createResolvedExecutionRequest({ ...base, agent: "fixture//agents/reviewer", persona: null })).toThrow(
-      /agent|persona/i,
-    );
-
-    expect(createResolvedExecutionRequest({ ...base, persona: reviewer }).persona?.source.ref).toBe(
-      "fixture//agents/reviewer",
-    );
-    expect(createResolvedExecutionRequest({ ...base, agent: null, persona: null }).agent).toBeNull();
-    expect(createResolvedExecutionRequest({ ...base, agent: "native-reviewer", persona: null }).persona).toBeNull();
-
-    const validWire = JSON.parse(
-      canonicalResolvedExecutionRequest(
-        createResolvedExecutionRequest({
-          ...base,
-          agent: "fixture//agents/reviewer",
-          persona: reviewer,
-        }),
-      ),
-    ) as Record<string, unknown>;
-    for (const invalid of [
-      { ...validWire, agent: "native\nselector", persona: null },
-      { ...validWire, agent: null },
-      { ...validWire, agent: "native-reviewer" },
-      { ...validWire, agent: "fixture//agents/other" },
-      { ...validWire, persona: null },
-    ]) {
-      expect(() => decodeResolvedExecutionRequest(invalid)).toThrow(/agent|persona|stable|control|selector/i);
-    }
-  });
-
-  test("construction and durable decode fixtures are equivalent without claiming caller cutover", () => {
+  test("construction and durable decode are equivalent, and resume rehydrates the same bytes", () => {
     const source = commandSource();
     const constructed = commonRequest(
       createResolvedCommand({
@@ -263,64 +166,28 @@ describe("resolved execution request v1", () => {
         content: "Review packages/core exactly once.\n",
       }),
     );
-    const durableFixture = JSON.parse(canonicalResolvedExecutionRequest(constructed));
-    const decoded = decodeResolvedExecutionRequest(durableFixture);
-
-    expect(canonicalResolvedExecutionRequest(decoded)).toBe(canonicalResolvedExecutionRequest(constructed));
-    expect(canonicalResolvedRequestForTest(projectResolvedExecutionRequestForTest(decoded))).toBe(
-      canonicalResolvedRequestForTest(projectResolvedExecutionRequestForTest(constructed)),
-    );
-    // Production direct/task/workflow cutover remains owned by WP3/WP4/WP5.
-  });
-
-  test("strictly rehydrates the same durable bytes for workflow resume", () => {
-    const source = commandSource();
-    const request = commonRequest(
-      createResolvedCommand({
-        source,
-        argumentInput: "packages/core",
-        content: "Review packages/core exactly once.\n",
-      }),
-    );
-    const canonical = canonicalResolvedExecutionRequest(request);
+    const canonical = canonicalResolvedExecutionRequest(constructed);
     const resumed = decodeResolvedExecutionRequest(JSON.parse(canonical));
 
     expect(canonicalResolvedExecutionRequest(resumed)).toBe(canonical);
     expect(resumed.command.argumentInput).toBe("packages/core");
-    expect(resumed.command.source).toEqual(request.command.source);
-
-    for (const hostileField of ["raw", "frontmatter"] as const) {
-      const hostile = JSON.parse(canonical) as Record<string, Record<string, unknown>>;
-      const hostileCommand = hostile.command;
-      if (!hostileCommand) throw new Error("canonical request omitted its command");
-      hostileCommand[hostileField] = COMMAND_RAW;
-      expect(() => decodeResolvedExecutionRequest(hostile)).toThrow(
-        new RegExp(`command contains unsupported field: ${hostileField}`, "i"),
-      );
-
-      const hostileSource = JSON.parse(canonical) as {
-        command?: { source?: Record<string, unknown> };
-      };
-      const sourceIdentity = hostileSource.command?.source;
-      if (!sourceIdentity) throw new Error("canonical request omitted its command source identity");
-      sourceIdentity[hostileField] = COMMAND_RAW;
-      expect(() => decodeResolvedExecutionRequest(hostileSource)).toThrow(
-        new RegExp(`command.source contains unsupported field: ${hostileField}`, "i"),
-      );
-    }
-    const unknownTopLevel = JSON.parse(canonical) as Record<string, unknown>;
-    unknownTopLevel.capabilities = { tools: true };
-    expect(() => decodeResolvedExecutionRequest(unknownTopLevel)).toThrow(
-      /resolved execution request contains unsupported field: capabilities/i,
+    expect(resumed.command.source).toEqual(constructed.command.source);
+    expect(canonicalResolvedRequestForTest(projectResolvedExecutionRequestForTest(resumed))).toBe(
+      canonicalResolvedRequestForTest(projectResolvedExecutionRequestForTest(constructed)),
     );
+  });
 
-    const sparseNotices = JSON.parse(canonical) as { notices: unknown[] };
-    delete sparseNotices.notices[0];
-    expect(() => decodeResolvedExecutionRequest(sparseNotices)).toThrow(/notices.*array|dense|sparse/i);
+  test("decoding is tolerant of unknown keys and names the upgrade for a newer schema", () => {
+    const source = commandSource();
+    const canonical = JSON.parse(
+      canonicalResolvedExecutionRequest(commonRequest(createResolvedCommand({ source, content: source.content }))),
+    ) as Record<string, unknown> & { command: Record<string, unknown> };
 
-    const decoratedNotices = JSON.parse(canonical) as { notices: unknown[] & { raw?: string } };
-    decoratedNotices.notices.raw = "native bytes";
-    expect(() => decodeResolvedExecutionRequest(decoratedNotices)).toThrow(/notices.*array|propert/i);
+    const withExtras = { ...canonical, capabilities: { tools: true }, command: { ...canonical.command, raw: "x" } };
+    expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(withExtras))).toBe(
+      canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(canonical)),
+    );
+    expect(() => decodeResolvedExecutionRequest({ ...canonical, schemaVersion: 2 })).toThrow(/upgrade akm/);
   });
 
   test("covers every runner transport kind without embedding a capability matrix", () => {
@@ -338,7 +205,6 @@ describe("resolved execution request v1", () => {
         notices: [],
       });
       expect(request.engine.kind).toBe(kind);
-      expect(Object.hasOwn(request.engine, "capabilities")).toBe(false);
     }
   });
 
@@ -360,391 +226,7 @@ describe("resolved execution request v1", () => {
     expect(request.persona).toBeNull();
     expect(request.model).toBeNull();
     expect(request.tools).toBeNull();
-  });
-
-  test("enforces exact tool-selection and authorization-state pairing", () => {
-    const source = commandSource();
-    const base = {
-      command: createResolvedCommand({ source, content: source.content }),
-      engine: { name: "fixture-llm", kind: "llm" as const },
-      authorization: { status: "not-required" as const },
-      runtime: {},
-      notices: [],
-    };
-    for (const tools of [null, "", [], {}] as const) {
-      expect(() => createResolvedExecutionRequest({ ...base, tools })).not.toThrow();
-      for (const status of ["allowed", "denied"] as const) {
-        expect(() => createResolvedExecutionRequest({ ...base, tools, authorization: { status } })).toThrow(
-          /empty|no tools|not-required/i,
-        );
-      }
-    }
-    for (const tools of ["read", ["read"], { read: true }] as const) {
-      expect(() => createResolvedExecutionRequest({ ...base, tools })).toThrow(/not-required.*no tools are selected/i);
-      for (const status of ["allowed", "denied"] as const) {
-        expect(() => createResolvedExecutionRequest({ ...base, tools, authorization: { status } })).not.toThrow();
-      }
-    }
-  });
-
-  test("rejects extension-owner collisions instead of silently merging adapter metadata", () => {
-    expect(() =>
-      createAdapterExtensions(["claude", { argumentHint: "<target>" }], ["claude", { another: true }]),
-    ).toThrow(/duplicate extension owner.*claude/i);
-    for (const owner of ["__proto__", "constructor", "Constructor", "prototype", "PROTOTYPE", "toString", "TOSTRING"]) {
-      expect(() => createAdapterExtensions(owner, { polluted: true })).toThrow(/canonical|reserved/i);
-    }
-    const safe = createAdapterExtensions("claude", { argumentHint: "<target>" });
-    expect(Object.getPrototypeOf(safe)).toBeNull();
-    expect(Object.isFrozen(safe)).toBe(true);
-
-    let entryReads = 0;
-    const accessorEntry: unknown[] = [];
-    Object.defineProperty(accessorEntry, "0", {
-      enumerable: true,
-      get: () => {
-        entryReads += 1;
-        return "claude";
-      },
-    });
-    Object.defineProperty(accessorEntry, "1", {
-      enumerable: true,
-      get: () => {
-        entryReads += 1;
-        return { argumentHint: "<target>" };
-      },
-    });
-    accessorEntry.length = 2;
-    expect(() => createAdapterExtensions(accessorEntry as never)).toThrow(/extension entry|array|data propert/i);
-    expect(entryReads).toBe(0);
-  });
-
-  test("uses locale-independent canonical key order and rejects invalid optional model extensions", () => {
-    const source = commandSource();
-    const request = createResolvedExecutionRequest({
-      command: createResolvedCommand({ source, content: source.content }),
-      engine: { name: "fixture-llm", kind: "llm", settings: { a: 1, Z: 2 } },
-      model: {
-        input: "provider/model",
-        interpretation: "exact",
-        resolved: "provider/model",
-      },
-      authorization: { status: "not-required" },
-      runtime: {},
-      notices: [],
-    });
-
-    expect(canonicalResolvedExecutionRequest(request)).toContain('"settings":{"Z":2,"a":1}');
-
-    const invalidWire = JSON.parse(canonicalResolvedExecutionRequest(request)) as {
-      model: Record<string, unknown>;
-    };
-    invalidWire.model.extensions = null;
-    expect(() => decodeResolvedExecutionRequest(invalidWire)).toThrow(/model\.extensions/i);
-  });
-
-  test("requires own frozen brands and clones command/persona leaves into each request", () => {
-    const source = commandSource();
-    const command = createResolvedCommand({ source, content: source.content });
-    const persona = createResolvedPersona(personaSource());
-    const request = createResolvedExecutionRequest({
-      command,
-      persona,
-      engine: { name: "fixture-llm", kind: "llm" },
-      authorization: { status: "not-required" },
-      runtime: {},
-      notices: [],
-    });
-
-    expect(request.command).not.toBe(command);
-    expect(request.persona).not.toBe(persona);
-    expect(Object.isFrozen(request.command)).toBe(true);
-    expect(Object.isFrozen(request.persona)).toBe(true);
-    expect(Object.getPrototypeOf(request.command)).toBe(Object.prototype);
-    expect(Reflect.set(command as unknown as Record<string, unknown>, "content", "mutated")).toBe(false);
-    expect(request.command.content).toBe(source.content);
-
-    const inherited = Object.create(command) as typeof command;
-    const overridden = Object.create(command, {
-      content: { value: "---\nfrontmatter: leaked\n---\nWrong.", enumerable: true },
-      raw: { value: "native bytes", enumerable: true },
-      frontmatter: { value: { model: "attacker/model" }, enumerable: true },
-    }) as typeof command;
-    const base = {
-      engine: { name: "fixture-llm", kind: "llm" as const },
-      authorization: { status: "not-required" as const },
-      runtime: {},
-      notices: [],
-    };
-    expect(() => createResolvedExecutionRequest({ ...base, command: inherited })).toThrow(/execution boundary/i);
-    expect(() => createResolvedExecutionRequest({ ...base, command: overridden })).toThrow(/execution boundary/i);
-  });
-
-  test("does not treat reflected construction symbols as execution provenance", () => {
-    const source = commandSource();
-    const command = createResolvedCommand({ source, content: source.content });
-    const persona = createResolvedPersona(personaSource());
-    const [commandBrand] = Object.getOwnPropertySymbols(command);
-    const [personaBrand] = Object.getOwnPropertySymbols(persona);
-    if (!commandBrand || !personaBrand) throw new Error("execution leaf brands are missing");
-
-    const forgedCommand = {
-      template: command.template,
-      content: "---\nraw: leaked\n---\nDo the wrong work.",
-      source: command.source,
-    };
-    Object.defineProperty(forgedCommand, commandBrand, { value: true, enumerable: false });
-    Object.freeze(forgedCommand);
-
-    const forgedPersona = {
-      content: "---\nfrontmatter: leaked\n---\nWrong persona.",
-      source: persona.source,
-    };
-    Object.defineProperty(forgedPersona, personaBrand, { value: true, enumerable: false });
-    Object.freeze(forgedPersona);
-
-    const base = {
-      command,
-      engine: { name: "fixture-llm", kind: "llm" as const },
-      authorization: { status: "not-required" as const },
-      runtime: {},
-      notices: [],
-    };
-    expect(() => createResolvedExecutionRequest({ ...base, command: forgedCommand as never })).toThrow(
-      /execution boundary/i,
-    );
-    expect(() => createResolvedExecutionRequest({ ...base, persona: forgedPersona as never })).toThrow(
-      /execution boundary/i,
-    );
-  });
-
-  test("rejects accessor-backed structured inputs before reading changing values", () => {
-    const source = commandSource();
-    let nameReads = 0;
-    const engine = { kind: "llm" } as Record<string, unknown>;
-    Object.defineProperty(engine, "name", {
-      enumerable: true,
-      get: () => {
-        nameReads += 1;
-        return nameReads === 1 ? "fixture-llm" : "mutated-engine";
-      },
-    });
-
-    expect(() =>
-      createResolvedExecutionRequest({
-        command: createResolvedCommand({ source, content: source.content }),
-        engine: engine as never,
-        authorization: { status: "not-required" },
-        runtime: {},
-        notices: [],
-      }),
-    ).toThrow(/engine\.name|accessor|data propert/i);
-    expect(nameReads).toBe(0);
-  });
-
-  test("clones caller-owned nested records before they can be mutated", () => {
-    const source = commandSource();
-    const engineSettings = { endpoint: "before" };
-    const runtimeEnvironment = { MODE: "before" };
-    const engine = { name: "fixture-llm", kind: "llm" as const, settings: engineSettings };
-    const runtime = { environment: runtimeEnvironment };
-    const request = createResolvedExecutionRequest({
-      command: createResolvedCommand({ source, content: source.content }),
-      engine,
-      authorization: { status: "not-required" },
-      runtime,
-      notices: [],
-    });
-
-    engine.name = "mutated";
-    engineSettings.endpoint = "after";
-    runtimeEnvironment.MODE = "after";
-    expect(request.engine).toEqual({ name: "fixture-llm", kind: "llm", settings: { endpoint: "before" } });
-    expect(request.runtime.environment).toEqual({ MODE: "before" });
-  });
-
-  test("validates canonical identity in both adapter construction and durable decoding", () => {
-    const valid: ExecutionSourceIdentity = {
-      ref: "fixture//commands/review",
-      bundle: "fixture",
-      adapter: "akm",
-      file: "commands/review.md",
-      hash: "a".repeat(64),
-    };
-    for (const adapter of BUILTIN_ADAPTERS) {
-      expect(decodeExecutionSourceIdentity({ ...valid, adapter: adapter.id }).adapter).toBe(adapter.id);
-    }
-
-    const invalid: Array<Partial<ExecutionSourceIdentity>> = [
-      { ref: "fixture//../secrets/x" },
-      { ref: "fixture//commands//review" },
-      { ref: "fixture//commands/review " },
-      { ref: "fixture//commands/re\u0301view" },
-      { ref: "fixture//commands/review#fragment" },
-      { bundle: "other" },
-      { file: "C:/commands/review.md" },
-      { file: "commands/\u0000review.md" },
-      { file: "commands/\u001freview.md" },
-      { file: "commands/\u2028review.md" },
-      { ref: "fixture//commands/\u202Ereview" },
-      { file: "commands/\uFEFFreview.md" },
-      { ref: "fix\uD800ture//commands/review", bundle: "fix\uD800ture" },
-      { adapter: "bad adapter" },
-      { adapter: "Bad-Adapter" },
-      { adapter: "bad.adapter" },
-      { adapter: "bad_adapter" },
-    ];
-    for (const patch of invalid) {
-      expect(() => decodeExecutionSourceIdentity({ ...valid, ...patch })).toThrow();
-      expect(() =>
-        renderMarkdownExecutionSource({
-          kind: "command",
-          raw: "---\nmodel: provider/exact\n---\nReview.\n",
-          identity: {
-            ref: patch.ref ?? valid.ref,
-            bundle: patch.bundle ?? valid.bundle,
-            adapter: patch.adapter ?? valid.adapter,
-            file: patch.file ?? valid.file,
-          },
-        }),
-      ).toThrow();
-    }
-
-    const source = commandSource();
-    const canonical = JSON.parse(
-      canonicalResolvedExecutionRequest(
-        createResolvedExecutionRequest({
-          command: createResolvedCommand({ source, content: source.content }),
-          engine: { name: "fixture-llm", kind: "llm" },
-          authorization: { status: "not-required" },
-          runtime: {},
-          notices: [],
-        }),
-      ),
-    ) as { command: { source: ExecutionSourceIdentity } };
-    for (const patch of invalid) {
-      const hostile = structuredClone(canonical);
-      Object.assign(hostile.command.source, patch);
-      expect(() => decodeResolvedExecutionRequest(hostile)).toThrow();
-    }
-
-    expect(
-      decodeExecutionSourceIdentity({
-        ...valid,
-        ref: "fixture//commands/レビュー",
-        file: "commands/レビュー.md",
-      }),
-    ).toMatchObject({ ref: "fixture//commands/レビュー", file: "commands/レビュー.md" });
-    expect(
-      decodeExecutionSourceIdentity({
-        ...valid,
-        ref: "fixture//commands/👩‍💻",
-        file: "commands/نامه‌نگاری.md",
-      }),
-    ).toMatchObject({ ref: "fixture//commands/👩‍💻", file: "commands/نامه‌نگاری.md" });
-  });
-
-  test("canonical encoding accepts only provenance-validated requests", () => {
-    const source = commandSource();
-    const request = createResolvedExecutionRequest({
-      command: createResolvedCommand({ source, content: source.content }),
-      engine: { name: "fixture-llm", kind: "llm" },
-      authorization: { status: "not-required" },
-      runtime: {},
-      notices: [],
-    });
     const canonical = canonicalResolvedExecutionRequest(request);
-    const decoded = decodeResolvedExecutionRequest(JSON.parse(canonical));
-    expect(canonicalResolvedExecutionRequest(decoded)).toBe(canonical);
-
-    const unknown = { ...request, capabilities: { tools: true } };
-    expect(() => canonicalResolvedExecutionRequest(unknown as never)).toThrow(/constructed|provenance|boundary/i);
-    expect(() => canonicalResolvedExecutionRequest(JSON.parse(canonical) as never)).toThrow(
-      /constructed|provenance|boundary/i,
-    );
-  });
-
-  test("rejects unknown constructor fields, mismatched exact models, and unsafe timeouts", () => {
-    const source = commandSource();
-    const base = {
-      command: createResolvedCommand({ source, content: source.content }),
-      engine: { name: "fixture-llm", kind: "llm" as const },
-      authorization: { status: "not-required" as const },
-      runtime: {},
-      notices: [],
-    };
-    expect(() => createResolvedExecutionRequest({ ...base, capabilities: {} } as never)).toThrow(/capabilities/i);
-    expect(() =>
-      createResolvedExecutionRequest({
-        ...base,
-        engine: { name: "fixture-llm", kind: "llm", capabilities: { tools: true } },
-      } as never),
-    ).toThrow(/capabilities/i);
-    expect(() => createResolvedCommand({ source, content: source.content, raw: COMMAND_RAW } as never)).toThrow(/raw/i);
-    expect(() =>
-      createInlineResolvedCommand({ template: "Inline.", content: "Inline.", frontmatter: {} } as never),
-    ).toThrow(/frontmatter/i);
-    expect(() => createResolvedExecutionRequest({ ...base, runtime: { cwd: "/tmp" } } as never)).toThrow(/cwd/i);
-    expect(() =>
-      createResolvedExecutionRequest({ ...base, authorization: { status: "not-required", extra: true } } as never),
-    ).toThrow(/extra/i);
-    expect(() =>
-      createResolvedExecutionRequest({
-        ...base,
-        notices: [{ code: "X", severity: "info", adapter: "akm", message: "x", extra: true }],
-      } as never),
-    ).toThrow(/extra/i);
-    expect(() =>
-      createResolvedExecutionRequest({
-        ...base,
-        model: { input: "provider/one", interpretation: "exact", resolved: "provider/two" },
-      }),
-    ).toThrow(/exact.*match|input.*resolved/i);
-    expect(() =>
-      createResolvedExecutionRequest({
-        ...base,
-        model: { input: "provider/one", interpretation: "exact", resolved: "provider/one", extra: true },
-      } as never),
-    ).toThrow(/model.*extra|extra/i);
-
-    for (const timeoutMs of [-1, 1.5, WORKFLOW_MAX_TIMEOUT_MS + 1]) {
-      expect(() => createResolvedExecutionRequest({ ...base, runtime: { timeoutMs } })).toThrow(/timeoutMs/i);
-    }
-    for (const timeoutMs of [0, WORKFLOW_MAX_TIMEOUT_MS]) {
-      expect(createResolvedExecutionRequest({ ...base, runtime: { timeoutMs } }).runtime.timeoutMs).toBe(timeoutMs);
-    }
-    expect(EXECUTION_MAX_TIMEOUT_MS).toBe(WORKFLOW_MAX_TIMEOUT_MS);
-  });
-
-  test("every resolved-request constructor form canonicalizes and strictly decodes byte-identically", () => {
-    const source = commandSource();
-    const cases = [
-      createResolvedExecutionRequest({
-        command: createResolvedCommand({ source, content: source.content }),
-        engine: { name: "fixture-llm", kind: "llm" },
-        authorization: { status: "not-required" },
-        runtime: {},
-        notices: [],
-      }),
-      commonRequest(createResolvedCommand({ source, argumentInput: "", content: "Review  exactly once.\n" })),
-      createResolvedExecutionRequest({
-        command: createInlineResolvedCommand({ template: "Inline.", content: "Inline." }),
-        persona: null,
-        engine: { name: "fixture-agent", kind: "agent", settings: {} },
-        model: null,
-        inference: null,
-        outputSchema: null,
-        tools: null,
-        authorization: { status: "not-required" },
-        runtime: { timeoutMs: 0, workspace: "", environment: {}, settings: {} },
-        notices: [],
-        extensions: createAdapterExtensions("akm", {}),
-      }),
-    ];
-
-    for (const request of cases) {
-      const canonical = canonicalResolvedExecutionRequest(request);
-      expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(JSON.parse(canonical)))).toBe(canonical);
-    }
+    expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(JSON.parse(canonical)))).toBe(canonical);
   });
 });

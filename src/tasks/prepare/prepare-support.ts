@@ -16,8 +16,7 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
-import { requireAuthorizedExecutionPlan } from "../../integrations/agent/execution-cascade";
-import { lowerResolvedExecutionRequest } from "../../integrations/agent/execution-lowering";
+import { buildExecution } from "../../integrations/agent/execution";
 import { resolveAssetPath } from "../../sources/resolve";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { compileWorkflowPlan } from "../../workflows/ir/compile";
@@ -157,7 +156,7 @@ export function validatePreparedCommand(
   invocation: PreparedCommandInvocation,
   context: PrepareTaskV3ExecutionContext,
 ): PreparedCommandInvocation {
-  const request = requireAuthorizedExecutionPlan(invocation.plan);
+  const { request } = invocation;
   if (!request.engine.name) {
     throw new ConfigError(
       `Task ${JSON.stringify(context.taskRef)} has no resolved execution engine. Configure defaults.engine or akm.engine before running it.`,
@@ -167,7 +166,7 @@ export function validatePreparedCommand(
   // Lowering is pure. Running it before the durable-attempt boundary proves
   // the selected target is transport-projectable; dispatch repeats the same
   // deterministic projection from this frozen request/config snapshot.
-  lowerResolvedExecutionRequest(request, invocation.config);
+  buildExecution(request, invocation.runner);
   return invocation;
 }
 

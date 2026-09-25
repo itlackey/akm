@@ -174,7 +174,7 @@ export interface ProposalReview {
 }
 
 /**
- * The verdict the deterministic drain/triage engine reached for this proposal
+ * The verdict a gate (the triage drain, or the generating stage's quality judge) reached for this proposal
  * (#577). This is drain-owned audit machinery.
  *
  *   - `auto-accepted` — the gate promoted the proposal without review.
@@ -201,14 +201,16 @@ export interface ProposalGateDecision {
   outcome: ProposalGateDecisionOutcome;
   /**
    * Short machine-stable reason token chosen by the gate that recorded the
-   * decision. The vocabulary persisted today (drain/triage gate): `empty-diff`,
-   * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band`,
-   * `possible-dup`, `no-judge-configured`, `judgment-accept`,
-   * `judgment-reject`. The distill quality gate (`quality-gate` gate, stamped
-   * by `writeQualityRejection`) uses `quality-review`: a `review_needed`
-   * outcome the judge could not decide, which must reach a human rather than
-   * the triage drain's judgment tier — `classifyPendingProposals`
-   * (proposal/drain.ts) skips any row carrying it.
+   * decision. The triage drain (`triage` gate) writes `empty-diff`,
+   * `judge-passed`, `judgment-accept`, `judgment-reject`,
+   * `no-judge-configured`, `judgment-deferred` and `stale-target`. The
+   * generating stage's quality judge (`quality-gate` gate) writes
+   * `quality-judge` on a `staged` pass (with `contentHash`) and
+   * `quality-review` on a `review_needed` deferral, which must reach a human
+   * rather than the drain's judgment tier. The retention expiry writes
+   * `expired`, the orphan purge `asset-missing`. Rows written by older
+   * releases also carry `max-diff-lines`, `min-content-lines`,
+   * `policy-accept`, `mid-band` and `possible-dup`.
    */
   reason: string;
   /**
@@ -234,7 +236,7 @@ export interface ProposalGateDecision {
    * to distinguish an unchanged retry from a reset/content edit.
    */
   contentHash?: string;
-  /** Label of the gate that recorded the decision (e.g. `triage:personal-stash`). */
+  /** Label of the gate that recorded the decision (e.g. `triage`, `quality-gate`). */
   gate?: string;
   /** ISO timestamp the decision was recorded. */
   decidedAt: string;
@@ -294,9 +296,8 @@ export interface Proposal {
    * SHA-256 hex of the content that existed at the primary change's target
    * path in the proposal's OWN stash when the proposal was minted. Absent when
    * the target did not exist (a `create`) or could not be resolved locally.
-   * Consumed by the §23.6 input fingerprint (mint-time before-state term);
-   * the unified transaction engine captures its own before-state at apply
-   * time — this is NOT an apply-time guard.
+   * Its presence marks an update; the promote freshness guard compares it
+   * only for proposals minted without {@link beforeHashNormalized}.
    */
   beforeHash?: string;
   /**
@@ -311,8 +312,7 @@ export interface Proposal {
    * `beforeHash`). The promote guard prefers this over `beforeHash` when present,
    * so a same-run bookkeeping rewrite of the target (salience scoring,
    * inference dedup marking) does not stale out the proposal; a real content
-   * change still refuses. `beforeHash` itself keeps its exact raw meaning —
-   * it is also a §23.6 fingerprint term.
+   * change still refuses. `beforeHash` itself keeps its exact raw meaning.
    */
   beforeHashNormalized?: string;
   review?: ProposalReview;
@@ -375,25 +375,36 @@ export interface Proposal {
  * Gate-decision reason token for a promote refusal caused by the TARGET
  * changing after mint — often akm's own bookkeeping, not a merit judgement on
  * the proposed content (STALE, R20). The drain stamps this on the auto-reject
- * it issues instead of retrying a promote that will fail identically forever;
- * {@link isStaleTargetRejection} and the rejection-backoff guard
- * (`repository.ts`'s `checkFingerprintAndBackoff`) both key off the exact
- * string so they can't drift apart.
+ * it issues instead of retrying a promote that will fail identically forever.
  */
 export const STALE_TARGET_GATE_REASON = "stale-target";
 
+/** Gate-decision reason for a pending proposal archived by the retention expiry. */
+export const EXPIRED_GATE_REASON = "expired";
+
+/** Gate-decision reason for a pending proposal whose target asset no longer exists. */
+export const ASSET_MISSING_GATE_REASON = "asset-missing";
+
+const PROCEDURAL_GATE_REASONS: ReadonlySet<string> = new Set([
+  STALE_TARGET_GATE_REASON,
+  EXPIRED_GATE_REASON,
+  ASSET_MISSING_GATE_REASON,
+]);
+
 /**
- * True for a rejected proposal whose rejection was the drain's stale-target
- * auto-reject (STALE, R20), not a judgement on the proposed content. Readers
+ * True for a rejected proposal nobody judged on its content: the drain's
+ * stale-target auto-reject, the retention expiry, or the orphan purge. Readers
  * that treat a rejection as "this content was refused" — the Reflexion
  * "previously rejected" context (`improve/reflect.ts`, `improve/distill.ts`)
  * and the accept-rate health metric (`health/accept-rate.ts`) — exclude these
- * rows so a procedural refusal doesn't misrepresent content quality.
+ * rows. Expiries archived before the gate reason existed are recognised by
+ * their review reason.
  */
-export function isStaleTargetRejection(proposal: Pick<Proposal, "gateDecision">): boolean {
-  return (
-    proposal.gateDecision?.outcome === "auto-rejected" && proposal.gateDecision.reason === STALE_TARGET_GATE_REASON
-  );
+export function isProceduralRejection(proposal: Pick<Proposal, "gateDecision" | "review">): boolean {
+  if (proposal.gateDecision?.outcome === "auto-rejected" && PROCEDURAL_GATE_REASONS.has(proposal.gateDecision.reason)) {
+    return true;
+  }
+  return proposal.review?.reason?.startsWith("expired:") === true;
 }
 
 // ── Validator-shared types ───────────────────────────────────────────────────

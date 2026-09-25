@@ -1030,22 +1030,7 @@
                           "enabled": {
                             "type": "boolean"
                           },
-                          "maxGeneration": {
-                            "type": "integer",
-                            "minimum": 1
-                          },
-                          "lexicalDiversityCheck": {
-                            "type": "boolean"
-                          },
                           "randomClusterFraction": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "mergeInformationFloor": {
-                            "type": "boolean"
-                          },
-                          "minSpecificityRetention": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -1449,20 +1434,9 @@
                           "promote"
                         ]
                       },
-                      "policy": {
-                        "type": "string",
-                        "minLength": 1
-                      },
                       "maxAcceptsPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
-                      },
-                      "maxDiffLines": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "rejectEmpty": {
-                        "type": "boolean"
                       },
                       "judgment": {
                         "anyOf": [
@@ -1665,48 +1639,6 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
-            },
-            "replayBudget": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": true
-        },
-        "collapseDetector": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "canaryCount": {
-              "type": "integer",
-              "minimum": 3,
-              "maximum": 200
-            },
-            "k": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            },
-            "windowCycles": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 50
-            },
-            "recallDropThreshold": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "entropyDropThreshold": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "retentionDays": {
-              "type": "integer",
-              "minimum": 1
             }
           },
           "additionalProperties": true
@@ -2820,22 +2752,7 @@
                               "enabled": {
                                 "type": "boolean"
                               },
-                              "maxGeneration": {
-                                "type": "integer",
-                                "minimum": 1
-                              },
-                              "lexicalDiversityCheck": {
-                                "type": "boolean"
-                              },
                               "randomClusterFraction": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "mergeInformationFloor": {
-                                "type": "boolean"
-                              },
-                              "minSpecificityRetention": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -3239,20 +3156,9 @@
                               "promote"
                             ]
                           },
-                          "policy": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "maxAcceptsPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
-                          },
-                          "maxDiffLines": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "rejectEmpty": {
-                            "type": "boolean"
                           },
                           "judgment": {
                             "anyOf": [
@@ -3455,48 +3361,6 @@
                   "type": "number",
                   "minimum": 0,
                   "maximum": 1
-                },
-                "replayBudget": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "additionalProperties": true
-            },
-            "collapseDetector": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "canaryCount": {
-                  "type": "integer",
-                  "minimum": 3,
-                  "maximum": 200
-                },
-                "k": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
-                },
-                "windowCycles": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 50
-                },
-                "recallDropThreshold": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "entropyDropThreshold": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "retentionDays": {
-                  "type": "integer",
-                  "minimum": 1
                 }
               },
               "additionalProperties": true
@@ -3851,22 +3715,7 @@
             "enabled": {
               "type": "boolean"
             },
-            "maxGeneration": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "lexicalDiversityCheck": {
-              "type": "boolean"
-            },
             "randomClusterFraction": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "mergeInformationFloor": {
-              "type": "boolean"
-            },
-            "minSpecificityRetention": {
               "type": "number",
               "minimum": 0,
               "maximum": 1
@@ -3957,20 +3806,9 @@
             "promote"
           ]
         },
-        "policy": {
-          "type": "string",
-          "minLength": 1
-        },
         "maxAcceptsPerRun": {
           "type": "integer",
           "exclusiveMinimum": 0
-        },
-        "maxDiffLines": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "rejectEmpty": {
-          "type": "boolean"
         },
         "judgment": {
           "anyOf": [
@@ -4406,22 +4244,7 @@
                     "enabled": {
                       "type": "boolean"
                     },
-                    "maxGeneration": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
-                    "lexicalDiversityCheck": {
-                      "type": "boolean"
-                    },
                     "randomClusterFraction": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "mergeInformationFloor": {
-                      "type": "boolean"
-                    },
-                    "minSpecificityRetention": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -4825,20 +4648,9 @@
                     "promote"
                   ]
                 },
-                "policy": {
-                  "type": "string",
-                  "minLength": 1
-                },
                 "maxAcceptsPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
-                },
-                "maxDiffLines": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "rejectEmpty": {
-                  "type": "boolean"
                 },
                 "judgment": {
                   "anyOf": [

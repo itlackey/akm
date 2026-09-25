@@ -607,20 +607,35 @@ const helpCommand = defineGroupCommand({
   },
 });
 
+// Root `--help` text for the exit-code table. `EXIT_CODES` (src/cli/shared.ts)
+// is the single source of the numbers; this only supplies the prose next to
+// each one, so there is no third, independently-drifting copy of the table
+// (the other copy is errors.ts's doc comment, which documents by reference
+// instead of repeating the numbers).
+const EXIT_CODE_DESCRIPTIONS: ReadonlyArray<readonly [number, string]> = [
+  [EXIT_CODES.SUCCESS, "success"],
+  [EXIT_CODES.GENERAL, "not found / command-reported failure"],
+  [EXIT_CODES.USAGE, "usage error"],
+  [EXIT_CODES.HEALTH_WARN, "health warn (akm health only)"],
+  [EXIT_CODES.INTERNAL, "internal / unclassified error"],
+  [
+    EXIT_CODES.TEMPFAIL,
+    "transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)",
+  ],
+  [EXIT_CODES.CONFIG, "config error"],
+];
+
+function renderExitCodesHelp(): string {
+  return EXIT_CODE_DESCRIPTIONS.map(([code, description]) => `  ${String(code).padEnd(4)}${description}`).join("\n");
+}
+
 export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
     description:
       "Agent Knowledge Manager — search, show, and manage assets from your bundle.\n\n" +
-      "Exit codes:\n" +
-      "  0   success\n" +
-      "  1   not found / command-reported failure\n" +
-      "  2   usage error\n" +
-      "  4   health warn (akm health only)\n" +
-      "  70  internal / unclassified error\n" +
-      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)\n" +
-      "  78  config error",
+      `Exit codes:\n${renderExitCodesHelp()}`,
   },
   args: {
     // Single-sourced from GLOBAL_OUTPUT_ARGS (src/cli/shared.ts) so root help

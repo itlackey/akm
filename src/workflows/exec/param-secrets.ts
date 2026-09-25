@@ -5,24 +5,23 @@
 /**
  * Best-effort secret-shaped-param detection (PR #714 review round 2, #13).
  *
- * ## Why params are declared NON-SECRET
+ * ## Params are not a secret channel
  *
  * A workflow's run params are attached to every unit prompt as structured
  * context (`buildUnitPrompt` substitutes them into the engine preamble's
- * `{{PARAMS_JSON}}` placeholder — prose instructions are never interpolated)
- * and, critically, are part of the unit's **input hash**. The prompt an executor runs
- * must be byte-identical to the one the hash was taken over — redacting a param
- * would change the prompt, break the input-hash contract, and make a resumed or
- * replayed run diverge from the original. So params CANNOT be redacted and are
- * declared **non-secret**: secrets belong in **env bindings** (`env:` refs),
- * which are carried by NAME ONLY through the plan and the hash preimage and are
- * resolved from the process environment at dispatch.
+ * `{{PARAMS_JSON}}` placeholder — prose instructions are never interpolated),
+ * so a unit sees them in clear, and they are stored on the run row and shown
+ * by `akm workflow status`. Secrets belong in **env bindings** (`env:` refs),
+ * which are carried by NAME ONLY through the plan and resolved from the
+ * process environment at dispatch.
  *
  * This module is the loud, best-effort guardrail on top of that contract: it
  * scans params for values that LOOK like credentials (secret-suggesting key
  * names, long high-entropy strings, known token prefixes) and returns WARNING
- * strings. It is purely advisory — it NEVER blocks a run and NEVER mutates
- * params — and is surfaced when a run starts. False positives and false
+ * strings surfaced when a run starts — it NEVER blocks a run and NEVER mutates
+ * params. {@link secretShapedParamValues} feeds the same heuristic into the
+ * dispatch redaction set, so a unit result or diagnostic that echoes such a
+ * value is scrubbed before it is journaled. False positives and false
  * negatives are expected; it is a nudge, not a scanner.
  *
  * ## Reused as `akm task explain`'s redaction check
@@ -88,9 +87,8 @@ function valueLooksSecret(value: string): boolean {
 
 const MOVE_TO_ENV =
   "Workflow params are copied verbatim into every native unit execution context and returned in `akm workflow run` and " +
-  "`akm workflow status` output (they are part of the unit input hash and CANNOT be redacted) — move " +
-  "secrets to an env binding (`env:` ref), whose value native execution resolves only at dispatch instead of storing " +
-  "it as a run param.";
+  "`akm workflow status` output — move secrets to an env binding (`env:` ref), whose value native execution resolves " +
+  "only at dispatch instead of storing it as a run param.";
 
 /**
  * Scan run params for secret-shaped values. Returns human-readable WARNING
@@ -103,17 +101,38 @@ const MOVE_TO_ENV =
 export function detectSecretShapedParams(params: Record<string, unknown>): string[] {
   const warnings: string[] = [];
   const seen = new Set<string>();
-
-  const push = (path: string, why: string): void => {
+  walkSecretShaped(params, (path, why) => {
     if (seen.has(path)) return;
     seen.add(path);
     warnings.push(`Run param "${path}" ${why}. ${MOVE_TO_ENV} (Heuristic warning; params are declared non-secret.)`);
-  };
+  });
+  return warnings;
+}
 
+/**
+ * The string param values {@link detectSecretShapedParams} flags, for the
+ * dispatch redaction set: a unit still receives its params in clear, but a
+ * result or diagnostic echoing one of these is scrubbed before it reaches the
+ * journal. Values under 8 characters are left out so a secret-NAMED param
+ * holding something trivial (`token_limit: "1000"`) cannot blank out ordinary
+ * output.
+ */
+export function secretShapedParamValues(params: Record<string, unknown>): string[] {
+  const values = new Set<string>();
+  walkSecretShaped(params, (_path, _why, value) => {
+    if (typeof value === "string" && value.trim().length >= 8) values.add(value);
+  });
+  return [...values];
+}
+
+function walkSecretShaped(
+  params: Record<string, unknown>,
+  hit: (path: string, why: string, value: unknown) => void,
+): void {
   const walk = (value: unknown, path: string, key: string | null): void => {
-    if (key !== null && keyLooksSecret(key)) push(path, "has a secret-suggesting name");
+    if (key !== null && keyLooksSecret(key)) hit(path, "has a secret-suggesting name", value);
     if (typeof value === "string") {
-      if (valueLooksSecret(value)) push(path, "has a secret-shaped value (long, high-entropy string)");
+      if (valueLooksSecret(value)) hit(path, "has a secret-shaped value (long, high-entropy string)", value);
       return;
     }
     if (Array.isArray(value)) {
@@ -126,7 +145,5 @@ export function detectSecretShapedParams(params: Record<string, unknown>): strin
       }
     }
   };
-
   for (const [k, v] of Object.entries(params)) walk(v, k, k);
-  return warnings;
 }

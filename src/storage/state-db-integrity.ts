@@ -8,10 +8,11 @@
  * `akm health`'s `state-db-integrity` check (src/commands/health/checks.ts)
  * is a pure projection like every other check, so the actual IO lives here:
  * a read-only `PRAGMA quick_check` and a read-only freelist/page-count read.
- * Both open their own short-lived connection via the plain {@link openDatabase}
- * opener — deliberately bypassing `openStateDatabase`'s managed-open/migration
- * machinery (src/core/state-db.ts), since a corrupt database must not need a
- * clean migration-ledger read just to report itself as corrupt.
+ * Both open their own short-lived read-only connection via the plain
+ * {@link openDatabase} opener rather than `openStateDatabase`
+ * (src/core/state-db.ts), since a corrupt database must not need a clean
+ * migration-ledger read, let alone a migration, just to report itself as
+ * corrupt.
  *
  * {@link vacuumStateDbIfReclaimable} is the post-purge VACUUM step: given an
  * already-open read-write connection (VACUUM cannot run inside a transaction,
@@ -24,7 +25,7 @@
 
 import { appendEvent, type EventsContext } from "../core/events";
 import { type Database, openDatabase } from "./database";
-import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-pragmas";
+import { applyReadonlyPragmas } from "./sqlite-pragmas";
 
 /** How many corruption errors `PRAGMA quick_check` collects before it stops scanning and returns. */
 const QUICK_CHECK_ERROR_LIMIT = 10;
@@ -69,10 +70,7 @@ function firstColumn(row: Record<string, unknown> | undefined): unknown {
 
 function openReadonlyStateDb(dbPath: string): Database {
   const db = openDatabase(dbPath, { readonly: true, create: false });
-  // Read-only handles cannot run journal_mode/foreign_keys (write operations),
-  // but busy_timeout is legal — see openReadonlyExistingDatabase's identical
-  // rationale in src/storage/repositories/index-connection.ts.
-  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  applyReadonlyPragmas(db);
   return db;
 }
 

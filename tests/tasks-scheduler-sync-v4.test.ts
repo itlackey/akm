@@ -3,36 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Test-review remediation (spec docs/plans/specs/p2a-task-source-v4.md §5.2,
- * D2-N6, B-38) for the finding recorded against
- * docs/plans/specs/p2a-task-source-v4.md:501: B-07 ("a `version: 4` task with
- * no `schedule:` parses, contributes ZERO scheduler bindings, records ZERO
- * failures, and emits no diagnostic through `akm task sync`") had no test
- * anywhere, even though §9 names it as an explicit acceptance bullet. This
- * file was originally deliberately new and separate from
- * tests/integration/tasks-scheduler-sync-v3.test.ts, which §7/F-4 required to
- * stay byte-unchanged at the time.
- *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.6) deleted
- * `tests/integration/tasks-scheduler-sync-v3.test.ts` along with task source
- * v3 acceptance — its 23 tests' SUBJECT was v3 parsing, but almost none of
- * their BEHAVIOR was actually about task source version: the whole-set CAS
- * mechanics, native-artifact collision detection, drift/removal diffing,
- * task+workflow composition, and poisoning behavior they proved are generic
- * `scheduler-sync.ts` invariants that a task source v4 fixture demonstrates
- * exactly as well as a v3 one did. Per F-A2.6's instruction, that behavior
- * ported here (fixtures converted to task source v4; assertions unchanged)
- * rather than being lost with the file. The one genuinely v3-specific case
- * (the GitHub Action locator's pre-signature rejection, F-A1.15) is replaced
- * by an equivalent `docker://` case below — the ordering invariant it pins
- * ("a workflow-step uses: rejection happens before any scheduler signature
- * call") is independent of which unsupported-ref shape triggers it, and the
- * locator grammar itself is already covered by
- * tests/execution/target-ref.test.ts and
- * tests/workflows/characterization-classification.test.ts (F-A1.7/F-A1.3).
- *
- * Structure mirrors the deleted file's `root()`/`write()`/`planSchedulerSync()`
- * helpers and `SchedulerSyncPlanInput` shape — only the fixtures differ.
+ * Scheduler sync planning for task source v4 (and the workflow sources that
+ * share its native rows): what one bundle's sources compile to, and how that
+ * desired set diffs against the rows installed in the native scheduler —
+ * install, update, remove, leave alone — including per-source failure
+ * isolation (#867) and ownership attribution by resolved bundle path (#846).
+ * The helper below builds one bundle's plan exactly as `akm task sync` does.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -40,16 +16,43 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../src/core/warn";
-import { compileTaskSchedulerBindings, schedulerNativeBindingId } from "../src/tasks/scheduler-binding";
 import {
-  finalizeSchedulerSyncPlan,
-  prepareSchedulerSyncSourceSet,
-  type SchedulerSyncPlanInput,
+  type InstalledSchedulerBinding,
+  type SchedulerBinding,
+  type SchedulerInstallOptions,
+  schedulerNativeBindingId,
+} from "../src/tasks/scheduler-binding";
+import {
+  type CompileSchedulerSourcesInput,
+  compileSchedulerSources,
+  planSchedulerSync as planInstalledRows,
 } from "../src/tasks/scheduler-sync";
 import { overrideSeam } from "./_helpers/seams";
 
-async function planSchedulerSync(input: SchedulerSyncPlanInput) {
-  return finalizeSchedulerSyncPlan(input, await prepareSchedulerSyncSourceSet(input));
+interface PlanInput extends CompileSchedulerSourcesInput {
+  readonly installed: readonly InstalledSchedulerBinding[];
+  /** Set for the primary bundle, which proves its rows by resolved path (#846). */
+  readonly bundlePath?: string;
+  readonly expectedSignature?: (binding: SchedulerBinding, options?: SchedulerInstallOptions) => string;
+}
+
+/** One bundle's plan, built the way `akm task sync` builds it: compile the sources, then diff the installed rows. */
+async function planSchedulerSync(input: PlanInput) {
+  const compiled = await compileSchedulerSources(input);
+  const plan = planInstalledRows({
+    desired: compiled.desired,
+    installed: input.installed,
+    scopes: [
+      {
+        bundleName: input.bundleName,
+        adapterId: input.adapterId,
+        ...(input.bundlePath ? { bundlePath: input.bundlePath } : {}),
+      },
+    ],
+    ...(input.expectedSignature ? { expectedSignature: input.expectedSignature } : {}),
+    keepRefs: new Set(compiled.failures.flatMap((failure) => (failure.ref ? [failure.ref] : []))),
+  });
+  return { ...plan, failures: [...compiled.failures, ...plan.failures] };
 }
 
 function root(): string {
@@ -64,7 +67,7 @@ function write(file: string, content: string): void {
 const emptyInstalled = [] as const;
 
 describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only, D2-N6)", () => {
-  test("a version: 4 task with no schedule: contributes ZERO bindings and records ZERO failures — prepareSchedulerSyncSourceSet does not reject", async () => {
+  test("a version: 4 task with no schedule: contributes ZERO bindings and records ZERO failures — compileSchedulerSources does not reject", async () => {
     const bundleRoot = root();
     write(
       path.join(bundleRoot, "tasks", "manual-only.yml"),
@@ -73,13 +76,11 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
 
     // Today this REJECTS (see file header) — the assertion that it resolves
     // at all is the B-07 pin, independent of the shape assertions below.
-    const prepared = await prepareSchedulerSyncSourceSet({
+    const prepared = await compileSchedulerSources({
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
-      installed: emptyInstalled,
     });
     expect(prepared.desired).toEqual([]);
   });
@@ -95,7 +96,6 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: (binding) => `sig:${binding.id}`,
@@ -129,7 +129,6 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: (binding) => `sig:${binding.id}`,
@@ -156,7 +155,6 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: (binding) => `sig:${binding.id}`,
@@ -178,7 +176,6 @@ describe("whole-set task source v4 scheduler sync planning — locally activated
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: (binding) => `sig:${binding.id}`,
@@ -228,16 +225,14 @@ describe("whole-set task source v4 scheduler sync planning — sync-grant gating
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron" as const,
-      installed: emptyInstalled,
     };
 
-    const ungranted = await prepareSchedulerSyncSourceSet({ ...baseInput, enabledRefs: new Set() });
+    const ungranted = await compileSchedulerSources({ ...baseInput, enabledRefs: new Set() });
     expect(ungranted.desired).toEqual([]);
     expect(ungranted.failures).toEqual([]);
 
-    const granted = await prepareSchedulerSyncSourceSet({
+    const granted = await compileSchedulerSources({
       ...baseInput,
       enabledRefs: new Set(["team//tasks/legacy-v3", "team//tasks/retired-enabled-v4"]),
     });
@@ -297,7 +292,6 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: (binding) => `sig:${binding.id}`,
@@ -353,16 +347,14 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
     );
 
     // #867: compileTaskSources' per-source try/catch turns a per-file parse
-    // failure into one `failures` entry. prepareSchedulerSyncSourceSet no
+    // failure into one `failures` entry. compileSchedulerSources no
     // longer rejects the whole set over it — it degrades, reporting the
     // failure and reconciling every other source (none, here).
-    const prepared = await prepareSchedulerSyncSourceSet({
+    const prepared = await compileSchedulerSources({
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
-      installed: emptyInstalled,
     });
     expect(prepared.desired).toEqual([]);
     expect(prepared.failures).toHaveLength(1);
@@ -397,13 +389,11 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
     // the task ref, and an author sees it without running `akm task sync`.
     // #867: this is still a per-source parse failure — it degrades rather
     // than rejecting the whole (empty, here) desired set.
-    const prepared = await prepareSchedulerSyncSourceSet({
+    const prepared = await compileSchedulerSources({
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
-      installed: emptyInstalled,
     });
     expect(prepared.desired).toEqual([]);
     expect(prepared.failures).toHaveLength(1);
@@ -446,7 +436,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: (binding) => `sig:${binding.id}`,
@@ -479,7 +468,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron" as const,
       expectedSignature: (binding: { id: string; cron: string }) => `${binding.id}:${binding.cron}`,
     };
@@ -493,13 +481,8 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       invocation: binding.invocation,
       signature: `${binding.id}:${binding.cron}`,
     }));
-    const nativeArtifacts = initial.desired.map((binding) => ({
-      nativeId: schedulerNativeBindingId(binding.id),
-      bindingId: binding.id,
-      invocation: binding.invocation,
-    }));
 
-    const second = await planSchedulerSync({ ...base, installed, nativeArtifacts } as never);
+    const second = await planSchedulerSync({ ...base, installed });
 
     expect(second.unchanged).toEqual(initial.desired.map(({ id }) => id));
     expect(second.operations).toEqual([]);
@@ -523,7 +506,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron" as const,
       expectedSignature: (binding: { id: string; cron: string }) => `${binding.id}:${binding.cron}`,
     };
@@ -537,20 +519,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       invocation: binding.invocation,
       signature: `${binding.id}:${binding.cron}`,
     }));
-    const nativeArtifacts = initial.desired.map((binding) => ({
-      nativeId: schedulerNativeBindingId(binding.id),
-      bindingId: binding.id,
-      invocation: binding.invocation,
-    }));
     write(file, source("30 2 * * *"));
 
-    const drift = await planSchedulerSync({ ...base, installed, nativeArtifacts } as never);
+    const drift = await planSchedulerSync({ ...base, installed });
 
     expect(drift.unchanged).toEqual([initial.desired[0]!.id]);
     expect(drift.updated).toEqual([initial.desired[1]!.id]);
   });
 
-  test("higher-ordinal removal freezes the exact parsed owner and installed fingerprint", async () => {
+  test("a row whose schedule entry was deleted is removed; the remaining entry is unchanged", async () => {
     const bundleRoot = root();
     const file = path.join(bundleRoot, "tasks", "nightly.yml");
     write(file, "version: 4\nrun: echo index\nshell: sh\nschedule:\n  - cron: '0 1 * * *'\n  - cron: '0 2 * * *'\n");
@@ -558,7 +535,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron" as const,
       expectedSignature: (binding: { id: string; cron: string }) => `${binding.id}:${binding.cron}`,
     };
@@ -572,181 +548,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       invocation: binding.invocation,
       signature: `${binding.id}:${binding.cron}`,
     }));
-    const nativeArtifacts = initial.desired.map((binding) => ({
-      nativeId: schedulerNativeBindingId(binding.id),
-      bindingId: binding.id,
-      invocation: binding.invocation,
-    }));
     write(file, "version: 4\nrun: echo index\nshell: sh\nschedule:\n  - cron: '0 1 * * *'\n");
 
-    const removal = await planSchedulerSync({ ...base, installed, nativeArtifacts } as never);
+    const removal = await planSchedulerSync({ ...base, installed });
     const removed = initial.desired[1];
     if (!removed) throw new Error("missing higher-ordinal binding");
-    expect(removal.operations).toContainEqual({
-      kind: "remove",
-      id: removed.id,
-      nativeId: schedulerNativeBindingId(removed.id),
-      expected: {
-        state: "present",
-        bindingId: removed.id,
-        nativeId: schedulerNativeBindingId(removed.id),
-        logicalSource: removed.logicalSource,
-        ordinal: removed.ordinal,
-        invocation: removed.invocation,
-        fingerprint: `${removed.id}:${removed.cron}`,
-      },
-    });
-  });
-
-  test("freezes exact absence and exact prior CAS state on every planned mutation", async () => {
-    const bundleRoot = root();
-    write(
-      path.join(bundleRoot, "tasks", "create.yml"),
-      "version: 4\nrun: echo create\nshell: sh\nschedule: '0 1 * * *'\n",
-    );
-    write(
-      path.join(bundleRoot, "tasks", "update.yml"),
-      "version: 4\nrun: echo update\nshell: sh\nschedule: '0 2 * * *'\n",
-    );
-    const existing = compileTaskSchedulerBindings({
-      id: "update",
-      qualifiedRef: "team//tasks/update",
-      schedules: [{ cron: "30 2 * * *", source: "schedule", ordinal: 0 }],
-    })[0]!;
-    const installed = {
-      id: existing.id,
-      nativeId: existing.nativeId,
-      binding: ["/opt/akm"],
-      contextPath: "/state/context.json",
-      target: "team",
-      invocation: existing.invocation,
-      signature: "installed-fingerprint",
-    };
-
-    const plan = await planSchedulerSync({
-      sourceRoot: bundleRoot,
-      adapterId: "akm",
-      bundleName: "team",
-      backend: "cron",
-      installed: [installed],
-      nativeArtifacts: [
-        {
-          nativeId: existing.nativeId!,
-          bindingId: existing.id,
-          invocation: existing.invocation,
-          fingerprint: "installed-fingerprint",
-        },
-      ],
-      expectedSignature: (item) => `desired:${item.id}:${item.cron}`,
-    });
-
-    const create = plan.operations.find((operation) => operation.kind === "install");
-    const update = plan.operations.find((operation) => operation.kind === "update");
-    expect(create).toMatchObject({
-      expected: {
-        state: "absent",
-        bindingId: "create",
-        nativeId: "create",
-        logicalSource: { kind: "task", ref: "team//tasks/create" },
-        ordinal: 0,
-        invocation: ["task", "run", "create", "--bundle", "team", "--scheduled"],
-      },
-    });
-    expect(update).toMatchObject({
-      expected: {
-        state: "present",
-        bindingId: "update",
-        nativeId: "update",
-        logicalSource: { kind: "task", ref: "team//tasks/update" },
-        ordinal: 0,
-        invocation: ["task", "run", "update", "--bundle", "team", "--scheduled"],
-        fingerprint: "installed-fingerprint",
-      },
-    });
-  });
-
-  test("rejects incoherent installed and native fingerprints instead of planning a false no-op", async () => {
-    const bundleRoot = root();
-    write(
-      path.join(bundleRoot, "tasks", "nightly.yml"),
-      "version: 4\nrun: echo nightly\nshell: sh\nschedule: '0 1 * * *'\n",
-    );
-    const [desired] = compileTaskSchedulerBindings({
-      id: "nightly",
-      qualifiedRef: "team//tasks/nightly",
-      schedules: [{ cron: "0 1 * * *", source: "schedule", ordinal: 0 }],
-    });
-    if (!desired) throw new Error("missing binding");
-
-    await expect(
-      planSchedulerSync({
-        sourceRoot: bundleRoot,
-        adapterId: "akm",
-        bundleName: "team",
-        backend: "cron",
-        installed: [
-          {
-            id: desired.id,
-            nativeId: desired.nativeId,
-            binding: ["/opt/akm"],
-            contextPath: "/state/context.json",
-            target: "team",
-            invocation: desired.invocation,
-            signature: "stale-list-fingerprint",
-          },
-        ],
-        nativeArtifacts: [
-          {
-            nativeId: desired.nativeId!,
-            bindingId: desired.id,
-            invocation: desired.invocation,
-            fingerprint: "newer-native-fingerprint",
-          },
-        ],
-        expectedSignature: () => "stale-list-fingerprint",
-      }),
-    ).rejects.toThrow(/coherent|fingerprint|changed/i);
-  });
-
-  test("a production coherent inspection cannot omit the native fingerprint behind a listed no-op", async () => {
-    const bundleRoot = root();
-    write(
-      path.join(bundleRoot, "tasks", "nightly.yml"),
-      "version: 4\nrun: echo nightly\nshell: sh\nschedule: '0 1 * * *'\n",
-    );
-    const [desired] = compileTaskSchedulerBindings({
-      id: "nightly",
-      qualifiedRef: "team//tasks/nightly",
-      schedules: [{ cron: "0 1 * * *", source: "schedule", ordinal: 0 }],
-    });
-    if (!desired) throw new Error("missing binding");
-    const installed = {
-      id: desired.id,
-      nativeId: desired.nativeId,
-      binding: ["/opt/akm"],
-      contextPath: "/state/context.json",
-      target: "team",
-      invocation: desired.invocation,
-      signature: "desired-fingerprint",
-    };
-    const artifact = {
-      nativeId: desired.nativeId!,
-      bindingId: desired.id,
-      invocation: desired.invocation,
-    };
-
-    await expect(
-      planSchedulerSync({
-        sourceRoot: bundleRoot,
-        adapterId: "akm",
-        bundleName: "team",
-        backend: "cron",
-        installed: [installed],
-        nativeArtifacts: [artifact],
-        inspection: { installed: [installed], artifacts: [artifact] },
-        expectedSignature: () => "desired-fingerprint",
-      }),
-    ).rejects.toThrow(/coherent|fingerprint|changed/i);
+    expect(removal.operations).toEqual([
+      { kind: "remove", id: removed.id, nativeId: schedulerNativeBindingId(removed.id) },
+    ]);
+    expect(removal.unchanged).toEqual([initial.desired[0]!.id]);
   });
 
   test("accepts the workflow-only tasks target through canonical step authority", async () => {
@@ -776,7 +586,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
     });
@@ -821,7 +630,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: () => {
@@ -843,7 +651,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm-task",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
     });
@@ -864,7 +671,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: componentRoot,
       adapterId: "akm-task",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
     });
@@ -892,7 +698,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: componentRoot,
       adapterId: "akm-task",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
     });
@@ -904,7 +709,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     ]);
   });
 
-  test("rejects logical ids whose exact native scheduler artifacts collide before signatures", async () => {
+  test("two sources claiming one native row are both reported and neither is installed", async () => {
     const componentRoot = root();
     write(
       path.join(componentRoot, "sub", "nightly.yml"),
@@ -916,45 +721,48 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     );
     let signatures = 0;
 
-    await expect(
-      planSchedulerSync({
-        sourceRoot: componentRoot,
-        adapterId: "akm-task",
-        bundleName: "team",
-        bundleTarget: "team",
-        backend: "cron",
-        installed: emptyInstalled,
-        expectedSignature: () => {
-          signatures += 1;
-          return "signature";
-        },
-      }),
-    ).rejects.toThrow(/native scheduler artifact|collision/i);
+    const plan = await planSchedulerSync({
+      sourceRoot: componentRoot,
+      adapterId: "akm-task",
+      bundleName: "team",
+      backend: "cron",
+      installed: emptyInstalled,
+      expectedSignature: () => {
+        signatures += 1;
+        return "signature";
+      },
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.failures.map((failure) => failure.ref).sort()).toEqual([
+      "team//sub/nightly",
+      "team//task-5f14bc23cb233df4713f2e147b6c077f",
+    ]);
+    expect(plan.failures[0]?.reason).toMatch(/is claimed by/);
     expect(signatures).toBe(0);
   });
 
   test.each([
     ["case folding", "Nightly", "nightly"],
-  ] as const)("rejects portable native artifact collisions caused by %s", async (_label, first, second) => {
+  ] as const)("native ids that differ only by %s are one row: both are reported", async (_label, first, second) => {
     const componentRoot = root();
     write(path.join(componentRoot, `${first}.yml`), "version: 4\nrun: echo first\nshell: sh\nschedule: '@daily'\n");
     write(path.join(componentRoot, `${second}.yml`), "version: 4\nrun: echo second\nshell: sh\nschedule: '@daily'\n");
     let signatures = 0;
 
-    await expect(
-      planSchedulerSync({
-        sourceRoot: componentRoot,
-        adapterId: "akm-task",
-        bundleName: "team",
-        bundleTarget: "team",
-        backend: "schtasks",
-        installed: emptyInstalled,
-        expectedSignature: () => {
-          signatures += 1;
-          return "signature";
-        },
-      }),
-    ).rejects.toThrow(/native scheduler artifact|collision/i);
+    const plan = await planSchedulerSync({
+      sourceRoot: componentRoot,
+      adapterId: "akm-task",
+      bundleName: "team",
+      backend: "schtasks",
+      installed: emptyInstalled,
+      expectedSignature: () => {
+        signatures += 1;
+        return "signature";
+      },
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.failures).toHaveLength(2);
+    expect(plan.failures.every((failure) => /is claimed by/.test(failure.reason))).toBe(true);
     expect(signatures).toBe(0);
   });
 
@@ -970,7 +778,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: componentRoot,
       adapterId: "akm-task",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "schtasks",
       installed: emptyInstalled,
       expectedSignature: () => {
@@ -984,85 +791,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(signatures).toBe(0);
   });
 
-  test.each([
-    ["different logical owner", "task-5f14bc23cb233df4713f2e147b6c077f"],
-    ["malformed source-absent owner", undefined],
-  ] as const)("rejects an installed %s at the desired exact native artifact before signatures", async (_label, bindingId) => {
-    const componentRoot = root();
-    write(
-      path.join(componentRoot, "sub", "nightly.yml"),
-      "version: 4\nrun: echo nested\nshell: sh\nschedule: '@daily'\n",
-    );
-    let signatures = 0;
-    const nativeArtifacts = [
-      {
-        nativeId: "task-5f14bc23cb233df4713f2e147b6c077f",
-        ...(bindingId
-          ? {
-              bindingId,
-              invocation: ["task", "run", bindingId, "--bundle", "team", "--scheduled"],
-            }
-          : {}),
-      },
-    ];
-
-    await expect(
-      planSchedulerSync({
-        sourceRoot: componentRoot,
-        adapterId: "akm-task",
-        bundleName: "team",
-        bundleTarget: "team",
-        backend: "cron",
-        installed: emptyInstalled,
-        nativeArtifacts,
-        expectedSignature: () => {
-          signatures += 1;
-          return "signature";
-        },
-      } as never),
-    ).rejects.toThrow(/native scheduler artifact|collision|unproven owner/i);
-    expect(signatures).toBe(0);
-  });
-
-  test("rejects a foreign fully-qualified workflow owner under the same binding and native id", async () => {
-    const bundleRoot = root();
-    write(
-      path.join(bundleRoot, "workflows", "release.yml"),
-      "name: release\non:\n  schedule:\n    - cron: '0 8 * * 1'\njobs:\n  main:\n    runs-on: [self-hosted]\n    steps:\n      - id: release\n        run: echo release\n",
-    );
-    const base = {
-      sourceRoot: bundleRoot,
-      adapterId: "akm",
-      bundleName: "team",
-      bundleTarget: "team",
-      backend: "cron" as const,
-    };
-    const initial = await planSchedulerSync({ ...base, installed: emptyInstalled });
-    const workflow = initial.desired.find((binding) => binding.logicalSource.kind === "workflow");
-    if (!workflow) throw new Error("missing workflow binding");
-    const foreignInvocation = ["workflow", "run", "team//workflows/other"] as const;
-
-    await expect(
-      planSchedulerSync({
-        ...base,
-        installed: [
-          {
-            id: workflow.id,
-            nativeId: workflow.nativeId,
-            binding: ["/opt/akm"],
-            contextPath: "/state/context.json",
-            target: "team",
-            invocation: foreignInvocation,
-          },
-        ],
-        nativeArtifacts: [
-          { nativeId: workflow.nativeId ?? workflow.id, bindingId: workflow.id, invocation: foreignInvocation },
-        ],
-      }),
-    ).rejects.toThrow(/native scheduler artifact|collision|team\/\/workflows\/other/i);
-  });
-
-  test("a proven source-absent nested owner removes by its exact enumerated native id", async () => {
+  test("a nested task whose source is gone is removed by its native id", async () => {
     const componentRoot = root();
     const nativeId = "task-5f14bc23cb233df4713f2e147b6c077f";
     const installed = {
@@ -1079,48 +808,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: componentRoot,
       adapterId: "akm-task",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: [installed],
-      nativeArtifacts: [
-        {
-          nativeId,
-          bindingId: "sub/nightly",
-          invocation: installed.invocation,
-          fingerprint: "installed-fingerprint",
-        },
-      ],
     });
 
     expect(plan.removed).toEqual(["sub/nightly"]);
-    expect(plan.operations).toEqual([
-      {
-        kind: "remove",
-        id: "sub/nightly",
-        nativeId,
-        expected: {
-          state: "present",
-          bindingId: "sub/nightly",
-          nativeId,
-          logicalSource: { kind: "task", ref: "team//sub/nightly" },
-          ordinal: 0,
-          invocation: installed.invocation,
-          fingerprint: "installed-fingerprint",
-        },
-      },
-    ]);
+    expect(plan.operations).toEqual([{ kind: "remove", id: "sub/nightly", nativeId }]);
   });
 
-  // Was "a true standalone physical-source identity collision rejects before
-  // diffing" (U3): the rejection this pinned was actually the
-  // directory-manifest layer's former blanket refusal of ANY symbolic entry,
-  // not a real physical-identity collision check — `beta/nightly.yml` here
-  // is never opened as a task candidate at all. Per U3, an in-bundle symlink
-  // that stays inside the bundle root is recorded as its own manifest kind
-  // and is never made a task candidate. This restores the report: a symlink
-  // classified as a task candidate is degraded into a per-source failure
-  // (not silently dropped), while the real owner still syncs normally.
-  test("an in-bundle symlink alias is reported as a per-source failure; the real owner still syncs", async () => {
+  test("an in-bundle symlink alias is read through like any other source file", async () => {
     const componentRoot = root();
     const owner = path.join(componentRoot, "alpha", "nightly.yml");
     const alias = path.join(componentRoot, "beta", "nightly.yml");
@@ -1133,7 +829,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: componentRoot,
       adapterId: "akm-task",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: () => {
@@ -1142,12 +837,9 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       },
     });
 
-    expect(plan.desired.map((binding) => binding.id)).toEqual(["alpha/nightly"]);
-    expect(plan.failures).toHaveLength(1);
-    expect(plan.failures[0]?.path.endsWith("beta/nightly.yml")).toBe(true);
-    expect(plan.failures[0]?.ref).toBe("team//beta/nightly");
-    expect(plan.failures[0]?.reason).toMatch(/symbolic/);
-    expect(signatures).toBe(1);
+    expect(plan.desired.map((binding) => binding.id)).toEqual(["alpha/nightly", "beta/nightly"]);
+    expect(plan.failures).toEqual([]);
+    expect(signatures).toBe(2);
   });
 
   test("#867: one invalid desired task degrades (reported, excluded) instead of poisoning the whole plan; a valid peer still reconciles", async () => {
@@ -1165,7 +857,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: () => {
@@ -1197,7 +888,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
       expectedSignature: () => {
@@ -1239,7 +929,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
     });
@@ -1260,7 +949,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: emptyInstalled,
     });
@@ -1303,17 +991,12 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   test("a desired/foreign installed id collision excludes just that binding and reports it, instead of aborting the sync", async () => {
     const bundleRoot = root();
     write(path.join(bundleRoot, "tasks", "nightly.yml"), "version: 4\nrun: echo yes\nshell: sh\nschedule: '@daily'\n");
-    // A resolvable invocation (rather than an installed row with no
-    // invocation at all) so this exercises belongsToBundle's foreign-target
-    // check specifically, not the separate (still-throwing) unproven-native-
-    // artifact-owner invariant `assertSchedulerNativeArtifactOwnership` guards.
     const foreignInvocation = ["task", "run", "nightly", "--bundle", "other", "--scheduled"];
 
     const plan = await planSchedulerSync({
       sourceRoot: bundleRoot,
       adapterId: "akm",
       bundleName: "team",
-      bundleTarget: "team",
       backend: "cron",
       installed: [
         {
@@ -1326,24 +1009,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
           signature: "foreign-fingerprint",
         },
       ],
-      nativeArtifacts: [
-        {
-          nativeId: "nightly",
-          bindingId: "nightly",
-          invocation: foreignInvocation,
-          fingerprint: "foreign-fingerprint",
-        },
-      ],
     });
 
-    expect(plan.desired).toEqual([]);
     expect(plan.operations).toEqual([]);
     expect(plan.failures).toHaveLength(1);
     expect(plan.failures[0]?.ref).toBe("team//tasks/nightly");
     expect(plan.failures[0]?.reason).toMatch(/already scheduled|collide/i);
   });
 
-  test("rejects desired sources that physically escape the bundle before diffing", async () => {
+  test("a task source symlinked from outside the bundle is read through, not refused", async () => {
     const bundleRoot = root();
     const outsideRoot = root();
     const outside = path.join(outsideRoot, "escaped.yml");
@@ -1352,24 +1026,24 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     fs.symlinkSync(outside, path.join(bundleRoot, "tasks", "escaped.yml"));
     let signatures = 0;
 
-    await expect(
-      planSchedulerSync({
-        sourceRoot: bundleRoot,
-        adapterId: "akm",
-        bundleName: "team",
-        backend: "cron",
-        installed: emptyInstalled,
-        expectedSignature: () => {
-          signatures += 1;
-          return "sig";
-        },
-      }),
-    ).rejects.toThrow(/outside the bundle root/);
-    expect(signatures).toBe(0);
+    const plan = await planSchedulerSync({
+      sourceRoot: bundleRoot,
+      adapterId: "akm",
+      bundleName: "team",
+      backend: "cron",
+      installed: emptyInstalled,
+      expectedSignature: () => {
+        signatures += 1;
+        return "sig";
+      },
+    });
+    expect(plan.desired.map((binding) => binding.id)).toEqual(["escaped"]);
+    expect(plan.failures).toEqual([]);
+    expect(signatures).toBe(1);
   });
 });
 
-describe("#846: belongsToBundle scopes by resolved bundle path, not display name", () => {
+describe("#846: the primary bundle owns rows by resolved bundle path, not display name", () => {
   test("two bundles at different paths sharing the same display name: bundle A's sync does not compute bundle B's installed binding as removable", async () => {
     const componentRoot = root();
     const bundleAPath = "/home/user/work/akm";
@@ -1397,14 +1071,6 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       bundlePath: bundleAPath,
       backend: "cron",
       installed: [foreignEntry],
-      nativeArtifacts: [
-        {
-          nativeId: "task-foreign",
-          bindingId: "akm-dogfood-091-capture",
-          invocation: foreignInvocation,
-          fingerprint: "foreign-fingerprint",
-        },
-      ],
     });
 
     // Bundle A has zero task ids in common with bundle B — bundle B's real
@@ -1427,7 +1093,7 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
     // path must never be assumed to mean "mine".
     const installed = {
       id: "nightly",
-      nativeId: "task-nightly",
+      nativeId: "nightly",
       binding: ["/opt/akm"],
       contextPath: "/data/unreadable-context.json",
       target: "team",
@@ -1444,18 +1110,9 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       bundlePath: "/home/user/work/akm",
       backend: "cron",
       installed: [installed],
-      nativeArtifacts: [
-        {
-          nativeId: "task-nightly",
-          bindingId: "nightly",
-          invocation: installed.invocation,
-          fingerprint: "installed-fingerprint",
-        },
-      ],
       expectedSignature: (binding) => `sig:${binding.id}`,
     });
 
-    expect(plan.desired).toEqual([]);
     expect(plan.operations).toEqual([]);
     expect(plan.failures).toHaveLength(1);
     expect(plan.failures[0]?.reason).toMatch(/already scheduled/i);
@@ -1483,49 +1140,16 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       bundlePath,
       backend: "cron",
       installed: [installed],
-      nativeArtifacts: [
-        {
-          nativeId,
-          bindingId: "sub/nightly",
-          invocation: installed.invocation,
-          fingerprint: "installed-fingerprint",
-        },
-      ],
     });
 
     // No desired source declares "sub/nightly" — it is genuinely orphaned
-    // drift owned by THIS bundle, and must still be reconciled away exactly
-    // as before the path-scoping fix.
+    // drift owned by THIS bundle, and is removed. The operation carries the
+    // owning bundle path (#849) so a dry-run preview can attribute it.
     expect(plan.removed).toEqual(["sub/nightly"]);
-    expect(plan.operations).toEqual([
-      {
-        kind: "remove",
-        id: "sub/nightly",
-        nativeId,
-        expected: {
-          state: "present",
-          bindingId: "sub/nightly",
-          nativeId,
-          logicalSource: { kind: "task", ref: "team//sub/nightly" },
-          ordinal: 0,
-          invocation: installed.invocation,
-          fingerprint: "installed-fingerprint",
-        },
-        // #849: the remove operation now carries the removed binding's
-        // owning bundle path (already known from #846's ownerBundlePath),
-        // so a dry-run preview can attribute every removal without a
-        // separate lookup.
-        ownerBundlePath: bundlePath,
-      },
-    ]);
+    expect(plan.operations).toEqual([{ kind: "remove", id: "sub/nightly", nativeId, ownerBundlePath: bundlePath }]);
   });
 
-  // `buildSchedulerRemoveOperation` still throws on its own (kept for
-  // `akm task prune`'s pre-confirmed-safe contract) but sync's removal loop
-  // now catches it per id — one orphaned row this process can't safely
-  // attribute a removal for must not cost every OTHER genuinely orphaned
-  // row its own, otherwise-clean removal.
-  test("one orphaned row with no provable native fingerprint is reported and left installed; the OTHER orphaned row is still removed", async () => {
+  test("an orphaned row without a listed signature is removed like any other", async () => {
     const componentRoot = root();
     const bundlePath = "/home/user/work/akm";
     const healthy = {
@@ -1538,10 +1162,6 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       invocation: ["task", "run", "healthy-orphan", "--bundle", "team", "--scheduled"],
       signature: "healthy-fingerprint",
     };
-    // Has an invocation (passes the `!current?.invocation` guard) but no
-    // signature, and no matching native artifact carries a fingerprint
-    // either — buildSchedulerRemoveOperation's own "no exact native
-    // fingerprint; refusing removal" throw.
     const poisoned = {
       id: "poisoned-orphan",
       nativeId: "task-poisoned-orphan",
@@ -1559,25 +1179,10 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       bundlePath,
       backend: "cron",
       installed: [healthy, poisoned],
-      nativeArtifacts: [
-        {
-          nativeId: "task-healthy-orphan",
-          bindingId: "healthy-orphan",
-          invocation: healthy.invocation,
-          fingerprint: "healthy-fingerprint",
-        },
-        // Present (so the backend read is coherent) but carries no fingerprint.
-        { nativeId: "task-poisoned-orphan", bindingId: "poisoned-orphan", invocation: poisoned.invocation },
-      ],
     });
 
     // No desired source declares either id — both are orphaned drift.
-    expect(plan.removed).toEqual(["healthy-orphan"]);
-    expect(
-      plan.operations.map((operation) => (operation.kind === "remove" ? operation.id : operation.binding.id)),
-    ).toEqual(["healthy-orphan"]);
-    expect(plan.failures).toHaveLength(1);
-    expect(plan.failures[0]?.path).toBe("poisoned-orphan");
-    expect(plan.failures[0]?.reason).toMatch(/no exact native fingerprint/i);
+    expect(plan.removed).toEqual(["healthy-orphan", "poisoned-orphan"]);
+    expect(plan.failures).toEqual([]);
   });
 });

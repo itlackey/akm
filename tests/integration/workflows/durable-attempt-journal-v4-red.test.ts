@@ -70,10 +70,7 @@ interface ReserveUnitAttemptV4Input {
   model: string | null;
   inputHash: string;
   worktreePath?: string | null;
-  claimHolder: string;
-  claimExpiresAt: string;
   now: string;
-  leaseMode: "engine" | "direct";
 }
 
 interface FinishUnitAttemptV4Input {
@@ -81,7 +78,6 @@ interface FinishUnitAttemptV4Input {
   unitId: string;
   attempt: number;
   dispatchId: string;
-  claimHolder: string;
   status: Exclude<AttemptStatus, "running">;
   resultJson: string | null;
   tokens: number | null;
@@ -101,7 +97,7 @@ interface AttemptAccountingV4 {
 
 interface DurableAttemptRepositoryV4 {
   reserveUnitAttempt(input: ReserveUnitAttemptV4Input): {
-    kind: "reserved" | "existing" | "reclaimed" | "busy";
+    kind: "reserved" | "reclaimed";
     attempt: WorkflowRunUnitAttemptRowV4;
   };
   finishUnitAttempt(input: FinishUnitAttemptV4Input): boolean;
@@ -120,8 +116,6 @@ interface StoredEvent {
 const RUN_ID = "77777777-7777-4777-8777-777777777777";
 const WORKFLOW_REF = "workflows/durable-attempts";
 const START = "2026-08-22T12:00:00.000Z";
-const LIVE_UNTIL = "2026-08-22T12:01:30.000Z";
-const EXPIRED = "2026-08-22T11:59:59.000Z";
 
 let storage: IsolatedAkmStorage;
 
@@ -133,7 +127,6 @@ beforeEach(() => {
       runId: RUN_ID,
       workflowRef: WORKFLOW_REF,
       steps: [{ stepId: "review", stepTitle: "Review" }],
-      checkinArmedAt: START,
     });
   } finally {
     db.close();
@@ -162,10 +155,7 @@ function reserveInput(unitId: string, overrides: Partial<ReserveUnitAttemptV4Inp
     engine: "test-llm",
     model: "exact-model",
     inputHash: `hash:${unitId}`,
-    claimHolder: "driver-a",
-    claimExpiresAt: LIVE_UNTIL,
     now: START,
-    leaseMode: "direct",
     ...overrides,
   };
 }
@@ -207,7 +197,6 @@ function finishInput(
     unitId: attempt.unit_id,
     attempt: attempt.attempt,
     dispatchId: attempt.dispatch_id,
-    claimHolder: attempt.claim_holder,
     status: "completed",
     resultJson: JSON.stringify({ message: "safe result" }),
     tokens: 7,
@@ -294,7 +283,6 @@ describe("attempt reservation + workflow_unit_started transaction", () => {
         phase: "unit",
         status: "running",
         input_hash: "hash:review.unit:one",
-        claim_holder: "driver-a",
       });
       expect(result.attempt.dispatch_id).toMatch(/^[0-9a-f-]{16,}$/i);
       expect(durableAttempts(repo).getUnitAttempts(RUN_ID, "review.unit:one")).toEqual([result.attempt]);
@@ -340,30 +328,15 @@ describe("attempt reservation + workflow_unit_started transaction", () => {
     });
   });
 
-  test("is idempotent for a live reservation: same attempt, dispatch id, and one event", async () => {
+  test("re-reserving a still-running attempt hands back the same attempt and dispatch id, with one event", async () => {
     await withWorkflowRunsRepo((repo) => {
       const attempts = durableAttempts(repo);
       const first = attempts.reserveUnitAttempt(reserveInput("review.unit:idempotent"));
       const duplicate = attempts.reserveUnitAttempt(reserveInput("review.unit:idempotent"));
-      expect(duplicate.kind).toBe("existing");
+      expect(duplicate.kind).toBe("reclaimed");
       expect(duplicate.attempt.attempt).toBe(first.attempt.attempt);
       expect(duplicate.attempt.dispatch_id).toBe(first.attempt.dispatch_id);
       expect(attempts.getUnitAttempts(RUN_ID, "review.unit:idempotent")).toHaveLength(1);
-      expect(eventRows("workflow_unit_started")).toHaveLength(1);
-    });
-  });
-
-  test("a live reservation held by another driver is busy and cannot double-reserve", async () => {
-    await withWorkflowRunsRepo((repo) => {
-      const attempts = durableAttempts(repo);
-      const first = attempts.reserveUnitAttempt(reserveInput("review.unit:contended"));
-      const contender = attempts.reserveUnitAttempt(
-        reserveInput("review.unit:contended", { claimHolder: "driver-b", now: "2026-08-22T12:00:30.000Z" }),
-      );
-      expect(contender.kind).toBe("busy");
-      expect(contender.attempt.dispatch_id).toBe(first.attempt.dispatch_id);
-      expect(contender.attempt.claim_holder).toBe("driver-a");
-      expect(attempts.getUnitAttempts(RUN_ID, "review.unit:contended")).toHaveLength(1);
       expect(eventRows("workflow_unit_started")).toHaveLength(1);
     });
   });
@@ -533,11 +506,7 @@ describe("append-only retry, reclaim, late finish, and accounting", () => {
         ),
       ).toBe(true);
       const second = attempts.reserveUnitAttempt(
-        reserveInput("review.unit:retry", {
-          claimHolder: "driver-b",
-          now: "2026-08-22T12:00:10.000Z",
-          claimExpiresAt: "2026-08-22T12:01:40.000Z",
-        }),
+        reserveInput("review.unit:retry", { now: "2026-08-22T12:00:10.000Z" }),
       );
       expect(second.kind).toBe("reserved");
       expect(second.attempt.attempt).toBe(2);
@@ -562,36 +531,28 @@ describe("append-only retry, reclaim, late finish, and accounting", () => {
     });
   });
 
-  test("reclaims an expired reservation in place with the stable dispatch id and rejects the old holder's late finish", async () => {
+  test("reclaims a crashed driver's running reservation in place with the stable dispatch id; the first finish wins", async () => {
     await withWorkflowRunsRepo((repo) => {
       const attempts = durableAttempts(repo);
       const first = attempts.reserveUnitAttempt(
-        reserveInput("review.unit:crash", { claimExpiresAt: EXPIRED, now: "2026-08-22T11:59:00.000Z" }),
+        reserveInput("review.unit:crash", { now: "2026-08-22T11:59:00.000Z" }),
       ).attempt;
-      const reclaimed = attempts.reserveUnitAttempt(
-        reserveInput("review.unit:crash", {
-          claimHolder: "driver-b",
-          now: START,
-          claimExpiresAt: LIVE_UNTIL,
-        }),
-      );
+      const reclaimed = attempts.reserveUnitAttempt(reserveInput("review.unit:crash", { now: START }));
       expect(reclaimed.kind).toBe("reclaimed");
       expect(reclaimed.attempt.attempt).toBe(1);
       expect(reclaimed.attempt.dispatch_id).toBe(first.dispatch_id);
-      expect(reclaimed.attempt.claim_holder).toBe("driver-b");
       expect(eventRows("workflow_unit_started")).toHaveLength(1);
 
-      // Driver A may have executed externally before dying. Its late callback
-      // is fenced by holder + dispatch CAS and cannot charge 101 tokens.
-      expect(attempts.finishUnitAttempt(finishInput(first, { tokens: 101 }))).toBe(false);
+      // The re-dispatch finishes first; the crashed driver's late callback for
+      // the same attempt cannot overwrite it or charge 101 more tokens.
       expect(
         attempts.finishUnitAttempt(finishInput(reclaimed.attempt, { resultJson: JSON.stringify("winner"), tokens: 5 })),
       ).toBe(true);
+      expect(attempts.finishUnitAttempt(finishInput(first, { tokens: 101 }))).toBe(false);
       expect(attempts.getUnitAttempts(RUN_ID, first.unit_id)).toEqual([
         expect.objectContaining({
           attempt: 1,
           dispatch_id: first.dispatch_id,
-          claim_holder: "driver-b",
           status: "completed",
           result_json: JSON.stringify("winner"),
           tokens: 5,

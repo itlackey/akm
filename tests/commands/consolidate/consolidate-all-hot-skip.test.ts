@@ -91,11 +91,9 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
   });
 
   test.each([
-    { dryRun: false, mutation: "deletion", nextCredential: undefined },
-    { dryRun: false, mutation: "replacement", nextCredential: "replacement-secret" },
-    { dryRun: true, mutation: "deletion", nextCredential: undefined },
-    { dryRun: true, mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("all $dryRun-run chunks survive ambient credential $mutation", async ({ dryRun, nextCredential }) => {
+    { dryRun: false },
+    { dryRun: true },
+  ])("each $dryRun-run chunk dispatch reads the credential current at that call", async ({ dryRun }) => {
     writeMemory("cold-a", { hot: false });
     writeMemory("cold-b", { hot: false });
     const config = {
@@ -109,21 +107,22 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
           kind: "llm",
           endpoint: "https://consolidate.example.test/v1/chat/completions",
           model: "planner",
-          apiKey: "$AKM_CONSOLIDATE_LEASE_KEY",
+          apiKey: "$AKM_CONSOLIDATE_ROTATING_KEY",
         },
       },
       defaults: { llmEngine: "planner", improveStrategy: "default" },
       improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const original = "consolidate-original-secret";
+    const rotated = "consolidate-rotated-secret";
     const observed: Array<string | null> = [];
 
-    const result = await withEnv({ AKM_CONSOLIDATE_LEASE_KEY: original }, () =>
+    const result = await withEnv({ AKM_CONSOLIDATE_ROTATING_KEY: original }, () =>
       withMockedFetch(
         () => akmConsolidate({ stashDir, config, dryRun, maxChunkSize: 1 }),
         async (_input, init) => {
           observed.push(new Headers(init?.headers).get("authorization"));
-          if (observed.length === 1) mutateScopedEnv("AKM_CONSOLIDATE_LEASE_KEY", nextCredential);
+          if (observed.length === 1) mutateScopedEnv("AKM_CONSOLIDATE_ROTATING_KEY", rotated);
           return new Response(
             JSON.stringify({ choices: [{ message: { content: JSON.stringify({ operations: [] }) } }] }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -133,7 +132,7 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(observed).toEqual([`Bearer ${original}`, `Bearer ${original}`]);
+    expect(observed).toEqual([`Bearer ${original}`, `Bearer ${rotated}`]);
   });
 
   test("an all-hot chunk skips the LLM and buckets every memory as judgedNoAction", async () => {

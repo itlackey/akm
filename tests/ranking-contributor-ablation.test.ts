@@ -9,11 +9,7 @@ import path from "node:path";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { recognizeStashEntries } from "../src/indexer/scan/drain-dir";
 import { lexicalNameMatchTier } from "../src/indexer/search/ranking";
-import {
-  applyBeliefStateScoreCeiling,
-  defaultRankingContributors,
-  type RankingContext,
-} from "../src/indexer/search/ranking-contributors";
+import { defaultRankingContributors, type RankingContext } from "../src/indexer/search/ranking-contributors";
 import type { RankedEntryInput } from "../src/indexer/search/ranking-types";
 
 // ── SPEC-2: tag-ranking fires for path-derived scope tokens ─────────────────
@@ -168,88 +164,5 @@ describe("exact-name ranking contributor identity isolation (#930)", () => {
     expect(lexicalNameMatchTier(opaque, ["xq000"])).toBe(0);
     expect(lexicalNameMatchTier(deployment, ["deploy"])).toBeGreaterThanOrEqual(2);
     expect(lexicalNameMatchTier(multiToken, ["deploy", "production"])).toBeGreaterThanOrEqual(2);
-  });
-});
-
-// ── SPEC-5: demoting-belief-state final-score ceilings ──────────────────────
-//
-// The additive beliefStateBoost penalties multiply the bounded FTS base, so a
-// demoted incumbent can still earn enough independent boosts to outrank its
-// own correction — the ceilings are what actually guarantee "subsequent
-// search ranks new above old". These unit tests pin the mechanism directly
-// (constants, severity order, no-op states, below-ceiling relative order, and
-// the preCeilingScore handoff to db-search's semantic minScore floor),
-// independent of any bm25 delta in the e2e fixtures.
-
-describe("applyBeliefStateScoreCeiling (SPEC-5 demoting-state ceilings)", () => {
-  function makeBeliefItem(beliefState: string | undefined, score: number): RankedEntryInput {
-    const entry: IndexDocument = {
-      name: "belief-item",
-      type: "memory",
-      description: "ceiling unit fixture",
-      filename: "belief-item.md",
-      ...(beliefState !== undefined ? { beliefState } : {}),
-    } as IndexDocument;
-    return { id: 1, entry, filePath: "/stash/memories/belief-item.md", score, rankingMode: "fts" };
-  }
-
-  test("pins the ceiling constants and the severity order deprecated > superseded > contradicted > archived", () => {
-    const expected: Array<[string, number]> = [
-      ["deprecated", 0.28],
-      ["superseded", 0.25],
-      ["contradicted", 0.2],
-      ["archived", 0.15],
-    ];
-    const clamped: number[] = [];
-    for (const [state, ceiling] of expected) {
-      const item = makeBeliefItem(state, 1.0);
-      applyBeliefStateScoreCeiling(item);
-      expect(item.score).toBe(ceiling);
-      clamped.push(item.score);
-    }
-    // Severity order mirrors the additive-penalty order (phase 1A): each
-    // demoting state sits strictly below the previous, and every ceiling sits
-    // below the 0.3 un-demoted keyword floor from normalizeFtsScores, so any
-    // un-demoted keyword hit outranks a ceilinged one.
-    for (let i = 1; i < clamped.length; i++) {
-      expect(clamped[i]).toBeLessThan(clamped[i - 1]!);
-    }
-    for (const ceiling of clamped) {
-      expect(ceiling).toBeLessThan(0.3);
-    }
-  });
-
-  test("no-op for asserted, active, and unset belief states", () => {
-    for (const state of ["asserted", "active", undefined]) {
-      const item = makeBeliefItem(state, 1.37);
-      applyBeliefStateScoreCeiling(item);
-      expect(item.score).toBe(1.37);
-      expect(item.preCeilingScore).toBeUndefined();
-    }
-  });
-
-  test("scores already below the ceiling are untouched — relative order among demoted entries survives", () => {
-    const low = makeBeliefItem("superseded", 0.1);
-    const high = makeBeliefItem("superseded", 0.2);
-    applyBeliefStateScoreCeiling(low);
-    applyBeliefStateScoreCeiling(high);
-    expect(low.score).toBe(0.1);
-    expect(high.score).toBe(0.2);
-    expect(low.score).toBeLessThan(high.score);
-    // Not clamped → no preCeilingScore, so db-search's minScore floor judges
-    // these by their real score exactly as before.
-    expect(low.preCeilingScore).toBeUndefined();
-    expect(high.preCeilingScore).toBeUndefined();
-  });
-
-  test("records the pre-clamp score so a semantic-only hit is floored on what it WOULD have scored", () => {
-    // Archived ceiling (0.15) sits below the default semantic minScore floor
-    // (0.2): db-search must consult preCeilingScore so the demotion ranks the
-    // hit last instead of silently dropping it.
-    const item = makeBeliefItem("archived", 0.6);
-    item.rankingMode = "semantic";
-    applyBeliefStateScoreCeiling(item);
-    expect(item.score).toBe(0.15);
-    expect(item.preCeilingScore).toBe(0.6);
   });
 });

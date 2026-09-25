@@ -50,15 +50,12 @@ import { type AkmConfig, getIndexPassConfig, loadConfig, resolveBatchSize } from
 import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
 import { warn, warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import {
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-} from "../../integrations/agent/execution-lowering";
+import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../../llm/graph-extract";
 import * as graphExtract from "../../llm/graph-extract";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
-import { preflightStructuredLlmRunner, type StructuredLlmRunner } from "../../llm/structured-call";
+import type { StructuredLlmRunner } from "../../llm/structured-call";
 import type { Database } from "../../storage/database";
 import type { LlmCacheEntry } from "../../storage/repositories/index-entry-types";
 import {
@@ -514,7 +511,6 @@ async function extractGraphBatches(args: {
   cacheVariant: string;
   telemetry: GraphExtractionTelemetry;
   llmRunner: StructuredLlmRunner;
-  lease: LoweredExecutionDispatchLease | undefined;
   featureConfig: AkmConfig;
   onFallback: (event: { feature: string; reason: string }) => void;
   batchState: graphExtract.GraphBatchState;
@@ -532,7 +528,6 @@ async function extractGraphBatches(args: {
     cacheVariant,
     telemetry,
     llmRunner,
-    lease,
     featureConfig,
     onFallback,
     abortState,
@@ -589,7 +584,6 @@ async function extractGraphBatches(args: {
             batchState,
             telemetry: runtimeTelemetry,
             onNotices,
-            ...(lease ? { lease } : {}),
             ...(maxChunksPerAsset != null ? { maxChunksPerAsset } : {}),
           },
         );
@@ -719,10 +713,9 @@ async function executeQueuedGraphPlans(args: {
   featureConfig: AkmConfig;
   signal: AbortSignal | undefined;
   llmRunner: StructuredLlmRunner;
-  lease: LoweredExecutionDispatchLease | undefined;
   onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
 }): Promise<QueuedGraphExecution> {
-  const { plans, db, stashRoot, featureConfig, signal, llmRunner, lease, onNotices } = args;
+  const { plans, db, stashRoot, featureConfig, signal, llmRunner, onNotices } = args;
   if (!db) return { graphChanged: false, acknowledgements: [] };
   let graphChanged = false;
   const acknowledgements: QueuedGraphExecution["acknowledgements"] = [];
@@ -751,7 +744,6 @@ async function executeQueuedGraphPlans(args: {
         config: featureConfig,
         signal,
         llmRunner,
-        lease,
         onNotices,
       });
       if (!outcome.written) continue;
@@ -889,297 +881,285 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   // Validate exactly once iff classification found real model work. Queue
   // acknowledgements, cache writes, and graph replacement all happen after
   // this boundary, so a missing credential cannot partially mutate a batch.
-  const dispatchLease =
-    queueNeedsModel || eligibleNeedsModel ? await preflightStructuredLlmRunner(llmRunner) : undefined;
+  if (queueNeedsModel || eligibleNeedsModel) assertRunnerCredentials(llmRunner);
 
-  try {
-    const queueExecution = await executeQueuedGraphPlans({
-      plans: queuePlans,
-      db,
-      stashRoot: primary.path,
-      featureConfig,
-      signal,
-      llmRunner,
-      lease: dispatchLease,
-      onNotices,
-    });
-    if (queueExecution.graphChanged) {
-      previousGraph = loadGraphFile(primary.path, db);
-    }
+  const queueExecution = await executeQueuedGraphPlans({
+    plans: queuePlans,
+    db,
+    stashRoot: primary.path,
+    featureConfig,
+    signal,
+    llmRunner,
+    onNotices,
+  });
+  if (queueExecution.graphChanged) {
+    previousGraph = loadGraphFile(primary.path, db);
+  }
 
-    if (considered === 0) {
-      acknowledgeQueuedGraphPlans(db, primary.path, queueExecution);
-      const scoped = options.candidatePaths ? ` matching ${options.candidatePaths.size} candidate path(s)` : "";
-      warnVerbose(
-        `graph extraction: skipped because no eligible files${scoped} were found under ${primary.path}. ` +
-          `includeTypes=${includeTypes.join(",")}`,
-      );
-      return emptyResult();
-    }
-
-    const nodes: GraphFileNode[] = [];
-    let totalEntities = 0;
-    let totalRelations = 0;
-    let processed = 0;
-    let extracted = 0;
-    onProgress?.({ processed, total: considered, extracted, totalEntities, totalRelations });
-
-    const reportProgress = (currentPath: string | undefined, result: ExtractionRecord | undefined): void => {
-      processed += 1;
-      if (result) {
-        if (result.entities.length > 0) extracted += 1;
-        totalEntities += result.entities.length;
-        totalRelations += result.relations.length;
-      }
-      onProgress?.({
-        processed,
-        total: considered,
-        extracted,
-        totalEntities,
-        totalRelations,
-        currentPath,
-      });
-    };
-
-    const extractionRunId = crypto.randomUUID();
-    const telemetry: GraphExtractionTelemetry = {
-      extractorId,
-      extractionRunId,
-      model: llmRunner.connection.model,
-      promptVersion: graphExtract.GRAPH_EXTRACT_PROMPT_VERSION,
-      batchSize,
-      cacheHits: 0,
-      cacheMisses: 0,
-      truncationCount: 0,
-      failureCount: 0,
-      htmlErrorCount: 0,
-      retryAttempts: 0,
-      nonArrayBatchFailures: 0,
-    };
-    const runtimeTelemetry: graphExtract.GraphRuntimeTelemetry = {
-      truncationCount: 0,
-      failureCount: 0,
-      htmlErrorCount: 0,
-      retryAttempts: 0,
-      filteredGenericEntities: 0,
-      filteredInvalidRelations: 0,
-      filteredLowConfidenceRelations: 0,
-      contextBatchRetries: 0,
-      nonArrayBatchFailures: 0,
-    };
-    const batchState: graphExtract.GraphBatchState = {
-      batchingDisabled: false,
-      nonArrayBatchFailures: 0,
-    };
-    const abortState: GraphExtractionAbortState = { attempts: 0, failures: 0, aborted: false };
-    warnVerbose(
-      `graph extraction: starting for ${considered} eligible file(s) under ${primary.path}; ` +
-        `includeTypes=${includeTypes.join(",")}, batchSize=${batchSize}, concurrency=${llmRunner.connection.concurrency ?? 1}, ` +
-        `reEnrich=${reEnrich === true}, candidateScoped=${options.candidatePaths ? "true" : "false"}.`,
-    );
-
-    const onFallback = (evt: { feature: string; reason: string }) => {
-      warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-    };
-
-    let extractionResults: Array<ExtractionRecord | undefined>;
-    let configFailure: ConfigError | undefined;
-
-    if (batchSize <= 1) {
-      // ── Original per-asset path (with incremental cache) ─────────────────
-      extractionResults = await concurrentMap(
-        eligiblePlans,
-        async (plan) => {
-          const { candidate, bodyHash } = plan;
-          if (signal?.aborted) {
-            reportProgress(candidate.absPath, undefined);
-            return undefined;
-          }
-          let cached: GraphCacheShape;
-          if (plan.kind === "cache-hit") {
-            telemetry.cacheHits += 1;
-            cached = plan.cached;
-            if (db && plan.persistCache && !isFailedExtractionStatus(cached.status)) {
-              upsertLlmCacheEntry(db, candidate.absPath, bodyHash, JSON.stringify(cached), cacheVariant);
-            }
-          } else {
-            if (abortState.aborted) {
-              reportProgress(candidate.absPath, undefined);
-              return undefined;
-            }
-            telemetry.cacheMisses += 1;
-            let extraction: Awaited<ReturnType<typeof graphExtract.extractGraphFromBody>>;
-            try {
-              extraction = await graphExtract.extractGraphFromBody(
-                llmRunner,
-                candidate.body,
-                signal,
-                featureConfig,
-                onFallback,
-                {
-                  batchState,
-                  telemetry: runtimeTelemetry,
-                  onNotices,
-                  ...(dispatchLease ? { lease: dispatchLease } : {}),
-                  ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
-                },
-              );
-            } catch (err) {
-              if (err instanceof ConfigError) {
-                configFailure ??= err;
-                return undefined;
-              }
-              throw err;
-            }
-            cached = {
-              entities: extraction.entities,
-              relations: extraction.relations,
-              ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
-              ...(extraction.status ? { status: extraction.status } : {}),
-              ...(extraction.reason ? { reason: extraction.reason } : {}),
-            };
-            recordGraphExtractionAttempt(abortState, isFailedExtractionStatus(cached.status));
-            if (db && !isFailedExtractionStatus(cached.status)) {
-              upsertLlmCacheEntry(db, candidate.absPath, bodyHash, JSON.stringify(cached), cacheVariant);
-            }
-          }
-
-          const result: ExtractionRecord = {
-            absPath: candidate.absPath,
-            type: candidate.type,
-            bodyHash,
-            entities: cached.entities,
-            relations: cached.relations,
-            ...(cached.confidence !== undefined ? { confidence: cached.confidence } : {}),
-            ...(cached.status ? { status: cached.status } : {}),
-            ...(cached.reason ? { reason: cached.reason } : {}),
-          };
-          reportProgress(candidate.absPath, result);
-          return result;
-        },
-        // Caller-set connection concurrency or 1: `resolveLlmEngineUse` does
-        // not forward `engines.<name>.concurrency`, so config cannot raise this.
-        llmRunner.connection.concurrency ?? 1,
-      );
-    } else {
-      const batch = await extractGraphBatches({
-        plans: eligiblePlans,
-        batchSize,
-        signal,
-        db,
-        cacheVariant,
-        telemetry,
-        llmRunner,
-        lease: dispatchLease,
-        featureConfig,
-        onFallback,
-        batchState,
-        runtimeTelemetry,
-        abortState,
-        onNotices,
-        reportProgress,
-        ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
-      });
-      extractionResults = batch.results;
-      configFailure ??= batch.configFailure;
-    }
-
-    if (configFailure) throw configFailure;
+  if (considered === 0) {
     acknowledgeQueuedGraphPlans(db, primary.path, queueExecution);
-
-    for (const result of extractionResults) {
-      if (!result) continue;
-      nodes.push({
-        path: result.absPath,
-        type: result.type,
-        bodyHash: result.bodyHash,
-        entities: [...new Set(result.entities.map((entity) => entity.trim()).filter(Boolean))],
-        relations: result.relations
-          .map((r) => ({
-            from: r.from.trim(),
-            to: r.to.trim(),
-            ...(r.type ? { type: r.type.trim() } : {}),
-            ...(normalizeConfidence(r.confidence) !== undefined
-              ? { confidence: normalizeConfidence(r.confidence) }
-              : {}),
-          }))
-          .filter((relation) => relation.from && relation.to),
-        ...(normalizeConfidence(result.confidence) !== undefined
-          ? { confidence: normalizeConfidence(result.confidence) }
-          : {}),
-        status: result.status ?? (result.entities.length > 0 ? "extracted" : "empty"),
-        reason: result.reason ?? (result.entities.length > 0 ? "none" : "no_graph_content"),
-        extractionRunId,
-      });
-    }
-
-    const queuedNodes = options.candidatePaths
-      ? []
-      : previousGraph.files.filter(
-          (node) =>
-            queuePlans.some((plan) => plan.filePath === node.path && plan.kind !== "discard") &&
-            !nodes.some((candidate) => candidate.path === node.path),
-        );
-    const mergedNodes = mergeGraphNodes(previousGraph.files, [...queuedNodes, ...nodes], options.candidatePaths);
-    const assetRefs = mergedNodes.map((node) => node.path);
-    const deduped = deduplicateGraph(
-      mergedNodes.map((node) => ({ entities: node.entities, relations: node.relations })),
-      assetRefs,
-    );
-    telemetry.truncationCount = runtimeTelemetry.truncationCount ?? 0;
-    telemetry.truncatedChunks = runtimeTelemetry.truncatedChunks ?? 0;
-    telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
-    telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
-    telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
-    telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
-    telemetry.aborted = abortState.aborted;
-
-    const qualityConsidered = mergedNodes.length;
-    const qualityExtracted = mergedNodes.filter(
-      (node) => node.status === "extracted" && node.entities.length > 0,
-    ).length;
-    const quality = computeGraphQualityTelemetry(
-      qualityConsidered,
-      qualityExtracted,
-      deduped.entities.length,
-      deduped.relations.length,
-    );
-    const warnings = buildLowQualityWarnings(quality, telemetry);
-    if (abortState.message) warnings.push(abortState.message);
-    for (const warning of warnings) warnVerbose(`graph extraction quality: ${warning}`);
-
-    const graph: GraphFile = {
-      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
-      generatedAt: new Date().toISOString(),
-      stashRoot: primary.path,
-      files: mergedNodes,
-      entities: deduped.entities,
-      relations: deduped.relations,
-      quality,
-      telemetry,
-    };
-
-    const written = writeGraphFile(primary.path, graph, db);
+    const scoped = options.candidatePaths ? ` matching ${options.candidatePaths.size} candidate path(s)` : "";
     warnVerbose(
-      `graph extraction: ${written ? "persisted" : "did not persist"} graph for ${primary.path}; ` +
-        `considered=${considered}, extractedThisRun=${extracted}, storedFiles=${mergedNodes.length}, ` +
-        `entities=${deduped.entities.length}, relations=${deduped.relations.length}, coverage=${quality.extractionCoverage}.`,
+      `graph extraction: skipped because no eligible files${scoped} were found under ${primary.path}. ` +
+        `includeTypes=${includeTypes.join(",")}`,
     );
+    return emptyResult();
+  }
 
-    return {
-      considered,
+  const nodes: GraphFileNode[] = [];
+  let totalEntities = 0;
+  let totalRelations = 0;
+  let processed = 0;
+  let extracted = 0;
+  onProgress?.({ processed, total: considered, extracted, totalEntities, totalRelations });
+
+  const reportProgress = (currentPath: string | undefined, result: ExtractionRecord | undefined): void => {
+    processed += 1;
+    if (result) {
+      if (result.entities.length > 0) extracted += 1;
+      totalEntities += result.entities.length;
+      totalRelations += result.relations.length;
+    }
+    onProgress?.({
+      processed,
+      total: considered,
       extracted,
       totalEntities,
       totalRelations,
-      written,
-      quality,
+      currentPath,
+    });
+  };
+
+  const extractionRunId = crypto.randomUUID();
+  const telemetry: GraphExtractionTelemetry = {
+    extractorId,
+    extractionRunId,
+    model: llmRunner.connection.model,
+    promptVersion: graphExtract.GRAPH_EXTRACT_PROMPT_VERSION,
+    batchSize,
+    cacheHits: 0,
+    cacheMisses: 0,
+    truncationCount: 0,
+    failureCount: 0,
+    htmlErrorCount: 0,
+    retryAttempts: 0,
+    nonArrayBatchFailures: 0,
+  };
+  const runtimeTelemetry: graphExtract.GraphRuntimeTelemetry = {
+    truncationCount: 0,
+    failureCount: 0,
+    htmlErrorCount: 0,
+    retryAttempts: 0,
+    filteredGenericEntities: 0,
+    filteredInvalidRelations: 0,
+    filteredLowConfidenceRelations: 0,
+    contextBatchRetries: 0,
+    nonArrayBatchFailures: 0,
+  };
+  const batchState: graphExtract.GraphBatchState = {
+    batchingDisabled: false,
+    nonArrayBatchFailures: 0,
+  };
+  const abortState: GraphExtractionAbortState = { attempts: 0, failures: 0, aborted: false };
+  warnVerbose(
+    `graph extraction: starting for ${considered} eligible file(s) under ${primary.path}; ` +
+      `includeTypes=${includeTypes.join(",")}, batchSize=${batchSize}, concurrency=${llmRunner.connection.concurrency ?? 1}, ` +
+      `reEnrich=${reEnrich === true}, candidateScoped=${options.candidatePaths ? "true" : "false"}.`,
+  );
+
+  const onFallback = (evt: { feature: string; reason: string }) => {
+    warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+  };
+
+  let extractionResults: Array<ExtractionRecord | undefined>;
+  let configFailure: ConfigError | undefined;
+
+  if (batchSize <= 1) {
+    // ── Original per-asset path (with incremental cache) ─────────────────
+    extractionResults = await concurrentMap(
+      eligiblePlans,
+      async (plan) => {
+        const { candidate, bodyHash } = plan;
+        if (signal?.aborted) {
+          reportProgress(candidate.absPath, undefined);
+          return undefined;
+        }
+        let cached: GraphCacheShape;
+        if (plan.kind === "cache-hit") {
+          telemetry.cacheHits += 1;
+          cached = plan.cached;
+          if (db && plan.persistCache && !isFailedExtractionStatus(cached.status)) {
+            upsertLlmCacheEntry(db, candidate.absPath, bodyHash, JSON.stringify(cached), cacheVariant);
+          }
+        } else {
+          if (abortState.aborted) {
+            reportProgress(candidate.absPath, undefined);
+            return undefined;
+          }
+          telemetry.cacheMisses += 1;
+          let extraction: Awaited<ReturnType<typeof graphExtract.extractGraphFromBody>>;
+          try {
+            extraction = await graphExtract.extractGraphFromBody(
+              llmRunner,
+              candidate.body,
+              signal,
+              featureConfig,
+              onFallback,
+              {
+                batchState,
+                telemetry: runtimeTelemetry,
+                onNotices,
+                ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
+              },
+            );
+          } catch (err) {
+            if (err instanceof ConfigError) {
+              configFailure ??= err;
+              return undefined;
+            }
+            throw err;
+          }
+          cached = {
+            entities: extraction.entities,
+            relations: extraction.relations,
+            ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
+            ...(extraction.status ? { status: extraction.status } : {}),
+            ...(extraction.reason ? { reason: extraction.reason } : {}),
+          };
+          recordGraphExtractionAttempt(abortState, isFailedExtractionStatus(cached.status));
+          if (db && !isFailedExtractionStatus(cached.status)) {
+            upsertLlmCacheEntry(db, candidate.absPath, bodyHash, JSON.stringify(cached), cacheVariant);
+          }
+        }
+
+        const result: ExtractionRecord = {
+          absPath: candidate.absPath,
+          type: candidate.type,
+          bodyHash,
+          entities: cached.entities,
+          relations: cached.relations,
+          ...(cached.confidence !== undefined ? { confidence: cached.confidence } : {}),
+          ...(cached.status ? { status: cached.status } : {}),
+          ...(cached.reason ? { reason: cached.reason } : {}),
+        };
+        reportProgress(candidate.absPath, result);
+        return result;
+      },
+      // Caller-set connection concurrency or 1: `resolveLlmEngineUse` does
+      // not forward `engines.<name>.concurrency`, so config cannot raise this.
+      llmRunner.connection.concurrency ?? 1,
+    );
+  } else {
+    const batch = await extractGraphBatches({
+      plans: eligiblePlans,
+      batchSize,
+      signal,
+      db,
+      cacheVariant,
       telemetry,
-      warnings,
-      ...(noticesByKey.size > 0 ? { notices: Object.freeze([...noticesByKey.values()]) } : {}),
-    };
-  } finally {
-    if (dispatchLease) disposeLoweredExecutionDispatchLease(dispatchLease);
+      llmRunner,
+      featureConfig,
+      onFallback,
+      batchState,
+      runtimeTelemetry,
+      abortState,
+      onNotices,
+      reportProgress,
+      ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
+    });
+    extractionResults = batch.results;
+    configFailure ??= batch.configFailure;
   }
+
+  if (configFailure) throw configFailure;
+  acknowledgeQueuedGraphPlans(db, primary.path, queueExecution);
+
+  for (const result of extractionResults) {
+    if (!result) continue;
+    nodes.push({
+      path: result.absPath,
+      type: result.type,
+      bodyHash: result.bodyHash,
+      entities: [...new Set(result.entities.map((entity) => entity.trim()).filter(Boolean))],
+      relations: result.relations
+        .map((r) => ({
+          from: r.from.trim(),
+          to: r.to.trim(),
+          ...(r.type ? { type: r.type.trim() } : {}),
+          ...(normalizeConfidence(r.confidence) !== undefined ? { confidence: normalizeConfidence(r.confidence) } : {}),
+        }))
+        .filter((relation) => relation.from && relation.to),
+      ...(normalizeConfidence(result.confidence) !== undefined
+        ? { confidence: normalizeConfidence(result.confidence) }
+        : {}),
+      status: result.status ?? (result.entities.length > 0 ? "extracted" : "empty"),
+      reason: result.reason ?? (result.entities.length > 0 ? "none" : "no_graph_content"),
+      extractionRunId,
+    });
+  }
+
+  const queuedNodes = options.candidatePaths
+    ? []
+    : previousGraph.files.filter(
+        (node) =>
+          queuePlans.some((plan) => plan.filePath === node.path && plan.kind !== "discard") &&
+          !nodes.some((candidate) => candidate.path === node.path),
+      );
+  const mergedNodes = mergeGraphNodes(previousGraph.files, [...queuedNodes, ...nodes], options.candidatePaths);
+  const assetRefs = mergedNodes.map((node) => node.path);
+  const deduped = deduplicateGraph(
+    mergedNodes.map((node) => ({ entities: node.entities, relations: node.relations })),
+    assetRefs,
+  );
+  telemetry.truncationCount = runtimeTelemetry.truncationCount ?? 0;
+  telemetry.truncatedChunks = runtimeTelemetry.truncatedChunks ?? 0;
+  telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
+  telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
+  telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
+  telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
+  telemetry.aborted = abortState.aborted;
+
+  const qualityConsidered = mergedNodes.length;
+  const qualityExtracted = mergedNodes.filter((node) => node.status === "extracted" && node.entities.length > 0).length;
+  const quality = computeGraphQualityTelemetry(
+    qualityConsidered,
+    qualityExtracted,
+    deduped.entities.length,
+    deduped.relations.length,
+  );
+  const warnings = buildLowQualityWarnings(quality, telemetry);
+  if (abortState.message) warnings.push(abortState.message);
+  for (const warning of warnings) warnVerbose(`graph extraction quality: ${warning}`);
+
+  const graph: GraphFile = {
+    schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
+    stashRoot: primary.path,
+    files: mergedNodes,
+    entities: deduped.entities,
+    relations: deduped.relations,
+    quality,
+    telemetry,
+  };
+
+  const written = writeGraphFile(primary.path, graph, db);
+  warnVerbose(
+    `graph extraction: ${written ? "persisted" : "did not persist"} graph for ${primary.path}; ` +
+      `considered=${considered}, extractedThisRun=${extracted}, storedFiles=${mergedNodes.length}, ` +
+      `entities=${deduped.entities.length}, relations=${deduped.relations.length}, coverage=${quality.extractionCoverage}.`,
+  );
+
+  return {
+    considered,
+    extracted,
+    totalEntities,
+    totalRelations,
+    written,
+    quality,
+    telemetry,
+    warnings,
+    ...(noticesByKey.size > 0 ? { notices: Object.freeze([...noticesByKey.values()]) } : {}),
+  };
 }
 
 /**
@@ -1199,7 +1179,6 @@ interface SingleFileGraphOptions {
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
   signal?: AbortSignal;
   config?: AkmConfig;
-  lease?: LoweredExecutionDispatchLease;
 }
 
 type SingleFileGraphRevision = { written: false } | { written: true; bodyHash: string };
@@ -1240,7 +1219,6 @@ async function extractGraphForSingleFileRevision(
   filePath: string,
   opts?: SingleFileGraphOptions,
 ): Promise<SingleFileGraphRevision> {
-  let ownedLease: LoweredExecutionDispatchLease | undefined;
   try {
     // Re-read from disk — never trust a stale queued body.
     let raw: string;
@@ -1278,11 +1256,8 @@ async function extractGraphForSingleFileRevision(
       const featureConfig = invocationOwnsRunner
         ? { ...config, index: { ...config.index, graph: { ...config.index?.graph, enabled: true } } }
         : config;
-      const lease = opts?.lease ?? (await preflightStructuredLlmRunner(llmRunner));
-      if (!opts?.lease) ownedLease = lease;
       const result = await graphExtract.extractGraphFromBody(llmRunner, body, opts?.signal, featureConfig, undefined, {
         ...(opts?.onNotices ? { onNotices: opts.onNotices } : {}),
-        lease,
       });
       extraction = {
         entities: result.entities,
@@ -1356,8 +1331,6 @@ async function extractGraphForSingleFileRevision(
       `graph extraction: failed to extract graph for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { written: false };
-  } finally {
-    if (ownedLease) disposeLoweredExecutionDispatchLease(ownedLease);
   }
 }
 

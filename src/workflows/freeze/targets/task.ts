@@ -5,7 +5,6 @@
 import path from "node:path";
 import { parseBundleRef } from "../../../core/asset/asset-ref";
 import { UsageError } from "../../../core/errors";
-import { freezeExecutableIdentity } from "../../../execution/executable-identity";
 import type { InputContract, TaskInputBinding } from "../../../execution/input-contract";
 import { prepareTaskV3Execution } from "../../../tasks/prepare/prepare";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
@@ -195,13 +194,11 @@ export async function taskDispatch(
     };
     const exec = freezeExecSpec(source, authoredExec, context);
     const environment = Object.freeze([...taskLiterals, ...freezeEnvironment(source, authoredExec, context)]);
-    const executable = freezeExecutableIdentity(exec.command[0] as string, { cwd: prepared.cwdIdentity.realCwd });
     const target: FrozenWorkflowShellTarget = Object.freeze({
       kind: "shell",
       contentHash: "",
       exec,
       cwdIdentity: prepared.cwdIdentity,
-      executable,
       ...gitIdentity(baseUnit, prepared.cwdIdentity.realRoot),
     });
     return withInputBindings(

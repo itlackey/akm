@@ -24,7 +24,7 @@ import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
-import type { SchedulerBackendInspection } from "../../tasks/scheduler-binding";
+import type { InstalledSchedulerBinding } from "../../tasks/scheduler-binding";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { prompt } from "../prompt";
 
@@ -114,7 +114,7 @@ export interface ScheduledTasksDeps {
   prepare: (tasks: PreparedSetupTask[]) => Promise<number>;
   sync: typeof akmTasksSync;
   /** Read-only native scheduler inventory, used to pre-check the review truthfully. */
-  inspectInstalled: () => Promise<SchedulerBackendInspection>;
+  inspectInstalled: () => Promise<{ installed: readonly InstalledSchedulerBinding[] }>;
 }
 
 export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
@@ -254,10 +254,7 @@ const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
   list: listSetupTaskDefinitions,
   prepare: prepareSetupTaskDefinitions,
   sync: akmTasksSync,
-  inspectInstalled: async () => {
-    const backend = selectBackend();
-    return backend.inspectBindings ? await backend.inspectBindings({}) : { installed: [], artifacts: [] };
-  },
+  inspectInstalled: async () => ({ installed: await selectBackend().list() }),
 };
 
 export async function stepScheduledTasks(

@@ -9,23 +9,10 @@ import { akmTasksSync } from "../src/commands/tasks/tasks";
 import { withWorkflowRunsRepo } from "../src/storage/repositories/workflow-runs-repository";
 import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import type { SchedulerBackend } from "../src/tasks/backends/types";
-import { type PreparedSchedulerSourceSet, prepareSchedulerSyncSourceSet } from "../src/tasks/scheduler-sync";
 import { startWorkflowRun } from "../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
-type ExecutableWorkflowEvidence = Readonly<{
-  ref: string;
-  irVersion: 5;
-  planHash: string;
-  sourceReadSet: readonly Readonly<{ identity: Readonly<{ ref: string; hash: string }> }>[];
-}>;
-
-type DurablePreparedSet = PreparedSchedulerSourceSet & {
-  readonly executableWorkflows: readonly ExecutableWorkflowEvidence[];
-};
-
 let storage: IsolatedAkmStorage;
-let assetsRoot: string;
 
 function write(root: string, relative: string, content: string): string {
   const file = path.join(root, relative);
@@ -49,24 +36,11 @@ function workflow(name: string, stepLines: readonly string[]): string {
   ].join("\n");
 }
 
-function executableWorkflows(prepared: PreparedSchedulerSourceSet): readonly ExecutableWorkflowEvidence[] {
-  return (prepared as DurablePreparedSet).executableWorkflows;
-}
-
 function recordingBackend() {
-  const calls = { runtime: 0, signatures: 0, snapshots: 0, installs: 0, removes: 0 };
-  const backend = {
+  const calls = { installs: 0, removes: 0 };
+  const backend: SchedulerBackend = {
     name: "cron",
-    inspectBindings: () => ({ installed: [], artifacts: [] }),
-    expectedSignature(binding: unknown) {
-      calls.signatures += 1;
-      return JSON.stringify(binding);
-    },
-    snapshotBindings(nativeIds: readonly string[]) {
-      calls.snapshots += 1;
-      return { nativeIds: [...nativeIds], artifacts: [] };
-    },
-    restoreBindings() {},
+    expectedSignature: (binding) => JSON.stringify(binding),
     install() {
       calls.installs += 1;
     },
@@ -75,19 +49,16 @@ function recordingBackend() {
     },
     list: () => [],
     setEnabled() {},
-  } as unknown as SchedulerBackend;
+  };
   return { backend, calls };
 }
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  assetsRoot = path.join(storage.root, "assets");
-  fs.mkdirSync(assetsRoot, { recursive: true });
   writeSandboxConfig({
     defaultBundle: "team",
     bundles: {
       team: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } },
-      assets: { path: assetsRoot, components: { main: { root: ".", adapter: "akm" } } },
     },
     defaults: { engine: "fixture" },
     engines: { fixture: { kind: "agent", platform: "claude", bin: "/bin/true" } },
@@ -96,37 +67,8 @@ beforeEach(() => {
 
 afterEach(() => storage.cleanup());
 
-describe("WP7 scheduler desired-set durable v4 RED", () => {
-  test("dry-freezes the complete sorted set as v4 hash/read-set evidence without retaining plan JSON", async () => {
-    write(storage.stashDir, "workflows/zeta.yml", workflow("zeta", ["      - id: zeta", "        run: echo zeta"]));
-    write(storage.stashDir, "workflows/alpha.yml", workflow("alpha", ["      - id: alpha", "        run: echo alpha"]));
-
-    const prepared = await prepareSchedulerSyncSourceSet({
-      sourceRoot: storage.stashDir,
-      adapterId: "akm",
-      bundleName: "team",
-      bundleTarget: "team",
-      backend: "cron",
-      installed: [],
-      nativeArtifacts: [],
-    });
-    const evidence = executableWorkflows(prepared);
-
-    expect(evidence.map(({ ref }) => ref)).toEqual(["team//workflows/alpha", "team//workflows/zeta"]);
-    for (const item of evidence) {
-      expect(item.irVersion).toBe(5);
-      expect(item.planHash).toMatch(/^[a-f0-9]{64}$/);
-      expect(item.sourceReadSet.map(({ identity }) => identity.ref)).toContain(item.ref);
-      expect(item).not.toHaveProperty("planJson");
-    }
-  });
-
+describe("scheduled workflows under task sync", () => {
   test.each([
-    [
-      "missing composed task",
-      workflow("invalid", ["      - id: missing", "        uses: tasks/does-not-exist"]),
-      /not found|not present|missing/i,
-    ],
     [
       "multi-job workflow",
       [
@@ -166,13 +108,7 @@ describe("WP7 scheduler desired-set durable v4 RED", () => {
     const { backend, calls } = recordingBackend();
 
     const result = await akmTasksSync(
-      {
-        backend,
-        schedulerRuntime() {
-          calls.runtime += 1;
-          return { binding: ["/test/akm"], contextPath: "/test/context.json" };
-        },
-      },
+      { backend, schedulerRuntime: () => ({ binding: ["/test/akm"], contextPath: "/test/context.json" }) },
       "team",
     );
 
@@ -182,7 +118,7 @@ describe("WP7 scheduler desired-set durable v4 RED", () => {
     expect(calls.installs).toBe(1);
   });
 
-  test("source changed after sync is fresh-frozen by the scheduled start, not reused from sync evidence", async () => {
+  test("a source changed after sync is frozen fresh by the scheduled start", async () => {
     const file = write(
       storage.stashDir,
       "workflows/release.yml",
@@ -202,41 +138,5 @@ describe("WP7 scheduler desired-set durable v4 RED", () => {
     expect(row?.plan_ir_version).toBe(5);
     expect(row?.plan_json).toContain("echo after-sync");
     expect(row?.plan_json).not.toContain("echo before-sync");
-  });
-
-  test("final whole-set CAS covers cross-bundle task/script reads before the first backend operation", async () => {
-    write(assetsRoot, "tasks/child.yml", "version: 4\nuses: assets//scripts/release.sh\n");
-    const script = write(assetsRoot, "scripts/release.sh", "#!/bin/sh\nprintf frozen\n");
-    write(
-      storage.stashDir,
-      "workflows/release.yml",
-      workflow("release", ["      - id: child", "        uses: assets//tasks/child"]),
-    );
-    setSchedulerRefEnabled("team//workflows/release", true);
-    const { backend, calls } = recordingBackend();
-    let caught: unknown;
-
-    try {
-      await akmTasksSync(
-        {
-          backend,
-          schedulerRuntime() {
-            calls.runtime += 1;
-            fs.writeFileSync(script, "#!/bin/sh\nprintf raced\n");
-            return { binding: ["/test/akm"], contextPath: "/test/context.json" };
-          },
-        },
-        "team",
-      );
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toBeInstanceOf(Error);
-    expect(String(caught)).toMatch(/source|read set|manifest|changed/i);
-    expect(calls.runtime).toBe(1);
-    expect(calls.snapshots).toBe(0);
-    expect(calls.installs).toBe(0);
-    expect(calls.removes).toBe(0);
   });
 });

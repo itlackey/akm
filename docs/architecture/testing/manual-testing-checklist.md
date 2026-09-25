@@ -2025,20 +2025,20 @@ akm proposal reject --generator distill \
 - [ ] **LOCAL** Max-diff-lines and older-than strictly validate integers/ranges and select exact rows.
 - [ ] **LOCAL** Dry-run does not create backups, commits, or asset/index mutations.
 
-### 16.4 Drain policy and observability
+### 16.4 Drain and observability
 
 ```sh
 before_event_id="$(akm log --format json | jq -r '.events[-1].id // 0')"
-akm proposal drain --policy manual --dry-run --format json \
+akm proposal drain --dry-run --format json \
   > "$AKM_SANDBOX/drain-dry-run.json"
 after_event_id="$(akm log --format json | jq -r '.events[-1].id // 0')"
 ```
 
-- [ ] **LOCAL** Manual policy deterministically rejects empty diff and defers nonempty proposals; it never accepts by itself.
+- [ ] **LOCAL** Without a judgment tier, drain accepts only proposals a quality judge passed (a `staged` gate decision whose content hash still matches), rejects empty diffs, and defers everything else; it never accepts an unjudged proposal by itself.
 - [ ] **LOCAL** Dry-run leaves assets/statuses unchanged but appends the documented `triage_drained` observability event. It is not globally side-effect-free.
-- [ ] **LOCAL** Max accepts, max diff lines, older-than, queue mode versus `--promote`, and hard cap buckets are exact.
-- [ ] **AI** Judgment-enabled policy uses selected frozen engine and fails closed on malformed/failed judgment.
-- [ ] **LOCAL** Invalid policy/path and noninteractive promotion without `--yes` fail before writes.
+- [ ] **LOCAL** Max accepts, older-than, queue mode versus `--promote`, and hard cap buckets are exact.
+- [ ] **AI** Judgment-enabled drain uses selected frozen engine and fails closed on malformed/failed judgment.
+- [ ] **LOCAL** Noninteractive promotion without `--yes` fails before writes.
 
 ### 16.5 Proposal generation and crash recovery
 

@@ -19,45 +19,34 @@ import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
-import {
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-} from "../integrations/agent/execution-lowering";
+import { assertRunnerCredentials } from "../integrations/agent/runner-dispatch";
 import { isLlmFeatureEnabled } from "../llm/feature-gate";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../llm/index-passes";
-import { preflightStructuredLlmRunner, type StructuredLlmRunner } from "../llm/structured-call";
+import type { StructuredLlmRunner } from "../llm/structured-call";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
- * M-4 / #395 — Index Consistency Architecture Decision Record
+ * Index consistency.
  *
- * AKM maintains four indexes per stash:
- *   1. Frontmatter index (SQLite `entries` table) — asset metadata.
- *   2. FTS5 full-text search index (SQLite `entries_fts` virtual table).
- *   3. Vector (embedding) index (SQLite `embedding` / `vec_entries` table).
- *   4. Graph index (SQLite `graph_nodes`, `graph_edges` tables).
+ * AKM keeps four derived populations per stash in index.db: the `entries`
+ * rows (metadata + `document_json`), the FTS5 index over them, the embedding
+ * vectors, and the LLM entity graph. Each pass keeps its own cursor, so a
+ * change to one pass's inputs re-runs only that pass:
  *
- * Decision (2026-05-16): No transactional boundary spans all four indexes.
- * Each step is individually crash-tolerant; cross-step consistency is
- * **opportunistic recovery** — subsequent index runs detect and heal drift.
+ *   - entries / FTS: `entries.content_hash` per file plus the per-directory
+ *     walk fingerprint (`index_dir_state`); the FTS rows are written in the
+ *     same transaction as the entries row (`upsertEntry`), never separately.
+ *   - LLM metadata: `llm_enrichment_cache` keyed by item ref + body hash.
+ *   - embeddings: `embeddings.model` per row; a row whose search text changed
+ *     is deleted by `upsertEntry`, a row whose model differs from the
+ *     configured one is re-embedded by the next pass.
+ *   - graph: `graph_files` keyed by (root, path, body hash) with a queue.
  *
- * Audit findings:
- *   - FTS5 is redundant with the main `entries` table when semantic search is
- *     on, but is the primary search path for keyword-only stashes.
- *   - The vector index depends on the `entries` table for entry IDs; orphan
- *     detection in `clearStaleCacheEntries` covers most drift cases.
- *   - The graph index is rebuilt from scratch on each extraction pass; it is
- *     not incremental, so cross-step drift resolves on the next extraction.
- *   - Eliminating any of the four indexes would break the current keyword/
- *     semantic/graph search paths. Merge is not currently feasible.
- *
- * Accepted strategy: opportunistic recovery (reindex heals drift).
- * CRDT-based convergence (Shapiro et al. 2011) would require per-operation
- * CRDTs for all four stores — deferred pending a dedicated storage refactor.
- *
- * See the index-consistency ADR (2026-06) for the full analysis.
+ * A full run (`--full`) re-drains every directory through the same
+ * diff-persist path as an incremental one — `entries.id` is preserved on
+ * conflict, so embeddings, utility scores and usage links stay attached to
+ * unchanged rows. Nothing is wiped to be rebuilt.
  */
 import type { Database } from "../storage/database";
-import { salvageEmbeddingsBeforeDiscard } from "../storage/repositories/embedding-salvage-repository";
 import {
   closeDatabase,
   openExistingDatabase,
@@ -65,7 +54,6 @@ import {
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import {
-  deleteAllEntries,
   deleteEntriesByBundle,
   deleteEntriesByDirAndBundle,
   deleteEntriesByDirExceptRefs,
@@ -88,6 +76,7 @@ import {
 } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
+  getIndexDirState,
   getMeta,
   setMeta,
   upsertIndexDirState,
@@ -232,9 +221,9 @@ interface IndexOptions {
    */
   dryRun?: boolean;
   /**
-   * When true (`akm index --reembed`), force a full purge + re-embed of
-   * every entry regardless of the embedding-fingerprint canary (#955) — an
-   * explicit operator override for when its verdict should not be trusted.
+   * When true (`akm index --reembed`), purge every stored vector and re-embed
+   * all entries — the one explicit override; a model change without it keeps
+   * the stored vectors and re-embeds incrementally.
    */
   reembed?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
@@ -344,23 +333,20 @@ function parseStoredSourceOwners(raw: string | undefined): IndexSourceOwner[] {
 }
 
 /**
- * Source cache phase: ensure git stash caches are up to date and purge orphaned
- * entries from removed sources (incremental only).
+ * Source cache phase: record the sources removed (or moved) since the last
+ * run, so their entries and graph rows are purged once the walk completes.
  */
 async function runSourceCachePhase(ctx: IndexRunContext): Promise<void> {
-  const { db, isIncremental, full, sources } = ctx;
-
-  if (isIncremental && !full) {
-    const currentByBundle = new Map(sourceOwners(sources).map((owner) => [owner.bundleId, owner]));
-    for (const previous of parseStoredSourceOwners(getMeta(db, "sourceOwners"))) {
-      const current = currentByBundle.get(previous.bundleId);
-      if (!current || current.sourceRoot !== previous.sourceRoot) {
-        ctx.hadRemovedSources = true;
-        ctx.removedSources.push({
-          ...previous,
-          removeBundleEntries: current === undefined,
-        });
-      }
+  const { db, sources } = ctx;
+  const currentByBundle = new Map(sourceOwners(sources).map((owner) => [owner.bundleId, owner]));
+  for (const previous of parseStoredSourceOwners(getMeta(db, "sourceOwners"))) {
+    const current = currentByBundle.get(previous.bundleId);
+    if (!current || current.sourceRoot !== previous.sourceRoot) {
+      ctx.hadRemovedSources = true;
+      ctx.removedSources.push({
+        ...previous,
+        removeBundleEntries: current === undefined,
+      });
     }
   }
   // Source caches are hydrated before akmIndex() calls this phase; nothing
@@ -369,10 +355,21 @@ async function runSourceCachePhase(ctx: IndexRunContext): Promise<void> {
 
 function applyRemovedSources(ctx: IndexRunContext): void {
   if (!ctx.scanComplete) return;
-  const currentRoots = new Set(sourceOwners(ctx.sources).map((owner) => owner.sourceRoot));
+  const owners = sourceOwners(ctx.sources);
+  const currentRoots = new Set(owners.map((owner) => owner.sourceRoot));
   for (const removed of ctx.removedSources) {
     if (removed.removeBundleEntries) deleteEntriesByBundle(ctx.db, removed.bundleId);
     if (!currentRoots.has(removed.sourceRoot)) deleteStoredGraph(ctx.db, removed.sourceRoot);
+  }
+  // A full run re-drains every configured source, so any other bundle's rows
+  // are stale even when no stored owner names them.
+  if (ctx.isIncremental) return;
+  const currentBundles = new Set(owners.map((owner) => owner.bundleId));
+  const indexed = ctx.db.prepare("SELECT DISTINCT bundle_id AS bundleId FROM entries").all() as Array<{
+    bundleId: string;
+  }>;
+  for (const { bundleId } of indexed) {
+    if (!currentBundles.has(bundleId)) deleteEntriesByBundle(ctx.db, bundleId);
   }
 }
 
@@ -384,20 +381,20 @@ function applyRemovedSources(ctx: IndexRunContext): void {
  * `ctx.walkWarnings`, and `ctx.dirsNeedingLlm` for downstream phases.
  */
 async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
-  const { db, sources, isIncremental, builtAtMs, hadRemovedSources, full, clean, signal, onProgress, config } = ctx;
+  const { db, sources, isIncremental, builtAtMs, hadRemovedSources, clean, signal, onProgress, config } = ctx;
 
   throwIfAborted(signal);
 
   ctx.timing.tWalkStart = Date.now();
 
-  const doFullDelete = full || !isIncremental;
+  // `--full` is folded into `isIncremental` (createIndexRunContext): a full
+  // run drains every directory through the same diff-persist path.
   const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm, warnings, complete } = await indexEntries(
     db,
     sources,
     isIncremental,
     builtAtMs,
     hadRemovedSources,
-    doFullDelete,
     onProgress,
     !clean,
     async (dirRecords, ownersByRoot) => {
@@ -407,7 +404,7 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
         isLlmFeatureEnabled(config, "metadata_enhance") &&
         dirRecordsNeedMetadataDispatch(db, dirRecords, ownersByRoot)
       ) {
-        ctx.enrichmentLease = await preflightStructuredLlmRunner(runner);
+        assertRunnerCredentials(runner);
       }
     },
   );
@@ -445,15 +442,8 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
   throwIfAborted(signal);
 
   // LLM enrichment for directories that need it
-  await enhanceDirsWithLlm(
-    db,
-    config,
-    ctx.enrichmentExecution,
-    dirsNeedingLlm,
-    onProgress,
-    signal,
-    (notices) => collectLoweringNotices(ctx.loweringNotices, notices),
-    ctx.enrichmentLease,
+  await enhanceDirsWithLlm(db, config, ctx.enrichmentExecution, dirsNeedingLlm, onProgress, signal, (notices) =>
+    collectLoweringNotices(ctx.loweringNotices, notices),
   );
   onProgress({
     phase: "llm",
@@ -720,28 +710,26 @@ export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
 }
 
 /**
- * Named observation points fired from INSIDE the reindex write transaction
+ * Named observation point fired from INSIDE the reindex write transaction
  * (see {@link persistDirRecords}). TEST-ONLY.
  *
- *  - `full-delete-applied` — every `DELETE` of the full-rebuild wipe has run,
- *    but the re-insert has not started. This is the instant at which a
- *    non-atomic implementation would expose an empty database.
- *  - `records-persisted` — all rows are re-inserted, but the transaction has
- *    not committed yet, so the new generation is still invisible outside.
+ *  - `records-persisted` — every directory's rows are upserted and pruned,
+ *    but the transaction has not committed yet, so the new generation is
+ *    still invisible outside.
  */
-export type IndexTransactionPoint = "full-delete-applied" | "records-persisted";
+export type IndexTransactionPoint = "records-persisted";
 
 let indexTransactionHookForTests: ((point: IndexTransactionPoint) => void) | undefined;
 
 /**
  * TEST-ONLY. Observe the in-flight reindex transaction; `undefined` restores.
  *
- * Exists because the delete-then-reinsert atomicity guarantee is, by
- * construction, invisible from outside the transaction: by the time
- * `akmIndex()` resolves, the commit has already collapsed both generations
- * into one observable state. Concurrency tests install a hook that opens a
- * SECOND connection at these points and asserts it still sees the previous
- * complete generation. Inert in production (one `undefined?.()` per reindex).
+ * Exists because the persist transaction's atomicity is, by construction,
+ * invisible from outside it: by the time `akmIndex()` resolves, the commit
+ * has already collapsed both generations into one observable state.
+ * Concurrency tests install a hook that opens a SECOND connection at this
+ * point and asserts it still sees the previous complete generation. Inert in
+ * production (one `undefined?.()` per reindex).
  */
 export function _setIndexTransactionHookForTests(hook?: (point: IndexTransactionPoint) => void): void {
   indexTransactionHookForTests = hook;
@@ -854,9 +842,9 @@ interface CreateIndexRunContextOptions {
 function createIndexRunContext(options: CreateIndexRunContextOptions): IndexRunContext {
   const prevStashDir = getMeta(options.db, "stashDir");
   const prevBuiltAt = getMeta(options.db, "builtAt");
-  const isIncremental = !options.full && prevStashDir === options.stashDir && !!prevBuiltAt;
+  const { t0, full, ...context } = options;
+  const isIncremental = !full && prevStashDir === options.stashDir && !!prevBuiltAt;
   const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
-  const { t0, ...context } = options;
   return {
     ...context,
     loweringNotices: [...options.enrichmentExecution.notices],
@@ -970,7 +958,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       throw new Error("Source update index requires an active borrowed index transaction.");
     }
 
-    let indexRunContext: IndexRunContext | undefined;
     try {
       // Assemble the run context
       const ctx = createIndexRunContext({
@@ -988,7 +975,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         t0,
         deferredUpdateTransaction: options.deferredUpdateTransaction,
       });
-      indexRunContext = ctx;
 
       onProgress({
         phase: "summary",
@@ -1068,9 +1054,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
       };
     } finally {
-      if (indexRunContext?.enrichmentLease) {
-        disposeLoweredExecutionDispatchLease(indexRunContext.enrichmentLease);
-      }
       if (!borrowedUpdateDb) closeDatabase(db);
     }
   })();
@@ -1397,9 +1380,10 @@ function buildSourceScanPlans(
 
   const allComplete = plans.every((plan) => plan.walkComplete && plan.adapter !== undefined);
 
-  // A full, globally-complete run uses the atomic table wipe below. Every
-  // other run reconciles only sources that produced trustworthy snapshots.
-  if (reconcileMissingDirs && (isIncremental || !allComplete)) {
+  // Reconcile departed directories for every source that produced a
+  // trustworthy snapshot; a source that was not walked completely keeps its
+  // last-known-good rows.
+  if (reconcileMissingDirs) {
     const allIndexedDirsByBundle = !isIncremental ? new Map<string, Set<string>>() : undefined;
     if (allIndexedDirsByBundle) {
       for (const entry of getAllEntries(db)) {
@@ -1695,32 +1679,9 @@ function requiresWorkflowSourcePreflight(ctxs: readonly FileContext[]): boolean 
   });
 }
 
-function preserveExistingIndex(
-  doFullDelete: boolean,
-  dirRecords: DirRecord[],
-  sourceRoots: readonly string[],
-): boolean {
-  if (!doFullDelete) return false;
-  const incomingDocCount = dirRecords.reduce(
-    (n, record) => n + (record.skip ? 0 : (record.stash?.entries.length ?? 0)),
-    0,
-  );
-  if (incomingDocCount > 0 || allSourceRootsReadable(sourceRoots)) return false;
-  warn(
-    "[index] --full produced zero documents while one or more source roots are missing or unreadable — " +
-      "preserving the existing index (last-known-good) rather than wiping it. Re-run once the sources are available.",
-  );
-  return true;
-}
-
 /**
- * #624-P1 zero-document preflight probe. A source root counts as "readable"
- * when it exists on disk as a directory whose listing can be read. A root that
- * is missing or unreadable (a transient mount failure, a permission race, or a
- * source that vanished mid-run) makes a zero-document scan untrustworthy: the
- * walk saw nothing not because the stash is empty but because it could not be
- * read. Returns true only when EVERY root is readable, so a single unreadable
- * root blocks the full-rebuild wipe.
+ * A source root counts as "readable" when it exists on disk as a directory
+ * whose listing can be read. Adapter detection only runs against such roots.
  */
 function allSourceRootsReadable(roots: readonly string[]): boolean {
   for (const root of roots) {
@@ -1735,6 +1696,15 @@ function allSourceRootsReadable(roots: readonly string[]): boolean {
   return true;
 }
 
+/** The stored row a drained entry is compared against before it is re-persisted. */
+interface PersistedEntryRow {
+  id: number;
+  content_hash: string | null;
+  file_path: string;
+  adapter_id: string;
+  quality: string | null;
+}
+
 /**
  * Phase 2 (sync): write all pre-generated scan records inside a single
  * transaction, returning the directories that still need LLM enrichment.
@@ -1742,24 +1712,10 @@ function allSourceRootsReadable(roots: readonly string[]): boolean {
 function persistDirRecords(
   db: Database,
   dirRecords: DirRecord[],
-  doFullDelete: boolean,
   warnings: string[],
-  sourceRoots: readonly string[],
-  scanComplete: boolean,
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
 ): { dirsNeedingLlm: DirNeedingLlm[] } {
   const dirsNeedingLlm: DirNeedingLlm[] = [];
-  const fullDelete = doFullDelete && scanComplete;
-
-  // #624-P1 zero-document preflight (spec §4). A full-rebuild wipe is a
-  // legitimate mass-delete ONLY when the scan legitimately found nothing. If
-  // the walk produced zero documents AND any configured source root is missing
-  // or unreadable, the empty result is almost certainly a transient scan
-  // failure, not an emptied stash — wiping here would cascade-destroy the
-  // last-known-good index (entries + embeddings + utility/usage). Preserve it
-  // and warn instead; the next successful run reconciles. A genuinely empty
-  // stash whose roots ARE readable still wipes, as before.
-  if (preserveExistingIndex(fullDelete, dirRecords, sourceRoots)) return { dirsNeedingLlm };
 
   // Per-source dedup: the same logical asset can appear more than once within
   // one owning source, where source order still makes the first occurrence win.
@@ -1767,35 +1723,12 @@ function persistDirRecords(
   // remain distinct indexed rows.
   const indexedAssetIdentities = new Set<string>();
   const deletedUsageEntryIds = new Set<number>();
+  const findPersisted = db.prepare(
+    "SELECT id, content_hash, file_path, adapter_id, json_extract(document_json, '$.quality') AS quality " +
+      "FROM entries WHERE item_ref = ?",
+  );
 
   const insertTransaction = db.transaction(() => {
-    // Perform the full-rebuild wipe as the FIRST step of the insert
-    // transaction so delete and re-insert are atomic — a concurrent reader
-    // never observes an empty database between the two operations.
-    if (fullDelete) {
-      // #955: copy every (search_text hash, embedding) pair about to be
-      // discarded wholesale into `embedding_salvage`, tagged with the
-      // fingerprint the discarded vectors were generated under, BEFORE the
-      // wipe below — inside the SAME transaction so the copy and the
-      // discard commit or roll back together. The embedding phase later in
-      // this run hands salvaged vectors back to unchanged content instead
-      // of re-embedding the whole corpus.
-      salvageEmbeddingsBeforeDiscard(db);
-      // Entries and every child materialization share one deletion authority.
-      // Usage events live in state.db and survive so finalize can relink them
-      // to the replacement generation's row ids.
-      deleteAllEntries(db, { cleanupUsageEvents: false });
-      db.exec("DELETE FROM index_dir_state");
-      // Chunk-8 WI-8.3: usage_events lives in state.db now (not index.db), so the
-      // wipe no longer detaches it here. The finalize pass's relinkUsageEvents
-      // (cross-DB) nulls entry_ids that no longer resolve to a rebuilt entry and
-      // re-resolves the rest by entry_ref — subsuming the old detach.
-      // Atomicity observation point: inside the transaction the tables are now
-      // empty, but no other connection may observe that. See
-      // tests/integration/indexer/reindex-generation-atomicity.test.ts.
-      indexTransactionHook("full-delete-applied");
-    }
-
     for (const {
       dirPath,
       currentStashDir,
@@ -1826,7 +1759,13 @@ function persistDirRecords(
         // row_count and the gate skips this directory before draining next
         // time. "unchanged-precheck" already matched the stored row.
         if (reason?.kind === "unchanged" && fingerprint) {
-          upsertIndexDirState(db, { dirPath, ...fingerprint, reason: reason.kind, rowCount: persistedRowCount });
+          upsertIndexDirState(db, {
+            dirPath,
+            ...fingerprint,
+            reason: reason.kind,
+            rowCount: persistedRowCount,
+            indexVariant,
+          });
         }
         continue;
       }
@@ -1838,8 +1777,21 @@ function persistDirRecords(
       // `deleteEntriesByDir` truncate-and-reinsert (which discarded ids).
       const keptItemRefs = new Set<string>();
 
+      // Per-file cursor: a directory is drained whole (one changed file
+      // re-reads its siblings), but on an incremental run a sibling whose
+      // content hash, path and adapter are unchanged since the last drain
+      // under the same adapter variant is already persisted exactly as this
+      // drain would persist it — including any LLM enrichment layered onto its
+      // row — so it is neither rewritten nor re-enriched. `--full` re-persists
+      // every entry.
+      const sameVariant =
+        reason?.kind !== "full-rebuild" &&
+        indexVariant !== undefined &&
+        getIndexDirState(db, dirPath)?.indexVariant === indexVariant;
+
       let persistedRows = 0;
       let dedupedRows = 0;
+      const entriesToEnrich: IndexDocument[] = [];
 
       if (stash) {
         const ownerIdentity = bundle.bundleId;
@@ -1864,23 +1816,38 @@ function persistDirRecords(
           }
           indexedAssetIdentities.add(identityKey);
 
-          const searchText = buildSearchText(entry);
-          const entryWithSize = attachFileSize(entry, entryPath);
           // content_hash = doc.hash from the drain, keyed by the recognized
           // file's path. A missing hash preserves the existing value on upsert.
           const contentHash = hashByFile?.get(entryPath);
-
           const provenance = deriveEntryProvenance(bundle, entry.type, entry.name, adapterConceptId);
           keptItemRefs.add(provenance.itemRef);
-
-          upsertEntry(db, entryPath, entryWithSize, searchText, provenance, contentHash);
           persistedRows++;
+
+          const previous = sameVariant
+            ? ((findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined)
+            : undefined;
+          const unchanged =
+            previous !== undefined &&
+            contentHash !== undefined &&
+            previous.content_hash === contentHash &&
+            previous.file_path === entryPath &&
+            previous.adapter_id === bundle.adapterId;
+          if (unchanged) {
+            // An unchanged row that was never enriched still wants the LLM
+            // pass (the cache decides whether a call is needed).
+            if (entry.quality === "generated" && previous.quality !== "enriched") entriesToEnrich.push(entry);
+            continue;
+          }
+
+          const searchText = buildSearchText(entry);
+          const entryWithSize = attachFileSize(entry, entryPath);
+          upsertEntry(db, entryPath, entryWithSize, searchText, provenance, contentHash);
+          if (entry.quality === "generated") entriesToEnrich.push(entry);
         }
 
-        // Collect dirs needing LLM enhancement during the first walk.
-        // Only dirs with "generated" entries need enrichment.
-        if (stash.entries.some((e) => e.quality === "generated")) {
-          dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
+        // Only "generated" entries (never user-curated ones) are enriched.
+        if (entriesToEnrich.length > 0) {
+          dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash: { entries: entriesToEnrich } });
         }
       }
 
@@ -1911,6 +1878,7 @@ function persistDirRecords(
         // must keep draining every run (as it did before the gate) until a
         // drain persists it without dedup. NULL keeps the gate closed.
         rowCount: dedupedRows === 0 ? persistedRows : undefined,
+        indexVariant,
       });
       if (persistedRows === 0) {
         // Warn only when the dir had files that *could* produce entries (.md or
@@ -1945,7 +1913,6 @@ async function indexEntries(
   isIncremental: boolean,
   builtAtMs: number,
   hadRemovedSources: boolean,
-  doFullDelete = false,
   onProgress?: (event: IndexProgressEvent) => void,
   reconcileMissingDirs = true,
   beforePersist?: (
@@ -1976,23 +1943,12 @@ async function indexEntries(
   await beforePersist?.(dirRecords, bundleByRoot);
 
   // Phase 2 (sync): write all pre-generated metadata inside a single transaction.
-  // Source roots feed the #624-P1 zero-document preflight (a full-rebuild wipe
-  // is suppressed when the scan is empty because roots are unreadable).
-  const sourceRoots = allSourceEntries.map((s) => s.path);
-  // Map each source root → its durable bundle id so the writer can persist
-  // `item_ref = <bundle>//<conceptId>` and canonical component/adapter
-  // provenance. `deriveInstallations`
-  // preserves source order, so a positional zip yields the SAME bundle id the
-  // dispatched `adapter.recognize` emits as `IndexDocument.ref` for that root.
-  const { dirsNeedingLlm } = persistDirRecords(
-    db,
-    dirRecords,
-    doFullDelete,
-    warnings,
-    sourceRoots,
-    complete,
-    bundleByRoot,
-  );
+  // `bundleByRoot` maps each source root → its durable bundle id so the writer
+  // can persist `item_ref = <bundle>//<conceptId>` and canonical
+  // component/adapter provenance. `deriveInstallations` preserves source
+  // order, so a positional zip yields the SAME bundle id the dispatched
+  // `adapter.recognize` emits as `IndexDocument.ref` for that root.
+  const { dirsNeedingLlm } = persistDirRecords(db, dirRecords, warnings, bundleByRoot);
 
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm, complete };
 }
@@ -2037,7 +1993,6 @@ async function enhanceDirsWithLlm(
   onProgress?: (event: IndexProgressEvent) => void,
   signal?: AbortSignal,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
-  lease?: LoweredExecutionDispatchLease,
 ): Promise<void> {
   // The invocation owns one frozen symbolic selection. Summary reporting and
   // every enrichment dispatch consume this same snapshot.
@@ -2174,7 +2129,6 @@ async function enhanceDirsWithLlm(
               });
             },
             onNotices,
-            lease,
           );
         } catch (err) {
           if (err instanceof ConfigError) {
@@ -2416,7 +2370,6 @@ async function enhanceStashWithLlm(
   akmConfig?: AkmConfig,
   onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" | "skipped" }) => void,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
-  lease?: LoweredExecutionDispatchLease,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
   const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import(
@@ -2473,7 +2426,7 @@ async function enhanceStashWithLlm(
           }
         }
 
-        const outcome = await enhanceMetadata(llmRunner, entry, fileContent, signal, akmConfig, onNotices, lease);
+        const outcome = await enhanceMetadata(llmRunner, entry, fileContent, signal, akmConfig, onNotices);
 
         if (outcome.status !== "enriched") {
           // Not a genuine LLM success: the gate was closed (`skipped`) or the

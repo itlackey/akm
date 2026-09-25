@@ -27,6 +27,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
+import { TransientError } from "../core/errors";
 import {
   createLockPayload,
   type LockOwnership,
@@ -154,7 +155,10 @@ export async function acquireAssetMutationLease(
     // attempt, so a caller with maxWaitMs:0 still gets one chance at a free lock
     // instead of throwing before it ever tries.
     if (maxWaitMs >= 0 && Date.now() - startedAt >= maxWaitMs) {
-      throw new Error(`timed out waiting for asset mutation lease for ${options.purpose}`);
+      throw new TransientError(
+        `timed out waiting for asset mutation lease for ${options.purpose}`,
+        "ASSET_MUTATION_LEASE_HELD",
+      );
     }
     const waitedMs = Date.now() - startedAt;
     if (waitedMs - lastWaitNoticeMs >= 15000) {
@@ -206,7 +210,10 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
       if (!lease) {
         const waitedMs = Date.now() - startedAt;
         if (waitedMs >= maxWaitMs) {
-          throw new Error(`timed out waiting for asset mutation lease for ${purpose}`);
+          throw new TransientError(
+            `timed out waiting for asset mutation lease for ${purpose}`,
+            "ASSET_MUTATION_LEASE_HELD",
+          );
         }
         // #956: the sync path used to wait up to 10 minutes with zero
         // progress feedback. Mirror the async path's 15s onWait cadence, but

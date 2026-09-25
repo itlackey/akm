@@ -3,25 +3,18 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stageJudgedProposal } from "../../../src/commands/improve/distill/quality-gate";
 import {
   buildJudgmentPrompt,
-  classifyProposal,
   type DrainOptions,
   drainProposals,
   isEmptyDiff,
   type JudgmentSeams,
 } from "../../../src/commands/proposal/drain";
-import {
-  CONSERVATIVE,
-  MANUAL,
-  PERSONAL_STASH,
-  resolveDrainPolicy,
-} from "../../../src/commands/proposal/drain-policies";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../../../src/commands/proposal/proposal";
 import {
   createProposal,
   getProposal,
-  isProposalSkipped,
   listProposals,
   type Proposal,
   recordGateDecision,
@@ -30,10 +23,10 @@ import { writeSalienceToFrontmatter } from "../../../src/core/asset/frontmatter"
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import type { EventsContext } from "../../../src/core/events";
-import { getStateDbPath } from "../../../src/core/state-db";
-import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import type { AgentRunResult } from "../../../src/integrations/agent";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
+import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { mutateScopedEnv, withEnv } from "../../_helpers/sandbox";
 
@@ -90,7 +83,7 @@ afterEach(() => {
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repos.\n`;
 const EMPTY_LESSON = `---\ndescription: A lesson with an intentionally empty body\nwhen_to_use: Testing empty-diff proposal handling\n---\n\n`;
-// A valid lesson whose body exceeds the personal-stash consolidate band (>200 lines).
+// A valid, unjudged lesson with a long body — left for judgment.
 const BIG_LESSON = `---\ndescription: A large consolidated lesson\nwhen_to_use: When the body is intentionally long\n---\n\n${Array.from(
   { length: 300 },
   (_, i) => `line ${i}`,
@@ -102,13 +95,25 @@ function seed(stash: string, ref: string, source: string, content: string): Prop
   const result = createProposal(stash, {
     ref,
     source,
-    force: true,
     sourceRun: "run-x",
     target: { source: "stash", root: stash },
     payload: { content, frontmatter: { description: `${ref} fixture` } },
   });
-  if (isProposalSkipped(result)) throw new Error(`unexpected skip: ${result.message}`);
   return result;
+}
+
+/** Seed a proposal whose quality judge passed on its content (a `staged` stamp). */
+function seedJudged(stash: string, ref: string, source: string, content: string): Proposal {
+  return stageJudgedProposal(stash, seed(stash, ref, source, content));
+}
+
+function ledgerRow(stash: string, ref: string, source: string) {
+  const db = openStateDatabase();
+  try {
+    return getImproveLedgerRow(db, stash, ref, source);
+  } finally {
+    db.close();
+  }
 }
 
 function proposalFixture(source: string, content: string): Proposal {
@@ -122,7 +127,6 @@ function proposalFixture(source: string, content: string): Proposal {
 function baseOpts(stash: string, overrides: Partial<DrainOptions> = {}): DrainOptions {
   return {
     stashDir: stash,
-    policy: PERSONAL_STASH,
     applyMode: "promote",
     maxAccepts: 25,
     dryRun: false,
@@ -157,116 +161,6 @@ function fakeReject() {
   );
 }
 
-// ── Policy presets ──────────────────────────────────────────────────────────
-
-describe("resolveDrainPolicy", () => {
-  test("resolves built-in presets by name", () => {
-    expect(resolveDrainPolicy("personal-stash")).toBe(PERSONAL_STASH);
-    expect(resolveDrainPolicy("conservative")).toBe(CONSERVATIVE);
-    expect(resolveDrainPolicy("manual")).toBe(MANUAL);
-  });
-
-  test("defaults to personal-stash when undefined", () => {
-    expect(resolveDrainPolicy(undefined)).toBe(PERSONAL_STASH);
-  });
-
-  test("throws on unknown preset that is not a file", () => {
-    expect(() => resolveDrainPolicy("does-not-exist")).toThrow(/Unknown policy/);
-  });
-
-  test("loads and validates a custom policy file", () => {
-    const dir = makeTempDir("akm-drain-policy-");
-    const file = path.join(dir, "policy.json");
-    fs.writeFileSync(
-      file,
-      JSON.stringify({ name: "custom", accept: [{ generator: "extract" }], rejectEmpty: true, defer: [] }),
-    );
-    const policy = resolveDrainPolicy(file);
-    expect(policy.name).toBe("custom");
-    expect(policy.accept).toEqual([{ generator: "extract" }]);
-  });
-
-  test("rejects a custom policy file that fails schema validation", () => {
-    const dir = makeTempDir("akm-drain-policy-bad-");
-    const file = path.join(dir, "bad.json");
-    fs.writeFileSync(file, JSON.stringify({ name: "x", accept: "nope", rejectEmpty: true, defer: [] }));
-    expect(() => resolveDrainPolicy(file)).toThrow(/Invalid policy file/);
-  });
-
-  test("a `_comment` or newer-akm field is ignored and warned about, not rejected", () => {
-    const dir = makeTempDir("akm-drain-policy-extra-");
-    const file = path.join(dir, "commented.json");
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        name: "custom",
-        _comment: "this policy pins the personal-stash defaults",
-        accept: [{ generator: "extract", futureField: "written-for-a-newer-akm" }],
-        rejectEmpty: true,
-        defer: [],
-      }),
-    );
-
-    const warnings: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    let policy: ReturnType<typeof resolveDrainPolicy>;
-    try {
-      policy = resolveDrainPolicy(file);
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-
-    expect(policy.name).toBe("custom");
-    expect(policy.accept).toMatchObject([{ generator: "extract" }]);
-    expect((policy.accept[0] as unknown as { futureField?: string }).futureField).toBe("written-for-a-newer-akm");
-    expect(warnings.some((w) => w.includes(file) && w.includes("_comment"))).toBe(true);
-    expect(warnings.some((w) => w.includes("accept[0]") && w.includes("futureField"))).toBe(true);
-  });
-});
-
-// ── classifyProposal (pure) ───────────────────────────────────────────────
-
-describe("classifyProposal", () => {
-  test("extract with real content → accept", () => {
-    const p = proposalFixture("extract", VALID_LESSON);
-    expect(classifyProposal(p, PERSONAL_STASH)?.verdict).toBe("accept");
-  });
-
-  test("extract exceeding the accept band's maxDiffLines → defer (no uncapped auto-promote)", () => {
-    // An arbitrarily large extract must not auto-promote with zero LLM calls.
-    const big = `---\nd: x\n---\n${Array.from({ length: 300 }, (_, i) => `line ${i}`).join("\n")}\n`;
-    const p = proposalFixture("extract", big);
-    const decision = classifyProposal(p, PERSONAL_STASH);
-    expect(decision?.verdict).toBe("defer");
-  });
-
-  test("empty diff → reject", () => {
-    const p = proposalFixture("extract", EMPTY_LESSON);
-    const decision = classifyProposal(p, PERSONAL_STASH);
-    expect(decision?.verdict).toBe("reject");
-  });
-
-  test("mid-band consolidate (in defer list, no accept match) → defer", () => {
-    // A consolidate proposal that exceeds the accept band's maxDiffLines defers.
-    const big = `---\nd: x\n---\n${Array.from({ length: 300 }, (_, i) => `line ${i}`).join("\n")}\n`;
-    const p = proposalFixture("consolidate", big);
-    const decision = classifyProposal(p, PERSONAL_STASH);
-    expect(decision?.verdict).toBe("defer");
-  });
-
-  test("unmatched generator → null (left pending)", () => {
-    const p = proposalFixture("propose", VALID_LESSON);
-    expect(classifyProposal(p, PERSONAL_STASH)).toBeNull();
-  });
-
-  test("global maxDiffLines defers an otherwise-acceptable extract", () => {
-    const p = proposalFixture("extract", VALID_LESSON);
-    expect(classifyProposal(p, PERSONAL_STASH, 2)?.verdict).toBe("defer");
-  });
-});
-
 describe("isEmptyDiff", () => {
   test("frontmatter-only content is empty", () => {
     expect(isEmptyDiff(proposalFixture("extract", EMPTY_LESSON))).toBe(true);
@@ -278,10 +172,10 @@ describe("isEmptyDiff", () => {
 
 // ── drainProposals (engine) ─────────────────────────────────────────────────
 
-describe("drainProposals — policy matching", () => {
-  test("extract→accept, empty→reject, consolidate mid-band→defer", async () => {
+describe("drainProposals — the one rule", () => {
+  test("judge-passed→accept, empty→reject, unjudged→left for judgment", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lessons/good", "extract", VALID_LESSON);
+    const accepted = seedJudged(stash, "lessons/good", "extract", VALID_LESSON);
     const empty = seed(stash, "lessons/empty", "extract", EMPTY_LESSON);
     const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
@@ -292,16 +186,37 @@ describe("drainProposals — policy matching", () => {
     expect(result.promoted).toEqual([accepted.id]);
     expect(result.rejected).toEqual([empty.id]);
     expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+    expect(result.deferred).toEqual([{ id: deferred.id, reason: "needs-judgment" }]);
     expect(promoteFn).toHaveBeenCalledTimes(1);
     expect(rejectFn).toHaveBeenCalledTimes(1);
+    expect(promoteFn).toHaveBeenCalledWith(
+      expect.objectContaining({ gateDecision: { outcome: "auto-accepted", reason: "judge-passed", gate: "triage" } }),
+    );
+  });
+
+  test("an edit after judging sends the proposal back for judgment", async () => {
+    const stash = makeStashDir();
+    const judged = seedJudged(stash, "lessons/edited", "extract", VALID_LESSON);
+    const db = openStateDatabase();
+    try {
+      db.prepare("UPDATE proposals SET content = content || ? WHERE id = ?").run("\nedited", judged.id);
+    } finally {
+      db.close();
+    }
+
+    const promoteFn = fakeAccept();
+    const result = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(result.deferred.map((d) => d.id)).toEqual([judged.id]);
   });
 });
 
 describe("drainProposals — excludeIds", () => {
   test("fresh ids are filtered out (decision #2)", async () => {
     const stash = makeStashDir();
-    const fresh = seed(stash, "lessons/fresh", "extract", VALID_LESSON);
-    const old = seed(stash, "lessons/old", "extract", VALID_LESSON);
+    const fresh = seedJudged(stash, "lessons/fresh", "extract", VALID_LESSON);
+    const old = seedJudged(stash, "lessons/old", "extract", VALID_LESSON);
 
     const promoteFn = fakeAccept();
     const result = await drainProposals(baseOpts(stash, { excludeIds: new Set([fresh.id]) }), promoteFn, fakeReject());
@@ -314,9 +229,9 @@ describe("drainProposals — excludeIds", () => {
 describe("drainProposals — maxAccepts ceiling", () => {
   test("ceiling stops promotion and reports skippedByCap", async () => {
     const stash = makeStashDir();
-    seed(stash, "lessons/a", "extract", VALID_LESSON);
-    seed(stash, "lessons/b", "extract", VALID_LESSON);
-    seed(stash, "lessons/c", "extract", VALID_LESSON);
+    seedJudged(stash, "lessons/a", "extract", VALID_LESSON);
+    seedJudged(stash, "lessons/b", "extract", VALID_LESSON);
+    seedJudged(stash, "lessons/c", "extract", VALID_LESSON);
 
     const promoteFn = fakeAccept();
     const result = await drainProposals(baseOpts(stash, { maxAccepts: 1 }), promoteFn, fakeReject());
@@ -328,7 +243,7 @@ describe("drainProposals — maxAccepts ceiling", () => {
 
   test("deterministic promotion receives the frozen target and config", async () => {
     const stash = makeStashDir();
-    seed(stash, "lessons/a", "extract", VALID_LESSON);
+    seedJudged(stash, "lessons/a", "extract", VALID_LESSON);
     const config = { semanticSearchMode: "off" } as AkmConfig;
     const promoteFn = fakeAccept();
 
@@ -344,7 +259,7 @@ describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)"
     // 1 deterministic accept (extract) + 2 deferred consolidate items the judge
     // will accept. maxAccepts=1 → the deterministic accept consumes the whole
     // budget, so BOTH judged-accepts must be skipped by the cap.
-    const det = seed(stash, "lessons/det", "extract", VALID_LESSON);
+    const det = seedJudged(stash, "lessons/det", "extract", VALID_LESSON);
     const big1 = seed(stash, "lessons/big1", "consolidate", BIG_LESSON);
     const big2 = seed(stash, "lessons/big2", "consolidate", BIG_LESSON);
 
@@ -370,7 +285,7 @@ describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)"
     const stash = makeStashDir();
     // 1 deterministic accept + 2 judged-accepts, maxAccepts=2 → deterministic
     // promotes 1, judgment may promote 1 more, the 2nd judged-accept is capped.
-    const det = seed(stash, "lessons/det", "extract", VALID_LESSON);
+    const det = seedJudged(stash, "lessons/det", "extract", VALID_LESSON);
     seed(stash, "lessons/big1", "consolidate", BIG_LESSON);
     seed(stash, "lessons/big2", "consolidate", BIG_LESSON);
 
@@ -394,7 +309,7 @@ describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)"
 describe("drainProposals — applyMode queue", () => {
   test("queue mode never calls promoteFn but still rejects empties", async () => {
     const stash = makeStashDir();
-    seed(stash, "lessons/a", "extract", VALID_LESSON);
+    seedJudged(stash, "lessons/a", "extract", VALID_LESSON);
     const empty = seed(stash, "lessons/empty", "extract", EMPTY_LESSON);
 
     const promoteFn = fakeAccept();
@@ -408,24 +323,10 @@ describe("drainProposals — applyMode queue", () => {
   });
 });
 
-describe("drainProposals — maxDiffLines", () => {
-  test("defers large proposals instead of promoting", async () => {
-    const stash = makeStashDir();
-    const small = seed(stash, "lessons/small", "extract", VALID_LESSON);
-    const large = seed(stash, "lessons/large", "extract", BIG_LESSON);
-
-    const promoteFn = fakeAccept();
-    const result = await drainProposals(baseOpts(stash, { maxDiffLines: 10 }), promoteFn, fakeReject());
-
-    expect(result.promoted).toEqual([small.id]);
-    expect(result.deferred.map((d) => d.id)).toContain(large.id);
-  });
-});
-
 describe("drainProposals — dry-run", () => {
   test("performs zero writes (promote/reject never called)", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lessons/good", "extract", VALID_LESSON);
+    const accepted = seedJudged(stash, "lessons/good", "extract", VALID_LESSON);
     const empty = seed(stash, "lessons/empty", "extract", EMPTY_LESSON);
 
     const promoteFn = fakeAccept();
@@ -445,7 +346,7 @@ describe("drainProposals — dry-run", () => {
 
   test("reports a candidate the real preflight only flags advisorily as promotable", async () => {
     const stash = makeStashDir();
-    const advisoryOnly = seed(
+    const advisoryOnly = seedJudged(
       stash,
       "lessons/preflight-advisory",
       "extract",
@@ -466,7 +367,7 @@ describe("drainProposals — dry-run", () => {
 describe("drainProposals — failed reporting (#921)", () => {
   test("a promote failure lands in result.failed, not silently as failed:0", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lessons/promote-boom", "extract", VALID_LESSON);
+    const accepted = seedJudged(stash, "lessons/promote-boom", "extract", VALID_LESSON);
     const promoteFn = mock(async () => {
       throw new Error("simulated write failure");
     });
@@ -492,7 +393,7 @@ describe("drainProposals — failed reporting (#921)", () => {
 
   test("a stale-target refusal is auto-rejected once, not left as a generic failure (STALE, R20)", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lessons/promote-stale", "extract", VALID_LESSON);
+    const accepted = seedJudged(stash, "lessons/promote-stale", "extract", VALID_LESSON);
     const promoteFn = mock(async () => {
       throw new Error(
         `Proposal target changed after proposal ${accepted.id} was created; refusing to overwrite newer content.`,
@@ -510,7 +411,7 @@ describe("drainProposals — failed reporting (#921)", () => {
     expect(rejectFn).toHaveBeenCalledWith(
       expect.objectContaining({
         id: accepted.id,
-        gateDecision: { outcome: "auto-rejected", reason: "stale-target", gate: "triage:personal-stash" },
+        gateDecision: { outcome: "auto-rejected", reason: "stale-target", gate: "triage" },
       }),
     );
   });
@@ -522,12 +423,11 @@ describe("drainProposals — failed reporting (#921)", () => {
     const created = createProposal(stash, {
       ref: "lessons/dry-run-stale",
       source: "extract",
-      force: true,
       sourceRun: "run-x",
       target: { source: "stash", root: stash },
       payload: { content: VALID_LESSON, frontmatter: { description: "dry-run-stale fixture" } },
     });
-    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
+    stageJudgedProposal(stash, created);
     // The target changes again after the proposal is minted — the exact
     // condition both the dry-run preflight and the real promote must refuse.
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Newer: someone else edited this"), "utf8");
@@ -565,7 +465,6 @@ describe("drainProposals — failed reporting (#921)", () => {
     const created = createProposal(stash, {
       ref: "lessons/bookkeeping-fresh",
       source: "extract",
-      force: true,
       sourceRun: "run-x",
       target: { source: "stash", root: stash },
       payload: {
@@ -573,7 +472,7 @@ describe("drainProposals — failed reporting (#921)", () => {
         frontmatter: { description: "bookkeeping-fresh fixture" },
       },
     });
-    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
+    stageJudgedProposal(stash, created);
 
     // A same-run bookkeeping-only rewrite of the target after mint — the real
     // writer distill uses, not a hand-edited fixture. Changes the raw bytes
@@ -604,19 +503,18 @@ describe("drainProposals — failed reporting (#921)", () => {
     expect(finalContent).toContain("salience:");
   });
 
-  test("a stale-target auto-reject does not count toward rejection_backoff (STALE, R20)", async () => {
+  test("a stale-target auto-reject records `failed` in the improve ledger — no rejection window (STALE, R20)", async () => {
     const stash = makeStashDir();
     const assetPath = path.join(stash, "lessons", "reproposable.md");
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Original: prefer rg"), "utf8");
     const created = createProposal(stash, {
       ref: "lessons/reproposable",
       source: "extract",
-      force: true,
       sourceRun: "run-x",
       target: { source: "stash", root: stash },
       payload: { content: VALID_LESSON, frontmatter: { description: "reproposable fixture" } },
     });
-    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
+    stageJudgedProposal(stash, created);
     // A real content edit after mint — the drain's promote will hit the
     // stale-target guard and auto-reject.
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Newer: someone else edited this"), "utf8");
@@ -624,26 +522,21 @@ describe("drainProposals — failed reporting (#921)", () => {
     const result = await drainProposals(baseOpts(stash, { config: makeConfig(stash) }));
     expect(result.rejected).toEqual([created.id]);
 
-    // A later proposal for the SAME ref+source, without `force`, must not be
-    // skipped by rejection_backoff (extract's cooldown is the 7-day default)
-    // — a stale-target rejection is procedural, not a judgement on content.
-    const reproposed = createProposal(stash, {
-      ref: "lessons/reproposable",
-      source: "extract",
-      sourceRun: "run-y",
-      target: { source: "stash", root: stash },
-      payload: { content: VALID_LESSON, frontmatter: { description: "reproposable fixture, take 2" } },
+    // A stale-target rejection is procedural, not a judgement on the content:
+    // the ref stays re-proposable against its current content at once.
+    expect(ledgerRow(stash, "stash//lessons/reproposable", "extract")).toMatchObject({
+      outcome: "failed",
+      nextEligibleAt: null,
+      proposalId: created.id,
     });
-    expect(isProposalSkipped(reproposed)).toBe(false);
   });
 });
 
 // ── Judgment tier (Phase 3) ─────────────────────────────────────────────────
 //
-// The judgment tier adjudicates the *deferred* items. PERSONAL_STASH defers
-// large consolidate proposals (mid-band). We inject a fake runner that returns
-// a verdict and assert the ENGINE performs the resulting accept / reject write
-// (the runner only judges). Mirrors reflect's dual test seams: an `llm`-mode
+// The judgment tier adjudicates the items no quality judge has passed. We
+// inject a fake runner that returns a verdict and assert the ENGINE performs
+// the resulting accept / reject write (the runner only judges). Mirrors reflect's dual test seams: an `llm`-mode
 // test injects a fake `chat`; an `agent`-mode test injects a fake `runAgentFn`.
 
 /** A minimal `llm` RunnerSpec — the injected `chat` seam ignores the connection. */
@@ -681,9 +574,9 @@ function agentResult(stdout: string): AgentRunResult {
 }
 
 describe("drainProposals — judgment tier (llm mode)", () => {
-  test("an unused judgment credential is not materialized when deterministic policy leaves no deferred work", async () => {
+  test("an unused judgment credential is not materialized when every proposal is already judged", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lessons/deterministic-only", "extract", VALID_LESSON);
+    const accepted = seedJudged(stash, "lessons/deterministic-only", "extract", VALID_LESSON);
     const runner: RunnerSpec = {
       ...FAKE_LLM_RUNNER,
       credential: { names: ["AKM_UNUSED_DRAIN_REQUIRED_KEY"], required: true },
@@ -730,29 +623,30 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(fs.existsSync(eventContext.dbPath ?? "")).toBe(false);
   });
 
-  test("all deferred judgments use the credential captured before drain mutations", async () => {
+  test("each deferred judgment reads the credential current at its dispatch", async () => {
     const stash = makeStashDir();
-    const first = seed(stash, "lessons/lease-first", "consolidate", BIG_LESSON);
-    const second = seed(stash, "lessons/lease-second", "consolidate", BIG_LESSON);
-    const secret = "drain-lease-original-092";
+    const first = seed(stash, "lessons/rotation-first", "consolidate", BIG_LESSON);
+    const second = seed(stash, "lessons/rotation-second", "consolidate", BIG_LESSON);
+    const secret = "drain-original-092";
+    const rotated = "drain-rotated-092";
     const runner: RunnerSpec = {
       ...FAKE_LLM_RUNNER,
-      credential: { names: ["AKM_DRAIN_LEASE_KEY"], required: true },
+      credential: { names: ["AKM_DRAIN_ROTATING_KEY"], required: true },
     };
     const observed: Array<string | undefined> = [];
     const chat = mock(async (dispatched: Extract<RunnerSpec, { kind: "llm" }>) => {
       observed.push(dispatched.connection.apiKey);
-      if (observed.length === 1) mutateScopedEnv("AKM_DRAIN_LEASE_KEY", undefined);
-      return JSON.stringify({ decision: "reject", reason: "lease fixture" });
+      if (observed.length === 1) mutateScopedEnv("AKM_DRAIN_ROTATING_KEY", rotated);
+      return JSON.stringify({ decision: "reject", reason: "rotation fixture" });
     });
     const rejectFn = fakeReject();
 
-    const result = await withEnv({ AKM_DRAIN_LEASE_KEY: secret }, () =>
+    const result = await withEnv({ AKM_DRAIN_ROTATING_KEY: secret }, () =>
       drainProposals(baseOpts(stash, { judgment: runner }), fakeAccept(), rejectFn, { chat }),
     );
 
     expect(result.rejected.sort()).toEqual([first.id, second.id].sort());
-    expect(observed).toEqual([secret, secret]);
+    expect(observed).toEqual([secret, rotated]);
     expect(rejectFn).toHaveBeenCalledTimes(2);
   });
 
@@ -780,7 +674,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
       [
         {
           role: "user",
-          content: buildJudgmentPrompt(deferred, "mid-band", { liveAsset: undefined, siblings: [] }),
+          content: buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
         },
       ],
     );
@@ -879,7 +773,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(rejectFn).toHaveBeenCalledWith(
       expect.objectContaining({
         id: deferred.id,
-        gateDecision: { outcome: "auto-rejected", reason: "stale-target", gate: "triage:personal-stash" },
+        gateDecision: { outcome: "auto-rejected", reason: "stale-target", gate: "triage" },
       }),
     );
   });
@@ -913,12 +807,10 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     const created = createProposal(stash, {
       ref: "lessons/judgment-dry-run-stale",
       source: "distill",
-      force: true,
       sourceRun: "run-x",
       target: { source: "stash", root: stash },
       payload: { content: VALID_LESSON, frontmatter: { description: "judgment-dry-run-stale fixture" } },
     });
-    if (isProposalSkipped(created)) throw new Error(`unexpected skip: ${created.message}`);
     // The target changes again after the proposal is minted — the exact
     // condition the judged-accept preflight must refuse.
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Newer: someone else edited this"), "utf8");
@@ -965,7 +857,7 @@ describe("drainProposals — judgment tier (agent mode)", () => {
     expect(runAgentFn).toHaveBeenCalledTimes(1);
     expect(runAgentFn).toHaveBeenCalledWith(
       expect.objectContaining({ model: "provider/exact-agent-judge" }),
-      buildJudgmentPrompt(deferred, "mid-band", { liveAsset: undefined, siblings: [] }),
+      buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
       expect.objectContaining({
         stdio: "captured",
         parseOutput: "text",
@@ -1044,35 +936,6 @@ describe("drainProposals — judgment tier (agent mode)", () => {
     );
     expect(secondJudge).not.toHaveBeenCalled();
     expect(second.promoted).toEqual([deferred.id]);
-  });
-
-  test("a staged personal-stash judgment is not consumed by the manual policy", async () => {
-    const stash = makeStashDir();
-    const deferred = seed(stash, "lessons/cross-policy", "consolidate", BIG_LESSON);
-    const stageJudge = mock(async () => agentResult(JSON.stringify({ decision: "accept", reason: "personal" })));
-    await drainProposals(
-      baseOpts(stash, { policy: PERSONAL_STASH, judgment: FAKE_AGENT_RUNNER, applyMode: "queue" }),
-      fakeAccept(),
-      fakeReject(),
-      { runAgentFn: stageJudge },
-    );
-
-    const manualJudge = mock(async () => agentResult(JSON.stringify({ decision: "accept", reason: "manual" })));
-    const promoteFn = fakeAccept();
-    const result = await drainProposals(
-      baseOpts(stash, { policy: MANUAL, judgment: FAKE_AGENT_RUNNER, applyMode: "promote" }),
-      promoteFn,
-      fakeReject(),
-      { runAgentFn: manualJudge },
-    );
-
-    expect(result.promoted).toEqual([]);
-    expect(promoteFn).not.toHaveBeenCalled();
-    expect(manualJudge).not.toHaveBeenCalled();
-    expect(getProposal(stash, deferred.id).gateDecision).toMatchObject({
-      outcome: "staged",
-      gate: "triage:personal-stash",
-    });
   });
 });
 
@@ -1158,6 +1021,13 @@ describe("drainProposals — judgment disabled", () => {
     const result = await drainProposals(baseOpts(stash, { judgment: null }), fakeAccept(), fakeReject(), {});
 
     expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+    // Left for review: a per-proposal reason, and `review_needed` in the ledger.
+    expect(getProposal(stash, deferred.id).gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "no-judge-configured",
+      gate: "triage",
+    });
+    expect(ledgerRow(stash, "stash//lessons/big", "consolidate")).toMatchObject({ outcome: "review_needed" });
   });
 });
 
@@ -1168,8 +1038,7 @@ describe("drainProposals — judgment disabled", () => {
 // row entirely — not classify it, not re-stamp it, not send it to the
 // judgment tier, which could auto-accept it under `applyMode: promote` with
 // no human ever seeing content the gate explicitly refused to auto-queue. An
-// unstamped `distill` row is unaffected and still reaches judgment normally
-// (PERSONAL_STASH defers `distill` to the judgment tier).
+// unstamped `distill` row is unaffected and still reaches judgment normally.
 
 describe("drainProposals — REVIEW: quality-gate review-band rows are skipped, not judged", () => {
   test("a distill row stamped deferred/quality-gate stays pending and untouched; the judgment seam is never called", async () => {

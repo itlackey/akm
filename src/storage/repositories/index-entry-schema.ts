@@ -3,18 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The single canonical contract for the derived `entries` generation.
+ * The derived `entries` layout: DDL plus the layout marker.
  *
- * `index.db` is regenerable, so callers compare one normalized PRAGMA
- * fingerprint and discard any generation that differs. This module owns both
- * the DDL and its expected fingerprint so schema creation, writable opens,
- * serving preflights, and read-only evaluator tooling cannot drift into
- * separate definitions of "current".
+ * `index_meta.version` is a layout marker, not a compatibility gate. Nothing
+ * refuses an index over it: readers serve what is there, and the writable
+ * opener (`ensureSchema`, `index-schema.ts`) brings an older layout up to date
+ * in place — additive columns and a one-time full-text rebuild — without
+ * touching embeddings, utility scores, graph rows, or the LLM enrichment cache.
  */
 
-// v23 adds an isolated fragment FTS population. v22 is the last shipped
-// generation and is intentionally rebuilt rather than migrated in place.
-export const CANONICAL_INDEX_DB_VERSION = 23;
+// 24: the FTS5 tables are contentless (`content=''`) — the indexed text lives
+// once, in `entries` / `entry_fragments`, and FTS rows are keyed by rowid only.
+// 23 and earlier stored a second copy of every indexed field in FTS5's own
+// content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
+// tables from the stored entries when it finds the older layout.
+export const CANONICAL_INDEX_DB_VERSION = 24;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
@@ -37,81 +40,51 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_file_path ON entries(file_path);
   CREATE INDEX IF NOT EXISTS idx_entries_derived_from ON entries(derived_from);
 
-  -- Keep parent metadata and body fragments in separate FTS populations.
-  -- Combining them changes parent-document IDF and conjunction semantics.
-  CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-    entry_id UNINDEXED,
-    name,
-    description,
-    tags,
-    hints,
-    content,
-    tokenize='porter unicode61'
-  );
-
   CREATE TABLE IF NOT EXISTS entry_fragments (
     entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
     safe_markdown TEXT NOT NULL
   );
-
-  CREATE VIRTUAL TABLE IF NOT EXISTS entry_fragments_fts USING fts5(
-    entry_id UNINDEXED,
-    fragment_id UNINDEXED,
-    fragment_ordinal UNINDEXED,
-    content,
-    tokenize='porter unicode61'
-  );
 `;
 
-interface ColumnFingerprint {
-  cid: number;
-  name: string;
-  type: string;
-  notNull: number;
-  defaultValue: string | null;
-  primaryKeyPosition: number;
-  hidden: number;
+// Both FTS tables are contentless: FTS5 keeps only the inverted index, and a
+// row is addressed by its rowid (`entries_fts.rowid = entries.id`;
+// `entry_fragments_fts.rowid = entries.id * 2^20 + fragment ordinal`, see
+// index-fts-repository.ts). `contentless_delete=1` lets a row be deleted by
+// rowid alone — an external-content table would instead need the exact text
+// originally indexed, which is derived in JS from `document_json`
+// (`buildSearchFields`) and would corrupt the index the first time that
+// derivation changed. The UNINDEXED columns store nothing and read back NULL;
+// they stay declared so the insert statements and the readers'
+// `COALESCE(f.entry_id, f.rowid)` joins are valid against both this layout
+// and the content-bearing one older releases wrote — which is also the
+// layout written when the linked SQLite predates `contentless_delete` (3.43,
+// e.g. the macOS 13 system library Bun links there).
+//
+// Parent metadata and body fragments are separate FTS populations on purpose:
+// combining them changes parent-document IDF and conjunction semantics.
+const CONTENTLESS_OPTIONS = "content='', contentless_delete=1,";
+
+export function entriesFtsDdl(contentless: boolean): string {
+  return `
+  CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+    entry_id UNINDEXED, name, description, tags, hints, content,
+    ${contentless ? CONTENTLESS_OPTIONS : ""} tokenize='porter unicode61'
+  );`;
 }
 
-interface IndexColumnFingerprint {
-  sequence: number;
-  cid: number;
-  name: string | null;
-  descending: number;
-  collation: string | null;
-  key: number;
+export function fragmentsFtsDdl(contentless: boolean): string {
+  return `
+  CREATE VIRTUAL TABLE IF NOT EXISTS entry_fragments_fts USING fts5(
+    entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content,
+    ${contentless ? CONTENTLESS_OPTIONS : ""} tokenize='porter unicode61'
+  );`;
 }
 
-interface IndexFingerprint {
-  name: string;
-  unique: number;
-  origin: string;
-  partial: number;
-  columns: IndexColumnFingerprint[];
-}
-
-interface EntrySchemaFingerprint {
-  tableSql: string | null;
-  sqliteSequenceTable: boolean;
-  sqliteSequenceValid: boolean;
-  columns: ColumnFingerprint[];
-  indexes: IndexFingerprint[];
-  searchSurfaces: SearchSurfaceFingerprint;
-}
-
-/**
- * The logical FTS surfaces that belong to this derived generation.
- *
- * SQLite records an FTS5 virtual table itself and its implementation-owned
- * shadow tables in sqlite_master with type `table`.  Only the named logical
- * roots below are part of AKM's contract: exact virtual-table DDL proves the
- * FTS module, columns, UNINDEXED flags, and tokenizer.  Shadow-table layout is
- * deliberately not fingerprinted because it is SQLite's internal detail.
- */
-interface SearchSurfaceFingerprint {
-  entriesFtsSql: string | null;
-  fragmentSourceSql: string | null;
-  fragmentsFtsSql: string | null;
+/** Whether the linked SQLite's FTS5 supports `contentless_delete` (3.43.0+). */
+export function supportsContentlessDelete(db: EntrySchemaInspectionDatabase): boolean {
+  const version = (db.prepare("SELECT sqlite_version() AS version").get() as { version: string }).version;
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 3 || (major === 3 && minor >= 43);
 }
 
 /** Minimal read-only statement surface shared by bun:sqlite and AKM's runtime-neutral handle. */
@@ -122,305 +95,61 @@ export interface EntrySchemaInspectionDatabase {
   };
 }
 
-const CANONICAL_ENTRY_SCHEMA_FINGERPRINT: EntrySchemaFingerprint = {
-  tableSql:
-    "CREATE TABLE entries ( id INTEGER PRIMARY KEY AUTOINCREMENT, item_ref TEXT NOT NULL UNIQUE, bundle_id TEXT NOT NULL, component_id TEXT NOT NULL, concept_id TEXT NOT NULL, adapter_id TEXT NOT NULL, type TEXT NOT NULL, file_path TEXT NOT NULL, content_hash TEXT, document_json TEXT NOT NULL, search_text TEXT NOT NULL, derived_from TEXT )",
-  sqliteSequenceTable: true,
-  sqliteSequenceValid: true,
-  columns: [
-    { cid: 0, name: "id", type: "INTEGER", notNull: 0, defaultValue: null, primaryKeyPosition: 1, hidden: 0 },
-    {
-      cid: 1,
-      name: "item_ref",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 2,
-      name: "bundle_id",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 3,
-      name: "component_id",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 4,
-      name: "concept_id",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 5,
-      name: "adapter_id",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    { cid: 6, name: "type", type: "TEXT", notNull: 1, defaultValue: null, primaryKeyPosition: 0, hidden: 0 },
-    {
-      cid: 7,
-      name: "file_path",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 8,
-      name: "content_hash",
-      type: "TEXT",
-      notNull: 0,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 9,
-      name: "document_json",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 10,
-      name: "search_text",
-      type: "TEXT",
-      notNull: 1,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-    {
-      cid: 11,
-      name: "derived_from",
-      type: "TEXT",
-      notNull: 0,
-      defaultValue: null,
-      primaryKeyPosition: 0,
-      hidden: 0,
-    },
-  ],
-  indexes: [
-    {
-      name: "idx_entries_bundle",
-      unique: 0,
-      origin: "c",
-      partial: 0,
-      columns: [
-        { sequence: 0, cid: 2, name: "bundle_id", descending: 0, collation: "BINARY", key: 1 },
-        { sequence: 1, cid: -1, name: null, descending: 0, collation: "BINARY", key: 0 },
-      ],
-    },
-    {
-      name: "idx_entries_derived_from",
-      unique: 0,
-      origin: "c",
-      partial: 0,
-      columns: [
-        { sequence: 0, cid: 11, name: "derived_from", descending: 0, collation: "BINARY", key: 1 },
-        { sequence: 1, cid: -1, name: null, descending: 0, collation: "BINARY", key: 0 },
-      ],
-    },
-    {
-      name: "idx_entries_file_path",
-      unique: 0,
-      origin: "c",
-      partial: 0,
-      columns: [
-        { sequence: 0, cid: 7, name: "file_path", descending: 0, collation: "BINARY", key: 1 },
-        { sequence: 1, cid: -1, name: null, descending: 0, collation: "BINARY", key: 0 },
-      ],
-    },
-    {
-      name: "idx_entries_type",
-      unique: 0,
-      origin: "c",
-      partial: 0,
-      columns: [
-        { sequence: 0, cid: 6, name: "type", descending: 0, collation: "BINARY", key: 1 },
-        { sequence: 1, cid: -1, name: null, descending: 0, collation: "BINARY", key: 0 },
-      ],
-    },
-    {
-      name: "sqlite_autoindex_entries_1",
-      unique: 1,
-      origin: "u",
-      partial: 0,
-      columns: [
-        { sequence: 0, cid: 1, name: "item_ref", descending: 0, collation: "BINARY", key: 1 },
-        { sequence: 1, cid: -1, name: null, descending: 0, collation: "BINARY", key: 0 },
-      ],
-    },
-  ],
-  searchSurfaces: {
-    entriesFtsSql:
-      "CREATE VIRTUAL TABLE entries_fts USING fts5( entry_id UNINDEXED, name, description, tags, hints, content, tokenize='porter unicode61' )",
-    fragmentSourceSql:
-      "CREATE TABLE entry_fragments ( entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE, safe_markdown TEXT NOT NULL )",
-    fragmentsFtsSql:
-      "CREATE VIRTUAL TABLE entry_fragments_fts USING fts5( entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content, tokenize='porter unicode61' )",
-  },
-};
-
 function sqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function normalizeSchemaSql(value: string | null | undefined): string | null {
-  if (value == null) return null;
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function readNamedTableSql(db: EntrySchemaInspectionDatabase, name: string): string | null {
+export function readTableSql(db: EntrySchemaInspectionDatabase, name: string): string | null {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ${sqlString(name)}`).get() as
     | { sql: string | null }
     | null
     | undefined;
-  return normalizeSchemaSql(row?.sql);
+  return row?.sql ?? null;
 }
 
-export function readEntrySchemaFingerprint(db: EntrySchemaInspectionDatabase): EntrySchemaFingerprint {
-  const sqliteSequenceTable =
-    db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").get() !=
-    null;
-  const maxId = Number(
-    (db.prepare("SELECT COALESCE(MAX(id), 0) AS maxId FROM entries").get() as { maxId: number }).maxId,
+export function tableExists(db: EntrySchemaInspectionDatabase, name: string): boolean {
+  return readTableSql(db, name) !== null;
+}
+
+/** Columns every `entries` row carries for this release's readers and writers (layout 21+). */
+const REQUIRED_ENTRY_COLUMNS = [
+  "id",
+  "item_ref",
+  "bundle_id",
+  "component_id",
+  "concept_id",
+  "adapter_id",
+  "type",
+  "file_path",
+  "content_hash",
+  "document_json",
+  "search_text",
+  "derived_from",
+] as const;
+
+/** Required `entries` columns the table lacks; every column when there is no `entries` table. */
+export function missingEntryColumns(db: EntrySchemaInspectionDatabase): string[] {
+  const present = new Set(
+    (db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((c) => c.name),
   );
-  const sequenceRow = sqliteSequenceTable
-    ? (db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'entries'").get() as { seq: number } | null | undefined)
-    : undefined;
-  const sqliteSequenceValid =
-    sqliteSequenceTable &&
-    (maxId === 0 ? sequenceRow == null || Number(sequenceRow.seq) >= 0 : Number(sequenceRow?.seq) >= maxId);
-  const columns = (
-    db.prepare("PRAGMA table_xinfo(entries)").all() as Array<{
-      cid: number;
-      name: string;
-      type: string;
-      notnull: number;
-      dflt_value: string | null;
-      pk: number;
-      hidden: number;
-    }>
-  ).map((column) => ({
-    cid: Number(column.cid),
-    name: column.name,
-    type: column.type.trim().toUpperCase(),
-    notNull: Number(column.notnull),
-    defaultValue: column.dflt_value === null ? null : String(column.dflt_value),
-    primaryKeyPosition: Number(column.pk),
-    hidden: Number(column.hidden),
-  }));
-
-  const indexes = (
-    db.prepare("PRAGMA index_list(entries)").all() as Array<{
-      name: string;
-      unique: number;
-      origin: string;
-      partial: number;
-    }>
-  )
-    .map((index) => ({
-      name: index.name,
-      unique: Number(index.unique),
-      origin: index.origin,
-      partial: Number(index.partial),
-      columns: (
-        db.prepare(`PRAGMA index_xinfo(${sqlString(index.name)})`).all() as Array<{
-          seqno: number;
-          cid: number;
-          name: string | null;
-          desc: number;
-          coll: string | null;
-          key: number;
-        }>
-      )
-        .sort((left, right) => Number(left.seqno) - Number(right.seqno))
-        .map((column) => ({
-          sequence: Number(column.seqno),
-          cid: Number(column.cid),
-          name: column.name,
-          descending: Number(column.desc),
-          collation: column.coll,
-          key: Number(column.key),
-        })),
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name));
-
-  return {
-    tableSql: readNamedTableSql(db, "entries"),
-    sqliteSequenceTable,
-    sqliteSequenceValid,
-    columns,
-    indexes,
-    searchSurfaces: {
-      entriesFtsSql: readNamedTableSql(db, "entries_fts"),
-      fragmentSourceSql: readNamedTableSql(db, "entry_fragments"),
-      fragmentsFtsSql: readNamedTableSql(db, "entry_fragments_fts"),
-    },
-  };
+  return REQUIRED_ENTRY_COLUMNS.filter((column) => !present.has(column));
 }
 
-export function hasCanonicalEntrySchema(db: EntrySchemaInspectionDatabase): boolean {
+/**
+ * Whether an index database has an `entries` table this release can read. A
+ * fresh or empty file has none; an index older than layout 21 has one keyed
+ * by columns this release no longer reads, and serves nothing until the next
+ * `akm index` recreates it.
+ */
+export function hasCurrentEntriesTable(db: EntrySchemaInspectionDatabase): boolean {
   try {
-    return JSON.stringify(readEntrySchemaFingerprint(db)) === JSON.stringify(CANONICAL_ENTRY_SCHEMA_FINGERPRINT);
+    return missingEntryColumns(db).length === 0;
   } catch {
     return false;
   }
 }
 
-export type IndexGenerationStatus = "canonical" | "older" | "newer";
-
-export interface IndexGenerationClassification {
-  status: IndexGenerationStatus;
-  storedVersion: string | undefined;
-}
-
-export function classifyIndexGeneration(db: EntrySchemaInspectionDatabase): IndexGenerationClassification {
-  let storedVersion: string | undefined;
-  try {
-    const row = db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string } | undefined;
-    storedVersion = row?.value;
-  } catch {
-    storedVersion = undefined;
-  }
-
-  if (storedVersion === String(CANONICAL_INDEX_DB_VERSION) && hasCanonicalEntrySchema(db)) {
-    return { status: "canonical", storedVersion };
-  }
-
-  const storedNumeric = storedVersion === undefined ? undefined : Number(storedVersion);
-  if (storedNumeric !== undefined && Number.isFinite(storedNumeric) && storedNumeric > CANONICAL_INDEX_DB_VERSION) {
-    return { status: "newer", storedVersion };
-  }
-  return { status: "older", storedVersion };
-}
-
-export function isCanonicalIndexGeneration(db: EntrySchemaInspectionDatabase): boolean {
-  try {
-    return classifyIndexGeneration(db).status === "canonical";
-  } catch {
-    return false;
-  }
+/** True when an FTS5 table's DDL declares the contentless layout this release writes. */
+export function isContentlessFtsDdl(sql: string | null): boolean {
+  return sql !== null && /content\s*=\s*''/.test(sql);
 }

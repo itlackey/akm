@@ -18,10 +18,7 @@ describe("triage improve-process config schema", () => {
         triage: {
           enabled: true,
           applyMode: "queue",
-          policy: "personal-stash",
           maxAcceptsPerRun: 25,
-          maxDiffLines: 200,
-          rejectEmpty: true,
           judgment: { engine: "fast", timeoutMs: 600000 },
         },
       },
@@ -34,10 +31,7 @@ describe("triage improve-process config schema", () => {
       ImproveProcessConfigSchema.safeParse({
         enabled: false,
         applyMode: "promote",
-        policy: "conservative",
         maxAcceptsPerRun: 10,
-        maxDiffLines: 50,
-        rejectEmpty: false,
         judgment: { engine: "agent" },
       }).success,
     ).toBe(true);
@@ -46,7 +40,10 @@ describe("triage improve-process config schema", () => {
     expect(ImproveProcessConfigSchema.safeParse({ applyMode: "delete" }).success).toBe(false);
     // maxAcceptsPerRun must be a positive integer
     expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
-    expect(ImproveProcessConfigSchema.safeParse({ maxDiffLines: -1 }).success).toBe(false);
+    // The retired drain-policy keys are tolerated like any unknown key, never fatal.
+    expect(
+      ImproveProcessConfigSchema.safeParse({ policy: "personal-stash", maxDiffLines: -1, rejectEmpty: true }).success,
+    ).toBe(true);
     // An unknown judgment key is not fatal: the loader warns about it and it changes nothing.
     const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } });
     expect(withUnknown.success).toBe(true);

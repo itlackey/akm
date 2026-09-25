@@ -147,33 +147,18 @@ const triageJudgmentField = z
   .optional();
 
 /**
- * WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
- * from collapsing too aggressively and losing diversity. Consolidate process
- * only. Default ON since R5 (opt out via enabled: false).
- *   - maxGeneration: refuse to merge two assets both above this generation (default 2).
- *   - lexicalDiversityCheck: low n-gram diversity ⇒ raise merge threshold.
- *   - randomClusterFraction: occasional random (non-similar) cluster in pool (default 0.05).
- *   - mergeInformationFloor: LIVE gate (anti-collapse.ts:143) — NOT a
- *     decorative/inert knob. `false` skips the merge-information-floor
- *     measurement entirely (no counting, no warning) for every merge;
- *     true/absent (default) measures it on every merge. The MEASUREMENT's
- *     outcome is advisory in v1: a failing merge is counted
- *     (`merge_floor_violations`) and warned but never refused (promotion path:
- *     docs/architecture/specs/improve-collapse-churn-detector-design.md §7). In short:
- *     this field gates whether the check runs at all (a real code path), not
- *     whether a merge is allowed.
- *   - minSpecificityRetention: distinct-token retention floor for merges (default 0.6).
- * (WS-3b step 0a `homeostaticDemotion` was removed — R4. Continuous decay is
- * now part of the always-applied salience recency term.)
+ * WS-3b: Anti-collapse guard (step 8), consolidate process only: a small
+ * random (non-similarity-driven) fraction of the pool is mixed into the
+ * clustered order so consolidation is not purely rich-get-richer. Default ON
+ * (opt out via `enabled: false`); `randomClusterFraction` defaults to 0.05.
+ * The retired merge guards (`maxGeneration`, `lexicalDiversityCheck`,
+ * `mergeInformationFloor`, `minSpecificityRetention`) never refused a merge
+ * and are tolerated as unknown keys.
  */
 const antiCollapseField = z
   .object({
     enabled: z.boolean().optional(),
-    maxGeneration: z.number().int().min(1).optional(),
-    lexicalDiversityCheck: z.boolean().optional(),
     randomClusterFraction: z.number().min(0).max(1).optional(),
-    mergeInformationFloor: z.boolean().optional(),
-    minSpecificityRetention: z.number().min(0).max(1).optional(),
   })
   .passthrough()
   .optional();
@@ -278,10 +263,7 @@ const EXTRACT_PROCESS_FIELDS = {
 
 const TRIAGE_PROCESS_FIELDS = {
   applyMode: z.enum(["queue", "promote"]).optional(),
-  policy: z.string().min(1).optional(),
   maxAcceptsPerRun: positiveInt.optional(),
-  maxDiffLines: positiveInt.optional(),
-  rejectEmpty: z.boolean().optional(),
   judgment: triageJudgmentField,
 };
 

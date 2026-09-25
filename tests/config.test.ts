@@ -1056,25 +1056,23 @@ describe("extends inheritance (#945)", () => {
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 
-  test("the base config runs through its own independent version-shim pass", () => {
-    // The synthetic "0.0.1" -> "0.9.0" shim moves a root `defaultEngine` under
-    // `defaults.llmEngine` (config-version-shim.ts). Writing the BASE at that
-    // old version proves the base gets its own shim pass, independent of the
-    // (current-version) local file that extends it.
+  test("a base config declaring a foreign configVersion is still merged underneath", () => {
+    // The base gets the same per-file pipeline as the local file: its
+    // `configVersion` is read as current rather than gating the merge.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "old-base.json"),
       JSON.stringify({
-        configVersion: "0.0.1",
-        defaultEngine: "legacy",
+        configVersion: "0.8.0",
+        defaults: { llmEngine: "legacy" },
         engines: { legacy: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "m" } },
       }),
     );
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./old-base.json" }));
 
     const config = loadConfig();
+    expect(config.configVersion).toBe("0.9.0");
     expect(config.defaults?.llmEngine).toBe("legacy");
-    expect((config as unknown as Record<string, unknown>).defaultEngine).toBeUndefined();
   });
 
   test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
@@ -1341,91 +1339,5 @@ describe("getConfigValueSource (#945)", () => {
     );
 
     expect(getConfigValueSource("archiveRetentionDays")).toBe("local");
-  });
-});
-
-// ── Strict version gate ──────────────────────────────────────────────────────
-
-describe("strict 0.9 config loading", () => {
-  const originalNoAutoMigrate = process.env.AKM_NO_AUTO_MIGRATE;
-
-  afterEach(() => {
-    // Restore env after each test
-    if (originalNoAutoMigrate === undefined) {
-      delete process.env.AKM_NO_AUTO_MIGRATE;
-    } else {
-      process.env.AKM_NO_AUTO_MIGRATE = originalNoAutoMigrate;
-    }
-    resetConfigCache();
-  });
-
-  test("rejects a legacy config with no configVersion without rewriting it", () => {
-    delete process.env.AKM_NO_AUTO_MIGRATE;
-
-    const configPath = getConfigPath();
-    const v1Config = {
-      llm: {
-        endpoint: "http://localhost:11434",
-        model: "qwen3",
-        features: { memory_inference: true },
-      },
-    };
-    const original = JSON.stringify(v1Config);
-    writeRawConfig(configPath, original);
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
-    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(onDisk.configVersion).toBeUndefined();
-    expect(onDisk.llm?.endpoint).toBe("http://localhost:11434");
-    expect(onDisk.profiles).toBeUndefined();
-    const backupDir = path.join(getCacheDir(), "config-backups");
-    expect(fs.existsSync(backupDir)).toBe(false);
-  });
-
-  test("AKM_NO_AUTO_MIGRATE does not bypass the strict version gate", () => {
-    process.env.AKM_NO_AUTO_MIGRATE = "1";
-
-    const configPath = getConfigPath();
-    const v1Config = {
-      llm: {
-        endpoint: "http://localhost:11434",
-        model: "qwen3",
-        features: { memory_inference: true },
-      },
-    };
-    writeRawConfig(configPath, JSON.stringify(v1Config));
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
-
-    const onDisk = fs.readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(onDisk);
-    expect(parsed.configVersion).toBeUndefined();
-    expect(parsed.llm?.features?.memory_inference).toBe(true);
-  });
-
-  test("version rejection does not attempt a write even when the directory is read-only (#461)", () => {
-    delete process.env.AKM_NO_AUTO_MIGRATE;
-
-    const configPath = getConfigPath();
-    const v1Config = {
-      llm: {
-        endpoint: "http://localhost:11434",
-        model: "qwen3",
-        features: { memory_inference: true },
-      },
-    };
-    writeRawConfig(configPath, JSON.stringify(v1Config));
-
-    const configDir = path.dirname(configPath);
-    fs.chmodSync(configDir, 0o555);
-    try {
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
-      expect(JSON.parse(fs.readFileSync(configPath, "utf8")).llm.model).toBe("qwen3");
-    } finally {
-      fs.chmodSync(configDir, 0o755);
-    }
   });
 });

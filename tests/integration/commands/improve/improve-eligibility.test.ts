@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Signal-delta + pool-delta eligibility tests (0.8.0).
+ * Candidate selection against the improve ledger.
  *
- * The 0.8.0 redesign replaced the per-ref time-based reflect/distill cooldowns
- * with a *signal-delta* gate (re-eligible iff new feedback landed since the
- * last proposal for that ref+source) and the consolidate time cooldown with a
- * *pool-delta* gate (re-eligible iff any memory file mtime is newer than the
- * last consolidate_completed event). These tests pin the new gates.
+ * Reflect/distill: a ref is re-eligible iff new feedback landed since its last
+ * attempt on that source (the ledger's `last_attempt_at`) and no rejection
+ * window holds it. Consolidate: a memory judged within its revisit window and
+ * unchanged since is not judged again. These tests seed ledger rows directly
+ * and drive `akmImprove` end to end.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -19,7 +19,6 @@ import path from "node:path";
 import { inspectConsolidationPool } from "../../../../src/commands/improve/consolidate";
 import {
   buildLatestFeedbackTsMap,
-  buildLatestProposalTsMap,
   collectEligibleRefs,
   dedupeRefs,
   resolveImproveScope,
@@ -39,6 +38,10 @@ import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
+import {
+  type ImproveLedgerOutcome,
+  recordImproveLedger,
+} from "../../../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
@@ -106,6 +109,23 @@ async function buildIndex(stashDir: string): Promise<void> {
 
 function durableRef(ref: string): string {
   return `stash//${ref}`;
+}
+
+/** Seed an improve-ledger attempt on `ref` (keyed by its item_ref) at `atMs`. */
+function recordAttempt(
+  stashDir: string,
+  ref: string,
+  source: "reflect" | "distill" | "consolidate",
+  outcome: ImproveLedgerOutcome,
+  atMs: number = Date.now(),
+  key: string = durableRef(ref),
+): void {
+  const db = openStateDatabase();
+  try {
+    recordImproveLedger(db, { stashDir, ref: key, source, outcome, at: new Date(atMs).toISOString() });
+  } finally {
+    db.close();
+  }
 }
 
 // #553: these pool-delta / #551-gate tests use single-memory sandboxed pools.
@@ -269,47 +289,15 @@ describe("durable eligibility keys", () => {
     expect(improveStateReadRefs("memories/auth-tips")).toEqual(["memories/auth-tips"]);
   });
 
-  test("a durable feedback/proposal event correlates on the conceptId key", () => {
+  test("a durable feedback event correlates on the conceptId key", () => {
     appendEvent(
       { eventType: "feedback", ref: "memories/auth-tips", metadata: { signal: "positive" } },
       { now: () => NEWER_MS },
     );
-    appendEvent({ eventType: "reflect_invoked", ref: "memories/auth-tips" }, { now: () => NEWER_MS });
 
     expect(buildLatestFeedbackTsMap(["memories/auth-tips"], new Date(0).toISOString())).toEqual(
       new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
     );
-    expect(buildLatestProposalTsMap(["memories/auth-tips"], "reflect")).toEqual(
-      new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
-    );
-  });
-
-  // R10: quality_rejected and review_needed now mint a real proposal row (see
-  // quality-gate.ts's writeQualityRejection), so — like queued — the distill
-  // signal-delta cursor must advance for them too, or the same ref is
-  // re-selected and re-rejected on every run. llm_failed stays excluded: no
-  // real attempt (and no proposal) resulted.
-  test.each([
-    "quality_rejected",
-    "review_needed",
-  ] as const)("distill_invoked outcome %s advances the signal-delta cursor", (outcome) => {
-    appendEvent(
-      { eventType: "distill_invoked", ref: "memories/auth-tips", metadata: { outcome } },
-      { now: () => NEWER_MS },
-    );
-
-    expect(buildLatestProposalTsMap(["memories/auth-tips"], "distill")).toEqual(
-      new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
-    );
-  });
-
-  test("distill_invoked outcome llm_failed does not advance the signal-delta cursor", () => {
-    appendEvent(
-      { eventType: "distill_invoked", ref: "memories/auth-tips", metadata: { outcome: "llm_failed" } },
-      { now: () => NEWER_MS },
-    );
-
-    expect(buildLatestProposalTsMap(["memories/auth-tips"], "distill")).toEqual(new Map());
   });
 });
 
@@ -319,8 +307,8 @@ describe("reflect signal-delta eligibility", () => {
     writeMemory(stash, "auth-tips", "Use VPN.");
     await buildIndex(stash);
 
-    // Older reflect proposal recorded as reflect_invoked event.
-    appendEvent({ eventType: "reflect_invoked", ref: durableRef("memories/auth-tips") }, { now: () => OLDER_MS });
+    // Older reflect attempt recorded in the ledger.
+    recordAttempt(stash, "memories/auth-tips", "reflect", "unchanged", OLDER_MS);
     // Newer feedback event arrived after the reflect (injected ts strictly > reflect).
     appendEvent(
       {
@@ -352,7 +340,7 @@ describe("reflect signal-delta eligibility", () => {
     writeMemory(stash, "stale", "Old content.");
     await buildIndex(stash);
 
-    // Old feedback event THEN a reflect_invoked event (reflect is newer).
+    // Old feedback event THEN a reflect attempt (the attempt is newer).
     appendEvent(
       {
         eventType: "feedback",
@@ -361,7 +349,7 @@ describe("reflect signal-delta eligibility", () => {
       },
       { now: () => OLDER_MS },
     );
-    appendEvent({ eventType: "reflect_invoked", ref: durableRef("memories/stale") }, { now: () => NEWER_MS });
+    recordAttempt(stash, "memories/stale", "reflect", "unchanged", NEWER_MS);
 
     const reflected: string[] = [];
     await akmImprove({
@@ -377,6 +365,33 @@ describe("reflect signal-delta eligibility", () => {
     });
 
     expect(reflected).not.toContain("memories/stale");
+  });
+
+  test("a rejection window holds the ref even after new feedback", async () => {
+    const stash = makeTempDir("akm-elig-reflect-rejected-");
+    writeMemory(stash, "refused", "Content a reviewer turned down.");
+    await buildIndex(stash);
+    recordAttempt(stash, "memories/refused", "reflect", "rejected", OLDER_MS);
+    appendEvent(
+      { eventType: "feedback", ref: durableRef("memories/refused"), metadata: { signal: "negative" } },
+      { now: () => NEWER_MS },
+    );
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      config: configWithoutPoolGuard(stash),
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).not.toContain("memories/refused");
   });
 
   test("never-reflected ref with feedback signal → eligible", async () => {
@@ -436,14 +451,7 @@ describe("distill signal-delta eligibility", () => {
     writeMemory(stash, "auth-tips", "VPN required.");
     await buildIndex(stash);
 
-    appendEvent(
-      {
-        eventType: "distill_invoked",
-        ref: durableRef("memories/auth-tips"),
-        metadata: { outcome: "queued" },
-      },
-      { now: () => OLDER_MS },
-    );
+    recordAttempt(stash, "memories/auth-tips", "distill", "proposed", OLDER_MS);
     appendEvent(
       {
         eventType: "feedback",
@@ -482,14 +490,7 @@ describe("distill signal-delta eligibility", () => {
       },
       { now: () => OLDER_MS },
     );
-    appendEvent(
-      {
-        eventType: "distill_invoked",
-        ref: durableRef("memories/old-memory"),
-        metadata: { outcome: "queued" },
-      },
-      { now: () => NEWER_MS },
-    );
+    recordAttempt(stash, "memories/old-memory", "distill", "proposed", NEWER_MS);
 
     const distilled: string[] = [];
     await akmImprove({
@@ -555,28 +556,16 @@ describe("distill signal-delta eligibility", () => {
   });
 });
 
-// ── Consolidate pool-delta ──────────────────────────────────────────────────
+// ── Consolidate: the improve ledger narrows the pool ────────────────────────
 
-describe("consolidate pool-delta eligibility", () => {
-  test("no memory updates since last consolidate_completed → ineligible (improve_skipped emitted)", async () => {
+describe("consolidate ledger eligibility", () => {
+  test("every memory judged recently and unchanged since → skipped (improve_skipped emitted)", async () => {
     const stash = makeTempDir("akm-elig-consolidate-skip-");
-    writeMemory(stash, "old-mem", "Stable content.");
+    writeMemory(stash, "old-mem", "Stable content.", new Date(Date.now() - 60_000));
     await buildIndex(stash);
-    // Emit a consolidate_completed event with ts well in the future so the
-    // memory file's natural mtime (including any in-pipeline lint touches)
-    // stays strictly less than the event ts. This is the canonical "nothing
-    // new since the last successful consolidate" state.
-    const farFutureMs = new Date("2099-01-01T00:00:00.000Z").getTime();
-    appendEvent(
-      {
-        eventType: "consolidate_completed",
-        ref: "memories/_consolidation",
-        metadata: { processed: 1, source: "stash" },
-      },
-      { now: () => farFutureMs },
-    );
+    recordAttempt(stash, "memories/old-mem", "consolidate", "judged_no_action", Date.now(), "memories/old-mem");
 
-    await akmImprove({
+    const result = await akmImprove({
       scope: "memory",
       config: configWithoutPoolGuard(stash),
       stashDir: stash,
@@ -586,23 +575,22 @@ describe("consolidate pool-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
+    expect(result.consolidation?.processed ?? 0).toBe(0);
     const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
   });
 
-  test("memory mtime > last consolidate_completed → consolidation skip event NOT emitted", async () => {
+  test("a memory edited after its judgement is back in the pool (no skip event)", async () => {
     const stash = makeTempDir("akm-elig-consolidate-runs-");
-    // Old completion event (injected ts in the past), then a freshly-written
-    // memory whose natural mtime is strictly newer than the completion event.
-    appendEvent(
-      {
-        eventType: "consolidate_completed",
-        ref: "memories/_consolidation",
-        metadata: { processed: 1, source: "stash" },
-      },
-      { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
+    recordAttempt(
+      stash,
+      "memories/fresh-mem",
+      "consolidate",
+      "judged_no_action",
+      Date.now() - 60_000,
+      "memories/fresh-mem",
     );
-    writeMemory(stash, "nested/fresh-mem", "Recent nested edit.");
+    writeMemory(stash, "fresh-mem", "Edited since the last judgement.", new Date(Date.now() + 5_000));
     await buildIndex(stash);
 
     await akmImprove({
@@ -618,98 +606,18 @@ describe("consolidate pool-delta eligibility", () => {
     const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
   });
-});
 
-// ── R4: volume override is bootstrap-only ────────────────────────────────────
-
-describe("R4 consolidation volume override is bootstrap-only", () => {
-  // (b) Once a consolidate_completed event exists, a large eligible pool must
-  // NOT bypass the pool-delta gate — only actual memory updates since that
-  // event should. Before the fix, `volumeTriggered` forced the run regardless
-  // of `lastConsolidateTs`, so this cooldown skip never fired once the pool
-  // grew past the threshold.
-  test("prior consolidate_completed + no memory updates → cooldown even when eligible pool exceeds volume threshold", async () => {
-    const stash = makeTempDir("akm-r4-volume-cooldown-");
-    writeMemory(stash, "mem-a", "Stable content A.");
-    writeMemory(stash, "mem-b", "Stable content B.");
-    await buildIndex(stash);
-    // Far-future completion ts: nothing on disk is newer, so the pool-delta
-    // gate alone would put this on cooldown.
-    const farFutureMs = new Date("2099-01-01T00:00:00.000Z").getTime();
-    appendEvent(
-      {
-        eventType: "consolidate_completed",
-        ref: "memories/_consolidation",
-        metadata: { processed: 1, source: "stash" },
-      },
-      { now: () => farFutureMs },
-    );
-
-    await akmImprove({
-      scope: "memory",
-      config: configWithoutPoolGuard(stash),
-      stashDir: stash,
-      memoryVolumeConsolidationThreshold: 1, // eligible pool (2) exceeds this
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
-    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
-  });
-
-  // (c) With no prior consolidate_completed event at all, the volume override
-  // still forces the bootstrap run — this is the "fresh stash, consolidate
-  // once" behaviour the override exists for, and stays intact.
-  test("no prior consolidate_completed + eligible pool exceeds volume threshold → bootstrap runs (not cooldown)", async () => {
-    const stash = makeTempDir("akm-r4-volume-bootstrap-");
-    writeMemory(stash, "mem-a", "Stable content A.");
-    writeMemory(stash, "mem-b", "Stable content B.");
-    await buildIndex(stash);
-
-    await akmImprove({
-      scope: "memory",
-      config: configWithoutPoolGuard(stash),
-      stashDir: stash,
-      memoryVolumeConsolidationThreshold: 1, // eligible pool (2) exceeds this
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
-    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
-  });
-});
-
-// ── #551: consolidation runs before extract + smarter pool-delta gate ────────
-
-describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
-  // (a) Consolidation now runs BEFORE the session-extract phase. We prove this
-  // structurally: the consolidation decision event (here, the pool-delta skip)
-  // is emitted strictly BEFORE `improve_invoked`, which is emitted AFTER the
-  // extract phase inside the preparation stage. Events are returned in
-  // monotonic insertion order (`ORDER BY id ASC`), so index comparison is
-  // deterministic — no wall-clock dependency.
+  // #551: consolidation runs BEFORE the session-extract phase. The
+  // consolidation decision event (here, the ledger-delta skip) is emitted
+  // strictly BEFORE `improve_invoked`, which is emitted AFTER the extract
+  // phase inside the preparation stage. Events are returned in monotonic
+  // insertion order (`ORDER BY id ASC`), so the index comparison is
+  // deterministic.
   test("consolidation phase is emitted before the extract phase (event order)", async () => {
     const stash = makeTempDir("akm-551-order-");
-    writeMemory(stash, "settled-mem", "Stable content.");
+    writeMemory(stash, "settled-mem", "Stable content.", new Date(Date.now() - 60_000));
     await buildIndex(stash);
-    // Force the pool-delta SKIP path so a consolidation decision event fires
-    // deterministically without an LLM: a far-future last-consolidate ts means
-    // nothing on disk is newer.
-    const farFutureMs = new Date("2099-01-01T00:00:00.000Z").getTime();
-    appendEvent(
-      {
-        eventType: "consolidate_completed",
-        ref: "stash//memories/_consolidation",
-        metadata: { processed: 1, source: "stash" },
-      },
-      { now: () => farFutureMs },
-    );
+    recordAttempt(stash, "memories/settled-mem", "consolidate", "judged_no_action", Date.now(), "memories/settled-mem");
 
     await akmImprove({
       scope: "memory",
@@ -722,8 +630,6 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
     });
 
     const all = readEvents({}).events;
-    // THIS run's consolidation decision = the pool-delta skip event (carries the
-    // reason). The seeded `consolidate_completed` is ignored deliberately.
     const consolidationIdx = all.findIndex(
       (e) =>
         e.eventType === "improve_skipped" &&
@@ -733,85 +639,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
     const improveInvokedIdx = all.findIndex((e) => e.eventType === "improve_invoked");
     expect(consolidationIdx).toBeGreaterThanOrEqual(0);
     expect(improveInvokedIdx).toBeGreaterThanOrEqual(0);
-    // Consolidation decision precedes the post-extract `improve_invoked` marker.
     expect(consolidationIdx).toBeLessThan(improveInvokedIdx);
-  });
-
-  // (b) REGRESSION the issue describes. A memory whose only post-consolidate
-  // mtime bump came from its OWN auto-accept promotion (i.e. promoted by the
-  // immediately-preceding run) must NOT trigger consolidation — it has no
-  // settled merge/contradiction candidates yet. BEFORE the fix the raw
-  // mtime>lastConsolidate check fired and consolidation RAN; AFTER the fix the
-  // file is excluded via its `promoted` event and the gate SKIPS.
-  test("memory whose only delta is its own promotion → gate SKIPS (emits skip event)", async () => {
-    const stash = makeTempDir("akm-551-promoted-skip-");
-    // Last consolidate well in the past.
-    appendEvent(
-      {
-        eventType: "consolidate_completed",
-        ref: "stash//memories/_consolidation",
-        metadata: { processed: 1, source: "stash" },
-      },
-      { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
-    );
-    // Freshly-promoted memory: file mtime is naturally newer than 2020. WITHOUT
-    // the #551 gate this alone makes mtime>lastConsolidate true → consolidation
-    // runs. The `promoted` event below (carrying its assetPath) marks it as a
-    // same-cohort promotion to be excluded.
-    writeMemory(stash, "just-promoted", "Single-source memory, no merge candidates yet.");
-    await buildIndex(stash);
-    const assetPath = path.join(stash, "memories", "just-promoted.md");
-    appendEvent({
-      eventType: "promoted",
-      ref: durableRef("memories/just-promoted"),
-      metadata: { assetPath, source: "extract", autoAccept: true },
-    });
-
-    await akmImprove({
-      scope: "memory",
-      config: configWithoutPoolGuard(stash),
-      stashDir: stash,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
-    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
-  });
-
-  // (c) A genuinely-settled memory from a PRIOR run (no promotion since the last
-  // consolidate — e.g. edited by feedback/manual) still triggers consolidation:
-  // the skip event is NOT emitted. This guards against the gate over-skipping.
-  test("settled prior-run memory (no same-cohort promotion) → consolidation NOT skipped", async () => {
-    const stash = makeTempDir("akm-551-settled-runs-");
-    appendEvent(
-      {
-        eventType: "consolidate_completed",
-        ref: "stash//memories/_consolidation",
-        metadata: { processed: 1, source: "stash" },
-      },
-      { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
-    );
-    // Two memories edited after the last consolidate, with NO `promoted` event
-    // tying their mtime to a same-cohort promotion → real work to do.
-    writeMemory(stash, "edited-a", "Edited by feedback loop.");
-    writeMemory(stash, "edited-b", "Also edited.");
-    await buildIndex(stash);
-
-    await akmImprove({
-      scope: "memory",
-      config: configWithoutPoolGuard(stash),
-      stashDir: stash,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
-    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
   });
 });
 
@@ -879,16 +707,17 @@ describe("high-salience admission gate (#608)", () => {
     expect(reflected).toContain("memories/salient");
   });
 
-  test("high-salience fires at most once per asset (prior reflect proposal blocks re-rescue)", async () => {
+  test("high-salience fires at most once per asset (a prior reflect attempt blocks re-rescue)", async () => {
     const stash = makeTempDir("akm-hs-once-");
     writeMemory(stash, "salient", "High salience but already reflected once.");
     await buildIndex(stash);
     seedSalience(durableRef("memories/salient"), 0.9, "content");
-    // A reflect proposal already exists for this ref. Without the cooldown guard
-    // the high-salience lane re-selected it every run (auto-accept emits a
-    // `promoted` event, not `feedback`, so it never leaves noFeedbackCandidates),
-    // burning LLM calls and churning the asset. The guard must block re-rescue.
-    appendEvent({ eventType: "reflect_invoked", ref: durableRef("memories/salient") });
+    // A reflect attempt already exists for this ref (its revisit window has
+    // elapsed). Without the once-per-asset rule the high-salience lane
+    // re-selected it every run (auto-accept emits a `promoted` event, not
+    // `feedback`, so it never leaves noFeedbackCandidates), burning LLM calls
+    // and churning the asset. The rule must block re-rescue.
+    recordAttempt(stash, "memories/salient", "reflect", "accepted", OLDER_MS);
 
     const reflected: string[] = [];
     await akmImprove({
@@ -1011,7 +840,7 @@ describe("high-salience admission gate (#608)", () => {
 describe("aggregated no_new_signal skip event", () => {
   test("stale-feedback refs emit a single counted improve_skipped, not one per ref", async () => {
     const stash = makeTempDir("akm-no-new-signal-");
-    // Two refs with feedback on record but a NEWER reflect+distill proposal →
+    // Two refs with feedback on record but a NEWER reflect+distill attempt →
     // signal-delta gate rejects both for reflect AND distill (fully skipped).
     writeMemory(stash, "stale-a", "Stable A.");
     writeMemory(stash, "stale-b", "Stable B.");
@@ -1020,8 +849,8 @@ describe("aggregated no_new_signal skip event", () => {
     for (const name of ["stale-a", "stale-b"]) {
       const ref = durableRef(`memories/${name}`);
       appendEvent({ eventType: "feedback", ref, metadata: { signal: "negative" } }, { now: () => OLDER_MS });
-      appendEvent({ eventType: "reflect_invoked", ref }, { now: () => NEWER_MS });
-      appendEvent({ eventType: "distill_invoked", ref, metadata: { outcome: "queued" } }, { now: () => NEWER_MS });
+      recordAttempt(stash, `memories/${name}`, "reflect", "unchanged", NEWER_MS);
+      recordAttempt(stash, `memories/${name}`, "distill", "proposed", NEWER_MS);
     }
 
     await akmImprove({
@@ -1057,7 +886,7 @@ describe("attribution: eligibilitySource lane tagging", () => {
     const stash = makeTempDir("akm-attr-signal-");
     writeMemory(stash, "rated", "Has fresh feedback.");
     await buildIndex(stash);
-    appendEvent({ eventType: "reflect_invoked", ref: durableRef("memories/rated") }, { now: () => OLDER_MS });
+    recordAttempt(stash, "memories/rated", "reflect", "unchanged", OLDER_MS);
     appendEvent(
       { eventType: "feedback", ref: durableRef("memories/rated"), metadata: { signal: "negative" } },
       { now: () => NEWER_MS },

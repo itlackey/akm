@@ -171,12 +171,6 @@ export function validateStashEntry(entry: unknown): IndexDocument | null {
   const contradictedBy = normalizeNonEmptyStringList(e.contradictedBy);
   if (contradictedBy) result.contradictedBy = contradictedBy;
 
-  // R5 — consolidation provenance fields must survive the whitelist too, or
-  // stash.json-overridden merge products lose merge-following + generation
-  // counting in the collapse detector.
-  if (typeof e.generation === "number" && Number.isFinite(e.generation) && e.generation > 0) {
-    result.generation = Math.floor(e.generation);
-  }
   const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
   if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
   if (e.captureMode === "hot" || e.captureMode === "background") {
@@ -359,12 +353,6 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
   const contradictedBy = normalizeStringListOrUndefined(fmData.contradictedBy);
   if (contradictedBy) entry.contradictedBy = contradictedBy;
 
-  // R5 — consolidation generation depth is captured so the collapse detector
-  // can count over-generation assets without filesystem reads.
-  const generation = fmData.generation;
-  if (typeof generation === "number" && Number.isFinite(generation) && generation > 0) {
-    entry.generation = Math.floor(generation);
-  }
   const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
   if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
 

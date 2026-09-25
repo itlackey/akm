@@ -55,18 +55,13 @@
  *   units), since a fully-converged run resumes as a pure no-op too.
  *
  * C-04 — two-parent-process contention on the SAME child. The parent's own
- * run lease already prevents two engines driving one PARENT (the pre-existing
- * run-lease.test.ts guarantee), so this is the CHILD-row analogue: mirrors
- * tests/integration/workflows/chaos.test.ts's "a live foreign lease refuses a
- * second engine invocation up front" technique (and run-lease.test.ts's own
- * precedent) one level down — pre-publish the child exactly as the engine
- * will independently derive it, seed its OWN engine lease as held by a
- * foreign holder, then let a genuinely unheld, real engine invocation drive
- * the parent and observe the busy refusal. No subprocess is needed for this
- * one: the CONTRACT under test is CHILD-lease arbitration, not process
- * survival, and a single real repository + a single real lease row already
- * exercises it for real (spec §5.3: "must exercise the real index and the
- * real lease, never a mocked repository").
+ * run lock already prevents two engines driving one PARENT (run-lock.test.ts),
+ * so this is the CHILD-row analogue one level down — pre-publish the child
+ * exactly as the engine will independently derive it, plant its OWN run lock
+ * as held by another live process, then let a genuinely unheld, real engine
+ * invocation drive the parent and observe the busy refusal. No subprocess is
+ * needed for this one: the CONTRACT under test is CHILD-lock arbitration, not
+ * process survival.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -88,13 +83,13 @@ import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import { decodeWorkflowPlanV4 } from "../../../src/workflows/ir/schema-v4";
-import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
+import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
+import { plantRunLock } from "../../_helpers/workflow";
 import {
   bunAvailable,
   dispatchCount,
-  expireLease,
   holdStartExists,
   pollUntil,
   type RunnerChild,
@@ -156,12 +151,6 @@ function writeComposingParent(stashDir: string, name: string, childRef: string):
   );
 }
 
-/** Expire both a parent's and its (possibly not-yet-existing) child's engine lease — a crashed process abandons both. */
-async function expireBothLeases(parentRunId: string, childRunId: string | undefined): Promise<void> {
-  await expireLease(parentRunId);
-  if (childRunId) await expireLease(childRunId);
-}
-
 async function firstChildOf(parentRunId: string): Promise<string | undefined> {
   const children = await withWorkflowRunsRepo((repo) => repo.childRunsOf(parentRunId));
   return children[0]?.id;
@@ -214,8 +203,6 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     const childrenAtCrash = await withWorkflowRunsRepo((repo) => repo.childRunsOf(parentRunId));
     expect(childrenAtCrash).toHaveLength(1);
     const childRunId = childrenAtCrash[0]!.id;
-
-    await expireBothLeases(parentRunId, childRunId);
 
     const resume = spawnRunner({ CHAOS_RUN_ID: parentRunId, CHAOS_MARKER_DIR: markerDir });
     expect(await resume.done()).toBe(0);
@@ -271,7 +258,6 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
 
     crasher.kill("SIGKILL");
     await crasher.done();
-    await expireBothLeases(parentRunId, childRunId);
 
     const resume = spawnRunner({ CHAOS_RUN_ID: parentRunId, CHAOS_MARKER_DIR: markerDir });
     expect(await resume.done()).toBe(0);
@@ -323,7 +309,6 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     await crasher.done();
 
     const dispatchCountAtCrash = dispatchCount(markerDir, childUnitId!);
-    await expireBothLeases(parentRunId, childRunId);
 
     const resume = spawnRunner({ CHAOS_RUN_ID: parentRunId, CHAOS_MARKER_DIR: markerDir });
     expect(await resume.done()).toBe(0);
@@ -442,7 +427,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
         updatedAt: now,
         agentHarness: parentRow?.agent_harness ?? null,
         agentSessionId: parentRow?.agent_session_id ?? null,
-        checkinArmedAt: now,
       },
       steps: frozenStepRows(target.frozenPlan).map((step) => ({ runId: childRunId, ...step })),
       planJson: canonicalPlanJson(target.frozenPlan),
@@ -548,17 +532,15 @@ describe("two-parent-process contention on one child (C-04)", () => {
     }
   }, 20_000);
 
-  test("a live foreign lease on the pre-published child refuses the parent's real drive up front; a later resume (foreign lease released) converges on the SAME child", async () => {
+  test("a live foreign lock on the pre-published child refuses the parent's real drive up front; a later resume (foreign lock released) converges on the SAME child", async () => {
     writeProgram(storage.stashDir, "c04-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "c04-parent", "workflows/c04-leaf");
     const started = await startWorkflowRun("workflows/c04-parent", {});
     const parentRunId = started.run.id;
 
     // Compute exactly what the engine's own dispatch seam will independently
-    // derive for the composing unit (spec §3.3 steps 1-3), then pre-publish +
-    // pre-lease the child directly — the repository-level analogue of
-    // chaos.test.ts's "a live foreign lease refuses a second engine
-    // invocation up front", one level down at the CHILD row.
+    // derive for the composing unit (spec §3.3 steps 1-2), then pre-publish +
+    // pre-lock the child directly — one level down at the CHILD row.
     const parentRow = await withWorkflowRunsRepo((repo) => repo.getRunById(parentRunId));
     const plan = decodeWorkflowPlanV4(JSON.parse(parentRow?.plan_json ?? "null"));
     const composingStep = plan.steps[0]!;
@@ -596,7 +578,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
           updatedAt: now,
           agentHarness: parentRow?.agent_harness ?? null,
           agentSessionId: parentRow?.agent_session_id ?? null,
-          checkinArmedAt: now,
         },
         steps: frozenStepRows(target.frozenPlan).map((step) => ({ runId: childRunId, ...step })),
         planJson: canonicalPlanJson(target.frozenPlan),
@@ -606,17 +587,13 @@ describe("two-parent-process contention on one child (C-04)", () => {
     expect(seeded.id).toBe(childRunId);
     expect(computePlanHash(target.frozenPlan)).toBe(target.planHash);
 
-    // A live foreign driver already holds the child's own run lease.
-    const foreignHolder = "other-engine-instance";
-    const until = new Date(Date.now() + 60_000).toISOString();
-    await withWorkflowRunsRepo((repo) => {
-      expect(repo.acquireEngineLease(childRunId, foreignHolder, until, new Date().toISOString())).toBe(true);
-    });
+    // Another live process already holds the child's own run lock.
+    const releaseForeignLock = plantRunLock(childRunId);
 
     // The parent's own (real, unheld) drive now reaches the composing step,
     // idempotently re-finds the pre-seeded child (never a second child row,
     // never a second workflow_started event), and must be refused the
-    // child's lease rather than stealing it or double-driving.
+    // child's lock rather than stealing it or double-driving.
     const dispatchedFirstAttempt = new Set<string>();
     const result = await runWorkflowSteps({
       target: parentRunId,
@@ -629,8 +606,8 @@ describe("two-parent-process contention on one child (C-04)", () => {
     expect(result.run.status).toBe("failed");
     const composingReport = result.executed.find((e) => e.stepId === "dispatch");
     expect(composingReport?.ok).toBe(false);
-    expect(composingReport?.summary).toContain(foreignHolder);
-    // The lease refusal happens before any child unit ever reaches the
+    expect(composingReport?.summary).toContain(`pid ${process.pid}`);
+    // The lock refusal happens before any child unit ever reaches the
     // dispatcher — the busy child is never driven.
     expect(dispatchedFirstAttempt.size).toBe(0);
 
@@ -642,9 +619,9 @@ describe("two-parent-process contention on one child (C-04)", () => {
     expect(childrenAfterBusy).toHaveLength(1);
     expect(childrenAfterBusy[0]?.id).toBe(childRunId);
 
-    // Release the foreign lease and resume: the SAME child converges, this
+    // Release the foreign lock and resume: the SAME child converges, this
     // time driven for real.
-    await withWorkflowRunsRepo((repo) => repo.releaseEngineLease(childRunId, foreignHolder));
+    releaseForeignLock();
     await resumeWorkflowRun(parentRunId);
     const finalResult = await runWorkflowSteps({
       target: parentRunId,

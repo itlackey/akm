@@ -11,7 +11,6 @@ import path from "node:path";
 import { parseRef } from "../../../scripts/akm-eval/src/lib/ref-normalize";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 
 const VERDICT_SCRIPT = path.resolve("scripts/akm-eval/src/proactive-verdict.ts");
 const REAL_QUERY_SCRIPT = path.resolve("scripts/akm-eval/src/gen-real-query-suite.ts");
@@ -57,25 +56,24 @@ function seedIndexRef(db: Database, itemRef: string): void {
   );
 }
 
-function replaceWithStampedNoncanonicalIndex(indexPath: string): void {
+/** An index whose `entries` table predates the columns this akm reads (layout < 21). */
+function replaceWithLegacyEntriesIndex(indexPath: string): void {
   for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${indexPath}${suffix}`, { force: true });
   const index = new Database(indexPath);
   try {
     index.exec(`
       CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO index_meta (key, value) VALUES ('version', '${CANONICAL_INDEX_DB_VERSION}');
+      INSERT INTO index_meta (key, value) VALUES ('version', '20');
       CREATE TABLE entries (
-        id, item_ref, bundle_id, component_id, concept_id, adapter_id,
-        type, file_path, content_hash, document_json, search_text, derived_from
+        id INTEGER PRIMARY KEY,
+        entry_key TEXT NOT NULL,
+        stash_dir TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        entry_json TEXT NOT NULL,
+        entry_type TEXT NOT NULL
       );
-      CREATE INDEX idx_entries_bundle ON entries(bundle_id);
-      CREATE INDEX idx_entries_type ON entries(type);
-      CREATE INDEX idx_entries_file_path ON entries(file_path);
-      CREATE INDEX idx_entries_derived_from ON entries(derived_from);
       INSERT INTO entries VALUES
-        (1, 'bundle-a//knowledge/hostile', 'bundle-a', 'bundle-a', 'knowledge/hostile',
-         'akm', 'knowledge', '/tmp/hostile.md', NULL,
-         '{"name":"hostile","type":"knowledge"}', 'hostile', NULL);
+        (1, 'bundle-a//knowledge/legacy', '/tmp', '/tmp/legacy.md', '{"name":"legacy","type":"knowledge"}', 'knowledge');
     `);
   } finally {
     index.close();
@@ -498,10 +496,10 @@ describe("real-query suite generation", () => {
     expect(fs.readFileSync(existing, "utf8")).toBe("existing generation\n");
   });
 
-  test("rejects a stamped noncanonical entries generation before reading refs or publishing", () => {
+  test("rejects an index without the entries columns this akm reads before reading refs or publishing", () => {
     const root = tempDir();
     const { statePath, indexPath } = createCurrentDatabases(root);
-    replaceWithStampedNoncanonicalIndex(indexPath);
+    replaceWithLegacyEntriesIndex(indexPath);
     const casesRoot = path.join(root, "cases");
 
     const result = spawnSync(
@@ -515,13 +513,13 @@ describe("real-query suite generation", () => {
         "--cases-root",
         casesRoot,
         "--out-suite",
-        "hostile-generation",
+        "legacy-generation",
       ],
       { encoding: "utf8" },
     );
 
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain("current canonical entries schema");
+    expect(result.stderr).toContain("no entries table this akm reads");
     expect(fs.existsSync(casesRoot)).toBe(false);
   });
 
@@ -580,16 +578,16 @@ describe("real-query suite generation", () => {
 });
 
 describe("proactive verdict index boundary", () => {
-  test("rejects a stamped noncanonical entries generation before writing a report", () => {
+  test("rejects an index without the entries columns this akm reads before writing a report", () => {
     const root = tempDir();
     const { statePath, indexPath } = createCurrentDatabases(root);
-    replaceWithStampedNoncanonicalIndex(indexPath);
+    replaceWithLegacyEntriesIndex(indexPath);
     const out = path.join(root, "verdict.json");
 
     const result = runVerdict(root, statePath, indexPath, out);
 
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain("current canonical entries schema");
+    expect(result.stderr).toContain("no entries table this akm reads");
     expect(fs.existsSync(out)).toBe(false);
   });
 });

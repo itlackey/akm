@@ -23,6 +23,7 @@ import {
   openReadonlyExistingDatabase,
 } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { isDistillRefusedInputType } from "./distill";
@@ -46,8 +47,29 @@ import { improveStateReadRefs } from "./source-identity";
  * exit 0 depending only on which branch it took. Both arms now raise.
  */
 function openEligibilityDb(readOnly: boolean): Database | undefined {
-  if (readOnly) return openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true });
-  return isPathAbsent(getDbPath()) ? undefined : openExistingDatabase();
+  const db = readOnly
+    ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true })
+    : isPathAbsent(getDbPath())
+      ? undefined
+      : openExistingDatabase();
+  if (db) assertEligibilityEntriesTable(db);
+  return db;
+}
+
+/**
+ * Readers open whatever index layout is on disk (`noteIndexLayout`,
+ * index-connection.ts). Selecting candidates needs the `entries` table this
+ * akm reads, so an index without one is named as needing a rebuild here rather
+ * than failing later on a raw SQLite error.
+ */
+function assertEligibilityEntriesTable(db: Database): void {
+  if (hasCurrentEntriesTable(db)) return;
+  closeDatabase(db);
+  throw new ConfigError(
+    "index.db has no entries table this akm can read, so nothing can be selected for improvement.",
+    "INDEX_SCHEMA_INCOMPATIBLE",
+    "Run `akm index` to rebuild the derived index from the currently materialized sources.",
+  );
 }
 
 function describeIndexSnapshot(readOnly: boolean, status: "ready" | "missing"): ImproveIndexSnapshot {
@@ -74,10 +96,10 @@ function describeUnavailableSnapshot(error: SqliteReadSnapshotUnavailableError):
 
 /**
  * A dry-run is explicitly a non-mutating planning operation, so it may report
- * an unusable derived index as an empty snapshot.  This is deliberately a
- * typed boundary mapping: readers otherwise receive no incompatible handle,
- * and we must not turn an arbitrary SQLite error into a successful plan by
- * matching its text.
+ * an index without a readable `entries` table ({@link assertEligibilityEntriesTable})
+ * as an empty snapshot. This is deliberately a typed boundary mapping: we
+ * must not turn an arbitrary SQLite error into a successful plan by matching
+ * its text.
  */
 function isIncompatibleIndexError(error: unknown): error is ConfigError {
   return error instanceof ConfigError && error.code === "INDEX_SCHEMA_INCOMPATIBLE";
@@ -85,8 +107,7 @@ function isIncompatibleIndexError(error: unknown): error is ConfigError {
 
 function describeIncompatibleIndexSnapshot(error: ConfigError): ImproveIndexSnapshot {
   // `INDEX_SCHEMA_INCOMPATIBLE` establishes that this is the derived-index
-  // boundary, and the error's hint preserves whether this binary should
-  // rebuild an older/unknown generation or upgrade for a newer one.
+  // boundary; its hint names the action (rebuild with `akm index`).
   const action = error.hint() ?? error.message;
   return {
     status: "incompatible",
@@ -456,13 +477,12 @@ export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean 
   return !parsed.name.endsWith(".derived");
 }
 
-// ── Signal-delta eligibility helpers (0.8.0) ────────────────────────────────
+// ── Signal-delta eligibility helper ──────────────────────────────────────────
 //
-// The 0.8.0 redesign replaced flat time-based cooldowns for reflect/distill
-// with a *signal-delta* gate: a ref is re-eligible iff new feedback has
-// landed since the last proposal was generated for it. These helpers build
-// the two timestamp maps the gate needs in bulk, so the planner avoids
-// N+1 queries across the full postCleanupRefs set.
+// A ref is re-eligible for reflect/distill iff new feedback has landed since
+// its last attempt (the improve ledger's `last_attempt_at` — see
+// `preparation.ts` `partitionBySignalDelta`). This builds the feedback half in
+// bulk, so the planner avoids N+1 queries across the full postCleanupRefs set.
 
 /**
  * Latest feedback event timestamp per ref in the active window. Reads all
@@ -497,81 +517,6 @@ export function buildLatestFeedbackTsMap(
     if (ts > (out.get(ref) ?? "")) out.set(ref, ts);
   }
   return out;
-}
-
-/**
- * Latest proposal timestamp per input-ref, filtered by source ('reflect' or
- * 'distill'). Reads the corresponding `*_invoked` events from state.db —
- * these events are emitted at proposal creation time and carry the *input*
- * asset ref (`memories/foo`, `skills/bar`, etc.) directly. We use them rather than
- * `listProposals` because distill proposals are keyed by the derived
- * lesson/knowledge ref, not the source memory — joining back through the
- * payload would be fragile.
- */
-export function buildLatestProposalTsMap(
-  refs: ReadonlyArray<string>,
-  source: "reflect" | "distill",
-  itemRefByRef?: Map<string, string | undefined>,
-  eventsCtx?: EventsContext,
-): Map<string, string> {
-  const out = new Map<string, string>();
-  if (refs.length === 0) return out;
-  // Correlate item_ref-keyed events and conceptId-keyed direct invocations.
-  const refByDurableKey = new Map(
-    refs.flatMap((ref) => improveStateReadRefs(ref, itemRefByRef?.get(ref)).map((key) => [key, ref])),
-  );
-  const eventType = source === "reflect" ? "reflect_invoked" : "distill_invoked";
-  const { events } = readEvents({ type: eventType }, eventsCtx);
-  for (const e of events) {
-    const ref = e.ref ? refByDurableKey.get(e.ref) : undefined;
-    if (!ref) continue;
-    // For distill_invoked we only count attempts that produced (or attempted
-    // to produce) a real proposal — config_disabled outcomes (no LLM work was
-    // actually invoked) and llm_failed (transport/timeout — nothing to show
-    // for the attempt) should not move the signal-delta cursor forward.
-    // R10: quality_rejected and review_needed now also mint a real proposal
-    // row (see quality-gate.ts's `writeQualityRejection`), so — like queued —
-    // a real attempt was made and the cursor must advance, or the same
-    // already-rejected ref is re-selected and re-rejected on every run.
-    if (eventType === "distill_invoked") {
-      const outcome = (e.metadata as { outcome?: unknown } | undefined)?.outcome;
-      if (
-        outcome !== "queued" &&
-        outcome !== "skipped" &&
-        outcome !== "validation_failed" &&
-        outcome !== "quality_rejected" &&
-        outcome !== "review_needed"
-      ) {
-        continue;
-      }
-    }
-    const ts = e.ts ?? "";
-    if (ts > (out.get(ref) ?? "")) out.set(ref, ts);
-  }
-  return out;
-}
-
-/**
- * Signal-delta eligibility predicate.
- *
- * True iff `latestFeedback[ref]` is defined AND either no prior proposal
- * exists for this (ref, source) OR `latestFeedback[ref] > lastProposal[ref]`.
- *
- * Refs with no feedback signal at all are ineligible by definition — the
- * proactive-maintenance and high-salience fallback lanes (see
- * `noFeedbackCandidates` later in the planner) handle never-rated assets
- * separately.
- */
-export function isSignalDeltaEligible(
-  ref: string,
-  latestFeedback: Map<string, string>,
-  lastProposal: Map<string, string>,
-): boolean {
-  const fb = latestFeedback.get(ref);
-  if (!fb) return false;
-  const lp = lastProposal.get(ref);
-  if (!lp) return true;
-  return fb > lp;
 }
 
 /**

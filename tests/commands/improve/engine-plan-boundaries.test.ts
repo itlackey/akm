@@ -292,7 +292,6 @@ describe("improve engine-plan boundaries", () => {
         distillCooledRefs: new Set(),
         distillOnlyRefs: [],
         recentErrors: {},
-        rejectedProposalsByRef: new Map(),
         utilityMap: new Map(),
         startMs: Date.now(),
         budgetMs: 60_000,

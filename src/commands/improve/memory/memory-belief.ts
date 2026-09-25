@@ -83,9 +83,8 @@ function readEdgeList(value: unknown): string[] {
  * contradiction writers report the contradiction as applied.
  *
  * Never weakens a stronger demotion: `archived` ranks BELOW `contradicted`
- * (see `BELIEF_STATE_SCORE_CEILINGS` in
- * src/indexer/search/ranking-contributors.ts), so contradicting an archived
- * memory keeps `archived` and only appends the edge.
+ * (see `beliefStateBoost` in src/indexer/search/ranking-contributors.ts), so
+ * contradicting an archived memory keeps `archived` and only appends the edge.
  *
  * @param filePath          - Absolute path to the memory markdown file.
  * @param contradictedByRef - The ref that contradicts this memory.
@@ -130,7 +129,7 @@ export function writeContradictEdge(filePath: string, contradictedByRef: string)
  *
  * Never WEAKENS an existing demotion: `contradicted` and `archived` rank
  * BELOW `superseded` (severity order deprecated > superseded > contradicted >
- * archived — see `BELIEF_STATE_SCORE_CEILINGS` in
+ * archived — see `beliefStateBoost` in
  * src/indexer/search/ranking-contributors.ts), so superseding an already
  * contradicted/archived asset keeps the stronger state and only appends the
  * `supersededBy` edge.

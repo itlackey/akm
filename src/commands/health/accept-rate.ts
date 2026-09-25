@@ -17,7 +17,7 @@
  */
 
 import { resolveStashDir } from "../../core/common";
-import { isStaleTargetRejection } from "../proposal/proposal-types";
+import { isProceduralRejection } from "../proposal/proposal-types";
 import { listProposals } from "../proposal/repository";
 
 export interface AcceptRateEntry {
@@ -51,7 +51,7 @@ export function computeAcceptRateBySource(stashDir?: string): AcceptRateEntry[] 
         // A stale-target auto-reject (STALE, R20) is procedural, not a
         // judgement on the content — counting it would understate the
         // source's real accept rate for content the drain will re-propose.
-        if (status === "rejected" && isStaleTargetRejection(p)) continue;
+        if (status === "rejected" && isProceduralRejection(p)) continue;
         const src = p.source || "(unknown)";
         const entry = bySource.get(src) ?? { accepted: 0, rejected: 0, pending: 0 };
         if (status === "accepted") entry.accepted++;

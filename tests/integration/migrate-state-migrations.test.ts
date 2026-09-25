@@ -3,13 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm-migrate` runs every migration in one plan, in order: legacy config
- * lift, pending state.db migrations, the task generations, residue sweeps.
+ * `akm-migrate` runs every migration in one plan, in order: config.json in
+ * its current shape, pending state.db migrations, task files, residue sweep.
  * These prove the two steps the CLI proper refuses to do on its own -- the
  * config lift a failing `loadConfig` names as its own remedy, and the
  * historical-destructive state migration an ordinary open refuses (#895) --
- * and that they run BEFORE the task migrators, which load config and open
- * state.db themselves.
+ * and that they run BEFORE the task-file step, which loads config itself.
  *
  * Integration: seeds and opens a real state.db under an isolated data dir.
  */
@@ -130,8 +129,6 @@ test("status names the pending state migrations without applying them", async ()
   // Pending state reads as "ready" (apply would change state.db), never "blocked".
   expect(plan.status).toBe("ready");
   expect(ledgerLength(file)).toBe(BEFORE_018.length);
-  // The ordinary open still refuses, and points at the two commands that run this.
-  expect(() => openStateDatabase(file).close()).toThrow(/018-drop-dead-lane-schema.*akm migrate apply/i);
 });
 
 test("apply applies the pending state migrations, with the safety copy, and the task migrators then open state.db", async () => {
@@ -146,10 +143,9 @@ test("apply applies the pending state migrations, with the safety copy, and the 
   expect(fs.existsSync(state.safetyCopyPath as string)).toBe(true);
   expect(ledgerLength(file)).toBe(STATE_MIGRATIONS.length);
   expect(stateDbOpens(file)).toBe(true);
-  // Both task generations ran against a migrated state.db and found nothing to do.
+  // The task-file step ran after it and found nothing to do.
   expect(plan.status).toBe("current");
-  expect(plan.taskV3Migration?.changed).toBe(0);
-  expect(plan.taskV4Migration?.changed).toBe(0);
+  expect(plan.taskFiles?.changed).toBe(0);
   // The row 018 dropped survives in the verified safety copy.
   const copy = openDatabase(state.safetyCopyPath as string, { readonly: true });
   try {
@@ -181,7 +177,6 @@ test("dry-run reports the pending state migrations and applies nothing", async (
   expect(plan.stateMigrations).toEqual({ pending: FROM_018 });
   expect(plan.status).toBe("ready");
   expect(ledgerLength(file)).toBe(BEFORE_018.length);
-  expect(stateDbOpens(file)).toBe(false);
 });
 
 test("apply lifts a legacy extraParams config to disk, and later steps that load config still run", async () => {

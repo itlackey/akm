@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
 import { captureFrozenDirectoryIdentity } from "../../src/execution/directory-identity";
-import { type FrozenExecutableIdentity, freezeExecutableIdentity } from "../../src/execution/executable-identity";
 import type { ExecutionJsonObject } from "../../src/execution/json";
 import {
   canonicalResolvedExecutionRequest,
@@ -9,9 +10,7 @@ import {
   type ResolvedExecutionRequestV1,
 } from "../../src/execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
-import { requireAuthorizedExecutionPlan } from "../../src/integrations/agent/execution-cascade";
-import { lowerResolvedExecutionRequest } from "../../src/integrations/agent/execution-lowering";
-import { prepareInlineExecution } from "../../src/integrations/agent/inline-execution";
+import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import { MODEL_MAP_VERSION, type ResolvedModelMapV1 } from "../../src/integrations/agent/model-map";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import {
@@ -19,6 +18,7 @@ import {
   defaultMapConcurrency,
   workflowMaxConcurrency,
 } from "../../src/workflows/concurrency-policy";
+import { workflowRunLockPath } from "../../src/workflows/exec/run-workflow";
 import { compileWorkflowPlan } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import {
@@ -34,7 +34,7 @@ import {
 import { parseWorkflow } from "../../src/workflows/parser";
 import type { ProgramExec, ProgramUnit } from "../../src/workflows/program/schema";
 import { DEFAULT_EXEC_TIMEOUT_MS } from "../../src/workflows/resource-limits";
-import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
+import { frozenStepRows } from "../../src/workflows/runtime/run-plan";
 import type { WorkflowError } from "../../src/workflows/schema";
 import { compileWorkflowSource } from "../../src/workflows/source-ir/compile";
 import { sourceStepInstructions, sourceStepProgramUnit } from "../../src/workflows/source-ir/program";
@@ -178,22 +178,16 @@ function freezeCommandTarget(
   config: AkmConfig,
   invocationDefaults?: UnresolvedExecutionDefaults,
 ): FrozenWorkflowCommandTarget {
-  const prepared = prepareInlineExecution({
+  const prepared = resolveExecution({
     content: instructions,
     config,
-    invocationKind: "workflow",
     modelMap: WORKFLOW_TEST_MODEL_MAP,
     ...(invocationDefaults ? { invocationDefaults } : {}),
     current,
   });
-  const resolved = durableRequest(requireAuthorizedExecutionPlan(prepared.plan));
+  const resolved = durableRequest(prepared.request);
   const cwdIdentity = captureFrozenDirectoryIdentity("/tmp");
-  let runner = lowerResolvedExecutionRequest(resolved, prepared.config).runner;
-  let executable: FrozenExecutableIdentity | undefined;
-  if (runner.kind === "agent") {
-    executable = freezeExecutableIdentity(runner.profile.bin, { cwd: cwdIdentity.realCwd });
-    runner = Object.freeze({ ...runner, profile: Object.freeze({ ...runner.profile, bin: executable.absolutePath }) });
-  }
+  const runner = buildExecution(resolved, prepared.runner).runner;
   const request = JSON.parse(canonicalResolvedExecutionRequest(resolved)) as ResolvedExecutionRequestV1;
   return Object.freeze({
     kind: "command",
@@ -203,7 +197,6 @@ function freezeCommandTarget(
     runner,
     ...(targetConcurrency(runner, config) ? { concurrency: targetConcurrency(runner, config) } : {}),
     cwdIdentity,
-    ...(executable ? { executable } : {}),
   });
 }
 
@@ -325,8 +318,6 @@ export function seedWorkflowRun(
     params?: Record<string, unknown>;
     /** Defaults to the first step's id. */
     currentStepId?: string;
-    /** Defaults to `null` (check-in not armed). */
-    checkinArmedAt?: string | null;
   },
 ): void {
   const now = new Date().toISOString();
@@ -336,8 +327,8 @@ export function seedWorkflowRun(
   db.prepare(
     `INSERT INTO workflow_runs
        (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-        params_json, current_step_id, created_at, updated_at, checkin_armed_at)
-     VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?, ?)`,
+        params_json, current_step_id, created_at, updated_at)
+     VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?)`,
   ).run(
     options.runId,
     workflowRef,
@@ -347,7 +338,6 @@ export function seedWorkflowRun(
     options.currentStepId ?? steps[0]!.stepId,
     now,
     now,
-    options.checkinArmedAt ?? null,
   );
   steps.forEach((step, index) => {
     db.prepare(
@@ -382,4 +372,17 @@ export function storeFrozenWorkflowPlan(
     computePlanHash(plan),
     runId,
   );
+}
+
+/**
+ * Plant the per-run lock another akm process would hold while driving
+ * `runId`. The default holder is THIS test process — alive, so the lock reads
+ * as held; pass a dead pid (e.g. `999_999_999`) for a crashed holder. Returns
+ * a release function.
+ */
+export function plantRunLock(runId: string, pid: number = process.pid): () => void {
+  const lockPath = workflowRunLockPath(runId);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(lockPath, JSON.stringify({ pid, startedAt: new Date().toISOString() }), { flag: "wx" });
+  return () => fs.rmSync(lockPath, { force: true });
 }

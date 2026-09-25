@@ -113,7 +113,6 @@ function seedRun(runId: string, plan: WorkflowPlanFixture): void {
         { stepId: "summarize", stepTitle: "Summarize" },
       ],
       currentStepId: "collect",
-      checkinArmedAt: new Date().toISOString(),
     });
     storeFrozenWorkflowPlan(db, runId, plan);
   } finally {

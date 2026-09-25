@@ -184,7 +184,6 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
       updatedAt: now,
       agentHarness: null,
       agentSessionId: null,
-      checkinArmedAt: null,
     });
     repo.insertSteps([
       {

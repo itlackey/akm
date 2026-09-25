@@ -74,17 +74,17 @@ function resolveScopeAfterRetiredAutoAccept(scopeArg: string | undefined): strin
 }
 
 /**
- * `akm improve canary` was removed in 0.9 (moved to
- * `scripts/refresh-canary-set.ts`). Without this check "canary" falls through
- * to the generic scope positional, where resolveImproveScope treats any bare
- * word as a type filter that matches zero entries — so an unmigrated caller
- * silently acquires the improve lock and exits 0 having done nothing, instead
- * of getting an error.
+ * `akm improve canary` was removed in 0.9, and the collapse-detector canary
+ * set it managed is gone. Without this check "canary" falls through to the
+ * generic scope positional, where resolveImproveScope treats any bare word as
+ * a type filter that matches zero entries — so an unmigrated caller silently
+ * acquires the improve lock and exits 0 having done nothing, instead of
+ * getting an error.
  */
 function rejectRetiredCanaryScope(scopeArg: string | undefined): void {
   if (scopeArg !== "canary") return;
   throw new UsageError(
-    '"akm improve canary" was removed in 0.9. Use `bun scripts/refresh-canary-set.ts [--refresh]` instead.',
+    '"akm improve canary" was removed in 0.9; the collapse-detector canary set it managed no longer exists.',
     "INVALID_FLAG_VALUE",
   );
 }
@@ -228,8 +228,8 @@ export async function assertRequiredEnginesReachable(
  * and exit, before any lock, log, index write, or engine dispatch — the field
  * had no cheap way to confirm the #952 prompt fix (unverified-feedback framing,
  * no-truncation-marker instruction) without running a full improve cycle.
- * Reuses `renderReflectPromptPreview` (reflect.ts), which stops before the
- * dispatch lease reflect would otherwise acquire, so this never calls an engine.
+ * Reuses `renderReflectPromptPreview` (reflect.ts), which stops before reflect
+ * would read a credential or dispatch, so this never calls an engine.
  */
 async function runShowPromptCli(
   refArg: string,

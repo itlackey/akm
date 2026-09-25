@@ -219,11 +219,11 @@ Build or refresh the search index.
 
 ```sh
 akm index            # Incremental (only changed directories)
-akm index --full     # Full rebuild (reuses unchanged embeddings — see below)
+akm index --full     # Re-drain every directory (keeps unchanged embeddings — see below)
 akm index --verbose  # Print phase progress to stderr
 akm index --clean    # Normal index + remove stale entries from the DB
 akm index --clean --dry-run # Report stale entries without deleting
-akm index --reembed  # Force re-embedding of every entry
+akm index --reembed  # Discard stored vectors and re-embed every entry
 akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) if a run is already in progress
 ```
 
@@ -254,25 +254,22 @@ Use `--clean` to resolve the edge case where a deleted file in an unchanged
 directory lingers in the index across incremental runs. With `--dry-run`, reports
 which entries would be removed without modifying the database.
 
-**`--full` no longer re-embeds unchanged content (#955):** a full rebuild
-(and an index-generation bump on first open under a new binary) used to
-delete every embedding unconditionally, forcing a full re-embed of the
-whole corpus even when nothing changed. Vectors about to be discarded are
-now salvaged (keyed by a hash of their content plus the fingerprint they
-were generated under) and handed straight back to unchanged entries at the
-start of the next embedding pass, with zero provider calls for them — a
-progress line reports the split (`Reused N embeddings from the previous
-generation; embedding M new.`). Content that changed even by one byte, or
-a fingerprint that no longer matches, still goes through the provider
-normally. `--reembed` is the way to force a full re-embed regardless.
+**`--full` does not re-embed unchanged content:** a full run re-drains and
+re-persists every directory, but entry ids are kept, so a vector stays
+attached to its entry and only entries whose search text changed go back to
+the embedding provider. An incremental run re-persists only the files that
+changed.
 
-**`--reembed` flag:** Forces a full purge and re-embed of every entry,
-independent of the embedding-model-rename compatibility check described
-below. Ordinary indexing already tells a config-only rename of
-`embedding.model` (e.g. a gateway that changes how it names the same model)
-apart from a genuine model change, and keeps the stored vectors when they
-are still compatible; `--reembed` skips that check and forces a rebuild
-regardless of what it would have decided.
+**Embedding model changes:** every stored vector records the embedding model
+it was generated under (`embedding.model` plus dimension for a remote
+endpoint, the local model name otherwise). When the configured model
+changes, the next `akm index` re-embeds entry by entry, committing each
+batch; nothing is purged first, an interrupted run resumes where it
+stopped, and search serves only vectors from the configured model in the
+meantime.
+
+**`--reembed` flag:** Discards every stored vector and re-embeds all entries
+under the configured model.
 
 **`--skip-if-locked` flag:** Every explicit `akm index` run acquires an
 opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
@@ -387,9 +384,9 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `task-log-backing`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `akm-installs` (every OTHER akm install on the host, by path, whose version differs from the running one), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
-| `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
+| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
+| `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
 The `improve` section includes counts for planned refs, reflect/distill actions,
@@ -397,13 +394,13 @@ memory-prune actions, memory-inference writes, graph-extraction refreshes,
 session-extraction outcomes (`sessionsScanned`, `sessionsExtracted`, `proposalsCreated`),
 dead-URL detections, and skip reasons observed in the selected time window.
 
-`state-db-migrations` reports whether `state.db`'s migration ledger has any
-pending entries (checked read-only, without applying anything). It `fail`s
-when migrations are pending — naming them and pointing at `akm migrate apply`
-— rather than the command crashing, which is what happens when `state.db`
-holds a pending historical-destructive migration and something other than
-`akm upgrade` / `akm migrate apply` opens it directly. Read this check's
-`status` instead of grepping akm's error text for that case.
+`state-db-migrations` reports what `akm health`'s own open of `state.db`
+applied. Every open applies pending migrations (copying the file to
+`state.db.pre-<id>.bak` first when one drops schema), so the check passes and
+names the applied IDs (`evidence.applied`) and the copy (`evidence.backupPath`).
+It `fail`s only when a pending migration could not be applied — naming it and
+pointing at `akm migrate apply` — rather than the command crashing. Read this
+check's `status` instead of grepping akm's error text.
 
 `default-llm-engine` and `configured-engines` probe reachability (not just
 configuration) for a `kind: "llm"` engine — an unreachable endpoint is a hard
@@ -816,7 +813,7 @@ The old `--params <json>` bag is removed.
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
 | `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
 | `--new` | Start a fresh run even when one is already active for this ref, instead of resuming it. The existing active run is left untouched — it is never abandoned automatically. A workflow ref only: passing a run id with `--new` is a usage error (exit 2). Parameter flags are allowed together with `--new`, since it is starting a new run. |
-| `--skip-if-locked` | If another akm process already holds this run's engine lease (`RUN_LEASE_HELD`), or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
+| `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
 **Resuming an active run is announced, not silent.** Passing a ref that
 already has an active run in the current scope resumes that run rather than
@@ -1717,15 +1714,15 @@ in order:
    a verified sibling safety copy (`stateMigrations`) — the only path besides
    `akm upgrade` that admits released migration 018, which an ordinary
    command refuses;
-3. task-v2 files to task v3, then task-v3 files to task source v4
-   (`taskV3Migration`, `taskV4Migration`), each keeping its own lock, backup,
-   prevalidation, and rollback, so a file blocked in the first generation does
-   not stop the second from converting files already at `version: 3`;
+3. task files at version 2 or 3, and version 4 files still carrying the
+   retired `schedule[].enabled` key, rewritten as task source v4
+   (`taskFiles`) under one backup directory per run, each emitted document
+   re-parsed by the runtime v4 parser first; a file the planner cannot
+   convert unambiguously is reported `blocked` and left alone;
 4. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
-   `$CONFIG`; then live `.akm` writers relocated to `$STATE`/`$CACHE`
-   (`writerRelocation`).
+   `$CONFIG`.
 
 ```sh
 akm migrate status
@@ -2427,10 +2424,14 @@ akm improve report --since 7d          # ...aggregated over every real run start
 `akm improve` is the public entrypoint for whole-bundle, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow. A qualified scope such as `team//skills/code-review` selects that bundle;
-a different explicit `--bundle` is a usage error. Inspecting or re-minting the
-collapse-detector canary set is maintainer tooling, not a CLI verb — run
-`bun scripts/refresh-canary-set.ts` (add `--refresh` to mint a new set and
-deactivate the old one; old rows and their cycle history are retained).
+a different explicit `--bundle` is a usage error.
+
+Every stage records what it did with each asset in the improve ledger
+(`improve_ledger` in `state.db`) and reads it before any model call: an asset
+whose proposal was rejected waits 14 days (reflect), 30 days (distill) or 7
+days (other stages) before it is tried again; an expired proposal waits one
+day; an asset a stage looked at and left unchanged is revisited after 7 days,
+or as soon as new feedback (or, for consolidation, an edit) arrives.
 
 Built-in `default` and `frequent` leave the improve-stage extract process off,
 and `default` plus `reflect-distill` leave proactive maintenance off. Use the
@@ -2534,7 +2535,7 @@ default probe-on behavior) to check whether a named engine actually answers.
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
 proposal gathering `akm improve`'s live reflect step uses — and prints it
-without acquiring a dispatch lease, so it never calls an engine. Add
+without reading a credential, so it never calls an engine. Add
 `--format text` (the default JSON/yaml envelope escapes the prompt into one
 line, which defeats a by-eye read) to confirm by eye that recent feedback is
 framed as an unverified report to investigate (never a fact to insert
@@ -2830,27 +2831,27 @@ requires `--reason`.
 
 #### proposal drain
 
-Drain the standing pending-proposal backlog using a deterministic triage
-policy, instead of adjudicating proposals one at a time. Default mode stages
-decisions (queue mode); pass `--promote` to actually accept matching
-proposals.
+Drain the standing pending-proposal backlog instead of adjudicating proposals
+one at a time. One rule decides each proposal: a proposal whose quality judge
+passed on its current content is accepted (unless its target changed since it
+was minted — that one is auto-rejected as `stale-target`); an empty diff is
+rejected; everything else goes to the judgment tier when one is enabled, and
+is otherwise left for review. Default mode stages decisions (queue mode); pass
+`--promote` to actually accept.
 
 ```sh
 akm proposal drain --dry-run                        # Preview without writing
-akm proposal drain --policy personal-stash --promote -y
-akm proposal drain --policy conservative --max-accepts 10 --promote -y
-akm proposal drain --max-diff-lines 50 --older-than 7 --promote -y
+akm proposal drain --promote -y
+akm proposal drain --max-accepts 10 --older-than 7 --promote -y
 akm proposal drain --strategy default --promote -y  # Read the triage block from an improve strategy
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--policy` | Built-in preset (`personal-stash`, `conservative`, `manual`) or a path to a policy file |
-| `--strategy` | Read the triage block (policy, apply mode, ceilings, judgment) from this improve strategy instead |
-| `--promote` | Promote (accept) matching proposals. Default is queue mode — stage only, no writes to assets. |
+| `--strategy` | Read the triage block (apply mode, ceilings, judgment) from this improve strategy instead |
+| `--promote` | Promote (accept) judge-passed proposals. Default is queue mode — stage only, no writes to assets. |
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
-| `--max-diff-lines` | Defer (never promote) accepts whose proposed content exceeds this many lines |
 | `--older-than` | Only consider proposals created more than this many days ago |
 | `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
@@ -2899,10 +2900,10 @@ akm task prune --yes                        # Remove every currently-computed or
 akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
 ```
 
-`task add` also accepts `--disabled` (register but leave off in the OS
-scheduler), `--force` (overwrite an existing task with the same id), and
-`--rebind` (explicitly permit scheduler creation from a local invocation that
-would otherwise be considered ineligible).
+`task add` also accepts `--disabled` (write the task but leave its ref out of
+this host's scheduler activation), `--force` (overwrite an existing task with
+the same id), and `--rebind` (also point the bundle's installed scheduler rows
+at this akm invocation, as `akm task sync --rebind` does).
 
 `akm task list [<query>] [--limit <n>] [--from local|registry|all]` is a
 pure alias for `akm search --type task` with the query, `--limit`, and
@@ -2961,21 +2962,18 @@ gate a CI/health check on "sync would change something."
 
 `sync`'s (and `sync --dry-run`'s) result always carries `failures: [{path,
 ref?, reason}]` — one entry per item sync could not reconcile: a task/workflow
-source that failed to parse or prepare, a desired binding whose id collides
-with a different bundle's real installed entry, an installed row (including
-one belonging to a disabled bundle) this process cannot safely update or
-remove (no exact native fingerprint, no resolvable ordinal), or — for an
-unscoped, multi-bundle sync — a whole bundle whose source set itself could
-not be read. Every one of these is a per-item anomaly: the item is excluded
-(left exactly as it was) and reported here, while every OTHER item and
-bundle in the same sync still reconciles normally; with `--bundle`, that one
-bundle IS the whole sync, so its failure raises instead of being reported
-here, and an unscoped sync where every bundle fails resolves with those
-failures here instead of raising. `failures` is empty on a fully clean sync;
-a non-empty `failures` still exits non-zero, same as a pending removal. An
-incoherent or ambiguous backend read (a duplicate installed id or native
-artifact) can't be attributed to one item or bundle and still raises instead
-of appearing in `failures`.
+source that failed to parse or prepare (its installed row is left as it is),
+two sources claiming the same scheduler id, a desired binding whose id is
+already scheduled from a different bundle or installation, a row whose
+install or removal failed, or — for an unscoped, multi-bundle sync — a whole
+bundle whose sources could not be read. Every one of these is a per-item
+failure: the item is left exactly as it was and reported here, while every
+OTHER item and bundle in the same sync still reconciles; with `--bundle`,
+that one bundle IS the whole sync, so a bundle that cannot be read raises
+instead of being reported here. `failures` is empty on a fully clean sync; a
+non-empty `failures` still exits non-zero, same as a pending removal. A
+crontab whose akm markers are malformed is refused unmodified, and another
+akm process holding the scheduler lock makes sync exit 75 (retry shortly).
 
 `akm task prune` reclaims installed scheduler entries that `sync` can never
 clean up on its own: entries whose own `--scheduler-context` descriptor no

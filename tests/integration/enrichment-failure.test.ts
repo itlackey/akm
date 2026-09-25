@@ -174,7 +174,7 @@ test("missing required symbolic credential aborts indexing without provider or e
   }
 });
 
-test("metadata enrichment keeps one preflight credential across every entry mutation", async () => {
+test("each metadata-enrichment dispatch reads the credential current at that call; none is indexed", async () => {
   llmSucceeds = true;
   const knowledgeDir = path.join(stashDir, "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });
@@ -188,22 +188,26 @@ test("metadata enrichment keeps one preflight credential across every entry muta
         kind: "llm",
         endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
         model: "test-model",
-        apiKey: "$AKM_ENRICH_LEASE_KEY",
+        apiKey: "$AKM_ENRICH_ROTATING_KEY",
       },
     },
     index: { defaults: { engine: "index" }, metadataEnhance: { enabled: true } },
   });
-  const secret = "enrichment-lease-original-092";
+  const secret = "enrichment-original-092";
+  const rotated = "enrichment-rotated-092";
   onLlmRequest = () => {
-    if (llmCallCount === 1) mutateScopedEnv("AKM_ENRICH_LEASE_KEY", undefined);
+    if (llmCallCount === 1) mutateScopedEnv("AKM_ENRICH_ROTATING_KEY", rotated);
   };
 
-  await withEnv({ AKM_ENRICH_LEASE_KEY: secret }, () => akmIndex({ stashDir, full: true }));
+  await withEnv({ AKM_ENRICH_ROTATING_KEY: secret }, () => akmIndex({ stashDir, full: true }));
 
-  expect(llmAuthorizations).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+  expect(llmAuthorizations).toEqual([`Bearer ${secret}`, `Bearer ${rotated}`]);
   const db = openIndexDatabase(getDbPath());
   try {
-    expect(getAllEntries(db).filter((row) => row.entry.quality === "enriched")).toHaveLength(2);
+    const entries = getAllEntries(db);
+    expect(entries.filter((row) => row.entry.quality === "enriched")).toHaveLength(2);
+    expect(JSON.stringify(entries)).not.toContain(secret);
+    expect(JSON.stringify(entries)).not.toContain(rotated);
     const cacheCount = (db.prepare("SELECT COUNT(*) AS cnt FROM llm_enrichment_cache").get() as { cnt: number }).cnt;
     expect(cacheCount).toBe(2);
   } finally {

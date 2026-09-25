@@ -262,23 +262,15 @@ export interface EmbeddingBatchOutcome {
  * order is irrelevant to a caller that commits per call, so this fires
  * under concurrency too.
  *
- * `model`, when the provider's response body carried one, is the server-
- * reported model id for that request (#955) — undefined for a skipped
- * batch, a local/deterministic run, or a provider that omits the field.
- * The embedding-fingerprint canary uses it to tell a same-model config
- * rename (e.g. a gateway prefixing `provider/model`) apart from a genuine
- * model change without guessing from the config string alone.
- *
  * `outcome` (#954 field-report follow-up) is the extended event data the
  * default-level per-batch progress line needs — see
- * {@link EmbeddingBatchOutcome}. Optional so every existing caller/fake that
- * only ever passed `indices`/`embeddings`/`model` remains valid; a caller
- * that omits it simply gets no per-batch line.
+ * {@link EmbeddingBatchOutcome}. Optional so a caller/fake that only passes
+ * `indices`/`embeddings` remains valid; a caller that omits it simply gets no
+ * per-batch line.
  */
 export type EmbeddingBatchCommit = (
   indices: number[],
   embeddings: (EmbeddingVector | undefined)[],
-  model?: string,
   outcome?: EmbeddingBatchOutcome,
 ) => void;
 
@@ -608,7 +600,6 @@ export class RemoteEmbedder implements Embedder {
       commitBatch(
         rejectedIndices,
         rejectedIndices.map(() => undefined),
-        undefined,
         {
           batchIndex: rejectedBatchIndex,
           batchCount: textBatches.length,
@@ -656,7 +647,6 @@ export class RemoteEmbedder implements Embedder {
     const commitBatch = (
       indices: number[],
       embeddings: (EmbeddingVector | undefined)[],
-      model?: string,
       outcome?: EmbeddingBatchOutcome,
     ): void => {
       if (!onBatch) return;
@@ -666,7 +656,7 @@ export class RemoteEmbedder implements Embedder {
       // again (see the dispatch-stop comment above).
       if (firstOnBatchError !== undefined) return;
       try {
-        onBatch(indices, embeddings, model, outcome);
+        onBatch(indices, embeddings, outcome);
       } catch (err) {
         firstOnBatchError = err;
         stopDispatch(err);
@@ -713,16 +703,14 @@ export class RemoteEmbedder implements Embedder {
       const requestTimeoutMs = scaleEmbeddingTimeoutMs(configuredTimeoutMs, requestTokens, effectiveTokenBudget);
       const requestStart = Date.now();
       let batchEmbeddings: (EmbeddingVector | undefined)[];
-      let responseModel: string | undefined;
       let outcome: "stored" | "failed";
       let failureReason: string | undefined;
       try {
-        const { vectors, model } = await this.requestBatch(batch, headers, ollamaOpts, requestTimeoutMs, signal);
+        const vectors = await this.requestBatch(batch, headers, ollamaOpts, requestTimeoutMs, signal);
         for (let k = 0; k < indices.length; k++) {
           results[indices[k] as number] = vectors[k];
         }
         batchEmbeddings = indices.map((i) => results[i]);
-        responseModel = model;
         outcome = "stored";
       } catch (err) {
         // A caller abort must still propagate — it is not a "this batch
@@ -764,7 +752,6 @@ export class RemoteEmbedder implements Embedder {
           commitBatch(
             indices,
             indices.map(() => undefined),
-            undefined,
             {
               batchIndex,
               batchCount: textBatches.length,
@@ -833,7 +820,7 @@ export class RemoteEmbedder implements Embedder {
         outcome = "failed";
         failureReason = message;
       }
-      commitBatch(indices, batchEmbeddings, responseModel, {
+      commitBatch(indices, batchEmbeddings, {
         batchIndex,
         batchCount: textBatches.length,
         docCount: indices.length,
@@ -864,7 +851,7 @@ export class RemoteEmbedder implements Embedder {
         // Never made a request — excluded from the default-level per-batch
         // line (there is no request outcome to report), but still counted
         // in the run's oversized-skip total via `onSkip` above.
-        commitBatch([idx], [undefined], undefined, {
+        commitBatch([idx], [undefined], {
           batchIndex,
           batchCount: textBatches.length,
           docCount: 1,
@@ -902,11 +889,8 @@ export class RemoteEmbedder implements Embedder {
   }
 
   /**
-   * Send one batch request and return its embeddings in input order, plus the
-   * server-reported `model` id when the response body carried one (#955) —
-   * used by the embedding-fingerprint canary to verify a config-string
-   * rename against what the endpoint actually served, not just re-assert the
-   * configured string. Throws on any failure.
+   * Send one batch request and return its embeddings in input order. Throws
+   * on any failure.
    *
    * `timeoutMs` is the caller's ALREADY-SCALED per-request timeout (#954
    * — see {@link scaleEmbeddingTimeoutMs}), not re-resolved here:
@@ -920,7 +904,7 @@ export class RemoteEmbedder implements Embedder {
     ollamaOpts: { num_ctx?: number } | undefined,
     timeoutMs: number,
     signal?: AbortSignal,
-  ): Promise<{ vectors: EmbeddingVector[]; model?: string }> {
+  ): Promise<EmbeddingVector[]> {
     const body: { input: string[]; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
       input: batch,
       model: this.model,
@@ -961,7 +945,6 @@ export class RemoteEmbedder implements Embedder {
 
     const json = JSON.parse(await readBodyWithByteCap(response, undefined, { bodyTimeoutMs: timeoutMs, signal })) as {
       data: Array<{ embedding: number[]; index: number }>;
-      model?: string;
     };
 
     if (!json.data || json.data.length !== batch.length) {
@@ -980,7 +963,7 @@ export class RemoteEmbedder implements Embedder {
       }
       results.push(l2Normalize(d.embedding));
     }
-    return { vectors: results, model: typeof json.model === "string" && json.model ? json.model : undefined };
+    return results;
   }
 
   private buildHeaders(): Record<string, string> {

@@ -627,7 +627,7 @@ describe("exec unit — replay / reuse", () => {
     expect(fs.readFileSync(marker, "utf8")).toBe("x");
   });
 
-  test("a CHANGED argv is a different input hash, so the journaled row is not reused", async () => {
+  test("resume skips a completed unit even when its argv changed since (input_hash is informational)", async () => {
     seedRun(["work"]);
     const marker = path.join(tmpDir, "side-effects.log");
     const mk = (tag: string) =>
@@ -642,12 +642,12 @@ describe("exec unit — replay / reuse", () => {
     expect((await run(first)).evidence.output).toBe("v1");
 
     const second = mk("v2");
-    // Divergence only guards a matching id with a DIFFERENT hash and no matching
-    // sibling; here the id is the same (solo) and the hash differs, which is
-    // exactly the replay-divergence contract.
+    // Same content-derived unit id (solo), different input hash: the completed
+    // row is still the unit's result, so nothing re-runs.
     const result = await run(second);
-    expect(result.ok).toBe(false);
-    expect(result.summary).toContain("replay divergence");
+    expect(result.ok).toBe(true);
+    expect(result.evidence.output).toBe("v1");
+    expect(result.unitsDispatched).toBe(0);
     expect(fs.readFileSync(marker, "utf8")).toBe("x");
   });
 });

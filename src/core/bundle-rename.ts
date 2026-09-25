@@ -44,8 +44,7 @@ import {
   renameTaskHistoryTargetRefs,
 } from "../storage/repositories/task-history-repository";
 import { selectBackend } from "../tasks/backends";
-import type { SchedulerBackend } from "../tasks/backends/types";
-import type { SchedulerBackendInspection } from "../tasks/scheduler-binding";
+import type { InstalledSchedulerBinding, SchedulerBackend } from "../tasks/backends/types";
 import { bundleRefToString, parseBundleRef } from "./asset/asset-ref";
 import { validateExplicitBundleName } from "./bundle-id";
 import type { AkmConfig, BundleConfigEntry } from "./config/config";
@@ -71,7 +70,7 @@ export interface BundleRenamePlan {
   /**
    * Installed native scheduler rows (cron line, launchd plist, scheduled
    * task) whose invocation still names the old bundle — best-effort, empty
-   * when the active backend can't provide one coherent inspection. A real
+   * when the active backend cannot list its rows. A real
    * run's post-rename `akm task sync` replaces these; `--dry-run` lists them
    * so the plan shows what that sync will touch.
    */
@@ -173,14 +172,12 @@ function invocationNamesBundle(invocation: readonly string[] | undefined, bundle
 
 /**
  * Installed native scheduler rows whose invocation names `oldId`, best-effort
- * (a backend that can't provide `inspectBindings`, or whose inspection
- * throws, reports none — this is a preview, not a correctness requirement).
+ * (a backend whose listing throws reports none — this is a preview, not a
+ * correctness requirement).
  */
 async function nativeSchedulerRowsNamingBundle(sched: SchedulerBackend, oldId: string): Promise<string[]> {
-  if (!sched.inspectBindings) return [];
   try {
-    const inspection = await sched.inspectBindings({});
-    return inspection.installed
+    return (await sched.list())
       .filter((entry) => invocationNamesBundle(entry.invocation, oldId))
       .map((entry) => entry.invocation?.join(" ") ?? entry.id);
   } catch {
@@ -253,12 +250,11 @@ function taskSyncErrorMessage(cause: unknown): string {
  * before the sync below installs the new-named ones. Without this, a plain
  * `akmTasksSync(deps, newId)` alone cannot clean the old rows up: a task
  * binding's native id depends only on the task id, so the OLD row and the
- * new one it should become collide on that id, and `belongsToBundle`
- * (scheduler-sync.ts) gates ownership on the bundle NAME the row was
- * installed under — the physical-path check only confirms a name match, it
- * never substitutes for one — so the sync's own `foreignIdCollisions` logic
- * treats the old row as belonging to neither bundle and silently drops the
- * new binding instead of replacing it. A workflow binding's native id
+ * new one it should become collide on that id, and `installedRowScope`
+ * (scheduler-sync.ts) attributes a row by the bundle NAME it was installed
+ * under — the physical-path check only confirms a name match, it never
+ * substitutes for one — so the sync reports the old row as another bundle's
+ * and leaves the new binding out instead of replacing it. A workflow binding's native id
  * depends on its fully-qualified ref instead, so old and new never collide
  * at all and the old row would otherwise be left installed forever. Both
  * fail the same way this function fixes: uninstall the exact native rows
@@ -266,10 +262,9 @@ function taskSyncErrorMessage(cause: unknown): string {
  * the sync that follows starts from a clean slate.
  */
 async function removeStaleNativeSchedulerRows(sched: SchedulerBackend, oldId: string): Promise<void> {
-  if (!sched.inspectBindings) return;
-  let installed: SchedulerBackendInspection["installed"];
+  let installed: InstalledSchedulerBinding[];
   try {
-    installed = (await sched.inspectBindings({})).installed;
+    installed = await sched.list();
   } catch {
     return;
   }

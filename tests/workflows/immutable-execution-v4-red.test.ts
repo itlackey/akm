@@ -6,6 +6,8 @@
  * Tests-first contract for WP7's immutable executable projection.
  *
  * These fixtures pin the single common target shape emitted by every start.
+ * The `executable` identity the fixtures carry is what older releases froze;
+ * the decoder accepts it and drops it (the executable is resolved at dispatch).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -143,30 +145,18 @@ function rootUnit(plan: ReturnType<typeof commandPlan>) {
 }
 
 describe("durable workflow v4 immutable executable schema", () => {
-  test("accepts the exact frozen CLI executable, cwd identity, and worktree commit projection", () => {
+  test("keeps the cwd identity and worktree commit; an older release's executable identity is accepted and dropped", () => {
     const decoded = decodeWorkflowPlanV4(commandPlan({ isolation: "worktree" }));
     const root = decoded.steps[0]?.root;
     expect(root?.kind).toBe("unit");
     if (!root || root.kind !== "unit" || root.frozenTarget.kind !== "command") return;
-    expect(root.frozenTarget).toMatchObject({
-      cwdIdentity: CWD_IDENTITY,
-      executable: executableIdentity(),
-      gitCommitOid: "a".repeat(40),
-    });
-  });
+    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY, gitCommitOid: "a".repeat(40) });
+    expect(Object.hasOwn(root.frozenTarget, "executable")).toBe(false);
 
-  test("rejects a bare, relative, or internally inconsistent executable identity", () => {
-    const bare = commandPlan();
-    rootTarget(bare).executable = { ...executableIdentity(), absolutePath: "true" };
-    expect(() => decodeWorkflowPlanV4(bare)).toThrow(/executable|absolute|path/i);
-
-    const escaped = commandPlan();
-    rootTarget(escaped).executable = { ...executableIdentity(), realPath: "../true" };
-    expect(() => decodeWorkflowPlanV4(escaped)).toThrow(/executable|realPath|absolute|path/i);
-
-    const wrongHash = commandPlan();
-    rootTarget(wrongHash).executable = { ...executableIdentity(), sha256: "0".repeat(63) };
-    expect(() => decodeWorkflowPlanV4(wrongHash)).toThrow(/executable|sha256|hash|identity/i);
+    // Even an identity that no longer matches the host binary decodes.
+    const stale = commandPlan();
+    rootTarget(stale).executable = { ...executableIdentity(), sha256: "0".repeat(64) };
+    expect(() => decodeWorkflowPlanV4(stale)).not.toThrow();
   });
 
   test("requires a canonical Git OID exactly for worktree-isolated targets", () => {

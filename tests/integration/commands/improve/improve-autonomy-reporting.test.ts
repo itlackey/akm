@@ -61,7 +61,6 @@ const emptyPreparation = {
     contradicted: 0,
     warnings: [],
   },
-  consolidationRan: false,
 };
 
 let storage: IsolatedAkmStorage;

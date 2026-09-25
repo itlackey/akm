@@ -4,28 +4,25 @@
 
 /**
  * Window handling for `akm health`: `--window-compare` / `--windows` parsing,
- * per-window metric assembly, log-backing partition, and delta computation.
+ * per-window metric assembly, and delta computation between two windows.
  */
 
-import fs from "node:fs";
 import { UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
-import { buildTaskRunId, getLoggedRunIds } from "../../core/logs-db";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import type { Database } from "../../storage/database";
-import { queryTaskHistory, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
+import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import {
   buildImproveSkipSummary,
   computeWallTimeStats,
+  computeWindowProposalCoverage,
   countAgentFailureReasons,
   isAgentTaskHistoryRow,
   roundRate,
-  summarizeImproveCompleted,
   summarizeImproveRuns,
   taskFailureDetail,
 } from "./improve-metrics";
 import { readLlmUsageAggregate } from "./llm-usage";
-import { computeDegradationMetrics, computeDenominatorFixedCoverage } from "./metrics";
 import { buildPerRunSummaries } from "./task-runs";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -96,28 +93,30 @@ export function parseWindowSpec(raw: string): WindowSpec {
   };
 }
 
-/** Hard-coded list of "interesting" metric paths for window-compare deltas. */
+/**
+ * Metric paths diffed between the earliest and latest window (`deltas` in the
+ * JSON result; the delta column of `--format md`). Paths are relative to a
+ * {@link WindowResult}.
+ */
 export const INTERESTING_DELTA_PATHS = [
   "improve.actions.reflect.failed",
-  "improve.actions.reflect.guardRejected",
-  "improve.actions.distill.llmFailed",
   "improve.actions.distill.queued",
-  "improve.actions.distill.deferred",
+  "improve.actions.distill.llmFailed",
   "improve.consolidation.promoted",
   "improve.memoryInference.written",
   "improve.memoryInference.yieldRate",
   "improve.memoryInference.skippedNoFacts",
-  "improve.memoryInference.htmlErrorCount",
-  "improve.graphExtraction.cacheHitRate",
   "improve.graphExtraction.failures",
-  "improve.graphExtraction.htmlErrors",
-  "improve.graphExtraction.nonArrayBatchFailures",
-  "improve.sessionExtraction.sessionsScanned",
-  "improve.sessionExtraction.proposalsCreated",
   "improve.autoAccept.promoted",
   "improve.autoAccept.validationFailed",
+  "improve.coverage.acceptedProposals",
+  "improve.coverage.distinctRefs",
   "improve.wallTime.medianMs",
   "improve.wallTime.p95Ms",
+  "metrics.llmUsage.calls",
+  "metrics.llmUsage.totalTokens",
+  "metrics.llmUsage.totalDurationMs",
+  "metrics.llmUsage.failures",
 ] as const;
 
 export function readNumericPath(obj: unknown, path: string): number {
@@ -153,46 +152,18 @@ interface WindowMetricsBundle {
   runs: number;
 }
 
-/**
- * Partition task_history rows into "should have a log" (non-null log_path) and
- * "log is actually backed". A run counts as backed when logs.db holds rows for
- * its run_id (#579 — the DB is the primary record); rows written before logs.db
- * existed fall back to the transitional on-disk file check. `logsDb` may be
- * undefined when logs.db could not be opened — then only the file check runs.
- */
-export function partitionLogBackedRows(
-  taskRows: TaskHistoryRow[],
-  logsDb: Database | undefined,
-): { withLogs: TaskHistoryRow[]; backed: TaskHistoryRow[] } {
-  const withLogs = taskRows.filter((row) => row.log_path !== null);
-  const loggedRunIds = logsDb
-    ? getLoggedRunIds(
-        logsDb,
-        withLogs.map((row) => buildTaskRunId(row.task_id, row.started_at)),
-      )
-    : new Set<string>();
-  const backed = withLogs.filter(
-    (row) =>
-      loggedRunIds.has(buildTaskRunId(row.task_id, row.started_at)) ||
-      (row.log_path !== null && fs.existsSync(row.log_path)),
-  );
-  return { withLogs, backed };
-}
-
 export function buildWindowMetrics(
   db: Database,
   stateDbPath: string,
   since: string,
   until: string,
   now: () => number = () => Date.now(),
-  logsDb?: Database,
 ): WindowMetricsBundle {
+  const untilMs = new Date(until).getTime();
   const taskRows = queryTaskHistory(db, { since }).filter((row) => {
     const startMs = new Date(row.started_at).getTime();
-    const untilMs = new Date(until).getTime();
     return !Number.isFinite(untilMs) || startMs < untilMs;
   });
-  const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
   const stuckActiveRuns = activeRows.filter(
@@ -203,62 +174,35 @@ export function buildWindowMetrics(
     const detail = taskFailureDetail(row);
     return typeof detail?.reason === "string" && detail.reason.length > 0;
   });
-  const logBackingRate = taskRowsWithLogs.length === 0 ? 1 : existingLogRows.length / taskRowsWithLogs.length;
   const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
   const agentFailureRate = agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length;
-  const agentFailureReasonCounts = countAgentFailureReasons(agentFailures);
 
-  const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.filter(
-    (event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime(),
-  ).length;
-  const improveCompletedEvents = readEvents(
-    { since, type: IMPROVE_COMPLETED_EVENT },
-    { dbPath: stateDbPath },
-  ).events.filter((event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime());
-  const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events.filter(
-    (event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime(),
+  const eventsBeforeUntil = (type: string) =>
+    readEvents({ since, type }, { dbPath: stateDbPath }).events.filter(
+      (event) => new Date(event.ts ?? since).getTime() < untilMs,
+    );
+  const { metrics: improve, runCount } = summarizeImproveRuns(db, since, until);
+  improve.invoked = eventsBeforeUntil("improve_invoked").length;
+  improve.completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT).length;
+  const skipSummary = buildImproveSkipSummary(eventsBeforeUntil("improve_skipped"));
+  improve.skipped = skipSummary.skipped;
+  improve.skipReasons = skipSummary.skipReasons;
+  // Wall times come from the same improve-runs window as the per-run
+  // reporting so counts and percentiles stay aligned with it.
+  improve.wallTime = computeWallTimeStats(
+    buildPerRunSummaries(db, since, until)
+      .map((run) => run.wallTimeMs)
+      .filter((ms) => Number.isFinite(ms) && ms > 0),
   );
-  const eventsMetrics = summarizeImproveCompleted(improveCompletedEvents);
-  const { metrics: improveSummary, runCount } = summarizeImproveRuns(db, since, until);
-  improveSummary.invoked = improveInvoked;
-  improveSummary.completed = eventsMetrics.completed;
-  const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
-  improveSummary.skipped = skipSummary.skipped;
-  improveSummary.skipReasons = skipSummary.skipReasons;
-  // Preserve the per-phase aggregation computed by summarizeImproveRuns and
-  // derive top-level wall times from the same improve-runs window so counts
-  // and percentiles stay aligned with per-run reporting.
-  const perRunSummaries = buildPerRunSummaries(db, since, until);
-  const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
-  improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
-
-  // WS-5: Compute denominator-fixed coverage from the most recent run's
-  // memorySummary (totalAssets = eligible + derived — the fixed denominator).
-  const totalAssets = improveSummary.memorySummary.eligible + improveSummary.memorySummary.derived;
-  improveSummary.coverage = computeDenominatorFixedCoverage(
-    db,
-    totalAssets,
-    improveSummary.memorySummary.eligible,
-    since,
-    until,
-  );
-
-  // WS-5: Compute per-run degradation metrics (corpus diversity, merge fidelity,
-  // generation distribution, oracle spot-check). Health VIEWS only.
-  const degradation = computeDegradationMetrics(db, since, until);
-  if (degradation) {
-    improveSummary.degradation = degradation;
-  }
+  improve.coverage = computeWindowProposalCoverage(db, since, until);
 
   const metrics: HealthMetrics = {
     taskFailRate: roundRate(taskFailRate),
     agentFailureRate: roundRate(agentFailureRate),
-    agentFailureReasonCounts,
+    agentFailureReasonCounts: countAgentFailureReasons(agentFailures),
     stuckActiveRuns,
-    logBackingRate: roundRate(logBackingRate),
-    probeRoundTripMs: null,
     llmUsage: readLlmUsageAggregate(stateDbPath, since, until),
   };
 
-  return { improve: improveSummary, metrics, runs: runCount };
+  return { improve, metrics, runs: runCount };
 }

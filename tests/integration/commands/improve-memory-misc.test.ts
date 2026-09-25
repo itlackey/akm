@@ -541,14 +541,11 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     );
   });
 
-  test.each([
-    { mutation: "deletion", nextCredential: undefined },
-    { mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("all contradiction-pair calls survive ambient credential $mutation", async ({ nextCredential }) => {
+  test("each contradiction-pair call reads the credential current at its dispatch", async () => {
     const { detectAndWriteContradictions } = await import(
       "../../../src/commands/improve/memory/memory-contradiction-detect"
     );
-    const stashDir = makeTempDir("akm-m1-triad-lease-");
+    const stashDir = makeTempDir("akm-m1-triad-rotation-");
     for (const [name, body] of [
       ["vpn.aaa.derived", "Always use VPN."],
       ["vpn.bbb.derived", "VPN is optional."],
@@ -562,19 +559,20 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
         kind: "llm",
         endpoint: "http://localhost/v1/chat",
         model: "test",
-        apiKey: "$AKM_CONTRADICTION_LEASE_KEY",
+        apiKey: "$AKM_CONTRADICTION_ROTATING_KEY",
       },
     };
     const observed: Array<string | undefined> = [];
     const original = "contradiction-original-secret";
+    const rotated = "contradiction-rotated-secret";
 
-    const result = await withEnv({ AKM_CONTRADICTION_LEASE_KEY: original }, () =>
+    const result = await withEnv({ AKM_CONTRADICTION_ROTATING_KEY: original }, () =>
       detectAndWriteContradictions(
         stashDir,
         config,
         async (connection) => {
           observed.push(connection.apiKey);
-          if (observed.length === 1) mutateScopedEnv("AKM_CONTRADICTION_LEASE_KEY", nextCredential);
+          if (observed.length === 1) mutateScopedEnv("AKM_CONTRADICTION_ROTATING_KEY", rotated);
           return JSON.stringify({ contradicts: true, confidence: 1, reason: "conflict" });
         },
         contradictionStrategy,
@@ -582,7 +580,7 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     );
 
     expect(result.edgesWritten).toBe(3);
-    expect(observed).toEqual([original, original, original]);
+    expect(observed).toEqual([original, rotated, rotated]);
   });
 
   test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {
@@ -731,12 +729,10 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(readEvents({ type: "schema_repair_invoked" }).events).toEqual([]);
   });
 
-  test.each([
-    { mutation: "deletion", nextCredential: undefined },
-    { mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("two-item schema repair survives ambient credential $mutation", async ({ nextCredential }) => {
+  test("each schema-repair dispatch reads the credential current at that call", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
-    const stashDir = makeTempDir("akm-m3-schema-batch-lease-");
+    const { listProposals } = await import("../../../src/commands/proposal/repository");
+    const stashDir = makeTempDir("akm-m3-schema-batch-rotation-");
     const files = new Map<string, string>();
     for (const name of ["first", "second"]) {
       const ref = `memories/${name}`;
@@ -747,6 +743,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     }
     configureStash(stashDir);
     const original = "schema-original-secret";
+    const rotated = "schema-rotated-secret";
     const observed: Array<string | undefined> = [];
 
     const result = await withEnv({ AKM_SCHEMA_BATCH_KEY: original }, () =>
@@ -769,7 +766,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
           isLessonCandidateFn: () => false,
           chatFn: async (connection) => {
             observed.push(connection.apiKey);
-            if (observed.length === 1) mutateScopedEnv("AKM_SCHEMA_BATCH_KEY", nextCredential);
+            if (observed.length === 1) mutateScopedEnv("AKM_SCHEMA_BATCH_KEY", rotated);
             return JSON.stringify({ description: `Description ${observed.length}` });
           },
         },
@@ -777,7 +774,10 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     );
 
     expect(result.repairs.map((repair) => repair.outcome)).toEqual(["queued", "queued"]);
-    expect(observed).toEqual([original, original]);
+    expect(observed).toEqual([original, rotated]);
+    const persisted = JSON.stringify(listProposals(stashDir));
+    expect(persisted).not.toContain(original);
+    expect(persisted).not.toContain(rotated);
   });
 
   test("runSchemaRepairPass requires stashDir instead of bypassing the proposal queue", async () => {
@@ -1070,44 +1070,6 @@ describe("new 0.8.0 improve metrics", () => {
     expect(result.reflectCooldownActions).toBeGreaterThanOrEqual(0);
   });
 
-  test("reflectCooldownActions increments when reflectFn returns a cooldown signal", async () => {
-    const stashDir = makeTempDir("akm-m8-cooldown-");
-    writeMemory(stashDir, "beta", { description: "Beta memory" }, "Beta content.");
-    writeMemory(stashDir, "gamma", { description: "Gamma memory" }, "Gamma content.");
-    await buildIndex(stashDir);
-
-    // 0.8.0 signal-delta gate requires recent feedback to make a ref eligible
-    // for reflect. Add a feedback event for each ref so the planner queues
-    // them and reflectFn (which returns cooldown) is actually called.
-    appendEvent({ eventType: "feedback", ref: durableRef("memories/beta"), metadata: { signal: "positive" } });
-    appendEvent({ eventType: "feedback", ref: durableRef("memories/gamma"), metadata: { signal: "positive" } });
-
-    // Return a cooldown result for every ref to drive reflectCooldownActions up.
-    const result = await akmImprove({
-      scope: "memory",
-      stashDir,
-      ensureIndexFn: async () => false,
-      reflectFn: async ({ ref }) => ({
-        schemaVersion: 2,
-        ok: false,
-        reason: "cooldown" as const,
-        error: "Dedup signal from test",
-        ref: ref ?? "",
-        exitCode: null,
-      }),
-      distillFn: async ({ ref }) => ({
-        schemaVersion: 1,
-        ok: true,
-        outcome: "queued" as const,
-        inputRef: ref,
-        proposalRef: `lessons/${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-      }),
-    });
-
-    // Both beta and gamma should contribute to reflectCooldownActions.
-    expect(result.reflectCooldownActions).toBeGreaterThanOrEqual(1);
-  });
-
   test("orphansPurged increments for pending proposals targeting refs absent from disk", async () => {
     const { createProposal } = await import("../../../src/commands/proposal/repository");
     const stashDir = makeTempDir("akm-m8-orphan-");
@@ -1154,9 +1116,7 @@ describe("new 0.8.0 improve metrics", () => {
   // the replacement behavior for what used to be the strongest accept case.
 
   test("a high-confidence reflect proposal stays pending (no auto-accept path exists)", async () => {
-    const { createProposal, getProposal, isProposalSkipped, listProposals } = await import(
-      "../../../src/commands/proposal/repository"
-    );
+    const { createProposal, getProposal, listProposals } = await import("../../../src/commands/proposal/repository");
     const stashDir = makeTempDir("akm-6a-no-gate-");
     writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);
@@ -1181,14 +1141,12 @@ describe("new 0.8.0 improve metrics", () => {
           ref: ref ?? "memories/target-asset",
           source: "reflect",
           sourceRun: "test-confidence-high",
-          force: true,
           payload: {
             content: `---\ndescription: Updated memory\n---\n\nNEW BODY.\n`,
             frontmatter: { description: "Updated memory" },
           },
           confidence: 0.95,
         });
-        if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
         return {
           schemaVersion: 2,
           ok: true,
@@ -1231,7 +1189,7 @@ describe("new 0.8.0 improve metrics", () => {
   // ── Phase 6B — proposalsExpired propagates through the improve result ─────
 
   test("proposalsExpired surfaces in the result when stale proposals exist", async () => {
-    const { createProposal, isProposalSkipped } = await import("../../../src/commands/proposal/repository");
+    const { createProposal } = await import("../../../src/commands/proposal/repository");
     const stashDir = makeTempDir("akm-6b-expired-");
     writeMemory(stashDir, "live-asset", { description: "Live memory" }, "Live body.");
     await buildIndex(stashDir);
@@ -1240,18 +1198,16 @@ describe("new 0.8.0 improve metrics", () => {
     // exists on disk so the orphan-purge pass does not race the expiration
     // pass and pre-archive it.
     const STALE_AGE_MS = 200 * 86_400_000;
-    const seeded = createProposal(
+    createProposal(
       stashDir,
       {
         ref: "memories/live-asset",
         source: "reflect",
         sourceRun: "test-stale",
-        force: true,
         payload: { content: "# Stale proposal\nOld content." },
       },
       { now: () => Date.now() - STALE_AGE_MS },
     );
-    if (isProposalSkipped(seeded)) throw new Error("seed skipped");
 
     const result = await akmImprove({
       scope: "memories/live-asset",

@@ -2,10 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Top-level `akm health` metrics + LLM usage aggregates (chunk-9 WI-9.5d
- * per-domain split of `./types`).
- */
+/** Top-level `akm health` metrics + LLM usage aggregates. */
 
 export interface HealthMetrics {
   taskFailRate: number;
@@ -14,24 +11,19 @@ export interface HealthMetrics {
    * #943: reason-value breakdown behind {@link agentFailureRate} — how many
    * command-task failures in the window carry each `detail.reason` value
    * (`timeout`, `non_zero_exit`, `spawn_failed`, …; see `AgentFailureReason`
-   * in `src/integrations/agent/spawn.ts`). Lets a health consumer see
-   * "timeout-dominant" from data instead of grepping task logs.
+   * in `src/integrations/agent/spawn.ts`).
    */
   agentFailureReasonCounts: Record<string, number>;
   stuckActiveRuns: number;
-  logBackingRate: number;
-  probeRoundTripMs: number | null;
   /**
-   * Per-stage LLM usage aggregates (#576), derived from `llm_usage` events in
-   * the window. Replaces the prior GPU-time proxy: real token + wall-time
-   * accounting attributed to the pipeline stage that made each call. `stages`
-   * is keyed by stage name (`"reflect"`, `"memory-inference"`, …); calls made
-   * outside any stage scope land under the `unattributed` key.
+   * LLM usage aggregated from the window's `llm_usage` events (#576): real
+   * token + wall-time accounting, attributed to the stage, process, and engine
+   * that made each call. Calls outside any stage land under `unattributed`.
    */
   llmUsage: LlmUsageAggregate;
 }
 
-/** Aggregated LLM usage over a window: a total plus a per-stage breakdown. */
+/** Aggregated LLM usage over a window: a total plus per-dimension breakdowns. */
 export interface LlmUsageAggregate {
   /** Number of `llm_usage` events (== number of LLM calls) in the window. */
   calls: number;
@@ -40,7 +32,7 @@ export interface LlmUsageAggregate {
   completionTokens: number;
   totalTokens: number;
   reasoningTokens: number;
-  /** Count of calls whose `outcome` was `"error"` (#944). Additive to the existing shape. */
+  /** Count of calls whose `outcome` was `"error"` (#944). */
   failures: number;
   /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
   byStage: Record<string, LlmUsageStageAggregate>;
@@ -58,17 +50,14 @@ export interface LlmUsageStageAggregate {
   completionTokens: number;
   totalTokens: number;
   reasoningTokens: number;
-  /** Count of calls whose `outcome` was `"error"` (#944). Additive to the existing shape. */
+  /** Count of calls whose `outcome` was `"error"` (#944). */
   failures: number;
 }
 
 /**
  * One row of the process x engine x model cross-tab (#944) —
  * {@link LlmUsageStageAggregate}'s fields keyed on the composite identity of a
- * call, instead of on one dimension at a time like `byStage`/`byProcess`/
- * `byEngine`. Answers "which engine/model did a given process actually use,
- * and what did it cost" in one row instead of requiring a caller to
- * cross-reference three separate 1-D breakdowns by hand.
+ * call. Consumed by `akm improve report`.
  */
 export interface LlmUsageCrossTabRow extends LlmUsageStageAggregate {
   /** Owning process, or `"unattributed"` when the call carried no `process`. */
