@@ -1337,17 +1337,23 @@ install is already the latest version — `akm upgrade` also enumerates every
 OTHER `akm` on PATH and in the known install roots (bun global, the npm
 global root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
 version's `bin/`) and, for each with a recognizable manager (npm/bun/pnpm)
-not already at that version, installs the SAME version there too via that
-install's own adjacent package manager (not always the running install's)
-and re-verifies it with `--version`. One already at the target version is
-reported `ok: true` without being reinstalled. An install with no manager it
-can run (a standalone binary, a checkout) is listed but never touched —
-update those by hand. Results land in the `otherInstalls` field: `[{path,
-before, after, ok, message}]`. `--check`
-reports the same list read-only (`before` equals `after`; `ok` says whether
-that install already matches the version a real upgrade would install),
-without touching anything. See `akm health`'s `akm-installs` advisory for
-the same enumeration surfaced as an ongoing health check.
+not already at that version, moves it to the version the RUNNING install has
+after this command — never an older `latest` release (on a host running a
+prerelease newer than the last stable release, that would silently downgrade
+a peer already at the running version) — via that install's own adjacent
+package manager (not always the running install's), run under that install's
+own `node` rather than the running process's (its bin directory prepended to
+`PATH`, since npm/pnpm resolve `node` through `#!/usr/bin/env node` and would
+otherwise install into the wrong node's global prefix), and re-verifies it
+with `--version`. One already at the target version is reported `ok: true`
+without being reinstalled. An install with no manager it can run (a
+standalone binary, a checkout) is listed but never touched — update those by
+hand. Results land in the `otherInstalls` field: `[{path, before, after, ok,
+message}]`. `--check` reports the same list read-only against that same
+target (`before` equals `after`; `ok` says whether that install already
+matches it), without touching anything. See `akm health`'s `akm-installs`
+advisory for the same enumeration surfaced as an ongoing health check, whose
+remedy command is built the same way.
 
 ### clone
 
