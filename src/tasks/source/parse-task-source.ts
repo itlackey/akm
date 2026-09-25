@@ -16,7 +16,7 @@
  *   | root `version`        | outcome                                                        |
  *   |------------------------|-----------------------------------------------------------------|
  *   | `4`, no retired `schedule[].enabled` | `parseTaskSourceV4Document` — the current grammar |
- *   | `4`, some `schedule[]` entry carries `enabled` | in-memory read shim (below): the SAME `planTaskToV4File` call `akm migrate apply` uses for this exact case (`./task-to-v4.ts`'s `version === 4` branch, which strips every `schedule[].enabled` and reports `source-enablement-removed`) runs on the bytes already in hand; the result is parsed and returned with a one-line stderr deprecation warning (once per file per process). The value is never read either way — `enabled: false` cannot suppress a granted task and `enabled: true` cannot schedule an ungranted one, since activation is host-local `scheduler.enabled`. If the planner cannot produce a valid document, falls back to `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the specific blocked reason |
+ *   | `4`, some `schedule[]` entry carries `enabled` | in-memory read shim (below): the SAME `planTaskToV4File` call `akm migrate apply` uses for this exact case (`./task-to-v4.ts`'s `version === 4` branch, which strips every `schedule[].enabled` and reports `source-enablement-removed`) runs on the bytes already in hand; the result is parsed and returned with a one-line stderr deprecation warning (once per file per process). The value is never read either way — `enabled: false` cannot suppress a granted task and `enabled: true` cannot schedule an ungranted one, since activation is host-local `scheduler.enabled`. Version 4 is supported, so if the planner cannot produce a valid document it is an ordinary grammar defect: falls back to `TASK_SOURCE_INVALID` with the v4 parser's own error, not the unmigratable-version decision |
  *   | `2` or `3`             | in-memory read shim (below): the SAME pure planners `akm migrate apply` uses (`./task-to-v3.ts`, `./task-to-v4.ts`) convert the bytes already in hand to v4 in memory; the result is parsed and returned with a one-line stderr deprecation warning (once per file per process). If the deterministic conversion itself fails (an unmigratable shape — the file needs a human decision, not a re-run), falls back to `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the specific blocked reason — the shim removes friction for the deterministic case, it never hides a real problem |
  *   | any other number       | `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the migrator          |
  *   | absent / not a number  | `parseTaskSourceV4Document` — its own `TASK_SOURCE_INVALID` "version is required and must be 4" / "must be exactly 4" wording |
@@ -217,7 +217,11 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
       );
       return Object.freeze({ version: 4 as const, v4 });
     }
-    throw unmigratableVersionError(input.filePath, 4, shimmed.reason, shimmed.detail);
+    // Version 4 is supported; a blocked outcome here means the file itself
+    // is malformed (`generated-v4-validation-failed`), not that this
+    // version needs a human decision — throw the v4 grammar error, not
+    // `unmigratableVersionError`.
+    throw new UsageError(shimmed.detail ?? shimmed.reason, "TASK_SOURCE_INVALID");
   }
   const documentOptions = {
     filePath: input.filePath,
