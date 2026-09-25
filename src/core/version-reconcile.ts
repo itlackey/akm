@@ -95,6 +95,38 @@ function readStamp(stateDir: string): VersionReconcileStamp | undefined {
   }
 }
 
+/** Outcome of {@link readVersionReconcileStamp}, distinguishing "never reconciled" from "cannot tell". */
+export type VersionReconcileStampRead =
+  | { readonly outcome: "missing" }
+  | { readonly outcome: "unreadable"; readonly message: string }
+  | { readonly outcome: "found"; readonly stamp: VersionReconcileStamp };
+
+/**
+ * Pure reader for `$STATE/version-reconcile.json`, for callers (the
+ * `version-reconcile` health advisory) that must tell an absent stamp — this
+ * host has never reconciled — apart from one that exists but could not be
+ * parsed, which {@link readStamp}'s single `undefined` return collapses.
+ * Read-only: never runs `akm-migrate`.
+ */
+export function readVersionReconcileStamp(stateDir: string): VersionReconcileStampRead {
+  let text: string;
+  try {
+    text = fs.readFileSync(stampPath(stateDir), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { outcome: "missing" };
+    return { outcome: "unreadable", message: error instanceof Error ? error.message : String(error) };
+  }
+  try {
+    const parsed = JSON.parse(text) as VersionReconcileStamp;
+    if (typeof parsed !== "object" || parsed === null) {
+      return { outcome: "unreadable", message: "stamp is not a JSON object" };
+    }
+    return { outcome: "found", stamp: parsed };
+  } catch (error) {
+    return { outcome: "unreadable", message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function writeStamp(stateDir: string, stamp: VersionReconcileStamp): void {
   try {
     fs.mkdirSync(stateDir, { recursive: true });

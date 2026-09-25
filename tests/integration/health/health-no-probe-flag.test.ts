@@ -22,6 +22,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getStateDir } from "../../../src/core/paths";
+import { pkgVersion } from "../../../src/version";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
@@ -67,6 +69,15 @@ beforeEach(() => {
     },
     defaults: { llmEngine: "lab" },
   });
+  // upgrade-D/D2: `runCliCapture` deliberately never runs the real CLI's
+  // startup reconciliation (see its own module doc), so the sandboxed host
+  // otherwise looks like it has never reconciled — the `version-reconcile`
+  // advisory would warn and flip the overall exit code to 4, unrelated to
+  // the reachability probe under test here. Seed a matching stamp, same
+  // reasoning as `withNoRealCrontab` below for `scheduler-binary`.
+  const stateDir = getStateDir();
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "version-reconcile.json"), JSON.stringify({ version: pkgVersion }));
 });
 
 afterEach(() => {
