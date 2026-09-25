@@ -36,12 +36,17 @@
  *
  * ## Quarantine
  *
- * A journal {@link recoverTxnsForRoot} cannot recover — a fence violation or
- * a `rollback`/`finalize` throw — is moved to `$DATA/txn-quarantine/<rootNs
- * >/<transactionId>/` (see {@link QuarantinedTxn}) rather than aborting the
- * whole scan. Recovery is per-journal: one poisoned journal never blocks the
- * others, and never bricks a later scan against the same root the way a
- * thrown error would.
+ * A journal {@link recoverTxnsForRoot} cannot recover — an unreadable
+ * `journal.json`, a fence violation, or a `rollback`/`finalize` throw — is
+ * moved to `$DATA/txn-quarantine/<rootNs>/<transactionId>/` (see
+ * {@link QuarantinedTxn}) rather than aborting the whole scan. A `finalize`
+ * throw that is a `TransientError` or SQLite-contention-shaped
+ * (`isSqliteContentionError`) is the one exception: it means ordinary
+ * `state.db` contention mid-`finalize`, not a broken journal, so it is left
+ * in place for a later scan to retry rather than quarantined. Recovery is
+ * per-journal: one poisoned or busy journal never blocks the others, and
+ * never bricks a later scan against the same root the way a thrown error
+ * would.
  *
  * ## Crash-window test seam
  *
@@ -54,8 +59,10 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pkgVersion } from "../version";
+import { TransientError } from "./errors";
 import type { FileChangeOp } from "./file-change";
 import { getDataDir } from "./paths";
+import { isSqliteContentionError } from "./state-db";
 import { warn, warnOnce } from "./warn";
 
 // ── Journal shapes ───────────────────────────────────────────────────────────
@@ -410,6 +417,31 @@ function quarantineTxnDir(
   return { transactionId, kind: journal?.kind ?? "unknown", phase: journal?.phase ?? "unknown", journalPath, reason };
 }
 
+/**
+ * {@link quarantineTxnDir}, but a failure of the quarantine move itself
+ * (a failed rename, a `reason.json` write error) warns and leaves the
+ * journal where it is instead of escaping {@link recoverTxnsForRoot}'s scan
+ * — the one thing worse than a journal recovery can't resolve is a scan that
+ * a quarantine attempt can't resolve either.
+ */
+function quarantineTxnDirSafely(
+  dir: string,
+  root: string,
+  journal: TxnJournal<unknown> | undefined,
+  reason: string,
+): QuarantinedTxn | undefined {
+  try {
+    return quarantineTxnDir(dir, root, journal, reason);
+  } catch (error) {
+    warn(
+      `[txn] failed to quarantine transaction journal at ${dir} (${reason}); leaving it in place: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return undefined;
+  }
+}
+
 /** Engine-level safety fences shared by every kind. */
 function fenceJournal(journal: TxnJournal<unknown>, txnDir: string, root: string, journalPath: string): void {
   if (canonicalTxnRoot(journal.root) !== canonicalTxnRoot(root)) {
@@ -471,13 +503,27 @@ export function isCommittedPhase(journal: TxnJournal<unknown>): boolean {
  * against the same root. The grace period also covers the transient case
  * where the caller has not imported a live kind's registrar yet.
  *
+ * An unreadable or unparseable `journal.json` (torn write, or `readJournal`'s
+ * own version/kind/phase refusal) is QUARANTINED with `journal` left
+ * `undefined` — {@link quarantineTxnDir} already falls back to the directory
+ * name and `"unknown"` for exactly this case — rather than thrown, so one
+ * damaged journal never aborts the scan before its siblings are reached.
+ *
  * A journal of a REGISTERED kind whose fence check or `rollback`/`finalize`
- * throws (a fenced-off root divergence, an irrecoverable handler error) is
- * QUARANTINED rather than thrown: it is moved to
- * `$DATA/txn-quarantine/<rootNs>/<id>/` (see {@link QuarantinedTxn}) and the
- * scan continues with the next journal. One poisoned journal must never
- * block recovery of every OTHER journal in the same namespace, or brick
- * every later scan against the same root the way a thrown error would.
+ * throws is QUARANTINED (moved to `$DATA/txn-quarantine/<rootNs>/<id>/`, see
+ * {@link QuarantinedTxn}) and the scan continues with the next journal — with
+ * one exception: a `TransientError` (`src/core/errors.ts`) or a
+ * SQLite-contention-shaped error (`isSqliteContentionError`,
+ * `src/core/state-db.ts`) means the journal is at or past its commit point
+ * with `finalize` mid-flight against a busy `state.db`, not broken. That
+ * journal is left exactly where it is — not quarantined, not counted as
+ * recovered — for a later scan to retry once the contention clears. A
+ * failure of the quarantine move itself (see
+ * {@link quarantineTxnDirSafely}) warns and also leaves the journal in
+ * place rather than escaping the scan. One poisoned or busy journal must
+ * never block recovery of every OTHER journal in the same namespace, or
+ * brick every later scan against the same root the way a thrown error
+ * would.
  *
  * `filter` optionally narrows recovery (e.g. one kind, one proposal id). The
  * unknown-kind sweep runs BEFORE the filter: such a journal is garbage no
@@ -500,7 +546,14 @@ export async function recoverTxnsForRoot(
       sweepJournallessTxnDir(dir);
       continue;
     }
-    const journal = readJournal(journalPath);
+    let journal: TxnJournal<unknown>;
+    try {
+      journal = readJournal(journalPath);
+    } catch (error) {
+      const q = quarantineTxnDirSafely(dir, root, undefined, error instanceof Error ? error.message : String(error));
+      if (q) quarantined.push(q);
+      continue;
+    }
     if (!hasKind(journal.kind)) {
       if (sweepJournallessTxnDir(dir)) {
         warn(`[txn] swept unrecoverable journal of unregistered kind "${journal.kind}" at ${journalPath}.`);
@@ -521,7 +574,17 @@ export async function recoverTxnsForRoot(
       recovered.push(journal);
       cleanupTxn(dir);
     } catch (error) {
-      quarantined.push(quarantineTxnDir(dir, root, journal, error instanceof Error ? error.message : String(error)));
+      if (error instanceof TransientError || isSqliteContentionError(error)) {
+        warnOnce(
+          `txn-transient:${journal.transactionId}`,
+          `[txn] leaving transaction journal ${journal.transactionId} in place after a transient error (${
+            error instanceof Error ? error.message : String(error)
+          }); a later 'akm migrate apply' retries it.`,
+        );
+        continue;
+      }
+      const q = quarantineTxnDirSafely(dir, root, journal, error instanceof Error ? error.message : String(error));
+      if (q) quarantined.push(q);
     }
   }
   return { recovered, quarantined };
