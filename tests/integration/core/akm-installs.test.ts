@@ -28,7 +28,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     const sandbox = makeSandboxDir("akm-installs-path");
     try {
       writeStubAkm(sandbox.dir, "0.9.17");
-      const installs = enumerateAkmInstalls({ PATH: sandbox.dir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ PATH: sandbox.dir }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]).toMatchObject({
         path: fs.realpathSync(path.join(sandbox.dir, "akm")),
@@ -46,7 +46,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     try {
       const bunDir = path.join(sandbox.dir, ".bun", "install", "global", "node_modules", "akm-cli", "bin");
       writeStubAkm(bunDir, "0.9.15");
-      const installs = enumerateAkmInstalls({ PATH: bunDir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ PATH: bunDir }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]?.manager).toBe("bun");
     } finally {
@@ -63,7 +63,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       fs.mkdirSync(shimDir, { recursive: true });
       fs.symlinkSync(real, path.join(shimDir, "akm"));
 
-      const installs = enumerateAkmInstalls({ HOME: sandbox.dir, PATH: "" }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ HOME: sandbox.dir, PATH: "" }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]).toMatchObject({ manager: "bun", version: "0.9.15" });
     } finally {
@@ -76,7 +76,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     try {
       const pnpmDir = path.join(sandbox.dir, "pnpm", "global", "5", "node_modules", "akm-cli", "bin");
       writeStubAkm(pnpmDir, "0.9.15");
-      const installs = enumerateAkmInstalls({ PATH: pnpmDir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ PATH: pnpmDir }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]?.manager).toBe("pnpm");
     } finally {
@@ -89,7 +89,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     try {
       const npmDir = path.join(sandbox.dir, "lib", "node_modules", "akm-cli", "bin");
       writeStubAkm(npmDir, "0.9.15");
-      const installs = enumerateAkmInstalls({ PATH: npmDir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ PATH: npmDir }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]?.manager).toBe("npm");
     } finally {
@@ -104,7 +104,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
       const binDir = path.join(repoRoot, "dist");
       writeStubAkm(binDir, "0.9.16-dev");
-      const installs = enumerateAkmInstalls({ PATH: binDir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ PATH: binDir }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]?.manager).toBe("checkout");
     } finally {
@@ -126,7 +126,10 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       fs.mkdirSync(localBinDir, { recursive: true });
       fs.symlinkSync(real, path.join(localBinDir, "akm"));
 
-      const installs = enumerateAkmInstalls({ HOME: sandbox.dir, PATH: pathDir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls(
+        { HOME: sandbox.dir, PATH: pathDir },
+        { fixedRoots: [], runningRealpaths: [] },
+      );
       expect(installs).toHaveLength(1);
       expect(installs[0]?.path).toBe(fs.realpathSync(real));
     } finally {
@@ -141,7 +144,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       writeStubAkm(path.join(sandbox.dir, "other"), "0.9.16");
       const installs = enumerateAkmInstalls(
         { PATH: [path.join(sandbox.dir, "running"), path.join(sandbox.dir, "other")].join(path.delimiter) },
-        { runningRealpaths: [fs.realpathSync(runningPath)] },
+        { fixedRoots: [], runningRealpaths: [fs.realpathSync(runningPath)] },
       );
       expect(installs).toHaveLength(2);
       const running = installs.find((i) => i.isRunning);
@@ -159,7 +162,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       fs.mkdirSync(sandbox.dir, { recursive: true });
       const target = path.join(sandbox.dir, "akm");
       fs.writeFileSync(target, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      const installs = enumerateAkmInstalls({ PATH: sandbox.dir }, { runningRealpaths: [] });
+      const installs = enumerateAkmInstalls({ PATH: sandbox.dir }, { fixedRoots: [], runningRealpaths: [] });
       expect(installs).toHaveLength(1);
       expect(installs[0]?.version).toBeUndefined();
     } finally {
@@ -171,14 +174,32 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     expect(() =>
       enumerateAkmInstalls(
         { HOME: "/definitely/does/not/exist", PATH: "/also/nowhere", NVM_DIR: "/nope" },
-        { runningRealpaths: [] },
+        { fixedRoots: [], runningRealpaths: [] },
       ),
     ).not.toThrow();
     expect(
       enumerateAkmInstalls(
         { HOME: "/definitely/does/not/exist", PATH: "/also/nowhere", NVM_DIR: "/nope" },
-        { runningRealpaths: [] },
+        { fixedRoots: [], runningRealpaths: [] },
       ),
     ).toEqual([]);
+  });
+
+  // upgrade-D r2-3: `fixedRoots` (default `["/usr/local/bin"]`) replaces the
+  // old hardcoded `/usr/local/bin` scan so a real standalone install on the
+  // host running these tests cannot leak in. This pins the seam itself,
+  // independent of whatever `/usr/local/bin` holds on this host: PATH is
+  // empty, so the only way the stub can be found is through `fixedRoots`.
+  test("fixedRoots scans the given directories unconditionally, regardless of PATH", () => {
+    const sandbox = makeSandboxDir("akm-installs-fixed-roots");
+    try {
+      const fixedDir = path.join(sandbox.dir, "fixed-root");
+      const real = writeStubAkm(fixedDir, "0.0.1");
+      const installs = enumerateAkmInstalls({ PATH: "" }, { fixedRoots: [fixedDir], runningRealpaths: [] });
+      expect(installs).toHaveLength(1);
+      expect(installs[0]).toMatchObject({ path: fs.realpathSync(real), version: "0.0.1" });
+    } finally {
+      sandbox.cleanup();
+    }
   });
 });
