@@ -37,6 +37,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nested — before validation and warns once per source naming all of them,
   instead of only the `experimental.*` ones.
 
+### Fixed
+
+- **A `version: 2` or `version: 3` task source reads and runs again instead
+  of failing closed on upgrade.** `e413af024` deleted the in-memory
+  v2/v3 -> v4 read shim on the argument that "untrusted source cannot carry
+  obsolete activation semantics" — but activation had already moved to
+  host-local `scheduler.enabled` in that same commit, so the shim never
+  carried activation in the first place, and deleting it just reintroduced
+  the exact upgrade break 0.9.4 originally shipped the shim to fix ("would
+  have broken every pre-0.9.4 scheduled task headlessly on upgrade").
+  `parseTaskSource` (`src/tasks/source/parse-task-source.ts`) once again
+  routes `version: 2`/`version: 3` through the SAME pure planners
+  `akm migrate apply` uses, entirely in memory, with a one-line stderr
+  deprecation warning (once per file per process) and no disk write; the
+  parsed document never carries a source-owned `enabled` field, since the
+  v3->v4 planner already never hoists `akm.enabled` or a schedule entry's
+  `enabled` key. Only a v2/v3 document the deterministic conversion itself
+  cannot resolve still fails with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
+  the specific blocked reason.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed
