@@ -370,7 +370,7 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, the `scheduler-binary` version check, and the `akm-installs` host-wide version-skew check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
@@ -379,8 +379,10 @@ default agent engine, and summarizes recent `improve_*` events. Unless
 to the `default-llm-engine` and every `configured-engines` LLM connection (and
 an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
-and runs the scheduler's recorded akm binary with `--version` to check it
-against the running CLI (`scheduler-binary`).
+runs the scheduler's recorded akm binary with `--version` to check it
+against the running CLI (`scheduler-binary`), and enumerates every OTHER
+`akm` install on the host with its own `--version` probe, same as
+`akm upgrade` (`akm-installs`).
 
 Primary result fields:
 
@@ -388,7 +390,7 @@ Primary result fields:
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
 | `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `task-log-backing`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
+| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `akm-installs` (every OTHER akm install on the host, by path, that is behind the running version), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -1282,6 +1284,22 @@ through `akm upgrade`; see [`task sync`](#task) and `akm health`'s
 under `postUpgrade.taskSync` rather than failing the upgrade; it is also
 folded into `postUpgrade.message`, so a plain-text caller sees it without
 reading the structured field.
+
+A host can run more than one `akm`: the shell's bun-global copy, cron's
+nvm-node copy, the OpenCode plugin's own bundled copy — each upgraded
+separately in the past, so one could silently fall behind. After the
+primary install above succeeds, `akm upgrade` also enumerates every OTHER
+`akm` on PATH and in the known install roots (bun global, the npm global
+root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
+version's `bin/`) and, for each with a recognizable manager (npm/bun/pnpm),
+installs the SAME version there too and re-verifies it with `--version`. An
+install with no manager it can run (a standalone binary, a checkout) is
+listed but never touched — update those by hand. Results land in the
+`otherInstalls` field: `[{path, before, after, ok, message}]`. `--check`
+reports the same list read-only (`before` equals `after`; `ok` says whether
+that install already matches the version a real upgrade would install),
+without touching anything. See `akm health`'s `akm-installs` advisory for
+the same enumeration surfaced as an ongoing health check.
 
 ### clone
 

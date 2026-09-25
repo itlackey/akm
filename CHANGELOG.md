@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Every akm install on the host is known, and `akm upgrade` moves all of
+  them.** A host can run more than one `akm` at once — the shell's bun-global
+  copy, cron's nvm-node copy, a harness plugin's own bundled copy — and
+  `akm upgrade` used to move only whichever one was currently running,
+  leaving the others silently behind until an unrelated failure surfaced the
+  drift. `enumerateAkmInstalls` (`src/core/akm-installs.ts`) finds every
+  `akm` on PATH plus the known install roots (bun global, the npm global
+  root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
+  version's `bin/`), deduped by realpath, classified, and probed with
+  `--version` — pure, local, no network call. `akm upgrade` now enumerates
+  the OTHER installs after the primary one succeeds and, for each with a
+  recognizable manager (npm/bun/pnpm), installs the same version there too
+  and re-verifies it, reporting the outcome in a new `otherInstalls` field;
+  an install it cannot manage (a standalone binary, a checkout) is listed
+  but never touched. `--check` lists the same information read-only. A new
+  `akm-installs` `akm health` advisory (`--probe`-gated) reports the same
+  enumeration as an ongoing check, warning by path with the manager command
+  that moves it. `akm health`'s `plugin-version` check (itlackey/akm#832)
+  also now reports the OpenCode plugin's bundled `akm-cli` version — an
+  in-process copy sharing the host's databases — against the running CLI, as
+  a second `opencode-plugin-version` advisory.
+
 - **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
   `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
   `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag
