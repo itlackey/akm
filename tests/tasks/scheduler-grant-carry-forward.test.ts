@@ -103,7 +103,7 @@ describe("pendingGrantsFromInstalled", () => {
     ];
     expect(pendingGrantsFromInstalled(entries, config)).toEqual([]);
     expect(staleGrantsFromInstalled(entries, config)).toEqual([
-      { ref: "team//tasks/nightly", grantedSourceId: staleSourceId, currentSourceId },
+      { kind: "task", ref: "team//tasks/nightly", grantedSourceId: staleSourceId, currentSourceId },
     ]);
   });
 });

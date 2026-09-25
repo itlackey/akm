@@ -74,7 +74,12 @@ import {
   schedulerNativeArtifactKey,
   schedulerNativeBindingId,
 } from "../../tasks/scheduler-binding";
-import { carryForwardSchedulerGrants, pendingGrantsFromInstalled } from "../../tasks/scheduler-grant-carry-forward";
+import {
+  carryForwardSchedulerGrants,
+  pendingGrantsFromInstalled,
+  staleGrantsFromInstalled,
+  staleSchedulerGrantWarning,
+} from "../../tasks/scheduler-grant-carry-forward";
 import {
   schedulerContextDescriptor,
   schedulerContextPath,
@@ -741,6 +746,12 @@ async function buildSchedulerSyncPlan(
     finalizeSchedulerSyncPlan(common, preparedSources),
   );
   const warnings: string[] = [];
+  // A grant bound to a stale sourceId is never carried forward (see the
+  // carriedForward block above) and `desired` below excludes it too, so
+  // sync would otherwise remove its row with no explanation.
+  for (const grant of staleGrantsFromInstalled(inspection.installed, config)) {
+    warnings.push(staleSchedulerGrantWarning(grant));
+  }
   const expectedSignature = sched.expectedSignature?.bind(sched);
   const needsRuntime = preflights.some((preflight) =>
     preflight.operations.some((operation) => operation.kind !== "remove" && operation.options?.binding === undefined),

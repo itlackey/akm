@@ -113,12 +113,12 @@ describe("scheduler activation migration", () => {
     expect(plan.pending).toEqual([{ kind: "workflow", ref: "team//workflows/release", sourceId }]);
     expect(plan.warnings).toHaveLength(1);
     expect(plan.warnings[0]).toContain("team//tasks/nightly");
-    expect(plan.warnings[0]).toContain("akm migrate apply");
+    expect(plan.warnings[0]).toContain("akm task enable team//tasks/nightly");
 
     const result = await applySchedulerActivationMigration(backend());
     expect(result.applied).toEqual([{ kind: "workflow", ref: "team//workflows/release", sourceId }]);
     expect(result.staleGrants).toEqual([
-      { ref: "team//tasks/nightly", grantedSourceId: staleSourceId, currentSourceId: sourceId },
+      { kind: "task", ref: "team//tasks/nightly", grantedSourceId: staleSourceId, currentSourceId: sourceId },
     ]);
     // The stale grant is reported, not silently rebound to the new source.
     expect(schedulerActivations(loadConfig())).toContainEqual({

@@ -16,17 +16,10 @@ import {
   pendingGrantsFromInstalled,
   type SchedulerGrantCarryForwardResult,
   staleGrantsFromInstalled,
+  staleSchedulerGrantWarning,
 } from "../../../src/tasks/scheduler-grant-carry-forward";
 import type { SchedulerActivation } from "../../../src/tasks/activation-config";
 import type { SchedulerBackend, SchedulerBackendInspection } from "../../../src/tasks/scheduler-binding";
-
-function staleGrantWarning(ref: string, grantedSourceId: string, currentSourceId: string): string {
-  return (
-    `Scheduler activation ${JSON.stringify(ref)} is granted to source ${JSON.stringify(grantedSourceId)} ` +
-    `but currently resolves to ${JSON.stringify(currentSourceId)}; not carried forward. ` +
-    `Run \`akm migrate apply\` (its configSchedulerSourceIds step) to rebind it explicitly.`
-  );
-}
 
 export interface SchedulerActivationMigrationPlan {
   readonly pending: readonly SchedulerActivation[];
@@ -72,9 +65,7 @@ export async function inspectSchedulerActivationMigration(
   const stale = staleGrantsFromInstalled(result.inspection.installed, config);
   return Object.freeze({
     pending: pendingGrantsFromInstalled(result.inspection.installed, config),
-    warnings: Object.freeze(
-      stale.map((grant) => staleGrantWarning(grant.ref, grant.grantedSourceId, grant.currentSourceId)),
-    ),
+    warnings: Object.freeze(stale.map((grant) => staleSchedulerGrantWarning(grant))),
   });
 }
 
@@ -88,9 +79,7 @@ export async function applySchedulerActivationMigration(
     ...migrationResult,
     warnings: Object.freeze([
       ...migrationResult.warnings,
-      ...migrationResult.staleGrants.map((grant) =>
-        staleGrantWarning(grant.ref, grant.grantedSourceId, grant.currentSourceId),
-      ),
+      ...migrationResult.staleGrants.map((grant) => staleSchedulerGrantWarning(grant)),
     ]),
   };
 }
