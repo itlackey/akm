@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
+  `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
+  `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag
+  `next`) could only be installed by hand, bypassing the migration/index step
+  `akm upgrade` is designed to run. `--version` installs an exact release;
+  `--tag` resolves an npm dist-tag through the npm registry (npm/Bun/pnpm
+  installs only — a standalone binary has no dist-tag, use `--version`); the
+  two are mutually exclusive, and `--check` reports the resolved target
+  without installing. A target older than the running version is a downgrade
+  and is refused unless combined with `--force`. Every package-manager
+  install now pins `<pkg>@<resolved-version>` instead of the floating
+  `@latest` tag, so the exact version that was decided on is the one that
+  gets installed. `akm upgrade` also now runs `akm task sync` after
+  `akm index`, so scheduler rows recorded under the same install method pick
+  up the freshly installed binary path without a manual step; a sync failure
+  is reported under `postUpgrade.taskSync`, never thrown. `--skip-post-upgrade`
+  skips both the index rebuild and the task sync.
 - **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
   `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
   release as a real global npm package, drives it to build a realistic home
