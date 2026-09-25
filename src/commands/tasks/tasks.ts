@@ -529,11 +529,11 @@ export async function akmTasksDisable(
   const resolved = resolveTaskActivation(ref, options.target, false);
   const activation = setSchedulerRefEnabled("task", resolved.qualifiedRef, false);
   // The grant just revoked above is still an installed, backed native
-  // binding — exactly what carry-forward exists to rescue elsewhere. Skip
-  // it for this one reconciling sync so disabling a ref is not immediately
-  // undone by the same call that is supposed to remove it (upgrade-B: this
-  // is the escape hatch the carry-forward warning itself names).
-  const sync = await akmTasksSync(deps, resolved.bundleName, { skipCarryForward: true });
+  // binding — exactly what carry-forward exists to rescue elsewhere. This
+  // internal reconciling sync never opts in to carry-forward (upgrade-B
+  // r2-1), so disabling a ref is not immediately undone by the same call
+  // that is supposed to remove it.
+  const sync = await akmTasksSync(deps, resolved.bundleName);
   return { ref: resolved.qualifiedRef, enabled: false, changed: activation.changed, sync };
 }
 
@@ -599,7 +599,7 @@ export interface TasksSyncResult {
 async function buildSchedulerSyncPlan(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime },
   bundleTarget: string | undefined,
-  options: { rebind?: boolean; dryRun?: boolean; skipCarryForward?: boolean },
+  options: { rebind?: boolean; dryRun?: boolean; carryForward?: boolean },
 ): Promise<{
   sched: SchedulerBackend;
   plan: SchedulerSyncPlan;
@@ -621,10 +621,15 @@ async function buildSchedulerSyncPlan(
   // binding that is the operator's own prior `akm task sync` but has no
   // grant yet — before `desired` is computed below, which would otherwise
   // remove it as ungranted (upgrade-B). `--dry-run` only reports what would
-  // be carried forward; it never mutates config.
-  const carriedForward = options.skipCarryForward
-    ? []
-    : pendingGrantsFromInstalled(inspection.installed, config).map((activation) => activation.ref);
+  // be carried forward; it never mutates config. Opt-in only (upgrade-B
+  // r2-1): the CLI's `akm task sync` (and its `--dry-run` preview) is the
+  // only caller that passes `carryForward: true`. The internal reconciling
+  // syncs inside `akmTasksAdd`/`akmTasksEnable`/`akmTasksDisable` never
+  // carry forward — a caller that just revoked a grant and syncs must not
+  // have that revoke silently undone by the same call.
+  const carriedForward = options.carryForward
+    ? pendingGrantsFromInstalled(inspection.installed, config).map((activation) => activation.ref)
+    : [];
   if (carriedForward.length > 0 && options.dryRun !== true) {
     await carryForwardSchedulerGrants(inspection);
     resetConfigCache();
@@ -884,8 +889,13 @@ function assertNoCrossBundleSchedulerCollisions(plans: readonly SchedulerSyncPla
 export async function akmTasksSync(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
   bundleTarget?: string,
-  /** `skipCarryForward` is an internal-only escape hatch for `akmTasksDisable`; not exposed as a CLI flag. */
-  options: { rebind?: boolean; skipCarryForward?: boolean } = {},
+  /**
+   * `carryForward` is opt-in (upgrade-B r2-1): only the `akm task sync` CLI
+   * command passes `true`. Internal reconciling syncs (`akmTasksAdd`,
+   * `akmTasksEnable`, `akmTasksDisable`) never do, so they cannot silently
+   * re-grant a binding they, or the caller, just revoked.
+   */
+  options: { rebind?: boolean; carryForward?: boolean } = {},
 ): Promise<TasksSyncResult> {
   const { sched, plan, sourceSnapshots, prepared, warnings } = await buildSchedulerSyncPlan(
     deps,
@@ -925,7 +935,7 @@ export async function akmTasksSync(
 export async function akmTasksSyncPlan(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
   bundleTarget?: string,
-  options: { rebind?: boolean } = {},
+  options: { rebind?: boolean; carryForward?: boolean } = {},
 ): Promise<SchedulerPlanPreview> {
   const { sched, plan } = await buildSchedulerSyncPlan(deps, bundleTarget, { ...options, dryRun: true });
   return renderSchedulerSyncPlanPreview(sched.name, plan);
