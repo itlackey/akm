@@ -301,15 +301,26 @@ export async function stepScheduledTasks(
   // install that dropped grants, `byId`'s `enabled` reflects a grant that a
   // carry-forward would immediately restore. Pre-check an id the operator
   // would see re-granted anyway, without mutating anything before the
-  // confirmation below.
+  // confirmation below. Only a pending grant in the same bundle
+  // `listSetupTaskDefinitions` reviews (the default write target) qualifies —
+  // an installed, ungranted `team//tasks/improve` must not pre-check the
+  // default bundle's `improve`.
   const config = loadConfig();
   let pendingTaskIds = new Set<string>();
   try {
     const inspection = await deps.inspectInstalled();
+    let defaultBundleName: string | undefined;
+    try {
+      defaultBundleName = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false }).source.name;
+    } catch {
+      defaultBundleName = undefined;
+    }
     pendingTaskIds = new Set(
       pendingGrantsFromInstalled(inspection.installed, config)
         .filter((activation) => activation.kind === "task")
-        .map((activation) => parseBundleRef(activation.ref).conceptId.replace(/^tasks\//, "")),
+        .map((activation) => parseBundleRef(activation.ref))
+        .filter((parsed) => parsed.bundle === defaultBundleName)
+        .map((parsed) => parsed.conceptId.replace(/^tasks\//, "")),
     );
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);

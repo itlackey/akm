@@ -636,6 +636,89 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
     }
   });
 
+  // Reviewer finding (Batch B): a pending grant from an installed native binding pre-checked ANY
+  // bundle whose concept id matched an embedded template's name, so an installed, ungranted
+  // `team//tasks/improve` pre-checked the default bundle's `improve`. Only a pending grant in the
+  // bundle `listSetupTaskDefinitions` reviews (the default write target) may pre-check.
+  test("pre-checks a pending grant only when it belongs to the default bundle", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const teamDir = path.join(storage.root, "team");
+      fs.mkdirSync(path.join(teamDir, "tasks"), { recursive: true });
+      fs.writeFileSync(
+        path.join(teamDir, "tasks", "improve.yml"),
+        'version: 4\nrun: echo team-improve\nschedule:\n  - cron: "0 3 * * *"\n',
+        "utf8",
+      );
+      writeSandboxConfig({
+        bundles: {
+          stash: { path: storage.stashDir, writable: true },
+          team: { path: teamDir },
+        },
+        defaultBundle: "stash",
+      });
+
+      const inspection: SchedulerBackendInspection = {
+        installed: [
+          {
+            id: "team-improve",
+            enabled: true,
+            binding: [],
+            contextPath: "",
+            invocation: ["task", "run", "improve", "--bundle", "team"],
+          },
+        ],
+        artifacts: [],
+      };
+      const { deps } = makeDeps([], EMPTY_SYNC_RESULT, { inspection });
+      state.confirmReturn = false;
+
+      await stepScheduledTasks(deps);
+
+      expect(state.multiselectConfig?.initialValues).not.toContain("improve");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  test("pre-checks a pending grant that belongs to the default bundle", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "improve.yml"),
+        'version: 4\nrun: echo improve\nschedule:\n  - cron: "0 3 * * *"\n',
+        "utf8",
+      );
+      writeSandboxConfig({
+        bundles: { stash: { path: storage.stashDir, writable: true } },
+        defaultBundle: "stash",
+      });
+
+      const inspection: SchedulerBackendInspection = {
+        installed: [
+          {
+            id: "stash-improve",
+            enabled: true,
+            binding: [],
+            contextPath: "",
+            invocation: ["task", "run", "improve"],
+          },
+        ],
+        artifacts: [],
+      };
+      const { deps } = makeDeps([], EMPTY_SYNC_RESULT, { inspection });
+      state.confirmReturn = false;
+
+      await stepScheduledTasks(deps);
+
+      expect(state.multiselectConfig?.initialValues).toContain("improve");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   // Reviewer finding: a managed embedded task's
   // template is still prepared on disk even when the operator leaves it unchecked (":273-276"), so
   // a carry-forward that ran AFTER `prepare` revoked its grant would immediately re-grant it and

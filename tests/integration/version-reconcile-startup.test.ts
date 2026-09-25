@@ -6,7 +6,7 @@
 // child process, per AGENTS.md's classification rule.
 
 /**
- * Ungated end-to-end acceptance for startup reconciliation (upgrade-B r2-3).
+ * Ungated end-to-end acceptance for startup reconciliation.
  * `tests/core/version-reconcile.test.ts` injects `runTool` and
  * `tests/cli/should-reconcile-on-startup.test.ts` covers the predicate only
  * — neither exercises the real `src/cli.ts` hook, the real `akm-migrate`

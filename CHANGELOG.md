@@ -336,6 +336,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that removes leftover pre-fix sidecars whose lock file is gone and activity
   lock files whose owner pid has died, capped at 2,000 files per run so a
   large backlog drains over a few `akm index` runs without stalling one.
+- **`akm setup`'s scheduled-tasks review no longer pre-checks a task from a
+  pending grant in the wrong bundle.** `stepScheduledTasks`
+  (`src/setup/steps/tasks.ts`) pre-checked an embedded template whenever ANY
+  bundle had a pending carry-forward grant whose concept id matched the
+  template's name, so an installed, ungranted `team//tasks/improve` would
+  pre-check the default bundle's `improve`. It now only counts a pending
+  grant whose bundle equals the default write target `listSetupTaskDefinitions`
+  reviews.
 
 ### Changed
 

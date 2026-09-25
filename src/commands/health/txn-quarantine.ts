@@ -29,10 +29,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listTxnJournalsTolerant } from "../../core/fs-txn";
+import { PROPOSAL_TXN_KIND, REJECT_TXN_KIND } from "../proposal/txn-kinds";
 import type { HealthCheckResult } from "./types";
 
 /** Transaction kinds registered by `src/commands/proposal/repository.ts`. */
-const PROPOSAL_TXN_KINDS = new Set(["proposal", "proposal-reject"]);
+const PROPOSAL_TXN_KINDS = new Set([PROPOSAL_TXN_KIND, REJECT_TXN_KIND]);
 
 /** A journal awaiting recovery younger than this is still a normal in-flight operation, not stuck. */
 const AWAITING_RECOVERY_MIN_AGE_MS = 60 * 60 * 1000;
