@@ -69,24 +69,27 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved.bundleName).toBeUndefined();
   });
 
-  test("a task v2 file is left to akm-migrate -> outcome 'blocked', exit 1", async () => {
+  test("a task v2 file the deterministic migrator converts -> outcome 'converts', exit 0, no engine required", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
-    // The production validator does not embed the historical parser. The
-    // standalone migrator owns conversion, including this deterministic case.
+    // Same v2 fixture proven convertible by tests/migrate-format.test.ts. A
+    // `prompt:` task converts to a command-kind (`uses: akm/command`) target
+    // — #907 review: validate must not require a configured engine to
+    // report this `valid`/`converts` (no execution lowering runs at all), so
+    // this test deliberately configures NO engine.
     const filePath = writeFixture(scratch, "legacy.yml", 'version: 2\nschedule: "@daily"\nprompt: Say hello\n');
 
     const { stdout, status } = await runCli(["task", "validate", filePath], stash);
-    expect(status).toBe(1);
+    expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ok).toBe(false);
-    expect(env.outcome).toBe("blocked");
+    expect(env.ok).toBe(true);
+    expect(env.outcome).toBe("converts");
     expect(env.sourceVersion).toBe(2);
-    expect(env.reason).toContain("akm migrate apply");
-    expect(env.resolved).toBeUndefined();
+    expect(env.resolved).toBeDefined();
+    expect(env.resolved.target.kind).toBe("uses");
   });
 
-  test("an ambiguous task v2 file is also deferred to akm-migrate", async () => {
+  test("a task v2 file the migrator cannot convert -> outcome 'blocked', exit 1, reason names the human-decision case", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
     // Same unmigratable v2 fixture as tests/tasks-scheduler-sync-v4.test.ts's
@@ -100,7 +103,7 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.ok).toBe(false);
     expect(env.outcome).toBe("blocked");
     expect(env.sourceVersion).toBe(2);
-    expect(env.reason).toContain("akm migrate apply");
+    expect(env.reason).toContain("needs a human decision");
     expect(env.resolved).toBeUndefined();
   });
 
