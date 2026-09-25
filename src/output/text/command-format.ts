@@ -556,7 +556,8 @@ export function formatAddPlain(r: Record<string, unknown>): string {
   const index = r.index as Record<string, unknown> | undefined;
   const scanned = index?.directoriesScanned ?? 0;
   const total = index?.totalEntries ?? 0;
-  const lines = [`Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`];
+  const bundleSuffix = typeof r.bundleId === "string" && r.bundleId.length > 0 ? ` as bundle "${r.bundleId}"` : "";
+  const lines = [`Installed ${r.ref}${bundleSuffix} (${scanned} directories scanned, ${total} total assets indexed)`];
   const warnings = index?.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     lines.push(`Warnings (${warnings.length}):`);

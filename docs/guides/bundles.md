@@ -66,6 +66,20 @@ success. A declarative `--provider git` add does the same, including writable
 checkouts. Other declarative provider entries are materialized by
 `akm bundle update`.
 
+**Bundle naming.** `--name` sets the bundle's key — akm's config, index, and
+every persisted ref hang off it. It is a contract, not a hint: it must be a
+legal bundle slug (no `:` `.` `#` `/` or whitespace), and it must not already
+be taken by a different bundle, or the add fails before writing anything.
+Re-adding a source that is already installed under a different `--name` than
+it already carries also fails, naming the existing key — use
+[`akm bundle rename`](#akm-bundle-rename) instead of trying to relabel it
+through `add`. Every `akm bundle add` result carries `bundleId` (its
+resolved key), so scripting against the JSON output never has to guess it
+back out of `sourceAdded`/`installed`. Without `--name`, akm derives one
+(the directory name, the package/repo name, or the hostname), falling back to
+a `-<hash>` suffix only on a collision — that forgiving fallback applies
+solely to a derived name, never to an explicit `--name`.
+
 Git credentials must be symbolic references: `$VAR`, `${VAR}`, or
 `secret://name`. AKM resolves the reference only at the Git subprocess boundary
 and sends it as an HTTPS bearer header; it does not put the token in the remote

@@ -15,6 +15,7 @@
  */
 
 import path from "node:path";
+import { validateExplicitBundleName } from "../../core/bundle-id";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { bundleKeyForContentRoot, primaryBundlePath } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -100,15 +101,19 @@ export function bundleKeyForUrl(config: AkmConfig, url: string): string | undefi
 }
 
 /**
- * Derive a slug-legal, batch-unique bundle key for a new source: prefer the
- * caller's `preferredName` when it is a legal slug, else slug the seed locator
- * (path/url) — the shared {@link deriveBundleId} rule (D-R5), made unique against
- * the currently-configured bundle keys.
+ * Derive a slug-legal, batch-unique bundle key for a NEW source (the caller
+ * has already confirmed no existing bundle represents this exact source): an
+ * explicit `preferredName` is a contract (D6) — illegal or already taken
+ * fails loudly via {@link validateExplicitBundleName} rather than silently
+ * falling back to the seed locator or growing a `-<hash>` suffix. Without a
+ * `preferredName`, the seed locator (path/url) is slugged and the shared
+ * {@link deriveBundleId} `-<hash>` uniqueness fallback still applies.
  */
 export function nextBundleKey(
   bundles: Record<string, BundleConfigEntry>,
   preferredName: string | undefined,
   seedLocator: string,
 ): string {
+  if (preferredName !== undefined) validateExplicitBundleName(bundles, preferredName);
   return deriveBundleId(preferredName, seedLocator, new Set(Object.keys(bundles)));
 }

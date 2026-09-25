@@ -98,6 +98,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm bundle add`'s `--name` is now a contract on every add path (local,
+  website, registry), not a hint.** An explicit `--name` that is not a legal
+  bundle slug, or that is already taken by a different bundle, used to fall
+  back silently — `deriveBundleId` minted a derived name, or a `-<hash>`
+  suffix — so `akm bundle add ... --name my.bundle` installed under a name
+  the caller never asked for, without saying so. It now fails with a
+  `UsageError` (exit 2) naming the rule, before any write (config, lock, or
+  network sync). Re-adding an already-installed ref under a *different*
+  `--name` than it already carries used to keep the existing key and say
+  nothing; it now fails the same way, naming the existing key and
+  `akm bundle rename <old> <new>`. A DERIVED name (no `--name` given) is
+  unaffected and keeps `deriveBundleId`'s forgiving `-<hash>` uniqueness
+  fallback. Every `akm bundle add` result (local, website, and registry) now
+  also carries `bundleId` (the resolved bundle key) and `registryId` (the
+  registry install id, when it differs from `bundleId`), so a caller no
+  longer has to reconstruct the key from `sourceAdded`/`installed`.
 - **A one-file change in a large directory no longer costs `akm index` half
   an hour.** Both full-text tables keyed their per-entry deletes on
   `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole
