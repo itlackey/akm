@@ -56,10 +56,11 @@
  *     instead of double-enumerating and throwing `duplicate task migration
  *     file path`.
  *   - a real-shaped 0.8 config carrying the retired `stashDir`/`sources[]`/
- *     `installed[]` trio together (#863) — deliberately NOT read-shimmed
- *     (unlike every fixture above); this one instead guards that the break
- *     stays loud and actionable (`src/core/config/config-schema.ts`) rather
- *     than degrading into a silent load or an opaque crash.
+ *     `installed[]` trio together (#863) — read via the in-memory bundles
+ *     shim (`legacy-source-shape-shim.ts`, same pattern as the task-source
+ *     v2/v3 and configVersion shims elsewhere in this file), with
+ *     `akm migrate apply` as the on-disk rewrite path rather than a
+ *     precondition for reading.
  *   - downstream-consumer fixtures for OpenPalm (a real, if unofficial,
  *     integration point, #880): a `config.json` `bundles` shape and four
  *     task source v4 files exercising its grammar (`run:`/`shell:`,
