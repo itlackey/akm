@@ -1671,25 +1671,30 @@ wrapper over the standalone `akm-migrate` executable (installed alongside
 akm has ever written so the CLI proper reads only current schemas. The steps,
 in order:
 
-1. legacy config `extraParams` keys lifted onto first-class engine fields
+1. legacy `stashDir`/`sources[]`/`installed` config converted to
+   `bundles`/`defaultBundle` (`configLegacySourceShape`) — config loading
+   already does this in memory with a one-time warning naming this command,
+   so this persists it to the file;
+2. legacy config `extraParams` keys lifted onto first-class engine fields
    (`configExtraParams`);
-2. retired `experimental.*` config keys removed, today `workflowEngine`
-   (`configRetiredExperimentalKeys`) — config loading already ignores them
-   with a one-time warning, so this only cleans the file;
-3. scheduler grants bound to the configured source installation that was
+3. every registered retired config key removed, top-level (`llm`, `profiles`,
+   `agent`, ...) and nested (today `experimental.workflowEngine`)
+   (`configRetiredKeys`) — config loading already ignores them with a
+   one-time warning, so this only cleans the file;
+4. scheduler grants bound to the configured source installation that was
    approved, with stale grants for removed bundles dropped
    (`configSchedulerSourceIds`);
-4. pending `state.db` migrations, historical-destructive ones included, with
+5. pending `state.db` migrations, historical-destructive ones included, with
    a verified sibling safety copy (`stateMigrations`) — the only path besides
    `akm upgrade` that admits released migration 018, which an ordinary
    command refuses;
-5. source-owned schedule enablement converted to host-local scheduler grants
+6. source-owned schedule enablement converted to host-local scheduler grants
    (`schedulerActivation`);
-6. task-v2 files to task v3, then task-v3 files to task source v4
+7. task-v2 files to task v3, then task-v3 files to task source v4
    (`taskV3Migration`, `taskV4Migration`), each keeping its own lock, backup,
    prevalidation, and rollback, so a file blocked in the first generation does
    not stop the second from converting files already at `version: 3`;
-7. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
+8. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
    (`deadResidue`, `staleTxns`), then live `.akm` writers relocated to
    `$STATE`/`$CACHE` (`writerRelocation`).
 

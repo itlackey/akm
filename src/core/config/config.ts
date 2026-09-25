@@ -34,7 +34,7 @@ import type {
 import { upgradeConfigVersion } from "./config-version-shim";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { migrateLegacySourceShape } from "./legacy-source-shape-shim";
-import { stripRetiredExperimentalKeys } from "./retired-experimental-keys-shim";
+import { stripRetiredConfigKeys } from "./retired-config-keys-shim";
 import { isApiKeyReference, SECRET_STORE_REFERENCE_PATTERN } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
@@ -212,8 +212,9 @@ export function acquireConfigReadFence(): { config: AkmConfig; release: () => vo
  * before it is either validated (the local/top-level file) or merged in as
  * an `extends` base: JSONC parse already done by the caller, then version
  * shim, then legacy `stashDir`/`sources[]`/`installed[]` shim, then the
- * legacy `extraParams` lift (#852), then the retired `experimental.*` key
- * shim. Shared by {@link parseAndValidateConfigText}
+ * legacy `extraParams` lift (#852), then the retired-config-keys shim
+ * (`./retired-config-keys-shim.ts`, driven by `RETIRED_CONFIG_KEYS` in
+ * `./retired-keys.ts`). Shared by {@link parseAndValidateConfigText}
  * (the local file) and {@link resolveExtendsChain} (each base in the chain) so
  * a fleet-shared base config can carry its own old `configVersion` / legacy
  * shape independently of the file that extends it.
@@ -222,7 +223,7 @@ function runConfigFilePipeline(text: string, sourcePath?: string): Record<string
   const versioned = upgradeConfigVersion(parseConfigText(text, sourcePath), sourcePath);
   const parsedRaw = migrateLegacySourceShape(versioned, sourcePath);
   const liftedRaw = liftExtraParamsOrThrow(parsedRaw, sourcePath);
-  return stripRetiredExperimentalKeys(liftedRaw, sourcePath);
+  return stripRetiredConfigKeys(liftedRaw, sourcePath);
 }
 
 /**
@@ -307,24 +308,10 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
   return finalResult.data;
 }
 
-const RETIRED_TOP_LEVEL_CONFIG_KEYS = new Set([
-  "agent",
-  "bindings",
-  "features",
-  "installed",
-  "llm",
-  "modelAliases",
-  "profiles",
-  "sources",
-  "stashDir",
-  "stashes",
-  "writable",
-]);
-
 function warnUnknownTopLevelConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
   const known = new Set(listTopLevelConfigKeys());
   for (const key of Object.keys(raw).sort()) {
-    if (known.has(key) || RETIRED_TOP_LEVEL_CONFIG_KEYS.has(key)) continue;
+    if (known.has(key)) continue;
     warnOnce(
       `config:unknown-key:${sourcePath ?? "inline"}:${key}`,
       `Unknown config key ${JSON.stringify(key)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior. Check the spelling or remove it.`,

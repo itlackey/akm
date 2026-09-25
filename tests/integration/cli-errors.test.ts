@@ -236,7 +236,12 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.hint).toContain("akm migrate apply --dry-run");
+    // Both fixtures are unmigratable shapes (issue #869): the message names
+    // the blocked reason and tells the operator a human decision is needed,
+    // rather than pointing at `akm migrate apply`, which would just report
+    // the same block.
+    expect(parsed.error).toContain("needs a human decision");
+    expect(parsed.hint).toContain("Review the file and resolve the ambiguity by hand");
   });
 
   test("akm workflow run of a step passing with: to a task target emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {

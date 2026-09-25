@@ -24,11 +24,17 @@ import {
   findConfigExtraParamsLift,
 } from "./migrate/config-extra-params";
 import {
-  applyConfigRetiredExperimentalKeys,
-  type ConfigRetiredExperimentalKeysPlan,
-  type ConfigRetiredExperimentalKeysResult,
-  findConfigRetiredExperimentalKeys,
-} from "./migrate/config-retired-experimental-keys";
+  applyConfigLegacySourceShape,
+  type ConfigLegacySourceShapePlan,
+  type ConfigLegacySourceShapeResult,
+  findConfigLegacySourceShape,
+} from "./migrate/config-legacy-source-shape";
+import {
+  applyConfigRetiredKeys,
+  type ConfigRetiredKeysPlan,
+  type ConfigRetiredKeysResult,
+  findConfigRetiredKeys,
+} from "./migrate/config-retired-keys";
 import {
   applyConfigSchedulerSourceIdMigration,
   type ConfigSchedulerSourceIdPlan,
@@ -64,9 +70,10 @@ export interface CombinedMigrationPlan {
   schemaVersion: 1;
   status: MigrationStatus;
   blockers: string[];
+  configLegacySourceShape: ConfigLegacySourceShapeResult | { pending: ConfigLegacySourceShapePlan };
   configExtraParams: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
   configSchedulerSourceIds?: ConfigSchedulerSourceIdResult | { pending: ConfigSchedulerSourceIdPlan };
-  configRetiredExperimentalKeys: ConfigRetiredExperimentalKeysResult | { pending: ConfigRetiredExperimentalKeysPlan };
+  configRetiredKeys: ConfigRetiredKeysResult | { pending: ConfigRetiredKeysPlan };
   stateMigrations: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
@@ -137,6 +144,17 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const { apply } = options;
   const configPath = getConfigPath();
 
+  // The legacy stashDir/sources[]/installed conversion runs first, before
+  // anything that loads config, mirroring where `migrateLegacySourceShape`
+  // sits in the in-memory pipeline (src/core/config/config.ts,
+  // `runConfigFilePipeline`) — ahead of the extraParams lift and the
+  // retired-keys strip. It never blocks: the read shim already tolerates
+  // this shape in memory, so this is cleanup, not a precondition.
+  const configLegacySourceShape = apply
+    ? applyConfigLegacySourceShape(configPath)
+    : { pending: findConfigLegacySourceShape(configPath) };
+  if (apply && (configLegacySourceShape as ConfigLegacySourceShapeResult).applied) resetConfigCache();
+
   // The config lift runs BEFORE anything that loads config. A config still
   // carrying legacy extraParams keys fails `loadConfig` closed, and that
   // error names `akm migrate apply` as the remedy -- every later step loads
@@ -149,24 +167,23 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   if (apply && (configExtraParams as ConfigExtraParamsLiftResult).applied) resetConfigCache();
   const pendingLift = apply ? undefined : (configExtraParams as { pending: ConfigExtraParamsLiftPlan }).pending;
 
-  // Retired `experimental.*` keys never block anything — the read shim
-  // already tolerates them (src/core/config/retired-experimental-keys-shim.ts),
-  // so this is cleanup, not a precondition later steps depend on. Computed
-  // once here (it reads and writes only the raw file under its own lock and
+  // Retired config keys never block anything — the read shim already
+  // tolerates them (src/core/config/retired-config-keys-shim.ts), so this
+  // is cleanup, not a precondition later steps depend on. Computed once
+  // here (it reads and writes only the raw file under its own lock and
   // never calls loadConfig) so both early "blocked" returns below and the
   // full plan can share the same value.
-  const configRetiredExperimentalKeys = apply
-    ? applyConfigRetiredExperimentalKeys(configPath)
-    : { pending: findConfigRetiredExperimentalKeys(configPath) };
-  if (apply && (configRetiredExperimentalKeys as ConfigRetiredExperimentalKeysResult).applied) resetConfigCache();
+  const configRetiredKeys = apply ? applyConfigRetiredKeys(configPath) : { pending: findConfigRetiredKeys(configPath) };
+  if (apply && (configRetiredKeys as ConfigRetiredKeysResult).applied) resetConfigCache();
 
   if (pendingLift && pendingLift.lifted.length > 0) {
     return {
       schemaVersion: 1,
       status: "blocked",
       blockers: pendingLift.lifted,
+      configLegacySourceShape,
       configExtraParams,
-      configRetiredExperimentalKeys,
+      configRetiredKeys,
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
@@ -187,9 +204,10 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
           `${change.kind === "bind" ? "bind" : "drop"} scheduler activation ${change.ref}` +
           (change.reason ? `: ${change.reason}` : ""),
       ),
+      configLegacySourceShape,
       configExtraParams,
       configSchedulerSourceIds,
-      configRetiredExperimentalKeys,
+      configRetiredKeys,
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
@@ -231,19 +249,23 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const schedulerStatus: MigrationStatus =
     "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
   const retiredKeysStatus: MigrationStatus =
-    "pending" in configRetiredExperimentalKeys && configRetiredExperimentalKeys.pending.removed.length > 0
-      ? "ready"
-      : "current";
+    "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0 ? "ready" : "current";
+  const legacySourceShapeStatus: MigrationStatus =
+    "pending" in configLegacySourceShape && configLegacySourceShape.pending.converted.length > 0 ? "ready" : "current";
   return {
     schemaVersion: 1,
     status: worstStatus(
-      worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
-      retiredKeysStatus,
+      worstStatus(
+        worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
+        retiredKeysStatus,
+      ),
+      legacySourceShapeStatus,
     ),
     blockers: [...taskV3.blockers, ...taskV4.blockers],
+    configLegacySourceShape,
     configExtraParams,
     configSchedulerSourceIds,
-    configRetiredExperimentalKeys,
+    configRetiredKeys,
     stateMigrations,
     schedulerActivation,
     taskV3Migration: taskV3.taskV3Migration,

@@ -80,7 +80,7 @@ Machinery that prevents **data loss or corruption** passes test 2 on its own mer
 
 ### Reading persisted data
 
-A reader must tolerate data that older releases wrote. Deterministic transforms are the tool's job, not the user's — convert in memory, warn once, and keep the migrator as the on-disk rewrite path rather than a precondition for reading. See `src/tasks/source/parse-task-source.ts` (task v2/v3 → v4) and `src/core/config/config-version-shim.ts` for the established pattern. Every schema bump must add its old shape to `tests/integration/previous-release-corpus.test.ts` *before* shipping; that suite failing means an upgrade break was about to go out.
+A reader must tolerate data that older releases wrote: convert in memory, warn once, and keep the migrator as the on-disk rewrite path rather than a precondition for reading; the only refusal is data written by a newer release, and it must name the upgrade as the remedy. `docs/architecture/persisted-data-compat.md` is the per-format contract and inventory (where each format is written, its version marker, and its gap, if any) — read it before touching any persisted format. Every format bump must add its old shape to the upgrade rehearsal gate (`tests/integration/upgrade-rehearsal/`) and, for config keys, pass the schema-compatibility lint (`scripts/lint-config-schema-compat.ts`).
 
 Authority-bearing records are the narrow exception: if migration requires a
 new trust decision or binds approval to an identity older data never recorded,

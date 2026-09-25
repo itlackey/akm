@@ -10,18 +10,23 @@
  * a bundle/adapter/concept id at all — it reads exactly the path it was
  * given and classifies it.
  *
- * Reuses the exact current-schema router `parseTaskSource`
- * (`src/tasks/source/parse-task-source.ts`) used by every other task-source
- * reader. Historical v2/v3 documents are deliberately rejected here and
- * point to `akm migrate apply`; validation does not embed a second legacy
- * parser or perform an in-memory migration.
+ * Reuses the exact version-routing shim `parseTaskSource`
+ * (`src/tasks/source/parse-task-source.ts`) already applies for every other
+ * task-source reader (`akm task sync`'s `compileTaskSources` included) —
+ * this module never forks a second parser or a second v2/v3 migration
+ * planner. `readBoundedTaskSourceYaml` / `peekTaskSourceVersion` / `own` are
+ * the SAME front-end helpers that shim itself calls first; they are used
+ * here only to recover the file's ORIGINALLY DECLARED schema version for
+ * the report, because `parseTaskSource`'s own `ParsedTaskSource.version` is
+ * always `4` post-shim — it cannot answer "was this a v2/v3/v4 file?" on
+ * its own once a v2/v3 source has been converted in memory.
  *
  * Beyond parsing, this module also runs the SAME two per-source gates
  * `akm task sync`'s `compileTaskSources` runs before it ever installs a
  * schedule — `assertTaskScheduleInputsSatisfyContract` and
  * `assertTaskScheduleCronValid` (both extracted from `scheduler-sync.ts` for
  * exactly this reuse) — so a file `sync` would reject can never
- * be reported `valid` here. Cron dialect is checked against
+ * be reported `valid`/`converts` here. Cron dialect is checked against
  * `backendNameForPlatform()`, the same platform default `sync` falls back
  * to whenever it has no injected/native-inspected backend to hand (see
  * `akmTasksAdd`, `src/commands/tasks/tasks.ts`); a bare file was never
@@ -44,12 +49,23 @@
  * table in its header, extended for the two gates above):
  *   - `valid`       — parses as task source v4 directly (declared `version: 4`)
  *                      and passes both sync gates.
- *   - `blocked`     — declared `version: 2` or `3`; runtime does not accept
- *                      it and the explicit migrator must rewrite it first.
+ *   - `converts`    — declared `version: 2` or `3`; the deterministic
+ *                      in-memory migrator produced a valid v4 document that
+ *                      passes both sync gates. A declared `version: 4`
+ *                      document whose only defect is a retired
+ *                      `schedule[].enabled` key also reports `converts`
+ *                      (`sourceVersion` is still `4`) — it read through the
+ *                      same in-memory shim, not the direct v4 parse path.
+ *   - `blocked`     — declared `version: 2` or `3`; the migrator itself
+ *                      could not convert it (an ambiguous/unmigratable
+ *                      shape) — the ONLY way `parseTaskSource` ever throws
+ *                      for those two version numbers, so no message-text
+ *                      sniffing is needed to tell this apart from `invalid`.
  *   - `invalid`     — the document declares SOME version (`4`, or anything
  *                      other than 2/3/4) but fails to parse/validate, OR it
- *                      parsed but fails one of the two sync gates above, OR
- *                      the YAML itself does not parse at all
+ *                      parsed (directly or via a SUCCESSFUL v2/v3
+ *                      conversion) but fails one of the two sync gates
+ *                      above, OR the YAML itself does not parse at all
  *                      (a genuine syntax error, not merely a non-task
  *                      shape) — reported with the parser's own reason.
  *   - `not-a-task`  — the document parses as YAML but never declares a
@@ -65,14 +81,19 @@ import type { InputContract } from "../../execution/input-contract";
 import { backendNameForPlatform } from "../../tasks/backends";
 import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../tasks/scheduler-sync";
 import { own, readBoundedTaskSourceYaml } from "../../tasks/source/bounded-document";
-import { type ParsedTaskSource, parseTaskSource, peekTaskSourceVersion } from "../../tasks/source/parse-task-source";
+import {
+  type ParsedTaskSource,
+  parseTaskSource,
+  peekTaskSourceVersion,
+  v4ScheduleHasRetiredEnabledKey,
+} from "../../tasks/source/parse-task-source";
 import type {
   TaskSourceV4Document,
   TaskSourceV4ScheduleBinding,
   TaskSourceV4Target,
 } from "../../tasks/source/task-source-v4";
 
-export type TaskValidateOutcome = "valid" | "blocked" | "invalid" | "not-a-task";
+export type TaskValidateOutcome = "valid" | "converts" | "blocked" | "invalid" | "not-a-task";
 
 /**
  * The compiled task shape `akm task sync` would build a scheduler binding
@@ -107,9 +128,9 @@ export interface TaskValidateResult {
    */
   readonly sourceVersion?: number;
   readonly outcome: TaskValidateOutcome;
-  /** Present only when `outcome` is not `valid` — the diagnostic `akm task sync` would report for this source. */
+  /** Present only when `outcome` is not `valid`/`converts` — the diagnostic `akm task sync` would report for this source. */
   readonly reason?: string;
-  /** The compiled task shape sync produces (this file's header) — present only on `valid`. */
+  /** The compiled task shape sync produces (this file's header) — present only on `valid`/`converts`. */
   readonly resolved?: TaskValidateResolved;
 }
 
@@ -178,14 +199,11 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
   } catch (cause) {
     if (!(cause instanceof UsageError)) throw cause;
     const reason = cause.message;
+    // `parseTaskSource` only ever throws for a declared version 2/3 via the
+    // unmigratable-conversion branch (see this file's header) — no separate
+    // message check needed to recognize "blocked" here.
     if (declaredVersion === 2 || declaredVersion === 3) {
-      return {
-        ok: false,
-        path: resolvedPath,
-        sourceVersion: declaredVersion,
-        outcome: "blocked",
-        reason: `${reason} Run \`akm migrate apply --dry-run\`, review the plan, then run \`akm migrate apply\`.`,
-      };
+      return { ok: false, path: resolvedPath, sourceVersion: declaredVersion, outcome: "blocked", reason };
     }
     if (peekFailed) {
       return { ok: false, path: resolvedPath, outcome: "invalid", reason };
@@ -206,8 +224,11 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
   // undefined — the router requires a numeric 2/3/4 version to reach here.
   const sourceVersion = declaredVersion ?? 4;
 
-  // The current document parsed; now run the two gates `compileTaskSources`
-  // applies before accepting it.
+  // The document itself parsed (directly, or via a successful v2/v3
+  // conversion) — now the two gates `compileTaskSources` runs before
+  // accepting it. A violation here is `invalid`, never `blocked`: the
+  // migrator already succeeded, so this is the same kind of defect a
+  // native v4 document with the identical schedule would have.
   try {
     assertTaskScheduleInputsSatisfyContract(parsed.v4, resolvedPath);
     assertTaskScheduleCronValid(parsed.v4, backend);
@@ -216,12 +237,19 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
     return { ok: false, path: resolvedPath, sourceVersion, outcome: "invalid", reason: cause.message };
   }
 
+  // A declared `version: 4` document with a retired `schedule[].enabled`
+  // key parsed through `parseTaskSource`'s in-memory shim, not the direct
+  // v4 path, even though `sourceVersion` reads `4` — report it the same
+  // way a converted v2/v3 document is reported.
+  const convertedFromRetiredScheduleEnabled =
+    sourceVersion === 4 && !peekFailed && v4ScheduleHasRetiredEnabledKey(root);
+
   const id = path.parse(resolvedPath).name;
   return {
     ok: true,
     path: resolvedPath,
     sourceVersion,
-    outcome: "valid",
+    outcome: sourceVersion === 2 || sourceVersion === 3 || convertedFromRetiredScheduleEnabled ? "converts" : "valid",
     resolved: buildResolved(id, parsed.v4),
   };
 }

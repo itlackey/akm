@@ -6,6 +6,124 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
+  `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
+  release as a real global npm package, drives it to build a realistic home
+  (a filesystem, git, website, and npm bundle; scheduled and manual tasks; a
+  synced fake crontab), then installs the candidate build OVER it in place —
+  the same prefix a real `npm i -g`/`bun add -g` upgrade replaces — and runs
+  the candidate against that home — `migrate status`/`apply`, `bundle list`
+  with every bundle confirmed enabled, `search`, `show`, plain `task sync`
+  (dry-run and real, no `--rebind`, as an upgrading user actually runs it),
+  executing the generated cron command and confirming it ran the candidate,
+  `health`, `improve --plan` — and finally installs a separate untouched copy
+  of the previous release and runs it back against the candidate-written
+  home. Wired into CI (`.github/workflows/ci.yml`'s new `upgrade-rehearsal`
+  job) and `tests/release-check.sh` (right after packing the release
+  candidate). `.github/workflows/ci.yml` also now runs on pushes to
+  `release/*` branches, which previously had no CI coverage at all.
+- **A single retired-config-keys registry (`src/core/config/retired-keys.ts`)
+  and a schema-compat lint (`bun scripts/lint-config-schema-compat.ts`, wired
+  into `bun run lint`) that fails the build when a config key disappears from
+  `schemas/akm-config.json` or an object turns `.strict()` without being
+  registered.** `ExperimentalConfigSchema` went `.strict()` in 0.9.16 with no
+  record of which keys earlier releases accepted under it, and the retired
+  `experimental.workflowEngine` then failed every command for anyone whose
+  0.9.15-written config still carried it — the same knowledge used to be
+  split across `RETIRED_TOP_LEVEL_CONFIG_KEYS` (`config.ts`),
+  `RETIRED_EXPERIMENTAL_KEYS` (a dedicated `experimental.*` shim), and the
+  `extraParams` lift table, with nothing checking that a key removed from the
+  schema was registered anywhere. `stripRetiredConfigKeys`
+  (`src/core/config/retired-config-keys-shim.ts`, replacing the old
+  `experimental.*`-only shim) now drops every registered path — top-level or
+  nested — before validation and warns once per source naming all of them,
+  instead of only the `experimental.*` ones. `akm migrate apply` now removes
+  every registered `"ignored"` retired key from `config.json` too, not only
+  `experimental.*` (the registry's `"lifted"` keys — `extraParams`, and now
+  `stashDir`/`sources`/`installed`, see Fixed below — are converted by their
+  own dedicated shim instead): the migrator step (renamed
+  `scripts/akm-migrate/migrate/config-retired-experimental-keys.ts` ->
+  `config-retired-keys.ts`, plan field `configRetiredExperimentalKeys` ->
+  `configRetiredKeys`, prerelease migrator output) previously only cleaned
+  up `experimental.workflowEngine`, so the shim's own "Run `akm migrate
+  apply` to remove them" advice could never be made true for a top-level
+  retired key like `llm` or `profiles` — the warning would repeat forever.
+  It now shares its path-walking with the read shim
+  (`retiredConfigKeysIn`/`withoutRetiredConfigKeys`, exported from
+  `retired-config-keys-shim.ts`) instead of filtering the registry a second
+  time. Also deleted the two leftover duplicate retired-key lists this same
+  change was meant to replace: the dead `superRefine` warn loop in
+  `config-schema.ts` (every file-loaded config reaches that schema only
+  after the read shim has already stripped these keys) and the speculative
+  `RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES` in `config.ts` (both of its callers
+  already receive post-shim input).
+
+### Fixed
+
+- **The legacy `stashDir`/`sources[]`/`installed` config shape is repaired
+  by `akm migrate apply`, and an empty one no longer fails every command**
+  (#863). `migrateLegacySourceShape`
+  (`src/core/config/legacy-source-shape-shim.ts`) has always converted a
+  usable `stashDir`/`sources[]`/`installed` in memory on every load and told
+  the user to run `akm migrate apply` to make that stick, but nothing on disk
+  ever did — the retired-keys migrator step doesn't touch them, since
+  `RETIRED_CONFIG_KEYS` (`src/core/config/retired-keys.ts`) registers them
+  `"lifted"`, not `"ignored"`. A new migrator step
+  (`scripts/akm-migrate/migrate/config-legacy-source-shape.ts`, plan field
+  `configLegacySourceShape`, wired in ahead of `configRetiredKeys`) now calls
+  that same shim to persist the conversion to `config.json` once, under a
+  backup, making the warning's advice true. Separately, through 0.9.16 and
+  0.9.17-alpha.3 a config whose `sources` was `[]` (what 0.8.9's
+  `akm source remove` writes after the last source is removed) or whose
+  `stashDir` was empty or unusable failed every command with exit 78
+  `INVALID_CONFIG_FILE` ("sources is not supported"): the shim only fired on
+  a non-empty value while the schema rejected any present key, and
+  `akm migrate apply` failed the same way, so nothing could repair it. The
+  shim now triggers on the key's presence — such a config loads with the
+  one-time legacy-shape warning, and `akm migrate apply` removes the keys.
+- **A `version: 2` or `version: 3` task source reads and runs again instead
+  of failing closed on upgrade.** `e413af024` deleted the in-memory
+  v2/v3 -> v4 read shim on the argument that "untrusted source cannot carry
+  obsolete activation semantics" — but activation had already moved to
+  host-local `scheduler.enabled` in that same commit, so the shim never
+  carried activation in the first place, and deleting it just reintroduced
+  the exact upgrade break 0.9.4 originally shipped the shim to fix ("would
+  have broken every pre-0.9.4 scheduled task headlessly on upgrade").
+  `parseTaskSource` (`src/tasks/source/parse-task-source.ts`) once again
+  routes `version: 2`/`version: 3` through the SAME pure planners
+  `akm migrate apply` uses, entirely in memory, with a one-line stderr
+  deprecation warning (once per file per process) and no disk write; the
+  parsed document never carries a source-owned `enabled` field, since the
+  v3->v4 planner already never hoists `akm.enabled` or a schedule entry's
+  `enabled` key. Only a v2/v3 document the deterministic conversion itself
+  cannot resolve still fails with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
+  the specific blocked reason. The same in-memory shim now also tolerates a
+  declared `version: 4` document whose `schedule[]` still carries a
+  per-entry `enabled` key — 0.9.15's v4 grammar accepted it (`akm task add
+  --disabled` wrote it), this release's does not, and without this the
+  upgrade break above recurs for every 0.9.15-authored scheduled task. The
+  key is stripped without ever being read — `enabled: false` cannot
+  suppress a granted task and `enabled: true` cannot schedule an ungranted
+  one, since activation stays host-local `scheduler.enabled`. `akm task
+  validate` reports such a file `converts` (`sourceVersion` still `4`)
+  instead of `valid`, since it read through the shim rather than the direct
+  v4 path.
+
+### Changed
+
+- **Documented the persisted-data compatibility contract.** Added
+  `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
+  reader owes data an earlier release wrote, plus a per-format table (config,
+  `state.db`, `index.db`, task source, workflow IR, native scheduler rows,
+  transaction journals, proposal and task-history metadata, lock payloads,
+  guarded directory manifests, `.akm` residue) naming where each is written,
+  its version marker, its older/newer-data behavior, and which gate covers
+  it — with explicit `Gap:` notes where the code does not meet the contract
+  yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
+  persisted data" section now points at this doc instead of a deleted file.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed

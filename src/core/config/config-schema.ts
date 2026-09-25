@@ -41,7 +41,6 @@
  */
 import { z } from "zod";
 import { bundleRefToString, parseBundleRef } from "../asset/asset-ref";
-import { warnOnce } from "../warn";
 import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
@@ -171,14 +170,6 @@ const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   const raw = config as Record<string, unknown>;
-  for (const key of ["profiles", "llm", "agent", "features", "stashes", "modelAliases", "bindings", "writable"]) {
-    if (key in raw) {
-      warnOnce(
-        `config:retired-key:${key}`,
-        `Config key "${key}" is retired in 0.9 and is ignored; configure engines/improve.strategies/bundles.<id> instead.`,
-      );
-    }
-  }
   // Only the current source shape enters the runtime. There is no config
   // compatibility path; `bundles` + `defaultBundle` fully supersede these keys.
   for (const key of ["stashDir", "sources", "installed"]) {

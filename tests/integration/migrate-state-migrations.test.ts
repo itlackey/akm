@@ -18,13 +18,14 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
+import { resolveStashDir } from "../../src/core/common";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { openDatabase } from "../../src/storage/database";
 import { runMigrations } from "../../src/storage/engines/sqlite-migrations";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const BEFORE_018 = STATE_MIGRATIONS.slice(
   0,
@@ -91,13 +92,28 @@ function writeLegacyExtraParamsConfig(configDir: string): string {
   return configPath;
 }
 
-/** A config carrying one live and one retired `experimental.*` key. */
-function writeRetiredExperimentalKeysConfig(configDir: string): string {
+/** A config on the legacy `stashDir`/`sources[]` shape, pointing `stashDir` at an existing dir. */
+function writeLegacySourceShapeConfig(configDir: string, stashDir: string): string {
   const configPath = path.join(configDir, "akm", "config.json");
   fs.writeFileSync(
     configPath,
     JSON.stringify({
       configVersion: "0.9.0",
+      stashDir,
+      sources: [{ type: "git", url: "https://example.com/team.git", name: "team" }],
+    }),
+  );
+  return configPath;
+}
+
+/** A config carrying a retired top-level key, a live and a retired `experimental.*` key. */
+function writeRetiredConfigKeysConfig(configDir: string): string {
+  const configPath = path.join(configDir, "akm", "config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      configVersion: "0.9.0",
+      llm: { model: "gpt-4" },
       experimental: { improveAutonomy: true, workflowEngine: true },
     }),
   );
@@ -205,25 +221,36 @@ test("status names a pending config lift as the blocker instead of dying on the 
   expect(plan.taskV3Migration).toBeUndefined();
 });
 
-test("dry-run reports a pending retired experimental key removal, leaving the config file unchanged", async () => {
-  const configPath = writeRetiredExperimentalKeysConfig(storage.configDir);
+test("dry-run reports a pending retired top-level and nested key removal, leaving the config file unchanged", async () => {
+  const configPath = writeRetiredConfigKeysConfig(storage.configDir);
 
   const plan = await runMigration({ apply: false });
 
-  expect(plan.configRetiredExperimentalKeys).toEqual({ pending: { removed: ["experimental.workflowEngine"] } });
+  const pending = plan.configRetiredKeys as { pending: { removed: string[] } };
+  expect(new Set(pending.pending.removed)).toEqual(new Set(["llm", "experimental.workflowEngine"]));
   // apply will rewrite config.json, so the preview must not claim "current".
   expect(plan.status).toBe("ready");
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    llm: unknown;
+    experimental: Record<string, unknown>;
+  };
+  expect(written.llm).toEqual({ model: "gpt-4" });
   expect(written.experimental).toEqual({ improveAutonomy: true, workflowEngine: true });
 });
 
-test("apply removes the retired experimental key, keeps the live one, and the next loadConfig warns nothing about it", async () => {
-  const configPath = writeRetiredExperimentalKeysConfig(storage.configDir);
+test("apply removes the retired top-level and nested keys, keeps the live one, and the next loadConfig warns nothing about it", async () => {
+  const configPath = writeRetiredConfigKeysConfig(storage.configDir);
 
   const plan = await runMigration({ apply: true });
 
-  expect(plan.configRetiredExperimentalKeys).toEqual({ applied: true, removed: ["experimental.workflowEngine"] });
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  const applied = plan.configRetiredKeys as { applied: boolean; removed: string[] };
+  expect(applied.applied).toBe(true);
+  expect(new Set(applied.removed)).toEqual(new Set(["llm", "experimental.workflowEngine"]));
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    llm?: unknown;
+    experimental: Record<string, unknown>;
+  };
+  expect(written.llm).toBeUndefined();
   expect(written.experimental).toEqual({ improveAutonomy: true });
 
   resetConfigCache();
@@ -238,4 +265,64 @@ test("apply removes the retired experimental key, keeps the live one, and the ne
     _setWarnSinkForTests(undefined);
   }
   expect(warnings.some((w) => w.includes("workflowEngine"))).toBe(false);
+  expect(warnings.some((w) => w.includes("retired config key"))).toBe(false);
+});
+
+test("dry-run reports a pending legacy stashDir/sources conversion, leaving the config file and resolved stash unchanged", async () => {
+  const configPath = writeLegacySourceShapeConfig(storage.configDir, storage.stashDir);
+  const beforeStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
+
+  const plan = await runMigration({ apply: false });
+
+  const pending = plan.configLegacySourceShape as { pending: { converted: string[] } };
+  expect(new Set(pending.pending.converted)).toEqual(new Set(["stashDir", "sources"]));
+  expect(plan.status).toBe("ready");
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { stashDir: unknown; sources: unknown };
+  expect(written.stashDir).toBe(storage.stashDir);
+  expect(written.sources).toEqual([{ type: "git", url: "https://example.com/team.git", name: "team" }]);
+  const afterStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
+  expect(afterStashDir).toBe(beforeStashDir);
+});
+
+test("apply converts the legacy stashDir/sources shape to bundles/defaultBundle; resolveStashDir and the bundle ids are unchanged, and the next loadConfig warns nothing about it", async () => {
+  const configPath = writeLegacySourceShapeConfig(storage.configDir, storage.stashDir);
+  const beforeStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
+  const beforeBundleIds = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => Object.keys(loadConfig().bundles ?? {}));
+  resetConfigCache();
+
+  const plan = await runMigration({ apply: true });
+
+  const applied = plan.configLegacySourceShape as { applied: boolean; converted: string[] };
+  expect(applied.applied).toBe(true);
+  expect(new Set(applied.converted)).toEqual(new Set(["stashDir", "sources"]));
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    stashDir?: unknown;
+    sources?: unknown;
+    defaultBundle: string;
+    bundles: Record<string, unknown>;
+  };
+  expect(written.stashDir).toBeUndefined();
+  expect(written.sources).toBeUndefined();
+  expect(written.defaultBundle).toBe("stash");
+  expect(written.bundles.stash).toEqual({ path: storage.stashDir, writable: true });
+  expect(written.bundles.team).toEqual({ git: "https://example.com/team.git", writable: false });
+
+  const afterStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
+  expect(afterStashDir).toBe(beforeStashDir);
+  resetConfigCache();
+  const afterBundleIds = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => Object.keys(loadConfig().bundles ?? {}));
+  expect(new Set(afterBundleIds)).toEqual(new Set(beforeBundleIds));
+
+  resetConfigCache();
+  _resetWarnOnceForTests();
+  const warnings: string[] = [];
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  try {
+    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => loadConfig());
+  } finally {
+    _setWarnSinkForTests(undefined);
+  }
+  expect(warnings.some((w) => w.includes("legacy-source-shape") || w.includes("stashDir"))).toBe(false);
 });

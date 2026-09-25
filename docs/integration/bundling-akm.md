@@ -29,34 +29,59 @@ akm migrate apply
 
 In order, every run applies (or, under `status`/`--dry-run`, plans):
 
-1. **Legacy config lift** — `extraParams` keys on an engine config moved onto
-   first-class fields.
-2. **Pending `state.db` migrations**, historical-destructive ones included.
-   This is the only path (besides `akm upgrade`, which calls the same code)
-   that is allowed to apply a destructive migration to an existing,
-   unversioned or behind-generation `state.db` — see
+1. **Legacy source shape** — a `stashDir`/`sources[]`/`installed` config
+   converted to `bundles`/`defaultBundle` (`configLegacySourceShape`).
+2. **Legacy config lift** — `extraParams` keys on an engine config moved onto
+   first-class fields (`configExtraParams`).
+3. **Retired config keys removed**, top-level and nested
+   (`configRetiredKeys`); config loading already ignores them with a one-time
+   warning, so this only cleans the file.
+4. **Scheduler grants bound to their source installation**, with stale grants
+   for removed bundles dropped (`configSchedulerSourceIds`).
+5. **Pending `state.db` migrations**, historical-destructive ones included
+   (`stateMigrations`). This is the only path (besides `akm upgrade`, which
+   calls the same code) that is allowed to apply a destructive migration to an
+   existing, unversioned or behind-generation `state.db` — see
    [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
-3. **Task sources**: task-v2 files to task v3, then task-v3 files to task
-   source v4. Each generation keeps its own lock and backup, so a file
-   blocked in one generation does not stop the other from converting files
-   that are already current.
-4. **Stash residue sweeps**: superseded pre-0.9.0 `.akm` files and stale
-   filesystem transactions, scoped to the configured bundle (skipped
-   entirely when no bundle is configured yet).
+6. **Source-owned schedule enablement** converted to host-local scheduler
+   grants (`schedulerActivation`).
+7. **Task sources**: task-v2 files to task v3, then task-v3 files to task
+   source v4 (`taskV3Migration`, `taskV4Migration`). Each generation keeps its
+   own lock and backup, so a file blocked in one generation does not stop the
+   other from converting files that are already current.
+8. **Stash residue sweeps**: superseded pre-0.9.0 `.akm` files and stale
+   filesystem transactions (`deadResidue`, `staleTxns`), then live `.akm`
+   writers relocated to `$STATE`/`$CACHE` (`writerRelocation`), scoped to the
+   configured local bundles (the residue sweeps are skipped entirely when no
+   bundle is configured yet).
+
+The step list in [`docs/reference/cli.md`](../reference/cli.md#migrate) is the
+authoritative one; the two must agree.
 
 ### The plan JSON
 
-One JSON object on stdout, always. A current install, nothing to do:
+One JSON object on stdout, always, with one field per step. A current
+install, nothing to do, as `akm migrate status` prints it (under `apply` the
+per-step objects carry results instead — `applied`, `removed`, `recovered`,
+`relocated` — with the same step names; the two `generation` values are the
+planners' content hashes, abbreviated here):
 
 ```json
 {
   "schemaVersion": 1,
   "status": "current",
   "blockers": [],
-  "configExtraParams": { "applied": false, "lifted": [], "conflicts": [] },
+  "configLegacySourceShape": { "pending": { "converted": [] } },
+  "configExtraParams": { "pending": { "lifted": [], "conflicts": [] } },
+  "configSchedulerSourceIds": { "pending": { "changes": [] } },
+  "configRetiredKeys": { "pending": { "removed": [] } },
   "stateMigrations": { "pending": [] },
-  "taskV3Migration": { "schemaVersion": 1, "generation": "task-v2-to-v3", "changed": 0, "skipped": 4, "blocked": 0, "files": [] },
-  "taskV4Migration": { "schemaVersion": 1, "generation": "task-v3-to-v4", "changed": 0, "skipped": 4, "blocked": 0, "files": [] }
+  "schedulerActivation": { "pending": [], "warnings": [] },
+  "taskV3Migration": { "schemaVersion": 1, "generation": "1b09…6cc8", "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
+  "taskV4Migration": { "schemaVersion": 1, "generation": "ccd6…0150", "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
+  "deadResidue": { "pending": [] },
+  "staleTxns": { "pending": [] },
+  "writerRelocation": { "pending": { "stash": { "directories": [], "lockArtifacts": [], "skippedLocks": [] } } }
 }
 ```
 
