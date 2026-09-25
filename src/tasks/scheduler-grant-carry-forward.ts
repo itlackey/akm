@@ -154,7 +154,8 @@ function activationKey(activation: SchedulerActivation): string {
  * {@link hasBackingFile}). A ref with no existing grant is `pending`. A ref
  * with an existing grant bound to a different `sourceId` is `stale`, never
  * `pending` — carrying it forward would silently rebind authority to a new
- * origin, which only an explicit `akm migrate apply` may do.
+ * origin. `akm task enable <ref>` rebinds a stale task grant explicitly; a
+ * stale workflow grant has no such command and must be re-created explicitly.
  */
 function classifyInstalled(
   installed: readonly InstalledSchedulerBinding[],
