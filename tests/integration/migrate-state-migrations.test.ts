@@ -91,13 +91,14 @@ function writeLegacyExtraParamsConfig(configDir: string): string {
   return configPath;
 }
 
-/** A config carrying one live and one retired `experimental.*` key. */
-function writeRetiredExperimentalKeysConfig(configDir: string): string {
+/** A config carrying a retired top-level key, a live and a retired `experimental.*` key. */
+function writeRetiredConfigKeysConfig(configDir: string): string {
   const configPath = path.join(configDir, "akm", "config.json");
   fs.writeFileSync(
     configPath,
     JSON.stringify({
       configVersion: "0.9.0",
+      llm: { model: "gpt-4" },
       experimental: { improveAutonomy: true, workflowEngine: true },
     }),
   );
@@ -205,25 +206,36 @@ test("status names a pending config lift as the blocker instead of dying on the 
   expect(plan.taskV3Migration).toBeUndefined();
 });
 
-test("dry-run reports a pending retired experimental key removal, leaving the config file unchanged", async () => {
-  const configPath = writeRetiredExperimentalKeysConfig(storage.configDir);
+test("dry-run reports a pending retired top-level and nested key removal, leaving the config file unchanged", async () => {
+  const configPath = writeRetiredConfigKeysConfig(storage.configDir);
 
   const plan = await runMigration({ apply: false });
 
-  expect(plan.configRetiredExperimentalKeys).toEqual({ pending: { removed: ["experimental.workflowEngine"] } });
+  const pending = plan.configRetiredKeys as { pending: { removed: string[] } };
+  expect(new Set(pending.pending.removed)).toEqual(new Set(["llm", "experimental.workflowEngine"]));
   // apply will rewrite config.json, so the preview must not claim "current".
   expect(plan.status).toBe("ready");
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    llm: unknown;
+    experimental: Record<string, unknown>;
+  };
+  expect(written.llm).toEqual({ model: "gpt-4" });
   expect(written.experimental).toEqual({ improveAutonomy: true, workflowEngine: true });
 });
 
-test("apply removes the retired experimental key, keeps the live one, and the next loadConfig warns nothing about it", async () => {
-  const configPath = writeRetiredExperimentalKeysConfig(storage.configDir);
+test("apply removes the retired top-level and nested keys, keeps the live one, and the next loadConfig warns nothing about it", async () => {
+  const configPath = writeRetiredConfigKeysConfig(storage.configDir);
 
   const plan = await runMigration({ apply: true });
 
-  expect(plan.configRetiredExperimentalKeys).toEqual({ applied: true, removed: ["experimental.workflowEngine"] });
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  const applied = plan.configRetiredKeys as { applied: boolean; removed: string[] };
+  expect(applied.applied).toBe(true);
+  expect(new Set(applied.removed)).toEqual(new Set(["llm", "experimental.workflowEngine"]));
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    llm?: unknown;
+    experimental: Record<string, unknown>;
+  };
+  expect(written.llm).toBeUndefined();
   expect(written.experimental).toEqual({ improveAutonomy: true });
 
   resetConfigCache();
@@ -238,4 +250,5 @@ test("apply removes the retired experimental key, keeps the live one, and the ne
     _setWarnSinkForTests(undefined);
   }
   expect(warnings.some((w) => w.includes("workflowEngine"))).toBe(false);
+  expect(warnings.some((w) => w.includes("retired config key"))).toBe(false);
 });

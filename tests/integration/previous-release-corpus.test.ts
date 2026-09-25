@@ -80,6 +80,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { applyConfigRetiredKeys } from "../../scripts/akm-migrate/migrate/config-retired-keys";
 import { inspectMigrationPlan } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl, isProposalSkipped } from "../../src/commands/proposal/repository";
@@ -666,6 +667,30 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
 
     const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
     expect(messages.some((m) => m.includes("workflowEngine") && m.includes("features"))).toBe(true);
+  });
+
+  test("after `akm migrate apply` removes every retired key from config.json, loadConfig emits no retired-keys warning", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        features: { improve: { reflect: { mode: "llm" } } },
+        experimental: { improveAutonomy: true, workflowEngine: true },
+      }),
+    );
+
+    const result = applyConfigRetiredKeys(configPath);
+    expect(result.applied).toBe(true);
+    expect(new Set(result.removed)).toEqual(new Set(["features", "experimental.workflowEngine"]));
+
+    resetConfigCache();
+    _resetWarnOnceForTests();
+    const config = loadConfig();
+    expect(config.experimental?.improveAutonomy).toBe(true);
+    expect((config as unknown as Record<string, unknown>).features).toBeUndefined();
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   test("a non-retired unknown experimental key still fails closed", () => {
