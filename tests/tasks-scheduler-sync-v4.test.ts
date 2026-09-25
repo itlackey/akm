@@ -203,17 +203,13 @@ describe("whole-set task source v4 scheduler sync planning — locally activated
 describe("whole-set task source v4 scheduler sync planning — sync-grant gating covers both in-memory read-shim paths", () => {
   test("a v3 task and a v4 task with a retired schedule[].enabled schedule only when granted, and neither ever appears in failures", async () => {
     const bundleRoot = root();
+    // A v3 SHELL task, not `uses: akm/command`: whole-set compilation resolves
+    // an engine for a command task, so that variant only compiles on a machine
+    // with an engine (or the opencode-sdk fallback) on PATH — a CI runner has
+    // neither, and this test is about the read shim, not engine resolution.
     write(
       path.join(bundleRoot, "tasks", "legacy-v3.yml"),
-      [
-        "version: 3",
-        "uses: akm/command",
-        "with:",
-        "  content: run something",
-        "akm:",
-        "  schedule: '0 3 * * *'",
-        "",
-      ].join("\n"),
+      ["version: 3", "run: echo legacy", "shell: sh", "akm:", "  schedule: '0 3 * * *'", ""].join("\n"),
     );
     write(
       path.join(bundleRoot, "tasks", "retired-enabled-v4.yml"),
