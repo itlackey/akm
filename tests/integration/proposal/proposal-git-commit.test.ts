@@ -5,7 +5,7 @@ import path from "node:path";
 import { akmProposalAccept, akmProposalRevert } from "../../../src/commands/proposal/proposal";
 import { createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { txnNamespaceDir } from "../../../src/core/fs-txn";
+import { txnNamespaceDir, txnQuarantineNamespaceDir } from "../../../src/core/fs-txn";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -217,7 +217,7 @@ describe("proposal Git target commits", () => {
     expect(fs.existsSync(txnNamespaceDir(content))).toBe(false);
   });
 
-  test("rejects an asset-published journal without Git publication identity", async () => {
+  test("quarantines an asset-published journal without Git publication identity, still refusing the write", async () => {
     const url = "https://example.com/akm/proposal-git-legacy-journal.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
     const content = path.join(repo, "content");
@@ -267,10 +267,19 @@ describe("proposal Git target commits", () => {
     fs.writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
     fs.rmSync(rejectingHook);
 
+    // r3-4: recovery now quarantines this journal (its own "has no Git
+    // publication identity" throw) instead of aborting on it, so the retry
+    // it no longer blocks reaches a fresh accept attempt — which itself
+    // refuses, because the earlier commit already changed the working
+    // tree's on-disk content out from under the proposal's recorded
+    // before-hash. Still a safe refusal either way: the remote never saw
+    // the rejected push, and the busted journal survives in quarantine.
     await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
-      "has no Git publication identity",
+      "refusing to overwrite newer content",
     );
     expect(git(remote, ["show", "main:content/lessons/git-proposal.md"])).toContain("ORIGINAL.");
     expect(fs.existsSync(namespace)).toBe(true);
+    const quarantineDir = txnQuarantineNamespaceDir(content);
+    expect(fs.readdirSync(quarantineDir)).toHaveLength(1);
   });
 });

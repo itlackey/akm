@@ -422,9 +422,12 @@ function quarantineTxnDir(
  * (a failed rename, a `reason.json` write error) warns and leaves the
  * journal where it is instead of escaping {@link recoverTxnsForRoot}'s scan
  * — the one thing worse than a journal recovery can't resolve is a scan that
- * a quarantine attempt can't resolve either.
+ * a quarantine attempt can't resolve either. Exported so other per-kind
+ * recovery loops that keep their own scan (e.g. proposal accept/revert
+ * recovery, `src/commands/proposal/repository.ts`) can quarantine a
+ * journal under the exact same contract instead of duplicating it.
  */
-function quarantineTxnDirSafely(
+export function quarantineTxnDirSafely(
   dir: string,
   root: string,
   journal: TxnJournal<unknown> | undefined,

@@ -53,7 +53,7 @@ import {
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
 import {
@@ -66,6 +66,7 @@ import {
   fsyncTxnFile,
   listTxnJournals,
   mintTxnId,
+  quarantineTxnDirSafely,
   registerTxnKind,
   sweepJournallessTxnDir,
   type Txn,
@@ -75,8 +76,8 @@ import {
   txnNamespaceDir,
 } from "../../core/fs-txn";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
-import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
-import { warn } from "../../core/warn";
+import { getStateDbPath, isSqliteContentionError, withImmediateTransaction, withStateDb } from "../../core/state-db";
+import { warn, warnOnce } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
   assertAkmAssetWrite,
@@ -1605,6 +1606,24 @@ function resolveProposalRecoveryTarget(
   return { ...target, source: { ...target.source, name: bundleId } };
 }
 
+/**
+ * Recover every `proposal` transaction journal under `target`'s namespace,
+ * giving this loop the same per-journal contract {@link recoverTxnsForRoot}
+ * (`src/core/fs-txn.ts`) has for the generic engine: an unreadable, unsafe,
+ * or fence/finalize-failing journal is quarantined (via
+ * {@link quarantineTxnDirSafely}) and the scan continues with the next
+ * journal, rather than one bad journal aborting recovery for every OTHER
+ * journal sharing this root's namespace — recovery that runs before every
+ * `akm proposal accept`/`reject`. A `TransientError` or SQLite-contention
+ * shaped throw means `state.db` is busy mid-`finalize`, not a broken
+ * journal, so that one is left in place for a later scan to retry instead.
+ * This loop stays separate from {@link recoverTxnsForRoot} (rather than
+ * routing through the ALSO-registered generic `proposal` handler, below)
+ * because it threads the caller's `ctx` through `getProposal`/
+ * `finalizeProposalTransaction` for test-time DB overrides; the generic
+ * handler's `finalize` cannot, since {@link registerTxnKind} handlers take
+ * no such context.
+ */
 async function recoverProposalTransactions(
   target: ResolvedWriteTarget,
   stashDir: string,
@@ -1623,32 +1642,72 @@ async function recoverProposalTransactions(
       sweepJournallessTxnDir(transactionDir);
       continue;
     }
-    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<ProposalTxnPayload>;
+    let journal: TxnJournal<ProposalTxnPayload>;
+    try {
+      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<ProposalTxnPayload>;
+    } catch (error) {
+      quarantineTxnDirSafely(
+        transactionDir,
+        target.source.path,
+        undefined,
+        error instanceof Error ? error.message : String(error),
+      );
+      continue;
+    }
     if (journal.kind !== PROPOSAL_TXN_KIND) continue;
     if (path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) continue;
-    if (
-      journal.version !== 1 ||
-      canonicalTxnRoot(journal.root) !== canonicalTxnRoot(target.source.path) ||
-      journal.payload.targetSource !== target.source.name ||
-      journal.payload.targetKind !== target.source.kind
-    ) {
-      throw new Error(`Refusing unsafe proposal transaction journal at ${journalPath}.`);
+    try {
+      if (
+        journal.version !== 1 ||
+        canonicalTxnRoot(journal.root) !== canonicalTxnRoot(target.source.path) ||
+        journal.payload.targetSource !== target.source.name ||
+        journal.payload.targetKind !== target.source.kind
+      ) {
+        throw new Error(`Refusing unsafe proposal transaction journal at ${journalPath}.`);
+      }
+      fenceProposalTxnJournal(journal, transactionDir, target.source.path);
+      const txn: ProposalTxn = { journal, journalPath, dir: transactionDir };
+      if (journal.phase === "prepared") {
+        rollbackPreparedProposalTransaction(txn);
+      } else if (journal.phase !== "committed") {
+        const proposal = getProposal(stashDir, journal.payload.proposalId, ctx);
+        completed.set(journal.payload.proposalId, await finalizeProposalTransaction(txn, target, proposal, ctx));
+      } else {
+        completed.set(journal.payload.proposalId, getProposal(stashDir, journal.payload.proposalId, ctx));
+      }
+      cleanupProposalPublication(journal.payload);
+      cleanupTxn(transactionDir);
+    } catch (error) {
+      if (error instanceof TransientError || isSqliteContentionError(error)) {
+        warnOnce(
+          `proposal-txn-transient:${journal.transactionId}`,
+          `[proposals] leaving transaction journal ${journal.transactionId} in place after a transient error (${
+            error instanceof Error ? error.message : String(error)
+          }); a later recovery retries it.`,
+        );
+        continue;
+      }
+      quarantineTxnDirSafely(
+        transactionDir,
+        target.source.path,
+        journal,
+        error instanceof Error ? error.message : String(error),
+      );
     }
-    fenceProposalTxnJournal(journal, transactionDir, target.source.path);
-    const txn: ProposalTxn = { journal, journalPath, dir: transactionDir };
-    if (journal.phase === "prepared") {
-      rollbackPreparedProposalTransaction(txn);
-    } else if (journal.phase !== "committed") {
-      const proposal = getProposal(stashDir, journal.payload.proposalId, ctx);
-      completed.set(journal.payload.proposalId, await finalizeProposalTransaction(txn, target, proposal, ctx));
-    } else {
-      completed.set(journal.payload.proposalId, getProposal(stashDir, journal.payload.proposalId, ctx));
-    }
-    cleanupProposalPublication(journal.payload);
-    cleanupTxn(transactionDir);
   }
   return completed;
 }
+
+/**
+ * TEST-ONLY: exercises {@link recoverProposalTransactions}'s per-journal
+ * recovery/quarantine contract directly. `akm proposal accept`/`reject`
+ * reach it only through {@link recoverProposalTransactionsForStash}, whose
+ * upfront {@link listTxnJournals} root-discovery scan fails loudly on ANY
+ * unreadable `journal.json` anywhere under `$DATA/txn` (by design — see its
+ * doc comment in `src/core/fs-txn.ts`), so a corrupt SIBLING journal can't be
+ * reached that way in isolation. This seam calls the per-root scan directly.
+ */
+export const _recoverProposalTransactionsForTests = recoverProposalTransactions;
 
 export async function recoverProposalTransactionsForStash(
   stashDir: string,

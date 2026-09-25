@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { akmProposalAccept, akmProposalReject, akmProposalRevert } from "../../../src/commands/proposal/proposal";
@@ -14,8 +14,8 @@ import {
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
+import { crashProposalAt as crashProposalAtHelper } from "../_helpers/proposal-crash";
 
-const RUNNER = path.join(import.meta.dir, "../_helpers", "proposal-crash-runner.ts");
 const CONTENT =
   "---\ndescription: Durable proposal content\nwhen_to_use: Testing proposal crash recovery\n---\n\nDURABLE ACCEPT.\n";
 let storage: IsolatedAkmStorage;
@@ -47,26 +47,7 @@ async function crashProposalAt(
   operation = "accept",
   target?: string,
 ): Promise<void> {
-  const marker = path.join(markers.dir, `${operation}-${phase}.ready`);
-  const child = spawn("bun", [RUNNER, phase, marker, proposalId, operation, ...(target ? [target] : [])], {
-    env: { ...process.env },
-    stdio: "ignore",
-  });
-  children.push(child);
-  const deadline = Date.now() + 10_000;
-  while (!fs.existsSync(marker)) {
-    if (child.exitCode !== null || child.signalCode !== null || Date.now() >= deadline) {
-      throw new Error(`proposal crash runner did not reach ${phase}`);
-    }
-    await Bun.sleep(10);
-  }
-  const markerContent = fs.readFileSync(marker, "utf8");
-  if (markerContent === "unsupported") {
-    throw new Error(`proposal crash runner does not support ${phase}`);
-  }
-  if (markerContent.startsWith("error:")) throw new Error(markerContent);
-  child.kill("SIGKILL");
-  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  await crashProposalAtHelper(markers.dir, children, phase, proposalId, operation, target);
 }
 
 /**
