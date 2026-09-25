@@ -183,7 +183,13 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     expect(diags.find((d) => d.issue === "invalid-task-yaml")).toBeUndefined();
   });
 
-  test("a task with source-owned schedule[].enabled is flagged", async () => {
+  test("a task with source-owned schedule[].enabled is tolerated, not flagged", async () => {
+    // parseTaskSource's read shim now strips a retired schedule[].enabled
+    // (any value, never read) instead of throwing — see
+    // src/tasks/source/parse-task-source.ts and
+    // docs/architecture/persisted-data-compat.md's Task source row. This
+    // used to assert `invalid-task-yaml`; that behavior was replaced by the
+    // tolerant shim, so the adapter no longer sees an error to report.
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
       component({ root: ROOT }),
@@ -195,8 +201,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
       ],
       ctx,
     );
-    const hit = diags.find((d) => d.issue === "invalid-task-yaml");
-    expect(hit?.detail).toMatch(/schedule.*enabled|enabled.*unknown/i);
+    expect(diags.find((d) => d.issue === "invalid-task-yaml")).toBeUndefined();
   });
 
   test("a task omitting `version` is flagged", async () => {
