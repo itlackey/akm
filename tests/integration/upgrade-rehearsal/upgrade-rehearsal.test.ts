@@ -16,8 +16,9 @@
  * unit target, which must stay hermetic and host-independent.
  *
  * Gated behind `AKM_UPGRADE_REHEARSAL=1` (unset: logs one line and skips).
- * See docs/architecture/testing/testing-workflow.md's "Upgrade Regression
- * Coverage" section for how to run this locally and its env overrides.
+ * See docs/architecture/testing/testing-workflow.md's "Upgrade rehearsal
+ * gate" subsection (under "Upgrade Regression Coverage") for how to run
+ * this locally and its env overrides.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
