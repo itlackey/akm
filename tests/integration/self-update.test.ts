@@ -720,6 +720,11 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.taskSync?.ok).toBe(false);
     expect(result.postUpgrade?.taskSync?.message).toContain("crontab: command not found");
     expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
+    // The top-level message is what a text-format caller actually reads —
+    // it must say the sync failed too, not just that the upgrade completed.
+    expect(result.postUpgrade?.message).toContain("scheduler was not re-synced");
+    expect(result.postUpgrade?.message).toContain("crontab: command not found");
+    expect(result.postUpgrade?.message).toContain("akm task sync");
   });
 
   test("returns guidance message for unknown install method", async () => {

@@ -18,6 +18,7 @@
 
 import { formatRegistryUrl } from "../../core/registry-url";
 import type { IndexResponse } from "../../indexer/indexer";
+import { semverOrder } from "../../runtime";
 import type { DetailLevel } from "../context";
 
 /** Render the current `InfoResponse` shape. */
@@ -633,6 +634,19 @@ export function formatUpgradePlain(r: Record<string, unknown>): string | null {
     return `akm upgraded: v${r.currentVersion} → v${r.newVersion}`;
   }
   if (r.updateAvailable === true) {
+    const requestedTarget = r.requestedTarget as { version?: string; tag?: string } | undefined;
+    if (requestedTarget) {
+      // `latestVersion` here is the resolved target, not necessarily the
+      // newest release (see UpgradeCheckResponse). Following the generic
+      // "run 'akm upgrade'" advice would install `latest` instead of the
+      // target that was actually checked, and an older target is a
+      // downgrade, not something "available".
+      if (semverOrder(String(r.currentVersion), String(r.latestVersion)) > 0) {
+        return `akm v${r.latestVersion} is older than the installed v${r.currentVersion}; pass --force to downgrade`;
+      }
+      const flag = requestedTarget.version ? `--version ${requestedTarget.version}` : `--tag ${requestedTarget.tag}`;
+      return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade ${flag}' to install)`;
+    }
     return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade' to install)`;
   }
   if (r.updateAvailable === false && r.latestVersion) {

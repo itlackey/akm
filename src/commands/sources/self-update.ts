@@ -577,7 +577,14 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   const index = runAkmIndex(akmBin);
-  return { ...index, taskSync: runAkmTaskSync(akmBin) };
+  const { firstLine, ...taskSync } = runAkmTaskSync(akmBin);
+  // `index.message` alone reads as "the upgrade is done" even when the sync
+  // right after it failed — a text-format caller only ever sees this field,
+  // never `taskSync.message`, so a failed sync has to show up here too.
+  const message = taskSync.ok
+    ? index.message
+    : `${index.message} The scheduler was not re-synced: ${firstLine}; run \`akm task sync\`.`;
+  return { ...index, message, taskSync };
 }
 
 function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?: number | null; message: string } {
@@ -620,7 +627,13 @@ function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?
 }
 
 /** `akm task sync` after the install: a failure is reported, never thrown. */
-function runAkmTaskSync(akmBin: string): { ok: boolean; message: string } {
+/**
+ * `firstLine` carries the short detail `runPostUpgradeTasks` folds into
+ * `postUpgrade.message` on failure; it is not part of the public
+ * `postUpgrade.taskSync` shape (`UpgradeResponse["postUpgrade"]`), so callers
+ * strip it back off before returning `taskSync` to the caller.
+ */
+function runAkmTaskSync(akmBin: string): { ok: boolean; message: string; firstLine?: string } {
   try {
     const result = childProcess.spawnSync(akmBin, ["task", "sync"], {
       encoding: "utf8",
@@ -631,6 +644,7 @@ function runAkmTaskSync(akmBin: string): { ok: boolean; message: string } {
       return {
         ok: false,
         message: `Post-upgrade \`akm task sync\` could not start: ${result.error.message}. Run \`akm task sync\` manually.`,
+        firstLine: result.error.message.split("\n")[0],
       };
     }
     if (result.status !== 0) {
@@ -638,12 +652,17 @@ function runAkmTaskSync(akmBin: string): { ok: boolean; message: string } {
       return {
         ok: false,
         message: `Post-upgrade \`akm task sync\` failed (${detail}). Run \`akm task sync\` manually.`,
+        firstLine: detail.split("\n")[0],
       };
     }
     return { ok: true, message: "Scheduled tasks were re-synced against the new binary." };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    return { ok: false, message: `Post-upgrade \`akm task sync\` failed: ${detail}. Run \`akm task sync\` manually.` };
+    return {
+      ok: false,
+      message: `Post-upgrade \`akm task sync\` failed: ${detail}. Run \`akm task sync\` manually.`,
+      firstLine: detail.split("\n")[0],
+    };
   }
 }
 
