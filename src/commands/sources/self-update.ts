@@ -11,7 +11,9 @@ import {
   type AkmInstallManager,
   BUN_GLOBAL_INSTALL_PATTERN,
   enumerateAkmInstalls,
+  isUnlinkedNpmInstall,
   PNPM_GLOBAL_INSTALL_PATTERN,
+  unlinkedNpmPackageRoot,
 } from "../../core/akm-installs";
 import {
   fetchWithRetry,
@@ -937,17 +939,44 @@ function findOtherAkmInstalls(enumerate: typeof enumerateAkmInstalls): AkmInstal
 }
 
 /**
+ * The "can `akm upgrade` manage this install" decision, shared by
+ * {@link describeOtherInstalls} (read-only) and {@link upgradeOtherInstall}
+ * (the real upgrade) so the two can never drift (upgrade-D3 r2-1). Returns
+ * the terminal `ok: false` status for an install `akm upgrade` will never
+ * touch — an npm global package the direct `akm-cli/dist` scan found but
+ * nothing links onto any bin dir, so there is no package-manager link left
+ * to update through — or `undefined` when the install is manageable
+ * normally.
+ */
+function unlinkedNpmOrphanStatus(install: AkmInstall): OtherAkmInstallStatus | undefined {
+  if (!isUnlinkedNpmInstall(install)) return undefined;
+  return {
+    path: install.path,
+    before: install.version,
+    after: install.version,
+    ok: false,
+    message: `Not linked onto any bin dir (orphaned npm global package at ${unlinkedNpmPackageRoot(install)}); left untouched — remove it or reinstall it by hand.`,
+  };
+}
+
+/**
  * `akm upgrade --check`: list every other akm install on the host, read-only
  * — `before`/`after` are the same because nothing is attempted here. `ok`
- * says whether that install already matches `targetVersion`, so a caller
- * can tell which ones a real `akm upgrade` would still need to move.
+ * says whether that install already matches the version a real `akm
+ * upgrade` would move it to: `check.latestVersion` when an update is
+ * available, otherwise `check.currentVersion` (the running install's own
+ * version) — so a peer already at that version isn't reported as needing an
+ * update to an older `latestVersion` (e.g. a host running a prerelease).
  */
 export function describeOtherInstalls(
-  targetVersion: string,
+  check: Pick<UpgradeCheckResponse, "currentVersion" | "latestVersion" | "updateAvailable">,
   dependencies?: Partial<SelfUpdateDependencies>,
 ): OtherAkmInstallStatus[] {
+  const targetVersion = check.updateAvailable ? check.latestVersion : check.currentVersion;
   const enumerate = dependencies?.enumerateAkmInstalls ?? enumerateAkmInstalls;
   return findOtherAkmInstalls(enumerate).map((install) => {
+    const orphan = unlinkedNpmOrphanStatus(install);
+    if (orphan) return orphan;
     if (!isManagedInstallManager(install.manager)) {
       return {
         path: install.path,
@@ -985,6 +1014,9 @@ function upgradeOtherInstalls(
 }
 
 function upgradeOtherInstall(install: AkmInstall, targetVersion: string): OtherAkmInstallStatus {
+  const orphan = unlinkedNpmOrphanStatus(install);
+  if (orphan) return orphan;
+
   if (!isManagedInstallManager(install.manager)) {
     return {
       path: install.path,

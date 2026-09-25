@@ -18,6 +18,7 @@ import {
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
 import type { AkmInstall } from "../../src/core/akm-installs";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import type { UpgradeCheckResponse } from "../../src/sources/types";
 import { sandboxHome, withEnv } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
@@ -1331,24 +1332,32 @@ function fakeInstall(overrides: Partial<AkmInstall>): AkmInstall {
     manager: "npm",
     version: "0.0.13",
     isRunning: false,
+    linked: true,
     ...overrides,
   };
 }
 
+/** A `describeOtherInstalls` check whose target (`updateAvailable ? latestVersion : currentVersion`) is `target`. */
+function checkTargeting(
+  target: string,
+): Pick<UpgradeCheckResponse, "currentVersion" | "latestVersion" | "updateAvailable"> {
+  return { currentVersion: target, latestVersion: target, updateAvailable: false };
+}
+
 describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
   test("no other install on the host: empty list", () => {
-    expect(describeOtherInstalls("0.0.14", { enumerateAkmInstalls: () => [] })).toEqual([]);
+    expect(describeOtherInstalls(checkTargeting("0.0.14"), { enumerateAkmInstalls: () => [] })).toEqual([]);
   });
 
   test("the running install itself is excluded", () => {
-    const result = describeOtherInstalls("0.0.14", {
+    const result = describeOtherInstalls(checkTargeting("0.0.14"), {
       enumerateAkmInstalls: () => [fakeInstall({ isRunning: true, version: "0.0.14" })],
     });
     expect(result).toEqual([]);
   });
 
   test("an other install already at the target version: ok", () => {
-    const result = describeOtherInstalls("0.0.14", {
+    const result = describeOtherInstalls(checkTargeting("0.0.14"), {
       enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "npm", version: "0.0.14" })],
     });
     expect(result).toEqual([
@@ -1357,7 +1366,7 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
   });
 
   test("an other install behind the target version: not ok, names the manager", () => {
-    const result = describeOtherInstalls("0.0.14", {
+    const result = describeOtherInstalls(checkTargeting("0.0.14"), {
       enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "bun", version: "0.0.13" })],
     });
     expect(result[0]?.ok).toBe(false);
@@ -1365,7 +1374,7 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
   });
 
   test("an unmanaged install (standalone/checkout): not ok, never touched, names the reason", () => {
-    const result = describeOtherInstalls("0.0.14", {
+    const result = describeOtherInstalls(checkTargeting("0.0.14"), {
       enumerateAkmInstalls: () => [
         fakeInstall({ path: "/a/akm", manager: "standalone", version: "0.0.13" }),
         fakeInstall({ path: "/b/akm", manager: "checkout", version: "0.0.13" }),
@@ -1380,7 +1389,7 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
   // current), not an older `latestVersion` from a host running a
   // prerelease. A peer at that running version reports `ok: true`.
   test("a peer at the running install's own (prerelease) version is ok, per the target the caller passes", () => {
-    const result = describeOtherInstalls("0.9.17-alpha.3", {
+    const result = describeOtherInstalls(checkTargeting("0.9.17-alpha.3"), {
       enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "npm", version: "0.9.17-alpha.3" })],
     });
     expect(result).toEqual([
@@ -1390,6 +1399,57 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
         after: "0.9.17-alpha.3",
         ok: true,
         message: "Already v0.9.17-alpha.3.",
+      },
+    ]);
+  });
+
+  // r2-1 Fix B: the target choice (latestVersion when an update is
+  // available, otherwise currentVersion) now lives inside
+  // describeOtherInstalls itself, not the caller — pin both branches.
+  test("updateAvailable: false picks currentVersion as the target", () => {
+    const check = { currentVersion: "0.9.17-alpha.3", latestVersion: "0.9.16", updateAvailable: false };
+    const atCurrent = describeOtherInstalls(check, {
+      enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "npm", version: "0.9.17-alpha.3" })],
+    });
+    expect(atCurrent[0]).toMatchObject({ ok: true });
+
+    const behindCurrent = describeOtherInstalls(check, {
+      enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "npm", version: "0.9.16" })],
+    });
+    expect(behindCurrent[0]).toMatchObject({ ok: false });
+  });
+
+  test("updateAvailable: true picks latestVersion as the target", () => {
+    const check = { currentVersion: "0.9.16", latestVersion: "0.9.17", updateAvailable: true };
+    const result = describeOtherInstalls(check, {
+      enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "npm", version: "0.9.17" })],
+    });
+    expect(result[0]).toMatchObject({ ok: true });
+  });
+
+  // r2-1 Fix A: an npm copy the direct `akm-cli/dist` scan found but that
+  // is not linked onto any bin dir can never be moved by any package
+  // manager command, so it is reported as such rather than "will update it
+  // via npm".
+  test("an unlinked npm install: not ok, names the orphan, never claims akm upgrade will update it", () => {
+    const result = describeOtherInstalls(checkTargeting("0.0.14"), {
+      enumerateAkmInstalls: () => [
+        fakeInstall({
+          path: "/root/lib/node_modules/akm-cli/dist/akm",
+          manager: "npm",
+          linked: false,
+          version: "0.0.13",
+        }),
+      ],
+    });
+    expect(result).toEqual([
+      {
+        path: "/root/lib/node_modules/akm-cli/dist/akm",
+        before: "0.0.13",
+        after: "0.0.13",
+        ok: false,
+        message:
+          "Not linked onto any bin dir (orphaned npm global package at /root/lib/node_modules/akm-cli); left untouched — remove it or reinstall it by hand.",
       },
     ]);
   });
@@ -1642,6 +1702,47 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
         ok: false,
         message:
           "No package manager could be attributed to this standalone install; it was left untouched. Update it manually.",
+      },
+    ]);
+  });
+
+  // r2-1 Fix A: an unlinked npm global package (the direct `akm-cli/dist`
+  // scan's only find) has no link for any package manager to update through.
+  // `spawnSync` throws on anything unexpected, so a real spawn attempt fails
+  // this test rather than silently succeeding.
+  test("an unlinked npm peer spawns nothing and is reported as an orphan, left untouched", async () => {
+    spyOn(childProcess, "spawnSync").mockImplementation(((command: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "0.0.14\n", stderr: "" } as never;
+      throw new Error(`unexpected spawnSync command: ${command}`);
+    }) as never);
+
+    const result = await performUpgrade(
+      // Already latest, so the primary install's own upgrade is a no-op and
+      // never spawns — the only spawn attempt this test could see is the
+      // OTHER (unlinked) install's, which must never happen either.
+      { currentVersion: "0.0.14", latestVersion: "0.0.14", updateAvailable: false, installMethod: "npm" },
+      undefined,
+      {
+        ...currentMigrator,
+        enumerateAkmInstalls: () => [
+          fakeInstall({
+            path: "/root/lib/node_modules/akm-cli/dist/akm",
+            manager: "npm",
+            linked: false,
+            version: "0.0.13",
+          }),
+        ],
+      },
+    );
+
+    expect(result.otherInstalls).toEqual([
+      {
+        path: "/root/lib/node_modules/akm-cli/dist/akm",
+        before: "0.0.13",
+        after: "0.0.13",
+        ok: false,
+        message:
+          "Not linked onto any bin dir (orphaned npm global package at /root/lib/node_modules/akm-cli); left untouched — remove it or reinstall it by hand.",
       },
     ]);
   });
