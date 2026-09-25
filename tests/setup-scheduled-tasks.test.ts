@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
-import type { TasksSyncResult } from "../src/commands/tasks/tasks";
-import { loadConfig } from "../src/core/config/config";
+import { akmTasksSync, type TasksSyncResult } from "../src/commands/tasks/tasks";
+import { loadConfig, resetConfigCache } from "../src/core/config/config";
 import { deleteAssetFromSource, writeAssetToSource } from "../src/core/write-source";
 import { buildSetupSteps } from "../src/setup/setup";
 import {
@@ -17,8 +17,14 @@ import {
   prepareSetupTaskDefinitions,
   stepScheduledTasks,
 } from "../src/setup/steps/tasks";
-import { schedulerActivations } from "../src/tasks/activation-config";
+import { schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
+import {
+  resolveScheduledTaskContext,
+  schedulerContextDescriptor,
+  writeSchedulerContextDescriptor,
+} from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -429,5 +435,76 @@ describe("scheduled-tasks step registration", () => {
     });
     expect(steps.find((step) => step.id === "scheduled-tasks")).toBeUndefined();
     expect(steps[steps.length - 1]?.id).toBe("output");
+  });
+});
+
+function memoryExec(initial = ""): CronExec & { current: () => string } {
+  let store = initial;
+  return {
+    read: (): CronExecResult => ({ status: 0, stdout: store, stderr: "" }),
+    write: (content: string): CronExecResult => {
+      store = content;
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    current: () => store,
+  };
+}
+
+describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
+  beforeEach(resetClack);
+
+  // Reviewer finding (upgrade-B r2-1 follow-up): the wizard's own confirmed
+  // "Activate these schedules now?" sync is a human-confirmed action like
+  // `akm task sync`, not an internal reconciling sync like `task add`/
+  // `enable`/`disable`. It must carry a grant forward, exercised here
+  // through the real `akmTasksSync` rather than the stub the other tests in
+  // this file use for `deps.sync`.
+  test("carries forward a grant lost outside `disable` for a custom installed task (upgrade-B)", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "orphan.yml"),
+        'version: 4\nrun: echo orphan\nname: orphan\nschedule:\n  - cron: "*/5 * * * *"\n',
+        "utf8",
+      );
+      setSchedulerRefEnabled("task", "stash//tasks/orphan", true);
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+
+      await akmTasksSync({ backend });
+      expect(exec.current()).toContain("task run orphan");
+
+      // Simulate the grant record vanishing (e.g. an upgrade that reset
+      // host-local config) while the installed crontab row and the task
+      // file it backs both survive untouched.
+      writeSandboxConfig({ scheduler: { enabled: [] } });
+      resetConfigCache();
+      expect(schedulerActivations(loadConfig())).toEqual([]);
+
+      state.confirmReturn = true;
+      await stepScheduledTasks({
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (deps, bundleTarget, syncOptions) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+      });
+
+      expect(exec.current()).toContain("task run orphan");
+      expect(schedulerActivations(loadConfig())).toContainEqual(
+        expect.objectContaining({ kind: "task", ref: "stash//tasks/orphan" }),
+      );
+    } finally {
+      storage.cleanup();
+    }
   });
 });
