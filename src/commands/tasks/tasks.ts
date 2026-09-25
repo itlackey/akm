@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { hasGitAncestor } from "../../core/akm-installs";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
@@ -1728,21 +1729,6 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding, invocation: T
 
 function sameArgv(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function hasGitAncestor(file: string): boolean {
-  let current: string;
-  try {
-    current = path.dirname(fs.realpathSync(file));
-  } catch {
-    return false;
-  }
-  for (;;) {
-    if (fs.existsSync(path.join(current, ".git"))) return true;
-    const parent = path.dirname(current);
-    if (parent === current) return false;
-    current = parent;
-  }
 }
 
 function taskAssetRef(id: string): AssetRef {

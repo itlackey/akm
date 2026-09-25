@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   checkForUpdate,
+  describeOtherInstalls,
   detectInstallMethod,
   getAkmBinaryName,
   getPackageManagerUpgradeCommand,
@@ -15,6 +16,7 @@ import {
   streamResponseToFile,
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
+import type { AkmInstall } from "../../src/core/akm-installs";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { sandboxHome, withEnv } from "../_helpers/sandbox";
 
@@ -56,6 +58,11 @@ const currentMigrator = {
     stdout: JSON.stringify({ schemaVersion: 1, status: "current", blockers: [] }),
     stderr: "",
   }),
+  // upgrade-D D3: `performUpgrade`'s other-installs step defaults to the
+  // real `enumerateAkmInstalls`, which scans the real host PATH — stub it
+  // to "no other installs found" so these tests never touch the host
+  // filesystem or inflate the `spawnSync` call counts several of them pin.
+  enumerateAkmInstalls: () => [],
 };
 
 // ── detectInstallMethod ─────────────────────────────────────────────────────
@@ -901,7 +908,7 @@ describe("performUpgrade", () => {
     const result = await performUpgrade(
       { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
       { skipPostUpgrade: true },
-      { runMigrationTool },
+      { runMigrationTool, enumerateAkmInstalls: () => [] },
     );
 
     expect(result.upgraded).toBe(true);
@@ -928,7 +935,7 @@ describe("performUpgrade", () => {
     const result = await performUpgrade(
       { currentVersion: "0.9.8", latestVersion: "0.9.8", updateAvailable: false, installMethod: "npm" },
       undefined,
-      { runMigrationTool },
+      { runMigrationTool, enumerateAkmInstalls: () => [] },
     );
 
     expect(runMigrationTool).toHaveBeenCalledTimes(1);
@@ -951,7 +958,7 @@ describe("performUpgrade", () => {
     const result = await performUpgrade(
       { currentVersion: "0.8.14", latestVersion: "0.9.8", updateAvailable: true, installMethod: "package-local" },
       undefined,
-      { runMigrationTool },
+      { runMigrationTool, enumerateAkmInstalls: () => [] },
     );
 
     expect(spawnSyncSpy).not.toHaveBeenCalled();
@@ -977,7 +984,7 @@ describe("performUpgrade", () => {
       performUpgrade(
         { currentVersion: "0.9.6", latestVersion: "0.9.8", updateAvailable: true, installMethod: "npm" },
         undefined,
-        { runMigrationTool },
+        { runMigrationTool, enumerateAkmInstalls: () => [] },
       ),
     ).rejects.toThrow(/EACCES[\s\S]*Pending migrations ran anyway \(status: current\)/);
     expect(runMigrationTool).toHaveBeenCalledTimes(1);
@@ -991,7 +998,7 @@ describe("performUpgrade", () => {
     const result = await performUpgrade(
       { currentVersion: "0.9.8", latestVersion: "0.9.8", updateAvailable: false, installMethod: "npm" },
       undefined,
-      { runMigrationTool },
+      { runMigrationTool, enumerateAkmInstalls: () => [] },
     );
 
     expect(result.migration?.status).toBe("failed");
@@ -1005,7 +1012,7 @@ describe("performUpgrade", () => {
     const result = await performUpgrade(
       { currentVersion: "0.9.8", latestVersion: "0.9.8", updateAvailable: false, installMethod: "npm" },
       undefined,
-      { runMigrationTool },
+      { runMigrationTool, enumerateAkmInstalls: () => [] },
     );
 
     expect(result.migration?.status).toBe("blocked");
@@ -1258,6 +1265,181 @@ describe("getPackageManagerUpgradeCommand", () => {
   test("returns undefined for non-package-manager installs", () => {
     expect(getPackageManagerUpgradeCommand("binary", "akm-cli")).toBeUndefined();
     expect(getPackageManagerUpgradeCommand("unknown", "akm-cli")).toBeUndefined();
+  });
+
+  // upgrade-D D3: the other-installs upgrade step targets that install's OWN
+  // adjacent npm/pnpm rather than always the currently running one.
+  describe("binDir (upgrade-D D3)", () => {
+    test("resolves an adjacent npm binary in the given binDir when present", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bindir-"));
+      const npmPath = path.join(dir, "npm");
+      fs.writeFileSync(npmPath, "");
+      try {
+        expect(getPackageManagerUpgradeCommand("npm", "akm-cli", "0.0.14", dir)?.command).toBe(npmPath);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("falls back to the bare command name when no adjacent binary exists in binDir", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bindir-empty-"));
+      try {
+        expect(getPackageManagerUpgradeCommand("pnpm", "akm-cli", "0.0.14", dir)?.command).toBe("pnpm");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+// ── Other akm installs on the host (upgrade-D D3) ────────────────────────────
+
+function fakeInstall(overrides: Partial<AkmInstall>): AkmInstall {
+  return { path: "/opt/other/akm", manager: "npm", version: "0.0.13", isRunning: false, ...overrides };
+}
+
+describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
+  test("no other install on the host: empty list", () => {
+    expect(describeOtherInstalls("0.0.14", { enumerateAkmInstalls: () => [] })).toEqual([]);
+  });
+
+  test("the running install itself is excluded", () => {
+    const result = describeOtherInstalls("0.0.14", {
+      enumerateAkmInstalls: () => [fakeInstall({ isRunning: true, version: "0.0.14" })],
+    });
+    expect(result).toEqual([]);
+  });
+
+  test("an other install already at the target version: ok", () => {
+    const result = describeOtherInstalls("0.0.14", {
+      enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "npm", version: "0.0.14" })],
+    });
+    expect(result).toEqual([
+      { path: "/a/akm", before: "0.0.14", after: "0.0.14", ok: true, message: "Already v0.0.14." },
+    ]);
+  });
+
+  test("an other install behind the target version: not ok, names the manager", () => {
+    const result = describeOtherInstalls("0.0.14", {
+      enumerateAkmInstalls: () => [fakeInstall({ path: "/a/akm", manager: "bun", version: "0.0.13" })],
+    });
+    expect(result[0]?.ok).toBe(false);
+    expect(result[0]?.message).toContain("bun");
+  });
+
+  test("an unmanaged install (standalone/checkout): not ok, never touched, names the reason", () => {
+    const result = describeOtherInstalls("0.0.14", {
+      enumerateAkmInstalls: () => [
+        fakeInstall({ path: "/a/akm", manager: "standalone", version: "0.0.13" }),
+        fakeInstall({ path: "/b/akm", manager: "checkout", version: "0.0.13" }),
+      ],
+    });
+    expect(result.every((r) => r.ok === false)).toBe(true);
+    expect(result[0]?.message).toContain("update it manually");
+  });
+});
+
+describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
+  test("no otherInstalls field when the upgrade is a no-op (already latest)", async () => {
+    const result = await performUpgrade(
+      { currentVersion: "0.9.8", latestVersion: "0.9.8", updateAvailable: false, installMethod: "npm" },
+      undefined,
+      { ...currentMigrator, enumerateAkmInstalls: () => [fakeInstall({})] },
+    );
+    expect(result.upgraded).toBe(false);
+    expect(result.otherInstalls).toBeUndefined();
+  });
+
+  test("an npm other install is upgraded via its own adjacent npm and re-verified", async () => {
+    spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "0.0.14\n", stderr: "" } as never;
+      // The primary install's own `npm install -g` and the OTHER install's.
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    const result = await performUpgrade(
+      { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+      { skipPostUpgrade: true },
+      {
+        ...currentMigrator,
+        enumerateAkmInstalls: () => [fakeInstall({ path: "/other/npm/akm", manager: "npm", version: "0.0.13" })],
+      },
+    );
+
+    expect(result.upgraded).toBe(true);
+    expect(result.otherInstalls).toEqual([
+      {
+        path: "/other/npm/akm",
+        before: "0.0.13",
+        after: "0.0.14",
+        ok: true,
+        message: "Upgraded via npm (verified: v0.0.14).",
+      },
+    ]);
+  });
+
+  test("a failing other-install upgrade is reported without failing the overall upgrade", async () => {
+    // A real adjacent `npm` next to the other install's own binary, so the
+    // mock can fail THAT specific install without also failing the primary
+    // upgrade's own (bare, PATH-resolved) `npm install -g` call.
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-npm-"));
+    const otherAkmPath = path.join(otherDir, "akm");
+    fs.writeFileSync(otherAkmPath, "");
+    const otherNpmPath = path.join(otherDir, "npm");
+    fs.writeFileSync(otherNpmPath, "");
+
+    spyOn(childProcess, "spawnSync").mockImplementation(((command: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "0.0.14\n", stderr: "" } as never;
+      if (command === otherNpmPath) return { status: 1, stdout: "", stderr: "EACCES: permission denied" } as never;
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    try {
+      const result = await performUpgrade(
+        { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+        { skipPostUpgrade: true },
+        {
+          ...currentMigrator,
+          enumerateAkmInstalls: () => [fakeInstall({ path: otherAkmPath, manager: "npm", version: "0.0.13" })],
+        },
+      );
+
+      expect(result.upgraded).toBe(true);
+      expect(result.otherInstalls).toHaveLength(1);
+      expect(result.otherInstalls?.[0]).toMatchObject({ path: otherAkmPath, ok: false });
+      expect(result.otherInstalls?.[0]?.message).toContain("EACCES");
+    } finally {
+      fs.rmSync(otherDir, { recursive: true, force: true });
+    }
+  });
+
+  test("an unmanaged other install (standalone binary) is never touched", async () => {
+    spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "0.0.14\n", stderr: "" } as never;
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    const result = await performUpgrade(
+      { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+      { skipPostUpgrade: true },
+      {
+        ...currentMigrator,
+        enumerateAkmInstalls: () => [
+          fakeInstall({ path: "/opt/standalone/akm", manager: "standalone", version: "0.0.13" }),
+        ],
+      },
+    );
+
+    expect(result.otherInstalls).toEqual([
+      {
+        path: "/opt/standalone/akm",
+        before: "0.0.13",
+        after: "0.0.13",
+        ok: false,
+        message:
+          "No package manager could be attributed to this standalone install; it was left untouched. Update it manually.",
+      },
+    ]);
   });
 });
 

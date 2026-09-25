@@ -41,7 +41,7 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import { pkgVersion } from "../../version";
-import { checkForUpdate, performUpgrade } from "./self-update";
+import { checkForUpdate, describeOtherInstalls, performUpgrade } from "./self-update";
 import { akmClone } from "./source-clone";
 
 export const upgradeCommand = defineJsonCommand({
@@ -63,7 +63,9 @@ export const upgradeCommand = defineJsonCommand({
   async run({ args }) {
     const check = await checkForUpdate(pkgVersion, undefined, { version: args.version, tag: args.tag });
     if (args.check) {
-      output("upgrade", check);
+      // upgrade-D D3: `--check` also lists every OTHER akm install on the
+      // host, read-only, against the target `akm upgrade` would install.
+      output("upgrade", { ...check, otherInstalls: describeOtherInstalls(check.latestVersion) });
       return;
     }
     const skipPostUpgrade = args["skip-post-upgrade"];

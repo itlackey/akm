@@ -23,6 +23,7 @@ import { queryTaskHistory } from "../storage/repositories/task-history-repositor
 import { getStateDbFreelistInfo, runStateDbQuickCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectImproveAdvisories } from "./health/advisories";
+import { collectAkmInstallsAdvisory } from "./health/akm-installs";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -498,6 +499,17 @@ async function gatherAncillaryAdvisories(
         probe: Boolean(options.probe),
       })),
     );
+  } catch {
+    // Non-fatal.
+  }
+
+  // upgrade-D D3: every akm install on the host (PATH + known roots), version
+  // skew reported by path with the manager command that moves it.
+  // `--probe`-gated (enumeration spawns a `--version` probe per install) and
+  // best-effort — a filesystem/subprocess surprise must not abort the
+  // health report.
+  try {
+    advisories.push(collectAkmInstallsAdvisory(Boolean(options.probe), { cliVersion: pkgVersion }));
   } catch {
     // Non-fatal.
   }
