@@ -148,7 +148,13 @@ describe("FTS rowid maintenance", () => {
 
       // Before the drift re-check, the old writer's stray row collided with
       // this next upsert's `DELETE FROM entries_fts WHERE rowid = ?`,
-      // silently deleting entry a's only FTS row.
+      // silently deleting entry a's only FTS row. The fragment search below
+      // joins `entries`, not `entries_fts`, so only the row count pins the
+      // parent projection itself.
+      const parentRows = db.prepare("SELECT COUNT(*) AS n FROM entries_fts WHERE entry_id = ?").get(idA) as {
+        n: number;
+      };
+      expect(parentRows.n).toBe(1);
       expect(searchFts(db, "oldwritermarker", 5).map((hit) => hit.itemRef)).toEqual([
         "fixture//knowledge/old-writer-a",
       ]);
