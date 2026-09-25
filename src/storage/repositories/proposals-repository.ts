@@ -480,3 +480,56 @@ export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idP
     .all(stashDir, `${escaped}%`) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
+
+/**
+ * Preview counterpart of {@link renameProposalsBundleRef} for `akm bundle
+ * rename --dry-run`: the same two `WHERE` predicates, read-only.
+ */
+export function countProposalsForBundleRename(db: Database, oldBundleId: string): { refs: number; targets: number } {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const refs = (
+    db.prepare(`SELECT COUNT(*) AS n FROM proposals WHERE ref LIKE ? ESCAPE '\\'`).get(`${prefix}%`) as {
+      n: number;
+    }
+  ).n;
+  const targets = (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM proposals WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?`)
+      .get(oldBundleId) as { n: number }
+  ).n;
+  return { refs, targets };
+}
+
+/**
+ * Rewrite every proposal that names `oldBundleId` from `akm bundle rename`
+ * (D6): the fully-qualified `ref` column (`<bundle>//conceptId` — an
+ * unqualified legacy `ref` resolves against `defaultBundle` at use time and
+ * never names a bundle explicitly, so it is left alone), and
+ * `metadata_json.proposedTarget.source`, which names the write-target bundle
+ * a still-pending proposal would apply to (`resolveRecordedProposalTarget`,
+ * `commands/proposal/repository.ts`). Returns how many rows of each were
+ * rewritten.
+ */
+export function renameProposalsBundleRef(
+  db: Database,
+  oldBundleId: string,
+  newBundleId: string,
+): { refs: number; targets: number } {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  return db.transaction(() => {
+    const refs = Number(
+      db
+        .prepare(`UPDATE proposals SET ref = ? || substr(ref, ?) WHERE ref LIKE ? ESCAPE '\\'`)
+        .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+    );
+    const targets = Number(
+      db
+        .prepare(
+          `UPDATE proposals SET metadata_json = json_set(metadata_json, '$.proposedTarget.source', ?)
+           WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?`,
+        )
+        .run(newBundleId, oldBundleId).changes,
+    );
+    return { refs, targets };
+  })();
+}

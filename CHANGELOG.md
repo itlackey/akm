@@ -8,6 +8,98 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`akm info` publishes a `compat` manifest, and a new `PLUGIN_PROTOCOL_VERSION`
+  pins the plugin-facing JSON contract.** Plugins previously gated on a
+  hand-maintained semver range (`AKM_VERSION_RANGE` in
+  `akm-plugins/claude/shared/akm-version.ts`) that says nothing about the
+  contracts they actually depend on — the 0.9.2 `claude-code`→`claude`
+  rename broke session extraction while the version check passed, because a
+  version range can't see an index generation or a state ledger move. `akm
+  info`'s new `compat` field carries `indexGeneration`, `stateLedgerHead`,
+  `taskSourceVersion`, `configVersion`, `workflowIrVersion`, and
+  `pluginProtocol`, each read live from the constant that already owns it.
+  `pluginProtocol` (`PLUGIN_PROTOCOL_VERSION`, `src/version.ts`) is the
+  contract version for the JSON key sets of `akm search`, `akm curate`,
+  `akm show`, `akm info`, and `akm proposal extract` result envelopes;
+  `tests/contracts/plugin-protocol.test.ts` pins those key sets and fails,
+  with the instruction to bump, when one changes shape without a matching
+  version bump.
+- **Every akm install on the host is known, and `akm upgrade` moves all of
+  them.** A host can run more than one `akm` at once — the shell's bun-global
+  copy, cron's nvm-node copy, a harness plugin's own bundled copy — and
+  `akm upgrade` used to move only whichever one was currently running,
+  leaving the others silently behind until an unrelated failure surfaced the
+  drift. `enumerateAkmInstalls` (`src/core/akm-installs.ts`) finds every
+  `akm` on PATH plus the known install roots (bun global, the npm global
+  root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
+  version's `bin/`), deduped by realpath, classified, and probed with
+  `--version` — pure, local, no network call. It also derives the npm global
+  root of every distinct `node` executable it finds — on PATH, in an nvm
+  `bin/` dir, or in `~/.bun/bin`, not only the running one — scanning that
+  root's `akm-cli/dist` directly so a copy `npm install -g`'d there is
+  reported even when it was never linked onto PATH, and it scans
+  `${BUN_INSTALL:-~/.bun}/lib/node_modules` unconditionally — the layout a
+  plain `npm install -g` produces when it runs under bun's `node -> bun`
+  shim, easy to mistake for a bun-managed install and easy to strand out of
+  sight. `akm upgrade` now enumerates the OTHER installs after the primary
+  install step runs — including when that step is a no-op because the
+  running install is already current — and, for each with a recognizable
+  manager (npm/bun/pnpm), moves it to the version the running install has
+  afterward (never an older `latest`, which would silently downgrade a peer
+  on a host running a prerelease) via that install's own adjacent package
+  manager, run under that install's own `node` (its bin directory prepended
+  to `PATH`), and re-verifies it, reporting the outcome in a new
+  `otherInstalls` field; an install it cannot manage (a standalone binary, a
+  checkout) is listed but never touched. Nor is an npm global package the
+  direct `akm-cli/dist` scan found but that nothing links onto any bin
+  dir — there is no package manager link left to update through, so it is
+  reported as an orphan to remove or reinstall by hand rather than "will
+  update it via npm" (on Windows, where npm links a global package with a
+  cmd-shim file in its own prefix rather than a symlink, a prefix holding
+  `akm.cmd` counts as linked, and that prefix is the install's bin
+  directory). `--check` lists the same information read-only. A new
+  `akm-installs` `akm health` advisory (`--probe`-gated) reports the same
+  enumeration as an ongoing check, warning by path with the manager command
+  that pins it to the running version — the same `getPackageManagerUpgradeCommand`
+  `akm upgrade` uses, never `@latest`, so a host running a prerelease isn't
+  told to downgrade; that same unlinked orphan is instead named "not on
+  PATH" with a remedy to remove its package directory. `akm health`'s
+  `plugin-version` check (itlackey/akm#832)
+  also now reports the OpenCode plugin's bundled `akm-cli` version — an
+  in-process copy sharing the host's databases — against the running CLI, as
+  a second `opencode-plugin-version` advisory.
+- **`akm bundle rename <old> <new>`.** Renaming a bundle used to mean
+  hand-editing the `bundles` key in `config.json`, which stranded every
+  durable ref the tool had minted under the old id — the index and state
+  databases kept the old `<old>//` prefix while config named the new one
+  (the exact hand-rename signature `warnOnBundleRenameDrift` already
+  detected and warned about, with "there is no rekey command in 0.9.0").
+  `akm bundle rename` is that command: under the config lock it rewrites the
+  `bundles` key, `defaultBundle`/`defaultWriteTarget` when they name the old
+  id, and every `scheduler.enabled[].ref` with the old `//` prefix; then it
+  renames the lockfile entry, re-keys every indexed entry's
+  `bundle_id`/`item_ref` and the metadata-enrichment LLM cache's
+  `asset_ref` (in the same `index.db` write, so a rename can't land between
+  the two and strand the cache — the next `akm index` would otherwise treat
+  every renamed asset as stale and re-enrich it through the LLM from
+  scratch), and rewrites this tool's own state rows that name the old bundle
+  (`proposals.ref`, a pending proposal's `proposedTarget.source`, and
+  workflow `task_history.target_ref`). It then re-syncs native scheduler
+  rows under the new name (`akmTasksSync`, run from the command handler and
+  reported in the result's `taskSync` field, never thrown, since
+  config/index/state are already renamed by then), so a scheduled task or
+  workflow stops invoking `<old>//…` the moment the rename applies instead of
+  waiting on a manual `akm task sync`. `taskSync.ok` is `false` both when
+  the sync call itself fails and when it comes back with one or more
+  `taskSync.result.failures` — a binding that failed to prepare has already
+  lost its old native row and is not scheduled again until a retry, so
+  `akm bundle rename` never reports a partial re-sync as a clean one. Refs
+  inside the bundle's own CONTENT
+  (cross-references, a task's `uses:`, `supersededBy`) are reported, never
+  rewritten — the result's `contentRefs` lists the indexed files that still
+  spell the old prefix. `--dry-run` shows the full plan (row counts,
+  scheduler refs, content files, and the installed native scheduler rows a
+  real run's sync would replace) without writing anything.
 - **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
   `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
   `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag
@@ -95,9 +187,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   after the read shim has already stripped these keys) and the speculative
   `RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES` in `config.ts` (both of its callers
   already receive post-shim input).
+- **Three new `akm health` advisories that name an upgrade break within one
+  report** (`src/commands/health/upgrade-advisories.ts`):
+  `version-reconcile` warns when this host's host-local state hasn't
+  reconciled to the version that's actually running (a missing, stale, or
+  blocked `$STATE/version-reconcile.json` stamp), naming `akm migrate status`
+  and the first blocker; `scheduler-grants` (`--probe`-gated, like
+  `scheduler-binary`) warns when an installed native scheduler row has no
+  host-local grant yet, naming the refs and `akm task sync`; and
+  `scheduled-startup-failures` warns when a scheduled run in the health
+  window failed with a startup-class exit code (2 usage, 70 internal, 78
+  config) — a run that died before its body executed — naming the task id(s)
+  and, when a log is on disk, the first line naming the error. Previously
+  none of `state-db-migrations`, `scheduler-binary`, or `task-fail-rate` said
+  any of this, so an upgrade break could run for hours before anyone
+  noticed. See `docs/architecture/internals/health-advisories.md`.
 
 ### Fixed
 
+- **`akm bundle add`'s `--name` is now a contract on every add path (local,
+  website, registry), not a hint.** An explicit `--name` that is not a legal
+  bundle slug, or that is already taken by a different bundle, used to fall
+  back silently — `deriveBundleId` minted a derived name, or a `-<hash>`
+  suffix — so `akm bundle add ... --name my.bundle` installed under a name
+  the caller never asked for, without saying so. It now fails with a
+  `UsageError` (exit 2) naming the rule, before any write (config, lock, or
+  network sync). Re-adding an already-installed ref under a *different*
+  `--name` than it already carries used to keep the existing key and say
+  nothing; it now fails the same way, naming the existing key and
+  `akm bundle rename <old> <new>`. A DERIVED name (no `--name` given) is
+  unaffected and keeps `deriveBundleId`'s forgiving `-<hash>` uniqueness
+  fallback. Every `akm bundle add` result (local, website, and registry) now
+  also carries `bundleId` (the resolved bundle key), and a registry add's
+  result always carries `registryId` (the registry install id) rather than
+  only when it happens to differ from `bundleId`, so a caller no longer has
+  to reconstruct the key from `sourceAdded`/`installed`.
 - **A one-file change in a large directory no longer costs `akm index` half
   an hour.** Both full-text tables keyed their per-entry deletes on
   `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole

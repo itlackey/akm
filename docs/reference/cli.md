@@ -335,6 +335,18 @@ Returns a JSON object with:
 | `registries` | Configured registries |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
+| `compat` | Compat manifest (see below) — plugins gate on these, not on the version string |
+
+`compat` fields:
+
+| Field | Description |
+| --- | --- |
+| `indexGeneration` | `index.db` schema generation this binary reads/writes |
+| `stateLedgerHead` | Id of the last applied `state.db` migration |
+| `taskSourceVersion` | Task source document version this binary writes |
+| `configVersion` | `config.json` `configVersion` this binary writes |
+| `workflowIrVersion` | Frozen workflow plan `irVersion` this binary writes |
+| `pluginProtocol` | JSON key-set contract of plugin-facing command results (`search`, `curate`, `show`, `info`, `proposal extract`) |
 
 `semanticSearch.status` values:
 - `"ready-vec"` — native sqlite-vec extension active (fastest)
@@ -370,7 +382,7 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, the `scheduler-binary` version check, and the `akm-installs` host-wide version-skew check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
@@ -379,8 +391,10 @@ default agent engine, and summarizes recent `improve_*` events. Unless
 to the `default-llm-engine` and every `configured-engines` LLM connection (and
 an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
-and runs the scheduler's recorded akm binary with `--version` to check it
-against the running CLI (`scheduler-binary`).
+runs the scheduler's recorded akm binary with `--version` to check it
+against the running CLI (`scheduler-binary`), and enumerates every OTHER
+`akm` install on the host with its own `--version` probe, same as
+`akm upgrade` (`akm-installs`).
 
 Primary result fields:
 
@@ -388,7 +402,7 @@ Primary result fields:
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
 | `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `task-log-backing`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
+| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `akm-installs` (every OTHER akm install on the host, by path, whose version differs from the running one), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -1038,7 +1052,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 
 | Flag | Description |
 | --- | --- |
-| `--name` | Human-friendly name for the source |
+| `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
@@ -1209,6 +1223,42 @@ in `processed`/`plainSynced`; rejected entries report `status: "blocked"` and a
 security code; provider or transaction errors report `status: "failed"`. The
 command continues with later bundles without half-publishing a blocked one.
 
+### bundle rename
+
+Rename a configured bundle's key everywhere akm itself persists it — the one
+command allowed to change it (renaming by hand-editing `config.json`'s
+`bundles` key strands every durable ref the tool minted under the old id; see
+`akm health` / the startup warning that names this).
+
+```sh
+akm bundle rename old-name new-name
+akm bundle rename old-name new-name --dry-run   # Show the plan; write nothing
+```
+
+| Flag | Description |
+| --- | --- |
+| `--dry-run` | Report what would change (index/state row counts, scheduler refs, content files that still mention the old name) without writing anything |
+
+`<new>` must be a legal, unused bundle slug (the same `--name` contract `akm
+bundle add` enforces) or the rename fails before any write. Rewritten: the
+config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
+old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
+lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
+state rows that name the old bundle (`proposals.ref`, a pending proposal's
+write target, and workflow `task_history.target_ref`). Reported, never
+rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
+a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
+that still spell the old `<old>//` prefix so you can fix them by hand. A real
+run also re-syncs native scheduler bindings under the new name (`taskSync` in
+the result reports the outcome, never thrown, since config/index/state are
+already renamed by then). `taskSync.ok` is `false` both when the sync call
+itself fails and when it comes back reporting one or more
+`taskSync.result.failures` — a binding that failed to prepare has already
+lost its old native row and stays unscheduled until you re-run
+`akm task sync`; `--dry-run` lists the installed native rows that still name
+the old bundle (`nativeSchedulerRows`) so you can see what that sync will
+replace.
+
 ### upgrade
 
 Upgrade `akm` itself to the latest release. Standalone binaries are downloaded,
@@ -1282,6 +1332,36 @@ through `akm upgrade`; see [`task sync`](#task) and `akm health`'s
 under `postUpgrade.taskSync` rather than failing the upgrade; it is also
 folded into `postUpgrade.message`, so a plain-text caller sees it without
 reading the structured field.
+
+A host can run more than one `akm`: the shell's bun-global copy, cron's
+nvm-node copy, the OpenCode plugin's own bundled copy — each upgraded
+separately in the past, so one could silently fall behind. After the primary
+install step above runs — including when it is a no-op because the running
+install is already the latest version — `akm upgrade` also enumerates every
+OTHER `akm` on PATH and in the known install roots (bun global, the npm
+global root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
+version's `bin/`) and, for each with a recognizable manager (npm/bun/pnpm)
+not already at that version, moves it to the version the RUNNING install has
+after this command — never an older `latest` release (on a host running a
+prerelease newer than the last stable release, that would silently downgrade
+a peer already at the running version) — via that install's own adjacent
+package manager (not always the running install's), run under that install's
+own `node` rather than the running process's (its bin directory prepended to
+`PATH`, since npm/pnpm resolve `node` through `#!/usr/bin/env node` and would
+otherwise install into the wrong node's global prefix), and re-verifies it
+with `--version`. One already at the target version is reported `ok: true`
+without being reinstalled. An install with no manager it can run (a
+standalone binary, a checkout) is listed but never touched — update those by
+hand. An npm global package the enumeration found only by scanning
+`akm-cli/dist` directly, with nothing linking it onto any bin dir, is also
+never touched — no package manager command can update a copy nothing links
+to — and is reported as an orphan to remove or reinstall by hand instead of
+"will update it via npm". Results land in the `otherInstalls` field:
+`[{path, before, after, ok, message}]`. `--check` reports the same list
+read-only against that same target (`before` equals `after`; `ok` says
+whether that install already matches it), without touching anything. See
+`akm health`'s `akm-installs` advisory for the same enumeration surfaced as
+an ongoing health check, whose remedy command is built the same way.
 
 ### clone
 

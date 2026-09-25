@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isBundleSlug } from "../../core/asset/asset-ref";
-import { slugForRegistryId } from "../../core/bundle-id";
+import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import {
@@ -96,6 +96,9 @@ async function addLocalSource(
   mutateConfig((config) => {
     const existing = bundleKeyForPath(config, resolvedPath);
     if (existing) {
+      if (explicitName !== undefined) {
+        validateExplicitBundleName(config.bundles ?? {}, explicitName, existing);
+      }
       bundleKey = existing;
       const current = config.bundles?.[existing];
       if (current?.components && explicitAdapter === undefined) return config;
@@ -108,6 +111,10 @@ async function addLocalSource(
       return { ...config, bundles };
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    // D6: an explicit `--name` is a contract on this (local) add path — validated
+    // strictly before nextBundleKey derives a key, since that shared helper is also
+    // used by the out-of-scope `akm source add` (`addStash`) and stays forgiving.
+    if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
     bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
     const entry: BundleConfigEntry = {
       path: resolvedPath,
@@ -123,6 +130,7 @@ async function addLocalSource(
     schemaVersion: 1,
     bundleDir: stashDir,
     ref,
+    bundleId: bundleKey,
     sourceAdded: {
       type: "filesystem",
       path: resolvedPath,
@@ -155,10 +163,27 @@ async function addWebsiteSource(
   const maxPages = numberOption(options?.maxPages);
   const maxDepth = numberOption(options?.maxDepth);
   let entry: SourceConfigEntry | undefined;
+  let bundleId = "";
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
     const existingKey = bundleKeyForUrl(config, normalizedUrl);
-    const key = existingKey ?? nextBundleKey(bundles, name ?? toWebsiteName(normalizedUrl), normalizedUrl);
+    if (existingKey && name !== undefined) {
+      validateExplicitBundleName(bundles, name, existingKey);
+    }
+    // An explicit `--name` is a contract (D6) — validated strictly and used
+    // as-is, never silently substituted. A DERIVED default (no --name) keeps
+    // the forgiving `deriveBundleId` fallback, so a dotted hostname or a
+    // URL collision still mints a usable id instead of erroring.
+    let key: string;
+    if (existingKey) {
+      key = existingKey;
+    } else if (name !== undefined) {
+      validateExplicitBundleName(bundles, name);
+      key = name;
+    } else {
+      key = deriveBundleId(toWebsiteName(normalizedUrl), normalizedUrl, new Set(Object.keys(bundles)));
+    }
+    bundleId = key;
     // Merge onto the existing descriptor rather than replacing it: re-running
     // `bundle add` for a URL that already has a bundle would otherwise drop
     // respectRobots / refresh, silently restoring default robots enforcement
@@ -197,6 +222,7 @@ async function addWebsiteSource(
     schemaVersion: 1,
     bundleDir: stashDir,
     ref,
+    bundleId,
     sourceAdded: {
       type: "website",
       url: normalizedUrl,
@@ -238,6 +264,14 @@ async function addRegistryStash(
 
   const currentConfig = loadConfig();
   const existingBundleKey = findInstalledBundleKey(currentConfig.bundles ?? {}, parsedRef.id);
+  // D6: validate an explicit `--name` before any network sync or write — an
+  // illegal name, a name already taken by a different bundle, or re-adding
+  // this same install under a different name than it already carries must
+  // fail loudly here, not mint a `-<hash>` fallback deep inside the config
+  // mutation below.
+  if (explicitName !== undefined) {
+    validateExplicitBundleName(currentConfig.bundles ?? {}, explicitName, existingBundleKey);
+  }
   const existingBundle = existingBundleKey ? currentConfig.bundles?.[existingBundleKey] : undefined;
   const priorLock = existingBundleKey ? readLockfile().find((entry) => entry.id === existingBundleKey) : undefined;
   const existingWritable =
@@ -308,6 +342,8 @@ async function addRegistryStash(
     schemaVersion: 1,
     bundleDir: stashDir,
     ref,
+    bundleId,
+    registryId: synced.id,
     installed: {
       id: synced.id,
       source: synced.source,
@@ -424,12 +460,14 @@ function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, inst
 
 /**
  * The stable bundle key for a registry install: reuse the existing bundle for
- * this install id (so re-installs keep the same key), otherwise derive a
- * batch-unique key via the shared {@link deriveBundleId} (D-R5) — preferring the
- * caller's explicit `--name`, as local and website adds do, then the
- * package/repo name the install id names rather than the basename of the
- * materialized cache directory (`extracted`) — unique against the
- * currently-configured bundle keys.
+ * this install id (so re-installs keep the same key — a caller-visible name
+ * mismatch was already rejected upstream, by {@link validateExplicitBundleName}
+ * in `addRegistryStash`, before any write). Otherwise an explicit `--name`
+ * (D6) is a contract — validated strictly and used as-is, never silently
+ * substituted. Without one, a batch-unique key is derived via the shared
+ * {@link deriveBundleId} (D-R5) from the package/repo name the install id
+ * names rather than the basename of the materialized cache directory
+ * (`extracted`) — unique against the currently-configured bundle keys.
  */
 function resolveInstalledBundleKey(
   bundles: Record<string, BundleConfigEntry>,
@@ -439,8 +477,11 @@ function resolveInstalledBundleKey(
 ): string {
   const existing = findInstalledBundleKey(bundles, installId);
   if (existing) return existing;
-  const preferred = explicitName && isBundleSlug(explicitName) ? explicitName : slugForRegistryId(installId);
-  return deriveBundleId(preferred, path.resolve(stashRoot), new Set(Object.keys(bundles)));
+  if (explicitName !== undefined) {
+    validateExplicitBundleName(bundles, explicitName);
+    return explicitName;
+  }
+  return deriveBundleId(slugForRegistryId(installId), path.resolve(stashRoot), new Set(Object.keys(bundles)));
 }
 
 function toReadableId(resolvedPath: string): string {

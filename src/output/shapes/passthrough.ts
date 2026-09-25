@@ -45,6 +45,7 @@ const PASSTHROUGH_COMMANDS = [
   "add",
   "agent-result",
   "bundle-create",
+  "bundle-rename",
   "bundle-show",
   "clone",
   "command-dry-run",

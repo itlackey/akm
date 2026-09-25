@@ -364,6 +364,29 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
   }
 }
 
+/**
+ * Rename a lock entry's id in place (D6 — `akm bundle rename`), keeping every
+ * other resolved field (`localRoot`, `resolvedVersion`, …) unchanged. Returns
+ * `true` when an entry for `oldId` existed and was renamed, `false` when
+ * there was nothing to rename (e.g. a filesystem bundle, which has no lock
+ * entry).
+ */
+export async function renameLockEntry(oldId: string, newId: string): Promise<boolean> {
+  const release = await acquireLockSentinel();
+  try {
+    // R-012: see upsertLockEntry — a corrupt lockfile must abort loudly
+    // rather than read as `[]` and get silently overwritten.
+    const entries = readLockfileOrThrow();
+    const existing = entries.find((e) => e.id === oldId);
+    if (!existing) return false;
+    const renamed = entries.map((e) => (e.id === oldId ? { ...e, id: newId } : e));
+    writeLockfileUnlocked(renamed);
+    return true;
+  } finally {
+    release();
+  }
+}
+
 export async function removeLockEntry(id: string): Promise<void> {
   // Returning early says "there is no lock record to remove", and the uninstall
   // that called us reports success on that basis. Only an absent data dir earns
