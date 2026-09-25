@@ -98,39 +98,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **FTS maintenance no longer scans the whole FTS table once per entry, and
-  no longer trusts a stale stamp once an older writer has touched the
-  tables.** `entries_fts` and `entry_fragments_fts` both declare `entry_id
-  UNINDEXED`, and `INSERT_FTS_SQL` never set the rowid, so the only
-  constraint FTS5 could use for a per-entry delete — the rowid — was never
-  available: `DELETE FROM entries_fts WHERE entry_id = ?` and the
-  `entry_fragments_fts` equivalent (`index-fts-repository.ts`, used by
-  `replaceFtsEntry` and `deleteFtsEntries`) each ran a full scan of the FTS
-  content/data shadow tables. On a splinter-sized index (23,933 entries,
-  117,252 fragment rows), one changed file in the flat `knowledge/`
-  directory (13,736 entries) made a full `akm index` run cost 26 minutes
-  (task run `2026-09-24T20-30-01-663Z`). `entries_fts` rows now carry an
-  explicit `rowid = entry_id`; `entry_fragments_fts` rows carry
-  `rowid = entry_id * 2^20 + fragment_ordinal` (a mapping table would need
-  its own index-generation bump, which every older reader — e.g. the
-  OpenCode plugin's in-process 0.9.15 — would refuse), so a per-entry delete
-  is a rowid lookup or a rowid range (`>= start < end`) instead of a table
-  scan: on the same production data, one entry's delete pair dropped from
-  59ms + 33ms to about 1ms. A one-time in-place realignment rebuilds any
-  older `index.db`'s FTS rows onto this contract at the next writable open
-  (`index_meta.ftsRowidLayout`), with **no index-generation bump** — no
-  reader depends on FTS rowids (`rg -n "rowid" src/storage/repositories/
-  index-fts-repository.ts src/indexer/search/` returns nothing outside the
-  new maintenance code itself), so an older binary keeps reading the
-  realigned tables correctly; measured on a SQLite-backup-API copy of the
-  same 23,933-entry index, that one-time realignment costs about 9.5s wall /
-  1.1GB peak RSS. That writable open now also re-checks the contract on
-  each table's highest-rowid row and realigns again if it no longer holds:
-  an older binary sharing this generation (or a rollback) deletes an entry
-  by `entry_id` and inserts without a rowid, so FTS5 appends outside the
-  contract — the stamped meta key alone no longer proved the tables were
-  still aligned, and the next upsert's rowid-keyed delete could silently
-  remove an unrelated entry's only FTS row.
+- **A one-file change in a large directory no longer costs `akm index` half
+  an hour.** Both full-text tables keyed their per-entry deletes on
+  `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole
+  full-text index, twice per entry per run. On a 23.9k-entry index, one
+  touched file in a flat `knowledge/` directory of 13.7k entries took 26
+  minutes (task run `2026-09-24T20-30-01-663Z`); on a backup copy of that
+  index the same rescan now takes 38 s. FTS rows are keyed by rowid, and the
+  first writable open after upgrading realigns an existing index in place,
+  about 10 s and ~1.1 GB peak memory at that size, with no index-generation
+  bump, so an older binary keeps reading it. A writable open realigns again
+  if an older binary sharing the generation has written rows since.
 - **One bad scheduler-sync item, or one bad migration step, no longer fails
   the whole operation.** `akm task sync` (`finalizeSchedulerSyncPlan`,
   `src/tasks/scheduler-sync.ts`, and its per-bundle loop in
@@ -424,6 +402,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it — with explicit `Gap:` notes where the code does not meet the contract
   yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
   persisted data" section now points at this doc instead of a deleted file.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed
