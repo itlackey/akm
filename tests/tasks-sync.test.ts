@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDisable, akmTasksSync } from "../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache } from "../src/core/config/config";
+import { filesystemBundleSourceId } from "../src/core/config/config-sources";
 import { isSchedulerRefEnabled, schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import {
@@ -370,6 +371,40 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).toBe(prior);
     expect(exec.current()).toContain("*/15 * * * *");
     expect(exec.current()).not.toContain("45 */6 * * *");
+  });
+
+  test("a stale-grant warning does not silence the ineligible-invocation warning", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("a", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run a --bundle stash --scheduled");
+
+    // Make a's grant stale (bound to a different sourceId than "stash"
+    // currently resolves to), so this sync also has a stale-grant warning
+    // to report alongside the ineligible-invocation one below.
+    const staleSourceId = filesystemBundleSourceId(path.join(stashDir, "..", "different-origin"));
+    writeSandboxConfig({ scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/a", sourceId: staleSourceId }] } });
+    resetConfigCache();
+
+    // A new install needs a runtime binding, which is what makes
+    // buildSchedulerSyncPlan resolve one and run warnIneligibleRebind.
+    writeTask("b", "0 2 * * *", true);
+
+    const result = await akmTasksSync({
+      backend,
+      schedulerRuntime: () => ({
+        binding: ["/repo/bun", "/repo/src/cli.ts"],
+        contextPath: "/new/context.json",
+        eligible: false,
+        kind: "checkout",
+      }),
+    });
+
+    expect(result.removed).toContain("a");
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings?.some((warning) => warning.includes("ineligible checkout invocation"))).toBe(true);
+    expect(result.warnings?.some((warning) => warning.includes("akm task enable stash//tasks/a"))).toBe(true);
   });
 });
 
