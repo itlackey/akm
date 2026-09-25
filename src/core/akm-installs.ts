@@ -81,6 +81,12 @@ export interface AkmInstall {
   version: string | undefined;
   /** True when this install is the one executing right now. */
   isRunning: boolean;
+  /**
+   * Directory this install was discovered in (e.g. the nvm `bin/` a symlink
+   * lives in), for looking up its own adjacent package manager. `undefined`
+   * when enumeration has not populated it.
+   */
+  binDir?: string;
 }
 
 export interface EnumerateAkmInstallsOptions {

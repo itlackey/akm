@@ -62,18 +62,36 @@ describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {
     expect(result.message).toContain("2");
   });
 
-  test("an install behind the running version: warn naming the path, version, and manager remedy", () => {
+  test("an install behind a prerelease running version: warn naming the path, version, and a remedy pinned to that prerelease", () => {
     const result = collectAkmInstallsAdvisory(true, {
-      cliVersion: "0.9.17",
+      cliVersion: "0.9.17-alpha.3",
       enumerateAkmInstalls: () => [
-        install({ path: "/a/akm", version: "0.9.17", isRunning: true }),
+        install({ path: "/a/akm", version: "0.9.17-alpha.3", isRunning: true }),
         install({ path: "/b/akm", manager: "npm", version: "0.9.15" }),
       ],
     });
     expect(result.status).toBe("warn");
     expect(result.message).toContain("/b/akm");
     expect(result.message).toContain("0.9.15");
-    expect(result.message).toContain("npm install -g akm-cli@latest");
+    expect(result.message).toContain("differ from");
+    expect(result.message).not.toContain("behind");
+    expect(result.message).toContain("npm install -g akm-cli@0.9.17-alpha.3");
+    expect(result.message).not.toContain("@latest");
+  });
+
+  test("an install newer than the running version: warn with a remedy pinned to the running version, not called behind", () => {
+    const result = collectAkmInstallsAdvisory(true, {
+      cliVersion: "0.9.17-alpha.3",
+      enumerateAkmInstalls: () => [
+        install({ path: "/a/akm", version: "0.9.17-alpha.3", isRunning: true }),
+        install({ path: "/b/akm", manager: "bun", version: "0.9.18" }),
+      ],
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("/b/akm");
+    expect(result.message).toContain("0.9.18");
+    expect(result.message).toContain("differ from");
+    expect(result.message).toContain("bun install -g akm-cli@0.9.17-alpha.3");
   });
 
   test("an install whose --version failed, all others matching: unknown, not a false pass", () => {

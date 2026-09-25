@@ -8,18 +8,19 @@
  * `enumerateAkmInstalls` (`../../core/akm-installs.ts`) finds every `akm` on
  * PATH and in the known install roots. This turns that enumeration into one
  * advisory: `pass` when every install reports the running version, `warn`
- * naming each install that is behind and the manager command that moves it,
- * `unknown` when nothing could be found or a `--version` probe failed on
- * every install. `--probe`-gated like `scheduler-binary.ts`: enumeration
- * spawns a `--version` probe per discovered install (and, to find the npm
- * global root, `npm root --global`), so `unknown` "not probed" with
- * `--no-probe` rather than shelling out unconditionally. Best-effort like
- * its neighbours in `gatherAncillaryAdvisories` (`../health.ts`) — a thrown
- * error here is reported as `unknown`, never allowed to abort the health
- * report.
+ * naming each install whose version differs and the manager command that
+ * pins it to the running version, `unknown` when nothing could be found or a
+ * `--version` probe failed on every install. `--probe`-gated like
+ * `scheduler-binary.ts`: enumeration spawns a `--version` probe per
+ * discovered install (and, to find the npm global root, `npm root
+ * --global`), so `unknown` "not probed" with `--no-probe` rather than
+ * shelling out unconditionally. Best-effort like its neighbours in
+ * `gatherAncillaryAdvisories` (`../health.ts`) — a thrown error here is
+ * reported as `unknown`, never allowed to abort the health report.
  */
 
 import { type AkmInstall, type AkmInstallManager, enumerateAkmInstalls } from "../../core/akm-installs";
+import { getPackageManagerUpgradeCommand } from "../sources/self-update";
 import type { HealthCheckResult } from "./types";
 
 export interface AkmInstallsAdvisoryOptions {
@@ -31,14 +32,22 @@ export interface AkmInstallsAdvisoryOptions {
   enumerateAkmInstalls?: typeof enumerateAkmInstalls;
 }
 
-function remedyFor(manager: AkmInstallManager): string {
+/**
+ * The command that pins `install` to the running `cliVersion`. Reuses
+ * `getPackageManagerUpgradeCommand` (`../sources/self-update.ts`) so this
+ * remedy can never drift from what `akm upgrade` itself would run, and pins
+ * the running version rather than `@latest` — a host running a prerelease
+ * (e.g. `next`) would otherwise be told to install `@latest` and downgrade.
+ */
+function remedyFor(manager: AkmInstallManager, cliVersion: string, binDir: string | undefined): string {
   switch (manager) {
     case "npm":
-      return "npm install -g akm-cli@latest";
     case "bun":
-      return "bun install -g akm-cli@latest";
     case "pnpm":
-      return "pnpm add -g akm-cli@latest";
+      return (
+        getPackageManagerUpgradeCommand(manager, undefined, cliVersion, binDir)?.displayCommand ??
+        "reinstall it manually"
+      );
     case "checkout":
       return "pull and rebuild that checkout";
     case "standalone":
@@ -90,7 +99,10 @@ export function collectAkmInstallsAdvisory(probe: boolean, options: AkmInstallsA
 
   if (behind.length > 0) {
     const behindDetail = behind
-      .map((install) => `${install.path} -> v${install.version} (${remedyFor(install.manager)})`)
+      .map(
+        (install) =>
+          `${install.path} -> v${install.version} (${remedyFor(install.manager, options.cliVersion, install.binDir)})`,
+      )
       .join("; ");
     const unreadableDetail =
       unreadable.length > 0
@@ -101,7 +113,7 @@ export function collectAkmInstallsAdvisory(probe: boolean, options: AkmInstallsA
       kind: "deterministic",
       status: "warn",
       confidence: "high",
-      message: `${behind.length} of ${installs.length} akm install(s) are behind the running v${options.cliVersion}: ${behindDetail}.${unreadableDetail}`,
+      message: `${behind.length} of ${installs.length} akm install(s) differ from the running v${options.cliVersion}: ${behindDetail}.${unreadableDetail}`,
       evidence: { installs },
     };
   }
