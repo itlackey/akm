@@ -95,7 +95,7 @@ import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
 import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { _resetWarnOnceForTests, resetQuiet, setQuiet } from "../../src/core/warn";
+import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -654,6 +654,24 @@ describe("previous-release corpus — retired 0.8 source-config keys (configVers
     expect((config as unknown as Record<string, unknown>).installed).toBeUndefined();
     expect((config as unknown as Record<string, unknown>).stashDir).toBeUndefined();
     expect((config as unknown as Record<string, unknown>).sources).toBeUndefined();
+  });
+
+  test("an empty sources[] (what 0.8.9's `akm source remove` wrote after removing the last source) loads without an Unknown-config-key warning", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.9.0", sources: [] }));
+
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      expect(() => loadConfig()).not.toThrow();
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.some((w) => w.includes("Unknown config key") && w.includes("sources"))).toBe(false);
   });
 });
 

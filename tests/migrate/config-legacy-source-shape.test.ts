@@ -67,6 +67,27 @@ describe("findConfigLegacySourceShape (status, read-only)", () => {
     expect(before.stashDir).toBe("/srv/stash");
     expect(before.bundles).toBeUndefined();
   });
+
+  test("converts an empty sources[] and an empty stashDir instead of leaving them untouched", () => {
+    writeConfig({ configVersion: "0.9.0", sources: [], stashDir: "", semanticSearchMode: "off" });
+    const plan = findConfigLegacySourceShape(configPath);
+    expect(new Set(plan.converted)).toEqual(new Set(["stashDir", "sources"]));
+  });
+
+  test("emits no warning while planning a legacy config", () => {
+    writeConfig({ configVersion: "0.9.0", stashDir: "/srv/stash" });
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      findConfigLegacySourceShape(configPath);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings).toEqual([]);
+  });
 });
 
 describe("applyConfigLegacySourceShape (apply, persists once)", () => {
@@ -113,6 +134,67 @@ describe("applyConfigLegacySourceShape (apply, persists once)", () => {
     const added = fs.readdirSync(backupDir).filter((name) => !before.has(name) && name !== "config.latest.json");
     expect(added).toHaveLength(1);
     expect(fs.readFileSync(path.join(backupDir, added[0] as string), "utf8")).toContain("stashDir");
+
+    const second = applyConfigLegacySourceShape(configPath);
+    expect(second).toEqual({ applied: false, converted: [] });
+    const afterSecond = fs.readdirSync(backupDir).filter((name) => !before.has(name) && name !== "config.latest.json");
+    expect(afterSecond).toEqual(added);
+  });
+
+  test("emits no warning while applying a legacy config", () => {
+    writeConfig({ configVersion: "0.9.0", stashDir: "/srv/stash" });
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = applyConfigLegacySourceShape(configPath);
+      expect(result.applied).toBe(true);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  test("converts an empty sources[], backs up once, and a second apply is a no-op", () => {
+    writeConfig({ configVersion: "0.9.0", sources: [], semanticSearchMode: "off" });
+
+    const backupDir = path.join(process.env.XDG_CACHE_HOME ?? "", "akm", "config-backups");
+    const before = new Set(fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : []);
+
+    const result = applyConfigLegacySourceShape(configPath);
+    expect(result).toEqual({ applied: true, converted: ["sources"] });
+
+    const after = readConfig();
+    expect(after.sources).toBeUndefined();
+    expect(after.semanticSearchMode).toBe("off");
+
+    const added = fs.readdirSync(backupDir).filter((name) => !before.has(name) && name !== "config.latest.json");
+    expect(added).toHaveLength(1);
+
+    const second = applyConfigLegacySourceShape(configPath);
+    expect(second).toEqual({ applied: false, converted: [] });
+    const afterSecond = fs.readdirSync(backupDir).filter((name) => !before.has(name) && name !== "config.latest.json");
+    expect(afterSecond).toEqual(added);
+  });
+
+  test("converts an empty stashDir, backs up once, and a second apply is a no-op", () => {
+    writeConfig({ configVersion: "0.9.0", stashDir: "", semanticSearchMode: "off" });
+
+    const backupDir = path.join(process.env.XDG_CACHE_HOME ?? "", "akm", "config-backups");
+    const before = new Set(fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : []);
+
+    const result = applyConfigLegacySourceShape(configPath);
+    expect(result).toEqual({ applied: true, converted: ["stashDir"] });
+
+    const after = readConfig();
+    expect(after.stashDir).toBeUndefined();
+    expect(after.bundles).toBeUndefined();
+    expect(after.semanticSearchMode).toBe("off");
+
+    const added = fs.readdirSync(backupDir).filter((name) => !before.has(name) && name !== "config.latest.json");
+    expect(added).toHaveLength(1);
 
     const second = applyConfigLegacySourceShape(configPath);
     expect(second).toEqual({ applied: false, converted: [] });

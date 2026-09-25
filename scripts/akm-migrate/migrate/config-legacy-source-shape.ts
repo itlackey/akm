@@ -14,10 +14,11 @@
  * registered path rather than converting it, so applying it destroyed the
  * user's stash/bundle configuration. This is the on-disk counterpart, in
  * the same one-time-migration shape as `./config-extra-params.ts`: persist
- * the conversion `migrateLegacySourceShape` already computes once, with the
- * usual backup, so the read shim's warning becomes true and stops
- * recurring. There is no second converter here — this calls the shim's
- * exported `migrateLegacySourceShape` for both the plan and the write.
+ * the conversion the shim's pure `convertLegacySourceShape` already computes
+ * once, with the usual backup, so the read shim's warning becomes true and
+ * stops recurring. There is no second converter here — this calls the
+ * shim's exported `convertLegacySourceShape` for both the plan and the
+ * write (never `migrateLegacySourceShape`, which also warns).
  */
 
 import {
@@ -27,10 +28,7 @@ import {
   readConfigText,
   writeConfigAtomic,
 } from "../../../src/core/config/config-io";
-import { migrateLegacySourceShape } from "../../../src/core/config/legacy-source-shape-shim";
-
-/** The three legacy keys `migrateLegacySourceShape` can remove from the config root. */
-const LEGACY_SOURCE_SHAPE_KEYS = ["stashDir", "sources", "installed"] as const;
+import { convertLegacySourceShape } from "../../../src/core/config/legacy-source-shape-shim";
 
 export interface ConfigLegacySourceShapePlan {
   /** Legacy keys that would be converted (folded into `bundles`/`defaultBundle`, or dropped for `installed`). */
@@ -43,11 +41,6 @@ function readRawConfig(configPath: string): Record<string, unknown> | undefined 
   return parseConfigText(text, configPath);
 }
 
-/** Which of `LEGACY_SOURCE_SHAPE_KEYS` `migrateLegacySourceShape` actually removed from `raw`. */
-function convertedKeys(raw: Record<string, unknown>, migrated: Record<string, unknown>): string[] {
-  return LEGACY_SOURCE_SHAPE_KEYS.filter((key) => key in raw && !(key in migrated));
-}
-
 /**
  * Read-only: what `akm migrate apply` would convert in `config.json`'s
  * legacy `stashDir`/`sources[]`/`installed` shape. Never touches disk.
@@ -57,9 +50,7 @@ function convertedKeys(raw: Record<string, unknown>, migrated: Record<string, un
 export function findConfigLegacySourceShape(configPath: string): ConfigLegacySourceShapePlan {
   const raw = readRawConfig(configPath);
   if (!raw) return { converted: [] };
-  const migrated = migrateLegacySourceShape(raw, configPath);
-  if (migrated === raw) return { converted: [] };
-  return { converted: convertedKeys(raw, migrated) };
+  return { converted: convertLegacySourceShape(raw).converted };
 }
 
 export interface ConfigLegacySourceShapeResult extends ConfigLegacySourceShapePlan {
@@ -74,8 +65,8 @@ export interface ConfigLegacySourceShapeResult extends ConfigLegacySourceShapePl
 export function applyConfigLegacySourceShape(configPath: string): ConfigLegacySourceShapeResult {
   const raw = readRawConfig(configPath);
   if (!raw) return { applied: false, converted: [] };
-  const migrated = migrateLegacySourceShape(raw, configPath);
-  if (migrated === raw) return { applied: false, converted: [] };
+  const { config: migrated, converted } = convertLegacySourceShape(raw);
+  if (converted.length === 0) return { applied: false, converted: [] };
 
   const release = acquireConfigLock();
   try {
@@ -84,5 +75,5 @@ export function applyConfigLegacySourceShape(configPath: string): ConfigLegacySo
   } finally {
     release();
   }
-  return { applied: true, converted: convertedKeys(raw, migrated) };
+  return { applied: true, converted };
 }
