@@ -35,7 +35,6 @@ import { upgradeConfigVersion } from "./config-version-shim";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { migrateLegacySourceShape } from "./legacy-source-shape-shim";
 import { stripRetiredConfigKeys } from "./retired-config-keys-shim";
-import { RETIRED_CONFIG_KEYS } from "./retired-keys";
 import { isApiKeyReference, SECRET_STORE_REFERENCE_PATTERN } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
@@ -309,22 +308,10 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
   return finalResult.data;
 }
 
-// Top-level names from RETIRED_CONFIG_KEYS (./retired-keys.ts): by the time
-// this runs, runConfigFilePipeline's stripRetiredConfigKeys has already
-// dropped every one of these from `raw`, so this set only matters for a
-// caller that (unusually) passes raw that skipped the pipeline — it keeps
-// such a key from also drawing the less-specific "unknown config key"
-// warning on top of stripRetiredConfigKeys's own.
-const RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES = new Set(
-  RETIRED_CONFIG_KEYS.filter((entry) => entry.disposition === "ignored" && !entry.path.includes(".")).map(
-    (entry) => entry.path,
-  ),
-);
-
 function warnUnknownTopLevelConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
   const known = new Set(listTopLevelConfigKeys());
   for (const key of Object.keys(raw).sort()) {
-    if (known.has(key) || RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES.has(key)) continue;
+    if (known.has(key)) continue;
     warnOnce(
       `config:unknown-key:${sourcePath ?? "inline"}:${key}`,
       `Unknown config key ${JSON.stringify(key)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior. Check the spelling or remove it.`,
