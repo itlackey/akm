@@ -11,6 +11,7 @@ import {
   getPackageManagerUpgradeCommand,
   type InstallSignals,
   performUpgrade,
+  resolveExplicitUpgradeTarget,
   streamResponseToFile,
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
@@ -261,6 +262,93 @@ describe("checkForUpdate", () => {
   });
 });
 
+// ── checkForUpdate / resolveExplicitUpgradeTarget with --version / --tag ────
+//
+// `checkForUpdate` still calls the live `detectInstallMethod()` internally,
+// so tests that must control WHICH install method resolution takes (the
+// npm-registry vs. GitHub-releases branch) call `resolveExplicitUpgradeTarget`
+// directly with an explicit method instead of relying on the sandbox's
+// detected one. `mockFetch` is set on every case anyway so a differently
+// detected method in another environment fails loudly instead of reaching
+// the real network.
+
+describe("checkForUpdate — explicit --version/--tag target", () => {
+  test("rejects --version and --tag together", async () => {
+    mockFetch(() => new Response("{}", { status: 200 }));
+    await expect(checkForUpdate("0.9.16", undefined, { version: "0.9.17", tag: "next" })).rejects.toThrow(
+      "--version and --tag are mutually exclusive",
+    );
+  });
+
+  test("an explicit --version is reported as the target and differs from current", async () => {
+    mockFetch(() => new Response("{}", { status: 200 }));
+    const result = await checkForUpdate("0.9.16", undefined, { version: "0.9.17" });
+
+    expect(result.latestVersion).toBe("0.9.17");
+    expect(result.updateAvailable).toBe(true);
+    expect(result.requestedTarget).toEqual({ version: "0.9.17" });
+  });
+
+  test("an explicit --version equal to the running version is not 'available'", async () => {
+    mockFetch(() => new Response("{}", { status: 200 }));
+    const result = await checkForUpdate("0.9.16", undefined, { version: "0.9.16" });
+
+    expect(result.updateAvailable).toBe(false);
+  });
+});
+
+describe("resolveExplicitUpgradeTarget", () => {
+  test("resolves --tag through the npm registry (honors AKM_NPM_REGISTRY's endpoint shape)", async () => {
+    const requested: string[] = [];
+    mockFetch((url) => {
+      requested.push(url);
+      return Response.json({ version: "0.9.17-alpha.3" });
+    });
+
+    const version = await resolveExplicitUpgradeTarget("npm", { tag: "next" });
+
+    expect(requested).toEqual(["https://registry.npmjs.org/akm-cli/next"]);
+    expect(version).toBe("0.9.17-alpha.3");
+  });
+
+  test("rejects --tag for a non-npm-like install method", async () => {
+    await expect(resolveExplicitUpgradeTarget("binary", { tag: "next" })).rejects.toThrow(
+      "--tag names an npm dist-tag",
+    );
+  });
+
+  test("verifies --version against GitHub releases for a binary install", async () => {
+    const requested: string[] = [];
+    mockFetch((url) => {
+      requested.push(url);
+      return new Response("{}", { status: 200 });
+    });
+
+    const version = await resolveExplicitUpgradeTarget("binary", { version: "0.9.17" });
+
+    expect(requested).toEqual(["https://api.github.com/repos/itlackey/akm/releases/tags/v0.9.17"]);
+    expect(version).toBe("0.9.17");
+  });
+
+  test("a missing GitHub release for --version fails before any download starts", async () => {
+    mockFetch(() => new Response("Not Found", { status: 404, statusText: "Not Found" }));
+
+    await expect(resolveExplicitUpgradeTarget("binary", { version: "9.9.9" })).rejects.toThrow(
+      /Release v9\.9\.9 was not found/,
+    );
+  });
+
+  test("an npm --version is used directly, with no network round-trip", async () => {
+    mockFetch(() => {
+      throw new Error("no network call expected for a direct --version on an npm install");
+    });
+
+    const version = await resolveExplicitUpgradeTarget("npm", { version: "0.9.17" });
+
+    expect(version).toBe("0.9.17");
+  });
+});
+
 // ── performUpgrade ──────────────────────────────────────────────────────────
 
 describe("performUpgrade", () => {
@@ -268,6 +356,8 @@ describe("performUpgrade", () => {
     const args = upgradeCommand.args as Record<string, { description?: string }>;
     expect(args["skip-post-upgrade"]?.description).not.toMatch(/index migrates config|auto-migrat/i);
     expect(args["migration-config"]).toBeUndefined();
+    expect(args.version).toBeDefined();
+    expect(args.tag).toBeDefined();
 
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -486,7 +576,7 @@ describe("performUpgrade", () => {
 
     expect(spawnSyncSpy).toHaveBeenCalledWith(
       expect.stringContaining("npm"),
-      ["install", "-g", "akm-cli@latest"],
+      ["install", "-g", "akm-cli@0.0.14"],
       expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
     );
     expect(result.upgraded).toBe(true);
@@ -513,7 +603,7 @@ describe("performUpgrade", () => {
 
     expect(spawnSyncSpy).toHaveBeenCalledWith(
       expect.stringContaining("bun"),
-      ["install", "-g", "akm-cli@latest"],
+      ["install", "-g", "akm-cli@0.0.14"],
       expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
     );
     expect(result.upgraded).toBe(true);
@@ -540,11 +630,92 @@ describe("performUpgrade", () => {
 
     expect(spawnSyncSpy).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
-      ["add", "-g", "akm-cli@latest"],
+      ["add", "-g", "akm-cli@0.0.14"],
       expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
     );
     expect(result.upgraded).toBe(true);
     expect(result.installMethod).toBe("pnpm");
+  });
+
+  // ── explicit --version/--tag: downgrade requires --force ──────────────────
+
+  test("blocks a downgrade to an explicit older --version without --force", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.9.17",
+        latestVersion: "0.9.10",
+        updateAvailable: true,
+        installMethod: "npm",
+        requestedTarget: { version: "0.9.10" },
+      },
+      undefined,
+      currentMigrator,
+    );
+
+    expect(result.upgraded).toBe(false);
+    expect(result.message).toContain("downgrading requires --force");
+    expect(spawnSyncSpy).not.toHaveBeenCalled();
+  });
+
+  test("allows a downgrade to an explicit older --version with --force, pinned to that version", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.9.17",
+        latestVersion: "0.9.10",
+        updateAvailable: true,
+        installMethod: "npm",
+        requestedTarget: { version: "0.9.10" },
+      },
+      { force: true, skipPostUpgrade: true },
+      currentMigrator,
+    );
+
+    expect(result.upgraded).toBe(true);
+    expect(spawnSyncSpy).toHaveBeenCalledWith(
+      expect.stringContaining("npm"),
+      ["install", "-g", "akm-cli@0.9.10"],
+      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+    );
+  });
+
+  // ── post-upgrade `akm task sync` ───────────────────────────────────────────
+
+  test("a failing post-upgrade `akm task sync` is reported without failing the upgrade", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation(((_cmd: string, args: string[]) => {
+      if (args[0] === "task" && args[1] === "sync") {
+        return { status: 1, stdout: "", stderr: "crontab: command not found" } as never;
+      }
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.0.13",
+        latestVersion: "0.0.14",
+        updateAvailable: true,
+        installMethod: "npm",
+      },
+      undefined,
+      currentMigrator,
+    );
+
+    expect(result.upgraded).toBe(true);
+    expect(result.postUpgrade?.ok).toBe(true); // the index rebuild itself succeeded
+    expect(result.postUpgrade?.taskSync?.ok).toBe(false);
+    expect(result.postUpgrade?.taskSync?.message).toContain("crontab: command not found");
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
   });
 
   test("returns guidance message for unknown install method", async () => {
@@ -603,11 +774,21 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(true);
     expect(result.postUpgrade?.skipped).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(0);
-    // Install, version verification, then the post-upgrade `akm index`.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
-    expect(spawnSyncSpy).toHaveBeenLastCalledWith(
+    expect(result.postUpgrade?.taskSync).toEqual({
+      ok: true,
+      message: "Scheduled tasks were re-synced against the new binary.",
+    });
+    // Install, version verification, the post-upgrade `akm index`, then `akm task sync`.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
+    expect(spawnSyncSpy).toHaveBeenNthCalledWith(
+      3,
       "akm",
       ["index"],
+      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+    );
+    expect(spawnSyncSpy).toHaveBeenLastCalledWith(
+      "akm",
+      ["task", "sync"],
       expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
     );
   });
@@ -634,7 +815,8 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade).toBeDefined();
     expect(result.postUpgrade?.skipped).toBe(true);
     expect(result.postUpgrade?.ok).toBe(true);
-    // Install and version verification ran; only the index rebuild was skipped.
+    expect(result.postUpgrade?.taskSync).toBeUndefined();
+    // Install and version verification ran; the index rebuild and task sync were both skipped.
     expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -787,7 +969,7 @@ describe("performUpgrade", () => {
         // Package install and version verification succeed.
         return { status: 0, stdout: "", stderr: "" } as never;
       }
-      // The post-upgrade `akm index` fails with a non-zero exit.
+      // The post-upgrade `akm index` and `akm task sync` both fail with a non-zero exit.
       return { status: 1, stdout: "", stderr: "no embedding model configured" } as never;
     }) as never);
 
@@ -806,7 +988,11 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(1);
     expect(result.postUpgrade?.message).toContain("no embedding model configured");
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
+    // The index failure does not stop task sync from being attempted, and its
+    // failure is reported alongside the index's rather than thrown.
+    expect(result.postUpgrade?.taskSync?.ok).toBe(false);
+    expect(result.postUpgrade?.taskSync?.message).toContain("no embedding model configured");
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
   });
 
   test("throws when latestVersion is empty and force is used", async () => {

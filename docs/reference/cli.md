@@ -1217,10 +1217,11 @@ use their package manager.
 
 Upgrade replaces the installed program when a newer release exists, then runs
 `akm-migrate apply` — the migrator that shipped with whatever is now installed
-— and rebuilds the derived index. The migration step runs on every
-`akm upgrade`, install or no install, and its plan is reported under
-`migration`; an upgrade whose migration is blocked or could not run exits 1.
-That makes `akm upgrade` safe as a container entrypoint: on a current
+— rebuilds the derived index, and re-syncs scheduled tasks (`akm task sync`)
+so scheduler rows pick up the newly installed binary path. The migration step
+runs on every `akm upgrade`, install or no install, and its plan is reported
+under `migration`; an upgrade whose migration is blocked or could not run
+exits 1. That makes `akm upgrade` safe as a container entrypoint: on a current
 installation it is a no-op. An akm installed as a dependency of another
 package (`installMethod: "package-local"`) is never reinstalled — the parent
 package owns that copy — but its migrations still run. Standalone downloads
@@ -1230,17 +1231,29 @@ Standalone downloads are streamed directly to the staged file while SHA-256 is
 computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 1 MiB; an oversized response is cancelled and the staged file is removed.
 
+By default `akm upgrade` installs the latest release. `--version` or `--tag`
+(mutually exclusive) install a specific target instead: `--version` names an
+exact semver release; `--tag` names an npm dist-tag (e.g. `next` for a
+prerelease) and only applies to npm/Bun/pnpm installs, since a standalone
+binary has no dist-tag to resolve — use `--version` there. A `--version`/
+`--tag` older than the running version is a downgrade and is refused unless
+combined with `--force`.
+
 ```sh
-akm upgrade              # Install a newer release if there is one, then run every pending migration
-akm upgrade --check      # Check for updates without installing (no migration step)
-akm upgrade --force      # Force the install even if already on latest
+akm upgrade                    # Install a newer release if there is one, then run every pending migration
+akm upgrade --check            # Check for updates without installing (no migration step)
+akm upgrade --force            # Force the install even if already on latest
+akm upgrade --tag next         # Install the latest prerelease published under the "next" dist-tag
+akm upgrade --version 0.9.17   # Install that exact release
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--check` | Check for updates without installing |
-| `--force` | Force upgrade even if on latest version |
-| `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
+| `--force` | Force upgrade even if on latest version (also required to downgrade) |
+| `--version <semver>` | Install this exact version instead of the latest release |
+| `--tag <dist-tag>` | Install this npm dist-tag instead of the latest release (npm/bun/pnpm only) |
+| `--skip-post-upgrade` | Skip the post-upgrade index rebuild and task sync |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.
@@ -1254,13 +1267,15 @@ Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
 full boot contract, JSON shapes, and exit codes.
 
-`akm upgrade` replaces the binary in place for its own install method, but a
-scheduler binding recorded by an earlier `akm task sync` under a *different*
-install method is not repointed automatically — the scheduler runs the
-binary path recorded at sync time, not whichever akm `upgrade` just
-installed. Run `akm task sync` after switching installers so scheduled runs
-pick up the new binary; see [`task sync`](#task) and `akm health`'s
-`scheduler-binary` advisory.
+The post-upgrade `akm task sync` runs against the binary `akm upgrade` just
+installed, so scheduler rows recorded by an earlier sync under the *same*
+install method pick up the new binary path automatically — no manual
+`akm task sync` needed. Switching install methods entirely (installing via a
+different package manager than the one that put akm on PATH today) still
+needs a manual `akm task sync` afterward, since that switch does not go
+through `akm upgrade`; see [`task sync`](#task) and `akm health`'s
+`scheduler-binary` advisory. A failed post-upgrade task sync is reported
+under `postUpgrade.taskSync` rather than failing the upgrade.
 
 ### clone
 

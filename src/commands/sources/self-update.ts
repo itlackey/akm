@@ -13,9 +13,10 @@ import {
   readBodyWithByteCap,
   readChunkWithDeadline,
 } from "../../core/common";
-import { ConfigError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
+import { resolveNpmDistTagVersion } from "../../registry/resolve";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
@@ -206,11 +207,33 @@ export function getAkmBinaryName(): string {
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
+/** `--version`/`--tag`: mutually exclusive, an explicit `akm upgrade` target. */
+export interface UpgradeTargetOptions {
+  version?: string;
+  tag?: string;
+}
+
 export async function checkForUpdate(
   currentVersion: string,
   fetchOptions?: { timeout?: number; retries?: number },
+  target?: UpgradeTargetOptions,
 ): Promise<UpgradeCheckResponse> {
   const installMethod = detectInstallMethod();
+
+  if (target?.version && target?.tag) {
+    throw new UsageError("--version and --tag are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
+  }
+  if (target?.version || target?.tag) {
+    const resolvedVersion = await resolveExplicitUpgradeTarget(installMethod, target, fetchOptions);
+    return {
+      currentVersion,
+      latestVersion: resolvedVersion,
+      updateAvailable: resolvedVersion !== currentVersion,
+      installMethod,
+      requestedTarget: target,
+    };
+  }
+
   const url = `https://api.github.com/repos/${REPO}/releases/latest`;
   const response = await fetchWithRetry(url, { headers: githubHeaders() }, fetchOptions);
 
@@ -230,6 +253,55 @@ export async function checkForUpdate(
     updateAvailable: latestVersion !== "" && semverOrder(currentVersion, latestVersion) < 0,
     installMethod,
   };
+}
+
+/**
+ * Resolve `--version`/`--tag` to a concrete version for `installMethod`. A
+ * dist-tag is an npm concept, so it resolves through the npm registry and
+ * only makes sense for npm/bun/pnpm installs; a version for the `binary`
+ * method is checked against GitHub releases so a typo fails here rather than
+ * mid-download.
+ */
+export async function resolveExplicitUpgradeTarget(
+  installMethod: InstallMethod,
+  target: UpgradeTargetOptions,
+  fetchOptions?: { timeout?: number; retries?: number },
+): Promise<string> {
+  if (target.tag) {
+    if (installMethod !== "npm" && installMethod !== "bun" && installMethod !== "pnpm") {
+      throw new UsageError(
+        `--tag names an npm dist-tag; this install method is "${installMethod}". Use --version instead.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    return resolveNpmDistTagVersion(getInstalledPackageName(), target.tag);
+  }
+
+  const version = target.version;
+  if (!version) {
+    throw new UsageError("akm upgrade --version requires a value.", "INVALID_FLAG_VALUE");
+  }
+  if (installMethod === "binary") {
+    await verifyGithubReleaseExists(version, fetchOptions);
+  }
+  return version;
+}
+
+/** Confirm `v<version>` exists as a GitHub release before a binary install stages it. */
+async function verifyGithubReleaseExists(
+  version: string,
+  fetchOptions?: { timeout?: number; retries?: number },
+): Promise<void> {
+  const tag = `v${version}`;
+  const url = `https://api.github.com/repos/${REPO}/releases/tags/${tag}`;
+  const response = await fetchWithRetry(url, { headers: githubHeaders() }, fetchOptions);
+  await response.body?.cancel().catch(() => undefined);
+  if (!response.ok) {
+    throw new Error(
+      `Release ${tag} was not found on GitHub (${response.status} ${response.statusText}). ` +
+        `Check https://github.com/${REPO}/releases`,
+    );
+  }
 }
 
 /**
@@ -274,6 +346,21 @@ export async function performUpgrade(
       migration: await runMigrationStep(runTool),
     };
   }
+  // An explicit `--version`/`--tag` older than the running version is a
+  // downgrade: `updateAvailable` is true (it differs from current) but
+  // installing it needs an explicit `--force`, same as any other forced
+  // reinstall, so the reason is named rather than silently downgrading.
+  if (check.requestedTarget && !force && semverOrder(currentVersion, latestVersion) > 0) {
+    return {
+      currentVersion,
+      newVersion: latestVersion,
+      upgraded: false,
+      installMethod,
+      message: `akm v${currentVersion} is newer than the requested v${latestVersion}; downgrading requires --force.`,
+      migration: await runMigrationStep(runTool),
+    };
+  }
+
   if (!check.updateAvailable && !force) {
     return {
       currentVersion,
@@ -285,7 +372,7 @@ export async function performUpgrade(
     };
   }
 
-  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
+  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod, undefined, latestVersion);
   if (packageManagerCommand) {
     return runPackageManagerUpgrade({
       packageManagerCommand,
@@ -473,16 +560,27 @@ async function runMigrationStep(runTool: typeof runMigrationTool): Promise<NonNu
 }
 
 /**
- * Rebuild the derived index after a successful upgrade.
+ * Rebuild the derived index, then re-sync scheduled tasks, after a
+ * successful upgrade. Scheduler rows embed the runtime path
+ * (`src/tasks/resolve-akm-bin.ts`), so a task/workflow install left pointing
+ * at the pre-upgrade binary is exactly what `akm health`'s
+ * `scheduler-binary` advisory exists to catch — running `akm task sync`
+ * here closes that gap without waiting for the operator to notice it.
  */
 function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {
   if (opts.skip) {
     return {
       ok: true,
       skipped: true,
-      message: "Upgrade completed. Skipped the index rebuild. Run `akm index` manually to rebuild the index.",
+      message:
+        "Upgrade completed. Skipped the index rebuild and task sync. Run `akm index` and `akm task sync` manually.",
     };
   }
+  const index = runAkmIndex(akmBin);
+  return { ...index, taskSync: runAkmTaskSync(akmBin) };
+}
+
+function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?: number | null; message: string } {
   try {
     const result = childProcess.spawnSync(akmBin, ["index"], {
       encoding: "utf8",
@@ -518,6 +616,34 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
       skipped: false,
       message: `Upgrade completed. The index rebuild failed: ${detail}. Run \`akm index\` manually.`,
     };
+  }
+}
+
+/** `akm task sync` after the install: a failure is reported, never thrown. */
+function runAkmTaskSync(akmBin: string): { ok: boolean; message: string } {
+  try {
+    const result = childProcess.spawnSync(akmBin, ["task", "sync"], {
+      encoding: "utf8",
+      env: process.env,
+      stdio: "pipe",
+    });
+    if (result.error) {
+      return {
+        ok: false,
+        message: `Post-upgrade \`akm task sync\` could not start: ${result.error.message}. Run \`akm task sync\` manually.`,
+      };
+    }
+    if (result.status !== 0) {
+      const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`;
+      return {
+        ok: false,
+        message: `Post-upgrade \`akm task sync\` failed (${detail}). Run \`akm task sync\` manually.`,
+      };
+    }
+    return { ok: true, message: "Scheduled tasks were re-synced against the new binary." };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Post-upgrade \`akm task sync\` failed: ${detail}. Run \`akm task sync\` manually.` };
   }
 }
 
@@ -665,8 +791,9 @@ function resolveNodePackageManagerCommand(name: "npm" | "pnpm"): string {
 export function getPackageManagerUpgradeCommand(
   installMethod: InstallMethod,
   packageName = getInstalledPackageName(),
+  version = "latest",
 ): { command: string; args: string[]; displayCommand: string } | undefined {
-  const pkgRef = `${packageName}@latest`;
+  const pkgRef = `${packageName}@${version}`;
 
   if (installMethod === "bun") {
     return {
