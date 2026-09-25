@@ -40,8 +40,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `experimental.*`-only shim) now drops every registered path — top-level or
   nested — before validation and warns once per source naming all of them,
   instead of only the `experimental.*` ones. `akm migrate apply` now removes
-  every one of those registered retired keys from `config.json` too, not
-  only `experimental.*`: the migrator step (renamed
+  every registered `"ignored"` retired key from `config.json` too, not only
+  `experimental.*` (the registry's `"lifted"` keys — `extraParams`, and now
+  `stashDir`/`sources`/`installed`, see Fixed below — are converted by their
+  own dedicated shim instead): the migrator step (renamed
   `scripts/akm-migrate/migrate/config-retired-experimental-keys.ts` ->
   `config-retired-keys.ts`, plan field `configRetiredExperimentalKeys` ->
   `configRetiredKeys`, prerelease migrator output) previously only cleaned
@@ -60,6 +62,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm migrate apply` no longer deletes a legacy `stashDir`/`sources[]`/
+  `installed` config instead of converting it.** `RETIRED_CONFIG_KEYS`
+  (`src/core/config/retired-keys.ts`) registered these three as
+  `"ignored"`, so the retired-keys migrator step deleted them outright —
+  destroying the user's stash/bundle configuration — even though
+  `migrateLegacySourceShape` (`src/core/config/legacy-source-shape-shim.ts`)
+  already converts them in memory on every load and its warning has always
+  named `akm migrate apply` as the fix. The three now carry the `"lifted"`
+  disposition instead, and a new migrator step
+  (`scripts/akm-migrate/migrate/config-legacy-source-shape.ts`, plan field
+  `configLegacySourceShape`, wired in ahead of `configRetiredKeys`) calls
+  that same shim to persist the conversion to `config.json` once, under a
+  backup, making the warning's advice true.
 - **A `version: 2` or `version: 3` task source reads and runs again instead
   of failing closed on upgrade.** `e413af024` deleted the in-memory
   v2/v3 -> v4 read shim on the argument that "untrusted source cannot carry

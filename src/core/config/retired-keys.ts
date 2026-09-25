@@ -26,11 +26,15 @@
 
 /**
  * `"ignored"` — the key is dropped in memory before validation; nothing
- * reads its value. `"lifted"` — the key's value is moved onto a first-class
- * field instead of being dropped (the `extraParams` entries below); the
- * move itself is `liftLegacyEngineExtraParams` (`../extra-params.ts`), not
- * `stripRetiredConfigKeys` — a `"lifted"` entry here is read-only
- * documentation for the schema-compat lint, never stripped by the shim.
+ * reads its value. `"lifted"` — the key's value is moved by a dedicated
+ * shim onto a first-class field (or folded into one, or dropped as part of
+ * that move) instead of being stripped in place: the `extraParams` entries
+ * below are moved by `liftLegacyEngineExtraParams` (`../extra-params.ts`),
+ * and `stashDir`/`sources`/`installed` by `migrateLegacySourceShape`
+ * (`./legacy-source-shape-shim.ts` — `installed` is simply dropped there,
+ * not moved onto anything). A `"lifted"` entry here is read-only
+ * documentation for the schema-compat lint, never stripped by
+ * `stripRetiredConfigKeys`.
  */
 export type RetiredConfigKeyDisposition = "ignored" | "lifted";
 
@@ -49,14 +53,22 @@ export const RETIRED_CONFIG_KEYS: readonly RetiredConfigKey[] = [
   { path: "agent", since: "0.9.0", disposition: "ignored" },
   { path: "bindings", since: "0.9.0", disposition: "ignored" },
   { path: "features", since: "0.9.0", disposition: "ignored" },
-  { path: "installed", since: "0.9.0", disposition: "ignored" },
   { path: "llm", since: "0.9.0", disposition: "ignored" },
   { path: "modelAliases", since: "0.9.0", disposition: "ignored" },
   { path: "profiles", since: "0.9.0", disposition: "ignored" },
-  { path: "sources", since: "0.9.0", disposition: "ignored" },
-  { path: "stashDir", since: "0.9.0", disposition: "ignored" },
   { path: "stashes", since: "0.9.0", disposition: "ignored" },
   { path: "writable", since: "0.9.0", disposition: "ignored" },
+  // Converted, not stripped: `migrateLegacySourceShape`
+  // (`./legacy-source-shape-shim.ts`) folds `stashDir` into `bundles.stash`
+  // and each `sources[]` entry into a bundle, setting `defaultBundle`; it
+  // drops `installed` outright. Listed here — like the `extraParams`
+  // entries below — so the schema-compat lint knows these are a deliberate
+  // retirement, and so `stripRetiredConfigKeys`/`retiredConfigKeysIn` never
+  // treat them as plain drops (they run after the legacy-shape shim, which
+  // has already removed these keys from the pipeline by then).
+  { path: "installed", since: "0.9.0", disposition: "lifted" },
+  { path: "sources", since: "0.9.0", disposition: "lifted" },
+  { path: "stashDir", since: "0.9.0", disposition: "lifted" },
   // Removed from `ExperimentalConfigSchema` in `e0655d13c`, before that
   // schema went `.strict()` — a config a pre-0.9.1 release wrote can still
   // carry it. Moved here from `RETIRED_EXPERIMENTAL_KEYS`

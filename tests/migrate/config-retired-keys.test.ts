@@ -68,6 +68,18 @@ describe("findConfigRetiredKeys (status, read-only)", () => {
     expect(before.profiles).toEqual({ work: {} });
     expect((before.experimental as Record<string, unknown>).workflowEngine).toBe(true);
   });
+
+  test("does not list the legacy stashDir/sources/installed shape — that is converted, not removed", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      stashDir: "/srv/stash",
+      sources: [{ type: "git", url: "https://example.com/team.git", name: "team" }],
+      installed: [],
+      llm: { model: "gpt-4" },
+    });
+    const plan = findConfigRetiredKeys(configPath);
+    expect(plan.removed).toEqual(["llm"]);
+  });
 });
 
 describe("applyConfigRetiredKeys (apply, persists once)", () => {
@@ -127,5 +139,19 @@ describe("applyConfigRetiredKeys (apply, persists once)", () => {
     const result = applyConfigRetiredKeys(configPath);
     expect(result).toEqual({ applied: true, removed: ["experimental.workflowEngine"] });
     expect(readConfig().experimental).toEqual({});
+  });
+
+  test("leaves stashDir/sources/installed byte-for-byte in value — converting them is config-legacy-source-shape's job, not this step's", () => {
+    const sources = [{ type: "git", url: "https://example.com/team.git", name: "team" }];
+    writeConfig({ configVersion: "0.9.0", stashDir: "/srv/stash", sources, installed: [], llm: { model: "gpt-4" } });
+
+    const result = applyConfigRetiredKeys(configPath);
+    expect(result).toEqual({ applied: true, removed: ["llm"] });
+
+    const after = readConfig();
+    expect(after.stashDir).toBe("/srv/stash");
+    expect(after.sources).toEqual(sources);
+    expect(after.installed).toEqual([]);
+    expect(after.llm).toBeUndefined();
   });
 });

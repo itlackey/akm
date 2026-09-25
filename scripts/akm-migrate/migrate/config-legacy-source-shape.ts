@@ -1,0 +1,88 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * Legacy `stashDir`/`sources[]`/`installed` -> `bundles`/`defaultBundle`
+ * conversion, as an `akm migrate` concern.
+ *
+ * `migrateLegacySourceShape` (`src/core/config/legacy-source-shape-shim.ts`)
+ * already folds this shape in memory on every load and warns that
+ * `akm migrate apply` will rewrite the file — but until now nothing did:
+ * the on-disk cleanup ran `stripRetiredConfigKeys` instead
+ * (`scripts/akm-migrate/migrate/config-retired-keys.ts`), which deletes a
+ * registered path rather than converting it, so applying it destroyed the
+ * user's stash/bundle configuration. This is the on-disk counterpart, in
+ * the same one-time-migration shape as `./config-extra-params.ts`: persist
+ * the conversion `migrateLegacySourceShape` already computes once, with the
+ * usual backup, so the read shim's warning becomes true and stops
+ * recurring. There is no second converter here — this calls the shim's
+ * exported `migrateLegacySourceShape` for both the plan and the write.
+ */
+
+import {
+  acquireConfigLock,
+  backupExistingConfig,
+  parseConfigText,
+  readConfigText,
+  writeConfigAtomic,
+} from "../../../src/core/config/config-io";
+import { migrateLegacySourceShape } from "../../../src/core/config/legacy-source-shape-shim";
+
+/** The three legacy keys `migrateLegacySourceShape` can remove from the config root. */
+const LEGACY_SOURCE_SHAPE_KEYS = ["stashDir", "sources", "installed"] as const;
+
+export interface ConfigLegacySourceShapePlan {
+  /** Legacy keys that would be converted (folded into `bundles`/`defaultBundle`, or dropped for `installed`). */
+  converted: string[];
+}
+
+function readRawConfig(configPath: string): Record<string, unknown> | undefined {
+  const text = readConfigText(configPath);
+  if (text === undefined) return undefined;
+  return parseConfigText(text, configPath);
+}
+
+/** Which of `LEGACY_SOURCE_SHAPE_KEYS` `migrateLegacySourceShape` actually removed from `raw`. */
+function convertedKeys(raw: Record<string, unknown>, migrated: Record<string, unknown>): string[] {
+  return LEGACY_SOURCE_SHAPE_KEYS.filter((key) => key in raw && !(key in migrated));
+}
+
+/**
+ * Read-only: what `akm migrate apply` would convert in `config.json`'s
+ * legacy `stashDir`/`sources[]`/`installed` shape. Never touches disk.
+ * Returns an empty plan when the config file does not exist or carries
+ * none of the legacy shape.
+ */
+export function findConfigLegacySourceShape(configPath: string): ConfigLegacySourceShapePlan {
+  const raw = readRawConfig(configPath);
+  if (!raw) return { converted: [] };
+  const migrated = migrateLegacySourceShape(raw, configPath);
+  if (migrated === raw) return { converted: [] };
+  return { converted: convertedKeys(raw, migrated) };
+}
+
+export interface ConfigLegacySourceShapeResult extends ConfigLegacySourceShapePlan {
+  applied: boolean;
+}
+
+/**
+ * Persist the legacy `stashDir`/`sources[]`/`installed` -> `bundles`/
+ * `defaultBundle` conversion to `config.json`, once, with the usual backup.
+ * A no-op (and no backup) when the config carries none of the legacy shape.
+ */
+export function applyConfigLegacySourceShape(configPath: string): ConfigLegacySourceShapeResult {
+  const raw = readRawConfig(configPath);
+  if (!raw) return { applied: false, converted: [] };
+  const migrated = migrateLegacySourceShape(raw, configPath);
+  if (migrated === raw) return { applied: false, converted: [] };
+
+  const release = acquireConfigLock();
+  try {
+    backupExistingConfig(configPath);
+    writeConfigAtomic(configPath, migrated);
+  } finally {
+    release();
+  }
+  return { applied: true, converted: convertedKeys(raw, migrated) };
+}
