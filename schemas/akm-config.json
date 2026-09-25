@@ -261,7 +261,7 @@
           "default": []
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "index": {
       "type": "object",
@@ -641,7 +641,7 @@
               "maximum": 50
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
@@ -1521,10 +1521,10 @@
                                     "minLength": 1
                                   }
                                 },
-                                "additionalProperties": false
+                                "additionalProperties": true
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         ]
                       }
@@ -1745,35 +1745,29 @@
         "enabled": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "task",
-                  "workflow"
-                ]
-              },
-              "ref": {
+            "anyOf": [
+              {
                 "type": "string",
                 "minLength": 1
               },
-              "sourceId": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ref"
+                ],
+                "additionalProperties": true
               }
-            },
-            "required": [
-              "kind",
-              "ref",
-              "sourceId"
-            ],
-            "additionalProperties": false
-          },
-          "default": []
+            ]
+          }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "setup": {
       "type": "object",
@@ -1787,7 +1781,7 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "required": [
@@ -2054,7 +2048,7 @@
               "default": []
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "index": {
           "type": "object",
@@ -2434,7 +2428,7 @@
                   "maximum": 50
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
           "additionalProperties": true
@@ -3314,10 +3308,10 @@
                                         "minLength": 1
                                       }
                                     },
-                                    "additionalProperties": false
+                                    "additionalProperties": true
                                   }
                                 },
-                                "additionalProperties": false
+                                "additionalProperties": true
                               }
                             ]
                           }
@@ -3538,35 +3532,29 @@
             "enabled": {
               "type": "array",
               "items": {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "task",
-                      "workflow"
-                    ]
-                  },
-                  "ref": {
+                "anyOf": [
+                  {
                     "type": "string",
                     "minLength": 1
                   },
-                  "sourceId": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ref": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "ref"
+                    ],
+                    "additionalProperties": true
                   }
-                },
-                "required": [
-                  "kind",
-                  "ref",
-                  "sourceId"
-                ],
-                "additionalProperties": false
-              },
-              "default": []
+                ]
+              }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "setup": {
           "type": "object",
@@ -3580,7 +3568,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -4038,10 +4026,10 @@
                       "minLength": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           ]
         },
@@ -4906,10 +4894,10 @@
                               "minLength": 1
                             }
                           },
-                          "additionalProperties": false
+                          "additionalProperties": true
                         }
                       },
-                      "additionalProperties": false
+                      "additionalProperties": true
                     }
                   ]
                 }
