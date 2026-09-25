@@ -1,0 +1,128 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * `akm-installs` advisory for `akm health` (upgrade-D D3).
+ *
+ * `enumerateAkmInstalls` (`../../core/akm-installs.ts`) finds every `akm` on
+ * PATH and in the known install roots. This turns that enumeration into one
+ * advisory: `pass` when every install reports the running version, `warn`
+ * naming each install that is behind and the manager command that moves it,
+ * `unknown` when nothing could be found or a `--version` probe failed on
+ * every install. `--probe`-gated like `scheduler-binary.ts`: enumeration
+ * spawns a `--version` probe per discovered install (and, to find the npm
+ * global root, `npm root --global`), so `unknown` "not probed" with
+ * `--no-probe` rather than shelling out unconditionally. Best-effort like
+ * its neighbours in `gatherAncillaryAdvisories` (`../health.ts`) — a thrown
+ * error here is reported as `unknown`, never allowed to abort the health
+ * report.
+ */
+
+import { type AkmInstall, type AkmInstallManager, enumerateAkmInstalls } from "../../core/akm-installs";
+import type { HealthCheckResult } from "./types";
+
+export interface AkmInstallsAdvisoryOptions {
+  /** The running akm-cli version to compare each install against. */
+  cliVersion: string;
+  /** Env passed to enumeration; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Injectable enumerator; defaults to the real one. Tests supply a fake. */
+  enumerateAkmInstalls?: typeof enumerateAkmInstalls;
+}
+
+function remedyFor(manager: AkmInstallManager): string {
+  switch (manager) {
+    case "npm":
+      return "npm install -g akm-cli@latest";
+    case "bun":
+      return "bun install -g akm-cli@latest";
+    case "pnpm":
+      return "pnpm add -g akm-cli@latest";
+    case "checkout":
+      return "pull and rebuild that checkout";
+    case "standalone":
+      return "re-run the release install script for that binary";
+    default:
+      return "reinstall it manually";
+  }
+}
+
+export function collectAkmInstallsAdvisory(probe: boolean, options: AkmInstallsAdvisoryOptions): HealthCheckResult {
+  if (!probe) {
+    return {
+      name: "akm-installs",
+      kind: "deterministic",
+      status: "unknown",
+      confidence: "high",
+      message: "Installed akm binaries were not probed.",
+    };
+  }
+
+  const enumerate = options.enumerateAkmInstalls ?? enumerateAkmInstalls;
+  const env = options.env ?? process.env;
+
+  let installs: AkmInstall[];
+  try {
+    installs = enumerate(env);
+  } catch (error) {
+    return {
+      name: "akm-installs",
+      kind: "deterministic",
+      status: "unknown",
+      confidence: "high",
+      message: `Installed akm binaries could not be enumerated: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  if (installs.length === 0) {
+    return {
+      name: "akm-installs",
+      kind: "deterministic",
+      status: "unknown",
+      confidence: "high",
+      message: "No akm install was found on PATH or in the known install roots.",
+    };
+  }
+
+  const behind = installs.filter((install) => install.version !== undefined && install.version !== options.cliVersion);
+  const unreadable = installs.filter((install) => install.version === undefined);
+
+  if (behind.length > 0) {
+    const behindDetail = behind
+      .map((install) => `${install.path} -> v${install.version} (${remedyFor(install.manager)})`)
+      .join("; ");
+    const unreadableDetail =
+      unreadable.length > 0
+        ? ` ${unreadable.length} install(s) did not respond to --version: ${unreadable.map((i) => i.path).join(", ")}.`
+        : "";
+    return {
+      name: "akm-installs",
+      kind: "deterministic",
+      status: "warn",
+      confidence: "high",
+      message: `${behind.length} of ${installs.length} akm install(s) are behind the running v${options.cliVersion}: ${behindDetail}.${unreadableDetail}`,
+      evidence: { installs },
+    };
+  }
+
+  if (unreadable.length > 0) {
+    return {
+      name: "akm-installs",
+      kind: "deterministic",
+      status: "unknown",
+      confidence: "high",
+      message: `${unreadable.length} of ${installs.length} akm install(s) did not respond to --version: ${unreadable.map((i) => i.path).join(", ")}.`,
+      evidence: { installs },
+    };
+  }
+
+  return {
+    name: "akm-installs",
+    kind: "deterministic",
+    status: "pass",
+    confidence: "high",
+    message: `All ${installs.length} akm install(s) on this host report v${options.cliVersion}.`,
+    evidence: { installs },
+  };
+}
