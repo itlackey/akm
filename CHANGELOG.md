@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm bundle add <registry ref> --name <name>` now keys the bundle by
+  `<name>`.** For npm, `github:` and Git refs, `--name` was accepted and then
+  dropped before the bundle key was derived, so the bundle was keyed by the
+  basename of its materialized cache directory instead — `extracted`, or
+  `extracted-<hash>` once that was taken — and its assets were only
+  addressable as `extracted//…`. The name now goes through the same
+  slug-legality and uniqueness rules as a local or website add. The install's
+  registry id is still recorded as `registryId`, so `akm bundle update` and
+  `akm bundle remove` keep resolving the original ref. Re-adding a ref that is
+  already installed keeps its existing key, as local and website re-adds do.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed
