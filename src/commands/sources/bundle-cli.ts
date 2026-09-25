@@ -31,6 +31,7 @@ import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
+import { akmTasksSync } from "../tasks/tasks";
 import { addCommand } from "./add-cli";
 import { akmInit } from "./init";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
@@ -211,7 +212,14 @@ const renameCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const result = await renameBundle(args.old, args.new, { dryRun: args["dry-run"] });
+    const result = await renameBundle(
+      args.old,
+      args.new,
+      { dryRun: args["dry-run"] },
+      {
+        syncTasks: (newId, backend) => akmTasksSync({ backend }, newId),
+      },
+    );
     output("bundle-rename", result);
   },
 });

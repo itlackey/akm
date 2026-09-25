@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Proposal } from "../../src/commands/proposal/proposal-types";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
-import { akmTasksSync } from "../../src/commands/tasks/tasks";
+import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
 import { renameBundle } from "../../src/core/bundle-rename";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
@@ -65,6 +65,14 @@ function fakeCronBackend(exec: CronExec): SchedulerBackend {
     akmArgv: ["/usr/local/bin/akm"],
     envPath: false,
   });
+}
+
+/** `renameBundle`'s deps for an applied (non-dry-run) rename: the real `akmTasksSync`, injected the way `bundle-cli.ts` injects it (`src/core` doesn't import `src/commands`). */
+function renameDeps(backend: SchedulerBackend): {
+  backend: SchedulerBackend;
+  syncTasks: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult>;
+} {
+  return { backend, syncTasks: (newId, sched) => akmTasksSync({ backend: sched }, newId) };
 }
 
 let storage: IsolatedAkmStorage;
@@ -193,7 +201,7 @@ describe("akm bundle rename — applied", () => {
     }
 
     const backend = fakeCronBackend(memoryExec());
-    const result = await renameBundle("original", "renamed", {}, { backend });
+    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
 
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
@@ -247,7 +255,7 @@ describe("akm bundle rename — applied", () => {
     await seedBundleWithOneEntry();
 
     const backend = fakeCronBackend(memoryExec());
-    const result = await renameBundle("original", "renamed", {}, { backend });
+    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
 
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
@@ -284,11 +292,54 @@ describe("akm bundle rename — native scheduler sync", () => {
     expect(plan.nativeSchedulerRows.some((row) => row.includes("--bundle original"))).toBe(true);
     expect(exec.current()).toContain("--bundle original");
 
-    const result = await renameBundle("original", "renamed", {}, { backend });
+    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
     expect(exec.current()).toContain("task run foo --bundle renamed --scheduled");
     expect(exec.current()).not.toContain("--bundle original");
+  });
+
+  // r3-3: a binding that fails to re-sync must not be reported as success —
+  // its old native row is already gone (removeStaleNativeSchedulerRows runs
+  // before the sync), so a silent `ok: true` would leave it unscheduled
+  // until the operator happened to notice.
+  test("reports taskSync.ok false when a granted binding fails to re-sync, and still removes its old native row", async () => {
+    await seedBundleWithOneEntry();
+    const tasksDir = path.join(storage.stashDir, "tasks");
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tasksDir, "foo.yml"),
+      'version: 4\nrun: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
+      "utf8",
+    );
+    setSchedulerRefEnabled("task", "original//tasks/foo", true);
+
+    const exec = memoryExec();
+    const backend = fakeCronBackend(exec);
+    // Install the native row under the OLD name first, exactly as a real
+    // prior `akm task sync` would have.
+    await akmTasksSync({ backend }, "original");
+    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
+
+    // An invalid schedule written before the rename — the same #867 shape
+    // `akmTasksSync` reports as a failure rather than installing.
+    fs.writeFileSync(
+      path.join(tasksDir, "foo.yml"),
+      'run: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
+      "utf8",
+    );
+
+    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
+
+    expect(result.applied).toBe(true);
+    expect(result.taskSync?.ok).toBe(false);
+    const syncResult = (result.taskSync as { result?: TasksSyncResult } | undefined)?.result;
+    expect(syncResult?.failures.length).toBe(1);
+    expect(syncResult?.failures[0]?.reason).toMatch(/version is required and must be 4/);
+    // The stale old-name row was still removed, even though the new one
+    // could not be installed in its place.
+    expect(exec.current()).not.toContain("--bundle original");
+    expect(exec.current()).not.toContain("--bundle renamed");
   });
 });
 
@@ -303,7 +354,7 @@ describe("akm bundle rename — LLM enrichment cache", () => {
     }
 
     const backend = fakeCronBackend(memoryExec());
-    const result = await renameBundle("original", "renamed", {}, { backend });
+    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
     expect(result.applied).toBe(true);
 
     const readDb = openIndexDatabase(getDbPath());
