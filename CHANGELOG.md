@@ -57,6 +57,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cannot resolve still fails with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
   the specific blocked reason.
 
+### Changed
+
+- **Documented the persisted-data compatibility contract.** Added
+  `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
+  reader owes data an earlier release wrote, plus a per-format table (config,
+  `state.db`, `index.db`, task source, workflow IR, native scheduler rows,
+  transaction journals, proposal and task-history metadata, lock payloads,
+  guarded directory manifests, `.akm` residue) naming where each is written,
+  its version marker, its older/newer-data behavior, and which gate covers
+  it — with explicit `Gap:` notes where the code does not meet the contract
+  yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
+  persisted data" section now points at this doc instead of a deleted file.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed
