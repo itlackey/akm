@@ -84,21 +84,22 @@ export interface StrictenedConfigObject {
 /**
  * Every config object that turned from open (no `additionalProperties`, or
  * `.passthrough()`) to closed (`.strict()`). Verified by diffing
- * `git show v0.9.15:schemas/akm-config.json` against HEAD's: all four below
+ * `git show v0.9.15:schemas/akm-config.json` against HEAD's: both below
  * went `.passthrough()` -> `.strict()` in the same commit, `cc6152e02`
  * (0.9.16, "fix: align bundle and execution trust boundaries").
  * `execution` is also `.strict()` as of that commit but is a brand-new
  * schema module added in it (26 insertions, no prior version) — it never
  * had an open shape to regress from, so it is not listed here; the
  * schema-compat lint only flags a path that existed with a looser
- * `additionalProperties` in the previous schema.
+ * `additionalProperties` in the previous schema. `scheduler` and
+ * `scheduler.enabled[]` are absent from v0.9.15's schema entirely (zero
+ * occurrences of "scheduler") — they were born `.strict()` in the same
+ * commit and are excluded here for the identical reason as `execution`.
  * `improve-processes.ts`'s two `.strict()` calls predate 0.9.15 (0.9.2,
  * `5608efbd1`/`9992446d5`) and are already reflected in the baseline the
  * lint compares against, so they need no entry either.
  */
 export const STRICTENED_CONFIG_OBJECTS: readonly StrictenedConfigObject[] = [
   { path: "experimental", since: "0.9.16" },
-  { path: "scheduler", since: "0.9.16" },
-  { path: "scheduler.enabled[]", since: "0.9.16" },
   { path: "search.curateRerank", since: "0.9.16" },
 ];
