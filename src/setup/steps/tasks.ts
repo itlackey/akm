@@ -24,6 +24,7 @@ import { schedulerActivationSourceId, schedulerActivations } from "../../tasks/a
 import { backendNameForPlatform } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
+import { carryForwardSchedulerGrants } from "../../tasks/scheduler-grant-carry-forward";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { prompt } from "../prompt";
 
@@ -112,6 +113,7 @@ export interface ScheduledTasksDeps {
   list: () => SetupTaskDefinition[] | Promise<SetupTaskDefinition[]>;
   prepare: (tasks: PreparedSetupTask[]) => Promise<number>;
   sync: typeof akmTasksSync;
+  carryForward: () => Promise<unknown>;
 }
 
 export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
@@ -257,6 +259,7 @@ const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
   list: listSetupTaskDefinitions,
   prepare: prepareSetupTaskDefinitions,
   sync: akmTasksSync,
+  carryForward: () => carryForwardSchedulerGrants(),
 };
 
 export async function stepScheduledTasks(
@@ -371,12 +374,14 @@ export async function stepScheduledTasks(
     return;
   }
 
+  // Carry forward any grant lost outside the wizard's own review (e.g. an upgrade that reset
+  // host-local config) before `prepare` revokes every managed ref the operator left unchecked.
+  // Otherwise `prepare`'s revocation is followed by carry-forward re-granting the very ref the
+  // operator just deselected.
+  await deps.carryForward();
   const changed = await deps.prepare(plans);
   if (changed > 0) p.log.success(`Prepared ${changed} task definition${changed === 1 ? "" : "s"}.`);
-  // This sync follows the wizard's own "Activate these schedules now?" confirmation, the same
-  // explicit human action `akm task sync` is, so it carries forward like that CLI command does
-  // (upgrade-B r2-1 follow-up).
-  const syncResult = await deps.sync({}, undefined, { carryForward: true });
+  const syncResult = await deps.sync();
   if (syncResult.skipped.length > 0) {
     for (const skipped of syncResult.skipped) {
       p.log.warn(`Task "${skipped.id}" was not activated: ${skipped.reason}`);

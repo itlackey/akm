@@ -70,7 +70,11 @@ Scheduler sync/validation evidence is not an executable snapshot and is never re
 ## Rerunning setup preserves scheduler bindings
 
 Rerunning `akm setup` preserves existing scheduler bindings by design — it
-will not silently rebind entries that are already activated.
+will not silently rebind entries that are already activated. Before applying
+the operator's selections from that run's review, setup's confirmed
+activation also carries forward grants for installed tasks outside its
+review, so a task the operator leaves unchecked is still removed rather than
+re-granted.
 
 ## Upgrades no longer need a manual `akm migrate apply`
 
