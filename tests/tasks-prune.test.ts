@@ -96,7 +96,7 @@ const backendFor = (exec: CronExec) => {
   // operations that don't pass their own contextPath fall back to this one,
   // and it resolves to THIS sandbox's stash dir, so a plain `akmTasksSync`
   // install is always alive/live from prune's point of view.
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },
@@ -128,7 +128,7 @@ function missingContextPath(): string {
 function deadBundleContextPath(): string {
   const context = resolveScheduledTaskContext();
   const deadDir = path.join(os.tmpdir(), `akm-t851-dead-bundle-${Math.random().toString(36).slice(2)}`);
-  const descriptor = schedulerContextDescriptor({ ...context, AKM_BUNDLE_DIR: deadDir }, "");
+  const descriptor = schedulerContextDescriptor({ ...context, AKM_BUNDLE_DIR: deadDir });
   return writeSchedulerContextDescriptor(descriptor) ?? schedulerContextPath(descriptor);
 }
 

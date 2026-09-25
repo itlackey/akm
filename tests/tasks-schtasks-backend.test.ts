@@ -27,7 +27,7 @@ const USER_SID = "S-1-5-21-1000-2000-3000-1001";
 
 const xmlOptions = <T extends Record<string, unknown>>(options?: T) => ({
   ...options,
-  contextPath: schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, process.env.PATH ?? "")),
+  contextPath: schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT)),
   userSid: USER_SID,
 });
 

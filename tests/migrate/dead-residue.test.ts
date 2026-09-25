@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { findDeadResidueEntries, removeDeadResidue } from "../../scripts/akm-migrate/migrate/dead-residue";
+import { sandboxXdgDataHome, sandboxXdgStateHome } from "../_helpers/sandbox";
 
 let stashDir: string;
 
@@ -83,5 +84,50 @@ describe("removeDeadResidue (#889)", () => {
 
   test("is a no-op when nothing dead is present", () => {
     expect(removeDeadResidue(stashDir)).toEqual([]);
+  });
+});
+
+describe("host residue left by machinery removed in 0.9.17", () => {
+  test("lists the $DATA activity registry once, plus each lock's mutex sidecar and the reconcile stamp", () => {
+    const data = sandboxXdgDataHome();
+    const state = sandboxXdgStateHome();
+    try {
+      const dataDir = path.join(data.dir, "akm");
+      const registry = path.join(dataDir, "maintenance-activities");
+      fs.mkdirSync(registry, { recursive: true });
+      for (let index = 0; index < 25; index += 1) {
+        fs.writeFileSync(path.join(registry, `.state-db-${index}-uuid.lock.operations.sensitive`), Buffer.alloc(4096));
+      }
+      fs.writeFileSync(path.join(registry, "state-db-1-uuid.lock"), '{"pid":1}');
+      fs.writeFileSync(path.join(dataDir, ".akm.lock.lck.operations.sensitive"), Buffer.alloc(4096));
+      const stateDir = path.join(state.dir, "akm");
+      fs.mkdirSync(path.join(stateDir, "locks"), { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "version-reconcile.json"), "{}");
+      fs.writeFileSync(
+        path.join(stateDir, "locks", ".version-reconcile.lock.operations.sensitive"),
+        Buffer.alloc(4096),
+      );
+
+      const entries = findDeadResidueEntries(undefined);
+      expect(entries.map((entry) => entry.absolutePath).sort()).toEqual(
+        [
+          registry,
+          path.join(dataDir, ".akm.lock.lck.operations.sensitive"),
+          path.join(stateDir, "version-reconcile.json"),
+          path.join(stateDir, "locks", ".version-reconcile.lock.operations.sensitive"),
+        ].sort(),
+      );
+      // The registry is one entry; its sidecars are never listed one by one.
+      expect(entries.find((entry) => entry.absolutePath === registry)?.sizeBytes).toBe(25 * 4096 + 9);
+
+      const removals = removeDeadResidue(undefined);
+      expect(removals).toHaveLength(4);
+      expect(removals.every((removal) => removal.removed)).toBe(true);
+      expect(fs.existsSync(registry)).toBe(false);
+      expect(findDeadResidueEntries(undefined)).toEqual([]);
+    } finally {
+      state.cleanup();
+      data.cleanup();
+    }
   });
 });

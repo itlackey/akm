@@ -136,11 +136,15 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
   const logDir = options.logDir ?? getTaskLogDir();
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
   const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
+  // launchd strips the environment; the syncing shell's PATH goes into the
+  // plist's EnvironmentVariables so task bodies find the same binaries.
+  const envPath =
+    options.envPath === false ? undefined : typeof options.envPath === "string" ? options.envPath : process.env.PATH;
 
   const plistPath = (nativeId: string) => path.join(agentsDir, `${LAUNCHD_LABEL_PREFIX}${nativeId}.plist`);
   const label = (nativeId: string) => `${LAUNCHD_LABEL_PREFIX}${nativeId}`;
   const target = (nativeId: string) => `gui/${exec.uid()}/${label(nativeId)}`;
-  const defaultContextPath = launchdDefaultContextPath(options, scheduledContext);
+  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext));
   const setEnableState = (nativeId: string, enabled: boolean) => setLaunchdEnableState(exec, target(nativeId), enabled);
 
   return {
@@ -153,6 +157,7 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
         logDir,
         akmArgv,
         defaultContextPath,
+        envPath,
         plistPath,
         label,
         target,
@@ -286,6 +291,7 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
           logDir,
           opts?.contextPath ?? defaultContextPath,
           opts?.target,
+          envPath,
         ),
         task.enabled,
         true,
@@ -305,23 +311,34 @@ function installLaunchdBinding(
     logDir: string;
     akmArgv: readonly string[];
     defaultContextPath: string;
+    envPath: string | undefined;
     plistPath: (id: string) => string;
     label: (id: string) => string;
     target: (id: string) => string;
     setEnableState: (id: string, enabled: boolean) => void;
   },
 ): void {
-  const { exec, fsLike, agentsDir, logDir, akmArgv, defaultContextPath, plistPath, label, target, setEnableState } =
-    context;
+  const {
+    exec,
+    fsLike,
+    agentsDir,
+    logDir,
+    akmArgv,
+    defaultContextPath,
+    envPath,
+    plistPath,
+    label,
+    target,
+    setEnableState,
+  } = context;
   if (expected) assertSchedulerExpectationIdentity(expected, task);
-  // Capture PATH at install time so launchd (which strips the environment
-  // aggressively) can find the same binaries the user sees interactively.
   const xml = buildPlistXml(
     task,
     [...(opts?.binding ?? akmArgv)],
     logDir,
     opts?.contextPath ?? defaultContextPath,
     opts?.target,
+    envPath,
   );
   const nativeId = schedulerBindingNativeId(task);
   const file = plistPath(nativeId);
@@ -1062,16 +1079,6 @@ function withInstalledInvocation(
   return ref;
 }
 
-function launchdDefaultContextPath(options: LaunchdBackendOptions, scheduledContext: ScheduledTaskContext): string {
-  const pathEnv =
-    options.envPath === false
-      ? undefined
-      : typeof options.envPath === "string"
-        ? options.envPath
-        : (process.env.PATH ?? "");
-  return schedulerContextPath(schedulerContextDescriptor(scheduledContext, pathEnv ?? ""));
-}
-
 function setLaunchdEnableState(exec: LaunchdExec, nativeTarget: string, enabled: boolean): void {
   const verb = enabled ? "enable" : "disable";
   runOrThrow(exec, ["launchctl", verb, nativeTarget], {
@@ -1097,12 +1104,26 @@ function decodeXmlEntities(value: string): string {
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
 
+/** launchd strips the environment; carry the syncing shell's PATH so task bodies find the same binaries. */
+function renderPlistEnvironment(envPath: string | undefined): string {
+  if (!envPath) return "";
+  return [
+    "  <key>EnvironmentVariables</key>",
+    "  <dict>",
+    "    <key>PATH</key>",
+    `    <string>${escapeXml(envPath)}</string>`,
+    "  </dict>",
+    "",
+  ].join("\n");
+}
+
 export function buildPlistXml(
   task: SchedulerBinding,
   akmArgv: string[],
   logDir: string,
   contextPath: string,
   _target?: string,
+  envPath?: string,
 ): string {
   const spec = parseSchedule(task.cron, "launchd");
   const trigger = translateToLaunchd(spec);
@@ -1122,7 +1143,7 @@ export function buildPlistXml(
     .replace("{{LABEL}}", LAUNCHD_LABEL_PREFIX + escapeXml(nativeId))
     .replace("{{PROGRAM_ARGS}}", programArgs)
     .replaceAll("{{LOG_PATH}}", escapeXml(logPath))
-    .replace("{{ENV_VARS}}", "")
+    .replace("{{ENV_VARS}}", renderPlistEnvironment(envPath))
     .replace("{{TRIGGER_XML}}", triggerXml);
   for (const char of xml) {
     const code = char.codePointAt(0) ?? 0;

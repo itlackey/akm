@@ -14,6 +14,30 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Changed
 
+- **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
+  A `--scheduler-context` descriptor now carries the resolved bundle path
+  (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,
+  `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` values the process that
+  ran `task sync` had set explicitly; resolved defaults are left to resolve at
+  fire time, exactly as they do for an interactive command. It used to capture
+  every resolved directory and the whole PATH: one host's `task sync`, run from
+  inside a desktop app whose environment pointed `$STATE` at the app's own
+  config directory, froze that directory into eight cron rows on 2026-08-06,
+  every later sync preserved it, and the nightly improve run then held its
+  locks where no interactive command could see them. PATH moves into the
+  native artifact, where it is visible and editable: a `PATH=` line inside a
+  `# akm:env BEGIN`/`END` section written directly above the first akm task
+  block (cron applies it to the rows that follow it; akm rewrites the line on
+  every crontab write and removes it with the last task block), and an
+  `EnvironmentVariables` entry in each launchd plist. Task Scheduler runs a
+  task with the account's own environment and carries no PATH. Plain
+  `akm task sync` recomputes the descriptor on every run — an installed row
+  whose descriptor no longer matches is updated while its launcher is kept as
+  before (only `--rebind` moves that) — so one sync after upgrading rewrites
+  every row written under the old policy. Descriptors an older release wrote
+  still load, PATH included, until that sync. (`src/tasks/scheduler-invocation.ts`,
+  `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
+  `src/tasks/scheduler-sync.ts`.)
 - **Readers tolerate everything older releases wrote.** No config object is
   strict any more: a key this release does not know — retired, misspelled,
   or written by a newer release — is kept in memory and named once
@@ -141,6 +165,20 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Fixed
 
+- **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
+  key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
+  reads it, but the named-engine object (`LlmEngineSchema`) never listed it,
+  so this release's unknown-key walk named it on every load and `akm migrate
+  apply` would have deleted a live setting from config.json.
+  (`src/core/config/schema/engines.ts`)
+- **`akm migrate` finds the leaked activity registry where earlier releases
+  actually wrote it.** The `deadResidue` step looked for
+  `maintenance-activities/` under `$STATE`; the maintenance barrier created it
+  next to its own lock under `$DATA`, so the directory that had grown to
+  229,943 four-kilobyte sidecars (927 MB) on one host was never reported or
+  removed. Both roots are checked, the registry is reported as one entry rather
+  than once per sidecar, and a directory already listed whole is not descended
+  into by the sidecar scan. (`scripts/akm-migrate/migrate/dead-residue.ts`)
 - **`akm bundle add`'s `--name` is now a contract on every add path (local,
   website, registry), not a hint.** An explicit `--name` that is not a legal
   bundle slug, or that is already taken by a different bundle, used to fall

@@ -118,7 +118,9 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): Schedule
   const logDir = options.logDir ?? getTaskLogDir();
   const folder = options.folderPrefix ?? DEFAULT_FOLDER_PREFIX;
   const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
-  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext, process.env.PATH ?? ""));
+  // Task Scheduler runs a task with the account's own environment, so PATH is
+  // not carried anywhere; the descriptor holds directories only.
+  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext));
   const userSid = options.userSid ?? resolveCurrentUserSid(exec);
   const taskName = (nativeId: string) => `${folder}${nativeId}`;
 

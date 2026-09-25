@@ -479,7 +479,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       setSchedulerRefEnabled("stash//tasks/orphan", true);
 
       const exec = memoryExec();
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
       const backend = CRON_BACKEND({
         exec,
         fs: { ensureDir() {} },
@@ -524,7 +524,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
 
       const exec = memoryExec();
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
       const backend = CRON_BACKEND({
         exec,
         fs: { ensureDir() {} },

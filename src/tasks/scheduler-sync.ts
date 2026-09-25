@@ -897,8 +897,11 @@ function installOptionsFor(
   if (current && !input.rebind) {
     return Object.freeze({
       ...(input.bundleTarget ? { target: input.bundleTarget } : {}),
+      // The launcher stays as installed — only `--rebind` moves it. The
+      // context descriptor always follows the current policy, so a row never
+      // keeps directories an earlier sync froze into it.
       binding: Object.freeze([...current.binding]),
-      contextPath: current.contextPath,
+      contextPath: input.installOptions?.contextPath ?? current.contextPath,
     });
   }
   return input.installOptions ? Object.freeze({ ...input.installOptions }) : undefined;

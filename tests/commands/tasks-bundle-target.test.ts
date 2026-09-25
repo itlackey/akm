@@ -225,7 +225,7 @@ describe("bundle-targeted tasks via --bundle", () => {
   });
 
   test("plain sync removes a disabled bundle while reconciling bundles that remain active", async () => {
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
     writeTaskFile(iso.stashDir, "primary", taskYaml());
     writeTaskFile(work.dir, "secondary", taskYaml());
     await akmTasksSync({ backend: cronRealContext() });
@@ -279,7 +279,7 @@ describe("bundle-targeted tasks via --bundle", () => {
     // #846: the primary ("bar") entry needs to be recognized as this
     // stash's own across the two primary syncs below — use the real,
     // writable context for it (see cronRealContext).
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
 
     // A primary task and a work-bundle task, both scheduled.
     await akmTasksAdd({ id: "bar", schedule: "@daily", command: "true" }, { backend: cronRealContext() });
@@ -323,7 +323,7 @@ describe("bundle-targeted tasks via --bundle", () => {
       task,
       ["/usr/local/bin/akm"],
       "/var/log/akm",
-      schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, "")),
+      schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT)),
     );
     expect(body).toBe(expectedLine);
 

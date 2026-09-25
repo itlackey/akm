@@ -106,6 +106,8 @@ const DISABLED_PREFIX = "# akm:disabled ";
 const SOURCE_ENABLED_PREFIX = "# akm:source-enabled ";
 const BLOCK_RE = /^# akm:task ([\w.@:_-]+) BEGIN$/;
 const BLOCK_END_RE = /^# akm:task ([\w.@:_-]+) END$/;
+const ENV_BEGIN = "# akm:env BEGIN";
+const ENV_END = "# akm:env END";
 export const PORTABLE_CRON_LINE_LIMIT = 1000;
 const CRON_SNAPSHOT = Symbol("akm-cron-binding-snapshot");
 
@@ -123,7 +125,7 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
   const envPath = options.envPath === false ? undefined : (options.envPath ?? process.env.PATH);
   const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
-  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext, envPath ?? ""));
+  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext));
 
   return {
     name: "cron",
@@ -170,7 +172,7 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
         assertSchedulerNativeArtifactOwner(prior.id, task, extractCronInvocation(prior.body)?.invocation);
       }
       const block = renderBlock(nativeId, cronLine, task.enabled, task.executionEvidenceDigest);
-      const next = upsertBlock(existing, nativeId, block);
+      const next = upsertEnvBlock(upsertBlock(existing, nativeId, block), envPath);
       replaceCrontab(exec, existing, next);
     },
     uninstall(nativeId: string, expected?: SchedulerRemovalExpectation) {
@@ -198,7 +200,7 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
           normalizeSignature(prior.body),
         );
       }
-      const next = removeBlock(existing, nativeId);
+      const next = upsertEnvBlock(removeBlock(existing, nativeId), envPath);
       replaceCrontab(exec, existing, next);
     },
     setEnabled(nativeId: string, enabled: boolean) {
@@ -604,6 +606,52 @@ export function removeBlock(existing: string, id: string): string {
   // Collapse trailing blank lines.
   while (out.length > 0 && out[out.length - 1] === "") out.pop();
   return out.join("\n");
+}
+
+/**
+ * akm's managed environment section: one `PATH=` line directly above the
+ * first akm task block. Cron applies an environment assignment to every
+ * command line after it in the file, which is why the line sits immediately
+ * above akm's own rows rather than at the top of the crontab; rows a person
+ * adds below the akm section inherit it too, and it is plain text they can
+ * edit with `crontab -e`. Rewritten on every akm crontab write and removed
+ * together with the last akm task block. It replaces the PATH that
+ * descriptors written before 0.9.17 froze in a content-addressed file.
+ */
+export function renderEnvBlock(envPath: string): string {
+  return [ENV_BEGIN, `PATH=${assertCronValue(dedupeSearchPath(envPath))}`, ENV_END].join("\n");
+}
+
+export function upsertEnvBlock(existing: string, envPath: string | undefined): string {
+  const lines = removeEnvBlock(existing).split(/\r?\n/);
+  const firstBlock = lines.findIndex((line) => BLOCK_RE.test(line));
+  if (!envPath || firstBlock === -1) return lines.join("\n");
+  return [...lines.slice(0, firstBlock), renderEnvBlock(envPath), ...lines.slice(firstBlock)].join("\n");
+}
+
+export function removeEnvBlock(existing: string): string {
+  const lines = existing.split(/\r?\n/);
+  const start = lines.indexOf(ENV_BEGIN);
+  if (start === -1) return existing;
+  const end = lines.indexOf(ENV_END, start);
+  if (end === -1) {
+    throw new ConfigError(
+      "Crontab contains a malformed akm environment section; refusing to modify it.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");
+}
+
+function dedupeSearchPath(value: string): string {
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const entry of value.split(path.delimiter)) {
+    if (entry.length === 0 || seen.has(entry)) continue;
+    seen.add(entry);
+    entries.push(entry);
+  }
+  return entries.join(path.delimiter);
 }
 
 export function toggleBlock(existing: string, id: string, enabled: boolean): string {

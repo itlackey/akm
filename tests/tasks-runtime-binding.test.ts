@@ -5,7 +5,11 @@ import { akmTasksAdd, akmTasksDoctor, akmTasksSync } from "../src/commands/tasks
 import { bundleSourceId } from "../src/core/config/config-sources";
 import type { AkmConfig } from "../src/core/config/config-types";
 import type { SchedulerBackend, SchedulerInstallOptions } from "../src/tasks/backends/types";
-import { schedulerContextDescriptor, writeSchedulerContextDescriptor } from "../src/tasks/scheduler-invocation";
+import {
+  resolveScheduledTaskContext,
+  schedulerContextDescriptor,
+  writeSchedulerContextDescriptor,
+} from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
 function completeSchedulerBackend(options: {
@@ -312,11 +316,14 @@ describe("scheduler runtime binding", () => {
       fs.mkdirSync(storage.stashDir, { recursive: true });
       const contextPath = writeSchedulerContextDescriptor(schedulerContextDescriptor());
       const tamperedContextPath = writeSchedulerContextDescriptor(
-        schedulerContextDescriptor(undefined, `${process.env.PATH ?? ""}${path.delimiter}/tampered`),
+        schedulerContextDescriptor({
+          ...resolveScheduledTaskContext(),
+          AKM_CACHE_DIR: path.join(storage.stashDir, "cache-tampered"),
+        }),
       );
       fs.writeFileSync(
         tamperedContextPath,
-        fs.readFileSync(tamperedContextPath, "utf8").replace("/tampered", "/modified"),
+        fs.readFileSync(tamperedContextPath, "utf8").replace("cache-tampered", "cache-modified"),
         { mode: 0o600 },
       );
       const backend: SchedulerBackend = {

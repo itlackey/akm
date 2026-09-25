@@ -81,7 +81,7 @@ describe("akmTasksSync — schedule drift", () => {
     // `schedulerRuntime` deps injected), so install operations fall back to
     // CRON_BACKEND's own default context — write that descriptor for real,
     // matching it exactly, so it resolves on the next sync.
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
     return CRON_BACKEND({
       exec,
       fs: { ensureDir() {} },
@@ -92,7 +92,9 @@ describe("akmTasksSync — schedule drift", () => {
   };
 
   const backendForPath = (exec: CronExec, envPath: string) => {
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), envPath));
+    // PATH no longer lives in the descriptor (it is the crontab's `PATH=`
+    // header), so the same descriptor serves every ambient PATH.
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
     return CRON_BACKEND({
       exec,
       fs: { ensureDir() {} },
@@ -133,6 +135,9 @@ describe("akmTasksSync — schedule drift", () => {
     expect(result.updated).toEqual([]);
     expect(result.unchanged).toEqual(["alpha"]);
     expect(exec.current().match(/# akm:task alpha BEGIN[\s\S]*?# akm:task alpha END/)?.[0]).toBe(alphaBefore);
+    // The one managed PATH line follows the latest write; alpha's row does not.
+    expect(exec.current()).toContain("PATH=/ambient/bin:/usr/bin");
+    expect(exec.current()).not.toContain("PATH=/captured/bin:/usr/bin");
   });
 
   test("sync restores a locally enabled task that was manually disabled in crontab", async () => {
@@ -400,7 +405,7 @@ describe("akmTasksSync — schedule drift", () => {
 // the write-target ConfigError that used to escape from resolveWriteTarget.
 describe("akmTasksSync — website/npm bundles cannot carry scheduler state", () => {
   const backendFor = (exec: CronExec) => {
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
     return CRON_BACKEND({
       exec,
       fs: { ensureDir() {} },
@@ -450,7 +455,7 @@ describe("akmTasksSync — website/npm bundles cannot carry scheduler state", ()
 // whole operation, so it rethrows instead of being caught and reported.
 describe("akmTasksSync — one bundle's poisoned source set does not cost every OTHER bundle its sync", () => {
   const backendFor = (exec: CronExec) => {
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
     return CRON_BACKEND({
       exec,
       fs: { ensureDir() {} },

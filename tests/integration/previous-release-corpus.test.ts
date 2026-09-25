@@ -921,7 +921,7 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       // never routes through the real launcher-eligibility path, so install
       // operations fall back to CRON_BACKEND's own default context — write
       // that descriptor for real so it resolves on sync.
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
 
       // The real pre-0.9.2 shape: akm's own sentinels wrap a scheduled
       // invocation with no `--scheduler-context <path>` marker at all.

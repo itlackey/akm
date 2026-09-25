@@ -91,7 +91,7 @@ const backendFor = (exec: CronExec) => {
   // Mirrors tests/integration/tasks-sync.test.ts's `backendFor`: write a
   // real scheduler-context descriptor matching CRON_BACKEND's default
   // context so belongsToBundle can resolve the installed entries' owner.
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },

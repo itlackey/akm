@@ -57,7 +57,7 @@ function memoryExec(initial = ""): CronExec & { current: () => string } {
 
 /** A real CRON_BACKEND wired to an in-memory crontab, so the rename's `akmTasksSync` call never touches the host's real crontab. */
 function fakeCronBackend(exec: CronExec): SchedulerBackend {
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },

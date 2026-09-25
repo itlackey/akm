@@ -770,14 +770,20 @@ async function buildSchedulerSyncPlan(
   const needsRuntime = preflights.some((preflight) =>
     preflight.operations.some((operation) => operation.kind !== "remove" && operation.options?.binding === undefined),
   );
+  // The context descriptor is prepared on every sync (one hash, no writes) so
+  // an installed row whose descriptor no longer matches the current policy is
+  // planned as an update; the launcher is only resolved when some desired
+  // binding has no installed invocation to keep.
+  const context = prepareSchedulerContext(deps);
   const prepared = needsRuntime
     ? prepareSchedulerSyncRuntime(
         undefined,
         deps,
         warnings,
         allEntries.map((entry) => entry.binding),
+        context,
       )
-    : undefined;
+    : context;
   const plans = survivingSets.map(({ common, preparedSources, syncTarget }) =>
     finalizeSchedulerSyncPlan(
       {
@@ -1489,16 +1495,18 @@ async function prepareTaskAddSchedulerTransaction(input: {
   const primary = input.taskBindings[0];
   if (!primary) throw new Error("invariant: scheduler transaction has no desired binding");
   const installedEntry = installedEntries.find((entry) => entry.id === primary.id) ?? taskEntries[0];
+  const context = prepareSchedulerContext(input.deps);
   const preparedRuntime =
     installedEntry && !input.rebind
       ? {
           options: {
             ...input.installOpts,
             binding: Object.freeze([...installedEntry.binding]),
-            contextPath: installedEntry.contextPath,
+            contextPath: context?.options.contextPath ?? installedEntry.contextPath,
           },
+          ...(context ? { publish: context.publish } : {}),
         }
-      : prepareSchedulerSyncRuntime(input.installOpts, input.deps, []);
+      : prepareSchedulerSyncRuntime(input.installOpts, input.deps, [], [], context);
   const runtimeOpts = preparedRuntime.options;
   const removals: SchedulerSyncPlan["operations"][number][] = taskEntries.map((entry) => {
     const invocation = entry.invocation;
@@ -1583,11 +1591,45 @@ async function prepareTaskAddSchedulerTransaction(input: {
   });
 }
 
+interface PreparedSchedulerContext {
+  options: { contextPath: string };
+  /** Writes the content-addressed descriptor; invoked once, right before the first native mutation. */
+  publish: () => void;
+}
+
+/** The scheduler-context descriptor every desired binding references, from the current policy. */
+function buildSchedulerContext(): PreparedSchedulerContext {
+  const descriptor = schedulerContextDescriptor();
+  const contextPath = schedulerContextPath(descriptor);
+  return {
+    options: { contextPath },
+    publish: () => {
+      const written = writeSchedulerContextDescriptor(descriptor);
+      if (written !== contextPath) {
+        throw new ConfigError("Scheduler context descriptor path changed after preflight.", "INVALID_CONFIG_FILE");
+      }
+    },
+  };
+}
+
+/**
+ * Undefined when a caller injects its own backend or runtime (tests): the
+ * backend's own default, or the injected runtime, supplies the path then.
+ */
+function prepareSchedulerContext(deps: {
+  backend?: SchedulerBackend;
+  schedulerRuntime?: () => PreparedSchedulerRuntime;
+}): PreparedSchedulerContext | undefined {
+  if (deps.backend || deps.schedulerRuntime) return undefined;
+  return buildSchedulerContext();
+}
+
 function prepareSchedulerSyncRuntime(
   base: { target?: string } | undefined,
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime },
   warnings: string[],
   installedBindings: readonly (readonly string[])[] = [],
+  context: PreparedSchedulerContext | undefined = undefined,
 ): { options?: SchedulerInstallOptions; publish?: () => void } {
   if (deps.backend && !deps.schedulerRuntime) return base ? { options: base } : {};
   if (deps.schedulerRuntime) {
@@ -1598,16 +1640,10 @@ function prepareSchedulerSyncRuntime(
 
   const invocation = resolveAndValidateSchedulerInvocation();
   warnIneligibleRebind(invocation, warnings, installedBindings);
-  const descriptor = schedulerContextDescriptor();
-  const contextPath = schedulerContextPath(descriptor);
+  const prepared = context ?? buildSchedulerContext();
   return {
-    options: { ...base, binding: invocation.binding, contextPath },
-    publish: () => {
-      const written = writeSchedulerContextDescriptor(descriptor);
-      if (written !== contextPath) {
-        throw new ConfigError("Scheduler context descriptor path changed after preflight.", "INVALID_CONFIG_FILE");
-      }
-    },
+    options: { ...base, binding: invocation.binding, contextPath: prepared.options.contextPath },
+    publish: prepared.publish,
   };
 }
 

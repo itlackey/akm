@@ -33,7 +33,7 @@ const SCHEDULED_CONTEXT: ScheduledTaskContext = {
   AKM_CACHE_DIR: "/Users/Akm User/cache",
   AKM_STATE_DIR: "/Users/Akm User/state",
 };
-const contextPath = (envPath = "") => schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, envPath));
+const contextPath = () => schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT));
 
 function makeTask(schedule: string, id = "ping"): SchedulerBinding {
   return {
@@ -102,29 +102,35 @@ describe("buildPlistXml", () => {
 
   // ── PATH environment injection ───────────────────────────────────────────
 
-  test("pathEnv is captured by descriptor rather than native environment", () => {
+  test("PATH goes into EnvironmentVariables, never into the descriptor argv", () => {
     const xml = buildPlistXml(
       makeTask("*/15 * * * *"),
       ["/abs/akm"],
       "/var/log/akm",
-      contextPath("/usr/local/bin:/usr/bin:/bin"),
+      contextPath(),
+      undefined,
+      "/usr/local/bin:/usr/bin:/bin",
     );
-    expect(xml).not.toContain("<key>EnvironmentVariables</key>");
+    expect(xml).toContain("<key>EnvironmentVariables</key>");
+    expect(xml).toContain("<key>PATH</key>");
+    expect(xml).toContain("<string>/usr/local/bin:/usr/bin:/bin</string>");
     expect(xml).toContain("<string>--scheduler-context</string>");
   });
 
-  test("pathEnv contents do not inflate or escape into the plist", () => {
+  test("PATH contents are XML-escaped inside the plist", () => {
     const xml = buildPlistXml(
       makeTask("*/15 * * * *"),
       ["/abs/akm"],
       "/var/log/akm",
-      contextPath("/usr/local/bin&special<>bin"),
+      contextPath(),
+      undefined,
+      "/usr/local/bin&special<>bin",
     );
-    expect(xml).not.toContain("&amp;");
+    expect(xml).toContain("<string>/usr/local/bin&amp;special&lt;&gt;bin</string>");
     expect(xml).not.toContain("&special<>bin");
   });
 
-  test("pathEnv absent still uses a descriptor", () => {
+  test("no PATH: no EnvironmentVariables block, the descriptor is still referenced", () => {
     const xml = buildPlistXml(makeTask("*/15 * * * *"), ["/abs/akm"], "/var/log/akm", contextPath());
     expect(xml).toContain("--scheduler-context");
     expect(xml).not.toContain("EnvironmentVariables");
@@ -439,7 +445,7 @@ function makeTransactionalBackend() {
 }
 
 describe("LAUNCHD_BACKEND — envPath option", () => {
-  test("envPath string: plist uses the context descriptor", () => {
+  test("envPath string: PATH lands in the plist's EnvironmentVariables, the descriptor holds directories only", () => {
     const fakeFs = makeFakeFs();
     const backend = LAUNCHD_BACKEND({
       exec: makeFakeExec(),
@@ -454,8 +460,13 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
     const entries = [...fakeFs.written.values()];
     expect(entries.length).toBe(1);
     const plist = entries[0];
-    expect(plist).not.toContain("<key>EnvironmentVariables</key>");
+    expect(plist).toContain("<key>EnvironmentVariables</key>");
+    expect(plist).toContain("<key>PATH</key>");
+    expect(plist).toContain("<string>/custom/bin:/usr/bin:/bin</string>");
     expect(plist).toContain("<string>--scheduler-context</string>");
+    expect(backend.expectedSignature?.(makeTask("*/5 * * * *"))).toBe(
+      (backend.list() as Array<{ signature: string }>)[0]?.signature,
+    );
   });
 
   test("envPath false: plist still uses a descriptor without native environment", () => {
@@ -478,10 +489,7 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
     expect(plist).not.toContain("<key>PATH</key>");
   });
 
-  test("envPath not set: process PATH stays out of the plist", () => {
-    // When envPath is not provided, LAUNCHD_BACKEND captures process.env.PATH.
-    // We cannot assert the exact value, but we can verify the block is present
-    // as long as process.env.PATH is defined.
+  test("envPath not set: the process PATH is captured into the plist", () => {
     const savedPath = process.env.PATH;
     process.env.PATH = "/injected/bin:/usr/bin";
     try {
@@ -498,8 +506,8 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
       const entries = [...fakeFs.written.values()];
       expect(entries.length).toBe(1);
       const plist = entries[0];
-      expect(plist).not.toContain("<key>EnvironmentVariables</key>");
-      expect(plist).not.toContain("/injected/bin:/usr/bin");
+      expect(plist).toContain("<key>EnvironmentVariables</key>");
+      expect(plist).toContain("<string>/injected/bin:/usr/bin</string>");
     } finally {
       process.env.PATH = savedPath;
     }
@@ -591,7 +599,7 @@ describe("LAUNCHD_BACKEND lifecycle", () => {
         envPath: `/usr/bin${String.fromCharCode(1)}/bin`,
         scheduledContext: SCHEDULED_CONTEXT,
       }).install(makeTask("0 9 * * *")),
-    ).toThrow("scheduler context");
+    ).toThrow("XML-forbidden control characters");
     expect(fakeFs.written.size).toBe(0);
     expect(exec.calls).toEqual([]);
   });
@@ -1661,7 +1669,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       // The backend falls back to its own default context descriptor path
       // (no `schedulerRuntime` deps here) — write it for real so the
       // second sync's owning-path lookup can read it back.
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
       expect((await akmTasksSync({ backend })).installed).toEqual(["ping"]);
       exec.loadedLabels.delete("com.akm.task.ping");
       exec.calls.length = 0;
@@ -1689,7 +1697,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       // default SCHEDULED_CONTEXT can't back a resolvable owning path, so
       // use the real, writable sandboxed context instead.
       const { backend, exec } = makeBackend(undefined, undefined, resolveScheduledTaskContext());
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
       expect((await akmTasksSync({ backend })).installed).toEqual(["ping"]);
 
       exec.disabledLabels.add("com.akm.task.ping");

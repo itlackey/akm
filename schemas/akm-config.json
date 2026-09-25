@@ -64,6 +64,9 @@
                 "type": "integer",
                 "exclusiveMinimum": 0
               },
+              "supportsJsonSchema": {
+                "type": "boolean"
+              },
               "extraParams": {
                 "type": "object",
                 "additionalProperties": {}
@@ -1850,6 +1853,9 @@
                   "concurrency": {
                     "type": "integer",
                     "exclusiveMinimum": 0
+                  },
+                  "supportsJsonSchema": {
+                    "type": "boolean"
                   },
                   "extraParams": {
                     "type": "object",

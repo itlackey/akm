@@ -9,9 +9,12 @@ import {
   extractInstalledTarget,
   listBlocks,
   removeBlock,
+  removeEnvBlock,
   renderBlock,
+  renderEnvBlock,
   toggleBlock,
   upsertBlock,
+  upsertEnvBlock,
 } from "../src/tasks/backends/cron";
 import type { InstalledSchedulerBinding } from "../src/tasks/backends/types";
 import { type SchedulerBinding, schedulerNativeBindingId } from "../src/tasks/scheduler-binding";
@@ -34,7 +37,7 @@ const SCHEDULED_CONTEXT: ScheduledTaskContext = {
   AKM_CACHE_DIR: "/srv/akm cache",
   AKM_STATE_DIR: "/srv/akm state",
 };
-const contextPath = (envPath = "") => schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, envPath));
+const contextPath = () => schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT));
 
 const TASK: SchedulerBinding = {
   id: "ping",
@@ -122,13 +125,8 @@ describe("cron backend helpers", () => {
     expect(line).toContain("'/Applications/My Stuff/akm'");
   });
 
-  test("buildCronLine preserves the installer PATH for scheduled children", () => {
-    const line = buildCronLine(
-      TASK,
-      ["/home/user/.bun/bin/bun", "/opt/akm/cli.js"],
-      "/var/log",
-      contextPath("/home/user/.bun/bin:/usr/bin"),
-    );
+  test("buildCronLine never inlines PATH into the row (it is the section's PATH= header)", () => {
+    const line = buildCronLine(TASK, ["/home/user/.bun/bin/bun", "/opt/akm/cli.js"], "/var/log", contextPath());
     expect(line).not.toContain("PATH=");
     expect(line).toContain("/home/user/.bun/bin/bun /opt/akm/cli.js --scheduler-context");
   });
@@ -140,12 +138,7 @@ describe("cron backend helpers", () => {
   });
 
   test("buildCronLine escapes cron percent syntax even inside POSIX shell quotes", () => {
-    const line = buildCronLine(
-      TASK,
-      ["/opt/100% ready/akm's bin"],
-      "/var/log/100% ready",
-      contextPath("/opt/100% tools/bin:/usr/bin"),
-    );
+    const line = buildCronLine(TASK, ["/opt/100% ready/akm's bin"], "/var/log/100% ready", contextPath());
     expect(line).not.toContain("PATH=");
     expect(line).toContain("'/opt/100'\\%' ready/akm'\\''s bin'");
     expect(line).toContain("task run ping");
@@ -851,5 +844,66 @@ describe("cron backend drift detection", () => {
     expect(() => backend.install(SYNC_TASK)).toThrow("limited to 1000 bytes");
     expect(reads).toBe(0);
     expect(writes).toBe(0);
+  });
+});
+
+describe("cron backend managed PATH header", () => {
+  const withPath = (exec: CronExec, envPath: string | false) => CRON_BACKEND({ ...cronBackendOptions(exec), envPath });
+  const pong: SchedulerBinding = {
+    ...SYNC_TASK,
+    id: "pong",
+    logicalSource: { kind: "task", ref: "stash//tasks/pong" },
+    invocation: ["task", "run", "pong", "--scheduled"],
+  };
+
+  test("install writes one deduplicated PATH= line directly above the first akm block and refreshes it on later writes", () => {
+    const exec = memoryExec("0 1 * * * user-job\n");
+    withPath(exec, "/first/bin:/usr/bin:/first/bin").install(SYNC_TASK);
+    let lines = exec.current().split("\n");
+    expect(lines.slice(0, 5)).toEqual([
+      "0 1 * * * user-job",
+      "# akm:env BEGIN",
+      "PATH=/first/bin:/usr/bin",
+      "# akm:env END",
+      "# akm:task ping BEGIN",
+    ]);
+
+    withPath(exec, "/second/bin:/usr/bin").install(pong);
+    lines = exec.current().split("\n");
+    expect(lines.filter((line) => line.startsWith("PATH="))).toEqual(["PATH=/second/bin:/usr/bin"]);
+    expect(lines.indexOf("# akm:env BEGIN")).toBe(1);
+    expect(lines[4]).toBe("# akm:task ping BEGIN");
+    expect(listBlocks(exec.current()).map((block) => block.id)).toEqual(["ping", "pong"]);
+  });
+
+  test("the header leaves with the last akm block and is never written when envPath is false", () => {
+    const exec = memoryExec("0 1 * * * user-job\n");
+    const backend = withPath(exec, "/first/bin:/usr/bin");
+    backend.install(SYNC_TASK);
+    backend.install(pong);
+    backend.uninstall("ping");
+    expect(exec.current()).toContain("PATH=/first/bin:/usr/bin");
+    backend.uninstall("pong");
+    expect(exec.current()).toBe("0 1 * * * user-job\n");
+
+    withPath(exec, false).install(SYNC_TASK);
+    expect(exec.current()).not.toContain("akm:env");
+    expect(exec.current()).not.toContain("PATH=");
+  });
+
+  test("akm owns the section: a hand edit is replaced on the next write and a broken section is refused", () => {
+    const exec = memoryExec();
+    const backend = withPath(exec, "/first/bin:/usr/bin");
+    backend.install(SYNC_TASK);
+    exec.replace(exec.current().replace("PATH=/first/bin:/usr/bin", "PATH=/hand/edited"));
+    backend.install(SYNC_TASK);
+    expect(exec.current()).toContain("PATH=/first/bin:/usr/bin");
+    expect(exec.current()).not.toContain("/hand/edited");
+
+    exec.replace(exec.current().replace("# akm:env END\n", ""));
+    expect(() => backend.install(SYNC_TASK)).toThrow("malformed akm environment section");
+    expect(removeEnvBlock("no akm content\n")).toBe("no akm content\n");
+    expect(upsertEnvBlock("0 1 * * * user-job\n", "/a:/b")).toBe("0 1 * * * user-job\n");
+    expect(renderEnvBlock("/a:/b::/a")).toBe("# akm:env BEGIN\nPATH=/a:/b\n# akm:env END");
   });
 });

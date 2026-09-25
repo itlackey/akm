@@ -445,6 +445,17 @@ for full before/after examples and recovery guidance.
   current orphan candidate.
 - Use `akm task sync --rebind` only when deliberately changing the captured
   AKM runtime, then verify with `akm task doctor`.
+- `akm task sync` writes one `PATH=` line inside a `# akm:env BEGIN`/`END`
+  section directly above the first akm task block in the crontab (on macOS,
+  an `EnvironmentVariables` entry in each plist). It is the PATH of the shell
+  that ran the sync, rewritten on every crontab write and removed with the
+  last akm block; cron applies it to every row below it. The
+  `--scheduler-context` descriptor a row references holds directories only:
+  the bundle path, plus any `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`
+  or `AKM_STATE_DIR` that shell had set explicitly. Defaults resolve at fire
+  time, so a scheduled run uses the same state, data and cache directories an
+  interactive command does. Run the sync from a shell whose environment you
+  would want scheduled.
 
 Scheduler execution is at least once. Backends provide a stable invocation
 identity and AKM fences stale attempts, but an ambiguous process crash can be
