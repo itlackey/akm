@@ -64,11 +64,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scratch), and rewrites this tool's own state rows that name the old bundle
   (`proposals.ref`, a pending proposal's `proposedTarget.source`, and
   workflow `task_history.target_ref`). It then re-syncs native scheduler
-  rows under the new name (`akmTasksSync`, reported in the result's
-  `taskSync` field — a sync failure is reported, not thrown, since
+  rows under the new name (`akmTasksSync`, run from the command handler and
+  reported in the result's `taskSync` field, never thrown, since
   config/index/state are already renamed by then), so a scheduled task or
   workflow stops invoking `<old>//…` the moment the rename applies instead of
-  waiting on a manual `akm task sync`. Refs inside the bundle's own CONTENT
+  waiting on a manual `akm task sync`. `taskSync.ok` is `false` both when
+  the sync call itself fails and when it comes back with one or more
+  `taskSync.result.failures` — a binding that failed to prepare has already
+  lost its old native row and is not scheduled again until a retry, so
+  `akm bundle rename` never reports a partial re-sync as a clean one. Refs
+  inside the bundle's own CONTENT
   (cross-references, a task's `uses:`, `supersededBy`) are reported, never
   rewritten — the result's `contentRefs` lists the indexed files that still
   spell the old prefix. `--dry-run` shows the full plan (row counts,
