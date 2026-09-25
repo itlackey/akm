@@ -1112,12 +1112,12 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   // Was "a true standalone physical-source identity collision rejects before
-  // diffing" (tier3-0917-r5, U3): the rejection this pinned was actually the
+  // diffing" (U3): the rejection this pinned was actually the
   // directory-manifest layer's former blanket refusal of ANY symbolic entry,
   // not a real physical-identity collision check — `beta/nightly.yml` here
   // is never opened as a task candidate at all. Per U3, an in-bundle symlink
   // that stays inside the bundle root is recorded as its own manifest kind
-  // and is never made a task candidate. r2-1 restores the report: a symlink
+  // and is never made a task candidate. This restores the report: a symlink
   // classified as a task candidate is degraded into a per-source failure
   // (not silently dropped), while the real owner still syncs normally.
   test("an in-bundle symlink alias is reported as a per-source failure; the real owner still syncs", async () => {
@@ -1296,7 +1296,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(signatures).toBe(0);
   });
 
-  // C3: a desired binding whose id collides with a DIFFERENT bundle's real
+  // A desired binding whose id collides with a DIFFERENT bundle's real
   // installed entry is a per-item anomaly, not a whole-sync abort — this
   // one binding is excluded and reported in `failures` instead of refusing
   // to reconcile every other binding in the same sync.
@@ -1435,7 +1435,7 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       signature: "installed-fingerprint",
     };
 
-    // C3: excluded and reported, not a whole-sync throw — see the
+    // Excluded and reported, not a whole-sync throw — see the
     // "collision excludes just that binding" test above.
     const plan = await planSchedulerSync({
       sourceRoot: bundleRoot,
@@ -1520,7 +1520,7 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
     ]);
   });
 
-  // C3: `buildSchedulerRemoveOperation` still throws on its own (kept for
+  // `buildSchedulerRemoveOperation` still throws on its own (kept for
   // `akm task prune`'s pre-confirmed-safe contract) but sync's removal loop
   // now catches it per id — one orphaned row this process can't safely
   // attribute a removal for must not cost every OTHER genuinely orphaned

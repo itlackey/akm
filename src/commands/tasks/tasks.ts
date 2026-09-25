@@ -92,6 +92,7 @@ import {
   assertSchedulerSourceSnapshot,
   buildSchedulerRemoveOperation,
   finalizeSchedulerSyncPlan,
+  installedRowFailure,
   prepareSchedulerSyncSourceSet,
   type SchedulerSourceFailure,
   type SchedulerSyncOperation,
@@ -617,7 +618,8 @@ async function buildSchedulerSyncPlan(
   const sched = deps.backend ?? selectBackend();
   if (!sched.inspectBindings) {
     throw new ConfigError(
-      `Scheduler backend "${sched.name}" cannot provide one coherent inspection for transactional sync.`,
+      `Scheduler backend "${sched.name}" cannot provide one coherent inspection for transactional sync. ` +
+        "Switch to a backend that supports inspection, or manage this host's scheduled tasks outside akm.",
       "INVALID_CONFIG_FILE",
     );
   }
@@ -690,15 +692,22 @@ async function buildSchedulerSyncPlan(
   const sourceNames = bundleTarget
     ? [bundleTarget]
     : activeSources.filter((source) => isWriteCapableSourceKind(source.type)).map((source) => source.name);
-  const inactiveOperations = bundleTarget
-    ? []
+  const inactiveResult = bundleTarget
+    ? { operations: [], failures: [] }
     : inactiveBundleRemovalOperations(config, configuredSources, allEntries, nativeArtifacts);
+  const inactiveOperations = inactiveResult.operations;
+  const inactiveFailures = inactiveResult.failures;
   if (!bundleTarget && sourceNames.length === 0 && configuredSources.length > 0) {
     assertSchedulerBackendInspection({ installed: allEntries, artifacts: nativeArtifacts });
-    const plan = emptySchedulerSyncPlan(inactiveOperations, carriedForward);
+    const plan = emptySchedulerSyncPlan(inactiveOperations, carriedForward, inactiveFailures);
     return { sched, plan, sourceSnapshots: Object.freeze([]), prepared: undefined, warnings: [] };
   }
   const selectedNames = sourceNames.length > 0 ? sourceNames : [undefined];
+  // A backend-wide incoherent or duplicate native inspection can't be
+  // attributed to any one bundle, so validate it once here, before any
+  // per-bundle try/catch below can turn a whole-operation anomaly into a
+  // single bundle's reported failure while the others proceed.
+  assertSchedulerBackendInspection({ installed: allEntries, artifacts: nativeArtifacts });
   // A dry-run never mutates config, so `activeSchedulerActivations` above
   // does not yet include `pendingGrants` (the applied path reloads config
   // after `carryForwardSchedulerGrants` instead). Add them here so the
@@ -715,11 +724,13 @@ async function buildSchedulerSyncPlan(
     preparedSources: Awaited<ReturnType<typeof prepareSchedulerSyncSourceSet>>;
     syncTarget?: string;
   }> = [];
-  // C3: one bundle's source collection failing (a symbolic tasks/workflows
+  // One bundle's source collection failing (a symbolic tasks/workflows
   // root, a TOCTOU read-set change, …) must not cost every OTHER selected
   // bundle its sync — each bundle is its own item here, caught and reported
   // rather than aborting the whole (possibly multi-bundle) `selectedNames`
-  // loop.
+  // loop. A scoped sync (`bundleTarget` set) has only one bundle in
+  // `selectedNames`, and that one bundle's failure IS the whole operation,
+  // so it rethrows the original error instead of being caught below.
   const bundleFailures: SchedulerSourceFailure[] = [];
   for (const sourceName of selectedNames) {
     try {
@@ -747,6 +758,7 @@ async function buildSchedulerSyncPlan(
         ...(syncTarget ? { syncTarget } : {}),
       });
     } catch (cause) {
+      if (bundleTarget) throw cause;
       bundleFailures.push({ path: sourceName ?? "(default bundle)", reason: errorMessage(cause) });
     }
   }
@@ -755,8 +767,9 @@ async function buildSchedulerSyncPlan(
   // activation needs a new runtime descriptor before native mutation begins.
   // Same per-bundle isolation as the loop above: a bundle whose finalize
   // throws (a genuine whole-bundle precondition — see
-  // `finalizeSchedulerSyncPlan`'s own C3 classification) is reported and
-  // excluded from `survivingSets`, and every OTHER bundle still finalizes.
+  // `finalizeSchedulerSyncPlan`'s own per-item classification) is reported
+  // and excluded from `survivingSets`, and every OTHER bundle still
+  // finalizes; a scoped sync rethrows instead, same as above.
   const survivingSets: typeof preparedSets = [];
   const preflights: SchedulerSyncPlan[] = [];
   for (const set of preparedSets) {
@@ -764,6 +777,7 @@ async function buildSchedulerSyncPlan(
       preflights.push(finalizeSchedulerSyncPlan(set.common, set.preparedSources));
       survivingSets.push(set);
     } catch (cause) {
+      if (bundleTarget) throw cause;
       bundleFailures.push({ path: set.common.bundleName, reason: errorMessage(cause) });
     }
   }
@@ -829,16 +843,19 @@ async function buildSchedulerSyncPlan(
     }));
   const first = plans[0];
   if (!first) {
-    // Every selected bundle failed (or none was configured) — there is no
-    // surviving bundle to source a `sourceSnapshot` from, so unlike a
-    // single failed bundle (reported in `failures`, everything else still
-    // syncs) this is a genuine whole-operation precondition.
-    throw new ConfigError(
-      bundleFailures.length > 0
-        ? `No selected bundle produced a scheduler sync plan: ${bundleFailures.map((failure) => `${failure.path}: ${failure.reason}`).join("; ")}`
-        : "No configured bundle is available for scheduler sync.",
-      "INVALID_CONFIG_FILE",
-    );
+    // Every selected bundle failed. A scoped sync never reaches this point
+    // (its one bundle's failure is rethrown above instead of caught), so
+    // this is always the unscoped, every-bundle-failed case: there is no
+    // surviving bundle to source a `sourceSnapshot` from, but each failure
+    // is still individually attributable, so report them on an
+    // otherwise-empty plan rather than aborting the whole operation.
+    return {
+      sched,
+      plan: emptySchedulerSyncPlan(inactiveOperations, carriedForward, [...inactiveFailures, ...bundleFailures]),
+      sourceSnapshots: Object.freeze([]),
+      prepared,
+      warnings,
+    };
   }
   const plan: SchedulerSyncPlan = Object.freeze({
     desired: Object.freeze(plans.flatMap((candidate) => candidate.desired)),
@@ -855,6 +872,7 @@ async function buildSchedulerSyncPlan(
       ...plans.flatMap((candidate) => candidate.failures),
       ...missingActivationFailures,
       ...bundleFailures,
+      ...inactiveFailures,
     ]),
     ...(carriedForward.length > 0 ? { carriedForward: Object.freeze([...carriedForward]) } : {}),
   });
@@ -867,20 +885,35 @@ function inactiveBundleRemovalOperations(
   configuredSources: ReturnType<typeof resolveConfiguredSources>,
   installed: readonly InstalledSchedulerBinding[],
   artifacts: Parameters<typeof buildSchedulerRemoveOperation>[2],
-): Extract<SchedulerSyncOperation, { kind: "remove" }>[] {
+): {
+  operations: Extract<SchedulerSyncOperation, { kind: "remove" }>[];
+  failures: SchedulerSourceFailure[];
+} {
   const inactive = new Set(configuredSources.filter((source) => source.enabled === false).map((source) => source.name));
-  if (inactive.size === 0) return [];
-  return installed
+  if (inactive.size === 0) return { operations: [], failures: [] };
+  const candidates = installed
     .map((entry) => ({ entry, bundleName: installedSchedulerBundle(config, entry) }))
     .filter(
       (candidate): candidate is { entry: InstalledSchedulerBinding; bundleName: string } =>
         candidate.bundleName !== undefined && inactive.has(candidate.bundleName),
     )
-    .sort((left, right) => left.entry.id.localeCompare(right.entry.id))
-    .map(({ entry, bundleName }) => {
-      const adapterId = bundleComponentConfig(config.bundles?.[bundleName])?.adapter ?? "akm";
-      return buildSchedulerRemoveOperation(entry.id, entry, artifacts, { adapterId, bundleName });
-    });
+    .sort((left, right) => left.entry.id.localeCompare(right.entry.id));
+  const operations: Extract<SchedulerSyncOperation, { kind: "remove" }>[] = [];
+  const failures: SchedulerSourceFailure[] = [];
+  for (const { entry, bundleName } of candidates) {
+    const adapterId = bundleComponentConfig(config.bundles?.[bundleName])?.adapter ?? "akm";
+    const input = { adapterId, bundleName };
+    try {
+      operations.push(buildSchedulerRemoveOperation(entry.id, entry, artifacts, input));
+    } catch (cause) {
+      // One installed row of a disabled bundle this process can't safely
+      // attribute a removal for (no exact fingerprint, unresolvable
+      // invocation) must not cost every OTHER inactive-bundle row its own,
+      // otherwise-clean removal.
+      failures.push(installedRowFailure(entry.id, entry, input, cause));
+    }
+  }
+  return { operations, failures };
 }
 
 function installedSchedulerBundle(config: AkmConfig, entry: InstalledSchedulerBinding): string | undefined {
@@ -893,6 +926,7 @@ function installedSchedulerBundle(config: AkmConfig, entry: InstalledSchedulerBi
 function emptySchedulerSyncPlan(
   operations: readonly Extract<SchedulerSyncOperation, { kind: "remove" }>[],
   carriedForward: readonly string[] = [],
+  failures: readonly SchedulerSourceFailure[] = [],
 ): SchedulerSyncPlan {
   const sourceSnapshot: SchedulerSyncPlan["sourceSnapshot"] = Object.freeze({
     adapterId: "akm",
@@ -911,7 +945,7 @@ function emptySchedulerSyncPlan(
     unchanged: Object.freeze([]),
     operations: Object.freeze([...operations]),
     sourceSnapshot,
-    failures: Object.freeze([]),
+    failures: Object.freeze([...failures]),
     ...(carriedForward.length > 0 ? { carriedForward: Object.freeze([...carriedForward]) } : {}),
   });
 }
