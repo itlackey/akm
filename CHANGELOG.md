@@ -333,6 +333,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it — with explicit `Gap:` notes where the code does not meet the contract
   yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
   persisted data" section now points at this doc instead of a deleted file.
+- **Every `state.db` open no longer leaks a lock-mutex sidecar file.**
+  `acquireMaintenanceActivitySync` (`src/core/maintenance-barrier.ts`) gave
+  every activity lock its own uniquely-named path
+  (`maintenance-activities/<name>-<pid>-<uuid>.lock`), and `file-lock.ts`'s
+  operation mutex always derived its sidecar from that path
+  (`.<lock-basename>.operations.sensitive`) — a mutex meant to serialize
+  repeated use of one canonical path, not to be created fresh per
+  acquisition. Since nothing ever revisits a path unique to one acquisition,
+  nothing ever removed its sidecar either. Activity locks now share one
+  mutex path per data dir (`maintenance-activities/.activities.operations.sensitive`);
+  `tryAcquireLockSync`/`releaseLock`/`reclaimStaleLock` (`src/core/file-lock.ts`)
+  gained an optional `mutexPath` override for this, with every other caller
+  (config-io, run-lock, version-reconcile, improve, env secret, index
+  writer/rebuild locks) unaffected and still deriving the canonical path.
+  `akm index`'s finalize phase now also runs a bounded, best-effort
+  `sweepMaintenanceActivityOrphans()` (new export in `maintenance-barrier.ts`)
+  that removes leftover pre-fix sidecars whose lock file is gone and activity
+  lock files whose owner pid has died, capped at 2,000 files per run so a
+  large backlog drains over a few `akm index` runs without stalling one.
 
 ## [0.9.17-alpha.3] - 2026-09-24
 
