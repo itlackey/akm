@@ -113,6 +113,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
+  config.json (legacy source shape, `extraParams`, retired keys, scheduler
+  `sourceId` binding), pending `state.db` migrations (historical-destructive
+  ones included, with the same verified safety copy), the scheduler-grant
+  carry-forward, and `$DATA/txn` stale-transaction recovery — never bundle
+  content (task v2/v3/v4 rewrites, dead `.akm` residue, writer relocation).
+  Skipped sections are absent from the plan, not empty, and the plan's
+  `mode` field reads `"host-local"`. `scripts/akm-migrate/help.txt` documents
+  the two modes.
 - **Scheduler-grant carry-forward is now a reusable `src/` module.**
   `pendingGrantsFromInstalled`/`carryForwardSchedulerGrants`
   (`src/tasks/scheduler-grant-carry-forward.ts`) hold the logic that used to
