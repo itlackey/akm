@@ -630,12 +630,14 @@ function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?
 type AkmTaskSyncOutcome = { ok: true; message: string } | { ok: false; message: string; error: string };
 
 /**
- * The CLI contract renders a failure as `{ok:false, error, code}` on the
- * LAST line of stderr; a warning `akm task sync` printed ahead of it (e.g. a
- * carried-forward grant) must not be mistaken for the failure detail. Scans
- * stderr from the end for the last line that parses as that JSON shape and
- * returns its `error`; falls back to the last non-empty stderr line when
- * nothing parses.
+ * The CLI contract renders a failure as a `{ok:false, error, code}` envelope
+ * at the END of stderr — pretty-printed over several lines by
+ * `emitJsonError` (`src/cli/shared.ts`), or on one line from other writers.
+ * A warning `akm task sync` printed ahead of it (e.g. a carried-forward
+ * grant) must not be mistaken for the failure detail. Walks the lines from
+ * the end and, at each line that opens an object, parses the remainder of
+ * stderr as one JSON document; returns the first `error` string found. Falls
+ * back to the last non-empty stderr line when nothing parses.
  */
 function lastAkmTaskSyncError(stderr: string): string | undefined {
   const lines = stderr
@@ -643,11 +645,12 @@ function lastAkmTaskSyncError(stderr: string): string | undefined {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]!.startsWith("{")) continue;
     try {
-      const parsed = JSON.parse(lines[i]!) as { error?: unknown };
+      const parsed = JSON.parse(lines.slice(i).join("\n")) as { error?: unknown };
       if (typeof parsed.error === "string" && parsed.error.length > 0) return parsed.error;
     } catch {
-      // Not a JSON line; keep scanning backward for an earlier one.
+      // Not the start of the envelope; keep scanning backward for it.
     }
   }
   return lines.at(-1);

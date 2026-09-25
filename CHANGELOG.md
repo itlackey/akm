@@ -26,7 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is reported under `postUpgrade.taskSync`, never thrown, and is now also
   folded into `postUpgrade.message` so a text-output caller sees it without
   reading the structured field, using the child's own `{ok:false, error,
-  code}` JSON line rather than the first line of its stderr — a warning
+  code}` error envelope (the trailing JSON object on its stderr, usually
+  pretty-printed) rather than the first line of its stderr — a warning
   `akm task sync` printed ahead of it (e.g. a carried-forward grant) could
   otherwise read as the failure detail. `--skip-post-upgrade` skips both the
   index rebuild and the task sync. `akm upgrade --check`'s plain-text output now
