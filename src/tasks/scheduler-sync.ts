@@ -217,10 +217,30 @@ export function finalizeSchedulerSyncPlan(
     installed: inspection.installed,
     nativeArtifacts: inspection.artifacts,
   };
-  const desired = prepared.desired;
-  assertUniqueDesiredIds(desired);
-  assertSchedulerBackendInspection(inspection, desired, input.inspection !== undefined);
-  assertNoForeignIds(desired, coherentInput);
+  // Whole-operation preconditions (C3 (ii)): a duplicate id WITHIN the
+  // authored desired set, or an incoherent/ambiguous backend read, can't be
+  // safely attributed to one binding — which of two colliding sources is
+  // "the anomaly" is exactly what's unproven, so reconciling everything
+  // else around a guess would risk silently overwriting or orphaning a
+  // native scheduler entry. These still hard-fail the whole sync.
+  assertUniqueDesiredIds(prepared.desired);
+  assertSchedulerBackendInspection(inspection, prepared.desired, input.inspection !== undefined);
+
+  // C3 (i): a desired binding whose id collides with a DIFFERENT bundle's
+  // real installed entry is a per-item anomaly — unlike the assertions
+  // above, exactly one side of the collision is ours, so that one binding
+  // is excluded (never installed/updated) and reported in `failures`
+  // instead of aborting every other binding in this same bundle's sync.
+  const reconcileFailures: SchedulerSourceFailure[] = [];
+  const foreignCollisions = foreignIdCollisions(prepared.desired, coherentInput);
+  const desired =
+    foreignCollisions.size === 0
+      ? prepared.desired
+      : prepared.desired.filter((binding) => !foreignCollisions.has(binding.id));
+  for (const [id, foreign] of foreignCollisions) {
+    const binding = prepared.desired.find((candidate) => candidate.id === id);
+    if (binding) reconcileFailures.push(foreignIdFailure(binding, foreign, coherentInput));
+  }
 
   const scopedInstalled = coherentInput.installed.filter((entry) => belongsToBundle(entry, coherentInput));
   const present = new Map(scopedInstalled.map((entry) => [entry.id, entry] as const));
@@ -253,10 +273,17 @@ export function finalizeSchedulerSyncPlan(
     const artifact = exactInstalledArtifact(binding.id, current, inspection.artifacts);
     const priorFingerprint = artifact?.fingerprint ?? current.signature;
     if (artifact === undefined || priorFingerprint === undefined) {
-      throw new UsageError(
-        `Installed scheduler binding ${JSON.stringify(binding.id)} has no exact native fingerprint; refusing update.`,
-        "RESOURCE_ALREADY_EXISTS",
+      // C3 (i): can't prove what's currently installed, so this ONE
+      // binding is left exactly as installed (no update applied) and
+      // reported — every other binding still reconciles normally.
+      reconcileFailures.push(
+        Object.freeze({
+          path: binding.source,
+          ref: binding.logicalSource.ref,
+          reason: `Installed scheduler binding ${JSON.stringify(binding.id)} has no exact native fingerprint; leaving it unchanged rather than applying an unverifiable update.`,
+        }),
       );
+      continue;
     }
     updated.push(binding.id);
     operations.push(
@@ -271,13 +298,26 @@ export function finalizeSchedulerSyncPlan(
   }
 
   const desiredIds = new Set(desired.map(({ id }) => id));
-  const removed = scopedInstalled
+  const removalCandidates = scopedInstalled
     .map(({ id }) => id)
     .filter((id) => !desiredIds.has(id))
     .sort(compareCodePoints);
-  for (const id of removed) {
+  const removed: string[] = [];
+  for (const id of removalCandidates) {
     const current = present.get(id);
-    operations.push(buildSchedulerRemoveOperation(id, current, inspection.artifacts, coherentInput));
+    // C3 (i): `buildSchedulerRemoveOperation` keeps throwing on its own
+    // — `akm task prune` (#851) still depends on that contract for entries
+    // it has independently confirmed are safe to remove — but sync's own
+    // removal loop is per-item here: one installed row this process can't
+    // safely attribute (no exact fingerprint, no resolvable ordinal, no
+    // recognizable invocation shape) is left installed and reported,
+    // rather than refusing to remove every OTHER orphaned entry too.
+    try {
+      operations.push(buildSchedulerRemoveOperation(id, current, inspection.artifacts, coherentInput));
+      removed.push(id);
+    } catch (cause) {
+      reconcileFailures.push(installedRowFailure(id, current, coherentInput, cause));
+    }
   }
 
   return Object.freeze({
@@ -288,7 +328,7 @@ export function finalizeSchedulerSyncPlan(
     unchanged: Object.freeze(unchanged),
     operations: Object.freeze(operations),
     sourceSnapshot: prepared.sourceSnapshot,
-    failures: prepared.failures,
+    failures: Object.freeze([...prepared.failures, ...reconcileFailures]),
   });
 }
 
@@ -891,20 +931,42 @@ function belongsToBundle(entry: InstalledSchedulerBinding, input: SchedulerSyncP
   return false;
 }
 
-function assertNoForeignIds(desired: readonly SchedulerBinding[], input: SchedulerSyncPlanInput): void {
-  const wanted = new Set(desired.map(({ id }) => id));
-  const foreign = input.installed.find((entry) => wanted.has(entry.id) && !belongsToBundle(entry, input));
-  if (!foreign) return;
+/**
+ * Every desired binding whose id collides with a DIFFERENT bundle's real
+ * installed entry (C3 (i)): a map from that binding's id to the foreign
+ * installed row it collides with, one entry per colliding id. Replaces the
+ * single-collision `assertNoForeignIds` throw — `finalizeSchedulerSyncPlan`
+ * excludes each colliding binding and reports it instead of refusing the
+ * whole bundle's sync over one name clash.
+ */
+function foreignIdCollisions(
+  desired: readonly SchedulerBinding[],
+  input: SchedulerSyncPlanInput,
+): ReadonlyMap<string, InstalledSchedulerBinding> {
+  const collisions = new Map<string, InstalledSchedulerBinding>();
+  for (const binding of desired) {
+    const foreign = input.installed.find((entry) => entry.id === binding.id && !belongsToBundle(entry, input));
+    if (foreign) collisions.set(binding.id, foreign);
+  }
+  return collisions;
+}
+
+function foreignIdFailure(
+  binding: SchedulerBinding,
+  foreign: InstalledSchedulerBinding,
+  input: SchedulerSyncPlanInput,
+): SchedulerSourceFailure {
   const where = foreign.ownerBundlePath
     ? `the bundle at ${JSON.stringify(foreign.ownerBundlePath)}`
     : foreign.target
       ? `bundle ${JSON.stringify(foreign.target)}`
       : "the default bundle";
   const mine = input.bundlePath ? ` (this sync is scoped to ${JSON.stringify(input.bundlePath)})` : "";
-  throw new UsageError(
-    `Scheduler id ${JSON.stringify(foreign.id)} is already scheduled from ${where}${mine}; desired source ids must not collide across bundles.`,
-    "RESOURCE_ALREADY_EXISTS",
-  );
+  return Object.freeze({
+    path: binding.source,
+    ref: binding.logicalSource.ref,
+    reason: `Scheduler id ${JSON.stringify(binding.id)} is already scheduled from ${where}${mine}; desired source ids must not collide across bundles. Leaving it out of this sync.`,
+  });
 }
 
 function assertUniqueDesiredIds(desired: readonly SchedulerBinding[]): void {
@@ -953,6 +1015,30 @@ function taskFailure(file: string, ref: string, cause: unknown): SchedulerSource
 
 function workflowFailure(file: string, ref: string | undefined, cause: unknown): SchedulerSourceFailure {
   return Object.freeze({ path: file, ...(ref ? { ref } : {}), reason: errorMessage(cause) });
+}
+
+/**
+ * C3 (i): `buildSchedulerRemoveOperation` threw for one installed row —
+ * there is no source file for an installed-only row, so `path` falls back
+ * to the scheduler binding id itself; `ref` is filled in only when
+ * {@link installedLogicalSource} can still recognize the invocation shape
+ * (best-effort — the same throw this wraps often means it can't).
+ */
+function installedRowFailure(
+  id: string,
+  current: InstalledSchedulerBinding | undefined,
+  input: Pick<SchedulerSyncPlanInput, "adapterId" | "bundleName">,
+  cause: unknown,
+): SchedulerSourceFailure {
+  let ref: string | undefined;
+  if (current?.invocation) {
+    try {
+      ref = installedLogicalSource(current.invocation, input).ref;
+    } catch {
+      ref = undefined;
+    }
+  }
+  return Object.freeze({ path: id, ...(ref ? { ref } : {}), reason: errorMessage(cause) });
 }
 
 function errorMessage(cause: unknown): string {

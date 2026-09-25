@@ -283,29 +283,39 @@ describe("task lifecycle failure handling", () => {
     expect(installCalls).toEqual([]);
   });
 
-  test("sync rejects an invalid filesystem-derived id without mutating its installed definition", async () => {
+  test("sync reports (but never mutates for) an invalid filesystem-derived id whose installed native entry has no provable owner", async () => {
     writeTask("manual task", taskYaml("echo unsafe", "@daily"));
     installed.set("manual task", undefined);
 
-    // #867: the invalid-id source itself now degrades (reported, excluded
-    // from `desired`) instead of poisoning the whole sync — but that makes
-    // its still-installed, malformed (no proven invocation) native entry
-    // look orphaned, and removing an unproven-owner entry is a separate,
-    // still-hard, safety refusal (`finalizeSchedulerSyncPlan`'s removal
-    // ownership check, unchanged by #867). Either way, nothing mutates.
-    await expect(akmTasksSync({ backend })).rejects.toThrow(/native scheduler artifact|unproven owner/i);
+    // #867: the invalid-id source itself degrades (reported, excluded from
+    // `desired`) instead of poisoning the whole sync — which makes its
+    // still-installed, malformed (no proven invocation) native entry look
+    // orphaned. C3: removing an entry with no provable owner is itself a
+    // per-item removal anomaly (`finalizeSchedulerSyncPlan`'s removal loop),
+    // reported in `failures` rather than thrown — nothing mutates either way.
+    const result = await akmTasksSync({ backend });
+    expect(result.failures.some((failure) => /native scheduler artifact|unproven owner/i.test(failure.reason))).toBe(
+      true,
+    );
     expect(enabledCalls).toEqual([]);
     expect(installCalls).toEqual([]);
+    expect(uninstallCalls).toEqual([]);
   });
 
-  test("sync rejects an unsupported schedule without mutating its installed definition", async () => {
+  test("sync reports (but never mutates for) an unsupported schedule whose installed native entry has no provable owner", async () => {
     backendName = "schtasks";
     writeTask("monthly", taskYaml("echo monthly", "0 0 1 * *"));
     installed.set("monthly", undefined);
 
-    await expect(akmTasksSync({ backend })).rejects.toThrow(/unsupported|schedule/i);
+    const result = await akmTasksSync({ backend });
+    expect(
+      result.failures.some((failure) =>
+        /unsupported|schedule|native scheduler artifact|unproven owner/i.test(failure.reason),
+      ),
+    ).toBe(true);
     expect(enabledCalls).toEqual([]);
     expect(installCalls).toEqual([]);
+    expect(uninstallCalls).toEqual([]);
   });
 
   // #867: degrades — `b-invalid` is reported and excluded from the desired

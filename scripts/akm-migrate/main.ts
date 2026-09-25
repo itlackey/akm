@@ -17,6 +17,11 @@ import { type CombinedMigrationPlan, runMigration } from "./run-migrate";
 
 function printPlan(plan: CombinedMigrationPlan): void {
   console.log(JSON.stringify(plan));
+  // C3: `runMigration` no longer throws for one step's own anomaly — it
+  // records the step in `plan.failedSteps` and folds `status` to "blocked"
+  // instead, so a poisoned step already lands here as an ordinary blocked
+  // plan (GENERAL/1) rather than an uncaught throw reaching
+  // `runWithJsonErrors` and exiting INTERNAL(70) with no plan printed.
   if (plan.status === "blocked") process.exitCode = EXIT_CODES.GENERAL;
 }
 

@@ -67,6 +67,17 @@ import {
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
+/**
+ * One migration step whose own action (or, for `apply`, its read-only
+ * fallback too) threw (C3). Recorded instead of letting `runMigration`
+ * itself throw, so one poisoned step never costs the operator every other
+ * step's result.
+ */
+export interface FailedMigrationStep {
+  readonly step: string;
+  readonly error: string;
+}
+
 export interface CombinedMigrationPlan {
   schemaVersion: 1;
   /**
@@ -78,11 +89,25 @@ export interface CombinedMigrationPlan {
   mode?: "host-local";
   status: MigrationStatus;
   blockers: string[];
-  configLegacySourceShape: ConfigLegacySourceShapeResult | { pending: ConfigLegacySourceShapePlan };
-  configExtraParams: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
+  /**
+   * Steps whose own action (and, for `apply`, its read-only fallback too)
+   * threw (C3) — absent when every step ran cleanly. Any entry here also
+   * forces `status: "blocked"` and adds a matching line to `blockers`, so
+   * `akm migrate status|apply` never exits INTERNAL(70) for a step's own
+   * anomaly; it reports the plan with the step named and exits GENERAL(1)
+   * like any other blocked plan. The section for a failed step is absent
+   * from this plan rather than fabricated.
+   */
+  failedSteps?: readonly FailedMigrationStep[];
+  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
+  configLegacySourceShape?: ConfigLegacySourceShapeResult | { pending: ConfigLegacySourceShapePlan };
+  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
+  configExtraParams?: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
   configSchedulerSourceIds?: ConfigSchedulerSourceIdResult | { pending: ConfigSchedulerSourceIdPlan };
-  configRetiredKeys: ConfigRetiredKeysResult | { pending: ConfigRetiredKeysPlan };
-  stateMigrations: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
+  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
+  configRetiredKeys?: ConfigRetiredKeysResult | { pending: ConfigRetiredKeysPlan };
+  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
+  stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
   taskV4Migration?: TaskV4MigrationStatus["taskV4Migration"];
@@ -100,10 +125,85 @@ export interface CombinedMigrationPlan {
   writerRelocation?: { pending: Record<string, WriterRelocationPlan> } | { relocated: Record<string, WriterRelocationApplyResult> };
 }
 
+/** Shared by both `staleTxns` call sites so `migrationStepAsync`'s two branches infer one common type. */
+type StaleTxnsStepResult =
+  | { pending: StaleTxnEntry[] }
+  | { recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] };
+
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
   if (left === "blocked" || right === "blocked") return "blocked";
   if (left === "ready" || right === "ready") return "ready";
   return "current";
+}
+
+function migrationStepError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** One line per failed step, for folding into `blockers`. */
+function failedStepBlockers(failedSteps: readonly FailedMigrationStep[]): string[] {
+  return failedSteps.map((entry) => `migration step ${JSON.stringify(entry.step)} failed: ${entry.error}`);
+}
+
+/** `worstStatus`, but any recorded step failure always forces `"blocked"` too. */
+function statusWithFailedSteps(status: MigrationStatus, failedSteps: readonly FailedMigrationStep[]): MigrationStatus {
+  return failedSteps.length > 0 ? worstStatus(status, "blocked") : status;
+}
+
+/**
+ * Run one migration step under its own catch (C3): a step's own throw is
+ * recorded in `failedSteps` instead of ending `runMigration` for every
+ * OTHER step too. `apply` mode's mutation falling back to `probe` (the same
+ * read-only inspector `status`/`--dry-run` already uses for this step) means
+ * a step that fails to WRITE can usually still report what it would have
+ * done; if even that throws, the section is simply absent and `failedSteps`
+ * is the only record of it. A later step that genuinely needs an earlier
+ * one that failed (e.g. reading config the lift above couldn't finish
+ * rewriting) throws too, on its own turn, and is caught here exactly the
+ * same way — no separate dependency bookkeeping needed.
+ */
+// Exported (only) so tests/migrate/run-migrate-poisoned-step.test.ts can pin
+// the isolation guarantee directly, against synthetic steps, instead of only
+// through `runMigration`'s own real steps.
+export function migrationStep<T>(
+  failedSteps: FailedMigrationStep[],
+  step: string,
+  action: () => T,
+  probe?: () => T,
+): T | undefined {
+  try {
+    return action();
+  } catch (cause) {
+    failedSteps.push({ step, error: migrationStepError(cause) });
+    if (!probe) return undefined;
+    try {
+      return probe();
+    } catch (probeCause) {
+      failedSteps.push({ step: `${step} (read-only fallback)`, error: migrationStepError(probeCause) });
+      return undefined;
+    }
+  }
+}
+
+/** {@link migrationStep}, for an async step. */
+export async function migrationStepAsync<T>(
+  failedSteps: FailedMigrationStep[],
+  step: string,
+  action: () => Promise<T>,
+  probe?: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await action();
+  } catch (cause) {
+    failedSteps.push({ step, error: migrationStepError(cause) });
+    if (!probe) return undefined;
+    try {
+      return await probe();
+    } catch (probeCause) {
+      failedSteps.push({ step: `${step} (read-only fallback)`, error: migrationStepError(probeCause) });
+      return undefined;
+    }
+  }
 }
 
 /** No configured bundle is an empty domain, not an error: migrate works before `akm bundle create`. */
@@ -146,6 +246,39 @@ function writerRelocationTargets(defaultStashDir: string | undefined): { id: str
 }
 
 /**
+ * `apply`'s writer-relocation pass, one filesystem bundle target at a time
+ * (C3): one bundle's relocation throwing must not cost every OTHER bundle
+ * its relocation too, so each target runs under its own
+ * {@link migrationStep} rather than one `.map()` that aborts on the first
+ * throw. A failed target is simply absent from the returned record;
+ * `failedSteps` (keyed `writerRelocation:<id>`) is its only report.
+ */
+function relocateWriters(
+  failedSteps: FailedMigrationStep[],
+  targets: readonly { id: string; dir: string }[],
+): Record<string, WriterRelocationApplyResult> {
+  const relocated: Record<string, WriterRelocationApplyResult> = {};
+  for (const { id, dir } of targets) {
+    const result = migrationStep(failedSteps, `writerRelocation:${id}`, () => applyWriterRelocation(dir));
+    if (result !== undefined) relocated[id] = result;
+  }
+  return relocated;
+}
+
+/** {@link relocateWriters}, for the read-only preview. */
+function findWriterRelocations(
+  failedSteps: FailedMigrationStep[],
+  targets: readonly { id: string; dir: string }[],
+): Record<string, WriterRelocationPlan> {
+  const pending: Record<string, WriterRelocationPlan> = {};
+  for (const { id, dir } of targets) {
+    const result = migrationStep(failedSteps, `writerRelocation:${id}`, () => findWriterRelocationEntries(dir));
+    if (result !== undefined) pending[id] = result;
+  }
+  return pending;
+}
+
+/**
  * Run every migration step and return the combined plan. `apply: false` is
  * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
  * under its own lock and backup.
@@ -154,6 +287,7 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
   const { apply, hostLocal = false } = options;
   const mode: Pick<CombinedMigrationPlan, "mode"> = hostLocal ? { mode: "host-local" } : {};
   const configPath = getConfigPath();
+  const failedSteps: FailedMigrationStep[] = [];
 
   // The legacy stashDir/sources[]/installed conversion runs first, before
   // anything that loads config, mirroring where `migrateLegacySourceShape`
@@ -161,10 +295,13 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
   // `runConfigFilePipeline`) — ahead of the extraParams lift and the
   // retired-keys strip. It never blocks: the read shim already tolerates
   // this shape in memory, so this is cleanup, not a precondition.
-  const configLegacySourceShape = apply
-    ? applyConfigLegacySourceShape(configPath)
-    : { pending: findConfigLegacySourceShape(configPath) };
-  if (apply && (configLegacySourceShape as ConfigLegacySourceShapeResult).applied) resetConfigCache();
+  const configLegacySourceShape = migrationStep(
+    failedSteps,
+    "configLegacySourceShape",
+    () => (apply ? applyConfigLegacySourceShape(configPath) : { pending: findConfigLegacySourceShape(configPath) }),
+    apply ? () => ({ pending: findConfigLegacySourceShape(configPath) }) : undefined,
+  );
+  if (apply && (configLegacySourceShape as ConfigLegacySourceShapeResult | undefined)?.applied) resetConfigCache();
 
   // The config lift runs BEFORE anything that loads config. A config still
   // carrying legacy extraParams keys fails `loadConfig` closed, and that
@@ -172,11 +309,16 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
   // config, so applying the lift first is what makes the advice true.
   // Read-only modes cannot rewrite the file, so a pending lift is reported
   // as the blocker instead of letting the operator hit the same error again.
-  const configExtraParams = apply
-    ? applyConfigExtraParamsLift(configPath)
-    : { pending: findConfigExtraParamsLift(configPath) };
-  if (apply && (configExtraParams as ConfigExtraParamsLiftResult).applied) resetConfigCache();
-  const pendingLift = apply ? undefined : (configExtraParams as { pending: ConfigExtraParamsLiftPlan }).pending;
+  const configExtraParams = migrationStep(
+    failedSteps,
+    "configExtraParams",
+    () => (apply ? applyConfigExtraParamsLift(configPath) : { pending: findConfigExtraParamsLift(configPath) }),
+    apply ? () => ({ pending: findConfigExtraParamsLift(configPath) }) : undefined,
+  );
+  if (apply && (configExtraParams as ConfigExtraParamsLiftResult | undefined)?.applied) resetConfigCache();
+  const pendingLift = apply
+    ? undefined
+    : (configExtraParams as { pending: ConfigExtraParamsLiftPlan } | undefined)?.pending;
 
   // Retired config keys never block anything — the read shim already
   // tolerates them (src/core/config/retired-config-keys-shim.ts), so this
@@ -184,44 +326,66 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
   // here (it reads and writes only the raw file under its own lock and
   // never calls loadConfig) so both early "blocked" returns below and the
   // full plan can share the same value.
-  const configRetiredKeys = apply ? applyConfigRetiredKeys(configPath) : { pending: findConfigRetiredKeys(configPath) };
-  if (apply && (configRetiredKeys as ConfigRetiredKeysResult).applied) resetConfigCache();
+  const configRetiredKeys = migrationStep(
+    failedSteps,
+    "configRetiredKeys",
+    () => (apply ? applyConfigRetiredKeys(configPath) : { pending: findConfigRetiredKeys(configPath) }),
+    apply ? () => ({ pending: findConfigRetiredKeys(configPath) }) : undefined,
+  );
+  if (apply && (configRetiredKeys as ConfigRetiredKeysResult | undefined)?.applied) resetConfigCache();
 
   if (pendingLift && pendingLift.lifted.length > 0) {
+    const stateMigrations = migrationStep(failedSteps, "stateMigrations", () => ({
+      pending: listPendingStateMigrations(),
+    }));
     return {
       schemaVersion: 1,
       ...mode,
-      status: "blocked",
-      blockers: pendingLift.lifted,
+      status: statusWithFailedSteps("blocked", failedSteps),
+      blockers: [...pendingLift.lifted, ...failedStepBlockers(failedSteps)],
+      ...(failedSteps.length > 0 ? { failedSteps } : {}),
       configLegacySourceShape,
       configExtraParams,
       configRetiredKeys,
-      stateMigrations: { pending: listPendingStateMigrations() },
+      ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     };
   }
 
-  const configSchedulerSourceIds = apply
-    ? applyConfigSchedulerSourceIdMigration(configPath)
-    : { pending: findConfigSchedulerSourceIdMigration(configPath) };
-  if (apply && (configSchedulerSourceIds as ConfigSchedulerSourceIdResult).applied) resetConfigCache();
+  const configSchedulerSourceIds = migrationStep(
+    failedSteps,
+    "configSchedulerSourceIds",
+    () =>
+      apply
+        ? applyConfigSchedulerSourceIdMigration(configPath)
+        : { pending: findConfigSchedulerSourceIdMigration(configPath) },
+    apply ? () => ({ pending: findConfigSchedulerSourceIdMigration(configPath) }) : undefined,
+  );
+  if (apply && (configSchedulerSourceIds as ConfigSchedulerSourceIdResult | undefined)?.applied) resetConfigCache();
   const pendingSchedulerBindings = apply
     ? undefined
-    : (configSchedulerSourceIds as { pending: ConfigSchedulerSourceIdPlan }).pending;
+    : (configSchedulerSourceIds as { pending: ConfigSchedulerSourceIdPlan } | undefined)?.pending;
   if (pendingSchedulerBindings && pendingSchedulerBindings.changes.length > 0) {
+    const stateMigrations = migrationStep(failedSteps, "stateMigrations", () => ({
+      pending: listPendingStateMigrations(),
+    }));
     return {
       schemaVersion: 1,
       ...mode,
-      status: "blocked",
-      blockers: pendingSchedulerBindings.changes.map(
-        (change) =>
-          `${change.kind === "bind" ? "bind" : "drop"} scheduler activation ${change.ref}` +
-          (change.reason ? `: ${change.reason}` : ""),
-      ),
+      status: statusWithFailedSteps("blocked", failedSteps),
+      blockers: [
+        ...pendingSchedulerBindings.changes.map(
+          (change) =>
+            `${change.kind === "bind" ? "bind" : "drop"} scheduler activation ${change.ref}` +
+            (change.reason ? `: ${change.reason}` : ""),
+        ),
+        ...failedStepBlockers(failedSteps),
+      ],
+      ...(failedSteps.length > 0 ? { failedSteps } : {}),
       configLegacySourceShape,
       configExtraParams,
       configSchedulerSourceIds,
       configRetiredKeys,
-      stateMigrations: { pending: listPendingStateMigrations() },
+      ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     };
   }
 
@@ -229,13 +393,21 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
   // and an ordinary open refuses a historical-destructive migration by design.
   // This and `akm upgrade` (which runs this) are the only routes that admit
   // one, always with the verified safety copy.
-  const stateMigrations = apply ? applyStateMigrations() : { pending: listPendingStateMigrations() };
+  const stateMigrations = migrationStep(
+    failedSteps,
+    "stateMigrations",
+    () => (apply ? applyStateMigrations() : { pending: listPendingStateMigrations() }),
+    apply ? () => ({ pending: listPendingStateMigrations() }) : undefined,
+  );
 
   // Capture activation from the host's proven native scheduler state before
   // task source migration removes the retired bundle-authored enabled flags.
-  const schedulerActivation = apply
-    ? await applySchedulerActivationMigration()
-    : await inspectSchedulerActivationMigration();
+  const schedulerActivation = await migrationStepAsync<SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult>(
+    failedSteps,
+    "schedulerActivation",
+    () => (apply ? applySchedulerActivationMigration() : inspectSchedulerActivationMigration()),
+    apply ? () => inspectSchedulerActivationMigration() : undefined,
+  );
 
   if (hostLocal) {
     // Host-local reconciliation touches config.json, state.db, scheduler
@@ -247,89 +419,130 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     const stashDir = stashDirIfConfigured();
     const staleTxns =
       stashDir !== undefined
-        ? apply
-          ? await recoverStaleTxns(stashDir)
-          : { pending: findStaleTxnEntries(stashDir) }
+        ? await migrationStepAsync<StaleTxnsStepResult>(
+            failedSteps,
+            "staleTxns",
+            () => (apply ? recoverStaleTxns(stashDir) : Promise.resolve({ pending: findStaleTxnEntries(stashDir) })),
+            apply ? () => Promise.resolve({ pending: findStaleTxnEntries(stashDir) }) : undefined,
+          )
         : undefined;
 
     const stateStatus: MigrationStatus =
-      "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
+      stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
     const schedulerStatus: MigrationStatus =
-      "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
+      schedulerActivation && "pending" in schedulerActivation && schedulerActivation.pending.length > 0
+        ? "ready"
+        : "current";
     const retiredKeysStatus: MigrationStatus =
-      "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0 ? "ready" : "current";
+      configRetiredKeys && "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0
+        ? "ready"
+        : "current";
     const legacySourceShapeStatus: MigrationStatus =
-      "pending" in configLegacySourceShape && configLegacySourceShape.pending.converted.length > 0
+      configLegacySourceShape &&
+      "pending" in configLegacySourceShape &&
+      configLegacySourceShape.pending.converted.length > 0
         ? "ready"
         : "current";
     return {
       schemaVersion: 1,
       mode: "host-local",
-      status: worstStatus(
-        worstStatus(stateStatus, schedulerStatus),
-        worstStatus(retiredKeysStatus, legacySourceShapeStatus),
+      status: statusWithFailedSteps(
+        worstStatus(worstStatus(stateStatus, schedulerStatus), worstStatus(retiredKeysStatus, legacySourceShapeStatus)),
+        failedSteps,
       ),
-      blockers: [],
+      blockers: [...failedStepBlockers(failedSteps)],
+      ...(failedSteps.length > 0 ? { failedSteps } : {}),
       configLegacySourceShape,
       configExtraParams,
       configSchedulerSourceIds,
       configRetiredKeys,
-      stateMigrations,
-      schedulerActivation,
+      ...(stateMigrations !== undefined ? { stateMigrations } : {}),
+      ...(schedulerActivation !== undefined ? { schedulerActivation } : {}),
       ...(staleTxns !== undefined ? { staleTxns } : {}),
     };
   }
 
   const stashDir = stashDirIfConfigured();
-  const taskV3 = apply ? applyTaskV3Migration() : inspectMigrationPlan();
-  const taskV4 = apply ? applyTaskV4Migration() : inspectTaskV4MigrationStatus();
+  const taskV3 = migrationStep(
+    failedSteps,
+    "taskV3Migration",
+    () => (apply ? applyTaskV3Migration() : inspectMigrationPlan()),
+    apply ? () => inspectMigrationPlan() : undefined,
+  );
+  const taskV4 = migrationStep(
+    failedSteps,
+    "taskV4Migration",
+    () => (apply ? applyTaskV4Migration() : inspectTaskV4MigrationStatus()),
+    apply ? () => inspectTaskV4MigrationStatus() : undefined,
+  );
   const stashSections: Pick<CombinedMigrationPlan, "deadResidue" | "staleTxns" | "writerRelocation"> = {};
   if (stashDir !== undefined) {
-    stashSections.deadResidue = apply
-      ? { removed: removeDeadResidue(stashDir) }
-      : { pending: findDeadResidueEntries(stashDir) };
-    stashSections.staleTxns = apply
-      ? await recoverStaleTxns(stashDir)
-      : { pending: findStaleTxnEntries(stashDir) };
+    const deadResidue = migrationStep(
+      failedSteps,
+      "deadResidue",
+      () => (apply ? { removed: removeDeadResidue(stashDir) } : { pending: findDeadResidueEntries(stashDir) }),
+      apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
+    );
+    if (deadResidue !== undefined) stashSections.deadResidue = deadResidue;
+    const staleTxns = await migrationStepAsync<StaleTxnsStepResult>(
+      failedSteps,
+      "staleTxns",
+      () => (apply ? recoverStaleTxns(stashDir) : Promise.resolve({ pending: findStaleTxnEntries(stashDir) })),
+      apply ? () => Promise.resolve({ pending: findStaleTxnEntries(stashDir) }) : undefined,
+    );
+    if (staleTxns !== undefined) stashSections.staleTxns = staleTxns;
   }
   const relocationTargets = writerRelocationTargets(stashDir);
   if (relocationTargets.length > 0) {
     stashSections.writerRelocation = apply
-      ? { relocated: Object.fromEntries(relocationTargets.map(({ id, dir }) => [id, applyWriterRelocation(dir)])) }
-      : { pending: Object.fromEntries(relocationTargets.map(({ id, dir }) => [id, findWriterRelocationEntries(dir)])) };
+      ? { relocated: relocateWriters(failedSteps, relocationTargets) }
+      : { pending: findWriterRelocations(failedSteps, relocationTargets) };
   }
 
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
-  const stateStatus: MigrationStatus = "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
+  const stateStatus: MigrationStatus =
+    stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const schedulerStatus: MigrationStatus =
-    "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
+    schedulerActivation && "pending" in schedulerActivation && schedulerActivation.pending.length > 0
+      ? "ready"
+      : "current";
   const retiredKeysStatus: MigrationStatus =
-    "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0 ? "ready" : "current";
+    configRetiredKeys && "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0
+      ? "ready"
+      : "current";
   const legacySourceShapeStatus: MigrationStatus =
-    "pending" in configLegacySourceShape && configLegacySourceShape.pending.converted.length > 0 ? "ready" : "current";
+    configLegacySourceShape &&
+    "pending" in configLegacySourceShape &&
+    configLegacySourceShape.pending.converted.length > 0
+      ? "ready"
+      : "current";
   return {
     schemaVersion: 1,
-    status: worstStatus(
+    status: statusWithFailedSteps(
       worstStatus(
-        worstStatus(worstStatus(worstStatus(taskV3.status, taskV4.status), stateStatus), schedulerStatus),
-        retiredKeysStatus,
+        worstStatus(
+          worstStatus(worstStatus(taskV3?.status ?? "blocked", taskV4?.status ?? "blocked"), stateStatus),
+          schedulerStatus,
+        ),
+        worstStatus(retiredKeysStatus, legacySourceShapeStatus),
       ),
-      legacySourceShapeStatus,
+      failedSteps,
     ),
-    blockers: [...taskV3.blockers, ...taskV4.blockers],
+    blockers: [...(taskV3?.blockers ?? []), ...(taskV4?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    ...(failedSteps.length > 0 ? { failedSteps } : {}),
     configLegacySourceShape,
     configExtraParams,
     configSchedulerSourceIds,
     configRetiredKeys,
-    stateMigrations,
-    schedulerActivation,
-    taskV3Migration: taskV3.taskV3Migration,
-    taskV4Migration: taskV4.taskV4Migration,
-    ...(taskV3.backupPath !== undefined ? { backupPath: taskV3.backupPath } : {}),
-    ...(taskV3.applied !== undefined ? { applied: taskV3.applied } : {}),
-    ...(taskV4.backupPath !== undefined ? { taskV4BackupPath: taskV4.backupPath } : {}),
-    ...(taskV4.applied !== undefined ? { taskV4Applied: taskV4.applied } : {}),
+    ...(stateMigrations !== undefined ? { stateMigrations } : {}),
+    ...(schedulerActivation !== undefined ? { schedulerActivation } : {}),
+    taskV3Migration: taskV3?.taskV3Migration,
+    taskV4Migration: taskV4?.taskV4Migration,
+    ...(taskV3?.backupPath !== undefined ? { backupPath: taskV3.backupPath } : {}),
+    ...(taskV3?.applied !== undefined ? { applied: taskV3.applied } : {}),
+    ...(taskV4?.backupPath !== undefined ? { taskV4BackupPath: taskV4.backupPath } : {}),
+    ...(taskV4?.applied !== undefined ? { taskV4Applied: taskV4.applied } : {}),
     ...stashSections,
   };
 }
