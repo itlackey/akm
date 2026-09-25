@@ -209,7 +209,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it; the reconciling syncs inside `akm task add`, `enable` and `disable`
   never carry forward, so none of those commands can re-grant or reinstall
   a binding the same call just revoked. `--dry-run` reports what would be
-  carried forward under a new `carriedForward` field and never applies it.
+  carried forward under a new `carriedForward` field and never applies it;
+  its plan now reflects the carry-forward too, so a row listed under
+  `carriedForward` is never also listed under `removes`.
 - **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
   config.json (legacy source shape, `extraParams`, retired keys, scheduler
   `sourceId` binding), pending `state.db` migrations (historical-destructive
