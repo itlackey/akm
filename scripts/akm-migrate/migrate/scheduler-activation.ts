@@ -15,9 +15,18 @@ import {
   carryForwardSchedulerGrants,
   pendingGrantsFromInstalled,
   type SchedulerGrantCarryForwardResult,
+  staleGrantsFromInstalled,
 } from "../../../src/tasks/scheduler-grant-carry-forward";
 import type { SchedulerActivation } from "../../../src/tasks/activation-config";
 import type { SchedulerBackend, SchedulerBackendInspection } from "../../../src/tasks/scheduler-binding";
+
+function staleGrantWarning(ref: string, grantedSourceId: string, currentSourceId: string): string {
+  return (
+    `Scheduler activation ${JSON.stringify(ref)} is granted to source ${JSON.stringify(grantedSourceId)} ` +
+    `but currently resolves to ${JSON.stringify(currentSourceId)}; not carried forward. ` +
+    `Run \`akm migrate apply\` (its configSchedulerSourceIds step) to rebind it explicitly.`
+  );
+}
 
 export interface SchedulerActivationMigrationPlan {
   readonly pending: readonly SchedulerActivation[];
@@ -60,9 +69,12 @@ export async function inspectSchedulerActivationMigration(
   const config = loadConfig();
   const result = await inspectNativeBindings(backend);
   if ("warning" in result) return Object.freeze({ pending: Object.freeze([]), warnings: Object.freeze([result.warning]) });
+  const stale = staleGrantsFromInstalled(result.inspection.installed, config);
   return Object.freeze({
     pending: pendingGrantsFromInstalled(result.inspection.installed, config),
-    warnings: Object.freeze([]),
+    warnings: Object.freeze(
+      stale.map((grant) => staleGrantWarning(grant.ref, grant.grantedSourceId, grant.currentSourceId)),
+    ),
   });
 }
 
@@ -70,6 +82,15 @@ export async function applySchedulerActivationMigration(
   backend?: SchedulerBackend,
 ): Promise<SchedulerActivationMigrationResult> {
   const result = await inspectNativeBindings(backend);
-  if ("warning" in result) return { applied: Object.freeze([]), warnings: Object.freeze([result.warning]) };
-  return carryForwardSchedulerGrants(result.inspection);
+  if ("warning" in result) return { applied: Object.freeze([]), warnings: Object.freeze([result.warning]), staleGrants: Object.freeze([]) };
+  const migrationResult = await carryForwardSchedulerGrants(result.inspection);
+  return {
+    ...migrationResult,
+    warnings: Object.freeze([
+      ...migrationResult.warnings,
+      ...migrationResult.staleGrants.map((grant) =>
+        staleGrantWarning(grant.ref, grant.grantedSourceId, grant.currentSourceId),
+      ),
+    ]),
+  };
 }
