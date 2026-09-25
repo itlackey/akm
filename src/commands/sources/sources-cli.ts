@@ -64,8 +64,15 @@ export const upgradeCommand = defineJsonCommand({
     const check = await checkForUpdate(pkgVersion, undefined, { version: args.version, tag: args.tag });
     if (args.check) {
       // upgrade-D D3: `--check` also lists every OTHER akm install on the
-      // host, read-only, against the target `akm upgrade` would install.
-      output("upgrade", { ...check, otherInstalls: describeOtherInstalls(check.latestVersion) });
+      // host, read-only, against the target `akm upgrade` would install —
+      // `latestVersion` when an update is available, or `currentVersion`
+      // (the running install's own version) when it is already current, so a
+      // peer already at that version isn't reported as needing an update to
+      // an older `latestVersion` (e.g. a host running a prerelease).
+      output("upgrade", {
+        ...check,
+        otherInstalls: describeOtherInstalls(check.updateAvailable ? check.latestVersion : check.currentVersion),
+      });
       return;
     }
     const skipPostUpgrade = args["skip-post-upgrade"];

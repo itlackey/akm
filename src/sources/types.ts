@@ -544,7 +544,10 @@ export interface UpgradeCheckResponse {
   /**
    * (upgrade-D D3) `--check` lists every other akm install found on the host
    * read-only: `before`/`after` are the same (nothing was attempted), `ok`
-   * says whether it already matches `latestVersion`.
+   * says whether it already matches the version the running install would
+   * end up at (`latestVersion` when `updateAvailable`, otherwise the running
+   * install's own `currentVersion` — never an older `latestVersion` from a
+   * host running a prerelease newer than the last stable release).
    */
   otherInstalls?: OtherAkmInstallStatus[];
 }
@@ -577,15 +580,20 @@ export interface UpgradeResponse {
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
   /**
    * (upgrade-D D3) Every OTHER akm install found on the host: for a
-   * recognizable manager (npm/bun/pnpm), the SAME version is installed there
-   * too via that install's own adjacent package manager and re-verified with
-   * `--version` — or, when it is already at that version, left untouched and
-   * reported `ok: true` without spawning anything; an install with no
-   * manager (a standalone binary, a checkout) is listed with `ok: false` and
-   * never touched. Present whenever the primary install's own upgrade step
-   * ran, including when it was a no-op because the running install was
-   * already current; absent for the package-local and downgrade-refused
-   * branches, which return before that step.
+   * recognizable manager (npm/bun/pnpm), it is moved to the version the
+   * running install has AFTER this command — never an older `latestVersion`
+   * (a host running a prerelease newer than the last stable release would
+   * otherwise downgrade its other installs) — via that install's own
+   * adjacent package manager, run under that install's own `node` (its
+   * `binDir` prepended to `PATH`, since npm/pnpm resolve `node` through
+   * `#!/usr/bin/env node`), and re-verified with `--version` — or, when it
+   * is already at that version, left untouched and reported `ok: true`
+   * without spawning anything; an install with no manager (a standalone
+   * binary, a checkout) is listed with `ok: false` and never touched.
+   * Present whenever the primary install's own upgrade step ran, including
+   * when it was a no-op because the running install was already current;
+   * absent for the package-local and downgrade-refused branches, which
+   * return before that step.
    */
   otherInstalls?: OtherAkmInstallStatus[];
 }
