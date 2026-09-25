@@ -275,14 +275,14 @@ export function describeHostLocalReconciliation(plan: HostLocalMigrationPlan): s
   const deferred = Array.isArray(staleTxns?.deferred)
     ? (staleTxns.deferred as ReadonlyArray<{ transactionId?: unknown; reason?: unknown }>)
     : undefined;
-  if (deferred && deferred.length > 0) {
-    const items = deferred
-      .filter(
-        (entry): entry is { transactionId: string; reason: string } =>
-          typeof entry.transactionId === "string" && typeof entry.reason === "string",
-      )
-      .map((entry) => `${entry.transactionId}: ${entry.reason}`);
-    notes.push(`${deferred.length} stale transaction(s) left for retry: ${items.join("; ")}`);
+  const deferredItems = (deferred ?? [])
+    .filter(
+      (entry): entry is { transactionId: string; reason: string } =>
+        typeof entry.transactionId === "string" && typeof entry.reason === "string",
+    )
+    .map((entry) => `${entry.transactionId}: ${entry.reason}`);
+  if (deferredItems.length > 0) {
+    notes.push(`${deferredItems.length} stale transaction(s) left for retry: ${deferredItems.join("; ")}`);
   }
 
   return notes;
