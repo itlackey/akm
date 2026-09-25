@@ -16,6 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { TransientError } from "../../src/core/errors";
 import {
   advanceTxn,
   beginTxn,
@@ -329,5 +330,131 @@ describe("fs-txn engine core", () => {
     const second = await recoverTxnsForRoot(root);
     expect(second.recovered).toHaveLength(0);
     expect(second.quarantined).toHaveLength(0);
+  });
+
+  /** Write a raw journal.json under root's namespace, bypassing beginTxn. */
+  function fabricateRawJournalDir(root: string, name: string, content: string): string {
+    const dir = path.join(txnNamespaceDir(root), name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "journal.json"), content);
+    return dir;
+  }
+
+  test("a corrupt journal.json is quarantined without blocking sibling recovery", async () => {
+    const root = freshRoot();
+    const calls: string[] = [];
+    registerRecordingKind("test-kind-corrupt-sibling", calls);
+
+    const before = beginTxn({ kind: "test-kind-corrupt-sibling", root, changes: [], payload: { label: "before" } });
+    void before; // stays at "prepared" — rolls back
+    const corruptDir = fabricateRawJournalDir(root, "corrupt-mid", "{ not valid json");
+    const after = beginTxn({ kind: "test-kind-corrupt-sibling", root, changes: [], payload: { label: "after" } });
+    advanceTxn(after, "files-published");
+
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    // Both readable siblings recover — the unreadable journal between them
+    // does not abort the scan.
+    expect(recovered).toHaveLength(2);
+    expect(calls.sort()).toEqual(["finalize:after@files-published", "rollback:before"]);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.transactionId).toBe("corrupt-mid");
+    expect(quarantined[0]?.reason).toMatch(/Cannot read transaction journal/);
+    const quarantineDir = path.join(txnQuarantineNamespaceDir(root), "corrupt-mid");
+    expect(fs.existsSync(path.join(quarantineDir, "journal.json"))).toBe(true);
+    const reason = JSON.parse(fs.readFileSync(path.join(quarantineDir, "reason.json"), "utf8"));
+    expect(reason.reason).toMatch(/Cannot read transaction journal/);
+    expect(fs.existsSync(corruptDir)).toBe(false);
+  });
+
+  test("a journal with a refused version is quarantined, preserving readJournal's refusal reason", async () => {
+    const root = freshRoot();
+    const calls: string[] = [];
+    registerRecordingKind("test-kind-badversion-sibling", calls);
+
+    const sibling = beginTxn({ kind: "test-kind-badversion-sibling", root, changes: [], payload: { label: "ok" } });
+    advanceTxn(sibling, "files-published");
+
+    const badJournal = {
+      version: 2,
+      kind: "test-kind-badversion-sibling",
+      phase: "files-published",
+      transactionId: "bad-version",
+      root: path.resolve(root),
+      changes: [],
+      decidedAt: new Date().toISOString(),
+      payload: { label: "future" },
+    };
+    fabricateRawJournalDir(root, "bad-version", `${JSON.stringify(badJournal, null, 2)}\n`);
+
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    expect(recovered.map((j) => j.kind)).toEqual(["test-kind-badversion-sibling"]);
+    expect(calls).toEqual(["finalize:ok@files-published"]);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.transactionId).toBe("bad-version");
+    expect(quarantined[0]?.reason).toMatch(/Refusing unsafe transaction journal/);
+    const quarantineDir = path.join(txnQuarantineNamespaceDir(root), "bad-version");
+    expect(fs.existsSync(path.join(quarantineDir, "journal.json"))).toBe(true);
+  });
+
+  test("a finalize throw of TransientError leaves the journal in place for a later retry", async () => {
+    const root = freshRoot();
+    const calls: string[] = [];
+    let shouldThrow = true;
+    registerTxnKind<{ label: string }>("test-kind-transient", {
+      phases: ["prepared", "files-published", "state-persisted", "committed"],
+      commitPhase: "files-published",
+      rollback() {
+        calls.push("rollback");
+      },
+      finalize(txn: Txn<{ label: string }>) {
+        if (shouldThrow) throw new TransientError("state.db is busy", "STATE_DB_CONTENDED");
+        calls.push(`finalize:${txn.journal.payload.label}@${txn.journal.phase}`);
+        if (txn.journal.phase === "files-published") advanceTxn(txn, "state-persisted");
+        if (txn.journal.phase === "state-persisted") advanceTxn(txn, "committed");
+      },
+    });
+    registerRecordingKind("test-kind-transient-sibling", calls);
+    const txn = beginTxn({ kind: "test-kind-transient", root, changes: [], payload: { label: "t" } });
+    advanceTxn(txn, "files-published");
+    const sibling = beginTxn({ kind: "test-kind-transient-sibling", root, changes: [], payload: { label: "ok" } });
+    advanceTxn(sibling, "files-published");
+
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    // The sibling recovers normally; the transiently-failing journal is
+    // neither recovered nor quarantined — it stays at its original path
+    // and phase for a later retry.
+    expect(recovered.map((j) => j.kind)).toEqual(["test-kind-transient-sibling"]);
+    expect(quarantined).toHaveLength(0);
+    expect(fs.existsSync(txn.journalPath)).toBe(true);
+    const onDisk = JSON.parse(fs.readFileSync(txn.journalPath, "utf8")) as TxnJournal<unknown>;
+    expect(onDisk.phase).toBe("files-published");
+
+    // A second scan, once the transient condition clears, finalizes it.
+    shouldThrow = false;
+    const second = await recoverTxnsForRoot(root);
+    expect(second.recovered.map((j) => j.kind)).toEqual(["test-kind-transient"]);
+    expect(second.quarantined).toHaveLength(0);
+    expect(calls).toContain("finalize:t@files-published");
+    expect(fs.existsSync(txn.dir)).toBe(false);
+  });
+
+  test("a non-transient finalize throw is still quarantined (contention only defers)", async () => {
+    const root = freshRoot();
+    registerTxnKind<{ label: string }>("test-kind-nontransient", {
+      phases: ["prepared", "files-published", "state-persisted", "committed"],
+      commitPhase: "files-published",
+      rollback() {},
+      finalize() {
+        throw new Error("genuinely broken, not contention");
+      },
+    });
+    const txn = beginTxn({ kind: "test-kind-nontransient", root, changes: [], payload: { label: "n" } });
+    advanceTxn(txn, "files-published");
+
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.reason).toMatch(/genuinely broken, not contention/);
+    expect(fs.existsSync(txn.journalPath)).toBe(false);
   });
 });
