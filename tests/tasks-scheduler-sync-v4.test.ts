@@ -1296,20 +1296,51 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(signatures).toBe(0);
   });
 
-  test("preflights desired and foreign installed id collisions before diffing", async () => {
+  // C3: a desired binding whose id collides with a DIFFERENT bundle's real
+  // installed entry is a per-item anomaly, not a whole-sync abort — this
+  // one binding is excluded and reported in `failures` instead of refusing
+  // to reconcile every other binding in the same sync.
+  test("a desired/foreign installed id collision excludes just that binding and reports it, instead of aborting the sync", async () => {
     const bundleRoot = root();
     write(path.join(bundleRoot, "tasks", "nightly.yml"), "version: 4\nrun: echo yes\nshell: sh\nschedule: '@daily'\n");
+    // A resolvable invocation (rather than an installed row with no
+    // invocation at all) so this exercises belongsToBundle's foreign-target
+    // check specifically, not the separate (still-throwing) unproven-native-
+    // artifact-owner invariant `assertSchedulerNativeArtifactOwnership` guards.
+    const foreignInvocation = ["task", "run", "nightly", "--bundle", "other", "--scheduled"];
 
-    await expect(
-      planSchedulerSync({
-        sourceRoot: bundleRoot,
-        adapterId: "akm",
-        bundleName: "team",
-        bundleTarget: "team",
-        backend: "cron",
-        installed: [{ id: "nightly", target: "other", binding: ["/bin/akm"], contextPath: "/tmp/context.json" }],
-      }),
-    ).rejects.toThrow(/already scheduled|collision/i);
+    const plan = await planSchedulerSync({
+      sourceRoot: bundleRoot,
+      adapterId: "akm",
+      bundleName: "team",
+      bundleTarget: "team",
+      backend: "cron",
+      installed: [
+        {
+          id: "nightly",
+          nativeId: "nightly",
+          target: "other",
+          binding: ["/bin/akm"],
+          contextPath: "/tmp/context.json",
+          invocation: foreignInvocation,
+          signature: "foreign-fingerprint",
+        },
+      ],
+      nativeArtifacts: [
+        {
+          nativeId: "nightly",
+          bindingId: "nightly",
+          invocation: foreignInvocation,
+          fingerprint: "foreign-fingerprint",
+        },
+      ],
+    });
+
+    expect(plan.desired).toEqual([]);
+    expect(plan.operations).toEqual([]);
+    expect(plan.failures).toHaveLength(1);
+    expect(plan.failures[0]?.ref).toBe("team//tasks/nightly");
+    expect(plan.failures[0]?.reason).toMatch(/already scheduled|collide/i);
   });
 
   test("rejects desired sources that physically escape the bundle before diffing", async () => {
@@ -1404,25 +1435,30 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
       signature: "installed-fingerprint",
     };
 
-    await expect(
-      planSchedulerSync({
-        sourceRoot: bundleRoot,
-        adapterId: "akm",
-        bundleName: "team",
-        bundlePath: "/home/user/work/akm",
-        backend: "cron",
-        installed: [installed],
-        nativeArtifacts: [
-          {
-            nativeId: "task-nightly",
-            bindingId: "nightly",
-            invocation: installed.invocation,
-            fingerprint: "installed-fingerprint",
-          },
-        ],
-        expectedSignature: (binding) => `sig:${binding.id}`,
-      }),
-    ).rejects.toThrow(/already scheduled/i);
+    // C3: excluded and reported, not a whole-sync throw — see the
+    // "collision excludes just that binding" test above.
+    const plan = await planSchedulerSync({
+      sourceRoot: bundleRoot,
+      adapterId: "akm",
+      bundleName: "team",
+      bundlePath: "/home/user/work/akm",
+      backend: "cron",
+      installed: [installed],
+      nativeArtifacts: [
+        {
+          nativeId: "task-nightly",
+          bindingId: "nightly",
+          invocation: installed.invocation,
+          fingerprint: "installed-fingerprint",
+        },
+      ],
+      expectedSignature: (binding) => `sig:${binding.id}`,
+    });
+
+    expect(plan.desired).toEqual([]);
+    expect(plan.operations).toEqual([]);
+    expect(plan.failures).toHaveLength(1);
+    expect(plan.failures[0]?.reason).toMatch(/already scheduled/i);
   });
 
   test("a binding genuinely owned by the invoking bundle (matching resolved path) is still removed as drift", async () => {
@@ -1482,5 +1518,66 @@ describe("#846: belongsToBundle scopes by resolved bundle path, not display name
         ownerBundlePath: bundlePath,
       },
     ]);
+  });
+
+  // C3: `buildSchedulerRemoveOperation` still throws on its own (kept for
+  // `akm task prune`'s pre-confirmed-safe contract) but sync's removal loop
+  // now catches it per id — one orphaned row this process can't safely
+  // attribute a removal for must not cost every OTHER genuinely orphaned
+  // row its own, otherwise-clean removal.
+  test("one orphaned row with no provable native fingerprint is reported and left installed; the OTHER orphaned row is still removed", async () => {
+    const componentRoot = root();
+    const bundlePath = "/home/user/work/akm";
+    const healthy = {
+      id: "healthy-orphan",
+      nativeId: "task-healthy-orphan",
+      binding: ["/opt/akm"],
+      contextPath: "/data/context-a.json",
+      target: "team",
+      ownerBundlePath: bundlePath,
+      invocation: ["task", "run", "healthy-orphan", "--bundle", "team", "--scheduled"],
+      signature: "healthy-fingerprint",
+    };
+    // Has an invocation (passes the `!current?.invocation` guard) but no
+    // signature, and no matching native artifact carries a fingerprint
+    // either — buildSchedulerRemoveOperation's own "no exact native
+    // fingerprint; refusing removal" throw.
+    const poisoned = {
+      id: "poisoned-orphan",
+      nativeId: "task-poisoned-orphan",
+      binding: ["/opt/akm"],
+      contextPath: "/data/context-b.json",
+      target: "team",
+      ownerBundlePath: bundlePath,
+      invocation: ["task", "run", "poisoned-orphan", "--bundle", "team", "--scheduled"],
+    };
+
+    const plan = await planSchedulerSync({
+      sourceRoot: componentRoot,
+      adapterId: "akm-task",
+      bundleName: "team",
+      bundlePath,
+      backend: "cron",
+      installed: [healthy, poisoned],
+      nativeArtifacts: [
+        {
+          nativeId: "task-healthy-orphan",
+          bindingId: "healthy-orphan",
+          invocation: healthy.invocation,
+          fingerprint: "healthy-fingerprint",
+        },
+        // Present (so the backend read is coherent) but carries no fingerprint.
+        { nativeId: "task-poisoned-orphan", bindingId: "poisoned-orphan", invocation: poisoned.invocation },
+      ],
+    });
+
+    // No desired source declares either id — both are orphaned drift.
+    expect(plan.removed).toEqual(["healthy-orphan"]);
+    expect(
+      plan.operations.map((operation) => (operation.kind === "remove" ? operation.id : operation.binding.id)),
+    ).toEqual(["healthy-orphan"]);
+    expect(plan.failures).toHaveLength(1);
+    expect(plan.failures[0]?.path).toBe("poisoned-orphan");
+    expect(plan.failures[0]?.reason).toMatch(/no exact native fingerprint/i);
   });
 });
