@@ -1287,16 +1287,6 @@ function proposalFileHash(filePath: string): string {
   return proposalHash(fs.readFileSync(filePath));
 }
 
-function sameProposalFile(left: string, right: string): boolean {
-  try {
-    const leftStat = fs.statSync(left);
-    const rightStat = fs.statSync(right);
-    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Record an accept or revert: the proposal row and its event in one state.db
  * transaction, after the asset file is already on disk. Idempotent — a

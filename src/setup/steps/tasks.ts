@@ -10,7 +10,7 @@ import path from "node:path";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
-import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
