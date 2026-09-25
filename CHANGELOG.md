@@ -35,7 +35,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/core/config/retired-config-keys-shim.ts`, replacing the old
   `experimental.*`-only shim) now drops every registered path — top-level or
   nested — before validation and warns once per source naming all of them,
-  instead of only the `experimental.*` ones.
+  instead of only the `experimental.*` ones. `akm migrate apply` now removes
+  every one of those registered retired keys from `config.json` too, not
+  only `experimental.*`: the migrator step (renamed
+  `scripts/akm-migrate/migrate/config-retired-experimental-keys.ts` ->
+  `config-retired-keys.ts`, plan field `configRetiredExperimentalKeys` ->
+  `configRetiredKeys`, prerelease migrator output) previously only cleaned
+  up `experimental.workflowEngine`, so the shim's own "Run `akm migrate
+  apply` to remove them" advice could never be made true for a top-level
+  retired key like `llm` or `profiles` — the warning would repeat forever.
+  It now shares its path-walking with the read shim
+  (`retiredConfigKeysIn`/`withoutRetiredConfigKeys`, exported from
+  `retired-config-keys-shim.ts`) instead of filtering the registry a second
+  time. Also deleted the two leftover duplicate retired-key lists this same
+  change was meant to replace: the dead `superRefine` warn loop in
+  `config-schema.ts` (every file-loaded config reaches that schema only
+  after the read shim has already stripped these keys) and the speculative
+  `RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES` in `config.ts` (both of its callers
+  already receive post-shim input).
 
 ### Fixed
 

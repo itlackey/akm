@@ -24,6 +24,13 @@
  * found and the migrate command — rather than leaving each object to its
  * own `.passthrough()`, which would also let a live key typo through
  * silently once that object goes `.strict()`.
+ *
+ * `retiredConfigKeysIn`/`withoutRetiredConfigKeys` are the shared path
+ * walker: `stripRetiredConfigKeys` (below) uses them for the in-memory
+ * shim, and `scripts/akm-migrate/migrate/config-retired-keys.ts` reuses the
+ * same two functions for the on-disk `akm migrate apply` rewrite, so there
+ * is exactly one implementation of "find/remove a registered retired path"
+ * shared by both.
  */
 
 import { isRecord } from "../common";
@@ -53,6 +60,25 @@ function withoutRetiredKey(raw: Record<string, unknown>, segments: readonly stri
   return { ...raw, [head]: withoutRetiredKey(child, rest) };
 }
 
+/** Registered `"ignored"` `RETIRED_CONFIG_KEYS` dotted paths present in a raw parsed config object. */
+export function retiredConfigKeysIn(raw: Record<string, unknown>): string[] {
+  return RETIRED_CONFIG_KEYS.filter(
+    (entry) => entry.disposition === "ignored" && retiredKeyPresent(raw, entry.path.split(".")),
+  ).map((entry) => entry.path);
+}
+
+/** Return a copy of `raw` with every dotted path in `paths` removed. */
+export function withoutRetiredConfigKeys(
+  raw: Record<string, unknown>,
+  paths: readonly string[],
+): Record<string, unknown> {
+  let result = raw;
+  for (const path of paths) {
+    result = withoutRetiredKey(result, path.split("."));
+  }
+  return result;
+}
+
 /**
  * Drop every registered `"ignored"` `RETIRED_CONFIG_KEYS` path present in a
  * raw parsed config object before schema validation, warning once per
@@ -63,21 +89,15 @@ function withoutRetiredKey(raw: Record<string, unknown>, segments: readonly stri
  * left for the object's own schema to reject as before.
  */
 export function stripRetiredConfigKeys(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const present = RETIRED_CONFIG_KEYS.filter(
-    (entry) => entry.disposition === "ignored" && retiredKeyPresent(raw, entry.path.split(".")),
-  );
+  const present = retiredConfigKeysIn(raw);
   if (present.length === 0) return raw;
 
-  let result = raw;
-  for (const entry of present) {
-    result = withoutRetiredKey(result, entry.path.split("."));
-  }
+  const result = withoutRetiredConfigKeys(raw, present);
 
   const where = sourcePath ? ` at ${sourcePath}` : "";
-  const keys = present.map((entry) => entry.path);
   warnOnce(
     `config:retired-keys:${sourcePath ?? "inline"}`,
-    `Config${where} uses the retired config key(s) ${keys.join(", ")} — ignored in memory. Run \`akm migrate apply\` to remove ${keys.length === 1 ? "it" : "them"} from the config file and silence this warning.`,
+    `Config${where} uses the retired config key(s) ${present.join(", ")} — ignored in memory. Run \`akm migrate apply\` to remove ${present.length === 1 ? "it" : "them"} from the config file and silence this warning.`,
   );
 
   return result;

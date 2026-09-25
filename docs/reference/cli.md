@@ -1673,9 +1673,10 @@ in order:
 
 1. legacy config `extraParams` keys lifted onto first-class engine fields
    (`configExtraParams`);
-2. retired `experimental.*` config keys removed, today `workflowEngine`
-   (`configRetiredExperimentalKeys`) — config loading already ignores them
-   with a one-time warning, so this only cleans the file;
+2. every registered retired config key removed, top-level (`llm`, `profiles`,
+   `agent`, ...) and nested (today `experimental.workflowEngine`)
+   (`configRetiredKeys`) — config loading already ignores them with a
+   one-time warning, so this only cleans the file;
 3. scheduler grants bound to the configured source installation that was
    approved, with stale grants for removed bundles dropped
    (`configSchedulerSourceIds`);

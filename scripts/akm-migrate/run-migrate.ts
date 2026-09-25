@@ -24,11 +24,11 @@ import {
   findConfigExtraParamsLift,
 } from "./migrate/config-extra-params";
 import {
-  applyConfigRetiredExperimentalKeys,
-  type ConfigRetiredExperimentalKeysPlan,
-  type ConfigRetiredExperimentalKeysResult,
-  findConfigRetiredExperimentalKeys,
-} from "./migrate/config-retired-experimental-keys";
+  applyConfigRetiredKeys,
+  type ConfigRetiredKeysPlan,
+  type ConfigRetiredKeysResult,
+  findConfigRetiredKeys,
+} from "./migrate/config-retired-keys";
 import {
   applyConfigSchedulerSourceIdMigration,
   type ConfigSchedulerSourceIdPlan,
@@ -66,7 +66,7 @@ export interface CombinedMigrationPlan {
   blockers: string[];
   configExtraParams: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
   configSchedulerSourceIds?: ConfigSchedulerSourceIdResult | { pending: ConfigSchedulerSourceIdPlan };
-  configRetiredExperimentalKeys: ConfigRetiredExperimentalKeysResult | { pending: ConfigRetiredExperimentalKeysPlan };
+  configRetiredKeys: ConfigRetiredKeysResult | { pending: ConfigRetiredKeysPlan };
   stateMigrations: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
@@ -149,16 +149,14 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   if (apply && (configExtraParams as ConfigExtraParamsLiftResult).applied) resetConfigCache();
   const pendingLift = apply ? undefined : (configExtraParams as { pending: ConfigExtraParamsLiftPlan }).pending;
 
-  // Retired `experimental.*` keys never block anything — the read shim
-  // already tolerates them (src/core/config/retired-config-keys-shim.ts),
-  // so this is cleanup, not a precondition later steps depend on. Computed
-  // once here (it reads and writes only the raw file under its own lock and
+  // Retired config keys never block anything — the read shim already
+  // tolerates them (src/core/config/retired-config-keys-shim.ts), so this
+  // is cleanup, not a precondition later steps depend on. Computed once
+  // here (it reads and writes only the raw file under its own lock and
   // never calls loadConfig) so both early "blocked" returns below and the
   // full plan can share the same value.
-  const configRetiredExperimentalKeys = apply
-    ? applyConfigRetiredExperimentalKeys(configPath)
-    : { pending: findConfigRetiredExperimentalKeys(configPath) };
-  if (apply && (configRetiredExperimentalKeys as ConfigRetiredExperimentalKeysResult).applied) resetConfigCache();
+  const configRetiredKeys = apply ? applyConfigRetiredKeys(configPath) : { pending: findConfigRetiredKeys(configPath) };
+  if (apply && (configRetiredKeys as ConfigRetiredKeysResult).applied) resetConfigCache();
 
   if (pendingLift && pendingLift.lifted.length > 0) {
     return {
@@ -166,7 +164,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       status: "blocked",
       blockers: pendingLift.lifted,
       configExtraParams,
-      configRetiredExperimentalKeys,
+      configRetiredKeys,
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
@@ -189,7 +187,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       ),
       configExtraParams,
       configSchedulerSourceIds,
-      configRetiredExperimentalKeys,
+      configRetiredKeys,
       stateMigrations: { pending: listPendingStateMigrations() },
     };
   }
@@ -231,9 +229,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const schedulerStatus: MigrationStatus =
     "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
   const retiredKeysStatus: MigrationStatus =
-    "pending" in configRetiredExperimentalKeys && configRetiredExperimentalKeys.pending.removed.length > 0
-      ? "ready"
-      : "current";
+    "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0 ? "ready" : "current";
   return {
     schemaVersion: 1,
     status: worstStatus(
@@ -243,7 +239,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     blockers: [...taskV3.blockers, ...taskV4.blockers],
     configExtraParams,
     configSchedulerSourceIds,
-    configRetiredExperimentalKeys,
+    configRetiredKeys,
     stateMigrations,
     schedulerActivation,
     taskV3Migration: taskV3.taskV3Migration,
