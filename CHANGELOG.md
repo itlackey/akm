@@ -110,6 +110,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validate` reports such a file `converts` (`sourceVersion` still `4`)
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
+- **A poisoned transaction journal is quarantined and reported instead of
+  aborting the whole recovery scan.** `recoverTxnsForRoot`
+  (`src/core/fs-txn.ts`) fenced and finalized every journal under one loop
+  with no per-journal isolation: the first journal whose fence or handler
+  threw aborted the scan, leaving every OTHER journal under the same root
+  unrecovered and `akm migrate apply` exiting 70 (twelve journals, one
+  diverged, took down recovery for all twelve). Each journal's fence +
+  rollback/finalize now runs under its own `try`; a failure moves that
+  journal to `$DATA/txn-quarantine/<rootNs>/<id>/` (with a `reason.json`
+  naming the reason, the akm version, and the timestamp — nothing is
+  deleted) and the scan continues. `recoverTxnsForRoot` now returns
+  `{ recovered, quarantined }`; `akm migrate apply`'s `staleTxns` plan
+  section reports both lists, and a quarantined journal does not make the
+  plan `blocked`. A non-empty `$DATA/txn-quarantine` now also surfaces as a
+  new `txn-quarantine` `akm health` advisory.
 
 ### Changed
 

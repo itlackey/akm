@@ -55,6 +55,7 @@ import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
 import { buildPerRunSummaries } from "./health/task-runs";
+import { collectTxnQuarantineAdvisory } from "./health/txn-quarantine";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -441,6 +442,18 @@ function gatherAncillaryAdvisories(
   try {
     const dataDirUsage = collectDataDirUsageAdvisory(getDataDir());
     if (dataDirUsage) advisories.push(dataDirUsage);
+  } catch {
+    // Non-fatal.
+  }
+
+  // A poisoned transaction journal `akm migrate apply` cannot recover is
+  // quarantined, not thrown (src/core/fs-txn.ts's recoverTxnsForRoot) — this
+  // is what surfaces a non-empty `$DATA/txn-quarantine` to an operator who
+  // isn't reading migrate's own output. Best-effort — an unreadable/missing
+  // quarantine dir must not abort the health report.
+  try {
+    const txnQuarantine = collectTxnQuarantineAdvisory(getDataDir());
+    if (txnQuarantine) advisories.push(txnQuarantine);
   } catch {
     // Non-fatal.
   }
