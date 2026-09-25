@@ -457,4 +457,72 @@ describe("fs-txn engine core", () => {
     expect(quarantined[0]?.reason).toMatch(/genuinely broken, not contention/);
     expect(fs.existsSync(txn.journalPath)).toBe(false);
   });
+
+  test("a finalize throw shaped like a raw SQLite busy error defers rather than quarantines", async () => {
+    const root = freshRoot();
+    const calls: string[] = [];
+    let shouldThrow = true;
+    registerTxnKind<{ label: string }>("test-kind-sqlite-busy", {
+      phases: ["prepared", "files-published", "state-persisted", "committed"],
+      commitPhase: "files-published",
+      rollback() {
+        calls.push("rollback");
+      },
+      finalize(txn: Txn<{ label: string }>) {
+        if (shouldThrow) {
+          const error = new Error("driver error") as Error & { code?: string };
+          error.code = "SQLITE_BUSY";
+          throw error;
+        }
+        calls.push(`finalize:${txn.journal.payload.label}@${txn.journal.phase}`);
+        if (txn.journal.phase === "files-published") advanceTxn(txn, "state-persisted");
+        if (txn.journal.phase === "state-persisted") advanceTxn(txn, "committed");
+      },
+    });
+    const txn = beginTxn({ kind: "test-kind-sqlite-busy", root, changes: [], payload: { label: "b" } });
+    advanceTxn(txn, "files-published");
+
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(0);
+    expect(fs.existsSync(txn.journalPath)).toBe(true);
+
+    shouldThrow = false;
+    const second = await recoverTxnsForRoot(root);
+    expect(second.recovered.map((j) => j.kind)).toEqual(["test-kind-sqlite-busy"]);
+    expect(second.quarantined).toHaveLength(0);
+    expect(calls).toContain("finalize:b@files-published");
+  });
+
+  test("a finalize throw whose message is 'database is locked' defers rather than quarantines", async () => {
+    const root = freshRoot();
+    const calls: string[] = [];
+    let shouldThrow = true;
+    registerTxnKind<{ label: string }>("test-kind-db-locked", {
+      phases: ["prepared", "files-published", "state-persisted", "committed"],
+      commitPhase: "files-published",
+      rollback() {
+        calls.push("rollback");
+      },
+      finalize(txn: Txn<{ label: string }>) {
+        if (shouldThrow) throw new Error("database is locked");
+        calls.push(`finalize:${txn.journal.payload.label}@${txn.journal.phase}`);
+        if (txn.journal.phase === "files-published") advanceTxn(txn, "state-persisted");
+        if (txn.journal.phase === "state-persisted") advanceTxn(txn, "committed");
+      },
+    });
+    const txn = beginTxn({ kind: "test-kind-db-locked", root, changes: [], payload: { label: "l" } });
+    advanceTxn(txn, "files-published");
+
+    const { recovered, quarantined } = await recoverTxnsForRoot(root);
+    expect(recovered).toHaveLength(0);
+    expect(quarantined).toHaveLength(0);
+    expect(fs.existsSync(txn.journalPath)).toBe(true);
+
+    shouldThrow = false;
+    const second = await recoverTxnsForRoot(root);
+    expect(second.recovered.map((j) => j.kind)).toEqual(["test-kind-db-locked"]);
+    expect(second.quarantined).toHaveLength(0);
+    expect(calls).toContain("finalize:l@files-published");
+  });
 });

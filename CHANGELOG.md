@@ -217,7 +217,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `$STATE/locks/version-reconcile.lock` lock before writing the new stamp.
   A migration that cannot finish (`blocked`, or the spawn itself failing)
   warns once, retries no more than once per 10 minutes, and never fails the
-  command it ran ahead of.
+  command it ran ahead of. The 10-minute backoff is per running version
+  (`lastAttemptVersion` on the stamp), so installing a fix no longer has to
+  wait out a blocked attempt some earlier version made **(upgrade-B3)**, and
+  the startup summary now also names any journal `staleTxns` quarantined
+  during the reconcile, with its quarantine path, instead of only counting
+  the ones it recovered.
 - **`akm task sync` carries a scheduler grant forward before it would
   otherwise remove it as ungranted (upgrade-B).** An installed native
   scheduler binding backed by a file in an enabled bundle, but with no

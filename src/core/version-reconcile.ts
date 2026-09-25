@@ -31,6 +31,8 @@ export interface VersionReconcileStamp {
   readonly reconciledAt?: string;
   readonly lastAttemptAt?: string;
   readonly lastStatus?: string;
+  /** The running version that made `lastAttemptAt`'s attempt — the backoff below only applies while it still matches. */
+  readonly lastAttemptVersion?: string;
 }
 
 /**
@@ -164,7 +166,11 @@ async function reconcileOnVersionChangeInner(deps: VersionReconcileDeps): Promis
     const current = readStamp(deps.stateDir);
     if (current?.version === deps.version) return { outcome: "up-to-date" };
 
-    if (current?.lastAttemptAt && deps.now().getTime() - Date.parse(current.lastAttemptAt) < RETRY_AFTER_FAILURE_MS) {
+    if (
+      current?.lastAttemptAt &&
+      current.lastAttemptVersion === deps.version &&
+      deps.now().getTime() - Date.parse(current.lastAttemptAt) < RETRY_AFTER_FAILURE_MS
+    ) {
       warnOnce(
         "version-reconcile:blocked",
         `Host-local reconciliation is still blocked (last attempt ${current.lastAttemptAt}): ${current.lastStatus ?? "unknown reason"}. Run \`akm migrate status\` for detail.`,
@@ -182,6 +188,7 @@ async function reconcileOnVersionChangeInner(deps: VersionReconcileDeps): Promis
         version: current?.version,
         reconciledAt: current?.reconciledAt,
         lastAttemptAt,
+        lastAttemptVersion: deps.version,
         lastStatus: `spawn failed: ${message}`,
       });
       warnOnce(
@@ -202,6 +209,7 @@ async function reconcileOnVersionChangeInner(deps: VersionReconcileDeps): Promis
       version: current?.version,
       reconciledAt: current?.reconciledAt,
       lastAttemptAt,
+      lastAttemptVersion: deps.version,
       lastStatus: `blocked: ${blocker}`,
     });
     warnOnce(
@@ -247,6 +255,15 @@ export function describeHostLocalReconciliation(plan: HostLocalMigrationPlan): s
   push("scheduler grant(s) carried forward", arrayLength(schedulerActivation?.applied));
   const staleTxns = section("staleTxns");
   push("stale transaction(s) recovered", arrayLength(staleTxns?.recovered));
+  const quarantined = Array.isArray(staleTxns?.quarantined)
+    ? (staleTxns.quarantined as ReadonlyArray<{ journalPath?: unknown }>)
+    : undefined;
+  if (quarantined && quarantined.length > 0) {
+    const paths = quarantined
+      .map((entry) => entry.journalPath)
+      .filter((value): value is string => typeof value === "string");
+    notes.push(`${quarantined.length} stale transaction(s) quarantined (see ${paths.join(", ")})`);
+  }
 
   return notes;
 }

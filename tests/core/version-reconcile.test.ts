@@ -122,6 +122,55 @@ describe("reconcileOnVersionChange", () => {
     expect(runTool).toHaveBeenCalledTimes(1);
   });
 
+  test("blocked: a retry past the 10-minute window spawns again for the same version", async () => {
+    const stateDir = scratchStateDir();
+    const runTool = mock(() =>
+      Promise.resolve(
+        toolResult({
+          plan: { schemaVersion: 1, mode: "host-local", status: "blocked", blockers: ["bind scheduler activation x"] },
+        }),
+      ),
+    );
+    let nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+    const now = () => new Date(nowMs);
+
+    const first = await reconcileOnVersionChange({ version: "1.2.3", runTool, stateDir, now });
+    expect(first.outcome).toBe("blocked");
+    expect(runTool).toHaveBeenCalledTimes(1);
+
+    // Past the 10-minute backoff window, for the SAME version: the tool
+    // spawns again rather than staying "still blocked" forever.
+    nowMs += 11 * 60 * 1000;
+    const second = await reconcileOnVersionChange({ version: "1.2.3", runTool, stateDir, now });
+    expect(second.outcome).toBe("blocked");
+    expect(runTool).toHaveBeenCalledTimes(2);
+  });
+
+  test("blocked by version A does not suppress an attempt for version B", async () => {
+    const stateDir = scratchStateDir();
+    const runTool = mock(() =>
+      Promise.resolve(
+        toolResult({
+          plan: { schemaVersion: 1, mode: "host-local", status: "blocked", blockers: ["bind scheduler activation x"] },
+        }),
+      ),
+    );
+    const nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+    const now = () => new Date(nowMs);
+
+    const first = await reconcileOnVersionChange({ version: "1.2.3", runTool, stateDir, now });
+    expect(first.outcome).toBe("blocked");
+    expect(runTool).toHaveBeenCalledTimes(1);
+
+    // A different running version (e.g. the fix just got installed), one
+    // second later — well inside the 10-minute window, but a different
+    // version must not be held back by version 1.2.3's backoff.
+    const secondNow = () => new Date(nowMs + 1000);
+    const second = await reconcileOnVersionChange({ version: "1.2.4", runTool, stateDir, now: secondNow });
+    expect(second.outcome).toBe("blocked");
+    expect(runTool).toHaveBeenCalledTimes(2);
+  });
+
   test("lock held elsewhere and the stamp becomes current: no spawn", async () => {
     const stateDir = scratchStateDir();
     fs.mkdirSync(path.dirname(lockPathFor(stateDir)), { recursive: true });
@@ -206,6 +255,33 @@ describe("describeHostLocalReconciliation", () => {
       "1 state.db migration(s) applied",
       "1 scheduler grant(s) carried forward",
     ]);
+  });
+
+  test("reports quarantined journals with their quarantine path", () => {
+    const notes = describeHostLocalReconciliation({
+      schemaVersion: 1,
+      mode: "host-local",
+      status: "current",
+      blockers: [],
+      configLegacySourceShape: { applied: false },
+      configRetiredKeys: { applied: false },
+      stateMigrations: { applied: [] },
+      schedulerActivation: { applied: [], warnings: [] },
+      staleTxns: {
+        recovered: [],
+        quarantined: [
+          {
+            transactionId: "abc123",
+            kind: "mv",
+            phase: "files-published",
+            journalPath: "/data/txn-quarantine/root1/abc123/journal.json",
+            reason: "Refusing unsafe transaction journal",
+          },
+        ],
+      },
+    });
+
+    expect(notes).toEqual(["1 stale transaction(s) quarantined (see /data/txn-quarantine/root1/abc123/journal.json)"]);
   });
 
   test("an all-current plan with nothing applied summarizes to nothing", () => {
