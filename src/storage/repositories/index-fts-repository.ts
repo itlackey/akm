@@ -49,7 +49,7 @@ function fragmentFtsRowidRangeStart(entryId: number): number {
   return entryId * FRAGMENT_ROWID_ORDINAL_SPAN;
 }
 
-// index_meta key marking the one-time in-place rowid realignment (#C1). No
+// index_meta key marking the one-time in-place rowid realignment. No
 // index-generation bump: existing rows are rewritten with the rowid = entry_id
 // / encoded-fragment-rowid contract above, in place, and no reader depends on
 // FTS rowids (only entry_id/fragment_id/fragment_ordinal columns are read —
@@ -528,7 +528,33 @@ export function rebuildFts(db: Database): void {
 }
 
 /**
- * One-time in-place realignment (#C1) for an index.db written before FTS rows
+ * True when the rowid = entry_id / encoded-fragment-rowid contract still
+ * holds, checked on the highest-rowid row of each table (two rowid-ordered
+ * lookups, not a scan). A writer that shares this generation but predates the
+ * contract (an older installed binary, or a rollback) deletes by `entry_id`
+ * and inserts without an explicit rowid, so FTS5 appends at `max(rowid)+1`;
+ * that only ever moves the highest rowid, so checking it there is enough to
+ * catch the drift.
+ */
+function ftsRowidLayoutHolds(db: Database): boolean {
+  const entryRow = db.prepare("SELECT rowid, entry_id FROM entries_fts ORDER BY rowid DESC LIMIT 1").get() as
+    | { rowid: number; entry_id: number }
+    | undefined;
+  if (entryRow && entryRow.rowid !== entryRow.entry_id) return false;
+  const fragmentRow = db
+    .prepare("SELECT rowid, entry_id, fragment_ordinal FROM entry_fragments_fts ORDER BY rowid DESC LIMIT 1")
+    .get() as { rowid: number; entry_id: number; fragment_ordinal: number } | undefined;
+  if (
+    fragmentRow &&
+    fragmentRow.rowid !== fragmentRow.entry_id * FRAGMENT_ROWID_ORDINAL_SPAN + fragmentRow.fragment_ordinal
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * One-time in-place realignment for an index.db written before FTS rows
  * carried an explicit rowid. `rebuildFts` already reconstructs both FTS
  * tables from the canonical `entries`/`entry_fragments` source with the
  * rowid = entry_id / encoded-fragment-rowid contract above, so realignment is
@@ -540,7 +566,7 @@ export function rebuildFts(db: Database): void {
  * columns older and newer binaries already use.
  */
 export function ensureFtsRowidLayout(db: Database): void {
-  if (getMeta(db, FTS_ROWID_LAYOUT_META_KEY) === FTS_ROWID_LAYOUT_VERSION) return;
+  if (getMeta(db, FTS_ROWID_LAYOUT_META_KEY) === FTS_ROWID_LAYOUT_VERSION && ftsRowidLayoutHolds(db)) return;
   db.transaction(() => {
     rebuildFts(db);
     setMeta(db, FTS_ROWID_LAYOUT_META_KEY, FTS_ROWID_LAYOUT_VERSION);
