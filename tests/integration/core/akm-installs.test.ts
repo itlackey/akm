@@ -221,4 +221,65 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       sandbox.cleanup();
     }
   });
+
+  // upgrade-D3 r3-4: enumeration used to derive an npm global root only for
+  // the running node. A `node` on PATH belonging to a different install (an
+  // nvm copy, or any other node this process isn't running under) has its
+  // own npm global root, and a package installed there is otherwise
+  // invisible — even a stray one not linked onto PATH at all.
+  test("derives the npm global root of a node found on PATH and reports its install, not on PATH", () => {
+    const sandbox = makeSandboxDir("akm-installs-other-node-npm-root");
+    try {
+      const nodeBinDir = path.join(sandbox.dir, "other-node", "bin");
+      fs.mkdirSync(nodeBinDir, { recursive: true });
+      const prefixRoot = path.join(sandbox.dir, "scratch-prefix");
+      const npmGlobalRoot = path.join(prefixRoot, "lib", "node_modules");
+      fs.writeFileSync(path.join(nodeBinDir, "node"), `#!/bin/sh\necho ${JSON.stringify(npmGlobalRoot)}\n`, {
+        mode: 0o755,
+      });
+      // Only needs to exist so resolveAssociatedNpmCli finds a candidate;
+      // the fake "node" above ignores argv entirely.
+      fs.writeFileSync(path.join(nodeBinDir, "npm"), "", { mode: 0o755 });
+
+      const stub = writeStubAkm(path.join(npmGlobalRoot, "akm-cli", "dist"), "0.9.15-beta.1");
+
+      const installs = enumerateAkmInstalls(
+        { PATH: nodeBinDir, HOME: sandbox.dir },
+        { fixedRoots: [], runningRealpaths: [] },
+      );
+      const found = installs.find((i) => i.path === fs.realpathSync(stub));
+      expect(found).toMatchObject({
+        manager: "npm",
+        version: "0.9.15-beta.1",
+        binDir: path.join(prefixRoot, "bin"),
+      });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  // upgrade-D3 r3-4: a stray `npm install -g` run under the bun-shimmed
+  // `node` (`~/.bun/bin/node -> bun`) lands at
+  // `${BUN_INSTALL:-~/.bun}/lib/node_modules/akm-cli`, not the bun-global
+  // layout, and nothing previously looked there even though it is neither
+  // on PATH nor a bun-managed install.
+  test("finds a stray npm install under the bun prefix and classifies it npm, not bun", () => {
+    const sandbox = makeSandboxDir("akm-installs-bun-prefix-npm");
+    try {
+      const stub = writeStubAkm(
+        path.join(sandbox.dir, ".bun", "lib", "node_modules", "akm-cli", "dist"),
+        "0.9.15-beta.1",
+      );
+      const installs = enumerateAkmInstalls({ HOME: sandbox.dir, PATH: "" }, { fixedRoots: [], runningRealpaths: [] });
+      expect(installs).toHaveLength(1);
+      expect(installs[0]).toMatchObject({
+        path: fs.realpathSync(stub),
+        manager: "npm",
+        version: "0.9.15-beta.1",
+        binDir: path.join(sandbox.dir, ".bun", "bin"),
+      });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
 });

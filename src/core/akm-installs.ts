@@ -22,6 +22,16 @@
  * bounded `--version` — the same timeout pattern
  * `src/commands/health/scheduler-binary.ts` uses for its own recorded-binary
  * probe. No network call is made anywhere in this module.
+ *
+ * The running node is not the only one that can have installed an `akm`
+ * global (upgrade-D3 r3-4): every distinct `node` executable found on `PATH`,
+ * in an nvm `bin/` dir, or in `~/.bun/bin` gets its own npm global root
+ * probed the same bounded, local way, and that root's `<root>/akm-cli/dist`
+ * is scanned directly so a copy that was `npm install -g`'d there but never
+ * linked onto PATH is still reported. `${BUN_INSTALL:-~/.bun}/lib/node_modules`
+ * is scanned unconditionally too: that is where `npm install -g` puts a
+ * package when it runs under bun's `node -> bun` shim, a layout distinct
+ * from bun's own global install and easy to strand out of sight.
  */
 
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
@@ -37,7 +47,15 @@ import { resolveNpmGlobalRoot } from "../tasks/resolve-akm-bin";
  * single-process classifier and this multi-install enumerator share one
  * pattern instead of drifting apart.
  */
-export const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
+// The negative lookahead excludes `.bun/lib/node_modules/`: that is npm's
+// own global-root layout (`<prefix>/lib/node_modules`), which a plain `npm
+// install -g` produces when it runs under bun's `node -> bun` shim with
+// `$HOME/.bun` (or `$BUN_INSTALL`) as its prefix. Bun's own global installs
+// never use that literal subpath (`install/global/node_modules/` today, or
+// a bare version directory in the older layout), so this stays a bun match
+// while letting the npm-under-bun-shim case fall through to the generic
+// `node_modules` → "npm" classification below (upgrade-D3 r3-4).
+export const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?!lib\/node_modules\/)(?:[^/]+\/)+node_modules\//;
 
 /** Same relocation as {@link BUN_GLOBAL_INSTALL_PATTERN}, for pnpm's global store layout. */
 export const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
@@ -120,15 +138,24 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
   const run = options.spawnSync ?? spawnSync;
   const runningRealpaths = new Set(options.runningRealpaths ?? defaultRunningRealpaths());
   const npmGlobalRoot = resolveNpmGlobalRootSafely(env);
+  const home = env.HOME?.trim();
 
   const fixedRoots = options.fixedRoots ?? ["/usr/local/bin"];
 
-  const candidates = new Set<string>();
+  // candidate akm path -> the binDir it should be reported with. Normally
+  // that is just the directory the candidate was found in, but a candidate
+  // added directly from an npm global root's `akm-cli/dist` (below) is
+  // reported with that root's `bin/` instead — where its adjacent npm
+  // actually lives, not the `dist/` directory it has no package manager in.
+  const candidates = new Map<string, string>();
   for (const dir of pathDirectories(env)) addCandidate(candidates, dir);
   for (const dir of knownRootDirectories(env, npmGlobalRoot, fixedRoots)) addCandidate(candidates, dir);
+  for (const root of discoverAdjacentNpmGlobalRoots(env, home)) addNpmGlobalRootCandidates(candidates, root);
+  const bunPrefixRoot = bunPrefixLibNodeModules(env, home);
+  if (bunPrefixRoot) addNpmGlobalRootCandidates(candidates, bunPrefixRoot);
 
   const byRealpath = new Map<string, AkmInstall>();
-  for (const candidate of candidates) {
+  for (const [candidate, binDir] of candidates) {
     let real: string;
     try {
       real = fs.realpathSync(candidate);
@@ -138,13 +165,73 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
     if (byRealpath.has(real)) continue;
     byRealpath.set(real, {
       path: real,
-      binDir: path.dirname(candidate),
+      binDir,
       manager: classifyInstall(real),
       version: probeVersion(run, real),
       isRunning: runningRealpaths.has(real),
     });
   }
   return [...byRealpath.values()];
+}
+
+/**
+ * Every distinct `node` executable found on `PATH`, in an nvm `bin/` dir, or
+ * in `~/.bun/bin`, resolved to its own npm global root the same bounded,
+ * local way {@link resolveNpmGlobalRoot} resolves it for the running node.
+ * Only the running node's root was ever probed before (upgrade-D3 r3-4), so
+ * a package installed under any other node on the host — an nvm copy, or
+ * the bun-shimmed `node` a stray `npm install -g` ran under — was invisible.
+ */
+function discoverAdjacentNpmGlobalRoots(env: NodeJS.ProcessEnv, home: string | undefined): Set<string> {
+  const roots = new Set<string>();
+  const probedNodes = new Set<string>();
+  const dirs = [
+    ...pathDirectories(env),
+    ...nvmBinDirectories(env, home),
+    ...(home ? [path.join(home, ".bun", "bin")] : []),
+  ];
+  const names = process.platform === "win32" ? ["node.exe"] : ["node"];
+  for (const dir of dirs) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      let real: string;
+      try {
+        if (!fs.statSync(candidate).isFile()) continue;
+        real = fs.realpathSync(candidate);
+      } catch {
+        continue;
+      }
+      if (probedNodes.has(real)) continue;
+      probedNodes.add(real);
+      try {
+        const root = resolveNpmGlobalRoot(candidate, env);
+        if (root) roots.add(root);
+      } catch {
+        // Not a usable node/npm pair on this host — skip it.
+      }
+    }
+  }
+  return roots;
+}
+
+/**
+ * `${BUN_INSTALL:-~/.bun}/lib/node_modules` — npm's own global-root layout
+ * under bun's prefix. Scanned unconditionally (not gated on finding a
+ * working `node`/`npm` pair there) because it is exactly where `npm install
+ * -g` lands when it runs under bun's `node -> bun` shim: that shim answers
+ * `--version` like node but cannot run npm's script through
+ * {@link resolveNpmGlobalRoot}'s probe (upgrade-D3 r3-4).
+ */
+function bunPrefixLibNodeModules(env: NodeJS.ProcessEnv, home: string | undefined): string | undefined {
+  const bunInstall = env.BUN_INSTALL?.trim() || (home ? path.join(home, ".bun") : undefined);
+  return bunInstall ? path.join(bunInstall, "lib", "node_modules") : undefined;
+}
+
+/** Adds `<root>/../bin` (that root's own bin dir) and `<root>/akm-cli/dist` as candidates, both reported with that bin dir. */
+function addNpmGlobalRootCandidates(candidates: Map<string, string>, npmGlobalRoot: string): void {
+  const binDir = npmGlobalBinDir(npmGlobalRoot);
+  addCandidate(candidates, binDir);
+  addCandidate(candidates, path.join(npmGlobalRoot, "akm-cli", "dist"), binDir);
 }
 
 function pathDirectories(env: NodeJS.ProcessEnv): string[] {
@@ -200,12 +287,13 @@ function resolveNpmGlobalRootSafely(env: NodeJS.ProcessEnv): string | undefined 
   }
 }
 
-function addCandidate(paths: Set<string>, dir: string | undefined): void {
+/** `binDirOverride` reports the candidate under a different binDir than `dir` — see the call site in `addNpmGlobalRootCandidates`. */
+function addCandidate(paths: Map<string, string>, dir: string | undefined, binDirOverride?: string): void {
   if (!dir) return;
   for (const name of ["akm", "akm.exe", "akm.cmd"]) {
     const candidate = path.join(dir, name);
     try {
-      if (fs.statSync(candidate).isFile()) paths.add(candidate);
+      if (fs.statSync(candidate).isFile()) paths.set(candidate, binDirOverride ?? dir);
     } catch {
       // Not present at this root — normal; not every root exists on every host.
     }
