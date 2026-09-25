@@ -284,6 +284,52 @@ describe("describeHostLocalReconciliation", () => {
     expect(notes).toEqual(["1 stale transaction(s) quarantined (see /data/txn-quarantine/root1/abc123/journal.json)"]);
   });
 
+  test("reports deferred journals left in place for a later retry", () => {
+    const notes = describeHostLocalReconciliation({
+      schemaVersion: 1,
+      mode: "host-local",
+      status: "current",
+      blockers: [],
+      configLegacySourceShape: { applied: false },
+      configRetiredKeys: { applied: false },
+      stateMigrations: { applied: [] },
+      schedulerActivation: { applied: [], warnings: [] },
+      staleTxns: {
+        recovered: [],
+        deferred: [
+          {
+            transactionId: "def456",
+            kind: "proposal",
+            phase: "asset-published",
+            journalPath: "/data/txn/root1/def456/journal.json",
+            reason: "git push failed",
+          },
+        ],
+      },
+    });
+
+    expect(notes).toEqual(["1 stale transaction(s) left for retry: def456: git push failed"]);
+  });
+
+  test("reports scheduler grant warnings from carry-forward", () => {
+    const notes = describeHostLocalReconciliation({
+      schemaVersion: 1,
+      mode: "host-local",
+      status: "current",
+      blockers: [],
+      configLegacySourceShape: { applied: false },
+      configRetiredKeys: { applied: false },
+      stateMigrations: { applied: [] },
+      schedulerActivation: {
+        applied: [],
+        warnings: ["rebind it explicitly with `akm task enable stash//tasks/a`"],
+      },
+      staleTxns: { recovered: [] },
+    });
+
+    expect(notes).toEqual(["1 scheduler grant warning(s): rebind it explicitly with `akm task enable stash//tasks/a`"]);
+  });
+
   test("an all-current plan with nothing applied summarizes to nothing", () => {
     expect(
       describeHostLocalReconciliation({
