@@ -246,7 +246,7 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     const staleTxns =
       stashDir !== undefined
         ? apply
-          ? { recovered: await recoverStaleTxns(stashDir) }
+          ? await recoverStaleTxns(stashDir)
           : { pending: findStaleTxnEntries(stashDir) }
         : undefined;
 
