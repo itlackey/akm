@@ -24,7 +24,12 @@ import {
   bundleSourceId,
   isBundleEnabled,
 } from "../core/config/config-sources";
-import { canonicalSchedulerActivationRef, type SchedulerActivation, schedulerActivations } from "./activation-config";
+import {
+  canonicalSchedulerActivationRef,
+  type SchedulerActivation,
+  type SchedulerActivationKind,
+  schedulerActivations,
+} from "./activation-config";
 import { selectBackend } from "./backends";
 import type { InstalledSchedulerBinding, SchedulerBackendInspection } from "./scheduler-binding";
 
@@ -42,9 +47,27 @@ export interface SchedulerGrantCarryForwardResult {
  * carry-forward reports it instead of granting the new origin.
  */
 export interface StaleSchedulerGrant {
+  readonly kind: SchedulerActivationKind;
   readonly ref: string;
   readonly grantedSourceId: string;
   readonly currentSourceId: string;
+}
+
+/**
+ * Human-readable warning for a {@link StaleSchedulerGrant}, naming the
+ * command that rebinds it explicitly. Shared by `akm-migrate` (host-local
+ * reconciliation) and `akm task sync` so the wording never drifts between
+ * the two callers that can observe the same stale grant.
+ */
+export function staleSchedulerGrantWarning(grant: StaleSchedulerGrant): string {
+  const rebind =
+    grant.kind === "task"
+      ? `Run \`akm task enable ${grant.ref}\` to rebind it explicitly.`
+      : "It must be re-created explicitly; no command currently rebinds a stale workflow grant.";
+  return (
+    `Scheduler activation ${JSON.stringify(grant.ref)} is granted to source ${JSON.stringify(grant.grantedSourceId)} ` +
+    `but currently resolves to ${JSON.stringify(grant.currentSourceId)}; not carried forward. ${rebind}`
+  );
 }
 
 /**
@@ -150,7 +173,12 @@ function classifyInstalled(
     if (!existing) {
       pending.set(key, activation);
     } else if (existing.sourceId !== activation.sourceId) {
-      stale.set(key, { ref: activation.ref, grantedSourceId: existing.sourceId, currentSourceId: activation.sourceId });
+      stale.set(key, {
+        kind: activation.kind,
+        ref: activation.ref,
+        grantedSourceId: existing.sourceId,
+        currentSourceId: activation.sourceId,
+      });
     }
   }
   return {
