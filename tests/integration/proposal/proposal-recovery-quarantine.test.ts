@@ -14,14 +14,18 @@
  * unsafe, or finalize-failing SIBLING journal sharing a root's transaction
  * namespace must not abort recovery of every other journal there, which
  * runs ahead of every `akm proposal accept`/`reject`. A transient
- * (`state.db` busy) failure defers instead of quarantining. Two more spots
- * on that same public `accept`/`reject` path kept their own unguarded scans
- * and are covered here too: `recoverProposalTransactionsForStash`'s
- * upfront `listTxnJournals` root-discovery call failed loudly on ANY
- * unreadable journal anywhere under `$DATA/txn` before the per-root scan
- * above was ever reached (now `listTxnJournalsTolerant`), and
- * `recoverRejectTransaction`'s own scan (run on every `accept`, ahead of
- * promotion) had an unguarded `JSON.parse` of its own.
+ * (`state.db` busy) failure on a SIBLING journal defers instead of
+ * quarantining; the SAME failure on the requested proposal's OWN journal
+ * instead fails the command as transient (exit 75) rather than letting
+ * `accept`/`reject` proceed over a crashed transaction whose outcome is
+ * still unknown. Two more spots on that same public `accept`/`reject` path
+ * kept their own unguarded scans and are covered here too:
+ * `recoverProposalTransactionsForStash`'s upfront `listTxnJournals`
+ * root-discovery call failed loudly on ANY unreadable journal anywhere
+ * under `$DATA/txn` before the per-root scan above was ever reached (now
+ * `listTxnJournalsTolerant`), and `recoverRejectTransaction`'s own scan
+ * (run on every `accept`, ahead of promotion) had an unguarded `JSON.parse`
+ * of its own.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -216,8 +220,8 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
     expectQuarantined(badTransactionId, /Cannot read transaction journal|JSON/i);
   });
 
-  test("a TransientError from finalize defers the journal instead of quarantining it", async () => {
-    const target = seedProposal("quarantine-transient");
+  test("a TransientError from finalize on the requested proposal's OWN journal fails accept as transient, not deferred", async () => {
+    const target = seedProposal("quarantine-transient-own");
     await crashProposalAt("asset-published", target.id);
     const dir = findJournalDir(target.id);
 
@@ -229,12 +233,12 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
       }
     });
 
-    // Unmodified base code (3dfa3e29d) has no try/catch around finalize at
-    // all, so this throw propagates all the way out of akmProposalAccept.
-    const first = await akmProposalAccept({ stashDir: storage.stashDir, id: target.id });
-    expect(first.ok).toBe(true);
+    // Unmodified base code (769d2c05c) swallows this into a deferred warning
+    // and resolves `ok: true`, instead of failing the command as transient.
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: target.id })).rejects.toThrow(TransientError);
     // The proposal itself is already fully accepted (persisted before the
-    // hook fired) — only journal cleanup is pending.
+    // hook fired) — only journal cleanup is pending — and the journal is
+    // left in place, not quarantined.
     expect(getProposal(storage.stashDir, target.id).status).toBe("accepted");
     expect(fs.existsSync(dir)).toBe(true);
     const stillPending = JSON.parse(fs.readFileSync(path.join(dir, "journal.json"), "utf8")) as TxnJournal<unknown>;
@@ -249,5 +253,69 @@ describe("proposal transaction recovery quarantines a bad sibling journal", () =
       (event) => event.metadata?.proposalId === target.id,
     );
     expect(events).toHaveLength(1);
+  });
+
+  test("a TransientError from finalize on a SIBLING's journal still defers it, while the requested proposal's own accept succeeds", async () => {
+    // Both `good` and `sibling` are crashed (own journals in the same
+    // shared root) so accepting `good` sweeps both — the same "recovered as
+    // a side effect" mechanic as the unsafe-journal test above. The hook
+    // below fires once per journal that reaches "event-persisted" during
+    // that sweep; readdir order between `good` and `sibling` is not
+    // guaranteed, so it keys off which journal is CURRENTLY at
+    // "index-finalized" on disk (written by advanceTxn just before the
+    // hook fires) rather than call order, so it throws on `sibling`'s own
+    // finalize specifically regardless of which one is visited first.
+    const good = seedProposal("quarantine-transient-good");
+    await crashProposalAt("asset-published", good.id);
+    const sibling = seedProposal("quarantine-transient-sibling");
+    await crashProposalAt("asset-published", sibling.id);
+    const siblingDir = findJournalDir(sibling.id);
+    const siblingJournalPath = path.join(siblingDir, "journal.json");
+
+    let siblingThrown = false;
+    _setTxnMutationHookForTests((point) => {
+      if (point !== "event-persisted" || siblingThrown) return;
+      const journal = JSON.parse(fs.readFileSync(siblingJournalPath, "utf8")) as TxnJournal<unknown>;
+      if (journal.phase !== "index-finalized") return;
+      siblingThrown = true;
+      throw new TransientError("state.db is busy", "STATE_DB_CONTENDED");
+    });
+
+    const result = await akmProposalAccept({ stashDir: storage.stashDir, id: good.id });
+    expect(result.ok).toBe(true);
+    expect(getProposal(storage.stashDir, good.id).status).toBe("accepted");
+
+    // The sibling's crashed journal was deferred, not quarantined, and its
+    // proposal is left exactly as finalize's first step left it.
+    expect(fs.existsSync(siblingDir)).toBe(true);
+    expect(fs.existsSync(txnQuarantineNamespaceDir(storage.stashDir))).toBe(false);
+    expect(getProposal(storage.stashDir, sibling.id).status).toBe("accepted");
+
+    // A later accept of the sibling itself finishes its own cleanup (the
+    // hook no longer throws — `siblingThrown` is already set).
+    const finish = await akmProposalAccept({ stashDir: storage.stashDir, id: sibling.id });
+    expect(finish.ok).toBe(true);
+    expect(fs.existsSync(siblingDir)).toBe(false);
+  });
+
+  test("a TransientError from finalize on the requested proposal's OWN reject journal fails accept as transient, not the 'not pending' UsageError", async () => {
+    const bad = seedProposal("quarantine-transient-reject-own");
+    await crashProposalAt("reject-state-persisted", bad.id, "reject");
+    const dir = findJournalDir(bad.id);
+
+    let shouldThrow = true;
+    _setTxnMutationHookForTests((point) => {
+      if (point === "reject-event-persisted" && shouldThrow) {
+        shouldThrow = false;
+        throw new TransientError("state.db is busy", "STATE_DB_CONTENDED");
+      }
+    });
+
+    // Unmodified base code (769d2c05c) swallows this and lets accept
+    // continue over a proposal already durably marked "rejected", so it
+    // throws the "not pending" UsageError instead of a TransientError.
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: bad.id })).rejects.toThrow(TransientError);
+    expect(fs.existsSync(dir)).toBe(true);
+    expect(fs.existsSync(txnQuarantineNamespaceDir(storage.stashDir))).toBe(false);
   });
 });
