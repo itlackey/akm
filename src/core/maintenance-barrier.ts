@@ -192,8 +192,11 @@ export function acquireMaintenanceActivitySync(name: string): () => void {
  * Bound on how many `maintenance-activities/` files one sweep inspects, so a
  * large pre-existing backlog (per-acquisition sidecars leaked before the
  * shared-mutex fix above) drains over several calls instead of stalling one.
+ * Measured cost is about 4 µs/file (readdir of 50k entries: 12 ms; the full
+ * sidecar check plus unlink for 50k: 206 ms), so 50,000 stays a fraction of
+ * a second and drains a 227k-file backlog in about 5 `akm index` runs.
  */
-const MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES = 2_000;
+export const MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES = 50_000;
 
 /**
  * Remove orphaned `maintenance-activities/` files:
@@ -204,13 +207,17 @@ const MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES = 2_000;
  *     crashed mid-registration, reclaimed the same way `probeLock` /
  *     `reclaimStaleLock` already reclaim any other lock).
  *
- * Bounded per call ({@link MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES}) and
+ * Bounded per call ({@link MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES} by default,
+ * or `maxFiles` when a caller — such as a test — needs a smaller bound) and
  * best-effort: a missing directory or a file that vanishes mid-sweep (another
  * process released it concurrently) is not an error. Call only from an
  * existing maintenance point that already runs off the hot path (e.g. `akm
  * index`'s finalize phase) — never on every lock acquisition.
  */
-export function sweepMaintenanceActivityOrphans(): { scanned: number; removed: number } {
+export function sweepMaintenanceActivityOrphans(maxFiles: number = MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES): {
+  scanned: number;
+  removed: number;
+} {
   const directory = maintenanceActivitiesDir();
   let entries: fs.Dirent[];
   try {
@@ -224,7 +231,7 @@ export function sweepMaintenanceActivityOrphans(): { scanned: number; removed: n
   let scanned = 0;
   let removed = 0;
   for (const entry of entries) {
-    if (scanned >= MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES) break;
+    if (scanned >= maxFiles) break;
     if (!entry.isFile()) continue;
     const fullPath = path.join(directory, entry.name);
     if (fullPath === mutexPath) continue;

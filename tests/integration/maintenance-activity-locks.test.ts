@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { tryAcquireLockSync } from "../../src/core/file-lock";
-import { acquireMaintenanceActivitySync, sweepMaintenanceActivityOrphans } from "../../src/core/maintenance-barrier";
+import {
+  acquireMaintenanceActivitySync,
+  MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES,
+  sweepMaintenanceActivityOrphans,
+} from "../../src/core/maintenance-barrier";
 import { getMaintenanceBarrierPath } from "../../src/core/paths";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -121,20 +125,28 @@ describe("sweepMaintenanceActivityOrphans", () => {
     expect(fs.existsSync(mutexPath)).toBe(true);
   });
 
+  test("default bound drains a large backlog in a few runs", () => {
+    // 227,409 files / MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES must land in "a
+    // few" (single-digit) sweeps, not the 114 the old 2,000 cap needed.
+    expect(MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES).toBe(50_000);
+    expect(Math.ceil(227_409 / MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES)).toBeLessThanOrEqual(5);
+  });
+
   test("is bounded: caps the number of files removed in one call", () => {
     const dir = activitiesDir();
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const total = 2_010; // just over MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES (2,000)
+    const maxFiles = 20; // smaller than MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES so the test stays fast
+    const total = maxFiles + 10;
     for (let i = 0; i < total; i++) {
       fs.writeFileSync(path.join(dir, `.state-db-1-${i}.lock.operations.sensitive`), "");
     }
 
-    const first = sweepMaintenanceActivityOrphans();
-    expect(first.scanned).toBe(2_000);
-    expect(first.removed).toBe(2_000);
+    const first = sweepMaintenanceActivityOrphans(maxFiles);
+    expect(first.scanned).toBe(maxFiles);
+    expect(first.removed).toBe(maxFiles);
     expect(listActivityFiles().length).toBe(10);
 
-    const second = sweepMaintenanceActivityOrphans();
+    const second = sweepMaintenanceActivityOrphans(maxFiles);
     expect(second.removed).toBe(10);
     expect(listActivityFiles().length).toBe(0);
   });

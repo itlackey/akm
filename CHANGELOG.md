@@ -325,8 +325,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm index`'s finalize phase now also runs a bounded, best-effort
   `sweepMaintenanceActivityOrphans()` (new export in `maintenance-barrier.ts`)
   that removes leftover pre-fix sidecars whose lock file is gone and activity
-  lock files whose owner pid has died, capped at 2,000 files per run so a
-  large backlog drains over a few `akm index` runs without stalling one.
+  lock files whose owner pid has died, capped at 50,000 files per run (about
+  0.2 s) so a large backlog drains over a few `akm index` runs instead of
+  stalling one.
 - **`akm setup`'s scheduled-tasks review no longer pre-checks a task from a
   pending grant in the wrong bundle.** `stepScheduledTasks`
   (`src/setup/steps/tasks.ts`) pre-checked an embedded template whenever ANY
