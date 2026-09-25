@@ -51,7 +51,11 @@
  *                      and passes both sync gates.
  *   - `converts`    — declared `version: 2` or `3`; the deterministic
  *                      in-memory migrator produced a valid v4 document that
- *                      passes both sync gates.
+ *                      passes both sync gates. A declared `version: 4`
+ *                      document whose only defect is a retired
+ *                      `schedule[].enabled` key also reports `converts`
+ *                      (`sourceVersion` is still `4`) — it read through the
+ *                      same in-memory shim, not the direct v4 parse path.
  *   - `blocked`     — declared `version: 2` or `3`; the migrator itself
  *                      could not convert it (an ambiguous/unmigratable
  *                      shape) — the ONLY way `parseTaskSource` ever throws
@@ -77,7 +81,12 @@ import type { InputContract } from "../../execution/input-contract";
 import { backendNameForPlatform } from "../../tasks/backends";
 import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../tasks/scheduler-sync";
 import { own, readBoundedTaskSourceYaml } from "../../tasks/source/bounded-document";
-import { type ParsedTaskSource, parseTaskSource, peekTaskSourceVersion } from "../../tasks/source/parse-task-source";
+import {
+  type ParsedTaskSource,
+  parseTaskSource,
+  peekTaskSourceVersion,
+  v4ScheduleHasRetiredEnabledKey,
+} from "../../tasks/source/parse-task-source";
 import type {
   TaskSourceV4Document,
   TaskSourceV4ScheduleBinding,
@@ -228,12 +237,19 @@ export async function akmTaskValidate(filePath: string): Promise<TaskValidateRes
     return { ok: false, path: resolvedPath, sourceVersion, outcome: "invalid", reason: cause.message };
   }
 
+  // A declared `version: 4` document with a retired `schedule[].enabled`
+  // key parsed through `parseTaskSource`'s in-memory shim, not the direct
+  // v4 path, even though `sourceVersion` reads `4` — report it the same
+  // way a converted v2/v3 document is reported.
+  const convertedFromRetiredScheduleEnabled =
+    sourceVersion === 4 && !peekFailed && v4ScheduleHasRetiredEnabledKey(root);
+
   const id = path.parse(resolvedPath).name;
   return {
     ok: true,
     path: resolvedPath,
     sourceVersion,
-    outcome: sourceVersion === 2 || sourceVersion === 3 ? "converts" : "valid",
+    outcome: sourceVersion === 2 || sourceVersion === 3 || convertedFromRetiredScheduleEnabled ? "converts" : "valid",
     resolved: buildResolved(id, parsed.v4),
   };
 }

@@ -15,7 +15,8 @@
  *
  *   | root `version`        | outcome                                                        |
  *   |------------------------|-----------------------------------------------------------------|
- *   | `4`                    | `parseTaskSourceV4Document` — the current grammar               |
+ *   | `4`, no retired `schedule[].enabled` | `parseTaskSourceV4Document` — the current grammar |
+ *   | `4`, some `schedule[]` entry carries `enabled` | in-memory read shim (below): the SAME `planTaskToV4File` call `akm migrate apply` uses for this exact case (`./task-to-v4.ts`'s `version === 4` branch, which strips every `schedule[].enabled` and reports `source-enablement-removed`) runs on the bytes already in hand; the result is parsed and returned with a one-line stderr deprecation warning (once per file per process). The value is never read either way — `enabled: false` cannot suppress a granted task and `enabled: true` cannot schedule an ungranted one, since activation is host-local `scheduler.enabled`. If the planner cannot produce a valid document, falls back to `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the specific blocked reason |
  *   | `2` or `3`             | in-memory read shim (below): the SAME pure planners `akm migrate apply` uses (`./task-to-v3.ts`, `./task-to-v4.ts`) convert the bytes already in hand to v4 in memory; the result is parsed and returned with a one-line stderr deprecation warning (once per file per process). If the deterministic conversion itself fails (an unmigratable shape — the file needs a human decision, not a re-run), falls back to `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the specific blocked reason — the shim removes friction for the deterministic case, it never hides a real problem |
  *   | any other number       | `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the migrator          |
  *   | absent / not a number  | `parseTaskSourceV4Document` — its own `TASK_SOURCE_INVALID` "version is required and must be 4" / "must be exactly 4" wording |
@@ -42,7 +43,13 @@
  * the v3->v4 planner never hoists the retired `akm.enabled` field to v4's
  * top level and never carries a schedule entry's `enabled` key, so the
  * document this shim hands back carries no enablement at all — the same
- * shape a native v4 document has. The front end's own pre-version failures
+ * shape a native v4 document has. A declared `version: 4` document that
+ * still carries a `schedule[].enabled` key (0.9.15's v4 grammar accepted
+ * it; this release's does not) gets the identical treatment: routed
+ * through `planTaskToV4File`'s own `version === 4` branch, which strips
+ * every `schedule[].enabled` key without reading its value and reports
+ * `source-enablement-removed`, then re-parsed and returned with the same
+ * one-line deprecation warning. The front end's own pre-version failures
  * (source not a string, source too large, YAML parse/warning/expansion)
  * render with the label `task source`.
  */
@@ -111,14 +118,19 @@ interface PlanInMemoryV4Blocked {
 /**
  * Plan the SAME bytes already in hand through the pure v3->v4 (and, for v2,
  * chained v2->v3->v4) migration planner(s) — never touches disk, never
- * writes the file, never re-reads it from disk. Returns the produced v4
- * YAML text, or the blocked reason/detail when the deterministic conversion
- * cannot proceed (an unmigratable v2/v3 shape) — the caller falls back to
- * the same hard error this gate threw before the shim existed, now naming
- * that reason.
+ * writes the file, never re-reads it from disk. `version === 4` runs the
+ * identical bytes straight through `planTaskToV4File`'s own `version === 4`
+ * branch instead (the retired `schedule[].enabled` case, `./task-to-v4.ts`),
+ * so there is exactly one helper for every version this shim reads, not a
+ * second one for the v4-only case. Returns the produced v4 YAML text, or the
+ * blocked reason/detail when the deterministic conversion cannot proceed
+ * (an unmigratable v2/v3 shape, or a v4 document `planTaskToV4File` cannot
+ * revalidate once `schedule[].enabled` is stripped) — the caller falls back
+ * to the same hard error this gate threw before the shim existed, now
+ * naming that reason.
  */
 function planInMemoryV4Bytes(
-  version: 2 | 3,
+  version: 2 | 3 | 4,
   yaml: string,
   filePath: string,
   workspaceRoot?: string,
@@ -138,7 +150,7 @@ function planInMemoryV4Bytes(
   };
 
   let v3Bytes: Buffer;
-  if (version === 3) {
+  if (version === 3 || version === 4) {
     v3Bytes = bytes;
   } else {
     const v3Outcome = planTaskToV3File(baseInput as TaskToV3FileInput);
@@ -149,6 +161,23 @@ function planInMemoryV4Bytes(
   const v4Outcome = planTaskToV4File({ ...baseInput, bytes: v3Bytes } as TaskToV4FileInput);
   if (v4Outcome.status !== "changed") return { reason: v4Outcome.reason, detail: v4Outcome.detail };
   return v4Outcome.after.toString("utf8");
+}
+
+/**
+ * True when `root`'s `schedule:` is a sequence with at least one mapping
+ * entry that carries an `enabled` key, regardless of that key's value or
+ * type — the shape 0.9.15's v4 grammar accepted and this release's does
+ * not (`schedule[].enabled`). The value is never inspected: activation is
+ * host-local `scheduler.enabled`, so this is purely a presence check that
+ * decides whether to route through the in-memory shim.
+ */
+export function v4ScheduleHasRetiredEnabledKey(root: unknown): boolean {
+  if (root === null || typeof root !== "object" || Array.isArray(root)) return false;
+  const schedule = (root as Record<string, unknown>).schedule;
+  if (!Array.isArray(schedule)) return false;
+  return schedule.some(
+    (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry) && Object.hasOwn(entry, "enabled"),
+  );
 }
 
 /** Parse task source YAML, routing per the terminal table above. */
@@ -173,6 +202,22 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
       throw unmigratableVersionError(input.filePath, version, shimmed.reason, shimmed.detail);
     }
     throw unsupportedVersionError(input.filePath, version);
+  }
+  if (version === TASK_SOURCE_V4_VERSION && v4ScheduleHasRetiredEnabledKey(root)) {
+    const shimmed = planInMemoryV4Bytes(4, input.yaml, input.filePath, input.workspaceRoot);
+    if (typeof shimmed === "string") {
+      const v4 = parseTaskSourceV4({
+        yaml: shimmed,
+        filePath: input.filePath,
+        ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
+      });
+      warnOnce(
+        `task-source:v4-schedule-enabled-shim:${input.filePath}`,
+        `akm: task ${input.filePath} uses the retired schedule[].enabled field — auto-read with it ignored; run \`akm migrate apply\` to rewrite it and silence this`,
+      );
+      return Object.freeze({ version: 4 as const, v4 });
+    }
+    throw unmigratableVersionError(input.filePath, 4, shimmed.reason, shimmed.detail);
   }
   const documentOptions = {
     filePath: input.filePath,
