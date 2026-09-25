@@ -95,6 +95,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   after the read shim has already stripped these keys) and the speculative
   `RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES` in `config.ts` (both of its callers
   already receive post-shim input).
+- **Three new `akm health` advisories that name an upgrade break within one
+  report** (`src/commands/health/upgrade-advisories.ts`; upgrade-D/D2):
+  `version-reconcile` warns when this host's host-local state hasn't
+  reconciled to the version that's actually running (a missing, stale, or
+  blocked `$STATE/version-reconcile.json` stamp), naming `akm migrate status`
+  and the first blocker; `scheduler-grants` (`--probe`-gated, like
+  `scheduler-binary`) warns when an installed native scheduler row has no
+  host-local grant yet, naming the refs and `akm task sync`; and
+  `scheduled-startup-failures` warns when a scheduled run in the health
+  window failed with a startup-class exit code (2 usage, 70 internal, 78
+  config) — a run that died before its body executed — naming the task id(s)
+  and, when a log is on disk, the first line naming the error. Previously
+  none of `state-db-migrations`, `scheduler-binary`, or `task-fail-rate` said
+  any of this, so an upgrade break could run for hours before anyone
+  noticed. See `docs/architecture/internals/health-advisories.md`.
 
 ### Fixed
 
