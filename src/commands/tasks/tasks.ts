@@ -627,9 +627,8 @@ async function buildSchedulerSyncPlan(
   // syncs inside `akmTasksAdd`/`akmTasksEnable`/`akmTasksDisable` never
   // carry forward — a caller that just revoked a grant and syncs must not
   // have that revoke silently undone by the same call.
-  const carriedForward = options.carryForward
-    ? pendingGrantsFromInstalled(inspection.installed, config).map((activation) => activation.ref)
-    : [];
+  const pendingGrants = options.carryForward ? pendingGrantsFromInstalled(inspection.installed, config) : [];
+  const carriedForward = pendingGrants.map((activation) => activation.ref);
   if (carriedForward.length > 0 && options.dryRun !== true) {
     await carryForwardSchedulerGrants(inspection);
     resetConfigCache();
@@ -694,7 +693,16 @@ async function buildSchedulerSyncPlan(
     return { sched, plan, sourceSnapshots: Object.freeze([]), prepared: undefined, warnings: [] };
   }
   const selectedNames = sourceNames.length > 0 ? sourceNames : [undefined];
-  const enabled = activeSchedulerActivations(config);
+  // A dry-run never mutates config, so `activeSchedulerActivations` above
+  // does not yet include `pendingGrants` (the applied path reloads config
+  // after `carryForwardSchedulerGrants` instead). Add them here so the
+  // preview plans the sync that would actually run after the carry-forward,
+  // instead of showing a `remove` for a ref it just reported as carried
+  // forward.
+  const enabled =
+    options.dryRun === true
+      ? [...activeSchedulerActivations(config), ...pendingGrants]
+      : activeSchedulerActivations(config);
   const enabledActivations = new Set(enabled.map((activation) => `${activation.kind}\0${activation.ref}`));
   const preparedSets: Array<{
     common: Parameters<typeof finalizeSchedulerSyncPlan>[0];
