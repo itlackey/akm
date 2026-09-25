@@ -620,10 +620,27 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
       for (const row of nativeSchedulerRows) lines.push(`  - ${String(row)}`);
     }
   } else {
-    const taskSync = r.taskSync as { ok?: boolean; error?: string } | undefined;
-    if (taskSync?.ok === true) {
-      lines.push("Native scheduler bindings re-synced under the new name.");
-    } else if (taskSync?.ok === false) {
+    const taskSync = r.taskSync as { ok?: boolean; error?: string; result?: Record<string, unknown> } | undefined;
+    const syncResult = taskSync?.result;
+    if (syncResult) {
+      const installed = Array.isArray(syncResult.installed) ? syncResult.installed.length : 0;
+      const updated = Array.isArray(syncResult.updated) ? syncResult.updated.length : 0;
+      const removed = Array.isArray(syncResult.removed) ? syncResult.removed.length : 0;
+      const failures = Array.isArray(syncResult.failures)
+        ? (syncResult.failures as { path: string; ref?: string; reason: string }[])
+        : [];
+      if (failures.length === 0) {
+        lines.push(
+          `Native scheduler bindings re-synced under the new name (${installed} installed, ${updated} updated, ${removed} removed).`,
+        );
+      } else {
+        lines.push(
+          `Native scheduler sync after rename: ${installed} installed, ${updated} updated, ${removed} removed, ${failures.length} failed.`,
+        );
+        for (const failure of failures) lines.push(`  - ${failure.ref ?? failure.path}: ${failure.reason}`);
+        lines.push("Run `akm task sync` to retry.");
+      }
+    } else if (taskSync?.ok === false && taskSync.error) {
       lines.push(`Re-syncing native scheduler bindings failed: ${taskSync.error}. Run \`akm task sync\` to retry.`);
     }
   }
