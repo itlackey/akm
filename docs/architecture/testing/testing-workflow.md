@@ -367,7 +367,7 @@ executing a rebound generated cron command, `task run`, `health`,
 `improve --plan`), and finally runs the PREVIOUS release back against the
 candidate-written home to prove read-back still works. It exists because no
 other suite drives a real prior release against a real candidate build: the
-symlink-abort regression fixed in 0.9.17-alpha.3 (`45b5693dc`) went
+symlink-abort regression fixed in 0.9.17-alpha.3 (`d76af0a7b`) went
 undetected by the full unit/integration suite, `tests/release-check.sh`, and
 the Docker matrix, because no fixture combined a git bundle with an
 in-bundle symlink, a website bundle, an npm bundle, an ungranted task, and a
