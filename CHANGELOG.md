@@ -113,6 +113,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`akm task sync` carries a scheduler grant forward before it would
+  otherwise remove it as ungranted (upgrade-B).** An installed native
+  scheduler binding backed by a file in an enabled bundle, but with no
+  `scheduler.enabled` entry — the exact shape a lost or reset host-local
+  config leaves behind — is granted before `desired`/`removed` is computed,
+  instead of being deleted on the next sync. `akm task disable <ref>` is
+  still the supported way to drop a granted, installed binding: its own
+  reconciling sync skips carry-forward for that one call so the row it just
+  revoked is not immediately re-granted. `--dry-run` reports what would be
+  carried forward under a new `carriedForward` field and never applies it.
 - **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
   config.json (legacy source shape, `extraParams`, retired keys, scheduler
   `sourceId` binding), pending `state.db` migrations (historical-destructive
