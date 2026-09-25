@@ -72,6 +72,26 @@ Scheduler sync/validation evidence is not an executable snapshot and is never re
 Rerunning `akm setup` preserves existing scheduler bindings by design — it
 will not silently rebind entries that are already activated.
 
+## Upgrades no longer need a manual `akm migrate apply`
+
+Before 0.9.17, only `akm upgrade` ran the migrator after an install — a
+prerelease install (`npm i -g akm-cli@next`), a plain `npm i -g`/`bun add
+-g`, or an image rebuild all bypassed it, and a scheduled task's crontab (or
+launchd/schtasks) row could be removed by the next `akm task sync` before a
+human ever ran `akm migrate apply` to re-grant it.
+
+Every akm command now reconciles host-local state (config, scheduler
+grants, `state.db`) with the installed version by itself, once per version
+change, before the command's own work runs — including a scheduled `akm
+task run`. A scheduled task survives an upgrade by any install method with
+no manual step. `akm task sync` also carries a scheduler grant forward for
+any installed, backed, enabled-bundle binding that has no grant yet, as a
+second safeguard against the same evidence being lost. `akm task disable
+<ref>` is still the way to deliberately drop one.
+
+`akm migrate status` always reports whether anything host-local remains
+pending, and why.
+
 ## Migrating or repairing scheduler bindings (`--rebind`)
 
 If akm was moved, reinstalled under a different package prefix, or repaired

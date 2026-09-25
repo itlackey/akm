@@ -110,6 +110,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validate` reports such a file `converts` (`sourceVersion` still `4`)
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
+- **`akm task sync` could remove a scheduled task's evidence before a
+  post-upgrade `akm migrate apply` ever ran.** Only `akm upgrade` triggered
+  the migrator, and it cannot install a prerelease — every prerelease
+  install, plain `npm i -g`/`bun add -g`, and image rebuild bypassed it
+  entirely, with nothing detecting that the host was last written by a
+  different version. Meanwhile `akm task sync` treats an installed native
+  binding with no grant as an orphan and removes it (`desired` holds only
+  granted refs) — so a `task sync` that ran before a human got around to
+  `akm migrate apply` permanently deleted the installed row the migration
+  needed to re-grant it, taking every scheduled task on the host down with
+  no way back short of re-authoring them. Fixed by the startup
+  reconciliation and `task sync` carry-forward above (2026-09-24, one host).
 
 ### Added
 

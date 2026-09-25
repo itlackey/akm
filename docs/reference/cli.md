@@ -1703,6 +1703,8 @@ akm migrate status
 akm migrate apply --dry-run
 akm migrate apply
 akm-migrate apply          # the same, without the akm wrapper
+akm-migrate apply --host-local   # steps 1, 2, 3, 4, 5, 6, and stale-transaction
+                                  # recovery only -- never bundle content (7, 8)
 ```
 
 `status` and `apply --dry-run` are read-only. Apply skips blocked task
@@ -1714,6 +1716,27 @@ task source v4](tasks.md#migrating-to-task-source-v4) for the full
 blocked-reason table and worked examples, and
 [Bundling akm](../integration/bundling-akm.md) for the plan JSON shape and
 how to drive this from a container/image boot step.
+
+**`--host-local`** narrows `status`/`apply` to config.json, `state.db`,
+scheduler grants (including step 6's carry-forward, from an installed
+native scheduler row `akm task sync` already wrote), and `$DATA/txn` stale
+transactions — never bundle content (steps 7 and 8: task file rewrites,
+dead `.akm` residue, writer relocation), which stay reachable only through
+a full `apply`. The returned plan's `mode` field reads `"host-local"`, and
+a skipped section is absent from the plan, not empty.
+
+Every akm command now runs `akm-migrate apply --host-local` itself, once
+per version change: on startup, before the command's own work, akm compares
+`$STATE/version-reconcile.json` against its own version and, on a mismatch,
+runs the host-local apply under a lock before continuing — including for a
+scheduled `akm task run`. This is what lets a prerelease install
+(`npm i -g akm-cli@next`), a plain `npm i -g`/`bun add -g`, or an image
+rebuild — none of which can run `akm upgrade`'s own post-install step —
+still bring host-local state up to date with no manual step. A migration
+that cannot finish (blocked, or the reconcile attempt itself failing) warns
+once and lets the command run anyway; it is retried automatically no more
+than once every 10 minutes. `akm migrate status` (the full plan) always
+tells you exactly what remains pending and why.
 
 ### config
 
