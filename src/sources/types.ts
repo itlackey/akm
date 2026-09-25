@@ -513,6 +513,12 @@ export interface UpgradeCheckResponse {
   latestVersion: string;
   updateAvailable: boolean;
   installMethod: "binary" | "bun" | "npm" | "pnpm" | "package-local" | "unknown";
+  /**
+   * Present when `--version`/`--tag` named an explicit target instead of
+   * resolving the latest release. `latestVersion` above is that target's
+   * resolved version, not necessarily the newest one.
+   */
+  requestedTarget?: { version?: string; tag?: string };
 }
 
 export interface UpgradeResponse {
@@ -532,6 +538,8 @@ export interface UpgradeResponse {
     skipped: boolean;
     exitCode?: number | null;
     message: string;
+    /** Result of the `akm task sync` run after the index rebuild. Absent when skipped. */
+    taskSync?: { ok: boolean; message: string };
   };
   /**
    * The `akm-migrate apply` plan run after the install step -- or in its

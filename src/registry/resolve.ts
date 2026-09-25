@@ -463,6 +463,34 @@ function npmMetadataRegistry(): { baseUrl: string; allowPrivateRegistryOrigin: b
   return { baseUrl: `https://${DEFAULT_NPM_REGISTRY_HOST}`, allowPrivateRegistryOrigin: false };
 }
 
+/**
+ * Resolve an npm dist-tag (e.g. "latest", "next") to the version it
+ * currently points at, via the npm registry's per-version endpoint (`GET
+ * <registry>/<name>/<tag>`), honouring `AKM_NPM_REGISTRY` exactly as a
+ * package install does. Used by `akm upgrade --tag` (self-update.ts) to
+ * resolve a dist-tag without pulling the full package metadata document.
+ */
+export async function resolveNpmDistTagVersion(packageName: string, tag: string): Promise<string> {
+  const npmRegistry = npmMetadataRegistry();
+  const npmPolicy: RegistryNetworkPolicy = {
+    kind: "npm-api",
+    registryOrigin: new URL(npmRegistry.baseUrl).origin,
+    allowPrivateRegistryOrigin: npmRegistry.allowPrivateRegistryOrigin,
+  };
+  const encodedName = encodeURIComponent(packageName);
+  const encodedTag = encodeURIComponent(tag);
+  const versionDoc = await fetchJson<Record<string, unknown>>(
+    `${npmRegistry.baseUrl}/${encodedName}/${encodedTag}`,
+    undefined,
+    npmPolicy,
+  );
+  const version = asString(versionDoc.version);
+  if (!version) {
+    throw new Error(`npm dist-tag "${tag}" for ${packageName} did not resolve to a version.`);
+  }
+  return version;
+}
+
 async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistryArtifact> {
   const encodedName = encodeURIComponent(parsed.packageName);
   const npmRegistry = npmMetadataRegistry();
