@@ -407,8 +407,6 @@ export async function akmTasksRun(
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
-  const conceptId = adapterId === "akm" ? `tasks/${resolvedId}` : resolvedId;
-  const qualifiedRef = makeBundleRef(bundle.source.name, conceptId);
   // D5 "Construction" (spec docs/plans/specs/p1b-model-extraction.md §1.2/
   // §5.2): built ONCE at this invocation boundary. eventSource is "task"
   // whether or not --scheduled was passed (§1.6 D5-N1) — scheduled stays a
