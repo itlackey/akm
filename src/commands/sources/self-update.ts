@@ -381,7 +381,11 @@ export async function performUpgrade(
       installMethod,
       message: `akm v${currentVersion} is already the latest version`,
       migration,
-      otherInstalls: upgradeOtherInstalls(latestVersion, dependencies),
+      // The running install isn't moving, so other installs move to what IT
+      // has now (`currentVersion`), never `latestVersion` — on a host running
+      // a prerelease, `latestVersion` here is the last STABLE release, which
+      // is older than `currentVersion` and would silently downgrade a peer.
+      otherInstalls: upgradeOtherInstalls(currentVersion, dependencies),
     };
   }
 
@@ -868,10 +872,12 @@ function getInstalledPackageName(): string {
 function resolveNodePackageManagerCommand(
   name: "npm" | "pnpm",
   binDir: string = path.dirname(process.execPath),
-): string {
+): { command: string; resolvedInBinDir: boolean } {
   const extension = IS_WINDOWS ? ".cmd" : "";
   const adjacent = path.join(binDir, `${name}${extension}`);
-  return fs.existsSync(adjacent) ? adjacent : name;
+  return fs.existsSync(adjacent)
+    ? { command: adjacent, resolvedInBinDir: true }
+    : { command: name, resolvedInBinDir: false };
 }
 
 export function getPackageManagerUpgradeCommand(
@@ -879,7 +885,7 @@ export function getPackageManagerUpgradeCommand(
   packageName = getInstalledPackageName(),
   version = "latest",
   binDir?: string,
-): { command: string; args: string[]; displayCommand: string } | undefined {
+): { command: string; args: string[]; displayCommand: string; env?: NodeJS.ProcessEnv } | undefined {
   const pkgRef = `${packageName}@${version}`;
 
   if (installMethod === "bun") {
@@ -890,20 +896,26 @@ export function getPackageManagerUpgradeCommand(
     };
   }
 
-  if (installMethod === "pnpm") {
-    return {
-      command: resolveNodePackageManagerCommand("pnpm", binDir),
-      args: ["add", "-g", pkgRef],
-      displayCommand: `pnpm add -g ${pkgRef}`,
-    };
-  }
-
-  if (installMethod === "npm") {
-    return {
-      command: resolveNodePackageManagerCommand("npm", binDir),
-      args: ["install", "-g", pkgRef],
-      displayCommand: `npm install -g ${pkgRef}`,
-    };
+  if (installMethod === "pnpm" || installMethod === "npm") {
+    const args = installMethod === "pnpm" ? ["add", "-g", pkgRef] : ["install", "-g", pkgRef];
+    const bareDisplay = `${installMethod} ${args.join(" ")}`;
+    const resolved = resolveNodePackageManagerCommand(installMethod, binDir);
+    // Only when a `binDir` was explicitly named (an OTHER install, never the
+    // primary's own default) AND that install actually has npm/pnpm adjacent
+    // to it: npm/pnpm scripts are `#!/usr/bin/env node`, so npm derives its
+    // global prefix from whichever `node` PATH resolves — prepending
+    // `binDir` makes that this install's own `node`, not the running
+    // process's (#D3 r3-2: without this, the command above already points at
+    // the right npm, but it still installs into the WRONG install because it
+    // runs under the wrong node).
+    if (binDir !== undefined && resolved.resolvedInBinDir) {
+      const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` };
+      const displayCommand = IS_WINDOWS
+        ? `${resolved.command} ${args.join(" ")}`
+        : `PATH="${binDir}:$PATH" ${bareDisplay}`;
+      return { command: resolved.command, args, displayCommand, env };
+    }
+    return { command: resolved.command, args, displayCommand: bareDisplay };
   }
 
   return undefined;
@@ -1006,7 +1018,7 @@ function upgradeOtherInstall(install: AkmInstall, targetVersion: string): OtherA
 
   const result = childProcess.spawnSync(command.command, command.args, {
     encoding: "utf8",
-    env: process.env,
+    env: command.env ?? process.env,
     stdio: "pipe",
   });
   if (result.error || result.status !== 0) {

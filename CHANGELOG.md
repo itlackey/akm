@@ -34,11 +34,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
   version's `bin/`), deduped by realpath, classified, and probed with
   `--version` — pure, local, no network call. `akm upgrade` now enumerates
-  the OTHER installs after the primary one succeeds and, for each with a
-  recognizable manager (npm/bun/pnpm), installs the same version there too
-  and re-verifies it, reporting the outcome in a new `otherInstalls` field;
-  an install it cannot manage (a standalone binary, a checkout) is listed
-  but never touched. `--check` lists the same information read-only. A new
+  the OTHER installs after the primary install step runs — including when
+  that step is a no-op because the running install is already current — and,
+  for each with a recognizable manager (npm/bun/pnpm), moves it to the
+  version the running install has afterward (never an older `latest`, which
+  would silently downgrade a peer on a host running a prerelease) via that
+  install's own adjacent package manager, run under that install's own
+  `node` (its bin directory prepended to `PATH`), and re-verifies it,
+  reporting the outcome in a new `otherInstalls` field; an install it cannot
+  manage (a standalone binary, a checkout) is listed but never touched.
+  `--check` lists the same information read-only. A new
   `akm-installs` `akm health` advisory (`--probe`-gated) reports the same
   enumeration as an ongoing check, warning by path with the manager command
   that pins it to the running version — the same `getPackageManagerUpgradeCommand`

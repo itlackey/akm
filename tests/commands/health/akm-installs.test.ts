@@ -9,6 +9,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { collectAkmInstallsAdvisory } from "../../../src/commands/health/akm-installs";
 import type { AkmInstall } from "../../../src/core/akm-installs";
 
@@ -117,5 +120,31 @@ describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {
     const installs = [install({ path: "/a/akm", version: "0.9.17", isRunning: true })];
     const result = collectAkmInstallsAdvisory(true, { cliVersion: "0.9.17", enumerateAkmInstalls: () => installs });
     expect(result.evidence).toMatchObject({ installs });
+  });
+
+  // r3-2: npm is `#!/usr/bin/env node`, so it derives its global prefix from
+  // whichever `node` PATH resolves. A remedy naming only the bare
+  // `npm install -g` would reinstall into the WRONG node's global prefix
+  // when the behind install's own adjacent npm lives in a different
+  // `binDir`. `remedyFor` reuses `getPackageManagerUpgradeCommand`'s
+  // `displayCommand`, which must name that `binDir`.
+  test("an npm install behind, with its own adjacent npm in binDir: the remedy names that binDir", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-installs-bindir-"));
+    const npmPath = path.join(dir, "npm");
+    fs.writeFileSync(npmPath, "");
+    try {
+      const result = collectAkmInstallsAdvisory(true, {
+        cliVersion: "0.9.17",
+        enumerateAkmInstalls: () => [
+          install({ path: "/a/akm", version: "0.9.17", isRunning: true }),
+          install({ path: "/b/akm", manager: "npm", version: "0.9.15", binDir: dir }),
+        ],
+      });
+      expect(result.status).toBe("warn");
+      expect(result.message).toContain(dir);
+      expect(result.message).toContain("npm install -g akm-cli@0.9.17");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
