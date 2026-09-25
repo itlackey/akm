@@ -135,7 +135,9 @@ describe("akm health --no-probe (#914)", () => {
       advisories: Array<{
         name: string;
         status: string;
-        evidence?: { installs?: Array<{ path: string; manager: string; version?: string; isRunning: boolean }> };
+        evidence?: {
+          installs?: Array<{ path: string; binDir: string; manager: string; version?: string; isRunning: boolean }>;
+        };
       }>;
     };
     const check = parsed.hardChecks.find((c) => c.name === "default-llm-engine");
