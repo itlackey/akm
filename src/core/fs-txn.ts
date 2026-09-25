@@ -34,6 +34,23 @@
  * {@link recoverTxnsForRoot} (after importing the domain registrar so the
  * kinds are registered).
  *
+ * ## Quarantine and deferral
+ *
+ * A journal that cannot be TRUSTED — an unreadable `journal.json` or a fence
+ * violation (root binding, phase membership, path containment, the kind's
+ * own `validate`) — is QUARANTINED: moved to
+ * `$DATA/txn-quarantine/<rootNs>/<transactionId>/` (see {@link
+ * QuarantinedTxn}) rather than aborting the whole scan. A trusted, fenced
+ * journal whose `rollback`/`finalize` throws is DEFERRED instead: the
+ * recovery ACTION failed (a refused git push, a target that diverged,
+ * `state.db` contention), not the journal, so quarantining it would discard
+ * the only record of an interrupted mutation. A deferred journal is left
+ * exactly where it is and reported under {@link DeferredTxn} for a later
+ * scan — or an operation on the entity it belongs to — to retry. Recovery is
+ * per-journal: one untrusted or stuck journal never blocks the others, and
+ * never bricks a later scan against the same root the way a thrown error
+ * would.
+ *
  * ## Crash-window test seam
  *
  * `_setTxnMutationHookForTests` replaces the per-engine hooks; domain code
@@ -44,9 +61,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { pkgVersion } from "../version";
 import type { FileChangeOp } from "./file-change";
 import { getDataDir } from "./paths";
-import { warn } from "./warn";
+import { warn, warnOnce } from "./warn";
 
 // ── Journal shapes ───────────────────────────────────────────────────────────
 
@@ -82,6 +100,34 @@ export interface Txn<P = unknown> {
   journal: TxnJournal<P>;
   journalPath: string;
   dir: string;
+}
+
+/**
+ * One journal {@link recoverTxnsForRoot} could not recover (a fence
+ * violation or a `rollback`/`finalize` throw) and quarantined instead of
+ * aborting the scan. `journalPath` is the journal's new location under
+ * `$DATA/txn-quarantine/<rootNs>/<transactionId>/journal.json`.
+ */
+export interface QuarantinedTxn {
+  transactionId: string;
+  kind: string;
+  phase: string;
+  journalPath: string;
+  reason: string;
+}
+
+/**
+ * One trusted, fenced journal whose `rollback`/`finalize` threw and was left
+ * in place for a later scan to retry (see {@link recoverTxnsForRoot}) instead
+ * of being quarantined — the recovery ACTION failed, not the journal itself.
+ * `reason` is the error that made the recovery action fail.
+ */
+export interface DeferredTxn {
+  transactionId: string;
+  kind: string;
+  phase: string;
+  journalPath: string;
+  reason: string;
 }
 
 export interface TxnKindHandler<P = unknown> {
@@ -211,6 +257,16 @@ export function canonicalTxnRoot(root: string): string {
 export function txnNamespaceDir(root: string): string {
   const ns = txnHash(canonicalTxnRoot(root)).slice(0, 24);
   return path.join(getDataDir(), "txn", ns);
+}
+
+/**
+ * Quarantine home for `root`'s namespace — the counterpart to
+ * {@link txnNamespaceDir} under `$DATA/txn-quarantine` rather than
+ * `$DATA/txn`, keyed by the same root-hash segment so both are easy to
+ * correlate by eye.
+ */
+export function txnQuarantineNamespaceDir(root: string): string {
+  return path.join(getDataDir(), "txn-quarantine", path.basename(txnNamespaceDir(root)));
 }
 
 /** Mint a transaction id ahead of {@link beginTxn} (see its `transactionId`). */
@@ -350,6 +406,60 @@ function readJournal(journalPath: string): TxnJournal<unknown> {
   return journal;
 }
 
+/**
+ * Move a transaction directory that {@link recoverTxnsForRoot} could not
+ * recover to `$DATA/txn-quarantine/<rootNs>/<transactionId>/`, with a
+ * `reason.json` beside the untouched `journal.json`. Nothing is deleted —
+ * a human or a later release can inspect or restore it.
+ */
+function quarantineTxnDir(
+  dir: string,
+  root: string,
+  journal: TxnJournal<unknown> | undefined,
+  reason: string,
+): QuarantinedTxn {
+  const transactionId = journal?.transactionId ?? path.basename(dir);
+  const quarantineDir = path.join(txnQuarantineNamespaceDir(root), transactionId);
+  fs.mkdirSync(path.dirname(quarantineDir), { recursive: true, mode: 0o700 });
+  fs.renameSync(dir, quarantineDir);
+  const journalPath = path.join(quarantineDir, "journal.json");
+  const reasonPayload = { reason, version: pkgVersion, quarantinedAt: new Date().toISOString() };
+  writeTxnFileDurably(path.join(quarantineDir, "reason.json"), `${JSON.stringify(reasonPayload, null, 2)}\n`);
+  warnOnce(
+    `txn-quarantine:${transactionId}`,
+    `[txn] quarantined transaction journal ${transactionId} (${reason}) at ${journalPath}`,
+  );
+  return { transactionId, kind: journal?.kind ?? "unknown", phase: journal?.phase ?? "unknown", journalPath, reason };
+}
+
+/**
+ * {@link quarantineTxnDir}, but a failure of the quarantine move itself
+ * (a failed rename, a `reason.json` write error) warns and leaves the
+ * journal where it is instead of escaping {@link recoverTxnsForRoot}'s scan
+ * — the one thing worse than a journal recovery can't resolve is a scan that
+ * a quarantine attempt can't resolve either. Exported so other per-kind
+ * recovery loops that keep their own scan (e.g. proposal accept/revert
+ * recovery, `src/commands/proposal/repository.ts`) can quarantine a
+ * journal under the exact same contract instead of duplicating it.
+ */
+export function quarantineTxnDirSafely(
+  dir: string,
+  root: string,
+  journal: TxnJournal<unknown> | undefined,
+  reason: string,
+): QuarantinedTxn | undefined {
+  try {
+    return quarantineTxnDir(dir, root, journal, reason);
+  } catch (error) {
+    warn(
+      `[txn] failed to quarantine transaction journal at ${dir} (${reason}); leaving it in place: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return undefined;
+  }
+}
+
 /** Engine-level safety fences shared by every kind. */
 function fenceJournal(journal: TxnJournal<unknown>, txnDir: string, root: string, journalPath: string): void {
   if (canonicalTxnRoot(journal.root) !== canonicalTxnRoot(root)) {
@@ -365,6 +475,30 @@ function fenceJournal(journal: TxnJournal<unknown>, txnDir: string, root: string
     }
   }
   handler.validate?.(journal as TxnJournal<never>, txnDir, root);
+}
+
+/**
+ * Read-only probe: would {@link recoverTxnsForRoot} quarantine `journal` on
+ * its fence check, without running the kind's `rollback`/`finalize` (which
+ * this never invokes)? Fence checks are pure validation — root binding,
+ * phase membership, path containment, and the kind's own `validate` — so
+ * this is safe to call from a status/`--dry-run` path. Returns the failure
+ * reason, or `undefined` if the fence would pass (a fence pass does not mean
+ * recovery would succeed: `rollback`/`finalize` can still fail, and that is
+ * only detectable by actually running recovery). A journal whose kind has no
+ * registered handler returns `undefined` too — {@link recoverTxnsForRoot}
+ * sweeps those rather than quarantining them.
+ */
+export function probeJournalFence(journal: TxnJournal<unknown>, root: string): string | undefined {
+  if (!hasKind(journal.kind)) return undefined;
+  const dir = txnDirFor(root, journal.transactionId);
+  const journalPath = path.join(dir, "journal.json");
+  try {
+    fenceJournal(journal, dir, root, journalPath);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 /** True when `journal.phase` is at or after the kind's commit point. */
@@ -384,10 +518,35 @@ export function isCommittedPhase(journal: TxnJournal<unknown>): boolean {
  * kind can disappear for good — 0.9.0 deleted `akm mv` and with it the
  * `kind:"mv"` handler — and an unrecoverable leftover journal must never
  * brick every later recovery scan (index refresh, proposal accept/reject) run
- * against the same root. Kinds that ARE registered keep failing LOUDLY on any
- * fence violation: those journals may fence an interrupted, irreversible
- * mutation. The grace period also covers the transient case where the caller
- * has not imported a live kind's registrar yet.
+ * against the same root. The grace period also covers the transient case
+ * where the caller has not imported a live kind's registrar yet.
+ *
+ * An unreadable or unparseable `journal.json` (torn write, or `readJournal`'s
+ * own version/kind/phase refusal) is QUARANTINED with `journal` left
+ * `undefined` — {@link quarantineTxnDir} already falls back to the directory
+ * name and `"unknown"` for exactly this case — rather than thrown, so one
+ * damaged journal never aborts the scan before its siblings are reached.
+ *
+ * A journal of a REGISTERED kind whose fence check throws is QUARANTINED
+ * (moved to `$DATA/txn-quarantine/<rootNs>/<id>/`, see {@link
+ * QuarantinedTxn}) and the scan continues with the next journal — the fence
+ * (root binding, phase membership, path containment, the kind's own
+ * `validate`) is what decides whether the journal can be trusted at all. A
+ * failure of the quarantine move itself (see {@link quarantineTxnDirSafely})
+ * warns and also leaves the journal in place rather than escaping the scan.
+ *
+ * A journal that PASSES its fence but whose `rollback`/`finalize` throws is
+ * DEFERRED, not quarantined: the recovery ACTION failed — a refused git
+ * push, a target that diverged, `state.db` contention — not the journal, so
+ * quarantining it would discard the only record of an interrupted mutation.
+ * It is left exactly where it is, `warnOnce`-logged naming its id, kind,
+ * phase and the error, and reported under the result's `deferred` (see
+ * {@link DeferredTxn}) — not counted as recovered — for a later scan, or an
+ * operation on the entity it belongs to, to retry.
+ *
+ * Either way, one untrusted or stuck journal must never block recovery of
+ * every OTHER journal in the same namespace, or brick every later scan
+ * against the same root the way a thrown error would.
  *
  * `filter` optionally narrows recovery (e.g. one kind, one proposal id). The
  * unknown-kind sweep runs BEFORE the filter: such a journal is garbage no
@@ -397,10 +556,12 @@ export function isCommittedPhase(journal: TxnJournal<unknown>): boolean {
 export async function recoverTxnsForRoot(
   root: string,
   filter?: (journal: TxnJournal<unknown>) => boolean,
-): Promise<TxnJournal<unknown>[]> {
+): Promise<{ recovered: TxnJournal<unknown>[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] }> {
   const nsDir = txnNamespaceDir(root);
   const recovered: TxnJournal<unknown>[] = [];
-  if (!fs.existsSync(nsDir)) return recovered;
+  const quarantined: QuarantinedTxn[] = [];
+  const deferred: DeferredTxn[] = [];
+  if (!fs.existsSync(nsDir)) return { recovered, quarantined, deferred };
   for (const entry of fs.readdirSync(nsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const dir = path.join(nsDir, entry.name);
@@ -409,7 +570,14 @@ export async function recoverTxnsForRoot(
       sweepJournallessTxnDir(dir);
       continue;
     }
-    const journal = readJournal(journalPath);
+    let journal: TxnJournal<unknown>;
+    try {
+      journal = readJournal(journalPath);
+    } catch (error) {
+      const q = quarantineTxnDirSafely(dir, root, undefined, error instanceof Error ? error.message : String(error));
+      if (q) quarantined.push(q);
+      continue;
+    }
     if (!hasKind(journal.kind)) {
       if (sweepJournallessTxnDir(dir)) {
         warn(`[txn] swept unrecoverable journal of unregistered kind "${journal.kind}" at ${journalPath}.`);
@@ -417,19 +585,40 @@ export async function recoverTxnsForRoot(
       continue;
     }
     if (filter && !filter(journal)) continue;
-    fenceJournal(journal, dir, root, journalPath);
-    const handler = requireKind(journal.kind);
-    const txn: Txn<unknown> = { journal, journalPath, dir };
-    const terminal = handler.phases[handler.phases.length - 1];
-    if (!isCommittedPhase(journal)) {
-      await handler.rollback(txn as Txn<never>);
-    } else if (journal.phase !== terminal) {
-      await handler.finalize(txn as Txn<never>);
+    try {
+      fenceJournal(journal, dir, root, journalPath);
+    } catch (error) {
+      const q = quarantineTxnDirSafely(dir, root, journal, error instanceof Error ? error.message : String(error));
+      if (q) quarantined.push(q);
+      continue;
     }
-    recovered.push(journal);
-    cleanupTxn(dir);
+    try {
+      const handler = requireKind(journal.kind);
+      const txn: Txn<unknown> = { journal, journalPath, dir };
+      const terminal = handler.phases[handler.phases.length - 1];
+      if (!isCommittedPhase(journal)) {
+        await handler.rollback(txn as Txn<never>);
+      } else if (journal.phase !== terminal) {
+        await handler.finalize(txn as Txn<never>);
+      }
+      recovered.push(journal);
+      cleanupTxn(dir);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      warnOnce(
+        `txn-deferred:${journal.transactionId}`,
+        `[txn] leaving transaction journal ${journal.transactionId} (kind "${journal.kind}", phase "${journal.phase}") in place after its recovery action failed (${reason}); a later scan retries it.`,
+      );
+      deferred.push({
+        transactionId: journal.transactionId,
+        kind: journal.kind,
+        phase: journal.phase,
+        journalPath,
+        reason,
+      });
+    }
   }
-  return recovered;
+  return { recovered, quarantined, deferred };
 }
 
 /**
@@ -478,10 +667,15 @@ export interface TxnJournalScanResult {
  * scan. Recovery call sites (which must decide how to roll a journal forward
  * or back) keep using {@link listTxnJournals} — it fails loudly on purpose,
  * since silently skipping a damaged journal there could leave an interrupted,
- * irreversible mutation unrecovered.
+ * irreversible mutation unrecovered. `dataDir` defaults to `getDataDir()`;
+ * callers that already resolved it (e.g. `akm health`'s advisories) pass it
+ * through instead of letting this re-resolve it.
  */
-export function listTxnJournalsTolerant(predicate: (journal: TxnJournal<unknown>) => boolean): TxnJournalScanResult {
-  const home = path.join(getDataDir(), "txn");
+export function listTxnJournalsTolerant(
+  predicate: (journal: TxnJournal<unknown>) => boolean,
+  dataDir: string = getDataDir(),
+): TxnJournalScanResult {
+  const home = path.join(dataDir, "txn");
   const matches: TxnJournalScanEntry[] = [];
   const unreadableMtimes: number[] = [];
   if (!fs.existsSync(home)) return { matches, unreadableMtimes };

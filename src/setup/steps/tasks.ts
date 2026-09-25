@@ -10,7 +10,7 @@ import path from "node:path";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
-import { makeBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
@@ -21,9 +21,16 @@ import {
   writeAssetToSource,
 } from "../../core/write-source";
 import { schedulerActivationSourceId, schedulerActivations } from "../../tasks/activation-config";
-import { backendNameForPlatform } from "../../tasks/backends";
+import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
+import type { SchedulerBackendInspection } from "../../tasks/scheduler-binding";
+import {
+  carryForwardSchedulerGrants,
+  pendingGrantsFromInstalled,
+  type SchedulerGrantCarryForwardResult,
+  staleSchedulerGrantWarning,
+} from "../../tasks/scheduler-grant-carry-forward";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { prompt } from "../prompt";
 
@@ -112,6 +119,9 @@ export interface ScheduledTasksDeps {
   list: () => SetupTaskDefinition[] | Promise<SetupTaskDefinition[]>;
   prepare: (tasks: PreparedSetupTask[]) => Promise<number>;
   sync: typeof akmTasksSync;
+  /** Read-only native scheduler inventory, used to pre-check the review truthfully. */
+  inspectInstalled: () => Promise<SchedulerBackendInspection>;
+  carryForward: () => Promise<SchedulerGrantCarryForwardResult>;
 }
 
 export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
@@ -257,6 +267,11 @@ const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
   list: listSetupTaskDefinitions,
   prepare: prepareSetupTaskDefinitions,
   sync: akmTasksSync,
+  inspectInstalled: async () => {
+    const backend = selectBackend();
+    return backend.inspectBindings ? await backend.inspectBindings({}) : { installed: [], artifacts: [] };
+  },
+  carryForward: () => carryForwardSchedulerGrants(),
 };
 
 export async function stepScheduledTasks(
@@ -282,7 +297,28 @@ export async function stepScheduledTasks(
   const byId = new Map<string, SetupTaskDefinition>();
   for (const task of installed) byId.set(normaliseTaskIdForMatch(task.id), task);
 
-  const preChecked = embedded.filter((task) => byId.get(task.id)?.enabled === true).map((task) => task.id);
+  // `akm setup` skips startup reconciliation, so on the first command after an
+  // install that dropped grants, `byId`'s `enabled` reflects a grant that a
+  // carry-forward would immediately restore. Pre-check an id the operator
+  // would see re-granted anyway, without mutating anything before the
+  // confirmation below.
+  const config = loadConfig();
+  let pendingTaskIds = new Set<string>();
+  try {
+    const inspection = await deps.inspectInstalled();
+    pendingTaskIds = new Set(
+      pendingGrantsFromInstalled(inspection.installed, config)
+        .filter((activation) => activation.kind === "task")
+        .map((activation) => parseBundleRef(activation.ref).conceptId.replace(/^tasks\//, "")),
+    );
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    p.log.warn(`Native scheduler activation could not be inspected: ${message}`);
+  }
+
+  const preChecked = embedded
+    .filter((task) => byId.get(task.id)?.enabled === true || pendingTaskIds.has(task.id))
+    .map((task) => task.id);
   // Battery heuristic preserved from the retired `registerDefaultTasks` path
   // (S6): suggest the nightly full sweep on a detected server install, same
   // as every other embedded template, still gated behind the confirmation
@@ -371,6 +407,13 @@ export async function stepScheduledTasks(
     return;
   }
 
+  // Carry forward any grant lost outside the wizard's own review (e.g. an upgrade that reset
+  // host-local config) before `prepare` revokes every managed ref the operator left unchecked.
+  // Otherwise `prepare`'s revocation is followed by carry-forward re-granting the very ref the
+  // operator just deselected.
+  const carryForwardResult = await deps.carryForward();
+  for (const warning of carryForwardResult.warnings) p.log.warn(warning);
+  for (const stale of carryForwardResult.staleGrants) p.log.warn(staleSchedulerGrantWarning(stale));
   const changed = await deps.prepare(plans);
   if (changed > 0) p.log.success(`Prepared ${changed} task definition${changed === 1 ? "" : "s"}.`);
   const syncResult = await deps.sync();

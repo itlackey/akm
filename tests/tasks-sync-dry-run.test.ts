@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
 import { taskSyncDryRunExitCode, taskValidateExitCode } from "../src/commands/tasks/tasks-cli";
+import { resetConfigCache } from "../src/core/config/config";
 import { shapeForCommand } from "../src/output/shapes";
 import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
@@ -178,6 +179,46 @@ describe("akmTasksSyncPlan — dry-run", () => {
     expect(exec.writeCalls).toBe(writesAfterInstall);
     expect(exec.current()).toBe(afterInstall);
     expect(exec.current()).toContain("task run gamma");
+  });
+
+  // A row `akm task sync` itself installed but whose grant is
+  // missing (e.g. `scheduler.enabled` was cleared outside `akm task
+  // disable`) is carried forward by the real, non-dry-run sync — so the
+  // `--dry-run` preview of the SAME state must not plan to remove it. Before
+  // this fix, the preview's `enabledActivations` was built from config alone
+  // and never saw the carry-forward, so it planned a `remove` for a ref it
+  // was simultaneously reporting under `carriedForward`.
+  test("carries a grant-less installed binding forward in the preview instead of planning to remove it", async () => {
+    const exec = spyingMemoryExec();
+    const backend = backendFor(exec);
+    writeTask("orphan", "*/15 * * * *");
+    await akmTasksSync({ backend });
+    const afterInstall = exec.current();
+    const writesAfterInstall = exec.writeCalls;
+    expect(afterInstall).toContain("task run orphan");
+
+    // Strip the grant outside `akm task disable`, exactly like a pre-upgrade
+    // config or an operator-edited `scheduler.enabled`.
+    writeSandboxConfig({ scheduler: { enabled: [] } });
+    resetConfigCache();
+
+    const preview = await akmTasksSyncPlan({ backend }, undefined, { carryForward: true });
+
+    expect(preview.carriedForward).toEqual(["stash//tasks/orphan"]);
+    expect(preview.removes).toEqual([]);
+    expect(preview.hasRemovals).toBe(false);
+
+    // Dry-run still never writes, and config still has no grant — the
+    // preview only PLANS the carry-forward, it does not apply it.
+    expect(exec.writeCalls).toBe(writesAfterInstall);
+    expect(exec.current()).toBe(afterInstall);
+
+    // Control: the exact same state without `carryForward` still shows the
+    // `remove`, so the flag above is what changes the plan.
+    const previewNoCarry = await akmTasksSyncPlan({ backend }, undefined, {});
+    expect(previewNoCarry.carriedForward).toBeUndefined();
+    expect(previewNoCarry.removes.map((op) => op.id)).toEqual(["orphan"]);
+    expect(previewNoCarry.hasRemovals).toBe(true);
   });
 
   test("reports unchanged with hasRemovals: false and zero writes on a no-op re-sync", async () => {

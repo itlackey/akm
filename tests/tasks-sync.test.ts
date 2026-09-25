@@ -15,8 +15,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmTasksSync } from "../src/commands/tasks/tasks";
-import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { akmTasksAdd, akmTasksDisable, akmTasksSync } from "../src/commands/tasks/tasks";
+import { loadConfig, resetConfigCache } from "../src/core/config/config";
+import { filesystemBundleSourceId } from "../src/core/config/config-sources";
+import { isSchedulerRefEnabled, schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import {
   resolveScheduledTaskContext,
@@ -181,6 +183,77 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle");
   });
 
+  test("`akm task disable` also removes a granted, installed binding (upgrade-B)", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).not.toContain("# akm:disabled");
+
+    const disabled = await akmTasksDisable("alpha", {}, { backend });
+    expect(disabled.sync.removed).toEqual(["alpha"]);
+    expect(exec.current()).not.toContain("task run alpha --bundle");
+  });
+
+  test("`akm task add --disabled` does not re-grant or reinstall the task it just disabled (upgrade-B r2-1)", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run alpha --bundle stash --scheduled");
+
+    const result = await akmTasksAdd(
+      { id: "alpha", schedule: "0 3 * * *", command: "echo replacement", disabled: true, force: true },
+      { backend, commitBoundary() {} },
+    );
+
+    expect(result.enabled).toBe(false);
+    expect(isSchedulerRefEnabled(loadConfig(), "task", "stash//tasks/alpha")).toBe(false);
+    expect(exec.current()).not.toContain("task run alpha --bundle stash --scheduled");
+  });
+
+  test("carries forward a grant lost outside `disable` for an installed row with a backing file (upgrade-B)", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("orphan", "*/5 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run orphan");
+
+    // Simulate the grant record itself vanishing (e.g. an upgrade that
+    // reset host-local config) while the installed crontab row and the
+    // task file it backs both survive untouched — the exact 2026-09-24
+    // scenario. This is NOT `akm task disable`.
+    writeSandboxConfig({ scheduler: { enabled: [] } });
+    resetConfigCache();
+    expect(schedulerActivations(loadConfig())).toEqual([]);
+
+    // Only `akm task sync` itself carries a grant forward (upgrade-B r2-1);
+    // the internal reconciling syncs inside add/enable/disable never do.
+    const result = await akmTasksSync({ backend }, undefined, { carryForward: true });
+    expect(result.removed).not.toContain("orphan");
+    expect(exec.current()).toContain("task run orphan");
+    expect(schedulerActivations(loadConfig())).toContainEqual(
+      expect.objectContaining({ kind: "task", ref: "stash//tasks/orphan" }),
+    );
+  });
+
+  test("an installed row with no backing file is still removed, not carried forward", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("ghost", "*/5 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run ghost");
+
+    writeSandboxConfig({ scheduler: { enabled: [] } });
+    resetConfigCache();
+    fs.rmSync(path.join(tasksDir, "ghost.yml"));
+
+    const result = await akmTasksSync({ backend }, undefined, { carryForward: true });
+    expect(result.removed).toEqual(["ghost"]);
+    expect(exec.current()).not.toContain("task run ghost");
+    expect(schedulerActivations(loadConfig())).toEqual([]);
+  });
+
   test("removes orphaned scheduler entries with no backing file", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
@@ -298,6 +371,40 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).toBe(prior);
     expect(exec.current()).toContain("*/15 * * * *");
     expect(exec.current()).not.toContain("45 */6 * * *");
+  });
+
+  test("a stale-grant warning does not silence the ineligible-invocation warning", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("a", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain("task run a --bundle stash --scheduled");
+
+    // Make a's grant stale (bound to a different sourceId than "stash"
+    // currently resolves to), so this sync also has a stale-grant warning
+    // to report alongside the ineligible-invocation one below.
+    const staleSourceId = filesystemBundleSourceId(path.join(stashDir, "..", "different-origin"));
+    writeSandboxConfig({ scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/a", sourceId: staleSourceId }] } });
+    resetConfigCache();
+
+    // A new install needs a runtime binding, which is what makes
+    // buildSchedulerSyncPlan resolve one and run warnIneligibleRebind.
+    writeTask("b", "0 2 * * *", true);
+
+    const result = await akmTasksSync({
+      backend,
+      schedulerRuntime: () => ({
+        binding: ["/repo/bun", "/repo/src/cli.ts"],
+        contextPath: "/new/context.json",
+        eligible: false,
+        kind: "checkout",
+      }),
+    });
+
+    expect(result.removed).toContain("a");
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings?.some((warning) => warning.includes("ineligible checkout invocation"))).toBe(true);
+    expect(result.warnings?.some((warning) => warning.includes("akm task enable stash//tasks/a"))).toBe(true);
   });
 });
 

@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { akmProposalAccept, akmProposalRevert } from "../../../src/commands/proposal/proposal";
-import { createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
+import { akmProposalAccept, akmProposalReject, akmProposalRevert } from "../../../src/commands/proposal/proposal";
+import { createProposal, getProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { txnNamespaceDir } from "../../../src/core/fs-txn";
+import { txnNamespaceDir, txnQuarantineNamespaceDir } from "../../../src/core/fs-txn";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -142,6 +142,112 @@ describe("proposal Git target commits", () => {
     expect(fs.existsSync(namespace)).toBe(false);
   });
 
+  test("a push that still fails on retry leaves the journal in place and a later retry publishes it", async () => {
+    const url = "https://example.com/akm/proposal-git-retry-push.git";
+    const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    const content = path.join(repo, "content");
+    const assetPath = path.join(content, "lessons", "git-proposal.md");
+    const remote = path.join(storage.root, "retry-push-remote.git");
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.mkdirSync(remote, { recursive: true });
+    git(remote, ["init", "--bare"]);
+    git(repo, ["init", "--initial-branch=main"]);
+    git(repo, ["config", "user.email", "test@akm.local"]);
+    git(repo, ["config", "user.name", "akm-test"]);
+    fs.writeFileSync(assetPath, ORIGINAL, "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "initial"]);
+    git(repo, ["remote", "add", "origin", remote]);
+    git(repo, ["push", "-u", "origin", "main"]);
+    const rejectingHook = path.join(remote, "hooks", "pre-receive");
+    fs.writeFileSync(rejectingHook, "#!/bin/sh\nexit 1\n", "utf8");
+    fs.chmodSync(rejectingHook, 0o755);
+
+    const config = {
+      bundles: {
+        stash: { path: storage.stashDir, writable: true },
+        team: { git: url, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "stash",
+      defaultWriteTarget: "team",
+    } as AkmConfig;
+    const proposal = createProposal(storage.stashDir, {
+      ref: "lessons/git-proposal",
+      source: "distill",
+      force: true,
+      target: { source: "team", root: content },
+      payload: { content: ACCEPTED },
+    });
+    if (isProposalSkipped(proposal)) throw new Error("unexpected skip");
+
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+      "git push failed",
+    );
+    const namespace = txnNamespaceDir(content);
+    expect(fs.readdirSync(namespace)).toHaveLength(1);
+
+    // Retried while the push still fails: the journal it is about to act on
+    // stays in place and is rethrown, not quarantined.
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+      "git push failed",
+    );
+    expect(fs.readdirSync(namespace)).toHaveLength(1);
+    const quarantineDir = txnQuarantineNamespaceDir(content);
+    expect(fs.existsSync(quarantineDir) ? fs.readdirSync(quarantineDir) : []).toHaveLength(0);
+
+    fs.rmSync(rejectingHook);
+    await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+    expect(git(remote, ["show", "main:content/lessons/git-proposal.md"])).toContain("ACCEPTED.");
+  });
+
+  test("a reject while the push still fails rejects with the push failure, and the proposal stays pending", async () => {
+    const url = "https://example.com/akm/proposal-git-retry-reject.git";
+    const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    const content = path.join(repo, "content");
+    const assetPath = path.join(content, "lessons", "git-proposal.md");
+    const remote = path.join(storage.root, "retry-reject-remote.git");
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.mkdirSync(remote, { recursive: true });
+    git(remote, ["init", "--bare"]);
+    git(repo, ["init", "--initial-branch=main"]);
+    git(repo, ["config", "user.email", "test@akm.local"]);
+    git(repo, ["config", "user.name", "akm-test"]);
+    fs.writeFileSync(assetPath, ORIGINAL, "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "initial"]);
+    git(repo, ["remote", "add", "origin", remote]);
+    git(repo, ["push", "-u", "origin", "main"]);
+    const rejectingHook = path.join(remote, "hooks", "pre-receive");
+    fs.writeFileSync(rejectingHook, "#!/bin/sh\nexit 1\n", "utf8");
+    fs.chmodSync(rejectingHook, 0o755);
+
+    const config = {
+      bundles: {
+        stash: { path: storage.stashDir, writable: true },
+        team: { git: url, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "stash",
+      defaultWriteTarget: "team",
+    } as AkmConfig;
+    const proposal = createProposal(storage.stashDir, {
+      ref: "lessons/git-proposal",
+      source: "distill",
+      force: true,
+      target: { source: "team", root: content },
+      payload: { content: ACCEPTED },
+    });
+    if (isProposalSkipped(proposal)) throw new Error("unexpected skip");
+
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+      "git push failed",
+    );
+
+    await expect(akmProposalReject({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+      "git push failed",
+    );
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+  });
+
   test("refuses same-path user work before replacing a proposal target", async () => {
     const url = "https://example.com/akm/proposal-git-wip.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
@@ -217,7 +323,7 @@ describe("proposal Git target commits", () => {
     expect(fs.existsSync(txnNamespaceDir(content))).toBe(false);
   });
 
-  test("rejects an asset-published journal without Git publication identity", async () => {
+  test("refuses to publish an asset-published journal without Git publication identity, and leaves it for retry", async () => {
     const url = "https://example.com/akm/proposal-git-legacy-journal.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
     const content = path.join(repo, "content");
@@ -267,10 +373,14 @@ describe("proposal Git target commits", () => {
     fs.writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
     fs.rmSync(rejectingHook);
 
+    // Recovery rethrows the failure on the journal it is about to act on
+    // rather than quarantining it, so the busted journal survives in place
+    // for a retry once its payload is repaired.
     await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
       "has no Git publication identity",
     );
     expect(git(remote, ["show", "main:content/lessons/git-proposal.md"])).toContain("ORIGINAL.");
     expect(fs.existsSync(namespace)).toBe(true);
+    expect(fs.existsSync(txnQuarantineNamespaceDir(content))).toBe(false);
   });
 });

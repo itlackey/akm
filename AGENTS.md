@@ -83,10 +83,20 @@ Machinery that prevents **data loss or corruption** passes test 2 on its own mer
 A reader must tolerate data that older releases wrote: convert in memory, warn once, and keep the migrator as the on-disk rewrite path rather than a precondition for reading; the only refusal is data written by a newer release, and it must name the upgrade as the remedy. `docs/architecture/persisted-data-compat.md` is the per-format contract and inventory (where each format is written, its version marker, and its gap, if any) — read it before touching any persisted format. Every format bump must add its old shape to the upgrade rehearsal gate (`tests/integration/upgrade-rehearsal/`) and, for config keys, pass the schema-compatibility lint (`scripts/lint-config-schema-compat.ts`).
 
 Authority-bearing records are the narrow exception: if migration requires a
-new trust decision or binds approval to an identity older data never recorded,
-ordinary runtime code must not invent it. Report the required `akm migrate
-apply` step and let the standalone migrator make the explicit, backed-up
-rewrite. Source-bound `scheduler.enabled[].sourceId` is the canonical example.
+new trust decision or binds approval to an identity older data never
+recorded, ordinary runtime code must not invent it. A scheduler grant is the
+one kind of authority ordinary runtime code MAY carry forward on its own —
+but only from evidence the operator already created on this host: an
+installed native scheduler row `akm task sync` itself wrote
+(`pendingGrantsFromInstalled`/`carryForwardSchedulerGrants`,
+`src/tasks/scheduler-grant-carry-forward.ts`), never a row this process
+cannot attribute to a prior `akm task sync`. Anything else authority-bearing
+without such evidence is reported, never invented: report the required `akm
+migrate apply` step and let the standalone migrator make the explicit,
+backed-up rewrite — it remains the only path that rewrites bundle content.
+Source-bound `scheduler.enabled[].sourceId` is the canonical example of the
+general rule; the scheduler-grant carry-forward is the one narrow,
+deliberate exception to it.
 
 ### Worked examples
 

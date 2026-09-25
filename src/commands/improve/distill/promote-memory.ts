@@ -126,7 +126,7 @@ export async function planMemoryKnowledgePromotion(
 }
 
 /**
- * PRECHECK (tier3-0917): read-only classification of whether distill would
+ * PRECHECK: read-only classification of whether distill would
  * promote this memory to knowledge — used by the improve loop's distill
  * pre-generation proposal guard (`loop-stages.ts`) to pre-check the SAME ref
  * {@link planMemoryKnowledgePromotion} will target at dispatch time

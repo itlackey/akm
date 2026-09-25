@@ -87,6 +87,11 @@ jobs:
   upgrade-rehearsal:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # One job per KNOWN_UPGRADE_ORIGINS entry (tests/integration/upgrade-rehearsal/previous-release.ts).
+      matrix:
+        origin: [previous, "0.9.15"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
@@ -99,4 +104,4 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - run: AKM_UPGRADE_REHEARSAL=1 TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
+      - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/

@@ -15,6 +15,28 @@ import { type CommandRunner, parsePackedTarball, runCommand } from "../../../scr
 const PACKAGE_NAME = "akm-cli";
 
 /**
+ * Every upgrade origin the rehearsal gate drives against the candidate.
+ * `"previous"` resolves dynamically (the highest stable release below the
+ * candidate). `"0.9.15"` is fixed: the last release before source-bound
+ * scheduler grants (0.9.16) — a 0.9.15-built home has crontab rows
+ * installed by `task add`'s own direct activation, with no host-local
+ * `scheduler.enabled` grant recorded at all, the exact 2026-09-24 scenario
+ * upgrade-B's carry-forward exists to rescue.
+ */
+export const KNOWN_UPGRADE_ORIGINS = ["previous", "0.9.15"] as const;
+export type UpgradeOrigin = (typeof KNOWN_UPGRADE_ORIGINS)[number];
+
+/** `AKM_UPGRADE_FROM` still overrides ONLY the `"previous"` origin — `"0.9.15"` is fixed by definition. */
+export async function resolveUpgradeOriginVersion(
+  origin: UpgradeOrigin,
+  candidateVersion: string,
+  runner: CommandRunner = runCommand,
+): Promise<string> {
+  if (origin === "0.9.15") return "0.9.15";
+  return resolvePreviousReleaseVersion(candidateVersion, runner);
+}
+
+/**
  * Resolve the previous release version: `AKM_UPGRADE_FROM` overrides;
  * otherwise the highest STABLE (no prerelease suffix) version below the
  * candidate's own `package.json` version, read from the real registry.

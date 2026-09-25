@@ -15,6 +15,7 @@
 import { resolveStashDir } from "../../src/core/common";
 import { bundleContentRoots, bundleKeyForContentRoot, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import type { DeferredTxn, QuarantinedTxn } from "../../src/core/fs-txn";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import {
@@ -68,6 +69,13 @@ export type MigrationStatus = "current" | "ready" | "blocked";
 
 export interface CombinedMigrationPlan {
   schemaVersion: 1;
+  /**
+   * Present and `"host-local"` for `apply --host-local`/`status --host-local`
+   * (host-local reconciliation: `config.json`, `state.db`, scheduler grants,
+   * `$DATA/txn` — never bundle content). Absent for the full plan, which
+   * covers every migration step.
+   */
+  mode?: "host-local";
   status: MigrationStatus;
   blockers: string[];
   configLegacySourceShape: ConfigLegacySourceShapeResult | { pending: ConfigLegacySourceShapePlan };
@@ -83,7 +91,9 @@ export interface CombinedMigrationPlan {
   taskV4BackupPath?: string;
   taskV4Applied?: number;
   deadResidue?: { pending: DeadResidueEntry[] } | { removed: DeadResidueRemoval[] };
-  staleTxns?: { pending: StaleTxnEntry[] } | { recovered: StaleTxnEntry[] };
+  staleTxns?:
+    | { pending: StaleTxnEntry[] }
+    | { recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] };
   // Keyed by bundle id (the default stash first, then every other
   // filesystem-backed bundle) — one filesystem bundle can trail live writer
   // residue as easily as another (itlackey/akm#890).
@@ -140,8 +150,9 @@ function writerRelocationTargets(defaultStashDir: string | undefined): { id: str
  * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
  * under its own lock and backup.
  */
-export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
-  const { apply } = options;
+export async function runMigration(options: { apply: boolean; hostLocal?: boolean }): Promise<CombinedMigrationPlan> {
+  const { apply, hostLocal = false } = options;
+  const mode: Pick<CombinedMigrationPlan, "mode"> = hostLocal ? { mode: "host-local" } : {};
   const configPath = getConfigPath();
 
   // The legacy stashDir/sources[]/installed conversion runs first, before
@@ -179,6 +190,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   if (pendingLift && pendingLift.lifted.length > 0) {
     return {
       schemaVersion: 1,
+      ...mode,
       status: "blocked",
       blockers: pendingLift.lifted,
       configLegacySourceShape,
@@ -198,6 +210,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   if (pendingSchedulerBindings && pendingSchedulerBindings.changes.length > 0) {
     return {
       schemaVersion: 1,
+      ...mode,
       status: "blocked",
       blockers: pendingSchedulerBindings.changes.map(
         (change) =>
@@ -224,6 +237,49 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ? await applySchedulerActivationMigration()
     : await inspectSchedulerActivationMigration();
 
+  if (hostLocal) {
+    // Host-local reconciliation touches config.json, state.db, scheduler
+    // grants, and $DATA/txn only (policy: never bundle content) — no task
+    // v2/v3/v4 rewrite, no dead-residue sweep, no writer relocation. Stale
+    // transactions are still in scope: recovery only touches
+    // $DATA/txn/<rootNs>, never reads or writes the bundle itself (see
+    // ./migrate/stale-txn.ts).
+    const stashDir = stashDirIfConfigured();
+    const staleTxns =
+      stashDir !== undefined
+        ? apply
+          ? await recoverStaleTxns(stashDir)
+          : { pending: findStaleTxnEntries(stashDir) }
+        : undefined;
+
+    const stateStatus: MigrationStatus =
+      "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
+    const schedulerStatus: MigrationStatus =
+      "pending" in schedulerActivation && schedulerActivation.pending.length > 0 ? "ready" : "current";
+    const retiredKeysStatus: MigrationStatus =
+      "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0 ? "ready" : "current";
+    const legacySourceShapeStatus: MigrationStatus =
+      "pending" in configLegacySourceShape && configLegacySourceShape.pending.converted.length > 0
+        ? "ready"
+        : "current";
+    return {
+      schemaVersion: 1,
+      mode: "host-local",
+      status: worstStatus(
+        worstStatus(stateStatus, schedulerStatus),
+        worstStatus(retiredKeysStatus, legacySourceShapeStatus),
+      ),
+      blockers: [],
+      configLegacySourceShape,
+      configExtraParams,
+      configSchedulerSourceIds,
+      configRetiredKeys,
+      stateMigrations,
+      schedulerActivation,
+      ...(staleTxns !== undefined ? { staleTxns } : {}),
+    };
+  }
+
   const stashDir = stashDirIfConfigured();
   const taskV3 = apply ? applyTaskV3Migration() : inspectMigrationPlan();
   const taskV4 = apply ? applyTaskV4Migration() : inspectTaskV4MigrationStatus();
@@ -233,7 +289,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       ? { removed: removeDeadResidue(stashDir) }
       : { pending: findDeadResidueEntries(stashDir) };
     stashSections.staleTxns = apply
-      ? { recovered: await recoverStaleTxns(stashDir) }
+      ? await recoverStaleTxns(stashDir)
       : { pending: findStaleTxnEntries(stashDir) };
   }
   const relocationTargets = writerRelocationTargets(stashDir);

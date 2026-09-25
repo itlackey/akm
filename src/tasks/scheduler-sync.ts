@@ -123,6 +123,13 @@ export interface SchedulerSyncPlan {
   readonly sourceSnapshot: SchedulerSourceSnapshot;
   /** Sources that failed to parse/prepare (#867) — excluded from `desired`, never silently dropped. */
   readonly failures: readonly SchedulerSourceFailure[];
+  /**
+   * Refs granted from an installed native scheduler binding that had no
+   * grant yet (carry-forward) — present only when non-empty.
+   * A real sync already applied these; `--dry-run` reports them here
+   * without applying.
+   */
+  readonly carriedForward?: readonly string[];
 }
 
 /** One task/workflow source that could not be parsed/prepared into a scheduler binding. */

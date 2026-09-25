@@ -1824,7 +1824,7 @@ async function buildDistillMessages(args: {
 }
 
 /**
- * Exported (PRECHECK, tier3-0917) so the improve loop's distill
+ * Exported (PRECHECK) so the improve loop's distill
  * pre-generation guard (`loop-stages.ts`) can resolve the same asset path
  * `akmDistill` would when checking whether a memory promotes to knowledge —
  * without duplicating the resolution logic.

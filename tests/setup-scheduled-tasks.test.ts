@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
-import type { TasksSyncResult } from "../src/commands/tasks/tasks";
-import { loadConfig } from "../src/core/config/config";
+import { akmTasksSync, type TasksSyncResult } from "../src/commands/tasks/tasks";
+import { loadConfig, resetConfigCache } from "../src/core/config/config";
 import { deleteAssetFromSource, writeAssetToSource } from "../src/core/write-source";
 import { buildSetupSteps } from "../src/setup/setup";
 import {
@@ -17,8 +17,21 @@ import {
   prepareSetupTaskDefinitions,
   stepScheduledTasks,
 } from "../src/setup/steps/tasks";
-import { schedulerActivations } from "../src/tasks/activation-config";
+import { schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
+import type { SchedulerBackendInspection } from "../src/tasks/scheduler-binding";
+import {
+  carryForwardSchedulerGrants,
+  type SchedulerGrantCarryForwardResult,
+  type StaleSchedulerGrant,
+  staleSchedulerGrantWarning,
+} from "../src/tasks/scheduler-grant-carry-forward";
+import {
+  resolveScheduledTaskContext,
+  schedulerContextDescriptor,
+  writeSchedulerContextDescriptor,
+} from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -91,13 +104,26 @@ const EMPTY_SYNC_RESULT: TasksSyncResult = {
   failures: [],
 };
 
+const EMPTY_INSPECTION: SchedulerBackendInspection = { installed: [], artifacts: [] };
+const EMPTY_CARRY_FORWARD_RESULT: SchedulerGrantCarryForwardResult = {
+  applied: [],
+  warnings: [],
+  staleGrants: [],
+};
+
 function makeDeps(
   installed: Array<{ id: string; schedule: string; enabled: boolean; description?: string }>,
   syncResult: TasksSyncResult = EMPTY_SYNC_RESULT,
+  options: {
+    inspection?: SchedulerBackendInspection;
+    carryForwardResult?: SchedulerGrantCarryForwardResult;
+  } = {},
 ) {
   const calls = {
     prepared: [] as PreparedSetupTask[][],
     syncCalls: 0,
+    carryForwardCalls: 0,
+    inspectInstalledCalls: 0,
   };
   const deps = {
     list: () => installed,
@@ -110,6 +136,15 @@ function makeDeps(
       state.events.push("sync");
       calls.syncCalls += 1;
       return syncResult;
+    },
+    inspectInstalled: async () => {
+      calls.inspectInstalledCalls += 1;
+      return options.inspection ?? EMPTY_INSPECTION;
+    },
+    carryForward: async () => {
+      state.events.push("carryForward");
+      calls.carryForwardCalls += 1;
+      return options.carryForwardResult ?? EMPTY_CARRY_FORWARD_RESULT;
     },
   };
   return { deps, calls };
@@ -172,13 +207,17 @@ describe("stepScheduledTasks", () => {
     state.confirmReturn = true;
     state.onConfirm = () => {
       expect(state.notes).toHaveLength(1);
+      // The read-only inventory used to pre-check the review has already run by now, but nothing
+      // that mutates task files or scheduler state has.
+      expect(calls.inspectInstalledCalls).toBe(1);
       expect(calls.prepared).toHaveLength(0);
       expect(calls.syncCalls).toBe(0);
+      expect(calls.carryForwardCalls).toBe(0);
     };
 
     await stepScheduledTasks(deps);
 
-    expect(state.events).toEqual(["confirm", "prepare", "sync"]);
+    expect(state.events).toEqual(["confirm", "carryForward", "prepare", "sync"]);
     expect(calls.syncCalls).toBe(1);
     expect(calls.prepared[0]?.find((task) => task.task.id === "sync")).toMatchObject({
       schedule: "*/15 * * * *",
@@ -196,6 +235,45 @@ describe("stepScheduledTasks", () => {
 
     expect(state.confirmCalls).toBe(1);
     expect(calls.syncCalls).toBe(1);
+  });
+
+  // Reviewer finding: carry-forward must run after the operator's confirmation
+  // and before `prepare` revokes every managed ref the operator left unchecked, so a grant carried
+  // forward for a ref the operator just deselected is still removed by that same `prepare` call.
+  test("carries forward before preparing, and only on confirmed activation", async () => {
+    const { deps, calls } = makeDeps([{ id: "improve", schedule: "0 2 * * *", enabled: true }]);
+    state.multiselectReturn = ["improve"];
+    state.confirmReturn = true;
+
+    await stepScheduledTasks(deps);
+
+    expect(calls.carryForwardCalls).toBe(1);
+    expect(state.events).toEqual(["confirm", "carryForward", "prepare", "sync"]);
+  });
+
+  test("logs every carry-forward warning and stale-grant notice", async () => {
+    const staleGrant: StaleSchedulerGrant = {
+      kind: "task",
+      ref: "stash//tasks/example",
+      grantedSourceId: "filesystem:old",
+      currentSourceId: "filesystem:new",
+    };
+    const { deps } = makeDeps([], EMPTY_SYNC_RESULT, {
+      carryForwardResult: {
+        applied: [],
+        warnings: ["Native scheduler activation could not be inspected: boom"],
+        staleGrants: [staleGrant],
+      },
+    });
+    state.confirmReturn = true;
+
+    await stepScheduledTasks(deps);
+
+    expect(state.logs).toContainEqual({
+      level: "warn",
+      message: "Native scheduler activation could not be inspected: boom",
+    });
+    expect(state.logs).toContainEqual({ level: "warn", message: staleSchedulerGrantWarning(staleGrant) });
   });
 
   test("reports every skipped task and no activation success for a partial sync", async () => {
@@ -258,6 +336,7 @@ describe("stepScheduledTasks", () => {
 
     expect(calls.prepared).toHaveLength(0);
     expect(calls.syncCalls).toBe(0);
+    expect(calls.carryForwardCalls).toBe(0);
     expect(state.events).toEqual(["confirm"]);
   });
 
@@ -429,5 +508,188 @@ describe("scheduled-tasks step registration", () => {
     });
     expect(steps.find((step) => step.id === "scheduled-tasks")).toBeUndefined();
     expect(steps[steps.length - 1]?.id).toBe("output");
+  });
+});
+
+function memoryExec(initial = ""): CronExec & { current: () => string } {
+  let store = initial;
+  return {
+    read: (): CronExecResult => ({ status: 0, stdout: store, stderr: "" }),
+    write: (content: string): CronExecResult => {
+      store = content;
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    current: () => store,
+  };
+}
+
+describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
+  beforeEach(resetClack);
+
+  // Reviewer finding: the wizard's own confirmed "Activate these schedules
+  // now?" flow calls `deps.carryForward` before `prepare`, the same as a
+  // human-confirmed `akm task sync`, not an internal reconciling sync like
+  // `task add`/`enable`/`disable`. This exercises that carry-forward through
+  // the real `akmTasksSync` rather than the stub the other tests in this
+  // file use for `deps.sync`.
+  test("carries forward a grant lost outside `disable` for a custom installed task", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "orphan.yml"),
+        'version: 4\nrun: echo orphan\nname: orphan\nschedule:\n  - cron: "*/5 * * * *"\n',
+        "utf8",
+      );
+      setSchedulerRefEnabled("task", "stash//tasks/orphan", true);
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+
+      await akmTasksSync({ backend });
+      expect(exec.current()).toContain("task run orphan");
+
+      // Simulate the grant record vanishing (e.g. an upgrade that reset
+      // host-local config) while the installed crontab row and the task
+      // file it backs both survive untouched.
+      writeSandboxConfig({ scheduler: { enabled: [] } });
+      resetConfigCache();
+      expect(schedulerActivations(loadConfig())).toEqual([]);
+
+      state.confirmReturn = true;
+      await stepScheduledTasks({
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (deps, bundleTarget, syncOptions) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => backend.inspectBindings!({}),
+        carryForward: async () => carryForwardSchedulerGrants(await backend.inspectBindings!({})),
+      });
+
+      expect(exec.current()).toContain("task run orphan");
+      expect(schedulerActivations(loadConfig())).toContainEqual(
+        expect.objectContaining({ kind: "task", ref: "stash//tasks/orphan" }),
+      );
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  // `akm setup` skips startup reconciliation, so on the first run after an upgrade that dropped
+  // host-local grants, an embedded task with a live installed binding but no grant would otherwise
+  // show as disabled and unchecked — and confirming the wizard would then remove its row, acting on
+  // a state the wizard itself never actually holds.
+  test("pre-checks an embedded task whose grant was lost but a native binding still exists", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+      const deps = {
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (
+          syncDeps: Parameters<typeof akmTasksSync>[0],
+          bundleTarget?: string,
+          syncOptions?: Parameters<typeof akmTasksSync>[2],
+        ) => akmTasksSync({ ...syncDeps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => backend.inspectBindings!({}),
+        carryForward: async () => carryForwardSchedulerGrants(await backend.inspectBindings!({})),
+      };
+
+      // First run: select and activate the embedded `improve` task, installing its crontab row.
+      state.multiselectReturn = ["improve"];
+      state.confirmReturn = true;
+      await stepScheduledTasks(deps);
+      expect(exec.current()).toContain("task run improve");
+
+      // Simulate the grant record vanishing (e.g. an upgrade that reset host-local config) while
+      // the installed crontab row and the task file it backs both survive untouched.
+      writeSandboxConfig({ scheduler: { enabled: [] } });
+      resetConfigCache();
+      expect(schedulerActivations(loadConfig())).toEqual([]);
+
+      // Second run: decline activation, just inspect what the review pre-checks.
+      resetClack();
+      state.confirmReturn = false;
+      await stepScheduledTasks(deps);
+
+      expect(state.multiselectConfig?.initialValues).toContain("improve");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  // Reviewer finding: a managed embedded task's
+  // template is still prepared on disk even when the operator leaves it unchecked (":273-276"), so
+  // a carry-forward that ran AFTER `prepare` revoked its grant would immediately re-grant it and
+  // undo the deselection. Carry-forward must run before `prepare`, so `prepare`'s revocation is the
+  // one that wins for a ref the operator's own selection removed.
+  test("does not re-activate a task definition the operator deselects on a rerun", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+      const deps = {
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (
+          deps: Parameters<typeof akmTasksSync>[0],
+          bundleTarget?: string,
+          syncOptions?: Parameters<typeof akmTasksSync>[2],
+        ) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => backend.inspectBindings!({}),
+        carryForward: async () => carryForwardSchedulerGrants(await backend.inspectBindings!({})),
+      };
+
+      // First run: select the embedded `extract` task and activate it.
+      state.multiselectReturn = ["extract"];
+      state.confirmReturn = true;
+      await stepScheduledTasks(deps);
+      expect(exec.current()).toContain("task run extract");
+      expect(schedulerActivations(loadConfig())).toContainEqual(
+        expect.objectContaining({ kind: "task", ref: "stash//tasks/extract" }),
+      );
+
+      // Second run: leave `extract` unchecked. Its YAML is still prepared on disk, so a
+      // carry-forward that ran after `prepare` would see a backed, enabled-bundle row with no
+      // grant and re-grant it, undoing the deselection.
+      resetClack();
+      state.confirmReturn = true;
+
+      await stepScheduledTasks(deps);
+
+      expect(schedulerActivations(loadConfig())).not.toContainEqual(
+        expect.objectContaining({ kind: "task", ref: "stash//tasks/extract" }),
+      );
+      expect(exec.current()).not.toContain("task run extract");
+    } finally {
+      storage.cleanup();
+    }
   });
 });

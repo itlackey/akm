@@ -75,6 +75,54 @@ describe("scheduler source-id config migration", () => {
     expect(findConfigSchedulerSourceIdMigration(getConfigPath()).changes).toEqual([]);
   });
 
+  test("leaves a grant with a present but stale sourceId untouched", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const staleSourceId = filesystemBundleSourceId(path.join(storage.stashDir, "..", "different-origin"));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        bundles: { team: { path: storage.stashDir } },
+        defaultBundle: "team",
+        scheduler: {
+          enabled: [{ kind: "task", ref: "team//tasks/nightly", sourceId: staleSourceId }],
+        },
+      }),
+    );
+    resetConfigCache();
+
+    expect(findConfigSchedulerSourceIdMigration(configPath).changes).toEqual([]);
+    expect(applyConfigSchedulerSourceIdMigration(configPath).applied).toBe(false);
+    resetConfigCache();
+    expect(schedulerActivations(loadConfig())).toEqual([
+      { kind: "task", ref: "team//tasks/nightly", sourceId: staleSourceId },
+    ]);
+  });
+
+  test("leaves an already-granted activation alone when its bundle isn't configured right now", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const staleSourceId = filesystemBundleSourceId(path.join(storage.stashDir, "..", "different-origin"));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        scheduler: { enabled: [{ kind: "task", ref: "removed//tasks/nightly", sourceId: staleSourceId }] },
+      }),
+    );
+    resetConfigCache();
+
+    expect(findConfigSchedulerSourceIdMigration(configPath).changes).toEqual([]);
+    expect(applyConfigSchedulerSourceIdMigration(configPath).applied).toBe(false);
+    resetConfigCache();
+    expect(schedulerActivations(loadConfig())).toEqual([
+      { kind: "task", ref: "removed//tasks/nightly", sourceId: staleSourceId },
+    ]);
+  });
+
   test("binds an environment-only working bundle instead of dropping its grant", () => {
     const bundleId = deriveBundleId(undefined, storage.stashDir, new Set());
     fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
