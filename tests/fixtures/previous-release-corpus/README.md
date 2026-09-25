@@ -13,6 +13,14 @@ Files:
 - `task-v3.yml` — a conformant task v3 file: `akm.schedule`,
   `uses: akm/command`, `with.content`. Read via the in-memory v3->v4
   migration shim, same file.
+- `task-v4-schedule-enabled.yml` — a `version: 4` file exactly as 0.9.15's
+  `akm task add --disabled` wrote it (`renderTaskYaml` in that release's
+  `src/commands/tasks/tasks.ts`: `schedule: [{cron, enabled: false}]`, the
+  same field order/tags/when_to_use richness as `task-v2.yml`). 0.9.15's v4
+  grammar still accepted `schedule[].enabled`; this release's does not. Read
+  via the in-memory shim's `version === 4` branch in
+  `src/tasks/source/parse-task-source.ts`, which strips it without reading
+  its value and converts via `akm-migrate`.
 
 The proposals-state.db fixture (a pre-#858 legacy `metadata_json` row) is
 built programmatically inside the test — it is DB state, not a file, so

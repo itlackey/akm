@@ -193,6 +193,75 @@ describe("whole-set task source v4 scheduler sync planning — locally activated
   });
 });
 
+// r2-2's iteration-1 test (d): a stash holding both a task source generation
+// the in-memory v2/v3 shim reads and one the retired-schedule[].enabled v4
+// shim reads must schedule ONLY when the host has granted them — the shim
+// makes a source readable, never activated — and neither ever shows up in
+// `failures` (`compileTaskSources`'s ungranted branch `continue`s before it
+// even attempts to parse, so an ungranted, unparsed source is silently
+// absent from BOTH `desired` and `failures`, not a failure of its own kind).
+describe("whole-set task source v4 scheduler sync planning — sync-grant gating covers both in-memory read-shim paths", () => {
+  test("a v3 task and a v4 task with a retired schedule[].enabled schedule only when granted, and neither ever appears in failures", async () => {
+    const bundleRoot = root();
+    write(
+      path.join(bundleRoot, "tasks", "legacy-v3.yml"),
+      [
+        "version: 3",
+        "uses: akm/command",
+        "with:",
+        "  content: run something",
+        "akm:",
+        "  schedule: '0 3 * * *'",
+        "",
+      ].join("\n"),
+    );
+    write(
+      path.join(bundleRoot, "tasks", "retired-enabled-v4.yml"),
+      [
+        "version: 4",
+        "run: echo nightly",
+        "shell: sh",
+        "schedule:",
+        "  - cron: '0 4 * * *'",
+        "    enabled: false",
+        "",
+      ].join("\n"),
+    );
+
+    const baseInput = {
+      sourceRoot: bundleRoot,
+      adapterId: "akm",
+      bundleName: "team",
+      bundleTarget: "team",
+      backend: "cron" as const,
+      installed: emptyInstalled,
+    };
+
+    const ungranted = await prepareSchedulerSyncSourceSet({ ...baseInput, enabledActivations: new Set() });
+    expect(ungranted.desired).toEqual([]);
+    expect(ungranted.failures).toEqual([]);
+
+    const granted = await prepareSchedulerSyncSourceSet({
+      ...baseInput,
+      enabledActivations: new Set(["task\0team//tasks/legacy-v3", "task\0team//tasks/retired-enabled-v4"]),
+    });
+    expect(granted.failures).toEqual([]);
+    expect(granted.desired).toHaveLength(2);
+    expect(granted.desired.map((binding) => binding.logicalSource.ref).sort()).toEqual([
+      "team//tasks/legacy-v3",
+      "team//tasks/retired-enabled-v4",
+    ]);
+    // Whole-set compilation never reads the source's own retired enabled
+    // field (v3's document-level `akm.enabled`, v4's per-entry
+    // `schedule[].enabled`) into the compiled binding — grant gating above
+    // is the only activation signal, so every compiled binding is `enabled:
+    // true` regardless of what either source said.
+    for (const binding of granted.desired) {
+      expect(binding.enabled).toBe(true);
+    }
+  });
+});
+
 describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedule[i].inputs delivered as a sorted invocation tail)", () => {
   // P2b Lane B flip (spec docs/plans/specs/p2b-input-bindings.md §4.4, §7
   // F-B2): the P2a B-38 gap this describe block used to pin ("validated but

@@ -674,6 +674,79 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
     });
   });
 
+  // 0.9.15's v4 grammar accepted a per-entry `schedule[].enabled` (removed
+  // from `TASK_SOURCE_V4_SCHEDULE_KEYS` in this release, see the "schedule[i]
+  // .enabled is rejected" test below for the DIRECT-parse rejection that
+  // still applies to `parseTaskSourceV4Document`). `parseTaskSource` itself
+  // now tolerates that retired shape the same way it tolerates v2/v3: the
+  // SAME in-memory `planTaskToV4File` call `akm migrate apply` runs for this
+  // exact case strips every `schedule[].enabled` key without ever reading
+  // its value, and the result is parsed and returned with a one-line
+  // deprecation warning.
+  describe("v4 in-memory read shim for a retired schedule[].enabled", () => {
+    let warnCalls: string[] = [];
+
+    beforeEach(() => {
+      warnCalls = [];
+      _resetWarnOnceForTests();
+      overrideSeam(_setWarnSinkForTests, (level, args) => {
+        if (level !== "warn") return;
+        warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
+      });
+    });
+
+    test("a v4 document with schedule[0].enabled: false parses, has no enabled anywhere, and warns exactly once across two parses", () => {
+      const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n    enabled: false\n";
+      const filePath = "/bundle/tasks/x.yml";
+
+      const first = parseTaskSource({ yaml, filePath });
+      expect(first.version).toBe(4);
+      expect(first.v4.schedule).toHaveLength(1);
+      for (const entry of first.v4.schedule) {
+        expect(Object.hasOwn(entry, "enabled")).toBe(false);
+      }
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]).toContain(filePath);
+      expect(warnCalls[0]).toContain("schedule[].enabled");
+      expect(warnCalls[0]).toContain("akm migrate apply");
+
+      // enabled: false must never suppress a granted task — activation is
+      // host-local scheduler.enabled, never read from the source at all.
+      parseTaskSource({ yaml, filePath });
+      expect(warnCalls).toHaveLength(1);
+    });
+
+    // The routing decision in `parseTaskSource` is presence-only, never
+    // type-checked (the fix never reads the value at all — see
+    // `v4ScheduleHasRetiredEnabledKey`), and `planTaskToV4File`'s
+    // `version === 4` branch itself deletes `schedule[].enabled`
+    // unconditionally, with no type check either. A non-boolean value is
+    // therefore stripped and converted exactly like a boolean one, not
+    // rejected — verified directly against the planner before writing this
+    // assertion, per this item's brief.
+    test("a v4 document with a non-boolean schedule[0].enabled is still converted — the planner never reads the value's type", () => {
+      const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n    enabled: yes\n";
+      const filePath = "/bundle/tasks/y.yml";
+
+      const result = parseTaskSource({ yaml, filePath });
+      expect(result.version).toBe(4);
+      expect(result.v4.schedule).toHaveLength(1);
+      for (const entry of result.v4.schedule) {
+        expect(Object.hasOwn(entry, "enabled")).toBe(false);
+      }
+      expect(warnCalls).toHaveLength(1);
+    });
+
+    test("a v4 document without schedule[].enabled takes the direct single-parse path and never warns", () => {
+      const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n";
+      const filePath = "/bundle/tasks/z.yml";
+
+      const result = parseTaskSource({ yaml, filePath });
+      expect(result.version).toBe(4);
+      expect(warnCalls).toHaveLength(0);
+    });
+  });
+
   // Row B-16: a document with no version: key, or a version: that is NOT A
   // NUMBER, is a malformed v4 document — v4's own TASK_SOURCE_INVALID field
   // error, not the migrate-hint UNSUPPORTED path. Verified empirically

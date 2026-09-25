@@ -72,7 +72,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   v3->v4 planner already never hoists `akm.enabled` or a schedule entry's
   `enabled` key. Only a v2/v3 document the deterministic conversion itself
   cannot resolve still fails with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
-  the specific blocked reason.
+  the specific blocked reason. The same in-memory shim now also tolerates a
+  declared `version: 4` document whose `schedule[]` still carries a
+  per-entry `enabled` key — 0.9.15's v4 grammar accepted it (`akm task add
+  --disabled` wrote it), this release's does not, and without this the
+  upgrade break above recurs for every 0.9.15-authored scheduled task. The
+  key is stripped without ever being read — `enabled: false` cannot
+  suppress a granted task and `enabled: true` cannot schedule an ungranted
+  one, since activation stays host-local `scheduler.enabled`. `akm task
+  validate` reports such a file `converts` (`sourceVersion` still `4`)
+  instead of `valid`, since it read through the shim rather than the direct
+  v4 path.
 
 ### Changed
 
