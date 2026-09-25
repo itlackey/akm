@@ -193,9 +193,9 @@ describe("whole-set task source v4 scheduler sync planning — locally activated
   });
 });
 
-// r2-2's iteration-1 test (d): a stash holding both a task source generation
-// the in-memory v2/v3 shim reads and one the retired-schedule[].enabled v4
-// shim reads must schedule ONLY when the host has granted them — the shim
+// A stash holding both a task source generation the in-memory v2/v3 shim
+// reads and one the retired-schedule[].enabled v4 shim reads must schedule
+// ONLY when the host has granted them — the shim
 // makes a source readable, never activated — and neither ever shows up in
 // `failures` (`compileTaskSources`'s ungranted branch `continue`s before it
 // even attempts to parse, so an ungranted, unparsed source is silently
@@ -1180,10 +1180,10 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(plan.desired.map((binding) => binding.id)).toEqual(["a-valid"]);
     expect(plan.failures).toHaveLength(1);
     expect(plan.failures[0]?.path).toContain("b-invalid.yml");
-    // A3 reinstated the in-memory v2/v3 read shim: an unconvertible v2/v3
-    // file now fails with the shim's "needs a human decision" wording
-    // (naming the migrator's own blocked reason), not the plain
-    // TASK_SCHEMA_VERSION_UNSUPPORTED "akm migrate apply --dry-run" hint.
+    // The in-memory v2/v3 read shim: an unconvertible v2/v3 file fails with
+    // the shim's "needs a human decision" wording (naming the migrator's
+    // own blocked reason), not the plain TASK_SCHEMA_VERSION_UNSUPPORTED
+    // "akm migrate apply --dry-run" hint.
     expect(plan.failures[0]?.reason).toContain("needs a human decision");
     expect(signatures).toBe(1);
   });

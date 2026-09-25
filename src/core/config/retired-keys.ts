@@ -17,9 +17,9 @@
  * config still carried it, until `./retired-experimental-keys-shim.ts` was
  * added after the outage.
  *
- * `./config.ts` (`stripRetiredConfigKeys`, `warnUnknownTopLevelConfigKeys`)
- * and `../../../scripts/akm-migrate/migrate/config-retired-experimental-keys.ts`
- * read `RETIRED_CONFIG_KEYS` instead of keeping their own lists.
+ * `./retired-config-keys-shim.ts` (`stripRetiredConfigKeys`) and
+ * `../../../scripts/akm-migrate/migrate/config-retired-keys.ts` read
+ * `RETIRED_CONFIG_KEYS` instead of keeping their own lists.
  * `../../../scripts/lint-config-schema-compat.ts` reads both arrays to tell
  * an intentional retirement from an accidental schema regression.
  */
