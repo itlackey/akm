@@ -31,6 +31,20 @@ import type { InstalledSchedulerBinding, SchedulerBackendInspection } from "./sc
 export interface SchedulerGrantCarryForwardResult {
   readonly applied: readonly SchedulerActivation[];
   readonly warnings: readonly string[];
+  readonly staleGrants: readonly StaleSchedulerGrant[];
+}
+
+/**
+ * An installed native scheduler row whose ref already has a host-local grant,
+ * but bound to a different `sourceId` than the ref currently resolves to (the
+ * bundle was removed and re-added under the same name from a different
+ * origin). `sourceId` exists to stop exactly this kind of silent rebind, so
+ * carry-forward reports it instead of granting the new origin.
+ */
+export interface StaleSchedulerGrant {
+  readonly ref: string;
+  readonly grantedSourceId: string;
+  readonly currentSourceId: string;
 }
 
 /**
@@ -102,33 +116,76 @@ function activationFromInstalledEntry(
   }
 }
 
+// Matches the config schema's own uniqueness key for `scheduler.enabled`
+// (`config-schema.ts`): a valid config never has two grants for the same
+// kind+ref, regardless of sourceId, so this is the only key that can find an
+// "existing" grant for an installed row.
 function activationKey(activation: SchedulerActivation): string {
-  return `${activation.kind}\0${activation.ref}\0${activation.sourceId}`;
+  return `${activation.kind}\0${activation.ref}`;
+}
+
+/**
+ * Classify installed native scheduler bindings against existing host-local
+ * grants. Pure: no config mutation, no scheduler backend call — the only I/O
+ * is confirming that a candidate still has a backing asset file on disk (see
+ * {@link hasBackingFile}). A ref with no existing grant is `pending`. A ref
+ * with an existing grant bound to a different `sourceId` is `stale`, never
+ * `pending` — carrying it forward would silently rebind authority to a new
+ * origin, which only an explicit `akm migrate apply` may do.
+ */
+function classifyInstalled(
+  installed: readonly InstalledSchedulerBinding[],
+  config: AkmConfig,
+): { readonly pending: readonly SchedulerActivation[]; readonly stale: readonly StaleSchedulerGrant[] } {
+  const existingByKey = new Map(
+    schedulerActivations(config).map((activation) => [activationKey(activation), activation]),
+  );
+  const pending = new Map<string, SchedulerActivation>();
+  const stale = new Map<string, StaleSchedulerGrant>();
+  for (const entry of installed) {
+    const activation = activationFromInstalledEntry(entry, config);
+    if (!activation) continue;
+    const key = activationKey(activation);
+    const existing = existingByKey.get(key);
+    if (!existing) {
+      pending.set(key, activation);
+    } else if (existing.sourceId !== activation.sourceId) {
+      stale.set(key, { ref: activation.ref, grantedSourceId: existing.sourceId, currentSourceId: activation.sourceId });
+    }
+  }
+  return {
+    pending: Object.freeze(
+      [...pending.values()].sort(
+        (left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind),
+      ),
+    ),
+    stale: Object.freeze([...stale.values()].sort((left, right) => left.ref.localeCompare(right.ref))),
+  };
 }
 
 /**
  * Which installed native scheduler bindings are eligible to become
- * host-local scheduler grants that do not already exist. Pure: no config
- * mutation, no scheduler backend call — the only I/O is confirming that a
- * candidate still has a backing asset file on disk (see {@link hasBackingFile}).
+ * host-local scheduler grants that do not already exist. See
+ * {@link classifyInstalled} for what excludes a candidate; a ref whose
+ * existing grant is stale (bound to a different `sourceId`) is excluded
+ * here, not reported — use {@link staleGrantsFromInstalled} for that.
  */
 export function pendingGrantsFromInstalled(
   installed: readonly InstalledSchedulerBinding[],
   config: AkmConfig,
 ): readonly SchedulerActivation[] {
-  const existing = new Set(schedulerActivations(config).map(activationKey));
-  const pending = new Map<string, SchedulerActivation>();
-  for (const entry of installed) {
-    const activation = activationFromInstalledEntry(entry, config);
-    if (!activation) continue;
-    const key = activationKey(activation);
-    if (!existing.has(key)) pending.set(key, activation);
-  }
-  return Object.freeze(
-    [...pending.values()].sort(
-      (left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind),
-    ),
-  );
+  return classifyInstalled(installed, config).pending;
+}
+
+/**
+ * Installed native scheduler rows whose ref already has a grant bound to a
+ * different `sourceId`. See {@link classifyInstalled}.
+ */
+export function staleGrantsFromInstalled(
+  installed: readonly InstalledSchedulerBinding[],
+  config: AkmConfig,
+): readonly StaleSchedulerGrant[] {
+  return classifyInstalled(installed, config).stale;
 }
 
 /**
@@ -149,23 +206,34 @@ export async function carryForwardSchedulerGrants(
       selected = selectBackend();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      return { applied: [], warnings: [`Native scheduler activation could not be inspected: ${message}`] };
+      return {
+        applied: [],
+        warnings: [`Native scheduler activation could not be inspected: ${message}`],
+        staleGrants: [],
+      };
     }
     if (!selected.inspectBindings) {
       return {
         applied: [],
         warnings: [`Scheduler backend ${JSON.stringify(selected.name)} cannot inspect native bindings.`],
+        staleGrants: [],
       };
     }
     try {
       inspection = await selected.inspectBindings({});
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      return { applied: [], warnings: [`Native scheduler activation could not be inspected: ${message}`] };
+      return {
+        applied: [],
+        warnings: [`Native scheduler activation could not be inspected: ${message}`],
+        staleGrants: [],
+      };
     }
   }
-  const pending = pendingGrantsFromInstalled(inspection.installed, config);
-  if (pending.length === 0) return { applied: Object.freeze([]), warnings: Object.freeze([]) };
+  const { pending, stale } = classifyInstalled(inspection.installed, config);
+  if (pending.length === 0) {
+    return { applied: Object.freeze([]), warnings: Object.freeze([]), staleGrants: stale };
+  }
   const additions = new Map(pending.map((activation) => [activationKey(activation), activation]));
   mutateConfig((current) => {
     const combined = new Map(
@@ -178,5 +246,5 @@ export async function carryForwardSchedulerGrants(
     return { ...current, scheduler: { ...current.scheduler, enabled } };
   });
   resetConfigCache();
-  return { applied: pending, warnings: Object.freeze([]) };
+  return { applied: pending, warnings: Object.freeze([]), staleGrants: stale };
 }

@@ -10,7 +10,7 @@ import {
   inspectSchedulerActivationMigration,
 } from "../../scripts/akm-migrate/migrate/scheduler-activation";
 import { loadConfig } from "../../src/core/config/config";
-import { bundleSourceId } from "../../src/core/config/config-sources";
+import { bundleSourceId, filesystemBundleSourceId } from "../../src/core/config/config-sources";
 import { schedulerActivations } from "../../src/tasks/activation-config";
 import type { SchedulerBackend } from "../../src/tasks/scheduler-binding";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -98,5 +98,33 @@ describe("scheduler activation migration", () => {
       { kind: "workflow", ref: "team//workflows/release", sourceId },
     ]);
     expect((await inspectSchedulerActivationMigration(backend())).pending).toEqual([]);
+  });
+
+  test("a ref already granted to a stale sourceId is reported as a warning, never rebound", async () => {
+    const sourceId = bundleSourceId(loadConfig(), "team");
+    const staleSourceId = filesystemBundleSourceId(path.join(storage.stashDir, "..", "different-origin"));
+    writeSandboxConfig({
+      defaultBundle: "team",
+      bundles: { team: { path: storage.stashDir, writable: true } },
+      scheduler: { enabled: [{ kind: "task", ref: "team//tasks/nightly", sourceId: staleSourceId }] },
+    });
+
+    const plan = await inspectSchedulerActivationMigration(backend());
+    expect(plan.pending).toEqual([{ kind: "workflow", ref: "team//workflows/release", sourceId }]);
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain("team//tasks/nightly");
+    expect(plan.warnings[0]).toContain("akm migrate apply");
+
+    const result = await applySchedulerActivationMigration(backend());
+    expect(result.applied).toEqual([{ kind: "workflow", ref: "team//workflows/release", sourceId }]);
+    expect(result.staleGrants).toEqual([
+      { ref: "team//tasks/nightly", grantedSourceId: staleSourceId, currentSourceId: sourceId },
+    ]);
+    // The stale grant is reported, not silently rebound to the new source.
+    expect(schedulerActivations(loadConfig())).toContainEqual({
+      kind: "task",
+      ref: "team//tasks/nightly",
+      sourceId: staleSourceId,
+    });
   });
 });

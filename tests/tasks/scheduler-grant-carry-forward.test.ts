@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../src/core/config/config";
-import { bundleSourceId } from "../../src/core/config/config-sources";
+import { bundleSourceId, filesystemBundleSourceId } from "../../src/core/config/config-sources";
 import type { InstalledSchedulerBinding } from "../../src/tasks/scheduler-binding";
-import { pendingGrantsFromInstalled } from "../../src/tasks/scheduler-grant-carry-forward";
+import { pendingGrantsFromInstalled, staleGrantsFromInstalled } from "../../src/tasks/scheduler-grant-carry-forward";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -79,5 +79,31 @@ describe("pendingGrantsFromInstalled", () => {
       config,
     );
     expect(pending).toEqual([]);
+    expect(
+      staleGrantsFromInstalled(
+        [binding({ id: "nightly", invocation: ["task", "run", "nightly", "--bundle", "team", "--scheduled"] })],
+        config,
+      ),
+    ).toEqual([]);
+  });
+
+  test("a row whose ref has a grant bound to a different sourceId is not pending, and is reported as stale", () => {
+    const currentSourceId = bundleSourceId(loadConfig(), "team");
+    const staleSourceId = filesystemBundleSourceId(path.join(storage.stashDir, "..", "different-origin"));
+    writeSandboxConfig({
+      defaultBundle: "team",
+      bundles: { team: { path: storage.stashDir, writable: true } },
+      scheduler: {
+        enabled: [{ kind: "task", ref: "team//tasks/nightly", sourceId: staleSourceId }],
+      },
+    });
+    const config = loadConfig();
+    const entries = [
+      binding({ id: "nightly", invocation: ["task", "run", "nightly", "--bundle", "team", "--scheduled"] }),
+    ];
+    expect(pendingGrantsFromInstalled(entries, config)).toEqual([]);
+    expect(staleGrantsFromInstalled(entries, config)).toEqual([
+      { ref: "team//tasks/nightly", grantedSourceId: staleSourceId, currentSourceId },
+    ]);
   });
 });

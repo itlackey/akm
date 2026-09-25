@@ -48,7 +48,12 @@ function migrationChanges(raw: Record<string, unknown>): SchedulerSourceIdChange
   for (const value of activationArray(raw) ?? []) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const activation = value as Record<string, unknown>;
-    if (typeof activation.sourceId === "string") continue;
+    // A missing sourceId is the pre-0.9.2 legacy shape to backfill. A present
+    // sourceId that no longer matches the ref's currently resolved bundle
+    // (its origin was removed and re-added under the same name) is stale and
+    // gets rebound to the current one, rather than left pointing at a dead
+    // origin.
+    const currentSourceId = typeof activation.sourceId === "string" ? activation.sourceId : undefined;
     const ref = typeof activation.ref === "string" ? activation.ref : "(invalid activation)";
     try {
       const parsed = parseBundleRef(ref);
@@ -56,22 +61,31 @@ function migrationChanges(raw: Record<string, unknown>): SchedulerSourceIdChange
         throw new Error("not a canonical fully-qualified ref");
       }
       const bundles = raw.bundles;
-      if (bundles && typeof bundles === "object" && !Array.isArray(bundles) && parsed.bundle in bundles) {
-        changes.push({ kind: "bind", ref, sourceId: bundleSourceId(raw as AkmConfig, parsed.bundle) });
+      const resolvedSourceId =
+        bundles && typeof bundles === "object" && !Array.isArray(bundles) && parsed.bundle in bundles
+          ? bundleSourceId(raw as AkmConfig, parsed.bundle)
+          : implicitBundleSourceId(raw, parsed.bundle);
+      if (!resolvedSourceId) {
+        // Nothing to bind against right now. An activation that already
+        // carries a sourceId is left as-is (its bundle merely isn't
+        // configured in this snapshot) rather than dropped; only an
+        // unrecoverable legacy (sourceId-less) activation is dropped.
+        if (currentSourceId === undefined) {
+          changes.push({ kind: "drop", ref, reason: `bundle ${JSON.stringify(parsed.bundle)} is not configured` });
+        }
         continue;
       }
-      const implicitSourceId = implicitBundleSourceId(raw, parsed.bundle);
-      if (!implicitSourceId) {
-        changes.push({ kind: "drop", ref, reason: `bundle ${JSON.stringify(parsed.bundle)} is not configured` });
-        continue;
+      if (resolvedSourceId !== currentSourceId) {
+        changes.push({ kind: "bind", ref, sourceId: resolvedSourceId });
       }
-      changes.push({ kind: "bind", ref, sourceId: implicitSourceId });
     } catch (cause) {
-      changes.push({
-        kind: "drop",
-        ref,
-        reason: cause instanceof Error ? cause.message : String(cause),
-      });
+      if (currentSourceId === undefined) {
+        changes.push({
+          kind: "drop",
+          ref,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
     }
   }
   return changes;
@@ -110,9 +124,10 @@ export function applyConfigSchedulerSourceIdMigration(configPath: string): Confi
     const migrated = enabled.flatMap((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) return [value];
       const activation = value as Record<string, unknown>;
-      if (typeof activation.sourceId === "string" || typeof activation.ref !== "string") return [activation];
+      if (typeof activation.ref !== "string") return [activation];
       const change = byRef.get(activation.ref);
-      if (!change || change.kind === "drop") return [];
+      if (!change) return [activation];
+      if (change.kind === "drop") return [];
       return [{ ...activation, sourceId: change.sourceId }];
     });
     const next = { ...raw, scheduler: { ...scheduler, enabled: migrated } };

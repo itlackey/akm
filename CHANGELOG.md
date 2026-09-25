@@ -214,7 +214,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `carriedForward` is never also listed under `removes`. `akm setup`'s
   confirmed activation also carries forward grants for installed tasks
   outside its review before it applies the operator's selections, so a task
-  left unchecked is still removed.
+  left unchecked is still removed. Carry-forward never rebinds an existing
+  grant to a new source: a ref already granted, even to a stale `sourceId`
+  left behind when its bundle was removed and re-added under the same name,
+  is reported as stale rather than silently re-granted — only an explicit
+  `akm migrate apply` may rebind it.
 - **`akm-migrate status|apply` accepts `--host-local`.** Narrows the plan to
   config.json (legacy source shape, `extraParams`, retired keys, scheduler
   `sourceId` binding), pending `state.db` migrations (historical-destructive
