@@ -23,3 +23,13 @@ export const pkgVersion: string = (() => {
 })();
 
 // AKM_VERSION ambient type is declared in globals.d.ts
+
+/**
+ * Contract version for payloads plugins parse (`akm search`/`curate`/`show`/
+ * `info`/`proposal extract` result envelopes — see `akm info`'s `compat`
+ * block, D1). Bump this whenever one of those JSON key sets changes shape;
+ * `tests/contracts/plugin-protocol.test.ts` pins the current keys against
+ * this number and fails without a bump. A plugin gating on this can detect a
+ * contract break that a semver range on the package version cannot see.
+ */
+export const PLUGIN_PROTOCOL_VERSION = 1 as const;

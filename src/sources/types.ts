@@ -593,4 +593,24 @@ export interface InfoResponse {
      */
     unreadable?: string;
   };
+  /**
+   * Contracts plugins can gate on directly, instead of the `version` semver
+   * string (which says nothing about index/state/task/config/workflow
+   * shape or the plugin-facing JSON contract itself). Every value here is
+   * read from the constant that owns it (D1) — never a literal copy.
+   */
+  compat: {
+    /** `CANONICAL_INDEX_DB_VERSION` — the index.db generation this binary reads/writes. */
+    indexGeneration: number;
+    /** Id of the last entry in `STATE_MIGRATIONS` — the state.db ledger head. */
+    stateLedgerHead: string;
+    /** `TASK_SOURCE_V4_VERSION` — the task source document version this binary writes. */
+    taskSourceVersion: number;
+    /** `CURRENT_CONFIG_VERSION` — the `config.json` `configVersion` this binary writes. */
+    configVersion: string;
+    /** `WORKFLOW_IR_V5_VERSION` — the frozen workflow plan `irVersion` this binary writes. */
+    workflowIrVersion: number;
+    /** `PLUGIN_PROTOCOL_VERSION` — the JSON key-set contract of plugin-facing command results. */
+    pluginProtocol: number;
+  };
 }
