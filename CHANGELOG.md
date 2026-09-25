@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **A single retired-config-keys registry (`src/core/config/retired-keys.ts`)
+  and a schema-compat lint (`bun scripts/lint-config-schema-compat.ts`, wired
+  into `bun run lint`) that fails the build when a config key disappears from
+  `schemas/akm-config.json` or an object turns `.strict()` without being
+  registered.** `ExperimentalConfigSchema` went `.strict()` in 0.9.16 with no
+  record of which keys earlier releases accepted under it, and the retired
+  `experimental.workflowEngine` then failed every command for anyone whose
+  0.9.15-written config still carried it — the same knowledge used to be
+  split across `RETIRED_TOP_LEVEL_CONFIG_KEYS` (`config.ts`),
+  `RETIRED_EXPERIMENTAL_KEYS` (a dedicated `experimental.*` shim), and the
+  `extraParams` lift table, with nothing checking that a key removed from the
+  schema was registered anywhere. `stripRetiredConfigKeys`
+  (`src/core/config/retired-config-keys-shim.ts`, replacing the old
+  `experimental.*`-only shim) now drops every registered path — top-level or
+  nested — before validation and warns once per source naming all of them,
+  instead of only the `experimental.*` ones.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed
