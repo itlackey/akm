@@ -98,6 +98,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **One bad scheduler-sync item, or one bad migration step, no longer fails
+  the whole operation.** `akm task sync` (`finalizeSchedulerSyncPlan`,
+  `src/tasks/scheduler-sync.ts`, and its per-bundle loop in
+  `buildSchedulerSyncPlan`, `src/commands/tasks/tasks.ts`) used to throw and
+  abort the entire reconciliation for: an installed binding it could not
+  prove a native fingerprint for (update or removal), a desired task/workflow
+  whose id collided with a different bundle's real installed entry, or — in
+  an unscoped, multi-bundle sync — one bundle's own source set failing to
+  read at all. Each of these is now excluded and reported in the sync
+  result's `failures: [{path, ref?, reason}]` (already returned, now also
+  documented — see `docs/reference/cli.md`), while every other binding and
+  bundle in the same sync still reconciles normally. Genuine whole-operation
+  preconditions — a duplicate id within one bundle's own authored sources, an
+  incoherent backend read, a TOCTOU source-read-set change — still hard-fail,
+  since there both sides of the collision are unprovable. `akm-migrate`'s
+  `runMigration` (`scripts/akm-migrate/run-migrate.ts`) now runs every step
+  under its own catch too: a step's own throw (or, under `apply`, its
+  read-only fallback failing as well) is recorded in the plan's new
+  `failedSteps: [{step, error}]` and forces `status: "blocked"` instead of
+  ending the run with no plan at all — the remaining steps still run in
+  order. `akm migrate status|apply` (`scripts/akm-migrate/main.ts`) already
+  exits 1 for any blocked plan, so a poisoned step no longer exits the
+  internal-error code 70 with nothing printed.
 - **The legacy `stashDir`/`sources[]`/`installed` config shape is repaired
   by `akm migrate apply`, and an empty one no longer fails every command**
   (#863). `migrateLegacySourceShape`
