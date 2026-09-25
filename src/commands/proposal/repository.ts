@@ -1615,8 +1615,14 @@ function resolveProposalRecoveryTarget(
  * journal, rather than one bad journal aborting recovery for every OTHER
  * journal sharing this root's namespace — recovery that runs before every
  * `akm proposal accept`/`reject`. A `TransientError` or SQLite-contention
- * shaped throw means `state.db` is busy mid-`finalize`, not a broken
- * journal, so that one is left in place for a later scan to retry instead.
+ * shaped throw on a SIBLING journal (some other proposal's) means
+ * `state.db` is busy mid-`finalize`, not a broken journal, so that one is
+ * left in place for a later scan to retry instead. The same failure on
+ * `proposalId`'s OWN journal is rethrown as a `TransientError` instead: the
+ * caller is about to act on `proposalId` (accept/reject), and deferring
+ * would let that action run ahead of a crashed transaction whose recovery
+ * outcome (e.g. "asset already published") is still unknown, so the
+ * command must fail as retryable (exit 75) rather than proceed.
  * This loop stays separate from {@link recoverTxnsForRoot} (rather than
  * routing through the ALSO-registered generic `proposal` handler, below)
  * because it threads the caller's `ctx` through `getProposal`/
@@ -1628,6 +1634,7 @@ async function recoverProposalTransactions(
   target: ResolvedWriteTarget,
   stashDir: string,
   ctx?: ProposalsContext,
+  proposalId?: string,
 ): Promise<Map<string, Proposal>> {
   const completed = new Map<string, Proposal>();
   const nsDir = txnNamespaceDir(target.source.path);
@@ -1679,6 +1686,15 @@ async function recoverProposalTransactions(
       cleanupTxn(transactionDir);
     } catch (error) {
       if (error instanceof TransientError || isSqliteContentionError(error)) {
+        if (proposalId !== undefined && journal.payload.proposalId === proposalId) {
+          if (error instanceof TransientError) throw error;
+          const transient = new TransientError(
+            `akm's state database is busy while recovering proposal transaction ${journal.transactionId}; retry shortly.`,
+            "STATE_DB_CONTENDED",
+          );
+          transient.cause = error;
+          throw transient;
+        }
         warnOnce(
           `proposal-txn-transient:${journal.transactionId}`,
           `[proposals] leaving transaction journal ${journal.transactionId} in place after a transient error (${
@@ -1697,13 +1713,6 @@ async function recoverProposalTransactions(
   }
   return completed;
 }
-
-/**
- * TEST-ONLY: exercises {@link recoverProposalTransactions}'s per-journal
- * recovery/quarantine contract directly, without going through
- * {@link recoverProposalTransactionsForStash}'s root-discovery scan.
- */
-export const _recoverProposalTransactionsForTests = recoverProposalTransactions;
 
 export async function recoverProposalTransactionsForStash(
   stashDir: string,
@@ -1746,7 +1755,7 @@ export async function recoverProposalTransactionsForStash(
     }
     const key = path.resolve(target.source.path);
     if (recoveredRoots.has(key)) continue;
-    const recovered = await recoverProposalTransactions(target, stashDir, ctx);
+    const recovered = await recoverProposalTransactions(target, stashDir, ctx, proposalId);
     for (const [id, proposal] of recovered) completed.set(id, proposal);
     recoveredRoots.add(key);
   }
@@ -1821,12 +1830,16 @@ function finalizeRejectTransaction(txn: RejectTxn, ctx?: ProposalsContext): Prop
  * Recover a stuck `proposal-reject` transaction for `proposalId`, run on
  * every `akm proposal accept` ahead of promotion. Gives this scan the same
  * per-journal contract {@link recoverProposalTransactions} and
- * {@link recoverTxnsForRoot} (`src/core/fs-txn.ts`) have: a sibling journal
- * (any kind, any proposal) that is unreadable, unsafe, or fails to finalize
- * is quarantined via {@link quarantineTxnDirSafely} and the scan continues,
- * rather than aborting `accept` for every proposal in this stash. A
- * `TransientError`/SQLite-contention failure while finalizing THIS
- * proposal's own reject leaves its journal in place for a later scan.
+ * {@link recoverTxnsForRoot} (`src/core/fs-txn.ts`) have: an unreadable or
+ * unsafe journal encountered while scanning for `proposalId`'s own reject
+ * journal is quarantined via {@link quarantineTxnDirSafely} and the scan
+ * continues, rather than aborting `accept` for every proposal in this
+ * stash. This function only ever finalizes `proposalId`'s OWN reject
+ * journal (it skips every other proposal's), so a `TransientError`/SQLite-
+ * contention failure while finalizing it is rethrown as a `TransientError`
+ * instead of being swallowed — the caller is about to accept this same
+ * proposal, and letting that run ahead of an unfinished durable rejection
+ * would double-finalize it.
  */
 function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: ProposalsContext): Proposal | undefined {
   const nsDir = txnNamespaceDir(stashDir);
@@ -1859,13 +1872,13 @@ function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: Pr
       return proposal;
     } catch (error) {
       if (error instanceof TransientError || isSqliteContentionError(error)) {
-        warnOnce(
-          `proposal-reject-txn-transient:${journal.transactionId}`,
-          `[proposals] leaving rejection transaction journal ${journal.transactionId} in place after a transient error (${
-            error instanceof Error ? error.message : String(error)
-          }); a later recovery retries it.`,
+        if (error instanceof TransientError) throw error;
+        const transient = new TransientError(
+          `akm's state database is busy while recovering rejection transaction ${journal.transactionId}; retry shortly.`,
+          "STATE_DB_CONTENDED",
         );
-        return undefined;
+        transient.cause = error;
+        throw transient;
       }
       quarantineTxnDirSafely(transactionDir, stashDir, journal, error instanceof Error ? error.message : String(error));
       return undefined;
