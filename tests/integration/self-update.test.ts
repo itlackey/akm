@@ -727,6 +727,40 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.message).toContain("akm task sync");
   });
 
+  test("a failing post-upgrade `akm task sync` reports its JSON error, not an earlier warning line", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation(((_cmd: string, args: string[]) => {
+      if (args[0] === "task" && args[1] === "sync") {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: [
+            "Carried forward 2 grants for scheduled tasks.",
+            JSON.stringify({ ok: false, error: "scheduler backend rejected the sync", code: 1 }),
+          ].join("\n"),
+        } as never;
+      }
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.0.13",
+        latestVersion: "0.0.14",
+        updateAvailable: true,
+        installMethod: "npm",
+      },
+      undefined,
+      currentMigrator,
+    );
+
+    expect(result.postUpgrade?.taskSync?.ok).toBe(false);
+    expect(result.postUpgrade?.taskSync?.message).toContain("scheduler backend rejected the sync");
+    expect(result.postUpgrade?.taskSync?.message).not.toContain("Carried forward 2 grants");
+    expect(result.postUpgrade?.message).toContain("scheduler backend rejected the sync");
+    expect(result.postUpgrade?.message).not.toContain("Carried forward 2 grants");
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
+  });
+
   test("returns guidance message for unknown install method", async () => {
     const result = await performUpgrade(
       {

@@ -577,13 +577,14 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   const index = runAkmIndex(akmBin);
-  const { firstLine, ...taskSync } = runAkmTaskSync(akmBin);
+  const syncOutcome = runAkmTaskSync(akmBin);
   // `index.message` alone reads as "the upgrade is done" even when the sync
   // right after it failed — a text-format caller only ever sees this field,
   // never `taskSync.message`, so a failed sync has to show up here too.
-  const message = taskSync.ok
+  const message = syncOutcome.ok
     ? index.message
-    : `${index.message} The scheduler was not re-synced: ${firstLine}; run \`akm task sync\`.`;
+    : `${index.message} The scheduler was not re-synced: ${syncOutcome.error}; run \`akm task sync\`.`;
+  const taskSync = { ok: syncOutcome.ok, message: syncOutcome.message };
   return { ...index, message, taskSync };
 }
 
@@ -626,14 +627,40 @@ function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?
   }
 }
 
+type AkmTaskSyncOutcome = { ok: true; message: string } | { ok: false; message: string; error: string };
+
+/**
+ * The CLI contract renders a failure as `{ok:false, error, code}` on the
+ * LAST line of stderr; a warning `akm task sync` printed ahead of it (e.g. a
+ * carried-forward grant) must not be mistaken for the failure detail. Scans
+ * stderr from the end for the last line that parses as that JSON shape and
+ * returns its `error`; falls back to the last non-empty stderr line when
+ * nothing parses.
+ */
+function lastAkmTaskSyncError(stderr: string): string | undefined {
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(lines[i]!) as { error?: unknown };
+      if (typeof parsed.error === "string" && parsed.error.length > 0) return parsed.error;
+    } catch {
+      // Not a JSON line; keep scanning backward for an earlier one.
+    }
+  }
+  return lines.at(-1);
+}
+
 /**
  * `akm task sync` after the install: a failure is reported, never thrown.
- * `firstLine` carries the short detail `runPostUpgradeTasks` folds into
+ * `error` carries the short detail `runPostUpgradeTasks` folds into
  * `postUpgrade.message` on failure; it is not part of the public
  * `postUpgrade.taskSync` shape (`UpgradeResponse["postUpgrade"]`), so callers
  * strip it back off before returning `taskSync` to the caller.
  */
-function runAkmTaskSync(akmBin: string): { ok: boolean; message: string; firstLine?: string } {
+function runAkmTaskSync(akmBin: string): AkmTaskSyncOutcome {
   try {
     const result = childProcess.spawnSync(akmBin, ["task", "sync"], {
       encoding: "utf8",
@@ -644,15 +671,16 @@ function runAkmTaskSync(akmBin: string): { ok: boolean; message: string; firstLi
       return {
         ok: false,
         message: `Post-upgrade \`akm task sync\` could not start: ${result.error.message}. Run \`akm task sync\` manually.`,
-        firstLine: result.error.message.split("\n")[0],
+        error: result.error.message,
       };
     }
     if (result.status !== 0) {
-      const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`;
+      const detail =
+        lastAkmTaskSyncError(result.stderr ?? "") || (result.stdout ?? "").trim() || `exit code ${result.status}`;
       return {
         ok: false,
         message: `Post-upgrade \`akm task sync\` failed (${detail}). Run \`akm task sync\` manually.`,
-        firstLine: detail.split("\n")[0],
+        error: detail,
       };
     }
     return { ok: true, message: "Scheduled tasks were re-synced against the new binary." };
@@ -661,7 +689,7 @@ function runAkmTaskSync(akmBin: string): { ok: boolean; message: string; firstLi
     return {
       ok: false,
       message: `Post-upgrade \`akm task sync\` failed: ${detail}. Run \`akm task sync\` manually.`,
-      firstLine: detail.split("\n")[0],
+      error: detail,
     };
   }
 }
