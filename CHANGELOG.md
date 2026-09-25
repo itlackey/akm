@@ -41,7 +41,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   but never touched. `--check` lists the same information read-only. A new
   `akm-installs` `akm health` advisory (`--probe`-gated) reports the same
   enumeration as an ongoing check, warning by path with the manager command
-  that moves it. `akm health`'s `plugin-version` check (itlackey/akm#832)
+  that pins it to the running version — the same `getPackageManagerUpgradeCommand`
+  `akm upgrade` uses, never `@latest`, so a host running a prerelease isn't
+  told to downgrade. `akm health`'s `plugin-version` check (itlackey/akm#832)
   also now reports the OpenCode plugin's bundled `akm-cli` version — an
   in-process copy sharing the host's databases — against the running CLI, as
   a second `opencode-plugin-version` advisory.
