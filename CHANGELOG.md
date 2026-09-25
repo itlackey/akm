@@ -124,7 +124,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ recovered, quarantined }`; `akm migrate apply`'s `staleTxns` plan
   section reports both lists, and a quarantined journal does not make the
   plan `blocked`. A non-empty `$DATA/txn-quarantine` now also surfaces as a
-  new `txn-quarantine` `akm health` advisory.
+  new `txn-quarantine` `akm health` advisory. `akm migrate status` (and
+  `apply --dry-run`) now also runs the read-only fence check per journal and
+  marks a would-be-quarantined one with `wouldQuarantine: { reason }` in its
+  `staleTxns.pending` entry — a fence violation is cheap to determine without
+  mutation; a journal that would only fail during `rollback`/`finalize`
+  still reports as plain "pending", since that requires actually running
+  recovery.
 
 ### Changed
 

@@ -427,6 +427,30 @@ function fenceJournal(journal: TxnJournal<unknown>, txnDir: string, root: string
   handler.validate?.(journal as TxnJournal<never>, txnDir, root);
 }
 
+/**
+ * Read-only probe: would {@link recoverTxnsForRoot} quarantine `journal` on
+ * its fence check, without running the kind's `rollback`/`finalize` (which
+ * this never invokes)? Fence checks are pure validation — root binding,
+ * phase membership, path containment, and the kind's own `validate` — so
+ * this is safe to call from a status/`--dry-run` path. Returns the failure
+ * reason, or `undefined` if the fence would pass (a fence pass does not mean
+ * recovery would succeed: `rollback`/`finalize` can still fail, and that is
+ * only detectable by actually running recovery). A journal whose kind has no
+ * registered handler returns `undefined` too — {@link recoverTxnsForRoot}
+ * sweeps those rather than quarantining them.
+ */
+export function probeJournalFence(journal: TxnJournal<unknown>, root: string): string | undefined {
+  if (!hasKind(journal.kind)) return undefined;
+  const dir = txnDirFor(root, journal.transactionId);
+  const journalPath = path.join(dir, "journal.json");
+  try {
+    fenceJournal(journal, dir, root, journalPath);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 /** True when `journal.phase` is at or after the kind's commit point. */
 export function isCommittedPhase(journal: TxnJournal<unknown>): boolean {
   const handler = requireKind(journal.kind);

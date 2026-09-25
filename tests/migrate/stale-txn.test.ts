@@ -62,6 +62,35 @@ describe("migrate stale-txn detection and recovery", () => {
     expect(entries[0]?.phase).toBe("prepared");
   });
 
+  test("a journal that would fail its fence check is marked wouldQuarantine without running recovery", () => {
+    const stashDir = freshStash();
+    const calls: string[] = [];
+    registerTxnKind<{ label: string }>("test-stale-would-quarantine", {
+      phases: ["prepared", "files-published", "committed"],
+      commitPhase: "files-published",
+      validate() {
+        throw new Error("fence refuses this journal");
+      },
+      rollback() {
+        calls.push("rollback:unreachable");
+      },
+      finalize() {
+        calls.push("finalize:unreachable");
+      },
+    });
+    beginTxn({ kind: "test-stale-would-quarantine", root: stashDir, changes: [], payload: { label: "bad" } });
+
+    const entries = findStaleTxnEntries(stashDir);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe("test-stale-would-quarantine");
+    expect(entries[0]?.phase).toBe("prepared");
+    expect(entries[0]?.wouldQuarantine?.reason).toMatch(/fence refuses this journal/);
+    // The fence probe never runs rollback/finalize, and nothing moved.
+    expect(calls).toEqual([]);
+    expect(findStaleTxnEntries(stashDir)).toHaveLength(1);
+  });
+
   test("a journal bound to a DIFFERENT root is not reported", () => {
     const stashDir = freshStash();
     const otherStash = makeStashDir();
