@@ -148,25 +148,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm migrate apply` permanently deleted the installed row the migration
   needed to re-grant it, taking every scheduled task on the host down with
   no way back short of re-authoring them. Fixed by the startup
-  reconciliation and `task sync` carry-forward above (2026-09-24, one host).
-
-### Added
-
-- **Every akm command reconciles host-local state on a version change, with
-  no manual step.** `src/cli.ts`'s `runCli()` now runs
-  `reconcileOnVersionChange` (`src/core/version-reconcile.ts`) right after
-  `applyEarlyStderrFlags`, gated by a new `shouldReconcileOnStartup`
-  predicate: it skips the same recovery/setup surfaces
-  `shouldBypassConfigStartup` does (`--help`/`--version`/bare/`help`/
-  `hints`/`setup`/`migrate`/`config path`) but, unlike that predicate, DOES
-  run for `task run --id ...` — a scheduled task surviving an upgrade with
-  no manual step is the whole point. `reconcileOnVersionChange` compares a
-  `$STATE/version-reconcile.json` stamp against the running akm's version
-  and, on a mismatch, spawns `akm-migrate apply --host-local` under a
-  `$STATE/locks/version-reconcile.lock` lock before writing the new stamp.
-  A migration that cannot finish (`blocked`, or the spawn itself failing)
-  warns once, retries no more than once per 10 minutes, and never fails the
-  command it ran ahead of.
+  reconciliation and `task sync` carry-forward below (2026-09-24, one host).
 - **A poisoned transaction journal is quarantined and reported instead of
   aborting the whole recovery scan.** `recoverTxnsForRoot`
   (`src/core/fs-txn.ts`) fenced and finalized every journal under one loop
@@ -187,10 +169,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `staleTxns.pending` entry — a fence violation is cheap to determine without
   mutation; a journal that would only fail during `rollback`/`finalize`
   still reports as plain "pending", since that requires actually running
-  recovery.
+  recovery. A transient failure (`state.db` contention under load) is left
+  in place for a later retry instead of being quarantined; only a
+  non-transient failure is quarantined.
 
 ### Changed
 
+- **Every akm command reconciles host-local state on a version change, with
+  no manual step.** `src/cli.ts`'s `runCli()` now runs
+  `reconcileOnVersionChange` (`src/core/version-reconcile.ts`) right after
+  `applyEarlyStderrFlags`, gated by a new `shouldReconcileOnStartup`
+  predicate: it skips the same recovery/setup surfaces
+  `shouldBypassConfigStartup` does (`--help`/`--version`/bare/`help`/
+  `hints`/`setup`/`migrate`/`config path`) but, unlike that predicate, DOES
+  run for `task run --id ...` — a scheduled task surviving an upgrade with
+  no manual step is the whole point. `reconcileOnVersionChange` compares a
+  `$STATE/version-reconcile.json` stamp against the running akm's version
+  and, on a mismatch, spawns `akm-migrate apply --host-local` under a
+  `$STATE/locks/version-reconcile.lock` lock before writing the new stamp.
+  A migration that cannot finish (`blocked`, or the spawn itself failing)
+  warns once, retries no more than once per 10 minutes, and never fails the
+  command it ran ahead of.
 - **`akm task sync` carries a scheduler grant forward before it would
   otherwise remove it as ungranted (upgrade-B).** An installed native
   scheduler binding backed by a file in an enabled bundle, but with no
