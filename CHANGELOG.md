@@ -181,6 +181,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   recovery. A transient failure (`state.db` contention under load) is left
   in place for a later retry instead of being quarantined; only a
   non-transient failure is quarantined.
+- **A bad proposal transaction journal no longer aborts recovery for every
+  other proposal sharing its root.** `recoverProposalTransactions`
+  (`src/commands/proposal/repository.ts`), which runs ahead of every
+  `akm proposal accept`/`reject`, threw out of its scan on the first
+  corrupt, unsafe, or finalize-failing journal it found under a target's
+  transaction namespace — taking down recovery of every OTHER proposal's
+  pending journal in the same root along with it. It now quarantines that
+  one journal (via `quarantineTxnDirSafely`, exported from
+  `src/core/fs-txn.ts` for reuse here) and continues the scan, the same
+  per-journal contract `recoverTxnsForRoot` has, above; a transient
+  (`state.db` busy) failure defers the journal for a later retry instead of
+  quarantining it. Two more unguarded scans on that same `accept`/`reject`
+  path shared the same failure mode and are fixed the same way:
+  `recoverProposalTransactionsForStash`'s upfront root-discovery scan (which
+  read every proposal journal under `$DATA/txn` to find which roots to
+  recover) now tolerates an unreadable sibling instead of throwing before
+  recovery is even reached, and `recoverRejectTransaction` (run on every
+  `accept` ahead of promotion) now quarantines a corrupt or unsafe sibling
+  journal in the same stash namespace instead of throwing out of it.
 
 ### Changed
 
