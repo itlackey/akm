@@ -62,9 +62,12 @@ let storage: IsolatedAkmStorage;
  * to the real one) with a single controlled directory holding a fake
  * `crontab` that reports an empty schedule and a stub `akm` that reports
  * the running version, `NVM_DIR` is unset so no real nvm install directory
- * leaks in either, and `enumerateAkmInstalls` itself is wrapped (real
- * `spawnSync`/`fs` still run — only `fixedRoots` is forced to `[]`) since
- * that option cannot be reached through the CLI/health plumbing.
+ * leaks in either, `BUN_INSTALL` is unset too (upgrade-D3 r3-4:
+ * `enumerateAkmInstalls` now also scans `${BUN_INSTALL:-~/.bun}/lib/node_modules`
+ * unconditionally, and a developer's shell commonly exports `BUN_INSTALL`
+ * regardless of the HOME sandbox), and `enumerateAkmInstalls` itself is
+ * wrapped (real `spawnSync`/`fs` still run — only `fixedRoots` is forced to
+ * `[]`) since that option cannot be reached through the CLI/health plumbing.
  */
 async function withSandboxedProbeEnvironment<T>(fn: () => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-health-probe-sandbox-"));
@@ -80,7 +83,7 @@ async function withSandboxedProbeEnvironment<T>(fn: () => Promise<T>): Promise<T
     realEnumerate(env, { ...options, fixedRoots: [] }),
   );
   try {
-    return await withEnv({ PATH: dir, NVM_DIR: undefined }, fn);
+    return await withEnv({ PATH: dir, NVM_DIR: undefined, BUN_INSTALL: undefined }, fn);
   } finally {
     spy.mockRestore();
     fs.rmSync(dir, { recursive: true, force: true });
