@@ -111,6 +111,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
 
+### Added
+
+- **Startup host-local reconciliation (`src/core/version-reconcile.ts`).**
+  `reconcileOnVersionChange` compares a `$STATE/version-reconcile.json` stamp
+  against the running akm's version and, on a mismatch, spawns `akm-migrate
+  apply --host-local` under a `$STATE/locks/version-reconcile.lock` lock
+  before writing the new stamp. A migration that cannot finish (`blocked`, or
+  the spawn itself failing) warns once, retries no more than once per 10
+  minutes, and never fails the command it ran ahead of. Not yet wired into
+  `akm`'s startup — that is a separate change.
+
 ### Changed
 
 - **`akm task sync` carries a scheduler grant forward before it would
