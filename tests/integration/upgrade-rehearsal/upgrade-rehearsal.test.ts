@@ -133,7 +133,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
 
   test("0. scheduled-a's generated cron command survives the upgrade with no manual step: it runs the candidate before any `migrate` call, and `migrate status` then reports current for every host-local section", async () => {
     // Runs BEFORE test 2/3's own `migrate status`/`apply` calls: this is the
-    // whole point of upgrade-B's startup reconciliation (src/cli.ts's
+    // whole point of the startup reconciliation (src/cli.ts's
     // `reconcileOnVersionChange` hook) — a scheduled task must survive an
     // upgrade by ANY install method with no human ever running `akm migrate
     // apply` first.
@@ -359,7 +359,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
 });
 
 /**
- * KNOWN_UPGRADE_ORIGINS' fixed `"0.9.15"` origin (upgrade-B): the last
+ * KNOWN_UPGRADE_ORIGINS' fixed `"0.9.15"` origin: the last
  * release before source-bound scheduler grants (0.9.16). A 0.9.15-built
  * home has a scheduled task installed by the OLD release's own direct
  * activation (`task add`, no `--disabled`) with NO `scheduler.enabled`

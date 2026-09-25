@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R0 (tier0-0917): real on-disk `PRAGMA quick_check` / freelist / VACUUM
+ * R0: real on-disk `PRAGMA quick_check` / freelist / VACUUM
  * coverage for src/storage/state-db-integrity.ts. The pure check-registry
  * projection is covered by tests/health-state-db-integrity-check.test.ts;
  * this file proves the probes themselves — which open a real state.db —

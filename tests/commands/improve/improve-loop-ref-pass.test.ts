@@ -203,7 +203,7 @@ describe("processImproveLoopRef — reflect half", () => {
   });
 });
 
-describe("processImproveLoopRef — reflect pre-generation guard (R9, tier2-0917)", () => {
+describe("processImproveLoopRef — reflect pre-generation guard (R9)", () => {
   test("a fingerprint match skips the LLM call, lands in reflect-cooldown, and advances the signal cursor", async () => {
     const { stashDir } = freshSandbox();
     const target = { source: "stash", root: path.resolve(stashDir) };
@@ -373,7 +373,7 @@ describe("processImproveLoopRef — distill half", () => {
   });
 });
 
-describe("processImproveLoopRef — distill pre-generation guard (r2-6, tier2-0917)", () => {
+describe("processImproveLoopRef — distill pre-generation guard on a derived lesson ref", () => {
   const memoryRef = "memories/finding-1";
 
   test("a fingerprint match on the derived lesson ref skips distillFn and advances the signal cursor", async () => {
@@ -424,7 +424,7 @@ describe("processImproveLoopRef — distill pre-generation guard (r2-6, tier2-09
       payload: { content: VALID_LESSON },
     });
     if (isProposalSkipped(first)) throw new Error("unexpected skip setting up the fixture");
-    archiveProposal(stashDir, first.id, "rejected", "Test rejection for r2-6 backoff");
+    archiveProposal(stashDir, first.id, "rejected", "Test rejection to arm the rejection backoff");
 
     // Materialize the target so the second check is a genuinely new
     // fingerprint — the retained backoff (not the fingerprint guard) must be
@@ -487,7 +487,7 @@ describe("processImproveLoopRef — distill pre-generation guard (r2-6, tier2-09
   });
 });
 
-describe("processImproveLoopRef — distill guard target precheck (PRECHECK, tier3-0917)", () => {
+describe("processImproveLoopRef — distill guard target precheck (PRECHECK)", () => {
   const memoryRef = "memories/finding-1";
   const promotingMemoryRef = "memories/vpn-required-for-deploy";
   // Mirrors the "deploy-vpn-required" fixture in promotion-policy-corpus.ts

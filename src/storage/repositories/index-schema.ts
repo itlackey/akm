@@ -22,6 +22,7 @@ import {
   classifyIndexGeneration,
   isCanonicalIndexGeneration,
 } from "./index-entry-schema";
+import { ensureFtsRowidLayout } from "./index-fts-repository";
 import { getMeta, setMeta } from "./index-meta-repository";
 import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 
@@ -438,6 +439,12 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // A crash before this point leaves an unversioned generation that the next
   // writable open safely rebuilds instead of admitting a partial v23 index.
   setMeta(db, "version", String(DB_VERSION));
+
+  // One-time in-place realignment of FTS rowids onto entry_id / an
+  // encoded fragment rowid, so a per-entry delete is a rowid lookup/range
+  // instead of a full-table scan. Runs on every writable open path
+  // (ensureSchema has no other caller); a no-op once the layout holds.
+  ensureFtsRowidLayout(db);
 }
 
 /**

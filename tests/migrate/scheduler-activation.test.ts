@@ -23,7 +23,7 @@ beforeEach(() => {
     defaultBundle: "team",
     bundles: { team: { path: storage.stashDir, writable: true } },
   });
-  // A carried-forward grant requires a backing file (upgrade-B policy 1):
+  // A carried-forward grant requires a backing file:
   // "nightly" and "release" back the two installed rows that qualify below.
   fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
   fs.writeFileSync(path.join(storage.stashDir, "tasks", "nightly.yml"), "schedule: '0 2 * * *'\n");

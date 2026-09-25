@@ -1054,7 +1054,7 @@ describe("LAUNCHD_BACKEND lifecycle", () => {
     expect(launchdMutationCalls(exec.calls)).toEqual([]);
   });
 
-  test("whole-set transaction preparation rejects an affected loaded-only artifact before mutation", async () => {
+  test("whole-set transaction preparation reports an affected loaded-only artifact before mutation", async () => {
     const stash = sandboxStashDir();
     try {
       const tasksDir = path.join(stash.dir, "tasks");
@@ -1065,7 +1065,14 @@ describe("LAUNCHD_BACKEND lifecycle", () => {
       exec.loadedLabels.add("com.akm.task.ping");
       exec.calls.length = 0;
 
-      await expect(akmTasksSync({ backend })).rejects.toThrow(/owner|collision|artifact|scheduler|existing/i);
+      // This is the only configured bundle, so the unscoped sync reports
+      // the failure on an otherwise-empty plan instead of throwing.
+      const result = await akmTasksSync({ backend });
+      expect(result.installed).toEqual([]);
+      expect(result.updated).toEqual([]);
+      expect(
+        result.failures.some((failure) => /owner|collision|artifact|scheduler|existing/i.test(failure.reason)),
+      ).toBe(true);
       expect(launchdFs.written.size).toBe(0);
       expect(exec.loadedLabels.has("com.akm.task.ping")).toBe(true);
       expect(launchdMutationCalls(exec.calls)).toEqual([]);

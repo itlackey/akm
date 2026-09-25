@@ -17,12 +17,46 @@ import { buildLexicalQueryPlan, type LexicalQueryExecution } from "../../indexer
 import { buildSearchFields } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
 import type { DbSearchResult } from "./index-entry-types";
+import { getMeta, setMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
 const INSERT_FTS_SQL =
-  "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)";
+  "INSERT INTO entries_fts (rowid, entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?, ?)";
 const INSERT_FRAGMENT_SQL =
-  "INSERT INTO entry_fragments_fts (entry_id, fragment_id, fragment_ordinal, content) VALUES (?, ?, ?, ?)";
+  "INSERT INTO entry_fragments_fts (rowid, entry_id, fragment_id, fragment_ordinal, content) VALUES (?, ?, ?, ?, ?)";
+
+// `entry_fragments_fts` carries many rows per entry, so its rowid encodes
+// both the owning entry and the fragment's ordinal: `entryId * 2^20 +
+// ordinal`. That keeps a per-entry delete a rowid RANGE (`>= start < end`),
+// which FTS5 serves from its content table without scanning unrelated rows —
+// the same win `entries_fts` gets from using `entry_id` as the rowid
+// directly. A mapping table would need its own generation bump (every older
+// reader would have to understand it); this needs none.
+const FRAGMENT_ROWID_ORDINAL_BITS = 20;
+const FRAGMENT_ROWID_ORDINAL_SPAN = 2 ** FRAGMENT_ROWID_ORDINAL_BITS; // 1,048,576
+
+/** No file is expected to reach a million fragments; one that does must not silently collide with the next entry's rowid range. */
+function fragmentFtsRowid(entryId: number, ordinal: number): number {
+  if (ordinal < 0 || ordinal >= FRAGMENT_ROWID_ORDINAL_SPAN) {
+    throw new Error(
+      `Fragment ordinal ${ordinal} for entry ${entryId} exceeds the encoded FTS rowid span (${FRAGMENT_ROWID_ORDINAL_SPAN}).`,
+    );
+  }
+  return entryId * FRAGMENT_ROWID_ORDINAL_SPAN + ordinal;
+}
+
+function fragmentFtsRowidRangeStart(entryId: number): number {
+  return entryId * FRAGMENT_ROWID_ORDINAL_SPAN;
+}
+
+// index_meta key marking the one-time in-place rowid realignment. No
+// index-generation bump: existing rows are rewritten with the rowid = entry_id
+// / encoded-fragment-rowid contract above, in place, and no reader depends on
+// FTS rowids (only entry_id/fragment_id/fragment_ordinal columns are read —
+// see searchFts and getIndexedMarkdownFragments below), so an older binary
+// keeps reading the realigned tables correctly.
+const FTS_ROWID_LAYOUT_META_KEY = "ftsRowidLayout";
+const FTS_ROWID_LAYOUT_VERSION = "2";
 
 interface FtsMutationStatements {
   deleteOne: ReturnType<Database["prepare"]>;
@@ -39,9 +73,9 @@ function getFtsMutationStatements(db: Database): FtsMutationStatements {
   const existing = ftsMutationStatementsByDb.get(db);
   if (existing) return existing;
   const statements = {
-    deleteOne: db.prepare("DELETE FROM entries_fts WHERE entry_id = ?"),
+    deleteOne: db.prepare("DELETE FROM entries_fts WHERE rowid = ?"),
     insert: db.prepare(INSERT_FTS_SQL),
-    deleteFragments: db.prepare("DELETE FROM entry_fragments_fts WHERE entry_id = ?"),
+    deleteFragments: db.prepare("DELETE FROM entry_fragments_fts WHERE rowid >= ? AND rowid < ?"),
     upsertFragmentSource: db.prepare(
       "INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET safe_markdown = excluded.safe_markdown",
     ),
@@ -62,29 +96,40 @@ export function replaceFtsEntry(
   const fields = buildSearchFields(entry);
   const statements = getFtsMutationStatements(db);
   statements.deleteOne.run(entryId);
-  statements.insert.run(entryId, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+  statements.insert.run(entryId, entryId, fields.name, fields.description, fields.tags, fields.hints, fields.content);
   if (fragmentContent === undefined) {
     // Metadata-only re-upserts and re-keys deserialize the public document
     // without the internal substrate. Leave the persisted source untouched.
     // A scan that did read Markdown always supplies a value below.
     return;
   }
-  statements.deleteFragments.run(entryId);
+  const rangeStart = fragmentFtsRowidRangeStart(entryId);
+  statements.deleteFragments.run(rangeStart, rangeStart + FRAGMENT_ROWID_ORDINAL_SPAN);
   statements.deleteFragmentSource.run(entryId);
   if (!fragmentContent) return;
   statements.upsertFragmentSource.run(entryId, fragmentContent);
   for (const fragment of splitMarkdownFragments(fragmentContent)) {
-    statements.insertFragment.run(entryId, fragment.fragmentId, fragment.ordinal, fragment.text.toLowerCase());
+    statements.insertFragment.run(
+      fragmentFtsRowid(entryId, fragment.ordinal),
+      entryId,
+      fragment.fragmentId,
+      fragment.ordinal,
+      fragment.text.toLowerCase(),
+    );
   }
 }
 
 /** Delete derived FTS projections for canonical entries that are being removed. */
 export function deleteFtsEntries(db: Database, entryIds: readonly number[]): void {
+  const statements = getFtsMutationStatements(db);
   for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
-    db.prepare(`DELETE FROM entry_fragments_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
+    db.prepare(`DELETE FROM entries_fts WHERE rowid IN (${placeholders})`).run(...chunk);
+    for (const entryId of chunk) {
+      const rangeStart = fragmentFtsRowidRangeStart(entryId);
+      statements.deleteFragments.run(rangeStart, rangeStart + FRAGMENT_ROWID_ORDINAL_SPAN);
+    }
     db.prepare(`DELETE FROM entry_fragments WHERE entry_id IN (${placeholders})`).run(...chunk);
   }
 }
@@ -462,10 +507,16 @@ export function rebuildFts(db: Database): void {
         skipped++;
         continue;
       }
-      insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+      insertStmt.run(row.id, row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
       if (row.safe_markdown) {
         for (const fragment of splitMarkdownFragments(row.safe_markdown)) {
-          fragmentStmt.run(row.id, fragment.fragmentId, fragment.ordinal, fragment.text.toLowerCase());
+          fragmentStmt.run(
+            fragmentFtsRowid(row.id, fragment.ordinal),
+            row.id,
+            fragment.fragmentId,
+            fragment.ordinal,
+            fragment.text.toLowerCase(),
+          );
         }
       }
     }
@@ -473,5 +524,48 @@ export function rebuildFts(db: Database): void {
     if (skipped > 0) {
       warn(`[db] rebuildFts: skipped ${skipped} entr${skipped === 1 ? "y" : "ies"} with invalid document_json`);
     }
+  })();
+}
+
+/**
+ * True when the rowid = entry_id / encoded-fragment-rowid contract still
+ * holds, checked on the highest-rowid row of each table (two rowid-ordered
+ * lookups, not a scan). A writer that shares this generation but predates the
+ * contract (an older installed binary, or a rollback) deletes by `entry_id`
+ * and inserts without an explicit rowid, so FTS5 appends at `max(rowid)+1`;
+ * that only ever moves the highest rowid, so checking it there is enough to
+ * catch the drift.
+ */
+function ftsRowidLayoutHolds(db: Database): boolean {
+  const entryRow = db.prepare("SELECT rowid, entry_id FROM entries_fts ORDER BY rowid DESC LIMIT 1").get() as
+    | { rowid: number; entry_id: number }
+    | undefined;
+  if (entryRow && entryRow.rowid !== entryRow.entry_id) return false;
+  const fragmentRow = db
+    .prepare("SELECT rowid, entry_id, fragment_ordinal FROM entry_fragments_fts ORDER BY rowid DESC LIMIT 1")
+    .get() as { rowid: number; entry_id: number; fragment_ordinal: number } | undefined;
+  if (fragmentRow && fragmentRow.rowid !== fragmentFtsRowid(fragmentRow.entry_id, fragmentRow.fragment_ordinal)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * One-time in-place realignment for an index.db written before FTS rows
+ * carried an explicit rowid. `rebuildFts` already reconstructs both FTS
+ * tables from the canonical `entries`/`entry_fragments` source with the
+ * rowid = entry_id / encoded-fragment-rowid contract above, so realignment is
+ * exactly that rebuild plus the meta stamp — nested inside one transaction
+ * (the driver lowers `rebuildFts`'s own `db.transaction()` to a savepoint) so
+ * a crash mid-rebuild leaves the meta key unset and simply retries on the
+ * next writable open. No `index_meta.version` generation bump: the rewritten
+ * rows are read through the same `entry_id`/`fragment_id`/`fragment_ordinal`
+ * columns older and newer binaries already use.
+ */
+export function ensureFtsRowidLayout(db: Database): void {
+  if (getMeta(db, FTS_ROWID_LAYOUT_META_KEY) === FTS_ROWID_LAYOUT_VERSION && ftsRowidLayoutHolds(db)) return;
+  db.transaction(() => {
+    rebuildFts(db);
+    setMeta(db, FTS_ROWID_LAYOUT_META_KEY, FTS_ROWID_LAYOUT_VERSION);
   })();
 }

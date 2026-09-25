@@ -276,7 +276,7 @@ describe("buildChunkPrompt size bounds", () => {
   });
 });
 
-describe("buildChunkPrompt header is ref-free (CONS2, tier3-0917 R5c)", () => {
+describe("buildChunkPrompt header is ref-free (CONS2, R5c)", () => {
   it("header names the memory count, not a memories/<name> range", () => {
     const memories = makeMemoryBatch(tempDir, 3, 50);
     const prompt = buildChunkPrompt("/test/stash", memories, 1, 4, 500);
@@ -521,11 +521,11 @@ describe("body truncation", () => {
     expect(prompt).toContain("Z".repeat(500));
   });
 
-  // R5 (d) tier1-0917: the excerpt truncates the BODY, not the raw file
+  // R5 (d): the excerpt truncates the BODY, not the raw file
   // (frontmatter + body). Before the fix, `body.slice(0, bodyTruncation)`
   // sliced the raw file, so a memory whose frontmatter alone exceeds
   // bodyTruncation (~21% of the pool) was judged on metadata only.
-  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5 tier1-0917)", () => {
+  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5)", () => {
     const longFrontmatter = `---\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Actual body text that must appear.`;
     const entry = makeMemoryEntry(tempDir, "long-frontmatter", body);
@@ -534,7 +534,7 @@ describe("body truncation", () => {
     expect(prompt).toContain("Actual body text that must appear.");
   });
 
-  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5 tier1-0917)", () => {
+  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5)", () => {
     const longFrontmatter = `---\ncaptureMode: hot\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Body text.`;
     const entry = makeMemoryEntry(tempDir, "hot-long-frontmatter", body);

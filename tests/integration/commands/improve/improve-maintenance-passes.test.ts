@@ -166,7 +166,7 @@ describe("runGraphExtractionMaintenancePass", () => {
     expect(out.warnings).toEqual([]);
   });
 
-  // D9/r2-2 (tier1-0917): the post-consolidation reindex this pass used to run
+  // D9: the post-consolidation reindex this pass used to run
   // (`consolidationRan && !reindexedAfterInference` → `reindexWithIndexDbReleased`)
   // is deleted along with the seam it called — consolidation's only executed op
   // (promote) writes a proposal row to state.db, never a stash file, so the
@@ -265,7 +265,7 @@ describe("runRetentionPurgePass", () => {
     expect(fs.existsSync(newFile)).toBe(true);
   });
 
-  // r2-1 (tier0-0917): R0 step 3 wires vacuumStateDbIfReclaimable into the
+  // R0 step 3 wires vacuumStateDbIfReclaimable into the
   // purge callback, reading the freelist off the same connection the purge
   // just used. Recipe (bulk-insert-then-delete) reused from
   // tests/integration/storage/state-db-integrity.test.ts:140-160, except the

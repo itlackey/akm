@@ -18,8 +18,8 @@
  *   - buildDistillPrompt        (distill — lesson/knowledge)
  *   - buildExtractPrompt        (extract — lessons/memories from a session)
  *
- * consolidate's buildChunkPrompt does not take a standardsContext (CONS2,
- * tier3-0917): the chunk prompt is a promote-only op list that never used it.
+ * consolidate's buildChunkPrompt does not take a standardsContext (CONS2):
+ * the chunk prompt is a promote-only op list that never used it.
  *
  * Plus one tie-through test: the REAL `resolveStashStandards` output (from an
  * on-disk convention fact) reaches a builder's rendered prompt.

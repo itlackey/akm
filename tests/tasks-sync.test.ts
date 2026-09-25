@@ -14,12 +14,14 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDisable, akmTasksSync } from "../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache } from "../src/core/config/config";
 import { filesystemBundleSourceId } from "../src/core/config/config-sources";
 import { isSchedulerRefEnabled, schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
+import type { SchedulerBackend } from "../src/tasks/backends/types";
 import {
   resolveScheduledTaskContext,
   schedulerContextDescriptor,
@@ -183,7 +185,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle");
   });
 
-  test("`akm task disable` also removes a granted, installed binding (upgrade-B)", async () => {
+  test("`akm task disable` also removes a granted, installed binding", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *", true);
@@ -195,7 +197,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle");
   });
 
-  test("`akm task add --disabled` does not re-grant or reinstall the task it just disabled (upgrade-B r2-1)", async () => {
+  test("`akm task add --disabled` does not re-grant or reinstall the task it just disabled", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *", true);
@@ -212,7 +214,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle stash --scheduled");
   });
 
-  test("carries forward a grant lost outside `disable` for an installed row with a backing file (upgrade-B)", async () => {
+  test("carries forward a grant lost outside `disable` for an installed row with a backing file", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("orphan", "*/5 * * * *", true);
@@ -227,7 +229,7 @@ describe("akmTasksSync — schedule drift", () => {
     resetConfigCache();
     expect(schedulerActivations(loadConfig())).toEqual([]);
 
-    // Only `akm task sync` itself carries a grant forward (upgrade-B r2-1);
+    // Only `akm task sync` itself carries a grant forward;
     // the internal reconciling syncs inside add/enable/disable never do.
     const result = await akmTasksSync({ backend }, undefined, { carryForward: true });
     expect(result.removed).not.toContain("orphan");
@@ -288,8 +290,11 @@ describe("akmTasksSync — schedule drift", () => {
   });
 
   // A malformed native artifact does not prove its logical owner. Even when
-  // its marker resembles the desired task, sync must not overwrite it.
-  test("preserves and rejects a scheduler invocation without a context descriptor", async () => {
+  // its marker resembles the desired task, sync must not overwrite it. This
+  // is the only configured bundle, so the sync (unscoped) reports the
+  // failure on an otherwise-empty plan instead of installing/updating
+  // anything — never a whole-sync throw, and the crontab stays untouched.
+  test("preserves the crontab and reports a scheduler invocation without a context descriptor", async () => {
     const exec = memoryExec(
       [
         "# akm:task alpha BEGIN",
@@ -302,11 +307,17 @@ describe("akmTasksSync — schedule drift", () => {
     writeTask("alpha", "*/15 * * * *", true);
     const prior = exec.current();
 
-    await expect(akmTasksSync({ backend })).rejects.toThrow(/native scheduler artifact|unproven owner/i);
+    const result = await akmTasksSync({ backend });
+
+    expect(result.installed).toEqual([]);
+    expect(result.updated).toEqual([]);
+    expect(result.failures.some((failure) => /native scheduler artifact|unproven owner/i.test(failure.reason))).toBe(
+      true,
+    );
     expect(exec.current()).toBe(prior);
   });
 
-  test("preserves and rejects a pre-rename `tasks run` artifact with unproven ownership", async () => {
+  test("preserves the crontab and reports a pre-rename `tasks run` artifact with unproven ownership", async () => {
     const exec = memoryExec(
       [
         "# akm:task alpha BEGIN",
@@ -319,7 +330,13 @@ describe("akmTasksSync — schedule drift", () => {
     writeTask("alpha", "*/15 * * * *", true);
     const prior = exec.current();
 
-    await expect(akmTasksSync({ backend })).rejects.toThrow(/native scheduler artifact|unproven owner/i);
+    const result = await akmTasksSync({ backend });
+
+    expect(result.installed).toEqual([]);
+    expect(result.updated).toEqual([]);
+    expect(result.failures.some((failure) => /native scheduler artifact|unproven owner/i.test(failure.reason))).toBe(
+      true,
+    );
     expect(exec.current()).toBe(prior);
   });
 
@@ -454,5 +471,242 @@ describe("akmTasksSync — website/npm bundles cannot carry scheduler state", ()
     await expect(akmTasksSync({ backend }, "docs")).rejects.toThrow(
       /Bundle "docs" has kind "website"; task scheduling is only supported for filesystem and git bundles\./,
     );
+  });
+});
+
+// An unscoped (multi-bundle) sync must isolate one bundle's own anomaly: one
+// bundle's `tasks/` root being a symlink (or any other whole-bundle
+// source-collection failure) must not throw out of `buildSchedulerSyncPlan`'s
+// per-bundle loop and abort every OTHER selected bundle's sync too. A scoped
+// sync naming exactly that bundle is a different case: its one failure IS the
+// whole operation, so it rethrows instead of being caught and reported.
+describe("akmTasksSync — one bundle's poisoned source set does not cost every OTHER bundle its sync", () => {
+  const backendFor = (exec: CronExec) => {
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    return CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath: false,
+    });
+  };
+
+  function makePoisonedBundle(): { poisonedDir: string; cleanup: () => void } {
+    const poisonedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-sync-poisoned-"));
+    const poisonedTasksTarget = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-sync-poisoned-target-"));
+    // A `tasks/` root that is itself a symlink: SchedulerSourceCollector's
+    // constructor throws for this bundle (guarded reads require a
+    // no-follow owner) — a whole-bundle source-collection failure, not a
+    // single source's.
+    fs.symlinkSync(poisonedTasksTarget, path.join(poisonedDir, "tasks"));
+    return {
+      poisonedDir,
+      cleanup: () => {
+        fs.rmSync(poisonedDir, { recursive: true, force: true });
+        fs.rmSync(poisonedTasksTarget, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test("the healthy bundle still installs its task; the poisoned bundle is reported, not thrown", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    const poisoned = makePoisonedBundle();
+
+    try {
+      writeSandboxConfig({
+        bundles: {
+          stash: { path: stashDir, writable: true },
+          poisoned: { path: poisoned.poisonedDir, writable: true },
+        },
+        defaultBundle: "stash",
+      });
+      writeTask("alpha", "*/15 * * * *");
+
+      const result = await akmTasksSync({ backend });
+
+      expect(result.installed).toEqual(["alpha"]);
+      expect(exec.current()).toContain("task run alpha --bundle stash --scheduled");
+      expect(result.failures.some((failure) => failure.path === "poisoned" && /symbolic/i.test(failure.reason))).toBe(
+        true,
+      );
+    } finally {
+      poisoned.cleanup();
+    }
+  });
+
+  test("a sync scoped to the poisoned bundle rethrows its original usage error instead of reporting it", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    const poisoned = makePoisonedBundle();
+
+    try {
+      writeSandboxConfig({
+        bundles: {
+          stash: { path: stashDir, writable: true },
+          poisoned: { path: poisoned.poisonedDir, writable: true },
+        },
+        defaultBundle: "stash",
+      });
+
+      await expect(akmTasksSync({ backend }, "poisoned")).rejects.toMatchObject({
+        name: "UsageError",
+        code: "PATH_ESCAPE_VIOLATION",
+      });
+    } finally {
+      poisoned.cleanup();
+    }
+  });
+
+  test("an unscoped sync whose only write-capable bundle is poisoned returns a plan reporting it, instead of throwing", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    const poisoned = makePoisonedBundle();
+
+    try {
+      writeSandboxConfig({
+        bundles: {
+          poisoned: { path: poisoned.poisonedDir, writable: true },
+        },
+        defaultBundle: "poisoned",
+      });
+
+      const result = await akmTasksSync({ backend });
+
+      expect(result.installed).toEqual([]);
+      expect(result.failures.some((failure) => failure.path === "poisoned" && /symbolic/i.test(failure.reason))).toBe(
+        true,
+      );
+    } finally {
+      poisoned.cleanup();
+    }
+  });
+
+  test("a scoped sync against an unconfigured bundle rethrows the original usage error, not a config error", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+
+    await expect(akmTasksSync({ backend }, "nope")).rejects.toMatchObject({
+      name: "UsageError",
+      code: "INVALID_FLAG_VALUE",
+    });
+  });
+});
+
+// A backend-wide incoherent or duplicate native inspection can't be
+// attributed to any one bundle, so it must still hard-fail the whole sync —
+// even when the bundle whose desired set happens to finalize first would
+// otherwise succeed.
+describe("akmTasksSync — an incoherent backend inspection still hard-fails the whole sync", () => {
+  test("a duplicate native artifact across two bundles' installed rows throws, not reported per bundle", async () => {
+    const secondDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-sync-second-"));
+    fs.mkdirSync(path.join(secondDir, "tasks"), { recursive: true });
+    try {
+      writeSandboxConfig({
+        bundles: {
+          stash: { path: stashDir, writable: true },
+          other: { path: secondDir, writable: true },
+        },
+        defaultBundle: "stash",
+      });
+
+      const duplicateNativeId = "dup-native-id";
+      const artifacts = [
+        {
+          nativeId: duplicateNativeId,
+          bindingId: "a",
+          invocation: ["task", "run", "a", "--bundle", "stash", "--scheduled"],
+          fingerprint: "fingerprint-a",
+        },
+        {
+          nativeId: duplicateNativeId,
+          bindingId: "b",
+          invocation: ["task", "run", "b", "--bundle", "other", "--scheduled"],
+          fingerprint: "fingerprint-b",
+        },
+      ];
+      const backend: SchedulerBackend = {
+        name: "cron",
+        install() {},
+        uninstall() {},
+        setEnabled() {},
+        list: () => [],
+        listNativeArtifacts: () => artifacts,
+        inspectBindings: () => ({ installed: [], artifacts }),
+      };
+
+      await expect(akmTasksSync({ backend })).rejects.toMatchObject({
+        name: "UsageError",
+        code: "RESOURCE_ALREADY_EXISTS",
+      });
+    } finally {
+      fs.rmSync(secondDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// A disabled bundle's installed rows are removed one at a time
+// (`inactiveBundleRemovalOperations`): a row this process can't safely
+// attribute a removal for (no invocation, no exact fingerprint) must not
+// cost every OTHER disabled-bundle row its own, otherwise-clean removal.
+describe("akmTasksSync — inactive-bundle removal isolates one unattributable installed row", () => {
+  test("the attributable row is removed; the unattributable row is reported instead of aborting both", async () => {
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: stashDir, writable: true },
+        archived: { path: path.join(stashDir, "..", "archived"), writable: true, enabled: false },
+      },
+      defaultBundle: "stash",
+    });
+
+    const goodInvocation = ["task", "run", "good", "--bundle", "archived", "--scheduled"];
+    const good = {
+      id: "good",
+      nativeId: "good",
+      target: "archived",
+      binding: ["/opt/akm"],
+      contextPath: "/data/context.json",
+      invocation: goodInvocation,
+      signature: "sig-good",
+    };
+    const goodArtifact = { nativeId: "good", bindingId: "good", invocation: goodInvocation, fingerprint: "sig-good" };
+    // No `invocation`: `buildSchedulerRemoveOperation` cannot prove an exact
+    // native owner for this row and throws — the same throw sync's own
+    // removal loop already isolates per binding, now also isolated here.
+    const bad = {
+      id: "bad",
+      nativeId: "bad",
+      target: "archived",
+      binding: ["/opt/akm"],
+      contextPath: "/data/context.json",
+    };
+    const badArtifact = { nativeId: "bad", bindingId: "bad", fingerprint: "sig-bad" };
+
+    const installed = [good, bad];
+    const artifacts = [goodArtifact, badArtifact];
+    const backend: SchedulerBackend = {
+      name: "cron",
+      install() {},
+      uninstall() {},
+      setEnabled() {},
+      list: () => installed,
+      listNativeArtifacts: () => artifacts,
+      inspectBindings: () => ({ installed, artifacts }),
+      snapshotBindings: (ids) => ({
+        nativeIds: [...ids],
+        artifacts: artifacts.filter((a) => ids.includes(a.nativeId)),
+      }),
+      restoreBindings: () => {},
+    };
+
+    const result = await akmTasksSync({ backend });
+
+    expect(result.removed).toEqual(["good"]);
+    expect(
+      result.failures.some(
+        (failure) => failure.path === "bad" && /native scheduler artifact collision/i.test(failure.reason),
+      ),
+    ).toBe(true);
   });
 });

@@ -65,6 +65,8 @@ export type LockProbeResult =
 export interface ReclaimStaleLockOptions {
   /** Test seam for a replacement installed after quarantine verification. */
   afterQuarantineVerified?: () => void;
+  /** Overrides the operation mutex's location; see {@link withLockOperationMutex}. */
+  mutexPath?: string;
 }
 
 export interface LockFileIdentity {
@@ -114,10 +116,18 @@ function operationMutexPath(lockPath: string): string {
  * Serialize every mutation of one canonical lock path. SQLite's write lock is
  * released by the OS when a process dies, so this mutex needs no stale-owner
  * deletion protocol (which would reproduce the same check/rename race it is
- * meant to prevent).
+ * meant to prevent). This holds for a fixed canonical `lockPath` reused
+ * across invocations — a caller whose `lockPath` is unique per acquisition
+ * (nothing ever revisits it) must pass an explicit `mutexPath` shared across
+ * its acquisitions instead, or the derived per-path sidecar accumulates one
+ * abandoned file per acquisition forever.
  */
-function withLockOperationMutex<T>(lockPath: string, run: () => T): T {
-  const db = openDatabase(operationMutexPath(lockPath));
+function withLockOperationMutex<T>(
+  lockPath: string,
+  run: () => T,
+  mutexPath: string = operationMutexPath(lockPath),
+): T {
+  const db = openDatabase(mutexPath);
   let began = false;
   try {
     db.exec("PRAGMA busy_timeout = 30000");
@@ -183,9 +193,13 @@ function releaseLockRaw(lockPath: string): void {
  * `payload` is typically `String(process.pid)` for the simple cases or
  * a small JSON envelope for callers that want richer metadata
  * (improve.ts records pid + startedAt so audit can correlate runs).
+ *
+ * `mutexPath` overrides the operation mutex's own location (see
+ * {@link withLockOperationMutex}); omit it for a canonical, reused
+ * `lockPath`.
  */
-export function tryAcquireLockSync(lockPath: string, payload: string): LockOwnership | undefined {
-  return withLockOperationMutex(lockPath, () => tryAcquireLockRaw(lockPath, payload));
+export function tryAcquireLockSync(lockPath: string, payload: string, mutexPath?: string): LockOwnership | undefined {
+  return withLockOperationMutex(lockPath, () => tryAcquireLockRaw(lockPath, payload), mutexPath);
 }
 
 /**
@@ -274,54 +288,58 @@ export function reclaimStaleLock(
   if (probe.rawContent === undefined || probe.identity === undefined) return false;
   const expectedContent = probe.rawContent;
   const expectedIdentity = probe.identity;
-  return withLockOperationMutex(lockPath, () => {
-    let current: ReturnType<typeof readLockSnapshot>;
-    try {
-      current = readLockSnapshot(lockPath);
-    } catch {
-      return false;
-    }
-    if (!current || current.rawContent !== expectedContent || !sameIdentity(current.identity, expectedIdentity)) {
-      return false;
-    }
-
-    const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
-    try {
-      fs.renameSync(lockPath, quarantinePath);
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw err;
-    }
-
-    let quarantined: ReturnType<typeof readLockSnapshot>;
-    try {
-      quarantined = readLockSnapshot(quarantinePath);
-    } catch {
-      quarantined = undefined;
-    }
-    if (
-      !quarantined ||
-      quarantined.rawContent !== expectedContent ||
-      !sameIdentity(quarantined.identity, expectedIdentity)
-    ) {
+  return withLockOperationMutex(
+    lockPath,
+    () => {
+      let current: ReturnType<typeof readLockSnapshot>;
       try {
-        // Restore without replacing a non-cooperating lock installed after quarantine.
-        fs.linkSync(quarantinePath, lockPath);
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        current = readLockSnapshot(lockPath);
+      } catch {
+        return false;
       }
-      releaseLockRaw(quarantinePath);
-      return false;
-    }
-    options?.afterQuarantineVerified?.();
-    try {
-      fs.unlinkSync(quarantinePath);
-      return true;
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw err;
-    }
-  });
+      if (!current || current.rawContent !== expectedContent || !sameIdentity(current.identity, expectedIdentity)) {
+        return false;
+      }
+
+      const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+      try {
+        fs.renameSync(lockPath, quarantinePath);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw err;
+      }
+
+      let quarantined: ReturnType<typeof readLockSnapshot>;
+      try {
+        quarantined = readLockSnapshot(quarantinePath);
+      } catch {
+        quarantined = undefined;
+      }
+      if (
+        !quarantined ||
+        quarantined.rawContent !== expectedContent ||
+        !sameIdentity(quarantined.identity, expectedIdentity)
+      ) {
+        try {
+          // Restore without replacing a non-cooperating lock installed after quarantine.
+          fs.linkSync(quarantinePath, lockPath);
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        }
+        releaseLockRaw(quarantinePath);
+        return false;
+      }
+      options?.afterQuarantineVerified?.();
+      try {
+        fs.unlinkSync(quarantinePath);
+        return true;
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw err;
+      }
+    },
+    options?.mutexPath,
+  );
 }
 
 /**
@@ -329,22 +347,35 @@ export function reclaimStaleLock(
  * file identity are revalidated while holding the acquisition operation mutex,
  * so a stale holder cannot remove a successor. Synchronous and idempotent so it
  * is safe in both `finally` blocks and process exit handlers.
+ *
+ * `mutexPath` must match whatever was passed to the acquiring
+ * `tryAcquireLockSync` call (see {@link withLockOperationMutex}); omit it for
+ * a canonical, reused `lockPath`.
  */
-export function releaseLock(ownership: LockOwnership): void {
+export function releaseLock(ownership: LockOwnership, mutexPath?: string): void {
   const { lockPath } = ownership;
-  if (!fs.existsSync(lockPath) && !fs.existsSync(operationMutexPath(lockPath))) return;
-  withLockOperationMutex(lockPath, () => {
-    let current: ReturnType<typeof readLockSnapshot>;
-    try {
-      current = readLockSnapshot(lockPath);
-    } catch {
-      // Absent or unreadable — nothing of ours to release.
-      return;
-    }
-    if (current && current.rawContent === ownership.rawContent && sameIdentity(current.identity, ownership.identity)) {
-      releaseLockRaw(lockPath);
-    }
-  });
+  const resolvedMutexPath = mutexPath ?? operationMutexPath(lockPath);
+  if (!fs.existsSync(lockPath) && !fs.existsSync(resolvedMutexPath)) return;
+  withLockOperationMutex(
+    lockPath,
+    () => {
+      let current: ReturnType<typeof readLockSnapshot>;
+      try {
+        current = readLockSnapshot(lockPath);
+      } catch {
+        // Absent or unreadable — nothing of ours to release.
+        return;
+      }
+      if (
+        current &&
+        current.rawContent === ownership.rawContent &&
+        sameIdentity(current.identity, ownership.identity)
+      ) {
+        releaseLockRaw(lockPath);
+      }
+    },
+    mutexPath,
+  );
 }
 
 /**

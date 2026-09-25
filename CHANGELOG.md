@@ -98,6 +98,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A one-file change in a large directory no longer costs `akm index` half
+  an hour.** Both full-text tables keyed their per-entry deletes on
+  `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole
+  full-text index, twice per entry per run. On a 23.9k-entry index, one
+  touched file in a flat `knowledge/` directory of 13.7k entries took 26
+  minutes (task run `2026-09-24T20-30-01-663Z`); on a backup copy of that
+  index the same rescan now takes 38 s. FTS rows are keyed by rowid, and the
+  first writable open after upgrading realigns an existing index in place,
+  about 10 s and ~1.1 GB peak memory at that size, with no index-generation
+  bump, so an older binary keeps reading it. A writable open realigns again
+  if an older binary sharing the generation has written rows since.
+- **One bad scheduler-sync item, or one bad migration step, no longer fails
+  the whole operation.** `akm task sync` (`finalizeSchedulerSyncPlan`,
+  `src/tasks/scheduler-sync.ts`, and its per-bundle loop in
+  `buildSchedulerSyncPlan`, `src/commands/tasks/tasks.ts`) used to throw and
+  abort the entire reconciliation for: an installed binding it could not
+  prove a native fingerprint for (update or removal, including one installed
+  row of a disabled bundle being removed), a desired task/workflow whose id
+  collided with a different bundle's real installed entry, or — in an
+  unscoped, multi-bundle sync — one bundle's own source set failing to read
+  at all. Each of these is now excluded and reported in the sync result's
+  `failures: [{path, ref?, reason}]` (already returned, now also documented
+  — see `docs/reference/cli.md`), while every other binding and bundle in
+  the same sync still reconciles normally; a scoped sync (`--bundle`) has
+  only one bundle to isolate, so its failure rethrows the original error
+  instead of being reported, and an unscoped sync where every bundle fails
+  resolves with those failures on an otherwise-empty plan instead of
+  throwing. The one precondition that genuinely can't be attributed to a
+  single bundle — an incoherent or ambiguous backend read (a duplicate
+  installed id, a duplicate normalized native artifact, or installed/native
+  fingerprints that disagree) — is validated once, backend-wide, before any
+  bundle's own reconciliation begins, and still hard-fails the whole sync.
+  `akm-migrate`'s
+  `runMigration` (`scripts/akm-migrate/run-migrate.ts`) now runs every step
+  under its own catch too: a step's own throw (or, under `apply`, its
+  read-only fallback failing as well) is recorded in the plan's new
+  `failedSteps: [{step, error}]` and forces `status: "blocked"` instead of
+  ending the run with no plan at all — the remaining steps still run in
+  order. `akm migrate status|apply` (`scripts/akm-migrate/main.ts`) already
+  exits 1 for any blocked plan, so a poisoned step no longer exits the
+  internal-error code 70 with nothing printed.
 - **The legacy `stashDir`/`sources[]`/`installed` config shape is repaired
   by `akm migrate apply`, and an empty one no longer fails every command**
   (#863). `migrateLegacySourceShape`
@@ -252,6 +293,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reject journal) still quarantines a corrupt journal, but every other
   failure on that journal now leaves it in place and fails the command
   instead of quarantining it.
+- **Every `state.db` open no longer leaks a lock-mutex sidecar file.**
+  `acquireMaintenanceActivitySync` (`src/core/maintenance-barrier.ts`) gave
+  every activity lock its own uniquely-named path
+  (`maintenance-activities/<name>-<pid>-<uuid>.lock`), and `file-lock.ts`'s
+  operation mutex always derived its sidecar from that path
+  (`.<lock-basename>.operations.sensitive`) — a mutex meant to serialize
+  repeated use of one canonical path, not to be created fresh per
+  acquisition. Since nothing ever revisits a path unique to one acquisition,
+  nothing ever removed its sidecar either. Activity locks now share one
+  mutex path per data dir (`maintenance-activities/.activities.operations.sensitive`);
+  `tryAcquireLockSync`/`releaseLock`/`reclaimStaleLock` (`src/core/file-lock.ts`)
+  gained an optional `mutexPath` override for this, with every other caller
+  (config-io, run-lock, version-reconcile, improve, env secret, index
+  writer/rebuild locks) unaffected and still deriving the canonical path.
+  `akm index`'s finalize phase now also runs a bounded, best-effort
+  `sweepMaintenanceActivityOrphans()` (new export in `maintenance-barrier.ts`)
+  that removes leftover pre-fix sidecars whose lock file is gone and activity
+  lock files whose owner pid has died, capped at 50,000 files per run (about
+  0.2 s) so a large backlog drains over a few `akm index` runs instead of
+  stalling one.
+- **`akm setup`'s scheduled-tasks review no longer pre-checks a task from a
+  pending grant in the wrong bundle.** `stepScheduledTasks`
+  (`src/setup/steps/tasks.ts`) pre-checked an embedded template whenever ANY
+  bundle had a pending carry-forward grant whose concept id matched the
+  template's name, so an installed, ungranted `team//tasks/improve` would
+  pre-check the default bundle's `improve`. It now only counts a pending
+  grant whose bundle equals the default write target `listSetupTaskDefinitions`
+  reviews.
 
 ### Changed
 

@@ -1,5 +1,5 @@
 /**
- * R5 (b) tier1-0917: consolidate re-judged memories that were already
+ * R5 (b): consolidate re-judged memories that were already
  * promoted verbatim into `knowledge/`. Before this fix, that duplication was
  * discovered only after the LLM (`shouldSkipPromotionBodyDuplicate`), so a
  * pool where ~84% of memories were already-promoted duplicates still paid
@@ -58,7 +58,7 @@ const CONFIG = {
   profiles: { improve: { default: { processes: { consolidate: { enabled: true } } } } },
 } as unknown as AkmConfig;
 
-describe("akmConsolidate — pre-filter already-promoted memories before chunking (R5 tier1-0917)", () => {
+describe("akmConsolidate — pre-filter already-promoted memories before chunking (R5)", () => {
   test("a memory whose body already exists in knowledge/ is dropped before chunking; the other memory still reaches it", async () => {
     writeMemory("dup-a", "Duplicate body content that is long enough to matter.");
     writeMemory("new-b", "Brand new body content that is long enough to matter.");

@@ -19,7 +19,7 @@
  *   fix reuses eventsCtx.db when present; only the dbPath fallback path opens
  *   (and then owns and closes) its own handle.
  *
- * r3-1 — post-consolidation reindex requires an actual mutation:
+ * Post-consolidation reindex requires an actual mutation:
  *   The post-consolidation branch of the same reindex seam used to fire
  *   whenever `consolidation.processed > 0` (memories the LLM judged), not
  *   whenever consolidation actually wrote anything. Merge/delete/contradict
@@ -139,7 +139,7 @@ const stubGraphExtractionResult: GraphExtractionResult = {
 };
 
 describe("#584: index.db handle is closed before reindexFn runs", () => {
-  // R78 (tier1-0917): memory inference's writes used to trigger a FULL reindex through
+  // R78: memory inference's writes used to trigger a FULL reindex through
   // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
   // over exactly the paths the pass wrote. `indexWrittenAssets` opens its own
   // write handle on the same index.db WAL file, so the #584 discipline (close
@@ -342,7 +342,7 @@ function consolidateEnabledConfig(): AkmConfig {
   );
 }
 
-describe("r2-1 (tier1-0917-r4): consolidationRan gates R5's collapse detector on processed > 0", () => {
+describe("consolidationRan gates R5's collapse detector on processed > 0", () => {
   test("consolidation judges a memory but writes nothing — cycle metrics are still recorded", async () => {
     const stash = storage.stashDir;
     writeMemory(stash, "alpha");

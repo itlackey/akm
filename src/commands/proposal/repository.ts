@@ -123,6 +123,7 @@ import {
   type ProposalSource,
   type ProposalStatus,
 } from "./proposal-types";
+import { PROPOSAL_TXN_KIND, REJECT_TXN_KIND } from "./txn-kinds";
 import {
   canonicalOnlyProposalValidators,
   hasCanonicalProposalValidator,
@@ -1331,7 +1332,6 @@ interface ProposalTxnPayload {
 
 type ProposalTxn = Txn<ProposalTxnPayload>;
 
-const PROPOSAL_TXN_KIND = "proposal";
 const PROPOSAL_TXN_PHASES = [
   "prepared",
   "asset-published",
@@ -1806,7 +1806,6 @@ interface RejectTxnPayload {
 
 type RejectTxn = Txn<RejectTxnPayload>;
 
-const REJECT_TXN_KIND = "proposal-reject";
 const REJECT_TXN_PHASES = ["prepared", "state-persisted", "event-finalized", "committed"] as const;
 
 function finalizeRejectTransaction(txn: RejectTxn, ctx?: ProposalsContext): Proposal {

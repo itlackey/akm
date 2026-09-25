@@ -154,16 +154,110 @@ function withMaintenanceStartBarrierSyncWait<T>(run: () => T): T {
   }
 }
 
+function maintenanceActivitiesDir(): string {
+  return path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
+}
+
+/**
+ * Every activity lock path is unique per acquisition (`name-pid-uuid.lock`),
+ * so nothing ever contends on the same one twice — the operation mutex's job
+ * of serializing repeat use of one canonical path doesn't apply here. Deriving
+ * a mutex sidecar from each unique path (the file-lock.ts default) built up
+ * one abandoned `.operations.sensitive` file per acquisition forever, since
+ * nothing revisits a path no one will ever use again to clean it up. One
+ * shared, reused mutex file for the whole activities directory keeps the same
+ * critical-section protection — two acquisitions racing on the filesystem
+ * still serialize — with a bounded footprint.
+ */
+function activityLockMutexPath(directory: string): string {
+  return path.join(directory, ".activities.operations.sensitive");
+}
+
 /** Synchronous activity registration for synchronous database handle lifetimes. */
 export function acquireMaintenanceActivitySync(name: string): () => void {
   return withMaintenanceStartBarrierSyncWait(() => {
-    const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
+    const directory = maintenanceActivitiesDir();
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);
-    const ownership = tryAcquireLockSync(lockPath, createLockPayload({ purpose: name }));
+    const mutexPath = activityLockMutexPath(directory);
+    const ownership = tryAcquireLockSync(lockPath, createLockPayload({ purpose: name }), mutexPath);
     if (!ownership) {
       throw new ConfigError(`Could not register AKM maintenance activity at ${lockPath}.`, "INVALID_CONFIG_FILE");
     }
-    return () => releaseLock(ownership);
+    return () => releaseLock(ownership, mutexPath);
   });
+}
+
+/**
+ * Bound on how many `maintenance-activities/` files one sweep inspects, so a
+ * large pre-existing backlog (per-acquisition sidecars leaked before the
+ * shared-mutex fix above) drains over several calls instead of stalling one.
+ * Measured cost is about 4 µs/file (readdir of 50k entries: 12 ms; the full
+ * sidecar check plus unlink for 50k: 206 ms), so 50,000 stays a fraction of
+ * a second and drains a 227k-file backlog in about 5 `akm index` runs.
+ */
+export const MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES = 50_000;
+
+/**
+ * Remove orphaned `maintenance-activities/` files:
+ *   - a `.operations.sensitive` sidecar whose lock file no longer exists (the
+ *     pre-fix per-acquisition mutex leak — its acquisition long since
+ *     released or crashed, and nothing else will ever reopen that path);
+ *   - an activity lock file whose recorded owner pid has died (a process that
+ *     crashed mid-registration, reclaimed the same way `probeLock` /
+ *     `reclaimStaleLock` already reclaim any other lock).
+ *
+ * Bounded per call ({@link MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES} by default,
+ * or `maxFiles` when a caller — such as a test — needs a smaller bound) and
+ * best-effort: a missing directory or a file that vanishes mid-sweep (another
+ * process released it concurrently) is not an error. Call only from an
+ * existing maintenance point that already runs off the hot path (e.g. `akm
+ * index`'s finalize phase) — never on every lock acquisition.
+ */
+export function sweepMaintenanceActivityOrphans(maxFiles: number = MAINTENANCE_ACTIVITY_SWEEP_MAX_FILES): {
+  scanned: number;
+  removed: number;
+} {
+  const directory = maintenanceActivitiesDir();
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return { scanned: 0, removed: 0 };
+  }
+
+  const mutexPath = activityLockMutexPath(directory);
+  const sidecarSuffix = ".lock.operations.sensitive";
+  let scanned = 0;
+  let removed = 0;
+  for (const entry of entries) {
+    if (scanned >= maxFiles) break;
+    if (!entry.isFile()) continue;
+    const fullPath = path.join(directory, entry.name);
+    if (fullPath === mutexPath) continue;
+    scanned++;
+
+    if (entry.name.startsWith(".") && entry.name.endsWith(sidecarSuffix)) {
+      // `.{name-pid-uuid}.lock.operations.sensitive` -> its lock file is the
+      // same name minus the leading dot and the `.operations.sensitive` tail.
+      const lockName = entry.name.slice(1, -".operations.sensitive".length);
+      if (!fs.existsSync(path.join(directory, lockName))) {
+        try {
+          fs.unlinkSync(fullPath);
+          removed++;
+        } catch {
+          // Already gone, or a permission race — leave it for the next sweep.
+        }
+      }
+      continue;
+    }
+
+    if (entry.name.endsWith(".lock")) {
+      const probe = probeLock(fullPath);
+      if (probe.state === "stale" && probe.reason === "pid_dead" && reclaimStaleLock(fullPath, probe, { mutexPath })) {
+        removed++;
+      }
+    }
+  }
+  return { scanned, removed };
 }

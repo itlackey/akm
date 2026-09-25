@@ -1738,6 +1738,16 @@ blocked-reason table and worked examples, and
 [Bundling akm](../integration/bundling-akm.md) for the plan JSON shape and
 how to drive this from a container/image boot step.
 
+Each step above runs under its own catch: a step's own anomaly is always
+recorded in the plan's `failedSteps: [{step, error}]` instead of ending the
+whole run — the remaining steps still run in order. Under `apply`, a failed
+step's section falls back to its read-only preview; if that fails too, the
+fallback adds its own `failedSteps` entry, and the section is absent from the
+plan. Any `failedSteps` entry
+forces `status: "blocked"` and adds a matching line to `blockers`, so
+`akm migrate status|apply` reports the plan and exits 1 (not the internal-error
+70) the same way it does for any other blocked plan.
+
 **`--host-local`** narrows `status`/`apply` to config.json, `state.db`,
 scheduler grants (including step 6's carry-forward, from an installed
 native scheduler row `akm task sync` already wrote), and `$DATA/txn` stale
@@ -2967,6 +2977,24 @@ purpose. `akm task sync --dry-run` prints the planned adds/updates/removes
 writes, and any row it would grant is listed under `carriedForward` rather
 than under `removes`. Exits non-zero when removals are pending, so it can
 gate a CI/health check on "sync would change something."
+
+`sync`'s (and `sync --dry-run`'s) result always carries `failures: [{path,
+ref?, reason}]` — one entry per item sync could not reconcile: a task/workflow
+source that failed to parse or prepare, a desired binding whose id collides
+with a different bundle's real installed entry, an installed row (including
+one belonging to a disabled bundle) this process cannot safely update or
+remove (no exact native fingerprint, no resolvable ordinal), or — for an
+unscoped, multi-bundle sync — a whole bundle whose source set itself could
+not be read. Every one of these is a per-item anomaly: the item is excluded
+(left exactly as it was) and reported here, while every OTHER item and
+bundle in the same sync still reconciles normally; with `--bundle`, that one
+bundle IS the whole sync, so its failure raises instead of being reported
+here, and an unscoped sync where every bundle fails resolves with those
+failures here instead of raising. `failures` is empty on a fully clean sync;
+a non-empty `failures` still exits non-zero, same as a pending removal. An
+incoherent or ambiguous backend read (a duplicate installed id or native
+artifact) can't be attributed to one item or bundle and still raises instead
+of appearing in `failures`.
 
 `akm task prune` reclaims installed scheduler entries that `sync` can never
 clean up on its own: entries whose own `--scheduler-context` descriptor no
