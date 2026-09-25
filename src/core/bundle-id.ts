@@ -9,13 +9,26 @@ import { isBundleSlug } from "./asset/asset-ref";
 /** Deterministic, filesystem-safe bundle slug from a source path. */
 export function slugForPath(sourcePath: string): string {
   const resolved = path.resolve(sourcePath);
-  const base = path
-    .basename(resolved)
+  const base = slugify(path.basename(resolved));
+  if (base.length > 0) return base;
+  return `bundle-${shortHash(resolved)}`;
+}
+
+/**
+ * Bundle slug from the package/repo name a registry install id names
+ * (`npm:@scope/pkg` → `pkg`, `github:owner/repo` → `repo`,
+ * `git:https://host/owner/repo` → `repo`); empty when it names none.
+ */
+export function slugForRegistryId(registryId: string): string {
+  const locator = registryId.slice(registryId.indexOf(":") + 1);
+  return slugify(locator.split(/[/:]/).filter(Boolean).pop() ?? "");
+}
+
+function slugify(name: string): string {
+  return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  if (base.length > 0) return base;
-  return `bundle-${shortHash(resolved)}`;
 }
 
 /** Derive one batch-unique bundle id. */

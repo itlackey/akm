@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isBundleSlug } from "../../core/asset/asset-ref";
+import { slugForRegistryId } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import {
@@ -76,7 +77,7 @@ export async function akmAdd(
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryStash(ref, stashDir, input.writable, input, input.credential);
+  return addRegistryStash(ref, stashDir, input.name, input.writable, input, input.credential);
 }
 
 /** Add a local directory as a filesystem bundle. */
@@ -222,6 +223,7 @@ async function addWebsiteSource(
 async function addRegistryStash(
   ref: string,
   stashDir: string,
+  explicitName?: string,
   writable?: boolean,
   position: BundleInsertPosition = {},
   credentialRef?: string,
@@ -272,6 +274,7 @@ async function addRegistryStash(
     },
     position,
     credentialRef,
+    explicitName,
   );
 
   // The prior materialized root (if this is a re-install) — read BEFORE the lock
@@ -335,18 +338,20 @@ async function addRegistryStash(
  * (spec §10.1 / §10.2 desired/resolved split). The bundle carries ONLY the
  * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
  * the resolved cache root belongs exclusively in the lock (written by callers
- * via {@link upsertLockEntry} with the returned `bundleId`). Returns the config
+ * via {@link upsertLockEntry} with the returned `bundleId`). A new install is
+ * keyed by `explicitName` (the CLI's `--name`) when given. Returns the config
  * plus the derived bundle id so the caller keys its lock entry identically.
  */
 export function upsertInstalledRegistryEntry(
   entry: InstalledBundle,
   position: BundleInsertPosition = {},
   credential?: string,
+  explicitName?: string,
 ): { config: AkmConfig; bundleId: string } {
   let bundleId = entry.id;
   const config = mutateConfig((current) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
-    bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot);
+    bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot, explicitName);
     const existingComponents = bundles[bundleId]?.components;
     const components = existingComponents
       ? Object.fromEntries(
@@ -420,17 +425,22 @@ function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, inst
 /**
  * The stable bundle key for a registry install: reuse the existing bundle for
  * this install id (so re-installs keep the same key), otherwise derive a
- * batch-unique key via the shared {@link deriveBundleId} (D-R5), unique against
- * the currently-configured bundle keys.
+ * batch-unique key via the shared {@link deriveBundleId} (D-R5) — preferring the
+ * caller's explicit `--name`, as local and website adds do, then the
+ * package/repo name the install id names rather than the basename of the
+ * materialized cache directory (`extracted`) — unique against the
+ * currently-configured bundle keys.
  */
 function resolveInstalledBundleKey(
   bundles: Record<string, BundleConfigEntry>,
   installId: string,
   stashRoot: string,
+  explicitName?: string,
 ): string {
   const existing = findInstalledBundleKey(bundles, installId);
   if (existing) return existing;
-  return deriveBundleId(installId, path.resolve(stashRoot), new Set(Object.keys(bundles)));
+  const preferred = explicitName && isBundleSlug(explicitName) ? explicitName : slugForRegistryId(installId);
+  return deriveBundleId(preferred, path.resolve(stashRoot), new Set(Object.keys(bundles)));
 }
 
 function toReadableId(resolvedPath: string): string {

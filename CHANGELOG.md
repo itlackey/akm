@@ -110,6 +110,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validate` reports such a file `converts` (`sourceVersion` still `4`)
   instead of `valid`, since it read through the shim rather than the direct
   v4 path.
+- **`akm bundle add <registry ref> --name <name>` now keys the bundle by
+  `<name>`.** For npm, `github:` and Git refs, `--name` was accepted and then
+  dropped before the bundle key was derived, so the bundle was keyed by the
+  basename of its materialized cache directory instead — `extracted`, or
+  `extracted-<hash>` once that was taken — and its assets were only
+  addressable as `extracted//…`. The name now goes through the same
+  slug-legality and uniqueness rules as a local or website add. The install's
+  registry id is still recorded as `registryId`, so `akm bundle update` and
+  `akm bundle remove` keep resolving the original ref. Re-adding a ref that is
+  already installed keeps its existing key, as local and website re-adds do.
+- **A registry bundle added without `--name` is keyed by its package or repo
+  name instead of `extracted`.** `akm bundle add npm:<pkg>` now creates bundle
+  `<pkg>` (`npm:@scope/pkg` → `pkg`), and `github:owner/repo` or a Git URL
+  ending in `/repo` creates `repo` — the mapping the bundle schema already
+  documented for `registryId`. The key used to come from the basename of the
+  cache directory the package was unpacked into, which is always `extracted`,
+  so every registry bundle after the first was `extracted-<hash>`. A dotted
+  or mixed-case name is slugged like a directory name (`Foo.js` → `foo-js`),
+  and a `--name` that is not a legal bundle slug now falls back to this name
+  too. Bundles that are already installed keep their current key, including
+  `extracted`, because every recorded `extracted//…` ref depends on it.
 
 ### Changed
 
