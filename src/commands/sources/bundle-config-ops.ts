@@ -15,7 +15,6 @@
  */
 
 import path from "node:path";
-import { validateExplicitBundleName } from "../../core/bundle-id";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { bundleKeyForContentRoot, primaryBundlePath } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -101,19 +100,22 @@ export function bundleKeyForUrl(config: AkmConfig, url: string): string | undefi
 }
 
 /**
- * Derive a slug-legal, batch-unique bundle key for a NEW source (the caller
- * has already confirmed no existing bundle represents this exact source): an
- * explicit `preferredName` is a contract (D6) — illegal or already taken
- * fails loudly via {@link validateExplicitBundleName} rather than silently
- * falling back to the seed locator or growing a `-<hash>` suffix. Without a
- * `preferredName`, the seed locator (path/url) is slugged and the shared
- * {@link deriveBundleId} `-<hash>` uniqueness fallback still applies.
+ * Derive a slug-legal, batch-unique bundle key for a new source: prefer the
+ * caller's `preferredName` when it is a legal slug, else slug the seed locator
+ * (path/url) — the shared {@link deriveBundleId} rule (D-R5), made unique against
+ * the currently-configured bundle keys.
+ *
+ * This helper stays forgiving (no `--name` contract enforcement): it is also
+ * used by `akm source add` (`source-manage.ts`'s `addStash`), which predates
+ * and is not in scope for the D6 `--name` contract. A caller that DOES need
+ * the D6 contract (an illegal or already-taken explicit name failing loudly)
+ * validates with {@link validateExplicitBundleName} itself before calling in,
+ * as `source-add.ts`'s local/website/registry add paths do.
  */
 export function nextBundleKey(
   bundles: Record<string, BundleConfigEntry>,
   preferredName: string | undefined,
   seedLocator: string,
 ): string {
-  if (preferredName !== undefined) validateExplicitBundleName(bundles, preferredName);
   return deriveBundleId(preferredName, seedLocator, new Set(Object.keys(bundles)));
 }

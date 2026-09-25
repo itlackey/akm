@@ -115,6 +115,10 @@ async function addLocalSource(
       return { ...config, bundles };
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    // D6: an explicit `--name` is a contract on this (local) add path — validated
+    // strictly before nextBundleKey derives a key, since that shared helper is also
+    // used by the out-of-scope `akm source add` (`addStash`) and stays forgiving.
+    if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
     bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
     const entry: BundleConfigEntry = {
       path: resolvedPath,
