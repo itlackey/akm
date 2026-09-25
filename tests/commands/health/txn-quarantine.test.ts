@@ -122,6 +122,8 @@ describe("collectTxnAwaitingRecoveryAdvisory", () => {
     expect(advisory?.message).toContain("1 transaction journal(s)");
     expect(advisory?.message).toContain("txn-old (proposal p-123)");
     expect(advisory?.message).toContain("akm proposal show");
+    expect(advisory?.message).not.toContain("lists every stuck journal");
+    expect(advisory?.message).toContain("`akm migrate status` lists those under the default stash");
     expect(advisory?.evidence?.count).toBe(1);
   });
 
