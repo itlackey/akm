@@ -113,14 +113,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Startup host-local reconciliation (`src/core/version-reconcile.ts`).**
-  `reconcileOnVersionChange` compares a `$STATE/version-reconcile.json` stamp
-  against the running akm's version and, on a mismatch, spawns `akm-migrate
-  apply --host-local` under a `$STATE/locks/version-reconcile.lock` lock
-  before writing the new stamp. A migration that cannot finish (`blocked`, or
-  the spawn itself failing) warns once, retries no more than once per 10
-  minutes, and never fails the command it ran ahead of. Not yet wired into
-  `akm`'s startup — that is a separate change.
+- **Every akm command reconciles host-local state on a version change, with
+  no manual step.** `src/cli.ts`'s `runCli()` now runs
+  `reconcileOnVersionChange` (`src/core/version-reconcile.ts`) right after
+  `applyEarlyStderrFlags`, gated by a new `shouldReconcileOnStartup`
+  predicate: it skips the same recovery/setup surfaces
+  `shouldBypassConfigStartup` does (`--help`/`--version`/bare/`help`/
+  `hints`/`setup`/`migrate`/`config path`) but, unlike that predicate, DOES
+  run for `task run --id ...` — a scheduled task surviving an upgrade with
+  no manual step is the whole point. `reconcileOnVersionChange` compares a
+  `$STATE/version-reconcile.json` stamp against the running akm's version
+  and, on a mismatch, spawns `akm-migrate apply --host-local` under a
+  `$STATE/locks/version-reconcile.lock` lock before writing the new stamp.
+  A migration that cannot finish (`blocked`, or the spawn itself failing)
+  warns once, retries no more than once per 10 minutes, and never fails the
+  command it ran ahead of.
 
 ### Changed
 
