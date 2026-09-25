@@ -42,7 +42,7 @@ export interface SchedulerPlanPreview {
   readonly hasRemovals: boolean;
   /** Sources that failed to parse/prepare (#867) — excluded from the plan, reported here instead of poisoning it. */
   readonly failures: readonly SchedulerSourceFailure[];
-  /** Refs a real sync would grant from an installed, ungranted native scheduler binding (upgrade-B). Present only when non-empty. */
+  /** Refs a real sync would grant from an installed, ungranted native scheduler binding. Present only when non-empty. */
   readonly carriedForward?: readonly string[];
 }
 

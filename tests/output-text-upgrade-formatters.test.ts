@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Regression coverage for `formatUpgradePlain` (r3-6): an `akm upgrade
+// Regression coverage for `formatUpgradePlain`: an `akm upgrade
 // --check` against an explicit `--version`/`--tag` target must tell the
 // operator to re-run with that same target, not a bare `akm upgrade` (which
 // would install `latest` instead), and a downgrade target must read as a

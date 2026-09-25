@@ -233,7 +233,7 @@ const LESSON_JUDGE_CRITERIA_KEYS = ["novelty", "nonRedundancy"] as const;
 const REFLECT_JUDGE_CRITERIA_KEYS = ["feedbackAlignment", "preservation", "quality"] as const;
 
 /**
- * R16 / r2-2 / JUDGE2: parse the judge's JSON response, accepting either the
+ * R16 / JUDGE2: parse the judge's JSON response, accepting either the
  * current per-criterion shape (`{"scores": {...}, "reason"}`, averaged in
  * code) or the old averaged-float shape (`{"score": 1-5, "reason"}`) a model
  * may still return. `expectedCriteriaKeys` names the criteria this judge's
@@ -476,13 +476,13 @@ export function writeQualityRejection(
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
 
-  // r2-1: the mint-time canonical validator inside createProposal (via
+  // The mint-time canonical validator inside createProposal (via
   // emitProposal) throws UsageError for structurally-invalid content (e.g. a
   // lessons/ ref missing description/when_to_use). The proposal row here is
   // bookkeeping for backoff/Reflexion, never the authoritative record of the
   // rejection, so a validator throw degrades to "no row minted" — the same
   // bucket as the fingerprint/backoff skip below, not a caller-visible error.
-  // r3-1: the archiveProposal call below is guarded the same way, for the
+  // The archiveProposal call below is guarded the same way, for the
   // same reason.
   let mintedProposal: ReturnType<typeof emitProposal> | undefined;
   try {

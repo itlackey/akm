@@ -197,7 +197,7 @@ test("a crontab row for an ungranted task and a retired schedule[].enabled marke
 }, 120_000);
 
 /**
- * r3-2 Finding B: nothing ungated pinned that the `akm task sync` CLI leaf
+ * Nothing ungated pinned that the `akm task sync` CLI leaf
  * passes `carryForward: true` (`src/commands/tasks/tasks-cli.ts`). This
  * reuses the fixture above (fake crontab, sandbox XDG env, real `bun
  * src/cli.ts`) but drives `task sync`/`task sync --dry-run` directly instead

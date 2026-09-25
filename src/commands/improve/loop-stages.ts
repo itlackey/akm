@@ -642,8 +642,8 @@ async function runLoopDistillPass(
         }
       }
 
-      // R9 extension (r2-6, tier2-0917; PRECHECK, tier3-0917): the
-      // fingerprint/rejection-backoff guard `createProposal` runs AFTER
+      // R9 extension (PRECHECK): the fingerprint/rejection-backoff guard
+      // `createProposal` runs AFTER
       // distill's ~generation + judge is computable from inputs available
       // before dispatch — mirror the reflect pre-check above so a guard hit
       // skips the LLM call entirely. Distill's real `createProposal` call
@@ -682,9 +682,9 @@ async function runLoopDistillPass(
         const lookup = (ref: string) => defaultLookup(ref, dedupeStashDir);
         const filePath = await lookup(durableInputRef);
         const assetContent = filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
-        // PRECHECK (tier3-0917-r3, r3-4): reuse the loop's long-lived
-        // eventsCtx.db handle when one is open, instead of opening a fresh
-        // read-only state.db connection per memory ref (R25). Degrades to
+        // PRECHECK: reuse the loop's long-lived eventsCtx.db handle when one
+        // is open, instead of opening a fresh read-only state.db connection
+        // per memory ref (R25). Degrades to
         // the previous readOnly-open when no live handle is present (e.g.
         // this function invoked without a run-scoped eventsCtx), via the
         // same readOnlyEventsContext helper reflect.ts's read call sites use.

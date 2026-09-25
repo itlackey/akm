@@ -46,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   job) and `tests/release-check.sh` (right after packing the release
   candidate). `.github/workflows/ci.yml` also now runs on pushes to
   `release/*` branches, which previously had no CI coverage at all.
-  **(upgrade-B)** Proves the fix for the defect above (Fixed, below) two
+  It also proves the fix for the defect above (Fixed, below) two
   ways: a new first assertion in the "previous"-origin suite runs
   scheduled-a's generated cron command BEFORE any `migrate` call and
   confirms `akm-migrate status --host-local` then reports `current` with no
@@ -242,7 +242,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   during the reconcile, with its quarantine path, instead of only counting
   the ones it recovered.
 - **`akm task sync` carries a scheduler grant forward before it would
-  otherwise remove it as ungranted (upgrade-B).** An installed native
+  otherwise remove it as ungranted.** An installed native
   scheduler binding backed by a file in an enabled bundle, but with no
   `scheduler.enabled` entry — the exact shape a lost or reset host-local
   config leaves behind — is granted before `desired`/`removed` is computed,
@@ -276,7 +276,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/tasks/scheduler-grant-carry-forward.ts`) hold the logic that used to
   live only in `scripts/akm-migrate/migrate/scheduler-activation.ts` (now a
   thin importer), so `akm task sync` can carry a grant forward before it
-  would otherwise remove it as ungranted (upgrade-B). A carried-forward row
+  would otherwise remove it as ungranted. A carried-forward row
   now also requires a backing asset file on disk — an installed native
   binding for a task/workflow that no longer exists in the bundle is never
   granted, closing the gap a purely name-based carry-forward would have left
