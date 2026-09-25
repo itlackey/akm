@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
+  `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
+  release and the candidate build as real global npm packages, drives the
+  previous release to build a realistic home (a filesystem, git, website, and
+  npm bundle; scheduled and manual tasks; a synced fake crontab), then runs
+  the candidate against that home — `migrate status`/`apply`, `search`,
+  `show`, `task sync` (dry-run and real), executing a rebound cron command,
+  `health`, `improve --plan` — and runs the previous release back against the
+  candidate-written home. Wired into CI (`.github/workflows/ci.yml`'s new
+  `upgrade-rehearsal` job) and `tests/release-check.sh` (right after packing
+  the release candidate). `.github/workflows/ci.yml` also now runs on pushes
+  to `release/*` branches, which previously had no CI coverage at all.
+
 ## [0.9.17-alpha.3] - 2026-09-24
 
 ### Fixed
