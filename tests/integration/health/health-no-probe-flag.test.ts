@@ -46,7 +46,7 @@ let storage: IsolatedAkmStorage;
  *   the OS user, not `$HOME`. On a host that actually has akm entries
  *   scheduled (e.g. a dogfooding dev machine), that leaks a real "scheduled
  *   tasks are bound to an old akm version" warning into this test.
- * - `akm-installs` (upgrade-D r2-3, `src/commands/health/akm-installs.ts`)
+ * - `akm-installs` (`src/commands/health/akm-installs.ts`)
  *   enumerates every `akm` on the REAL `PATH` and known install roots
  *   (`enumerateAkmInstalls`, `src/core/akm-installs.ts`), including the
  *   hardcoded `/usr/local/bin` fixed root — `collectAkmInstallsAdvisory`
@@ -62,8 +62,7 @@ let storage: IsolatedAkmStorage;
  * to the real one) with a single controlled directory holding a fake
  * `crontab` that reports an empty schedule and a stub `akm` that reports
  * the running version, `NVM_DIR` is unset so no real nvm install directory
- * leaks in either, `BUN_INSTALL` is unset too (upgrade-D3 r3-4:
- * `enumerateAkmInstalls` now also scans `${BUN_INSTALL:-~/.bun}/lib/node_modules`
+ * leaks in either, `BUN_INSTALL` is unset too (* `enumerateAkmInstalls` now also scans `${BUN_INSTALL:-~/.bun}/lib/node_modules`
  * unconditionally, and a developer's shell commonly exports `BUN_INSTALL`
  * regardless of the HOME sandbox), and `enumerateAkmInstalls` itself is
  * wrapped (real `spawnSync`/`fs` still run — only `fixedRoots` is forced to
@@ -98,7 +97,7 @@ beforeEach(() => {
     },
     defaults: { llmEngine: "lab" },
   });
-  // upgrade-D/D2: `runCliCapture` deliberately never runs the real CLI's
+  // `runCliCapture` deliberately never runs the real CLI's
   // startup reconciliation (see its own module doc), so the sandboxed host
   // otherwise looks like it has never reconciled — the `version-reconcile`
   // advisory would warn and flip the overall exit code to 4, unrelated to
@@ -154,7 +153,7 @@ describe("akm health --no-probe (#914)", () => {
     expect(check?.status).toBe("pass");
     expect(check?.message).toContain("reachable");
 
-    // upgrade-D r2-3: pins that the akm-installs advisory saw ONLY the
+    // pins that the akm-installs advisory saw ONLY the
     // sandbox's stub akm — not this host's real installs — so the exit
     // code above cannot flip to 4 because of whatever happens to be on the
     // real host's PATH/known install roots.

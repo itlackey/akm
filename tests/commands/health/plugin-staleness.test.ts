@@ -57,7 +57,7 @@ function fakeTags(tags: string[] | undefined): ListRemoteTagsFn {
  * A guaranteed-empty OpenCode cache root, so these Claude-plugin-only tests
  * never pick up a real `~/.cache/opencode` on the host running them — `os.
  * homedir()` under bun does not honor a sandboxed `HOME`, same reason
- * `claudePluginsDir()` needs `AKM_CLAUDE_PLUGINS_DIR` (upgrade-D D3).
+ * `claudePluginsDir()` needs `AKM_CLAUDE_PLUGINS_DIR`.
  */
 function noOpencode(pluginsRoot: string): string {
   return path.join(pluginsRoot, "no-opencode-cache");
@@ -242,7 +242,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.evidence?.versionRange).toBeNull();
   });
 
-  // upgrade-D D3: OpenCode's bundled akm-cli, checked independently of any
+  // OpenCode's bundled akm-cli, checked independently of any
   // Claude harness plugin.
   describe("opencode-plugin-version", () => {
     function installOpencodeBundledAkm(cacheRoot: string, version: string): void {

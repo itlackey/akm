@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// r3-3: formatBundleRenamePlain used to print "Native scheduler bindings
+// formatBundleRenamePlain used to print "Native scheduler bindings
 // re-synced under the new name." whenever renameBundle's taskSync.ok was
 // true — including when the sync itself had already reported per-binding
 // failures in taskSync.result.failures, since the old code only ever set

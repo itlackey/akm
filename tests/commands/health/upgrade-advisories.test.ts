@@ -4,7 +4,7 @@
 
 /**
  * `version-reconcile` and `scheduler-grants` advisories for `akm health`
- * (upgrade-D/D2). Both are exercised with injected seams (a scratch
+ *. Both are exercised with injected seams (a scratch
  * `version-reconcile.json`, a fake scheduler backend, and a fake `db` that
  * never opens real SQLite) — the `scheduled-startup-failures` advisory,
  * which needs a real `task_history` table, is covered separately under

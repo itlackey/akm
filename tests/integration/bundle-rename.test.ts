@@ -308,7 +308,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     expect(exec.current()).not.toContain("--bundle original");
   });
 
-  // r3-3: a binding that fails to re-sync must not be reported as success —
+  // a binding that fails to re-sync must not be reported as success —
   // its old native row is already gone (removeStaleNativeSchedulerRows runs
   // before the sync), so a silent `ok: true` would leave it unscheduled
   // until the operator happened to notice.

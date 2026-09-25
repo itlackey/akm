@@ -387,7 +387,7 @@ describe("plugin protocol contract (D1)", () => {
     );
   });
 
-  // D1 / r2-6: both akm-plugins call sites (`claude/hooks/akm-hook.ts`
+  // both akm-plugins call sites (`claude/hooks/akm-hook.ts`
   // L1560, `opencode/index.ts` L593) run `akm curate ... --shape agent` and
   // read `type`/`score` off each item. The block above only pins the
   // `human`/`brief` projection, which never exercises `AGENT_FIELDS` in

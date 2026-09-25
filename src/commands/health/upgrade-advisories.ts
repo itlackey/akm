@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Upgrade-break advisories for `akm health` (batch upgrade-D, item D2).
+ * Upgrade-break advisories for `akm health` (batch).
  *
  * `state-db-migrations`, `scheduler-binary` and `task-fail-rate` each catch
  * one *symptom* of a host that upgraded akm without fully reconciling —

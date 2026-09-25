@@ -188,7 +188,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `RETIRED_TOP_LEVEL_CONFIG_KEY_NAMES` in `config.ts` (both of its callers
   already receive post-shim input).
 - **Three new `akm health` advisories that name an upgrade break within one
-  report** (`src/commands/health/upgrade-advisories.ts`; upgrade-D/D2):
+  report** (`src/commands/health/upgrade-advisories.ts`):
   `version-reconcile` warns when this host's host-local state hasn't
   reconciled to the version that's actually running (a missing, stale, or
   blocked `$STATE/version-reconcile.json` stamp), naming `akm migrate status`

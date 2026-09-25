@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm-installs` advisory for `akm health` (upgrade-D D3). The enumerator is
+ * `akm-installs` advisory for `akm health`. The enumerator is
  * injected so this never scans the real host filesystem or spawns a real
  * process — pure unit test.
  */
@@ -27,7 +27,7 @@ function install(overrides: Partial<AkmInstall>): AkmInstall {
   };
 }
 
-describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {
+describe("collectAkmInstallsAdvisory", () => {
   test("not probed: unknown, never enumerates", () => {
     let enumerated = false;
     const result = collectAkmInstallsAdvisory(false, {
@@ -123,7 +123,7 @@ describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {
     expect(result.evidence).toMatchObject({ installs });
   });
 
-  // r3-2: npm is `#!/usr/bin/env node`, so it derives its global prefix from
+  // npm is `#!/usr/bin/env node`, so it derives its global prefix from
   // whichever `node` PATH resolves. A remedy naming only the bare
   // `npm install -g` would reinstall into the WRONG node's global prefix
   // when the behind install's own adjacent npm lives in a different
@@ -149,7 +149,7 @@ describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {
     }
   });
 
-  // r2-1: an npm global package the direct akm-cli/dist scan found but that
+  // an npm global package the direct akm-cli/dist scan found but that
   // nothing links onto any bin dir has no package manager command that can
   // ever update it, so the remedy is to remove it, and the message says it
   // is not on PATH rather than implying a link exists.

@@ -59,7 +59,7 @@ const currentMigrator = {
     stdout: JSON.stringify({ schemaVersion: 1, status: "current", blockers: [] }),
     stderr: "",
   }),
-  // upgrade-D D3: `performUpgrade`'s other-installs step defaults to the
+  // `performUpgrade`'s other-installs step defaults to the
   // real `enumerateAkmInstalls`, which scans the real host PATH — stub it
   // to "no other installs found" so these tests never touch the host
   // filesystem or inflate the `spawnSync` call counts several of them pin.
@@ -1268,9 +1268,9 @@ describe("getPackageManagerUpgradeCommand", () => {
     expect(getPackageManagerUpgradeCommand("unknown", "akm-cli")).toBeUndefined();
   });
 
-  // upgrade-D D3: the other-installs upgrade step targets that install's OWN
+  // the other-installs upgrade step targets that install's OWN
   // adjacent npm/pnpm rather than always the currently running one.
-  describe("binDir (upgrade-D D3)", () => {
+  describe("binDir", () => {
     test("resolves an adjacent npm binary in the given binDir when present", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bindir-"));
       const npmPath = path.join(dir, "npm");
@@ -1289,14 +1289,14 @@ describe("getPackageManagerUpgradeCommand", () => {
         expect(result?.command).toBe("pnpm");
         expect(result?.displayCommand).toBe("pnpm add -g akm-cli@0.0.14");
         // No adjacent npm/pnpm was found, so there is nothing to run under a
-        // different `node` — no env override (r3-2).
+        // different `node` — no env override.
         expect(result?.env).toBeUndefined();
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 
-    // r3-2: npm/pnpm are `#!/usr/bin/env node` scripts, so npm derives its
+    // npm/pnpm are `#!/usr/bin/env node` scripts, so npm derives its
     // global prefix from whichever `node` PATH resolves. When the command
     // resolved to an adjacent binary inside `binDir`, the spawn env must
     // prepend that `binDir` so the OTHER install's own `node` runs it, and
@@ -1323,7 +1323,7 @@ describe("getPackageManagerUpgradeCommand", () => {
   });
 });
 
-// ── Other akm installs on the host (upgrade-D D3) ────────────────────────────
+// ── Other akm installs on the host ────────────────────────────
 
 function fakeInstall(overrides: Partial<AkmInstall>): AkmInstall {
   return {
@@ -1344,7 +1344,7 @@ function checkTargeting(
   return { currentVersion: target, latestVersion: target, updateAvailable: false };
 }
 
-describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
+describe("describeOtherInstalls (--check)", () => {
   test("no other install on the host: empty list", () => {
     expect(describeOtherInstalls(checkTargeting("0.0.14"), { enumerateAkmInstalls: () => [] })).toEqual([]);
   });
@@ -1384,7 +1384,7 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
     expect(result[0]?.message).toContain("update it manually");
   });
 
-  // r3-1: the caller passes the target `akm upgrade` would actually move
+  // the caller passes the target `akm upgrade` would actually move
   // installs to (the running install's own version when it is already
   // current), not an older `latestVersion` from a host running a
   // prerelease. A peer at that running version reports `ok: true`.
@@ -1403,7 +1403,7 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
     ]);
   });
 
-  // r2-1 Fix B: the target choice (latestVersion when an update is
+  // the target choice (latestVersion when an update is
   // available, otherwise currentVersion) now lives inside
   // describeOtherInstalls itself, not the caller — pin both branches.
   test("updateAvailable: false picks currentVersion as the target", () => {
@@ -1427,7 +1427,7 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
     expect(result[0]).toMatchObject({ ok: true });
   });
 
-  // r2-1 Fix A: an npm copy the direct `akm-cli/dist` scan found but that
+  // an npm copy the direct `akm-cli/dist` scan found but that
   // is not linked onto any bin dir can never be moved by any package
   // manager command, so it is reported as such rather than "will update it
   // via npm".
@@ -1455,9 +1455,9 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
   });
 });
 
-describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
+describe("performUpgrade otherInstalls", () => {
   test("an already-latest primary still moves a lagging other install", async () => {
-    // upgrade-D D3 r2-1: `performUpgrade` used to return before this step
+    // `performUpgrade` used to return before this step
     // when the running install had nothing to do, so a lagging OTHER
     // install was never moved. A realistic realpath under an nvm node
     // version's node_modules layout, whose dirname has no npm beside it —
@@ -1498,7 +1498,7 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
     }
   });
 
-  test("a running prerelease newer than the last stable release moves peers to ITS version, not the older latestVersion (r3-1)", async () => {
+  test("a running prerelease newer than the last stable release moves peers to ITS version, not the older latestVersion", async () => {
     // `checkForUpdate` resolves `latestVersion` from GitHub `releases/latest`,
     // which excludes prereleases. On a host running a prerelease (e.g.
     // 0.9.17-alpha.3), `latestVersion` can be an OLDER stable release
@@ -1560,7 +1560,7 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
 
   test("an npm other install is upgraded via its own adjacent npm, not the running install's", async () => {
     // The realpath's OWN dirname (`dist/`, mirroring the real nvm layout —
-    // #D3 r2-1) never has an npm beside it; only `binDir` (the discovered
+    //) never has an npm beside it; only `binDir` (the discovered
     // nvm `bin/`) does. Asserting the exact command proves the adjacent
     // npm was used, not a bare `npm` falling back to the running PATH.
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-npm-ok-"));
@@ -1598,10 +1598,10 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
 
       expect(result.upgraded).toBe(true);
       expect(otherInstallCommands).toEqual([otherNpmPath]);
-      // #D3 r3-1: the args target the running install's OWN resulting
+      //: the args target the running install's OWN resulting
       // version, never a stale `latest`.
       expect(otherInstallArgs).toEqual([["install", "-g", "akm-cli@0.0.14"]]);
-      // #D3 r3-2: npm is `#!/usr/bin/env node`, so it derives its global
+      //: npm is `#!/usr/bin/env node`, so it derives its global
       // prefix from whichever `node` PATH resolves — spawning it with the
       // other install's own `binDir` prepended makes that ITS node, not the
       // running process's.
@@ -1706,7 +1706,7 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
     ]);
   });
 
-  // r2-1 Fix A: an unlinked npm global package (the direct `akm-cli/dist`
+  // an unlinked npm global package (the direct `akm-cli/dist`
   // scan's only find) has no link for any package manager to update through.
   // `spawnSync` throws on anything unexpected, so a real spawn attempt fails
   // this test rather than silently succeeding.

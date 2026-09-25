@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm-installs` advisory for `akm health` (upgrade-D D3).
+ * `akm-installs` advisory for `akm health`.
  *
  * `enumerateAkmInstalls` (`../../core/akm-installs.ts`) finds every `akm` on
  * PATH and in the known install roots. This turns that enumeration into one
@@ -43,7 +43,7 @@ export interface AkmInstallsAdvisoryOptions {
  * remedy can never drift from what `akm upgrade` itself would run, and pins
  * the running version rather than `@latest` — a host running a prerelease
  * (e.g. `next`) would otherwise be told to install `@latest` and downgrade.
- * An unlinked npm global package (upgrade-D3 r2-1) has no bin-dir link for
+ * An unlinked npm global package has no bin-dir link for
  * any package manager command to update, so its remedy is to remove the
  * package directory instead — the same "is this install manageable"
  * decision `self-update.ts`'s `describeOtherInstalls`/`upgradeOtherInstall`

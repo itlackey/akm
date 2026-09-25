@@ -43,7 +43,7 @@ export interface SelfUpdateDependencies {
   execPath: string;
   runMigrationTool: typeof runMigrationTool;
   /**
-   * Injectable enumerator for the other-installs upgrade step (#D3);
+   * Injectable enumerator for the other-installs upgrade step ();
    * defaults to the real {@link enumerateAkmInstalls}. Tests supply a fake
    * so this never scans the real host's PATH/known install roots.
    */
@@ -866,7 +866,7 @@ function getInstalledPackageName(): string {
 
 /**
  * `binDir` defaults to the running process's own bin dir (the primary
- * upgrade path, unchanged). The other-installs upgrade step (#D3) passes
+ * upgrade path, unchanged). The other-installs upgrade step () passes
  * that OTHER install's own bin dir instead, so a multi-node-version host
  * (nvm) upgrades each install through its own adjacent npm/pnpm rather than
  * always the currently running one.
@@ -907,7 +907,7 @@ export function getPackageManagerUpgradeCommand(
     // to it: npm/pnpm scripts are `#!/usr/bin/env node`, so npm derives its
     // global prefix from whichever `node` PATH resolves — prepending
     // `binDir` makes that this install's own `node`, not the running
-    // process's (#D3 r3-2: without this, the command above already points at
+    // process's (: without this, the command above already points at
     // the right npm, but it still installs into the WRONG install because it
     // runs under the wrong node).
     if (binDir !== undefined && resolved.resolvedInBinDir) {
@@ -941,7 +941,7 @@ function findOtherAkmInstalls(enumerate: typeof enumerateAkmInstalls): AkmInstal
 /**
  * The "can `akm upgrade` manage this install" decision, shared by
  * {@link describeOtherInstalls} (read-only) and {@link upgradeOtherInstall}
- * (the real upgrade) so the two can never drift (upgrade-D3 r2-1). Returns
+ * (the real upgrade) so the two can never drift. Returns
  * the terminal `ok: false` status for an install `akm upgrade` will never
  * touch — an npm global package the direct `akm-cli/dist` scan found but
  * nothing links onto any bin dir, so there is no package-manager link left

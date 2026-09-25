@@ -74,7 +74,7 @@ function claudePluginsDir(): string {
  * The OpenCode plugin (`akm-opencode`) bundles its own `akm-cli` under
  * `packages/akm-opencode/node_modules/akm-cli` and runs it in-process,
  * sharing the host's databases with every other akm install — its version
- * lag matters the same way a stale Claude plugin's does (upgrade-D D3).
+ * lag matters the same way a stale Claude plugin's does.
  */
 function opencodeCacheDir(): string {
   return process.env.AKM_OPENCODE_CACHE_DIR ?? path.join(os.homedir(), ".cache", "opencode");
@@ -233,7 +233,7 @@ export interface PluginStalenessOptions {
 
 /**
  * Build one `plugin-version` advisory per detected `akm` harness plugin,
- * plus (upgrade-D D3) one `opencode-plugin-version` advisory when the
+ * plus one `opencode-plugin-version` advisory when the
  * OpenCode plugin's bundled `akm-cli` is found — it shares the host's
  * databases in-process, so its lag matters the same way a stale Claude
  * plugin's does. Returns `[]` when neither is installed — the benign,

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Enumerate every `akm` executable installed on the host (upgrade-D D3).
+ * Enumerate every `akm` executable installed on the host.
  *
  * Splinter runs three copies at once: the bun-global `akm` the shell and the
  * Claude plugin invoke, the nvm-node `akm` cron and the user's task files
@@ -24,7 +24,7 @@
  * probe. No network call is made anywhere in this module.
  *
  * The running node is not the only one that can have installed an `akm`
- * global (upgrade-D3 r3-4): every distinct `node` executable found on `PATH`,
+ * global: every distinct `node` executable found on `PATH`,
  * in an nvm `bin/` dir, or in `~/.bun/bin` gets its own npm global root
  * probed the same bounded, local way, and that root's `<root>/akm-cli/dist`
  * is scanned directly so a copy that was `npm install -g`'d there but never
@@ -54,7 +54,7 @@ import { resolveNpmGlobalRoot } from "../tasks/resolve-akm-bin";
 // never use that literal subpath (`install/global/node_modules/` today, or
 // a bare version directory in the older layout), so this stays a bun match
 // while letting the npm-under-bun-shim case fall through to the generic
-// `node_modules` → "npm" classification below (upgrade-D3 r3-4).
+// `node_modules` → "npm" classification below.
 export const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?!lib\/node_modules\/)(?:[^/]+\/)+node_modules\//;
 
 /** Same relocation as {@link BUN_GLOBAL_INSTALL_PATTERN}, for pnpm's global store layout. */
@@ -101,7 +101,7 @@ export interface AkmInstall {
    * `path.dirname(path)`, this is where that install's own adjacent
    * package manager (`npm`/`pnpm`) actually lives, so upgrading through it
    * uses the right manager instead of falling back to the bare command on
-   * the running process's PATH (upgrade-D D3).
+   * the running process's PATH.
    */
   binDir: string;
   manager: AkmInstallManager;
@@ -138,7 +138,7 @@ export interface EnumerateAkmInstallsOptions {
    * Extra install roots scanned unconditionally, regardless of `PATH` or
    * `HOME`/`NVM_DIR` — `install.sh`'s default `INSTALL_DIR`. Defaults to
    * `["/usr/local/bin"]`. Tests supply `[]` so a real standalone install on
-   * the host running the tests cannot leak into enumeration (upgrade-D r2-3).
+   * the host running the tests cannot leak into enumeration.
    */
   fixedRoots?: readonly string[];
   /**
@@ -189,7 +189,7 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
     if (existing) {
       // A later, direct-only candidate never demotes an already-linked
       // install; a later linked candidate always promotes an install first
-      // seen only through the direct scan (upgrade-D3 r2-1).
+      // seen only through the direct scan.
       if (!direct) existing.linked = true;
       continue;
     }
@@ -209,7 +209,7 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
  * Every distinct `node` executable found on `PATH`, in an nvm `bin/` dir, or
  * in `~/.bun/bin`, resolved to its own npm global root the same bounded,
  * local way {@link resolveNpmGlobalRoot} resolves it for the running node.
- * Only the running node's root was ever probed before (upgrade-D3 r3-4), so
+ * Only the running node's root was ever probed before, so
  * a package installed under any other node on the host — an nvm copy, or
  * the bun-shimmed `node` a stray `npm install -g` ran under — was invisible.
  */
@@ -251,7 +251,7 @@ function discoverAdjacentNpmGlobalRoots(env: NodeJS.ProcessEnv, home: string | u
  * working `node`/`npm` pair there) because it is exactly where `npm install
  * -g` lands when it runs under bun's `node -> bun` shim: that shim answers
  * `--version` like node but cannot run npm's script through
- * {@link resolveNpmGlobalRoot}'s probe (upgrade-D3 r3-4).
+ * {@link resolveNpmGlobalRoot}'s probe.
  */
 function bunPrefixLibNodeModules(env: NodeJS.ProcessEnv, home: string | undefined): string | undefined {
   const bunInstall = env.BUN_INSTALL?.trim() || (home ? path.join(home, ".bun") : undefined);
@@ -383,7 +383,7 @@ function classifyInstall(real: string): AkmInstallManager {
 
 /**
  * True for an npm-managed install that `akm upgrade` can never move because
- * nothing links it onto any bin dir (upgrade-D3 r2-1). Shared by the
+ * nothing links it onto any bin dir. Shared by the
  * self-update "left untouched" status and the `akm-installs` health remedy
  * so the "is this install manageable" decision lives in one place.
  */

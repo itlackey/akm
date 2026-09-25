@@ -440,9 +440,9 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     // empty fixture dir means "no plugin installed" instead of scanning the
     // host's real `~/.claude/plugins` cache.
     AKM_CLAUDE_PLUGINS_DIR: claudePluginsDir,
-    // Same reasoning for the `opencode-plugin-version` advisory (upgrade-D
-    // D3): an empty fixture dir means "no OpenCode plugin installed" instead
-    // of reading the host's real `~/.cache/opencode` package cache.
+    // Same reasoning for the `opencode-plugin-version` advisory: an empty
+    // fixture dir means "no OpenCode plugin installed" instead of reading
+    // the host's real `~/.cache/opencode` package cache.
     AKM_OPENCODE_CACHE_DIR: opencodeCacheDir,
   };
 

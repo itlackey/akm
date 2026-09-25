@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `scheduled-startup-failures` advisory for `akm health` (upgrade-D/D2).
+ * `scheduled-startup-failures` advisory for `akm health`.
  * Integration-classified: it queries a real `task_history` table
  * (`openStateDatabase`), which `tests/commands/health/upgrade-advisories.test.ts`
  * — covering `version-reconcile` and `scheduler-grants` with injected seams
@@ -77,7 +77,7 @@ function seedFailedRun(overrides: { taskId: string; exitCode: number; logPath?: 
   }
 }
 
-describe("scheduled-startup-failures advisory (upgrade-D/D2)", () => {
+describe("scheduled-startup-failures advisory", () => {
   test("pass: no task_history rows at all", async () => {
     const check = await scheduledStartupFailures();
     expect(check.status).toBe("pass");

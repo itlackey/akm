@@ -378,7 +378,7 @@ function gatherImproveSummaryPhase(
  * (binary-config-skew, egress-endpoints), `type-directory-disagreement`
  * (#831), `data-dir-usage` (#896), `plugin-version` (itlackey/akm#832), and
  * the upgrade-break advisories (`version-reconcile`, `scheduler-grants`,
- * `scheduled-startup-failures`; upgrade-D/D2). Order matches emission order
+ * `scheduled-startup-failures`). Order matches emission order
  * in the returned array. A probe/filesystem failure in any try/catch must
  * not abort the health report — each group degrades to "no advisory"
  * independently.
@@ -485,7 +485,7 @@ async function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
-  // upgrade-D/D2: name an upgrade break within one report — host-local state
+  // name an upgrade break within one report — host-local state
   // not reconciled to the running version, installed scheduler rows with no
   // grant, and scheduled runs failing before their body starts. Best-effort
   // — a stamp/scheduler/query failure must not abort the health report.
@@ -503,7 +503,7 @@ async function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
-  // upgrade-D D3: every akm install on the host (PATH + known roots), version
+  // every akm install on the host (PATH + known roots), version
   // skew reported by path with the manager command that moves it.
   // `--probe`-gated (enumeration spawns a `--version` probe per install) and
   // best-effort — a filesystem/subprocess surprise must not abort the

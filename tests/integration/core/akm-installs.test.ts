@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `enumerateAkmInstalls` (upgrade-D D3): every `akm` on the host, deduped by
+ * `enumerateAkmInstalls`: every `akm` on the host, deduped by
  * realpath and classified. Runs real stub `akm` scripts under a sandbox
  * `PATH` and fake install roots — a real process spawn for the `--version`
  * probe, hence tests/integration (never a real db or the network).
@@ -23,7 +23,7 @@ function writeStubAkm(dir: string, version: string, filename = "akm"): string {
   return target;
 }
 
-describe("enumerateAkmInstalls (upgrade-D D3)", () => {
+describe("enumerateAkmInstalls", () => {
   test("finds a standalone install on PATH and reports its version", () => {
     const sandbox = makeSandboxDir("akm-installs-path");
     try {
@@ -112,7 +112,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     }
   });
 
-  test("records binDir as the nvm bin dir, not the realpath's own dirname (upgrade-D D3 r2-1)", () => {
+  test("records binDir as the nvm bin dir, not the realpath's own dirname", () => {
     const sandbox = makeSandboxDir("akm-installs-nvm-bindir");
     try {
       const nvmDir = path.join(sandbox.dir, ".nvm");
@@ -127,7 +127,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
       expect(installs[0]?.path).toBe(fs.realpathSync(real));
       expect(installs[0]?.binDir).toBe(binDir);
       // An nvm-bin shim is a real bin-dir candidate, not the direct
-      // `akm-cli/dist` scan, so it is linked (upgrade-D3 r2-1).
+      // `akm-cli/dist` scan, so it is linked.
       expect(installs[0]?.linked).toBe(true);
     } finally {
       sandbox.cleanup();
@@ -207,7 +207,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     ).toEqual([]);
   });
 
-  // upgrade-D r2-3: `fixedRoots` (default `["/usr/local/bin"]`) replaces the
+  // `fixedRoots` (default `["/usr/local/bin"]`) replaces the
   // old hardcoded `/usr/local/bin` scan so a real standalone install on the
   // host running these tests cannot leak in. This pins the seam itself,
   // independent of whatever `/usr/local/bin` holds on this host: PATH is
@@ -225,7 +225,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     }
   });
 
-  // upgrade-D3 r3-4: enumeration used to derive an npm global root only for
+  // enumeration used to derive an npm global root only for
   // the running node. A `node` on PATH belonging to a different install (an
   // nvm copy, or any other node this process isn't running under) has its
   // own npm global root, and a package installed there is otherwise
@@ -256,7 +256,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
         version: "0.9.15-beta.1",
         binDir: path.join(prefixRoot, "bin"),
         // Nothing links this install onto any bin dir — it was found only
-        // through the direct `akm-cli/dist` scan (upgrade-D3 r2-1).
+        // through the direct `akm-cli/dist` scan.
         linked: false,
       });
     } finally {
@@ -264,7 +264,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     }
   });
 
-  // upgrade-D3 r2-1: when that same npm global root's `bin/` DOES hold a
+  // when that same npm global root's `bin/` DOES hold a
   // link to the install (a real `npm install -g` result, unlike the orphan
   // case above), the direct `akm-cli/dist` scan finds the same realpath a
   // second time through a non-direct candidate, and `linked` must reflect
@@ -297,7 +297,7 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     }
   });
 
-  // upgrade-D3 r3-4: a stray `npm install -g` run under the bun-shimmed
+  // a stray `npm install -g` run under the bun-shimmed
   // `node` (`~/.bun/bin/node -> bun`) lands at
   // `${BUN_INSTALL:-~/.bun}/lib/node_modules/akm-cli`, not the bun-global
   // layout, and nothing previously looked there even though it is neither

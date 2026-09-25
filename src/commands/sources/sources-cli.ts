@@ -63,9 +63,9 @@ export const upgradeCommand = defineJsonCommand({
   async run({ args }) {
     const check = await checkForUpdate(pkgVersion, undefined, { version: args.version, tag: args.tag });
     if (args.check) {
-      // upgrade-D D3: `--check` also lists every OTHER akm install on the
+      // `--check` also lists every OTHER akm install on the
       // host, read-only — `describeOtherInstalls` picks the target version
-      // from `check` itself (upgrade-D3 r2-1).
+      // from `check` itself.
       output("upgrade", {
         ...check,
         otherInstalls: describeOtherInstalls(check),
