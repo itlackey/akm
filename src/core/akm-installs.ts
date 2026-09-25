@@ -44,6 +44,28 @@ export const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)
 
 const NODE_MODULES_SEGMENT = "/node_modules/";
 
+/**
+ * Walks up from `filePath`'s resolved directory looking for a `.git` entry.
+ * Moved here from `src/commands/tasks/tasks.ts` (which now imports it), same
+ * relocation as {@link BUN_GLOBAL_INSTALL_PATTERN}, so the scheduler-binding
+ * "checkout" check and this module's own install classifier share one
+ * algorithm instead of drifting apart.
+ */
+export function hasGitAncestor(filePath: string): boolean {
+  let dir: string;
+  try {
+    dir = path.dirname(fs.realpathSync(filePath));
+  } catch {
+    return false;
+  }
+  for (;;) {
+    if (fs.existsSync(path.join(dir, ".git"))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
 /** Bound on each discovered install's `--version` probe. Mirrors scheduler-binary.ts's probe timeout. */
 const AKM_INSTALL_VERSION_PROBE_TIMEOUT_MS = 5_000;
 
@@ -183,18 +205,6 @@ function classifyInstall(real: string): AkmInstallManager {
   if (normalized.includes(NODE_MODULES_SEGMENT)) return "npm";
   if (hasGitAncestor(real)) return "checkout";
   return "standalone";
-}
-
-/** Walks up from the executable's directory looking for a `.git` entry, bounded to avoid walking to `/`. */
-function hasGitAncestor(filePath: string): boolean {
-  let dir = path.dirname(filePath);
-  for (let i = 0; i < 6; i++) {
-    if (fs.existsSync(path.join(dir, ".git"))) return true;
-    const parent = path.dirname(dir);
-    if (parent === dir) return false;
-    dir = parent;
-  }
-  return false;
 }
 
 function probeVersion(run: typeof spawnSync, real: string): string | undefined {
