@@ -80,7 +80,7 @@ describe("akm lint — malformed task YAML (issue #760)", () => {
   });
 
   test("a v2 task auto-shims to v4 and lints clean (deprecation is a read-time stderr warning, not a lint flag)", async () => {
-    // A3: parseTaskSource converts v2/v3 sources to v4 in memory instead of
+    // parseTaskSource converts v2/v3 sources to v4 in memory instead of
     // throwing (see parse-task-source.ts and the previous-release corpus
     // test). Lint must agree with the runtime: a readable legacy task is not
     // "invalid-task-yaml" — flagging it would tell the user their working,

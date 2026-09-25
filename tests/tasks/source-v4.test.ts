@@ -561,14 +561,14 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
     expect(result.v4.manualOnly).toBe(true);
   });
 
-  // Upgrade-smoothness shim (reinstated by A3 after e413af024 deleted it):
-  // `version: 3` and `version: 2` no longer fail closed by themselves —
-  // `parseTaskSource` first runs the SAME pure planners `akm migrate apply`
-  // uses on the bytes already in hand, entirely in memory, and only falls
-  // back to `TASK_SCHEMA_VERSION_UNSUPPORTED` when that deterministic
-  // conversion itself cannot proceed. A migratable v3 document reads
-  // straight through.
-  describe("v2/v3 in-memory read shim (A3)", () => {
+  // Upgrade-smoothness shim (the in-memory v2/v3 read shim, reinstated
+  // after e413af024 deleted it): `version: 3` and `version: 2` no longer
+  // fail closed by themselves — `parseTaskSource` first runs the SAME pure
+  // planners `akm migrate apply` uses on the bytes already in hand, entirely
+  // in memory, and only falls back to `TASK_SCHEMA_VERSION_UNSUPPORTED` when
+  // that deterministic conversion itself cannot proceed. A migratable v3
+  // document reads straight through.
+  describe("v2/v3 in-memory read shim", () => {
     let warnCalls: string[] = [];
 
     beforeEach(() => {

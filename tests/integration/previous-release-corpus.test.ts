@@ -22,10 +22,12 @@
  * spelled out in the commit message.
  *
  * Current coverage:
- *   - task source v2 (`fixtures/task-v2.yml`) — rejected by runtime and
- *     converted through the explicit v2->v3->v4 migrator.
- *   - task source v3 (`fixtures/task-v3.yml`) — rejected by runtime and
- *     converted through the explicit v3->v4 migrator.
+ *   - task source v2 (`fixtures/task-v2.yml`) — read via the in-memory
+ *     v2->v3->v4 shim, and convertible on disk through the explicit
+ *     `akm migrate apply` v2->v3->v4 migrator.
+ *   - task source v3 (`fixtures/task-v3.yml`) — read via the in-memory
+ *     v3->v4 shim, and convertible on disk through the explicit
+ *     `akm migrate apply` v3->v4 migrator.
  *   - task source v4 with a retired `schedule[].enabled`
  *     (`fixtures/task-v4-schedule-enabled.yml`, exactly as 0.9.15's `akm
  *     task add --disabled` wrote it) — read via the in-memory shim's
@@ -530,8 +532,8 @@ describe("previous-release corpus — upgrade must not break reads", () => {
   // v2 task whose `command:` started with `env NAME=value... cmd args...`
   // (a common, ordinary way to write a cron command) hit
   // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable — this is
-  // exactly the gap that shipped in 0.9.4. A3 reinstated the in-memory read
-  // shim, so this shape is readable again (not just migratable) — updated
+  // exactly the gap that shipped in 0.9.4. The in-memory v2/v3 read shim
+  // makes this shape readable again (not just migratable) — updated
   // alongside the "task source v2/v3" describe above since it exercises the
   // same router path.
   describe("task source v2 — env-prefixed command (#867)", () => {
