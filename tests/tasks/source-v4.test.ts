@@ -745,6 +745,27 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
       expect(result.version).toBe(4);
       expect(warnCalls).toHaveLength(0);
     });
+
+    // Version 4 is supported — a document that carries a retired
+    // schedule[].enabled AND an ordinary grammar defect (here, an unknown
+    // top-level field) must report the v4 grammar error (TASK_SOURCE_INVALID)
+    // naming the actual defect, not TASK_SCHEMA_VERSION_UNSUPPORTED's "needs
+    // a human decision" wording — nothing about this file is ambiguous.
+    test("a v4 document with both a retired schedule[].enabled and an unrelated grammar defect raises TASK_SOURCE_INVALID naming the defect, not TASK_SCHEMA_VERSION_UNSUPPORTED", () => {
+      const yaml =
+        "version: 4\nrun: echo hi\nshell: sh\nbogus: 1\nschedule:\n  - cron: '0 4 * * *'\n    enabled: true\n";
+      const filePath = "/bundle/tasks/bogus.yml";
+      let error: unknown;
+      try {
+        parseTaskSource({ yaml, filePath });
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(UsageError);
+      expect((error as UsageError).code).toBe("TASK_SOURCE_INVALID");
+      expect((error as UsageError).message).toContain("bogus is an unsupported field");
+      expect((error as UsageError).message).not.toContain("needs a human decision");
+    });
   });
 
   // Row B-16: a document with no version: key, or a version: that is NOT A

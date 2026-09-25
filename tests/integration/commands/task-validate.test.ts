@@ -208,6 +208,30 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved).toBeUndefined();
   });
 
+  test("a v4 file with a retired schedule[].enabled AND an ordinary grammar defect -> outcome 'invalid', exit 1, not the unmigratable-version wording", async () => {
+    const stash = makeStashDir();
+    const scratch = makeScratchDir();
+    // Version 4 is supported; the unknown `bogus` field is an ordinary
+    // grammar defect and must be reported as such, even though the file
+    // also carries the retired schedule[].enabled shape the in-memory shim
+    // otherwise tolerates.
+    const filePath = writeFixture(
+      scratch,
+      "bogus-with-enabled.yml",
+      "version: 4\nrun: echo hi\nshell: sh\nbogus: 1\nschedule:\n  - cron: '0 4 * * *'\n    enabled: true\n",
+    );
+
+    const { stdout, status } = await runCli(["task", "validate", filePath], stash);
+    expect(status).toBe(1);
+    const env = JSON.parse(stdout);
+    expect(env.ok).toBe(false);
+    expect(env.outcome).toBe("invalid");
+    expect(env.sourceVersion).toBe(4);
+    expect(env.reason).toContain("bogus is an unsupported field");
+    expect(env.reason).not.toContain("needs a human decision");
+    expect(env.resolved).toBeUndefined();
+  });
+
   test("a nonexistent path -> usage error, exit 2", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
