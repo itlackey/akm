@@ -24,6 +24,7 @@
 
 import {
   canonicalTxnRoot,
+  type DeferredTxn,
   listTxnJournalsTolerant,
   probeJournalFence,
   type QuarantinedTxn,
@@ -75,15 +76,17 @@ function journalToPendingEntry(journal: TxnJournal<unknown>, root: string): Stal
 
 /**
  * Recover every durable transaction bound to `stashDir`'s namespace: roll
- * back journals before their kind's commit point, roll forward the rest. A
- * journal that cannot be recovered is quarantined, not thrown — it is
- * resolved state, reported alongside what recovered normally. The
- * counterpart to {@link findStaleTxnEntries}, invoked only from `akm migrate
- * apply`.
+ * back journals before their kind's commit point, roll forward the rest. An
+ * untrusted journal (unreadable, or a fence violation) is quarantined, not
+ * thrown; a trusted, fenced journal whose recovery action fails is deferred
+ * instead — left in place for a later scan or an operation on the entity it
+ * belongs to. Neither aborts the run — both are resolved state, reported
+ * alongside what recovered normally. The counterpart to
+ * {@link findStaleTxnEntries}, invoked only from `akm migrate apply`.
  */
 export async function recoverStaleTxns(
   stashDir: string,
-): Promise<{ recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[] }> {
-  const { recovered, quarantined } = await recoverTxnsForRoot(stashDir);
-  return { recovered: recovered.map(journalToEntry), quarantined };
+): Promise<{ recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] }> {
+  const { recovered, quarantined, deferred } = await recoverTxnsForRoot(stashDir);
+  return { recovered: recovered.map(journalToEntry), quarantined, deferred };
 }

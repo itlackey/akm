@@ -3,10 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * itlackey/akm — a poisoned transaction journal must not turn `akm migrate
- * apply` into a blocked/failed run. Drives the real `runMigration`
- * orchestrator so the coverage is what `akm migrate status`/`apply` actually
- * report against a stash with a quarantine-worthy journal.
+ * itlackey/akm — an untrusted or stuck transaction journal must not turn
+ * `akm migrate apply` into a blocked/failed run. Drives the real
+ * `runMigration` orchestrator so the coverage is what `akm migrate
+ * status`/`apply` actually report against a stash with a deferred (recovery
+ * action failed) journal.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -27,37 +28,42 @@ afterEach(() => {
   storage.cleanup();
 });
 
-test("a poisoned journal is quarantined and reported; the plan stays current, not blocked", async () => {
+test("a journal whose recovery action fails is deferred and reported; the plan stays current, not blocked", async () => {
   writeSandboxConfig({ defaultBundle: "primary", bundles: { primary: { path: storage.stashDir } } });
-  registerTxnKind<{ label: string }>("test-run-migrate-poisoned", {
+  registerTxnKind<{ label: string }>("test-run-migrate-stuck", {
     phases: ["prepared", "files-published", "committed"],
     commitPhase: "files-published",
     rollback() {
-      throw new Error("poisoned journal");
+      throw new Error("recovery action failed, journal is still trusted");
     },
     finalize() {},
   });
-  beginTxn({ kind: "test-run-migrate-poisoned", root: storage.stashDir, changes: [], payload: { label: "bad" } });
+  beginTxn({ kind: "test-run-migrate-stuck", root: storage.stashDir, changes: [], payload: { label: "bad" } });
 
   const plan = await runMigration({ apply: true });
 
   expect(plan.status).toBe("current");
   expect(plan.blockers).toEqual([]);
   expect(plan.staleTxns && "recovered" in plan.staleTxns).toBe(true);
-  const staleTxns = plan.staleTxns as { recovered: unknown[]; quarantined: { kind: string; reason: string }[] };
+  const staleTxns = plan.staleTxns as {
+    recovered: unknown[];
+    quarantined: unknown[];
+    deferred: { kind: string; reason: string }[];
+  };
   expect(staleTxns.recovered).toEqual([]);
-  expect(staleTxns.quarantined).toHaveLength(1);
-  expect(staleTxns.quarantined[0]?.kind).toBe("test-run-migrate-poisoned");
-  expect(staleTxns.quarantined[0]?.reason).toMatch(/poisoned journal/);
+  expect(staleTxns.quarantined).toEqual([]);
+  expect(staleTxns.deferred).toHaveLength(1);
+  expect(staleTxns.deferred[0]?.kind).toBe("test-run-migrate-stuck");
+  expect(staleTxns.deferred[0]?.reason).toMatch(/recovery action failed, journal is still trusted/);
 });
 
-test("a poisoned journal does not block a sibling journal in the same status/apply pass", async () => {
+test("a deferred journal does not block a sibling journal in the same status/apply pass", async () => {
   writeSandboxConfig({ defaultBundle: "primary", bundles: { primary: { path: storage.stashDir } } });
-  registerTxnKind<{ label: string }>("test-run-migrate-poisoned-sibling", {
+  registerTxnKind<{ label: string }>("test-run-migrate-stuck-sibling", {
     phases: ["prepared", "files-published", "committed"],
     commitPhase: "files-published",
     rollback() {
-      throw new Error("poisoned journal");
+      throw new Error("recovery action failed, journal is still trusted");
     },
     finalize() {},
   });
@@ -68,7 +74,7 @@ test("a poisoned journal does not block a sibling journal in the same status/app
     finalize() {},
   });
   beginTxn({
-    kind: "test-run-migrate-poisoned-sibling",
+    kind: "test-run-migrate-stuck-sibling",
     root: storage.stashDir,
     changes: [],
     payload: { label: "bad" },
@@ -86,8 +92,10 @@ test("a poisoned journal does not block a sibling journal in the same status/app
   const staleTxns = plan.staleTxns as {
     recovered: { kind: string }[];
     quarantined: { kind: string }[];
+    deferred: { kind: string }[];
   };
   expect(staleTxns.recovered.map((j) => j.kind)).toEqual(["test-run-migrate-healthy-sibling"]);
-  expect(staleTxns.quarantined.map((j) => j.kind)).toEqual(["test-run-migrate-poisoned-sibling"]);
+  expect(staleTxns.quarantined).toEqual([]);
+  expect(staleTxns.deferred.map((j) => j.kind)).toEqual(["test-run-migrate-stuck-sibling"]);
   expect(plan.status).toBe("current");
 });

@@ -13,7 +13,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { findStaleTxnEntries, recoverStaleTxns } from "../../scripts/akm-migrate/migrate/stale-txn";
-import { advanceTxn, beginTxn, registerTxnKind, txnQuarantineNamespaceDir } from "../../src/core/fs-txn";
+import {
+  advanceTxn,
+  beginTxn,
+  registerTxnKind,
+  txnNamespaceDir,
+  txnQuarantineNamespaceDir,
+} from "../../src/core/fs-txn";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -131,21 +137,13 @@ describe("migrate stale-txn detection and recovery", () => {
     expect(findStaleTxnEntries(stashDir)).toEqual([]);
   });
 
-  test("a poisoned journal is quarantined, reported, and does not block a sibling's recovery", async () => {
+  test("an unreadable journal is quarantined, reported, and does not block a sibling's recovery", async () => {
     const stashDir = freshStash();
     const calls: string[] = [];
-    registerTxnKind<{ label: string }>("test-stale-poisoned", {
-      phases: ["prepared", "files-published", "committed"],
-      commitPhase: "files-published",
-      rollback() {
-        throw new Error("poisoned journal");
-      },
-      finalize() {
-        calls.push("finalize:unreachable");
-      },
-    });
     registerRecordingKind("test-stale-poisoned-sibling", calls);
-    beginTxn({ kind: "test-stale-poisoned", root: stashDir, changes: [], payload: { label: "bad" } });
+    const nsDir = txnNamespaceDir(stashDir);
+    fs.mkdirSync(path.join(nsDir, "corrupt"), { recursive: true });
+    fs.writeFileSync(path.join(nsDir, "corrupt", "journal.json"), "{ not valid json");
     const sibling = beginTxn({
       kind: "test-stale-poisoned-sibling",
       root: stashDir,
@@ -154,20 +152,62 @@ describe("migrate stale-txn detection and recovery", () => {
     });
     advanceTxn(sibling, "files-published");
 
-    const { recovered, quarantined } = await recoverStaleTxns(stashDir);
+    const { recovered, quarantined, deferred } = await recoverStaleTxns(stashDir);
 
     expect(recovered).toHaveLength(1);
     expect(recovered[0]?.kind).toBe("test-stale-poisoned-sibling");
     expect(calls).toEqual(["finalize:fw"]);
     expect(quarantined).toHaveLength(1);
-    expect(quarantined[0]?.kind).toBe("test-stale-poisoned");
-    expect(quarantined[0]?.reason).toMatch(/poisoned journal/);
+    expect(quarantined[0]?.transactionId).toBe("corrupt");
+    expect(quarantined[0]?.reason).toMatch(/Cannot read transaction journal/);
+    expect(deferred).toHaveLength(0);
 
     // The stash's stale-journal listing no longer sees either journal — the
-    // recovered one was cleaned up, the poisoned one moved out of `$DATA/txn`.
+    // recovered one was cleaned up, the unreadable one moved out of `$DATA/txn`.
     expect(findStaleTxnEntries(stashDir)).toEqual([]);
     const quarantineDir = path.join(txnQuarantineNamespaceDir(stashDir), quarantined[0]?.transactionId as string);
     expect(fs.existsSync(path.join(quarantineDir, "journal.json"))).toBe(true);
     expect(fs.existsSync(path.join(quarantineDir, "reason.json"))).toBe(true);
+  });
+
+  test("a journal whose recovery action fails is deferred, reported, and does not block a sibling's recovery", async () => {
+    const stashDir = freshStash();
+    const calls: string[] = [];
+    registerTxnKind<{ label: string }>("test-stale-stuck", {
+      phases: ["prepared", "files-published", "committed"],
+      commitPhase: "files-published",
+      rollback() {
+        throw new Error("recovery action failed, journal is still trusted");
+      },
+      finalize() {
+        calls.push("finalize:unreachable");
+      },
+    });
+    registerRecordingKind("test-stale-stuck-sibling", calls);
+    const stuck = beginTxn({ kind: "test-stale-stuck", root: stashDir, changes: [], payload: { label: "bad" } });
+    const sibling = beginTxn({
+      kind: "test-stale-stuck-sibling",
+      root: stashDir,
+      changes: [],
+      payload: { label: "fw" },
+    });
+    advanceTxn(sibling, "files-published");
+
+    const { recovered, quarantined, deferred } = await recoverStaleTxns(stashDir);
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.kind).toBe("test-stale-stuck-sibling");
+    expect(calls).toEqual(["finalize:fw"]);
+    expect(quarantined).toHaveLength(0);
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]?.kind).toBe("test-stale-stuck");
+    expect(deferred[0]?.reason).toMatch(/recovery action failed, journal is still trusted/);
+
+    // The recovered sibling is gone from the listing; the deferred journal
+    // is still there — left in place under `$DATA/txn` for a later retry.
+    const remaining = findStaleTxnEntries(stashDir);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.transactionId).toBe(stuck.journal.transactionId);
+    expect(remaining[0]?.wouldQuarantine).toBeUndefined();
   });
 });
