@@ -8,12 +8,11 @@
  *
  * `migrateLegacySourceShape` (`src/core/config/legacy-source-shape-shim.ts`)
  * already folds this shape in memory on every load and warns that
- * `akm migrate apply` will rewrite the file — but until now nothing did:
- * the on-disk cleanup ran `stripRetiredConfigKeys` instead
- * (`scripts/akm-migrate/migrate/config-retired-keys.ts`), which deletes a
- * registered path rather than converting it, so applying it destroyed the
- * user's stash/bundle configuration. This is the on-disk counterpart, in
- * the same one-time-migration shape as `./config-extra-params.ts`: persist
+ * `akm migrate apply` will rewrite the file — advice that had no on-disk
+ * counterpart: the retired-keys step (`./config-retired-keys.ts`) leaves
+ * these keys alone because the registry marks them `"lifted"`, and no other
+ * step wrote the conversion back. This is that counterpart, in the same
+ * one-time-migration shape as `./config-extra-params.ts`: persist
  * the conversion the shim's pure `convertLegacySourceShape` already computes
  * once, with the usual backup, so the read shim's warning becomes true and
  * stops recurring. There is no second converter here — this calls the

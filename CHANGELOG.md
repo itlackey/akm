@@ -62,18 +62,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **The legacy `stashDir`/`sources[]`/`installed` config warning's
-  `akm migrate apply` advice now works.** `migrateLegacySourceShape`
-  (`src/core/config/legacy-source-shape-shim.ts`) has always converted the
-  three in memory on every load and told the user to run `akm migrate apply`
-  to make that stick, but nothing on disk ever did — the retired-keys
-  migrator step didn't touch them, since `RETIRED_CONFIG_KEYS`
-  (`src/core/config/retired-keys.ts`) registers them `"lifted"`, not
-  `"ignored"`. A new migrator step
+- **The legacy `stashDir`/`sources[]`/`installed` config shape is repaired
+  by `akm migrate apply`, and an empty one no longer fails every command**
+  (#863). `migrateLegacySourceShape`
+  (`src/core/config/legacy-source-shape-shim.ts`) has always converted a
+  usable `stashDir`/`sources[]`/`installed` in memory on every load and told
+  the user to run `akm migrate apply` to make that stick, but nothing on disk
+  ever did — the retired-keys migrator step doesn't touch them, since
+  `RETIRED_CONFIG_KEYS` (`src/core/config/retired-keys.ts`) registers them
+  `"lifted"`, not `"ignored"`. A new migrator step
   (`scripts/akm-migrate/migrate/config-legacy-source-shape.ts`, plan field
   `configLegacySourceShape`, wired in ahead of `configRetiredKeys`) now calls
   that same shim to persist the conversion to `config.json` once, under a
-  backup, making the warning's advice true.
+  backup, making the warning's advice true. Separately, through 0.9.16 and
+  0.9.17-alpha.3 a config whose `sources` was `[]` (what 0.8.9's
+  `akm source remove` writes after the last source is removed) or whose
+  `stashDir` was empty or unusable failed every command with exit 78
+  `INVALID_CONFIG_FILE` ("sources is not supported"): the shim only fired on
+  a non-empty value while the schema rejected any present key, and
+  `akm migrate apply` failed the same way, so nothing could repair it. The
+  shim now triggers on the key's presence — such a config loads with the
+  one-time legacy-shape warning, and `akm migrate apply` removes the keys.
 - **A `version: 2` or `version: 3` task source reads and runs again instead
   of failing closed on upgrade.** `e413af024` deleted the in-memory
   v2/v3 -> v4 read shim on the argument that "untrusted source cannot carry
