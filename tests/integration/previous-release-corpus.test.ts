@@ -611,6 +611,27 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
     expect(warned).toBe(true);
   });
 
+  test("experimental.workflowEngine alongside a retired top-level key both load, both are dropped, and both are named in the warning (the generalized stripRetiredConfigKeys shim, src/core/config/retired-config-keys-shim.ts)", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        features: { improve: { reflect: { mode: "llm" } } },
+        experimental: { improveAutonomy: true, workflowEngine: true },
+      }),
+    );
+
+    const config = loadConfig();
+    expect(config.experimental?.improveAutonomy).toBe(true);
+    expect((config.experimental as unknown as Record<string, unknown> | undefined)?.workflowEngine).toBeUndefined();
+    expect((config as unknown as Record<string, unknown>).features).toBeUndefined();
+
+    const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
+    expect(messages.some((m) => m.includes("workflowEngine") && m.includes("features"))).toBe(true);
+  });
+
   test("a non-retired unknown experimental key still fails closed", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });

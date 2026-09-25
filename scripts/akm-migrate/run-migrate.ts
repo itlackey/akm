@@ -150,7 +150,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const pendingLift = apply ? undefined : (configExtraParams as { pending: ConfigExtraParamsLiftPlan }).pending;
 
   // Retired `experimental.*` keys never block anything — the read shim
-  // already tolerates them (src/core/config/retired-experimental-keys-shim.ts),
+  // already tolerates them (src/core/config/retired-config-keys-shim.ts),
   // so this is cleanup, not a precondition later steps depend on. Computed
   // once here (it reads and writes only the raw file under its own lock and
   // never calls loadConfig) so both early "blocked" returns below and the
