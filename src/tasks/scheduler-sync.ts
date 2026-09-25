@@ -125,7 +125,7 @@ export interface SchedulerSyncPlan {
   readonly failures: readonly SchedulerSourceFailure[];
   /**
    * Refs granted from an installed native scheduler binding that had no
-   * grant yet (upgrade-B carry-forward) — present only when non-empty.
+   * grant yet (carry-forward) — present only when non-empty.
    * A real sync already applied these; `--dry-run` reports them here
    * without applying.
    */

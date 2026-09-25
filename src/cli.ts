@@ -693,7 +693,7 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
 
 /**
  * Whether `runCli()` should run {@link reconcileOnVersionChange} ahead of
- * this invocation (upgrade-B). Same recovery/setup surfaces
+ * this invocation. Same recovery/setup surfaces
  * {@link shouldBypassConfigStartup} keeps reachable against a broken
  * config are skipped here too — reconciliation itself loads config through
  * the standalone `akm-migrate` subprocess, not this process, but there is
@@ -1030,7 +1030,7 @@ export function normalizeCittyCliError(error: unknown, rawArgs: readonly string[
 }
 
 /**
- * Run {@link reconcileOnVersionChange} ahead of this command (upgrade-B).
+ * Run {@link reconcileOnVersionChange} ahead of this command.
  * `reconcileOnVersionChange` already never throws for a migration that
  * cannot finish — this wrapper is a second, independent guarantee that
  * nothing in the startup reconciliation path can ever turn into a fatal

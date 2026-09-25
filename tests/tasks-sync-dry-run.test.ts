@@ -181,7 +181,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     expect(exec.current()).toContain("task run gamma");
   });
 
-  // r3-2: a row `akm task sync` itself installed but whose grant is
+  // A row `akm task sync` itself installed but whose grant is
   // missing (e.g. `scheduler.enabled` was cleared outside `akm task
   // disable`) is carried forward by the real, non-dry-run sync — so the
   // `--dry-run` preview of the SAME state must not plan to remove it. Before

@@ -535,9 +535,9 @@ export async function akmTasksDisable(
   const activation = setSchedulerRefEnabled("task", resolved.qualifiedRef, false);
   // The grant just revoked above is still an installed, backed native
   // binding — exactly what carry-forward exists to rescue elsewhere. This
-  // internal reconciling sync never opts in to carry-forward (upgrade-B
-  // r2-1), so disabling a ref is not immediately undone by the same call
-  // that is supposed to remove it.
+  // internal reconciling sync never opts in to carry-forward, so disabling
+  // a ref is not immediately undone by the same call that is supposed to
+  // remove it.
   const sync = await akmTasksSync(deps, resolved.bundleName);
   return { ref: resolved.qualifiedRef, enabled: false, changed: activation.changed, sync };
 }
@@ -625,10 +625,10 @@ async function buildSchedulerSyncPlan(
   // Carry a host-local scheduler grant forward for any installed native
   // binding that is the operator's own prior `akm task sync` but has no
   // grant yet — before `desired` is computed below, which would otherwise
-  // remove it as ungranted (upgrade-B). `--dry-run` only reports what would
-  // be carried forward; it never mutates config. Opt-in only (upgrade-B
-  // r2-1): the CLI's `akm task sync` (and its `--dry-run` preview) is the
-  // only caller that passes `carryForward: true`. The internal reconciling
+  // remove it as ungranted. `--dry-run` only reports what would be carried
+  // forward; it never mutates config. Opt-in only: the CLI's `akm task
+  // sync` (and its `--dry-run` preview) is the only caller that passes
+  // `carryForward: true`. The internal reconciling
   // syncs inside `akmTasksAdd`/`akmTasksEnable`/`akmTasksDisable` never
   // carry forward — a caller that just revoked a grant and syncs must not
   // have that revoke silently undone by the same call.
@@ -909,8 +909,8 @@ export async function akmTasksSync(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
   bundleTarget?: string,
   /**
-   * `carryForward` is opt-in (upgrade-B r2-1): only the `akm task sync` CLI
-   * command passes `true`. Internal reconciling syncs (`akmTasksAdd`,
+   * `carryForward` is opt-in: only the `akm task sync` CLI command passes
+   * `true`. Internal reconciling syncs (`akmTasksAdd`,
    * `akmTasksEnable`, `akmTasksDisable`) never do, so they cannot silently
    * re-grant a binding they, or the caller, just revoked.
    */

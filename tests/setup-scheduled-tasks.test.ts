@@ -211,7 +211,7 @@ describe("stepScheduledTasks", () => {
     expect(calls.syncCalls).toBe(1);
   });
 
-  // Reviewer finding (upgrade-B r3-1): carry-forward must run after the operator's confirmation
+  // Reviewer finding: carry-forward must run after the operator's confirmation
   // and before `prepare` revokes every managed ref the operator left unchecked, so a grant carried
   // forward for a ref the operator just deselected is still removed by that same `prepare` call.
   test("carries forward before preparing, and only on confirmed activation", async () => {
@@ -475,13 +475,13 @@ function memoryExec(initial = ""): CronExec & { current: () => string } {
 describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
   beforeEach(resetClack);
 
-  // Reviewer finding (upgrade-B r2-1 follow-up): the wizard's own confirmed
-  // "Activate these schedules now?" sync is a human-confirmed action like
-  // `akm task sync`, not an internal reconciling sync like `task add`/
-  // `enable`/`disable`. It must carry a grant forward, exercised here
-  // through the real `akmTasksSync` rather than the stub the other tests in
-  // this file use for `deps.sync`.
-  test("carries forward a grant lost outside `disable` for a custom installed task (upgrade-B)", async () => {
+  // Reviewer finding: the wizard's own confirmed "Activate these schedules
+  // now?" flow calls `deps.carryForward` before `prepare`, the same as a
+  // human-confirmed `akm task sync`, not an internal reconciling sync like
+  // `task add`/`enable`/`disable`. This exercises that carry-forward through
+  // the real `akmTasksSync` rather than the stub the other tests in this
+  // file use for `deps.sync`.
+  test("carries forward a grant lost outside `disable` for a custom installed task", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
@@ -531,12 +531,12 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
     }
   });
 
-  // Reviewer finding (upgrade-B r3-1, regression from f84e14332): a managed embedded task's
+  // Reviewer finding (regression from f84e14332): a managed embedded task's
   // template is still prepared on disk even when the operator leaves it unchecked (":273-276"), so
   // a carry-forward that ran AFTER `prepare` revoked its grant would immediately re-grant it and
   // undo the deselection. Carry-forward must run before `prepare`, so `prepare`'s revocation is the
   // one that wins for a ref the operator's own selection removed.
-  test("does not re-activate a task definition the operator deselects on a rerun (upgrade-B r3-1)", async () => {
+  test("does not re-activate a task definition the operator deselects on a rerun", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
