@@ -244,7 +244,7 @@ export interface AddResponse {
    * it back out of `sourceAdded`/`installed`.
    */
   bundleId: string;
-  /** The registry install id (e.g. `npm:pkg`, `github:owner/repo`), when the bundle key differs from it. */
+  /** The registry install id (e.g. `npm:pkg`, `github:owner/repo`). Present for registry stash installs. */
   registryId?: string;
   /** Present for registry stash installs (npm, github, git) */
   installed?: {

@@ -181,9 +181,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm bundle rename <old> <new>`. A DERIVED name (no `--name` given) is
   unaffected and keeps `deriveBundleId`'s forgiving `-<hash>` uniqueness
   fallback. Every `akm bundle add` result (local, website, and registry) now
-  also carries `bundleId` (the resolved bundle key) and `registryId` (the
-  registry install id, when it differs from `bundleId`), so a caller no
-  longer has to reconstruct the key from `sourceAdded`/`installed`. A
+  also carries `bundleId` (the resolved bundle key), and a registry add's
+  result always carries `registryId` (the registry install id) rather than
+  only when it happens to differ from `bundleId`, so a caller no longer has
+  to reconstruct the key from `sourceAdded`/`installed`. A
   `--name` that shadows an inherited `Object.prototype` member (e.g.
   `toString`) is a legal bundle slug and is no longer rejected as "already
   exists" — the existence check now tests the bundles map's own properties

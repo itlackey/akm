@@ -343,7 +343,7 @@ async function addRegistryStash(
     bundleDir: stashDir,
     ref,
     bundleId,
-    ...(synced.id !== bundleId ? { registryId: synced.id } : {}),
+    registryId: synced.id,
     installed: {
       id: synced.id,
       source: synced.source,
