@@ -11,11 +11,13 @@ const LegacySchedulerActivationSchema = z
   .passthrough()
   .transform((activation) => activation.ref);
 
-export const SchedulerConfigSchema = z.object({
-  /**
-   * Fully-qualified refs (`bundle//tasks/x`, `bundle//workflows/y`) this host
-   * schedules. Absent when the host has never chosen: `akm task sync` then
-   * takes the akm-written rows already installed as the choice and writes it.
-   */
-  enabled: z.array(z.union([nonEmptyString, LegacySchedulerActivationSchema])).optional(),
-});
+export const SchedulerConfigSchema = z
+  .object({
+    /**
+     * Fully-qualified refs (`bundle//tasks/x`, `bundle//workflows/y`) this host
+     * schedules. Absent when the host has never chosen: `akm task sync` then
+     * takes the akm-written rows already installed as the choice and writes it.
+     */
+    enabled: z.array(z.union([nonEmptyString, LegacySchedulerActivationSchema])).optional(),
+  })
+  .passthrough();

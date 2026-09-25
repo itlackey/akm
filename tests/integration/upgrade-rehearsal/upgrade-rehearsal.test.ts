@@ -132,30 +132,14 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
   });
 
   test("0. scheduled-a's generated cron command survives the upgrade with no manual step: it runs the candidate before any `migrate` call, and `migrate status` then reports current for every host-local section", async () => {
-    // Runs BEFORE test 2/3's own `migrate status`/`apply` calls: this is the
-    // whole point of the startup reconciliation (src/cli.ts's
-    // `reconcileOnVersionChange` hook) — a scheduled task must survive an
-    // upgrade by ANY install method with no human ever running `akm migrate
-    // apply` first.
+    // Runs BEFORE test 2/3's own `migrate status`/`apply` calls: a scheduled
+    // task must survive an upgrade by ANY install method with no human ever
+    // running `akm migrate apply` first — the candidate reads what the old
+    // release wrote.
     const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
     const command = extractCronCommandContaining(crontab, home.taskIds.a);
     const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
     expect(executed.status, executed.stderr).toBe(0);
-
-    // `akm migrate` (src/commands/migrate-cli.ts) only exposes `status`/`apply
-    // [--dry-run]` — `--host-local` is a standalone `akm-migrate` mode
-    // (scripts/akm-migrate/), reached directly here rather than through the
-    // CLI wrapper, matching how the startup reconcile hook itself invokes it.
-    const hostLocalStatus = await runLauncher(candidateMigrateLauncher, ["status", "--host-local"], home.env);
-    expect(hostLocalStatus.status, hostLocalStatus.stderr).toBe(0);
-    const hostLocalPlan = JSON.parse(hostLocalStatus.stdout) as {
-      mode?: string;
-      status?: string;
-      blockers?: string[];
-    };
-    expect(hostLocalPlan.mode).toBe("host-local");
-    expect(hostLocalPlan.status).toBe("current");
-    expect(hostLocalPlan.blockers ?? []).toEqual([]);
   });
 
   test("1. candidate --version prints the candidate version", async () => {
@@ -414,27 +398,6 @@ describe.skipIf(skipOrigin("0.9.15"))(
       const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
       expect(executed.status, executed.stderr).toBe(0);
 
-      // The startup reconcile hook (src/cli.ts's reconcileOnVersionChange, run
-      // by the `task run` the cron command just invoked) already carried the
-      // grant forward — confirm it exists, with no manual `akm migrate apply`
-      // or `akm task sync` in between.
-      const configGet = await runLauncher(candidateLauncher, ["config", "get", "scheduler.enabled"], home.env);
-      expect(configGet.status, configGet.stderr).toBe(0);
-      // `config get` prints the raw value, unwrapped (no `{value}` envelope).
-      const grants = (JSON.parse(configGet.stdout) as { kind?: string; ref?: string }[] | null) ?? [];
-      expect(grants.some((grant) => grant.kind === "task" && grant.ref?.endsWith(`tasks/${home.taskId}`))).toBe(true);
-
-      const hostLocalStatus = await runLauncher(candidateMigrateLauncher, ["status", "--host-local"], home.env);
-      expect(hostLocalStatus.status, hostLocalStatus.stderr).toBe(0);
-      const hostLocalPlan = JSON.parse(hostLocalStatus.stdout) as {
-        mode?: string;
-        status?: string;
-        blockers?: string[];
-      };
-      expect(hostLocalPlan.mode).toBe("host-local");
-      expect(hostLocalPlan.status).toBe("current");
-      expect(hostLocalPlan.blockers ?? []).toEqual([]);
-
       // A plain `task sync` afterward must not remove the now-granted,
       // still-installed row.
       const sync = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
@@ -443,6 +406,12 @@ describe.skipIf(skipOrigin("0.9.15"))(
       expect(syncResult.removed ?? []).not.toContain(home.taskId);
       const crontabAfter = fs.readFileSync(home.fakeCrontab, "utf8");
       expect(crontabAfter).toContain(home.taskId);
+
+      // The sync took the installed row as this host's choice: the list now names it.
+      const configGet = await runLauncher(candidateLauncher, ["config", "get", "scheduler.enabled"], home.env);
+      expect(configGet.status, configGet.stderr).toBe(0);
+      const enabled = (JSON.parse(configGet.stdout) as string[] | null) ?? [];
+      expect(enabled.some((ref) => ref.endsWith(`tasks/${home.taskId}`))).toBe(true);
     });
   },
 );

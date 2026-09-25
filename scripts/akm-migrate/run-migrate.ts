@@ -13,28 +13,17 @@
  */
 
 import { resolveStashDir } from "../../src/core/common";
-import { bundleContentRoots, bundleKeyForContentRoot, loadConfig, resetConfigCache } from "../../src/core/config/config";
+import {
+  bundleContentRoots,
+  bundleKeyForContentRoot,
+  type ConfigFileNormalization,
+  loadConfig,
+  normalizeConfigFile,
+  resetConfigCache,
+} from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
-import {
-  applyConfigExtraParamsLift,
-  type ConfigExtraParamsLiftPlan,
-  type ConfigExtraParamsLiftResult,
-  findConfigExtraParamsLift,
-} from "./migrate/config-extra-params";
-import {
-  applyConfigLegacySourceShape,
-  type ConfigLegacySourceShapePlan,
-  type ConfigLegacySourceShapeResult,
-  findConfigLegacySourceShape,
-} from "./migrate/config-legacy-source-shape";
-import {
-  applyConfigRetiredKeys,
-  type ConfigRetiredKeysPlan,
-  type ConfigRetiredKeysResult,
-  findConfigRetiredKeys,
-} from "./migrate/config-retired-keys";
 import { type DeadResidueEntry, type DeadResidueRemoval, findDeadResidueEntries, removeDeadResidue } from "./migrate/dead-residue";
 import {
   applyWriterRelocation,
@@ -79,12 +68,7 @@ export interface CombinedMigrationPlan {
    */
   failedSteps?: readonly FailedMigrationStep[];
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
-  configLegacySourceShape?: ConfigLegacySourceShapeResult | { pending: ConfigLegacySourceShapePlan };
-  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
-  configExtraParams?: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
-  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
-  configRetiredKeys?: ConfigRetiredKeysResult | { pending: ConfigRetiredKeysPlan };
-  /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
+  configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   taskV3Migration?: MigrationPlan["taskV3Migration"];
   taskV4Migration?: TaskV4MigrationStatus["taskV4Migration"];
@@ -239,67 +223,15 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configPath = getConfigPath();
   const failedSteps: FailedMigrationStep[] = [];
 
-  // The legacy stashDir/sources[]/installed conversion runs first, before
-  // anything that loads config, mirroring where `migrateLegacySourceShape`
-  // sits in the in-memory pipeline (src/core/config/config.ts,
-  // `runConfigFilePipeline`) — ahead of the extraParams lift and the
-  // retired-keys strip. It never blocks: the read shim already tolerates
-  // this shape in memory, so this is cleanup, not a precondition.
-  const configLegacySourceShape = await migrationStep(
+  // config.json: read through the same pipeline every load runs, written
+  // back in its current shape. Never blocks the other steps.
+  const configFile = await migrationStep(
     failedSteps,
-    "configLegacySourceShape",
-    () => (apply ? applyConfigLegacySourceShape(configPath) : { pending: findConfigLegacySourceShape(configPath) }),
-    apply ? () => ({ pending: findConfigLegacySourceShape(configPath) }) : undefined,
+    "configFile",
+    () => normalizeConfigFile(configPath, { apply }),
+    apply ? () => normalizeConfigFile(configPath, { apply: false }) : undefined,
   );
-  if (apply && (configLegacySourceShape as ConfigLegacySourceShapeResult | undefined)?.applied) resetConfigCache();
-
-  // The config lift runs BEFORE anything that loads config. A config still
-  // carrying legacy extraParams keys fails `loadConfig` closed, and that
-  // error names `akm migrate apply` as the remedy -- every later step loads
-  // config, so applying the lift first is what makes the advice true.
-  // Read-only modes cannot rewrite the file, so a pending lift is reported
-  // as the blocker instead of letting the operator hit the same error again.
-  const configExtraParams = await migrationStep(
-    failedSteps,
-    "configExtraParams",
-    () => (apply ? applyConfigExtraParamsLift(configPath) : { pending: findConfigExtraParamsLift(configPath) }),
-    apply ? () => ({ pending: findConfigExtraParamsLift(configPath) }) : undefined,
-  );
-  if (apply && (configExtraParams as ConfigExtraParamsLiftResult | undefined)?.applied) resetConfigCache();
-  const pendingLift = apply
-    ? undefined
-    : (configExtraParams as { pending: ConfigExtraParamsLiftPlan } | undefined)?.pending;
-
-  // Retired config keys never block anything — the read shim already
-  // tolerates them (src/core/config/retired-config-keys-shim.ts), so this
-  // is cleanup, not a precondition later steps depend on. Computed once
-  // here (it reads and writes only the raw file under its own lock and
-  // never calls loadConfig) so both early "blocked" returns below and the
-  // full plan can share the same value.
-  const configRetiredKeys = await migrationStep(
-    failedSteps,
-    "configRetiredKeys",
-    () => (apply ? applyConfigRetiredKeys(configPath) : { pending: findConfigRetiredKeys(configPath) }),
-    apply ? () => ({ pending: findConfigRetiredKeys(configPath) }) : undefined,
-  );
-  if (apply && (configRetiredKeys as ConfigRetiredKeysResult | undefined)?.applied) resetConfigCache();
-
-  if (pendingLift && pendingLift.lifted.length > 0) {
-    const stateMigrations = await migrationStep(failedSteps, "stateMigrations", () => ({
-      pending: listPendingStateMigrations(),
-    }));
-    return {
-      schemaVersion: 1,
-      status: statusWithFailedSteps("blocked", failedSteps),
-      blockers: [...pendingLift.lifted, ...failedStepBlockers(failedSteps)],
-      ...(failedSteps.length > 0 ? { failedSteps } : {}),
-      configLegacySourceShape,
-      configExtraParams,
-      configRetiredKeys,
-      ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-    };
-  }
-
+  if (apply && configFile?.applied) resetConfigCache();
   const stateMigrations = await migrationStep(
     failedSteps,
     "stateMigrations",
@@ -327,15 +259,13 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     apply ? () => inspectTaskV4MigrationStatus() : undefined,
   );
   const stashSections: Pick<CombinedMigrationPlan, "deadResidue" | "writerRelocation"> = {};
-  if (stashDir !== undefined) {
-    const deadResidue = await migrationStep(
-      failedSteps,
-      "deadResidue",
-      () => (apply ? { removed: removeDeadResidue(stashDir) } : { pending: findDeadResidueEntries(stashDir) }),
-      apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
-    );
-    if (deadResidue !== undefined) stashSections.deadResidue = deadResidue;
-  }
+  const deadResidue = await migrationStep(
+    failedSteps,
+    "deadResidue",
+    () => (apply ? { removed: removeDeadResidue(stashDir) } : { pending: findDeadResidueEntries(stashDir) }),
+    apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
+  );
+  if (deadResidue !== undefined) stashSections.deadResidue = deadResidue;
   // `writerRelocationTargets` calls `loadConfig()`, which throws for a
   // config the schema rejects (e.g. a non-string bundle `path`) — its own
   // step, so that throw is this step's failure rather than ending the run
@@ -352,30 +282,19 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
-  const retiredKeysStatus: MigrationStatus =
-    configRetiredKeys && "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0
-      ? "ready"
-      : "current";
-  const legacySourceShapeStatus: MigrationStatus =
-    configLegacySourceShape &&
-    "pending" in configLegacySourceShape &&
-    configLegacySourceShape.pending.converted.length > 0
-      ? "ready"
-      : "current";
+  const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
       worstStatus(
         worstStatus(worstStatus(taskV3?.status ?? "blocked", taskV4?.status ?? "blocked"), stateStatus),
-        worstStatus(retiredKeysStatus, legacySourceShapeStatus),
+        configFileStatus,
       ),
       failedSteps,
     ),
     blockers: [...(taskV3?.blockers ?? []), ...(taskV4?.blockers ?? []), ...failedStepBlockers(failedSteps)],
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
-    configLegacySourceShape,
-    configExtraParams,
-    configRetiredKeys,
+    ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     taskV3Migration: taskV3?.taskV3Migration,
     taskV4Migration: taskV4?.taskV4Migration,

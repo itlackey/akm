@@ -163,7 +163,7 @@ test("apply: one bundle's writer relocation throwing does not cost every OTHER b
   expect(relocated.secondary).toBeUndefined();
 
   // Every OTHER step in the same run still completed normally.
-  expect(plan.configRetiredKeys && "applied" in plan.configRetiredKeys).toBe(true);
+  expect(plan.configFile && "applied" in plan.configFile).toBe(true);
   expect(plan.stateMigrations).toBeDefined();
   expect(plan.taskV3Migration).toBeDefined();
   expect(plan.taskV4Migration).toBeDefined();

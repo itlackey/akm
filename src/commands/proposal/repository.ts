@@ -51,44 +51,19 @@ import {
   parseFrontmatter,
 } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, TransientError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
-import {
-  _setTxnMutationHookForTests,
-  advanceTxn,
-  beginTxn,
-  canonicalTxnRoot,
-  cleanupTxn,
-  fsyncTxnDir,
-  fsyncTxnFile,
-  listTxnJournalsTolerant,
-  mintTxnId,
-  quarantineTxnDirSafely,
-  registerTxnKind,
-  sweepJournallessTxnDir,
-  type Txn,
-  type TxnJournal,
-  txnDirFor,
-  txnMutationHook,
-  txnNamespaceDir,
-} from "../../core/fs-txn";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
-import { getDataDir } from "../../core/paths";
-import { getStateDbPath, isSqliteContentionError, withImmediateTransaction, withStateDb } from "../../core/state-db";
-import { warn, warnOnce } from "../../core/warn";
+import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
+import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
   assertAkmAssetWrite,
   assertWriteTargetPathsClean,
-  captureGitPublication,
-  captureWriteTargetPathSnapshot,
-  type GitPathSnapshots,
-  type GitPublication,
+  commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
-  publishWriteTargetTransaction,
   type ResolvedWriteTarget,
   resolveWriteTarget,
   type WriteTargetSource,
@@ -123,7 +98,6 @@ import {
   type ProposalSource,
   type ProposalStatus,
 } from "./proposal-types";
-import { PROPOSAL_TXN_KIND, REJECT_TXN_KIND } from "./txn-kinds";
 import {
   canonicalOnlyProposalValidators,
   hasCanonicalProposalValidator,
@@ -1305,47 +1279,6 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   };
 }
 
-/**
- * Kind-owned payload of a `proposal` transaction (accept/revert), riding the
- * unified fs-txn engine (WI-6.3). The envelope carries
- * kind/phase/transactionId/root(= target root)/changes/decidedAt.
- */
-interface ProposalTxnPayload {
-  operation: "accept" | "revert";
-  proposalId: string;
-  stashDir: string;
-  targetSource: string;
-  targetKind: string;
-  assetPath: string;
-  ref: string;
-  contentPath: string;
-  publishPath: string;
-  displacedPath: string;
-  backupPath: string | null;
-  originalHash: string | null;
-  publishedHash: string;
-  gitPublication?: GitPublication;
-  gitSnapshots?: GitPathSnapshots;
-  eventMetadata?: Record<string, unknown>;
-  gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
-}
-
-type ProposalTxn = Txn<ProposalTxnPayload>;
-
-const PROPOSAL_TXN_PHASES = [
-  "prepared",
-  "asset-published",
-  "proposal-persisted",
-  "index-finalized",
-  "event-finalized",
-  "committed",
-] as const;
-
-/** TEST-ONLY crash-window hook used by subprocess recovery tests. */
-export function _setProposalMutationHookForTests(hook?: (point: string) => void): void {
-  _setTxnMutationHookForTests(hook);
-}
-
 function proposalHash(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -1364,546 +1297,115 @@ function sameProposalFile(left: string, right: string): boolean {
   }
 }
 
-function cleanupProposalPublication(p: ProposalTxnPayload): void {
-  for (const filePath of [p.publishPath, p.displacedPath]) {
-    try {
-      fs.rmSync(filePath, { force: true });
-    } catch (error) {
-      warn(
-        `[proposals] transaction publication cleanup failed at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  fsyncTxnDir(path.dirname(p.assetPath));
-}
-
-function rollbackPreparedProposalTransaction(txn: ProposalTxn): void {
-  const p = txn.journal.payload;
-  const currentHash = fs.existsSync(p.assetPath) ? proposalFileHash(p.assetPath) : null;
-  if (!fs.existsSync(p.displacedPath)) {
-    if (p.originalHash === null) {
-      if (currentHash === p.publishedHash && sameProposalFile(p.assetPath, p.publishPath)) {
-        fs.unlinkSync(p.assetPath);
-        // #652: un-publishing is a mutation of this run's own write — journal
-        // it so the sync stages the FINAL state of a written-then-reverted path.
-        recordWrittenPath(p.assetPath);
-      } else if (currentHash !== null) {
-        throw new Error(`Cannot roll back proposal transaction: target was created externally.`);
+/**
+ * Record an accept or revert: the proposal row and its event in one state.db
+ * transaction, after the asset file is already on disk. Idempotent — a
+ * proposal already in the requested state is returned unchanged.
+ */
+function persistProposalDecision(
+  stashDir: string,
+  proposal: Proposal,
+  decision:
+    | {
+        operation: "accept";
+        target: ResolvedWriteTarget;
+        assetPath: string;
+        content: string;
+        originalHash: string | null;
+        backupContent?: string;
+        eventMetadata?: Record<string, unknown>;
+        gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+        decidedAt: string;
       }
-    } else if (currentHash !== p.originalHash) {
-      throw new Error(`Cannot roll back proposal transaction: ${p.assetPath} diverged.`);
-    }
-    cleanupProposalPublication(p);
-    return;
-  }
-  if (currentHash === p.publishedHash) {
-    fs.unlinkSync(p.assetPath);
-    recordWrittenPath(p.assetPath);
-  } else if (currentHash !== null && currentHash !== p.originalHash) {
-    throw new Error(`Cannot roll back proposal transaction: ${p.assetPath} diverged.`);
-  }
-  if (fs.existsSync(p.displacedPath)) {
-    if (fs.existsSync(p.assetPath)) {
-      throw new Error(`Cannot restore proposal backup: ${p.assetPath} is occupied.`);
-    }
-    fs.linkSync(p.displacedPath, p.assetPath);
-    // #652: restoring the displaced original still leaves the path in a state
-    // this run produced; journal it so the final on-disk bytes are staged.
-    recordWrittenPath(p.assetPath);
-  }
-  cleanupProposalPublication(p);
-}
-
-function validatePublishedProposal(p: ProposalTxnPayload): void {
-  if (!fs.existsSync(p.assetPath) || proposalFileHash(p.assetPath) !== p.publishedHash) {
-    throw new Error(`Cannot recover proposal ${p.proposalId}: published asset diverged.`);
-  }
-}
-
-function persistProposalTransactionState(txn: ProposalTxn, proposal: Proposal, ctx?: ProposalsContext): Proposal {
-  const p = txn.journal.payload;
-  const decidedAt = txn.journal.decidedAt;
-  const backupContent = p.backupPath ? fs.readFileSync(p.backupPath, "utf8") : undefined;
-  const publishedContent = fs.readFileSync(p.contentPath, "utf8");
-  return withProposalsDb(p.stashDir, ctx, (db) =>
+    | { operation: "revert"; assetPath: string; decidedAt: string },
+  ctx?: ProposalsContext,
+): Proposal {
+  return withProposalsDb(stashDir, ctx, (db) =>
     withImmediateTransaction(db, () => {
-      const current = requireProposal(db, p.stashDir, p.proposalId);
-      if (p.operation === "accept") {
+      const current = requireProposal(db, stashDir, proposal.id);
+      let next: Proposal;
+      if (decision.operation === "accept") {
+        const publishedHash = proposalHash(decision.content);
         if (current.status === "accepted") {
-          if (current.acceptedTarget?.contentHash !== p.publishedHash) {
-            throw new Error(`Accepted proposal ${p.proposalId} does not match its recovery journal.`);
+          if (current.acceptedTarget?.contentHash !== publishedHash) {
+            throw new Error(`Accepted proposal ${proposal.id} does not match the published content.`);
           }
           return current;
         }
         if (current.status !== "pending") {
-          throw new Error(`Proposal ${p.proposalId} changed status during acceptance (${current.status}).`);
+          throw new Error(`Proposal ${proposal.id} changed status during acceptance (${current.status}).`);
         }
-        const persistedProposal: Proposal =
+        const root = decision.target.source.path;
+        const persisted: Proposal =
           proposal.changes.length > 0 && proposal.changes.every((change) => change.path.length > 0)
-            ? withProposalContent(proposal, publishedContent)
+            ? withProposalContent(proposal, decision.content)
             : {
                 ...proposal,
-                payload: { ...proposal.payload, content: publishedContent },
+                payload: { ...proposal.payload, content: decision.content },
                 changes: [
                   {
-                    path: path.relative(txn.journal.root, p.assetPath),
-                    op: p.originalHash === null ? "create" : "update",
-                    after: publishedContent,
+                    path: path.relative(root, decision.assetPath),
+                    op: decision.originalHash === null ? "create" : "update",
+                    after: decision.content,
                   },
                 ],
-                proposedTarget: { source: p.targetSource, root: txn.journal.root },
+                proposedTarget: { source: decision.target.source.name, root },
               };
-        const accepted: Proposal = {
-          ...persistedProposal,
+        next = {
+          ...persisted,
           status: "accepted",
-          updatedAt: decidedAt,
-          review: { outcome: "accepted", decidedAt },
+          updatedAt: decision.decidedAt,
+          review: { outcome: "accepted", decidedAt: decision.decidedAt },
           acceptedTarget: {
-            source: p.targetSource,
-            root: txn.journal.root,
-            path: p.assetPath,
-            contentHash: p.publishedHash,
+            source: decision.target.source.name,
+            root,
+            path: decision.assetPath,
+            contentHash: publishedHash,
           },
-          ...(p.gateDecision
-            ? { gateDecision: { ...p.gateDecision, decidedAt: p.gateDecision.decidedAt ?? decidedAt } }
+          ...(decision.gateDecision
+            ? {
+                gateDecision: {
+                  ...decision.gateDecision,
+                  decidedAt: decision.gateDecision.decidedAt ?? decision.decidedAt,
+                },
+              }
             : {}),
-          ...(backupContent !== undefined ? { backupContent } : {}),
+          ...(decision.backupContent !== undefined ? { backupContent: decision.backupContent } : {}),
         };
-        upsertProposal(db, accepted, p.stashDir);
-        return accepted;
-      }
-
-      if (current.status === "reverted") return current;
-      if (current.status !== "accepted") {
-        throw new Error(`Proposal ${p.proposalId} changed status during reversion (${current.status}).`);
-      }
-      const reverted: Proposal = {
-        ...current,
-        status: "reverted",
-        updatedAt: decidedAt,
-        review: {
-          outcome: "rejected",
-          reason: "reverted: prior content restored from backup",
-          decidedAt,
-        },
-      };
-      upsertProposal(db, reverted, p.stashDir);
-      return reverted;
-    }),
-  );
-}
-
-function persistProposalEvent(txn: ProposalTxn, proposal: Proposal, ctx?: ProposalsContext): void {
-  const p = txn.journal.payload;
-  withProposalsDb(p.stashDir, ctx, (db) =>
-    withImmediateTransaction(db, () => {
-      const metadata = {
-        proposalId: proposal.id,
-        source: proposal.source,
-        ...(proposal.sourceRun !== undefined ? { sourceRun: proposal.sourceRun } : {}),
-        assetPath: p.assetPath,
-        ...(proposal.eligibilitySource !== undefined ? { eligibilitySource: proposal.eligibilitySource } : {}),
-        ...(p.eventMetadata ?? {}),
-        proposalTransactionId: txn.journal.transactionId,
-      };
-      insertEventOnce(db, {
-        eventType: p.operation === "accept" ? "promoted" : "proposal_reverted",
-        ts: txn.journal.decidedAt,
-        ref: p.ref,
-        metadata,
-        idempotencyKey: txn.journal.transactionId,
-      });
-    }),
-  );
-}
-
-async function finalizeProposalTransaction(
-  txn: ProposalTxn,
-  target: ResolvedWriteTarget,
-  proposal: Proposal,
-  ctx?: ProposalsContext,
-): Promise<Proposal> {
-  const p = txn.journal.payload;
-  validatePublishedProposal(p);
-  // #652: finalizing an `asset-published` transaction that a CRASHED earlier
-  // run left behind is this run adopting that write — journal the asset so the
-  // adopting run's auto-sync commits it instead of leaving it stranded.
-  recordWrittenPath(p.assetPath);
-  cleanupProposalPublication(p);
-  if (txn.journal.phase === "asset-published") {
-    const commitRoot = target.source.repoPath ?? target.source.path;
-    const commitPath = path.relative(commitRoot, p.assetPath).replaceAll(path.sep, "/");
-    publishWriteTargetTransaction(target, p.gitPublication, {
-      transactionId: txn.journal.transactionId,
-      message: `${p.operation === "accept" ? "Update" : "Revert"} ${p.ref}`,
-      paths: [commitPath],
-      snapshots: p.gitSnapshots ?? {},
-      onCommitRecorded: (commit) => {
-        const publication = p.gitPublication!;
-        if (publication.commit !== commit) {
-          publication.commit = commit;
-          advanceTxn(txn, "asset-published");
-        }
-      },
-    });
-    persistProposalTransactionState(txn, proposal, ctx);
-    advanceTxn(txn, "proposal-persisted");
-  }
-  let accepted = getProposal(p.stashDir, p.proposalId, ctx);
-  if (txn.journal.phase === "proposal-persisted") {
-    if (!(await indexWrittenAssets(txn.journal.root, [p.assetPath], { bundleId: target.source.name }))) {
-      throw new Error(`Proposal ${p.proposalId} index finalization failed.`);
-    }
-    advanceTxn(txn, "index-finalized");
-  }
-  if (txn.journal.phase === "index-finalized") {
-    accepted = getProposal(p.stashDir, p.proposalId, ctx);
-    persistProposalEvent(txn, accepted, ctx);
-    txnMutationHook("event-persisted");
-    advanceTxn(txn, "event-finalized");
-  }
-  if (txn.journal.phase === "event-finalized") advanceTxn(txn, "committed");
-  return accepted;
-}
-
-/**
- * Kind-level safety fence for a `proposal` journal, run before any recovery
- * action. The engine fences root binding and the uniform changes[] separately.
- */
-function fenceProposalTxnJournal(journal: TxnJournal<ProposalTxnPayload>, txnDir: string, root: string): void {
-  const p = journal.payload;
-  const refIdentity = proposalRefIdentity(p.ref);
-  if (
-    !["accept", "revert"].includes(p.operation) ||
-    !p.targetSource ||
-    !p.targetKind ||
-    refIdentity?.bundle === undefined ||
-    !isWithin(p.assetPath, root) ||
-    ![p.contentPath, p.backupPath]
-      .filter((candidate): candidate is string => candidate !== null)
-      .every((candidate) => isWithin(candidate, txnDir)) ||
-    ![p.publishPath, p.displacedPath].every(
-      (candidate) => isWithin(candidate, root) && path.dirname(candidate) === path.dirname(p.assetPath),
-    )
-  ) {
-    throw new Error(`Refusing unsafe proposal transaction journal at ${path.join(txnDir, "journal.json")}.`);
-  }
-}
-
-function resolveProposalRecoveryTarget(
-  config: AkmConfig,
-  journal: TxnJournal<ProposalTxnPayload>,
-): ResolvedWriteTarget {
-  let target: ResolvedWriteTarget;
-  try {
-    target = resolveBundleWriteTarget(config, journal.payload.targetSource);
-  } catch {
-    throw new UsageError(
-      `Proposal transaction ${journal.transactionId} target is no longer configured.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const bundleId = canonicalBundleIdForTarget(config, target);
-  return { ...target, source: { ...target.source, name: bundleId } };
-}
-
-/**
- * Rethrow a failure on the caller's OWN transaction journal (the one
- * `accept`/`reject` is about to act on) rather than quarantining or
- * deferring it: a raw SQLite-contention throw becomes a `TransientError`
- * (`STATE_DB_CONTENDED`, exit 75) exactly like an already-typed
- * `TransientError`; every other error passes through unchanged, since the
- * command must fail rather than proceed over a crashed transaction whose
- * recovery outcome is still unknown.
- */
-function rethrowOwnJournalFailure(error: unknown, kind: "proposal" | "rejection", transactionId: string): never {
-  if (error instanceof TransientError) throw error;
-  if (isSqliteContentionError(error)) {
-    const transient = new TransientError(
-      `akm's state database is busy while recovering ${kind} transaction ${transactionId}; retry shortly.`,
-      "STATE_DB_CONTENDED",
-    );
-    transient.cause = error;
-    throw transient;
-  }
-  throw error;
-}
-
-/**
- * Recover every `proposal` transaction journal under `target`'s namespace,
- * ahead of every `akm proposal accept`/`reject`. Per-journal contract:
- * - An unreadable `journal.json` is quarantined (via
- *   {@link quarantineTxnDirSafely}) and the scan continues to the next
- *   journal — whose journal it is cannot be known.
- * - A readable journal belonging to `proposalId` (the one the caller is
- *   about to act on) is never quarantined or deferred: ANY failure — the
- *   unsafe check, {@link fenceProposalTxnJournal}, rollback, or finalize —
- *   leaves the journal in place and is rethrown via
- *   {@link rethrowOwnJournalFailure}, so the command fails rather than
- *   proceeding over a crashed transaction whose recovery outcome (e.g.
- *   "asset already published") is still unknown.
- * - A SIBLING journal (some other proposal's) that fails the unsafe check
- *   or the fence is untrusted and is quarantined.
- * - A SIBLING journal whose rollback or finalize throws — transient or
- *   not — is a failed recovery ACTION rather than an untrusted journal: it
- *   is left in place with a `warnOnce`, and the scan continues. A later
- *   recovery pass, or a command that acts on that proposal directly,
- *   retries it.
- * This loop stays separate from {@link recoverTxnsForRoot} (rather than
- * routing through the ALSO-registered generic `proposal` handler, below)
- * because it threads the caller's `ctx` through `getProposal`/
- * `finalizeProposalTransaction` for test-time DB overrides; the generic
- * handler's `finalize` cannot, since {@link registerTxnKind} handlers take
- * no such context.
- */
-async function recoverProposalTransactions(
-  target: ResolvedWriteTarget,
-  stashDir: string,
-  ctx?: ProposalsContext,
-  proposalId?: string,
-): Promise<Map<string, Proposal>> {
-  const completed = new Map<string, Proposal>();
-  const nsDir = txnNamespaceDir(target.source.path);
-  if (!fs.existsSync(nsDir)) return completed;
-  for (const entry of fs.readdirSync(nsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const transactionDir = path.join(nsDir, entry.name);
-    const journalPath = path.join(transactionDir, "journal.json");
-    if (!fs.existsSync(journalPath)) {
-      // Journal-less dirs may be a SIBLING kind's beginTxn window (shared
-      // per-root namespace) — sweep only when demonstrably stale.
-      sweepJournallessTxnDir(transactionDir);
-      continue;
-    }
-    let journal: TxnJournal<ProposalTxnPayload>;
-    try {
-      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<ProposalTxnPayload>;
-    } catch (error) {
-      quarantineTxnDirSafely(
-        transactionDir,
-        target.source.path,
-        undefined,
-        error instanceof Error ? error.message : String(error),
-      );
-      continue;
-    }
-    if (journal.kind !== PROPOSAL_TXN_KIND) continue;
-    if (path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) continue;
-    const isOwnJournal = proposalId !== undefined && journal.payload.proposalId === proposalId;
-    try {
-      if (
-        journal.version !== 1 ||
-        canonicalTxnRoot(journal.root) !== canonicalTxnRoot(target.source.path) ||
-        journal.payload.targetSource !== target.source.name ||
-        journal.payload.targetKind !== target.source.kind
-      ) {
-        throw new Error(`Refusing unsafe proposal transaction journal at ${journalPath}.`);
-      }
-      fenceProposalTxnJournal(journal, transactionDir, target.source.path);
-    } catch (error) {
-      if (isOwnJournal) rethrowOwnJournalFailure(error, "proposal", journal.transactionId);
-      quarantineTxnDirSafely(
-        transactionDir,
-        target.source.path,
-        journal,
-        error instanceof Error ? error.message : String(error),
-      );
-      continue;
-    }
-    try {
-      const txn: ProposalTxn = { journal, journalPath, dir: transactionDir };
-      if (journal.phase === "prepared") {
-        rollbackPreparedProposalTransaction(txn);
-      } else if (journal.phase !== "committed") {
-        const proposal = getProposal(stashDir, journal.payload.proposalId, ctx);
-        completed.set(journal.payload.proposalId, await finalizeProposalTransaction(txn, target, proposal, ctx));
       } else {
-        completed.set(journal.payload.proposalId, getProposal(stashDir, journal.payload.proposalId, ctx));
+        if (current.status === "reverted") return current;
+        if (current.status !== "accepted") {
+          throw new Error(`Proposal ${proposal.id} changed status during reversion (${current.status}).`);
+        }
+        next = {
+          ...current,
+          status: "reverted",
+          updatedAt: decision.decidedAt,
+          review: {
+            outcome: "rejected",
+            reason: "reverted: prior content restored from backup",
+            decidedAt: decision.decidedAt,
+          },
+        };
       }
-      cleanupProposalPublication(journal.payload);
-      cleanupTxn(transactionDir);
-    } catch (error) {
-      if (isOwnJournal) rethrowOwnJournalFailure(error, "proposal", journal.transactionId);
-      warnOnce(
-        `proposal-txn-recovery-failed:${journal.transactionId}`,
-        `[proposals] leaving transaction journal ${journal.transactionId} in place after a recovery failure (${
-          error instanceof Error ? error.message : String(error)
-        }); a later recovery retries it.`,
-      );
-    }
-  }
-  return completed;
-}
-
-export async function recoverProposalTransactionsForStash(
-  stashDir: string,
-  config: AkmConfig,
-  ctx?: ProposalsContext,
-  proposalId?: string,
-): Promise<Map<string, Proposal>> {
-  const completed = new Map<string, Proposal>();
-  // A corrupt/unreadable journal ANYWHERE under `$DATA/txn` must not abort
-  // root discovery for every OTHER proposal — the same "one bad journal
-  // can't brick recovery" contract this function's own per-root scan
-  // (recoverProposalTransactions, below) already gives journals that share
-  // a root's namespace. listTxnJournalsTolerant counts an unreadable journal
-  // instead of throwing; whichever root it lives under gets a full
-  // directory scan (and quarantines it) once some OTHER matching proposal
-  // journal for that root is discovered here — but a root with no such
-  // sibling is never scanned at all, so the count below is the only record
-  // of it and is worth a warning rather than silence.
-  const scan = listTxnJournalsTolerant(
-    (j) =>
-      j.kind === PROPOSAL_TXN_KIND &&
-      path.resolve((j as TxnJournal<ProposalTxnPayload>).payload.stashDir) === path.resolve(stashDir) &&
-      (proposalId === undefined || (j as TxnJournal<ProposalTxnPayload>).payload.proposalId === proposalId),
+      upsertProposal(db, next, stashDir);
+      insertEventOnce(db, {
+        eventType: decision.operation === "accept" ? "promoted" : "proposal_reverted",
+        ts: decision.decidedAt,
+        ref: next.ref,
+        metadata: {
+          proposalId: next.id,
+          source: next.source,
+          ...(next.sourceRun !== undefined ? { sourceRun: next.sourceRun } : {}),
+          assetPath: decision.assetPath,
+          ...(next.eligibilitySource !== undefined ? { eligibilitySource: next.eligibilitySource } : {}),
+          ...(decision.operation === "accept" && decision.eventMetadata ? decision.eventMetadata : {}),
+        },
+        idempotencyKey: `${next.id}:${decision.operation === "accept" ? "promoted" : "reverted"}`,
+      });
+      return next;
+    }),
   );
-  if (scan.unreadableMtimes.length > 0) {
-    const txnHome = path.join(getDataDir(), "txn");
-    warnOnce(
-      `proposal-txn-unreadable:${stashDir}`,
-      `[proposals] ${scan.unreadableMtimes.length} unreadable transaction journal(s) under ${txnHome}; a per-root scan quarantines one only once a readable sibling journal for that root is recovered.`,
-    );
-  }
-  const matches = scan.matches.map((entry) => entry.journal) as TxnJournal<ProposalTxnPayload>[];
-  const irreversible = matches.filter((journal) => journal.phase !== "prepared" && journal.phase !== "committed");
-  if (proposalId !== undefined && irreversible.length > 1) {
-    throw new Error(`Conflicting durable proposal transactions exist for ${proposalId}; refusing recovery.`);
-  }
-  const recoveredRoots = new Set<string>();
-  for (const journal of matches) {
-    let target = resolveProposalRecoveryTarget(config, journal);
-    const requiresGitPublication = matches.some(
-      (candidate) =>
-        candidate.phase === "asset-published" && canonicalTxnRoot(candidate.root) === canonicalTxnRoot(journal.root),
-    );
-    if (requiresGitPublication) target = prepareWriteTargetForMutation(target, { allowAhead: true });
-    if (
-      canonicalTxnRoot(target.source.path) !== canonicalTxnRoot(journal.root) ||
-      journal.payload.targetKind !== target.source.kind
-    ) {
-      throw new Error(`Proposal transaction ${journal.transactionId} is bound to a different target root.`);
-    }
-    const key = path.resolve(target.source.path);
-    if (recoveredRoots.has(key)) continue;
-    const recovered = await recoverProposalTransactions(target, stashDir, ctx, proposalId);
-    for (const [id, proposal] of recovered) completed.set(id, proposal);
-    recoveredRoots.add(key);
-  }
-  return completed;
-}
-
-/**
- * Kind-owned payload of a `proposal-reject` transaction (DB-only — no file
- * changes, deliberately NO before-hash; the envelope root is the stash).
- */
-interface RejectTxnPayload {
-  proposalId: string;
-  stashDir: string;
-  reason?: string;
-  gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
-}
-
-type RejectTxn = Txn<RejectTxnPayload>;
-
-const REJECT_TXN_PHASES = ["prepared", "state-persisted", "event-finalized", "committed"] as const;
-
-function finalizeRejectTransaction(txn: RejectTxn, ctx?: ProposalsContext): Proposal {
-  const p = txn.journal.payload;
-  const decidedAt = txn.journal.decidedAt;
-  let proposal = getProposal(p.stashDir, p.proposalId, ctx);
-  if (txn.journal.phase === "prepared") {
-    if (proposal.status === "pending") {
-      proposal = archiveProposal(
-        p.stashDir,
-        p.proposalId,
-        "rejected",
-        p.reason,
-        { ...ctx, now: () => Date.parse(decidedAt) },
-        p.gateDecision,
-      );
-    } else if (proposal.status !== "rejected") {
-      throw new Error(`Proposal ${p.proposalId} changed status during rejection (${proposal.status}).`);
-    }
-    advanceTxn(txn, "state-persisted");
-    txnMutationHook("reject-state-persisted");
-  }
-  if (txn.journal.phase === "state-persisted") {
-    proposal = getProposal(p.stashDir, p.proposalId, ctx);
-    const eventRef = proposal.ref;
-    const eventMeta = {
-      proposalId: proposal.id,
-      source: proposal.source,
-      ...(proposal.sourceRun !== undefined ? { sourceRun: proposal.sourceRun } : {}),
-      ...(p.reason !== undefined ? { reason: p.reason } : {}),
-      proposalTransactionId: txn.journal.transactionId,
-    };
-    withProposalsDb(p.stashDir, ctx, (db) =>
-      withImmediateTransaction(db, () => {
-        insertEventOnce(db, {
-          eventType: "rejected",
-          ts: decidedAt,
-          ref: eventRef,
-          metadata: eventMeta,
-          idempotencyKey: txn.journal.transactionId,
-        });
-      }),
-    );
-    txnMutationHook("reject-event-persisted");
-    advanceTxn(txn, "event-finalized");
-  }
-  if (txn.journal.phase === "event-finalized") advanceTxn(txn, "committed");
-  return proposal;
-}
-
-/**
- * Recover a stuck `proposal-reject` transaction for `proposalId`, run on
- * every `akm proposal accept` ahead of promotion. An unreadable journal
- * encountered while scanning for `proposalId`'s own reject journal is
- * quarantined via {@link quarantineTxnDirSafely} and the scan continues,
- * rather than aborting `accept` for every proposal in this stash — whose
- * journal it is cannot be known. This function only ever processes
- * `proposalId`'s OWN reject journal (it skips every other proposal's), so
- * every other failure — the unsafe check or finalize — leaves that journal
- * in place and is rethrown via {@link rethrowOwnJournalFailure} rather than
- * quarantined: the caller is about to accept this same proposal, and
- * letting that run ahead of an unfinished durable rejection would
- * double-finalize it.
- */
-function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: ProposalsContext): Proposal | undefined {
-  const nsDir = txnNamespaceDir(stashDir);
-  if (!fs.existsSync(nsDir)) return undefined;
-  for (const entry of fs.readdirSync(nsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const transactionDir = path.join(nsDir, entry.name);
-    const journalPath = path.join(transactionDir, "journal.json");
-    if (!fs.existsSync(journalPath)) continue;
-    let journal: TxnJournal<RejectTxnPayload>;
-    try {
-      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<RejectTxnPayload>;
-    } catch (error) {
-      quarantineTxnDirSafely(
-        transactionDir,
-        stashDir,
-        undefined,
-        error instanceof Error ? error.message : String(error),
-      );
-      continue;
-    }
-    if (journal.kind !== REJECT_TXN_KIND) continue;
-    if (journal.payload.proposalId !== proposalId) continue;
-    try {
-      if (journal.version !== 1 || path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) {
-        throw new Error(`Refusing unsafe proposal rejection journal at ${journalPath}.`);
-      }
-      const proposal = finalizeRejectTransaction({ journal, journalPath, dir: transactionDir }, ctx);
-      cleanupTxn(transactionDir);
-      return proposal;
-    } catch (error) {
-      rethrowOwnJournalFailure(error, "rejection", journal.transactionId);
-    }
-  }
-  return undefined;
 }
 
 export function rejectProposalDurably(
@@ -1913,143 +1415,61 @@ export function rejectProposalDurably(
   ctx?: ProposalsContext,
   gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string },
 ): Proposal {
-  const recovered = recoverRejectTransaction(stashDir, proposalId, ctx);
-  if (recovered) return recovered;
-  const proposal = getProposal(stashDir, proposalId, ctx);
-  if (proposal.status !== "pending") {
-    throw new UsageError(
-      `Proposal ${proposalId} is not pending (current status: ${proposal.status}). Only pending proposals can be rejected.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const txn = beginTxn<RejectTxnPayload>({
-    kind: REJECT_TXN_KIND,
-    root: stashDir,
-    changes: [],
-    payload: {
-      proposalId,
-      stashDir,
-      ...(reason !== undefined ? { reason } : {}),
-      ...(gateDecision ? { gateDecision } : {}),
-    },
-    decidedAt: nowIso(ctx),
-  });
-  const rejected = finalizeRejectTransaction(txn, ctx);
-  cleanupTxn(txn.dir);
+  const decidedAt = nowIso(ctx);
+  const rejected = archiveProposal(
+    stashDir,
+    proposalId,
+    "rejected",
+    reason,
+    { ...ctx, now: () => Date.parse(decidedAt) },
+    gateDecision,
+  );
+  withProposalsDb(stashDir, ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      insertEventOnce(db, {
+        eventType: "rejected",
+        ts: decidedAt,
+        ref: rejected.ref,
+        metadata: {
+          proposalId: rejected.id,
+          source: rejected.source,
+          ...(rejected.sourceRun !== undefined ? { sourceRun: rejected.sourceRun } : {}),
+          ...(reason !== undefined ? { reason } : {}),
+        },
+        idempotencyKey: `${rejected.id}:rejected`,
+      });
+    }),
+  );
   return rejected;
 }
 
-function prepareProposalTransaction(
-  stashDir: string,
-  target: ResolvedWriteTarget,
-  proposal: Proposal,
-  ref: AssetRef,
-  content: string,
-  options: {
-    operation: "accept" | "revert";
-    originalHash: string | null;
-    backup?: Buffer;
-    eventMetadata?: Record<string, unknown>;
-    gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
-  },
-  ctx?: ProposalsContext,
-): ProposalTxn {
-  if (options.operation === "accept") assertAkmAssetWrite(target.source);
-  const assetPath = resolveAssetFilePathSafe(target.source, ref);
-  if (!assetPath) throw new Error(`Cannot resolve proposal target ${proposal.ref}.`);
+/** Write `content` to `assetPath` atomically (temp file + rename), keeping an existing file's mode. */
+function writeProposalAssetFile(assetPath: string, content: string): void {
   fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-  const normalized = content.endsWith("\n") ? content : `${content}\n`;
-  const publishedHash = proposalHash(normalized);
-  // Mint the id first: the payload embeds paths under the transaction dir,
-  // and the initial `prepared` journal must be written exactly ONCE with its
-  // final contents (crash runners intercept the first rename per phase).
-  const transactionId = mintTxnId();
-  const gitPublication = captureGitPublication(target);
-  const transactionDir = txnDirFor(target.source.path, transactionId);
-  fs.mkdirSync(transactionDir, { recursive: true, mode: 0o700 });
-  const contentPath = path.join(transactionDir, "published-content");
-  const publishPath = path.join(path.dirname(assetPath), `.akm-proposal-${transactionId}.publish`);
-  const displacedPath = path.join(path.dirname(assetPath), `.akm-proposal-${transactionId}.displaced`);
-  fs.writeFileSync(contentPath, normalized, { encoding: "utf8", mode: 0o600 });
-  fsyncTxnFile(contentPath);
-  let persistedBackupPath: string | null = null;
-  if (options.backup) {
-    const backupPath = path.join(transactionDir, "backup-content");
-    fs.writeFileSync(backupPath, options.backup, { mode: 0o600 });
-    fsyncTxnFile(backupPath);
-    persistedBackupPath = backupPath;
-  }
-  const txn = beginTxn<ProposalTxnPayload>({
-    kind: PROPOSAL_TXN_KIND,
-    root: target.source.path,
-    transactionId,
-    changes: [
-      {
-        path: assetPath,
-        op: options.originalHash === null ? "create" : "update",
-        beforeHash: options.originalHash,
-        afterHash: publishedHash,
-      },
-    ],
-    payload: {
-      operation: options.operation,
-      proposalId: proposal.id,
-      stashDir,
-      targetSource: target.source.name,
-      targetKind: target.source.kind,
-      assetPath,
-      ref: proposal.ref,
-      contentPath,
-      publishPath,
-      displacedPath,
-      backupPath: persistedBackupPath,
-      originalHash: options.originalHash,
-      publishedHash,
-      ...(gitPublication ? { gitPublication } : {}),
-      ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
-      ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
-    },
-    decidedAt: nowIso(ctx),
-  });
+  const mode = fs.existsSync(assetPath) ? fs.statSync(assetPath).mode & 0o777 : 0o644;
+  const tempPath = path.join(path.dirname(assetPath), `.akm-proposal-${process.pid}-${randomUUID()}.tmp`);
+  fs.writeFileSync(tempPath, content, { encoding: "utf8", mode });
   try {
-    const mode = fs.existsSync(assetPath) ? fs.statSync(assetPath).mode & 0o777 : 0o644;
-    fs.writeFileSync(publishPath, normalized, { encoding: "utf8", flag: "wx", mode });
-    fsyncTxnFile(publishPath);
-    fsyncTxnDir(path.dirname(assetPath));
+    fs.renameSync(tempPath, assetPath);
   } catch (error) {
-    rollbackPreparedProposalTransaction(txn);
-    cleanupTxn(txn.dir);
+    fs.rmSync(tempPath, { force: true });
     throw error;
   }
-  return txn;
+  recordWrittenPath(assetPath);
 }
 
-function publishProposalAsset(txn: ProposalTxn, target: ResolvedWriteTarget): void {
-  const p = txn.journal.payload;
+/** Index the file just written; the next `akm index` catches up when this cannot. */
+async function indexWrittenProposalAsset(target: ResolvedWriteTarget, assetPath: string): Promise<void> {
   try {
-    if (p.originalHash !== null) {
-      fs.renameSync(p.assetPath, p.displacedPath);
-      if (proposalFileHash(p.displacedPath) !== p.originalHash) {
-        fs.renameSync(p.displacedPath, p.assetPath);
-        throw new Error(`Proposal target changed while its backup was being acquired.`);
-      }
+    if (!(await indexWrittenAssets(target.source.path, [assetPath], { bundleId: target.source.name }))) {
+      warn(`[proposals] ${assetPath} was written but not indexed; run \`akm index\`.`);
     }
-    fs.linkSync(p.publishPath, p.assetPath);
-    // #652: the accepted-proposal (and revert) target is the run's headline
-    // write — journal it the instant the asset lands, before the txn advances.
-    recordWrittenPath(p.assetPath);
-    fsyncTxnDir(path.dirname(p.assetPath));
-    const snapshot = captureWriteTargetPathSnapshot(target, p.assetPath);
-    if (snapshot) p.gitSnapshots = { [snapshot.path]: snapshot.state };
-    advanceTxn(txn, "asset-published");
   } catch (error) {
-    rollbackPreparedProposalTransaction(txn);
-    cleanupTxn(txn.dir);
-    throw error;
+    warn(
+      `[proposals] ${assetPath} was written but not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
+    );
   }
 }
-
-// ── Promotion ──────────────────────────────────────────────────────────────
 
 export interface PromoteResult {
   proposal: Proposal;
@@ -2486,7 +1906,6 @@ async function promoteProposalWithLease(
   },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
-  recoverRejectTransaction(stashDir, id, ctx);
   let proposal = getProposal(stashDir, id, ctx);
   const repairedContent = repairProposalContent(proposalContent(proposal));
   const proposalToValidate =
@@ -2514,7 +1933,6 @@ async function promoteProposalWithLease(
     });
   }
 
-  await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
   proposal = getProposal(stashDir, id, ctx);
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   if (proposal.status === "accepted") {
@@ -2573,7 +1991,12 @@ async function promoteProposalWithLease(
         ? backup !== undefined &&
           computeNormalizedContentHash(backup.toString("utf8")) === proposal.beforeHashNormalized
         : backup !== undefined && proposalHash(backup) === proposal.beforeHash;
-    if (!fresh) {
+    // A file that already holds this proposal's content is a promotion that
+    // wrote the asset but did not get to record the decision: finish it.
+    const alreadyPublished =
+      backup !== undefined &&
+      computeNormalizedContentHash(backup.toString("utf8")) === computeNormalizedContentHash(preflight.stampedContent);
+    if (!fresh && !alreadyPublished) {
       throw new UsageError(
         `Proposal target changed after proposal ${id} was created; refusing to overwrite newer content.`,
         "INVALID_FLAG_VALUE",
@@ -2614,25 +2037,28 @@ async function promoteProposalWithLease(
     refIdentity?.bundle === undefined
       ? { ...proposalForPreflight, ref: `${target.source.name}//${refIdentity?.conceptId ?? ""}` }
       : proposalForPreflight;
-  const transaction = prepareProposalTransaction(
+  const decidedAt = nowIso(ctx);
+  const content = stampedContent.endsWith("\n") ? stampedContent : `${stampedContent}\n`;
+  writeProposalAssetFile(assetPath, content);
+  commitWriteTargetBoundary(mutationTarget, `Update ${proposalForMutation.ref}`, { paths: [assetPath] });
+  const accepted = persistProposalDecision(
     stashDir,
-    mutationTarget,
     proposalForMutation,
-    ref,
-    stampedContent,
     {
       operation: "accept",
+      target: mutationTarget,
+      assetPath,
+      content,
       originalHash: backup ? proposalHash(backup) : null,
-      backup,
-      eventMetadata: options.eventMetadata,
-      gateDecision: options.gateDecision,
+      ...(backup !== undefined ? { backupContent: backup.toString("utf8") } : {}),
+      ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
+      ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
+      decidedAt,
     },
     ctx,
   );
-  publishProposalAsset(transaction, mutationTarget);
-  const accepted = await finalizeProposalTransaction(transaction, mutationTarget, proposalForMutation, ctx);
-  cleanupTxn(transaction.dir);
-  return { proposal: accepted, assetPath: transaction.journal.payload.assetPath, ref: accepted.ref };
+  await indexWrittenProposalAsset(mutationTarget, assetPath);
+  return { proposal: accepted, assetPath, ref: accepted.ref };
 }
 
 // ── Reversion (Phase 6C) ────────────────────────────────────────────────────
@@ -2690,7 +2116,6 @@ async function revertProposalWithLease(
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
 
-  await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
   proposal = getProposal(stashDir, id, ctx);
   if (proposal.status === "reverted") {
     if (!proposal.acceptedTarget) {
@@ -2749,18 +2174,11 @@ async function revertProposalWithLease(
     );
   }
   assertWriteTargetPathsClean(target.source, [assetPath]);
-  const transaction = prepareProposalTransaction(
-    stashDir,
-    target,
-    proposal,
-    ref,
-    backupContent,
-    { operation: "revert", originalHash: acceptedHash },
-    ctx,
-  );
-  publishProposalAsset(transaction, target);
-  const reverted = await finalizeProposalTransaction(transaction, target, proposal, ctx);
-  cleanupTxn(transaction.dir);
+  const decidedAt = nowIso(ctx);
+  writeProposalAssetFile(assetPath, backupContent.endsWith("\n") ? backupContent : `${backupContent}\n`);
+  commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: [assetPath] });
+  const reverted = persistProposalDecision(stashDir, proposal, { operation: "revert", assetPath, decidedAt }, ctx);
+  await indexWrittenProposalAsset(target, assetPath);
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
@@ -2835,45 +2253,3 @@ function resolveAssetFilePathSafe(source: WriteTargetSource, ref: AssetRef): str
     return undefined;
   }
 }
-
-// Register the proposal transaction kinds with the unified engine so ANY
-// recovery entry point (mv pre-flight, indexer, write-path indexer) can
-// finish or roll back an interrupted proposal mutation for a root it
-// touches. The proposal-owned entry points below keep their richer,
-// ctx-threaded recovery paths over the same journals.
-registerTxnKind<ProposalTxnPayload>(PROPOSAL_TXN_KIND, {
-  phases: PROPOSAL_TXN_PHASES,
-  commitPhase: "asset-published",
-  validate: (journal, txnDir, root) => fenceProposalTxnJournal(journal, txnDir, root),
-  rollback: (txn) => {
-    rollbackPreparedProposalTransaction(txn);
-  },
-  finalize: async (txn) => {
-    const p = txn.journal.payload;
-    const config = loadConfig();
-    let target = resolveProposalRecoveryTarget(config, txn.journal);
-    if (txn.journal.phase === "asset-published") {
-      target = prepareWriteTargetForMutation(target, { allowAhead: true });
-    }
-    if (
-      canonicalTxnRoot(target.source.path) !== canonicalTxnRoot(txn.journal.root) ||
-      p.targetKind !== target.source.kind
-    ) {
-      throw new Error(`Proposal transaction ${txn.journal.transactionId} is bound to a different target root.`);
-    }
-    const proposal = getProposal(p.stashDir, p.proposalId);
-    await finalizeProposalTransaction(txn, target, proposal);
-    cleanupProposalPublication(p);
-  },
-});
-
-registerTxnKind<RejectTxnPayload>(REJECT_TXN_KIND, {
-  phases: REJECT_TXN_PHASES,
-  // A reject is roll-forward from its very first phase (DB-only; the archive
-  // decision is durable the moment the journal exists).
-  commitPhase: "prepared",
-  rollback: () => {},
-  finalize: (txn) => {
-    finalizeRejectTransaction(txn as RejectTxn);
-  },
-});

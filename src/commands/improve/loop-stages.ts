@@ -1682,7 +1682,7 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
  * Grace window (ms) before an unresolved `asset_salience` / `asset_outcome`
  * row becomes delete-eligible — only when `improve.stateGc.collect` is true.
  * A named constant, not a config knob (owner ruling — see the close-out
- * plan's Workstream C). Mirrors `TXN_SWEEP_GRACE_MS` (src/core/fs-txn.ts:298).
+ * plan's Workstream C).
  */
 export const STATE_GC_GRACE_MS = daysToMs(7);
 

@@ -29,4 +29,4 @@ export const ExperimentalConfigSchema = z
      */
     improveAutonomy: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();

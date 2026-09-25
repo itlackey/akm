@@ -1,40 +1,27 @@
 Usage: akm-migrate <command> [options]
 
-The one migration tool for an akm installation. Every historical shape akm
-has ever written lives here; the CLI proper reads only current schemas.
-`status` and `apply` run every step, in order, and print one combined JSON
-plan (exit 1 when any step is blocked):
+The one migration tool for an akm installation. The CLI proper reads every
+shape akm has ever written (in memory, with a warning); `apply` makes the
+current shape durable on disk. `status` and `apply` run every step, in
+order, and print one combined JSON plan (exit 1 when any step is blocked):
 
-  1. legacy config `extraParams` keys lifted onto first-class engine fields
-  2. retired `experimental.*` config keys removed (today `workflowEngine`)
-  3. scheduler grants bound to the configured source installation that was
-     approved (stale grants whose bundle no longer exists are removed)
-  4. pending state.db migrations, historical-destructive ones included,
+  1. config.json rewritten in its current shape (retired and unknown keys
+     dropped, legacy `extraParams` lifted onto engine fields, the legacy
+     source layout converted, `configVersion` bumped) -- backed up first
+  2. pending state.db migrations, historical-destructive ones included,
      with a verified sibling safety copy (the only path that admits them)
-  5. source-owned schedule enablement converted to host-local scheduler
-     grants
-  6. task-v2 files to task v3, then task-v3 files to task source v4
-  7. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
-  8. live `.akm` writers relocated to `$STATE`/`$CACHE`, for every local
+  3. task-v2 files to task v3, then task-v3 files to task source v4
+  4. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
+     and the transaction-journal, maintenance-barrier, lock-mutex and
+     version-stamp files older releases kept under $DATA, $STATE and $CONFIG
+  5. live `.akm` writers relocated to `$STATE`/`$CACHE`, for every local
      bundle (distill-rejected, eval-cases, measurement verdicts, and stale
-     improve-pipeline locks — a lock a live run still holds is left alone)
+     improve-pipeline locks -- a lock a live run still holds is left alone)
 
 `akm migrate status|apply` wraps this executable; `akm upgrade` runs
 `apply` after its install step, so an image that ships akm can put either
-in its entrypoint (a current installation is a no-op). Every akm command
-also TRIGGERS this executable itself, in `--host-local` mode, once per
-version change (`reconcileOnVersionChange`, `src/core/version-reconcile.ts`)
--- the CLI proper still reads only current schemas; it never absorbs the
-migration steps, it only calls the one tool that runs them.
-
-`--host-local` narrows `status`/`apply` to steps 1-5 above plus stale
-transaction recovery: config.json, state.db, scheduler grants (including
-carrying a grant forward from an installed native scheduler row that has
-no config entry yet -- the operator's own prior `akm task sync`), and
-`$DATA/txn`. It never rewrites bundle content (steps 6-8) -- task files,
-`.akm` residue, and writer relocation stay reachable only through the full
-`apply`, run by a human or `akm upgrade`.
+in its entrypoint (a current installation is a no-op).
 
 Commands:
-  status [--host-local]            Inspect every pending migration without changing anything.
-  apply [--dry-run] [--host-local] Back up and apply every pending migration.
+  status               Inspect every pending migration without changing anything.
+  apply [--dry-run]    Back up and apply every pending migration.

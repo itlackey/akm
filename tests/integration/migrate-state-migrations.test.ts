@@ -203,22 +203,23 @@ test("apply lifts a legacy extraParams config to disk, and later steps that load
   };
   expect(written.engines["my-llm"].temperature).toBe(0.7);
   expect(written.engines["my-llm"].extraParams).toBeUndefined();
-  expect((plan.configExtraParams as { applied?: boolean }).applied).toBe(true);
+  expect(plan.configFile?.applied).toBe(true);
   expect((plan.stateMigrations as { applied: string[] }).applied).toEqual(FROM_018);
   expect(plan.status).toBe("current");
 });
 
-test("status names a pending config lift as the blocker instead of dying on the config it describes", async () => {
+test("status reports a pending config lift as ready instead of dying on the config it describes", async () => {
   writeLegacyExtraParamsConfig(storage.configDir);
   seedBefore018(getStateDbPath());
 
   const plan = await runMigration({ apply: false });
 
-  expect(plan.status).toBe("blocked");
-  expect(plan.blockers).toEqual(["engines.my-llm.extraParams.temperature -> engines.my-llm.temperature"]);
+  expect(plan.status).toBe("ready");
+  expect(plan.blockers).toEqual([]);
+  expect(plan.configFile).toMatchObject({ changed: true, applied: false });
+  expect(plan.configFile?.keys).toContain("engines");
   // Read-only still reports what state is waiting behind the lift.
   expect(plan.stateMigrations).toEqual({ pending: FROM_018 });
-  expect(plan.taskV3Migration).toBeUndefined();
 });
 
 test("dry-run reports a pending retired top-level and nested key removal, leaving the config file unchanged", async () => {
@@ -226,8 +227,8 @@ test("dry-run reports a pending retired top-level and nested key removal, leavin
 
   const plan = await runMigration({ apply: false });
 
-  const pending = plan.configRetiredKeys as { pending: { removed: string[] } };
-  expect(new Set(pending.pending.removed)).toEqual(new Set(["llm", "experimental.workflowEngine"]));
+  expect(plan.configFile).toMatchObject({ changed: true, applied: false });
+  expect(plan.configFile?.keys).toEqual(expect.arrayContaining(["experimental", "llm"]));
   // apply will rewrite config.json, so the preview must not claim "current".
   expect(plan.status).toBe("ready");
   const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
@@ -243,9 +244,8 @@ test("apply removes the retired top-level and nested keys, keeps the live one, a
 
   const plan = await runMigration({ apply: true });
 
-  const applied = plan.configRetiredKeys as { applied: boolean; removed: string[] };
-  expect(applied.applied).toBe(true);
-  expect(new Set(applied.removed)).toEqual(new Set(["llm", "experimental.workflowEngine"]));
+  expect(plan.configFile?.applied).toBe(true);
+  expect(plan.configFile?.keys).toEqual(expect.arrayContaining(["experimental", "llm"]));
   const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
     llm?: unknown;
     experimental: Record<string, unknown>;
@@ -274,8 +274,8 @@ test("dry-run reports a pending legacy stashDir/sources conversion, leaving the 
 
   const plan = await runMigration({ apply: false });
 
-  const pending = plan.configLegacySourceShape as { pending: { converted: string[] } };
-  expect(new Set(pending.pending.converted)).toEqual(new Set(["stashDir", "sources"]));
+  expect(plan.configFile).toMatchObject({ changed: true, applied: false });
+  expect(plan.configFile?.keys).toEqual(expect.arrayContaining(["sources", "stashDir"]));
   expect(plan.status).toBe("ready");
   const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { stashDir: unknown; sources: unknown };
   expect(written.stashDir).toBe(storage.stashDir);
@@ -292,9 +292,8 @@ test("apply converts the legacy stashDir/sources shape to bundles/defaultBundle;
 
   const plan = await runMigration({ apply: true });
 
-  const applied = plan.configLegacySourceShape as { applied: boolean; converted: string[] };
-  expect(applied.applied).toBe(true);
-  expect(new Set(applied.converted)).toEqual(new Set(["stashDir", "sources"]));
+  expect(plan.configFile?.applied).toBe(true);
+  expect(plan.configFile?.keys).toEqual(expect.arrayContaining(["sources", "stashDir"]));
   const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
     stashDir?: unknown;
     sources?: unknown;

@@ -28,7 +28,6 @@ import {
   preflightProposalPromotion,
   promoteProposal,
   proposalContent,
-  recoverProposalTransactionsForStash,
   rejectProposalDurably,
   resolveProposalId,
   revertProposal,
@@ -223,7 +222,6 @@ export async function akmProposalReject(options: ProposalRejectOptions): Promise
     const config = options.config ?? loadConfig();
     const { stashDir: stash } = resolveProposalQueue(options.stashDir, options.queue, config);
     const proposalId = resolveProposalId(stash, options.id, options.ctx).id;
-    await recoverProposalTransactionsForStash(stash, config, options.ctx, proposalId);
     const updated = rejectProposalDurably(stash, proposalId, options.reason, options.ctx, options.gateDecision);
 
     return {

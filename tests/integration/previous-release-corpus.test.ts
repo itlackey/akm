@@ -88,12 +88,17 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { applyConfigRetiredKeys } from "../../scripts/akm-migrate/migrate/config-retired-keys";
 import { inspectMigrationPlan } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl, isProposalSkipped } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
-import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCache } from "../../src/core/config/config";
+import {
+  loadConfig,
+  loadUserConfig,
+  normalizeConfigFile,
+  parseAndValidateConfigText,
+  resetConfigCache,
+} from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
@@ -707,7 +712,6 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
 
     const config = loadConfig();
     expect(config.experimental?.improveAutonomy).toBe(true);
-    expect((config.experimental as unknown as Record<string, unknown> | undefined)?.workflowEngine).toBeUndefined();
     const warned = (warnSpy.mock.calls as unknown[][]).some((call) => call.join(" ").includes("workflowEngine"));
     expect(warned).toBe(true);
   });
@@ -726,11 +730,10 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
 
     const config = loadConfig();
     expect(config.experimental?.improveAutonomy).toBe(true);
-    expect((config.experimental as unknown as Record<string, unknown> | undefined)?.workflowEngine).toBeUndefined();
-    expect((config as unknown as Record<string, unknown>).features).toBeUndefined();
 
     const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
-    expect(messages.some((m) => m.includes("workflowEngine") && m.includes("features"))).toBe(true);
+    expect(messages.some((m) => m.includes("workflowEngine"))).toBe(true);
+    expect(messages.some((m) => m.includes("features"))).toBe(true);
   });
 
   test("after `akm migrate apply` removes every retired key from config.json, loadConfig emits no retired-keys warning", () => {
@@ -745,19 +748,20 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
       }),
     );
 
-    const result = applyConfigRetiredKeys(configPath);
+    const result = normalizeConfigFile(configPath, { apply: true });
     expect(result.applied).toBe(true);
-    expect(new Set(result.removed)).toEqual(new Set(["features", "experimental.workflowEngine"]));
+    expect(result.keys).toEqual(expect.arrayContaining(["experimental", "features"]));
 
     resetConfigCache();
     _resetWarnOnceForTests();
+    warnSpy.mockClear();
     const config = loadConfig();
     expect(config.experimental?.improveAutonomy).toBe(true);
     expect((config as unknown as Record<string, unknown>).features).toBeUndefined();
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  test("a non-retired unknown experimental key still fails closed", () => {
+  test("an unknown experimental key is dropped with a warning, never fatal", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -768,7 +772,9 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
       }),
     );
 
-    expect(() => loadConfig()).toThrow(/Unrecognized key/);
+    const config = loadConfig();
+    const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
+    expect(messages.some((m) => m.includes("experimental.improveAutonomyy"))).toBe(true);
   });
 });
 

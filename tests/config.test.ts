@@ -535,7 +535,7 @@ describe("embedding config", () => {
     expect(loadConfig().embedding).toBeUndefined();
   });
 
-  test("ignores the retired `embedding.chunkSize` key, unvalidated, with no error and no warning (#954)", () => {
+  test("ignores the retired `embedding.chunkSize` key with one warning and no error (#954)", () => {
     // Nothing in src/ ever read embedding.chunkSize; it is dead, not migrated. Before #954 it was
     // still a *validated* schema field (positiveInt), so an out-of-range value failed config
     // load even though the value was never used. Retiring the key drops the validation with it:
@@ -547,7 +547,8 @@ describe("embedding config", () => {
     const warnings = captureWarnings(() => {
       expect(() => loadConfig()).not.toThrow();
     });
-    expect(warnings).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/unknown config key "embedding\.chunkSize"/i);
     expect(loadConfig().embedding?.chunkSize).toBe(-3);
     expect(Object.keys(EmbeddingConnectionConfigSchema.shape)).not.toContain("chunkSize");
   });
