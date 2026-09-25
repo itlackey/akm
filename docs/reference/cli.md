@@ -335,6 +335,18 @@ Returns a JSON object with:
 | `registries` | Configured registries |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
+| `compat` | Compat manifest (see below) — plugins gate on these, not on the version string |
+
+`compat` fields:
+
+| Field | Description |
+| --- | --- |
+| `indexGeneration` | `index.db` schema generation this binary reads/writes |
+| `stateLedgerHead` | Id of the last applied `state.db` migration |
+| `taskSourceVersion` | Task source document version this binary writes |
+| `configVersion` | `config.json` `configVersion` this binary writes |
+| `workflowIrVersion` | Frozen workflow plan `irVersion` this binary writes |
+| `pluginProtocol` | JSON key-set contract of plugin-facing command results (`search`, `curate`, `show`, `info`, `proposal extract`) |
 
 `semanticSearch.status` values:
 - `"ready-vec"` — native sqlite-vec extension active (fastest)
