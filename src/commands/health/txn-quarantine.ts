@@ -113,8 +113,8 @@ export function collectTxnAwaitingRecoveryAdvisory(
   );
   const hasProposal = stale.some((entry) => entry.proposalId !== undefined);
   const action = hasProposal
-    ? "For a named proposal, run `akm proposal show <id>` then accept, reject or revert it; `akm migrate status` lists every stuck journal."
-    : "`akm migrate status` lists every stuck journal.";
+    ? "For a named proposal, run `akm proposal show <id>` then accept, reject or revert it (that retries its recovery); `akm migrate status` lists those under the default stash."
+    : "`akm migrate status` lists those under the default stash.";
 
   return {
     name: "txn-awaiting-recovery",
