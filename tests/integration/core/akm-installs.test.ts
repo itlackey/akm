@@ -112,6 +112,25 @@ describe("enumerateAkmInstalls (upgrade-D D3)", () => {
     }
   });
 
+  test("records binDir as the nvm bin dir, not the realpath's own dirname (upgrade-D D3 r2-1)", () => {
+    const sandbox = makeSandboxDir("akm-installs-nvm-bindir");
+    try {
+      const nvmDir = path.join(sandbox.dir, ".nvm");
+      const versionDir = path.join(nvmDir, "versions", "node", "v24.18.0");
+      const real = writeStubAkm(path.join(versionDir, "lib", "node_modules", "akm-cli", "dist"), "0.9.17");
+      const binDir = path.join(versionDir, "bin");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.symlinkSync(real, path.join(binDir, "akm"));
+
+      const installs = enumerateAkmInstalls({ HOME: sandbox.dir, PATH: "", NVM_DIR: nvmDir }, { runningRealpaths: [] });
+      expect(installs).toHaveLength(1);
+      expect(installs[0]?.path).toBe(fs.realpathSync(real));
+      expect(installs[0]?.binDir).toBe(binDir);
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
   test("dedupes a PATH shim and a known root that resolve to the same realpath", () => {
     const sandbox = makeSandboxDir("akm-installs-dedupe");
     try {

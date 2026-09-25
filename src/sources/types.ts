@@ -577,10 +577,15 @@ export interface UpgradeResponse {
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
   /**
    * (upgrade-D D3) Every OTHER akm install found on the host: for a
-   * recognizable manager (npm/bun/pnpm), the SAME version was just installed
-   * there too and re-verified with `--version`; an install with no manager
-   * (a standalone binary, a checkout) is listed with `ok: false` and never
-   * touched. Present only when the primary install above actually upgraded.
+   * recognizable manager (npm/bun/pnpm), the SAME version is installed there
+   * too via that install's own adjacent package manager and re-verified with
+   * `--version` — or, when it is already at that version, left untouched and
+   * reported `ok: true` without spawning anything; an install with no
+   * manager (a standalone binary, a checkout) is listed with `ok: false` and
+   * never touched. Present whenever the primary install's own upgrade step
+   * ran, including when it was a no-op because the running install was
+   * already current; absent for the package-local and downgrade-refused
+   * branches, which return before that step.
    */
   otherInstalls?: OtherAkmInstallStatus[];
 }

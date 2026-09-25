@@ -76,6 +76,16 @@ export type AkmInstallManager = "npm" | "bun" | "pnpm" | "standalone" | "checkou
 export interface AkmInstall {
   /** Resolved (symlink-free) absolute path — the dedup key. */
   path: string;
+  /**
+   * Directory of the first (pre-realpath) candidate that resolved to
+   * `path` — e.g. `~/.nvm/versions/node/v24/bin` for an nvm shim whose
+   * realpath lands under `lib/node_modules/akm-cli/dist`. Unlike
+   * `path.dirname(path)`, this is where that install's own adjacent
+   * package manager (`npm`/`pnpm`) actually lives, so upgrading through it
+   * uses the right manager instead of falling back to the bare command on
+   * the running process's PATH (upgrade-D D3).
+   */
+  binDir: string;
   manager: AkmInstallManager;
   /** `--version` output, trimmed, or `undefined` when the probe failed or timed out. */
   version: string | undefined;
@@ -119,6 +129,7 @@ export function enumerateAkmInstalls(env: NodeJS.ProcessEnv, options: EnumerateA
     if (byRealpath.has(real)) continue;
     byRealpath.set(real, {
       path: real,
+      binDir: path.dirname(candidate),
       manager: classifyInstall(real),
       version: probeVersion(run, real),
       isRunning: runningRealpaths.has(real),

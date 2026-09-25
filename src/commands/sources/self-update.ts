@@ -373,13 +373,15 @@ export async function performUpgrade(
   }
 
   if (!check.updateAvailable && !force) {
+    const migration = await runMigrationStep(runTool);
     return {
       currentVersion,
       newVersion: latestVersion,
       upgraded: false,
       installMethod,
       message: `akm v${currentVersion} is already the latest version`,
-      migration: await runMigrationStep(runTool),
+      migration,
+      otherInstalls: upgradeOtherInstalls(latestVersion, dependencies),
     };
   }
 
@@ -981,12 +983,17 @@ function upgradeOtherInstall(install: AkmInstall, targetVersion: string): OtherA
     };
   }
 
-  const command = getPackageManagerUpgradeCommand(
-    install.manager,
-    undefined,
-    targetVersion,
-    path.dirname(install.path),
-  );
+  if (install.version === targetVersion) {
+    return {
+      path: install.path,
+      before: install.version,
+      after: install.version,
+      ok: true,
+      message: `Already v${install.version}.`,
+    };
+  }
+
+  const command = getPackageManagerUpgradeCommand(install.manager, undefined, targetVersion, install.binDir);
   if (!command) {
     return {
       path: install.path,

@@ -13,7 +13,14 @@ import { collectAkmInstallsAdvisory } from "../../../src/commands/health/akm-ins
 import type { AkmInstall } from "../../../src/core/akm-installs";
 
 function install(overrides: Partial<AkmInstall>): AkmInstall {
-  return { path: "/opt/akm/akm", manager: "standalone", version: "0.9.17", isRunning: false, ...overrides };
+  return {
+    path: "/opt/akm/akm",
+    binDir: "/opt/akm",
+    manager: "standalone",
+    version: "0.9.17",
+    isRunning: false,
+    ...overrides,
+  };
 }
 
 describe("collectAkmInstallsAdvisory (upgrade-D D3)", () => {

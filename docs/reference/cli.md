@@ -1328,15 +1328,19 @@ reading the structured field.
 
 A host can run more than one `akm`: the shell's bun-global copy, cron's
 nvm-node copy, the OpenCode plugin's own bundled copy — each upgraded
-separately in the past, so one could silently fall behind. After the
-primary install above succeeds, `akm upgrade` also enumerates every OTHER
-`akm` on PATH and in the known install roots (bun global, the npm global
-root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
-version's `bin/`) and, for each with a recognizable manager (npm/bun/pnpm),
-installs the SAME version there too and re-verifies it with `--version`. An
-install with no manager it can run (a standalone binary, a checkout) is
-listed but never touched — update those by hand. Results land in the
-`otherInstalls` field: `[{path, before, after, ok, message}]`. `--check`
+separately in the past, so one could silently fall behind. After the primary
+install step above runs — including when it is a no-op because the running
+install is already the latest version — `akm upgrade` also enumerates every
+OTHER `akm` on PATH and in the known install roots (bun global, the npm
+global root, pnpm global, `~/.local/bin`, `/usr/local/bin`, every nvm node
+version's `bin/`) and, for each with a recognizable manager (npm/bun/pnpm)
+not already at that version, installs the SAME version there too via that
+install's own adjacent package manager (not always the running install's)
+and re-verifies it with `--version`. One already at the target version is
+reported `ok: true` without being reinstalled. An install with no manager it
+can run (a standalone binary, a checkout) is listed but never touched —
+update those by hand. Results land in the `otherInstalls` field: `[{path,
+before, after, ok, message}]`. `--check`
 reports the same list read-only (`before` equals `after`; `ok` says whether
 that install already matches the version a real upgrade would install),
 without touching anything. See `akm health`'s `akm-installs` advisory for

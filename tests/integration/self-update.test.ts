@@ -1295,7 +1295,14 @@ describe("getPackageManagerUpgradeCommand", () => {
 // ── Other akm installs on the host (upgrade-D D3) ────────────────────────────
 
 function fakeInstall(overrides: Partial<AkmInstall>): AkmInstall {
-  return { path: "/opt/other/akm", manager: "npm", version: "0.0.13", isRunning: false, ...overrides };
+  return {
+    path: "/opt/other/akm",
+    binDir: "/opt/other",
+    manager: "npm",
+    version: "0.0.13",
+    isRunning: false,
+    ...overrides,
+  };
 }
 
 describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
@@ -1340,20 +1347,97 @@ describe("describeOtherInstalls (upgrade-D D3, --check)", () => {
 });
 
 describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
-  test("no otherInstalls field when the upgrade is a no-op (already latest)", async () => {
-    const result = await performUpgrade(
-      { currentVersion: "0.9.8", latestVersion: "0.9.8", updateAvailable: false, installMethod: "npm" },
-      undefined,
-      { ...currentMigrator, enumerateAkmInstalls: () => [fakeInstall({})] },
-    );
-    expect(result.upgraded).toBe(false);
-    expect(result.otherInstalls).toBeUndefined();
+  test("an already-latest primary still moves a lagging other install", async () => {
+    // upgrade-D D3 r2-1: `performUpgrade` used to return before this step
+    // when the running install had nothing to do, so a lagging OTHER
+    // install was never moved. A realistic realpath under an nvm node
+    // version's node_modules layout, whose dirname has no npm beside it —
+    // only `binDir` (the discovered nvm `bin/`) does.
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-npm-noop-"));
+    const otherNpmPath = path.join(binDir, "npm");
+    fs.writeFileSync(otherNpmPath, "");
+    const otherAkmPath = "/home/dev/.nvm/versions/node/v24.18.0/lib/node_modules/akm-cli/dist/akm";
+
+    spyOn(childProcess, "spawnSync").mockImplementation(((command: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "0.9.8\n", stderr: "" } as never;
+      if (command === otherNpmPath) return { status: 0, stdout: "", stderr: "" } as never;
+      throw new Error(`unexpected spawnSync command: ${command}`);
+    }) as never);
+
+    try {
+      const result = await performUpgrade(
+        { currentVersion: "0.9.8", latestVersion: "0.9.8", updateAvailable: false, installMethod: "npm" },
+        undefined,
+        {
+          ...currentMigrator,
+          enumerateAkmInstalls: () => [fakeInstall({ path: otherAkmPath, binDir, manager: "npm", version: "0.9.7" })],
+        },
+      );
+
+      expect(result.upgraded).toBe(false);
+      expect(result.otherInstalls).toEqual([
+        {
+          path: otherAkmPath,
+          before: "0.9.7",
+          after: "0.9.8",
+          ok: true,
+          message: "Upgraded via npm (verified: v0.9.8).",
+        },
+      ]);
+    } finally {
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
   });
 
-  test("an npm other install is upgraded via its own adjacent npm and re-verified", async () => {
-    spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {
+  test("an npm other install is upgraded via its own adjacent npm, not the running install's", async () => {
+    // The realpath's OWN dirname (`dist/`, mirroring the real nvm layout —
+    // #D3 r2-1) never has an npm beside it; only `binDir` (the discovered
+    // nvm `bin/`) does. Asserting the exact command proves the adjacent
+    // npm was used, not a bare `npm` falling back to the running PATH.
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-npm-ok-"));
+    const otherNpmPath = path.join(binDir, "npm");
+    fs.writeFileSync(otherNpmPath, "");
+    const otherAkmPath = "/home/dev/.nvm/versions/node/v24.18.0/lib/node_modules/akm-cli/dist/akm";
+    const otherInstallCommands: string[] = [];
+
+    spyOn(childProcess, "spawnSync").mockImplementation(((command: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "0.0.14\n", stderr: "" } as never;
-      // The primary install's own `npm install -g` and the OTHER install's.
+      if (command === otherNpmPath) otherInstallCommands.push(command);
+      // The primary install's own (bare, PATH-resolved) `npm install -g`.
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    try {
+      const result = await performUpgrade(
+        { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+        { skipPostUpgrade: true },
+        {
+          ...currentMigrator,
+          enumerateAkmInstalls: () => [fakeInstall({ path: otherAkmPath, binDir, manager: "npm", version: "0.0.13" })],
+        },
+      );
+
+      expect(result.upgraded).toBe(true);
+      expect(otherInstallCommands).toEqual([otherNpmPath]);
+      expect(result.otherInstalls).toEqual([
+        {
+          path: otherAkmPath,
+          before: "0.0.13",
+          after: "0.0.14",
+          ok: true,
+          message: "Upgraded via npm (verified: v0.0.14).",
+        },
+      ]);
+    } finally {
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("an other install already at the target version is left untouched (no spawn)", async () => {
+    const spawnCalls: string[] = [];
+    spyOn(childProcess, "spawnSync").mockImplementation(((command: string, args: string[]) => {
+      spawnCalls.push(command);
+      if (args[0] === "--version") return { status: 0, stdout: "0.0.14\n", stderr: "" } as never;
       return { status: 0, stdout: "", stderr: "" } as never;
     }) as never);
 
@@ -1362,30 +1446,23 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
       { skipPostUpgrade: true },
       {
         ...currentMigrator,
-        enumerateAkmInstalls: () => [fakeInstall({ path: "/other/npm/akm", manager: "npm", version: "0.0.13" })],
+        enumerateAkmInstalls: () => [fakeInstall({ path: "/other/npm/akm", manager: "npm", version: "0.0.14" })],
       },
     );
 
-    expect(result.upgraded).toBe(true);
     expect(result.otherInstalls).toEqual([
-      {
-        path: "/other/npm/akm",
-        before: "0.0.13",
-        after: "0.0.14",
-        ok: true,
-        message: "Upgraded via npm (verified: v0.0.14).",
-      },
+      { path: "/other/npm/akm", before: "0.0.14", after: "0.0.14", ok: true, message: "Already v0.0.14." },
     ]);
+    expect(spawnCalls).not.toContain("/other/npm/akm");
   });
 
   test("a failing other-install upgrade is reported without failing the overall upgrade", async () => {
-    // A real adjacent `npm` next to the other install's own binary, so the
+    // A real adjacent `npm` next to the other install's own binDir, so the
     // mock can fail THAT specific install without also failing the primary
     // upgrade's own (bare, PATH-resolved) `npm install -g` call.
-    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-npm-"));
-    const otherAkmPath = path.join(otherDir, "akm");
-    fs.writeFileSync(otherAkmPath, "");
-    const otherNpmPath = path.join(otherDir, "npm");
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-npm-"));
+    const otherAkmPath = "/home/dev/.nvm/versions/node/v24.18.0/lib/node_modules/akm-cli/dist/akm";
+    const otherNpmPath = path.join(binDir, "npm");
     fs.writeFileSync(otherNpmPath, "");
 
     spyOn(childProcess, "spawnSync").mockImplementation(((command: string, args: string[]) => {
@@ -1400,7 +1477,7 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
         { skipPostUpgrade: true },
         {
           ...currentMigrator,
-          enumerateAkmInstalls: () => [fakeInstall({ path: otherAkmPath, manager: "npm", version: "0.0.13" })],
+          enumerateAkmInstalls: () => [fakeInstall({ path: otherAkmPath, binDir, manager: "npm", version: "0.0.13" })],
         },
       );
 
@@ -1409,7 +1486,7 @@ describe("performUpgrade otherInstalls (upgrade-D D3)", () => {
       expect(result.otherInstalls?.[0]).toMatchObject({ path: otherAkmPath, ok: false });
       expect(result.otherInstalls?.[0]?.message).toContain("EACCES");
     } finally {
-      fs.rmSync(otherDir, { recursive: true, force: true });
+      fs.rmSync(binDir, { recursive: true, force: true });
     }
   });
 
