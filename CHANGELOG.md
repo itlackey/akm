@@ -187,30 +187,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in place for a later retry instead of being quarantined; only a
   non-transient failure is quarantined.
 - **A bad proposal transaction journal no longer aborts recovery for every
-  other proposal sharing its root.** `recoverProposalTransactions`
+  other proposal sharing its root, and quarantine is reserved for journals
+  that cannot be trusted.** `recoverProposalTransactions`
   (`src/commands/proposal/repository.ts`), which runs ahead of every
   `akm proposal accept`/`reject`, threw out of its scan on the first
   corrupt, unsafe, or finalize-failing journal it found under a target's
   transaction namespace — taking down recovery of every OTHER proposal's
-  pending journal in the same root along with it. It now quarantines that
-  one journal (via `quarantineTxnDirSafely`, exported from
-  `src/core/fs-txn.ts` for reuse here) and continues the scan, the same
-  per-journal contract `recoverTxnsForRoot` has, above; a transient
-  (`state.db` busy) failure on a SIBLING journal (some other proposal's)
-  defers it for a later retry instead of quarantining it, but the same
-  failure on the requested proposal's OWN journal now fails the command as
-  transient (exit 75) and leaves that journal in place, rather than letting
-  `accept`/`reject` proceed over a crashed transaction whose outcome is
-  still unknown. Two more unguarded scans on that same `accept`/`reject`
-  path shared the same failure mode and are fixed the same way:
-  `recoverProposalTransactionsForStash`'s upfront root-discovery scan (which
-  read every proposal journal under `$DATA/txn` to find which roots to
-  recover) now tolerates an unreadable sibling instead of throwing before
-  recovery is even reached, and `recoverRejectTransaction` (run on every
-  `accept` ahead of promotion, and which only ever finalizes the requested
-  proposal's own reject journal) now quarantines a corrupt or unsafe
-  journal instead of throwing out of it, and rethrows as transient on a
-  `state.db`-busy failure instead of silently deferring it.
+  pending journal in the same root along with it. An unreadable
+  `journal.json`, or one that fails the unsafe check or the fence, is
+  untrusted and is quarantined (via `quarantineTxnDirSafely`, exported from
+  `src/core/fs-txn.ts` for reuse here), the same per-journal contract
+  `recoverTxnsForRoot` has, above. A SIBLING journal (some other proposal's)
+  whose rollback or finalize fails — transient or not — is a failed
+  recovery ACTION rather than an untrusted journal, so it is left in place
+  with a warning for a later retry instead of being quarantined. The
+  requested proposal's OWN journal is never quarantined or deferred either
+  way: any failure on it — the unsafe check, the fence, rollback, or
+  finalize — leaves that journal in place and fails the command (wrapping a
+  raw `state.db`-contention error as transient, exit 75), rather than
+  letting `accept`/`reject` proceed over a crashed transaction whose
+  outcome is still unknown. Two more unguarded scans on that same
+  `accept`/`reject` path shared the same failure mode and are fixed the
+  same way: `recoverProposalTransactionsForStash`'s upfront root-discovery
+  scan (which read every proposal journal under `$DATA/txn` to find which
+  roots to recover) now tolerates an unreadable sibling instead of throwing
+  before recovery is even reached, and warns once naming the unreadable
+  count for a root that has no other matching journal to trigger a full
+  scan of it; `recoverRejectTransaction` (run on every `accept` ahead of
+  promotion, and which only ever finalizes the requested proposal's own
+  reject journal) still quarantines a corrupt journal, but every other
+  failure on that journal now leaves it in place and fails the command
+  instead of quarantining it.
 
 ### Changed
 
