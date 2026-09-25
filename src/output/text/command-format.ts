@@ -556,7 +556,8 @@ export function formatAddPlain(r: Record<string, unknown>): string {
   const index = r.index as Record<string, unknown> | undefined;
   const scanned = index?.directoriesScanned ?? 0;
   const total = index?.totalEntries ?? 0;
-  const lines = [`Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`];
+  const bundleSuffix = typeof r.bundleId === "string" && r.bundleId.length > 0 ? ` as bundle "${r.bundleId}"` : "";
+  const lines = [`Installed ${r.ref}${bundleSuffix} (${scanned} directories scanned, ${total} total assets indexed)`];
   const warnings = index?.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     lines.push(`Warnings (${warnings.length}):`);
@@ -590,6 +591,37 @@ export function formatRemovePlain(r: Record<string, unknown>): string {
   const target = r.target ?? r.ref ?? "";
   const ok = r.ok !== false ? "OK" : "FAILED";
   return `remove: ${target} ${ok}`;
+}
+
+export function formatBundleRenamePlain(r: Record<string, unknown>): string {
+  const oldId = String(r.oldId ?? "?");
+  const newId = String(r.newId ?? "?");
+  const applied = r.applied === true;
+  const config = (r.config as Record<string, unknown> | undefined) ?? {};
+  const state = (r.state as Record<string, unknown> | undefined) ?? {};
+  const index = (r.index as Record<string, unknown> | undefined) ?? {};
+  const schedulerRefs = Array.isArray(config.schedulerRefs) ? config.schedulerRefs.length : 0;
+  const proposalRefs = Number(state.proposalRefs ?? 0);
+  const proposalTargets = Number(state.proposalTargets ?? 0);
+  const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
+  const entries = Number(index.entries ?? 0);
+  const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
+
+  const verb = applied ? "Renamed" : "Would rename";
+  const lines = [
+    `${verb} bundle "${oldId}" to "${newId}" (${entries} index entries, ${schedulerRefs} scheduler grant(s), ` +
+      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s)).`,
+  ];
+  if (!applied) {
+    lines.push("Re-run without --dry-run to apply. `akm task sync` still needs to run afterward.");
+  } else {
+    lines.push("Run `akm task sync` to reconcile native scheduler bindings under the new name.");
+  }
+  if (contentRefs.length > 0) {
+    lines.push(`Content still spelling "${oldId}//" (not rewritten — edit these by hand):`);
+    for (const file of contentRefs) lines.push(`  - ${String(file)}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatUpdatePlain(r: Record<string, unknown>): string {

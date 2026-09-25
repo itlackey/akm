@@ -1052,7 +1052,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 
 | Flag | Description |
 | --- | --- |
-| `--name` | Human-friendly name for the source |
+| `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
@@ -1222,6 +1222,35 @@ Reports per-entry change flags: `changed.version`, `changed.revision`, and
 in `processed`/`plainSynced`; rejected entries report `status: "blocked"` and a
 security code; provider or transaction errors report `status: "failed"`. The
 command continues with later bundles without half-publishing a blocked one.
+
+### bundle rename
+
+Rename a configured bundle's key everywhere akm itself persists it — the one
+command allowed to change it (renaming by hand-editing `config.json`'s
+`bundles` key strands every durable ref the tool minted under the old id; see
+`akm health` / the startup warning that names this).
+
+```sh
+akm bundle rename old-name new-name
+akm bundle rename old-name new-name --dry-run   # Show the plan; write nothing
+```
+
+| Flag | Description |
+| --- | --- |
+| `--dry-run` | Report what would change (index/state row counts, scheduler refs, content files that still mention the old name) without writing anything |
+
+`<new>` must be a legal, unused bundle slug (the same `--name` contract `akm
+bundle add` enforces) or the rename fails before any write. Rewritten: the
+config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
+old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
+lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
+state rows that name the old bundle (`proposals.ref`, a pending proposal's
+write target, and workflow `task_history.target_ref`). Reported, never
+rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
+a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
+that still spell the old `<old>//` prefix so you can fix them by hand. Native
+scheduler bindings still need `akm task sync` afterward to pick up the new
+name; run `--dry-run` first if the bundle has scheduled tasks.
 
 ### upgrade
 

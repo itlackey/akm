@@ -474,6 +474,37 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 }
 
 /**
+ * The `file_path` of every entry indexed under one bundle — used by
+ * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
+ * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
+ * reports rather than rewrites.
+ */
+export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+    file_path: string;
+  }>;
+  return rows.map((row) => row.file_path);
+}
+
+/**
+ * Re-key every entry row's `bundle_id`/`item_ref` from `oldBundleId` to
+ * `newBundleId` in place (`akm bundle rename`, D6). Unlike
+ * {@link rekeyEntryInPlace} (one asset, `akm mv`), this is a bulk identity
+ * change with no content move: `concept_id`/`file_path`/`document_json` are
+ * untouched, so no FTS/vector rebuild is needed (FTS and `entries_vec` key on
+ * the entry's row `id`, which this preserves, not on `item_ref`). Returns the
+ * number of rows renamed.
+ */
+export function renameEntriesBundleId(db: Database, oldBundleId: string, newBundleId: string): number {
+  return db.transaction(() => {
+    const result = db
+      .prepare("UPDATE entries SET bundle_id = ?, item_ref = ? || '//' || concept_id WHERE bundle_id = ?")
+      .run(newBundleId, newBundleId, oldBundleId);
+    return Number(result.changes);
+  })();
+}
+
+/**
  * Delete the complete regenerable entry generation through the same child-row
  * authority used by targeted deletes. The caller may retain cross-database
  * usage events so the finalize pass can relink them to the new row ids.

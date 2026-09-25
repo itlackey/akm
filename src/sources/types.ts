@@ -238,6 +238,14 @@ export interface AddResponse {
   schemaVersion: number;
   bundleDir: string;
   ref: string;
+  /**
+   * The configured bundle key this add resolved to (D6) — every add path
+   * (local, website, registry) carries this, so callers never have to guess
+   * it back out of `sourceAdded`/`installed`.
+   */
+  bundleId: string;
+  /** The registry install id (e.g. `npm:pkg`, `github:owner/repo`), when the bundle key differs from it. */
+  registryId?: string;
   /** Present for registry stash installs (npm, github, git) */
   installed?: {
     id: string;

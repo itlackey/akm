@@ -45,6 +45,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   also now reports the OpenCode plugin's bundled `akm-cli` version — an
   in-process copy sharing the host's databases — against the running CLI, as
   a second `opencode-plugin-version` advisory.
+- **`akm bundle rename <old> <new>`.** Renaming a bundle used to mean
+  hand-editing the `bundles` key in `config.json`, which stranded every
+  durable ref the tool had minted under the old id — the index and state
+  databases kept the old `<old>//` prefix while config named the new one
+  (the exact hand-rename signature `warnOnBundleRenameDrift` already
+  detected and warned about, with "there is no rekey command in 0.9.0").
+  `akm bundle rename` is that command: under the config lock it rewrites the
+  `bundles` key, `defaultBundle`/`defaultWriteTarget` when they name the old
+  id, and every `scheduler.enabled[].ref` with the old `//` prefix; then it
+  renames the lockfile entry, re-keys every indexed entry's
+  `bundle_id`/`item_ref`, and rewrites this tool's own state rows that name
+  the old bundle (`proposals.ref`, a pending proposal's
+  `proposedTarget.source`, and workflow `task_history.target_ref`). Refs
+  inside the bundle's own CONTENT (cross-references, a task's `uses:`,
+  `supersededBy`) are reported, never rewritten — the result's `contentRefs`
+  lists the indexed files that still spell the old prefix. `--dry-run` shows
+  the full plan (row counts, scheduler refs, content files) without writing
+  anything.
 - **`akm upgrade --version <semver>` / `--tag <dist-tag>`, and a post-upgrade
   `akm task sync`.** Previously `checkForUpdate` only ever resolved GitHub's
   `releases/latest`, so a prerelease (e.g. `0.9.17-alpha.3`, npm dist-tag
@@ -150,6 +168,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm bundle add`'s `--name` is now a contract on every add path (local,
+  website, registry), not a hint.** An explicit `--name` that is not a legal
+  bundle slug, or that is already taken by a different bundle, used to fall
+  back silently — `deriveBundleId` minted a derived name, or a `-<hash>`
+  suffix — so `akm bundle add ... --name my.bundle` installed under a name
+  the caller never asked for, without saying so. It now fails with a
+  `UsageError` (exit 2) naming the rule, before any write (config, lock, or
+  network sync). Re-adding an already-installed ref under a *different*
+  `--name` than it already carries used to keep the existing key and say
+  nothing; it now fails the same way, naming the existing key and
+  `akm bundle rename <old> <new>`. A DERIVED name (no `--name` given) is
+  unaffected and keeps `deriveBundleId`'s forgiving `-<hash>` uniqueness
+  fallback. Every `akm bundle add` result (local, website, and registry) now
+  also carries `bundleId` (the resolved bundle key) and `registryId` (the
+  registry install id, when it differs from `bundleId`), so a caller no
+  longer has to reconstruct the key from `sourceAdded`/`installed`.
 - **A one-file change in a large directory no longer costs `akm index` half
   an hour.** Both full-text tables keyed their per-entry deletes on
   `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole

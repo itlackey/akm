@@ -150,9 +150,53 @@ describe("akm bundle add <registry ref> without a usable --name", () => {
     });
   }
 
-  test("a --name that is not a legal bundle slug falls back to the package name", async () => {
-    await bundleAdd(`npm:${NPM_PACKAGE}`, "--name", "my.bundle");
+  // D6: an explicit --name is a contract — an illegal name fails loudly
+  // before any write, rather than silently falling back to the package name.
+  test("a --name that is not a legal bundle slug fails before any write", async () => {
+    const result = await withEnv(fixtureEnv, () =>
+      runCliCapture([`bundle`, "add", `npm:${NPM_PACKAGE}`, "--name", "my.bundle", "--format=json"]),
+    );
 
-    expect(bundleKeys()).toEqual([NPM_PACKAGE]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("not a legal bundle name");
+    expect(bundleKeys()).toEqual([]);
+    expect(readLockfile()).toEqual([]);
+  });
+});
+
+describe("akm bundle add <registry ref> --name conflicts (D6)", () => {
+  function configPath(): string {
+    return path.join(storage.configDir, "akm", "config.json");
+  }
+
+  test("a --name already used by a different bundle fails before any write", async () => {
+    await bundleAdd(`npm:${NPM_PACKAGE}`, "--name", "my-bundle");
+    const configBefore = fs.readFileSync(configPath(), "utf8");
+
+    const result = await withEnv(fixtureEnv, () =>
+      runCliCapture(["bundle", "add", "github:acme/name-fixture", "--name", "my-bundle", "--format=json"]),
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("already exists");
+    expect(bundleKeys()).toEqual(["my-bundle"]);
+    expect(fs.readFileSync(configPath(), "utf8")).toBe(configBefore);
+    expect(readLockfile().map((entry) => entry.id)).toEqual(["my-bundle"]);
+  });
+
+  test("re-adding an installed ref under a different --name fails and names rename", async () => {
+    await bundleAdd(`npm:${NPM_PACKAGE}`, "--name", "my-bundle");
+    const configBefore = fs.readFileSync(configPath(), "utf8");
+
+    const result = await withEnv(fixtureEnv, () =>
+      runCliCapture(["bundle", "add", `npm:${NPM_PACKAGE}`, "--name", "renamed", "--format=json"]),
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("already installed as bundle");
+    expect(result.stderr).toContain("my-bundle");
+    expect(result.stderr).toContain("akm bundle rename my-bundle renamed");
+    expect(bundleKeys()).toEqual(["my-bundle"]);
+    expect(fs.readFileSync(configPath(), "utf8")).toBe(configBefore);
   });
 });

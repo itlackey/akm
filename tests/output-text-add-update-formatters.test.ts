@@ -15,9 +15,10 @@ describe("formatAddPlain", () => {
   it("renders an AddResponse (eager install) shape as before", () => {
     const text = formatAddPlain({
       ref: "lodash",
+      bundleId: "lodash",
       index: { directoriesScanned: 2, totalEntries: 5 },
     });
-    expect(text).toBe("Installed lodash (2 directories scanned, 5 total assets indexed)");
+    expect(text).toBe('Installed lodash as bundle "lodash" (2 directories scanned, 5 total assets indexed)');
   });
 
   it("never renders 'Installed undefined' for a SourceAddResult (--provider add) shape", () => {
