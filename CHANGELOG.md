@@ -23,8 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   gets installed. `akm upgrade` also now runs `akm task sync` after
   `akm index`, so scheduler rows recorded under the same install method pick
   up the freshly installed binary path without a manual step; a sync failure
-  is reported under `postUpgrade.taskSync`, never thrown. `--skip-post-upgrade`
-  skips both the index rebuild and the task sync.
+  is reported under `postUpgrade.taskSync`, never thrown, and is now also
+  folded into `postUpgrade.message` so a text-output caller sees it without
+  reading the structured field. `--skip-post-upgrade` skips both the index
+  rebuild and the task sync. `akm upgrade --check`'s plain-text output now
+  names the `--version`/`--tag` it actually checked instead of a bare
+  `akm upgrade` (which would install `latest`), and reports a downgrade
+  target as a downgrade rather than as "available".
 - **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
   `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
   release as a real global npm package, drives it to build a realistic home

@@ -1237,7 +1237,11 @@ exact semver release; `--tag` names an npm dist-tag (e.g. `next` for a
 prerelease) and only applies to npm/Bun/pnpm installs, since a standalone
 binary has no dist-tag to resolve — use `--version` there. A `--version`/
 `--tag` older than the running version is a downgrade and is refused unless
-combined with `--force`.
+combined with `--force`. `--check`'s plain-text output names the target it
+resolved: `run 'akm upgrade --version X'` / `--tag <t>` for an explicit
+target instead of a bare `akm upgrade` (which would install `latest`
+instead), and a downgrade target reads as "v<X> is older than the installed
+v<Y>; pass --force to downgrade" rather than "available".
 
 ```sh
 akm upgrade                    # Install a newer release if there is one, then run every pending migration
@@ -1275,7 +1279,9 @@ different package manager than the one that put akm on PATH today) still
 needs a manual `akm task sync` afterward, since that switch does not go
 through `akm upgrade`; see [`task sync`](#task) and `akm health`'s
 `scheduler-binary` advisory. A failed post-upgrade task sync is reported
-under `postUpgrade.taskSync` rather than failing the upgrade.
+under `postUpgrade.taskSync` rather than failing the upgrade; it is also
+folded into `postUpgrade.message`, so a plain-text caller sees it without
+reading the structured field.
 
 ### clone
 
