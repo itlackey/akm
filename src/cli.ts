@@ -103,7 +103,6 @@ import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { improveCommand } from "./commands/improve/improve-cli";
 import { migrateCommand } from "./commands/migrate-cli";
-import { runMigrationTool } from "./commands/migration-tool";
 import { modelsCommand } from "./commands/models-cli";
 import { logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
@@ -120,10 +119,9 @@ import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
 import { launcherPidFromEnv } from "./core/file-lock";
 import { startParentDeathWatchdog } from "./core/parent-watchdog";
-import { getConfigPath, getStateDir } from "./core/paths";
+import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
-import { describeHostLocalReconciliation, reconcileOnVersionChange } from "./core/version-reconcile";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
@@ -691,24 +689,6 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   return subcommand === "path";
 }
 
-/**
- * Whether `runCli()` should run {@link reconcileOnVersionChange} ahead of
- * this invocation. Same recovery/setup surfaces
- * {@link shouldBypassConfigStartup} keeps reachable against a broken
- * config are skipped here too — reconciliation itself loads config through
- * the standalone `akm-migrate` subprocess, not this process, but there is
- * nothing host-local left to reconcile ahead of `--help`/`--version`/bare/
- * `help`/`hints`/`setup`/`migrate`/`config path`. `task run` is the one
- * exception: `shouldBypassConfigStartup` returns true for it too (a
- * scheduled run must stay reachable against a broken config), but a
- * scheduled task surviving an upgrade with no manual step is the whole
- * point of this feature, so it reconciles anyway.
- */
-export function shouldReconcileOnStartup(argv: readonly string[]): boolean {
-  if (isTaskRunWithId(argv)) return true;
-  return !shouldBypassConfigStartup(argv);
-}
-
 // ── Exit codes ──────────────────────────────────────────────────────────────
 // Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
 // the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
@@ -1030,31 +1010,6 @@ export function normalizeCittyCliError(error: unknown, rawArgs: readonly string[
 }
 
 /**
- * Run {@link reconcileOnVersionChange} ahead of this command.
- * `reconcileOnVersionChange` already never throws for a migration that
- * cannot finish — this wrapper is a second, independent guarantee that
- * nothing in the startup reconciliation path can ever turn into a fatal
- * `emitJsonError` for the command it was only ever meant to run ahead of.
- */
-async function runStartupReconciliation(): Promise<void> {
-  try {
-    const result = await reconcileOnVersionChange({
-      version: pkgVersion,
-      runTool: runMigrationTool,
-      stateDir: getStateDir(),
-      now: () => new Date(),
-    });
-    if (result.outcome === "reconciled") {
-      const notes = describeHostLocalReconciliation(result.plan);
-      if (notes.length > 0) warn(`akm ${pkgVersion}: reconciled host-local state — ${notes.join(", ")}.`);
-    }
-  } catch {
-    // reconcileOnVersionChange already catches everything it can; this is
-    // the last-resort backstop so a bug here can never brick every command.
-  }
-}
-
-/**
  * The CLI's real startup sequence, extracted into a function so error paths
  * can `return` early — top-level `return` is a syntax error in an ES module,
  * and this used to rely on `emitJsonError`'s `never` return type (a
@@ -1082,7 +1037,6 @@ async function runCli(): Promise<void> {
   // rather than letting the raw exception escape with a stack trace.
   try {
     applyEarlyStderrFlags(process.argv);
-    if (shouldReconcileOnStartup(process.argv)) await runStartupReconciliation();
     const bypassConfig = shouldBypassConfigStartup(process.argv);
     initOutputMode(process.argv, bypassConfig ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}));
   } catch (error: unknown) {

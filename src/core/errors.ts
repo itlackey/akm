@@ -171,18 +171,6 @@ export type TransientErrorCode =
   // escaping the walk, index, or embedding phase. The original driver error
   // survives as `cause`.
   | "INDEX_DB_CONTENDED"
-  // Field follow-up to #956 (G1, dev-team field review 2026-09-10): two real
-  // concurrent akm processes (e.g. two plain `akm index` runs started back
-  // to back by a scheduler) can both reach `acquireMaintenanceBarrier()` —
-  // the short critical section that registers the opt-in rebuild lock — in
-  // the same instant. The barrier is meant to be held for milliseconds, so
-  // losing that race is ordinary contention, never a broken config file:
-  // previously this threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing
-  // as exit 78 and telling a supervisor to stop retrying a normal lock
-  // collision. Thrown from `acquireMaintenanceBarrier`
-  // (src/core/maintenance-barrier.ts) once its own brief backoff-and-retry
-  // window is exhausted.
-  | "MAINTENANCE_BARRIER_BUSY"
   // Field follow-up to #948 (dev-team field review 2026-09-10): the
   // `akm improve` whole-run lock (`commands/improve/locks.ts`) is ordinary
   // contention between two legitimate `improve` invocations — the same
@@ -312,8 +300,6 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
   INDEX_DB_CONTENDED:
     "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
-  MAINTENANCE_BARRIER_BUSY:
-    "Another akm process is registering a lock or lease right now. Retry shortly, or pass --skip-if-locked on scheduled index/improve/workflow runs.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
 };

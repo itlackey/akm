@@ -233,13 +233,13 @@ describe("whole-set task source v4 scheduler sync planning — sync-grant gating
       installed: emptyInstalled,
     };
 
-    const ungranted = await prepareSchedulerSyncSourceSet({ ...baseInput, enabledActivations: new Set() });
+    const ungranted = await prepareSchedulerSyncSourceSet({ ...baseInput, enabledRefs: new Set() });
     expect(ungranted.desired).toEqual([]);
     expect(ungranted.failures).toEqual([]);
 
     const granted = await prepareSchedulerSyncSourceSet({
       ...baseInput,
-      enabledActivations: new Set(["task\0team//tasks/legacy-v3", "task\0team//tasks/retired-enabled-v4"]),
+      enabledRefs: new Set(["team//tasks/legacy-v3", "team//tasks/retired-enabled-v4"]),
     });
     expect(granted.failures).toEqual([]);
     expect(granted.desired).toHaveLength(2);

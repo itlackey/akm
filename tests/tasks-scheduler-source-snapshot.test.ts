@@ -180,7 +180,7 @@ describe("guarded scheduler source byte snapshots", () => {
       path.join(storage.stashDir, "tasks", "nightly.yml"),
     );
 
-    const prepared = await prepareSchedulerSyncSourceSet(sourceInput({ enabledActivations: new Set() }));
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput({ enabledRefs: new Set() }));
 
     expect(prepared.desired).toEqual([]);
     expect(prepared.failures).toEqual([]);
@@ -217,7 +217,7 @@ describe("guarded scheduler source byte snapshots", () => {
   test("the same workflow sibling layout contributes nothing when it is not granted", async () => {
     writeReleaseWorkflowWithSymlinkedSibling();
 
-    const prepared = await prepareSchedulerSyncSourceSet(sourceInput({ enabledActivations: new Set() }));
+    const prepared = await prepareSchedulerSyncSourceSet(sourceInput({ enabledRefs: new Set() }));
 
     expect(prepared.desired).toEqual([]);
     expect(prepared.failures).toEqual([]);

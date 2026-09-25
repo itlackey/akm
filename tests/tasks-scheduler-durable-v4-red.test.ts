@@ -161,8 +161,8 @@ describe("WP7 scheduler desired-set durable v4 RED", () => {
   ] as const)("#867: invalid %s degrades — reported and excluded — while the valid peer is still installed", async (_label, invalidSource, message) => {
     write(storage.stashDir, "workflows/a-valid.yml", workflow("valid", ["      - id: ok", "        run: echo ok"]));
     write(storage.stashDir, "workflows/z-invalid.yml", invalidSource);
-    setSchedulerRefEnabled("workflow", "team//workflows/a-valid", true);
-    setSchedulerRefEnabled("workflow", "team//workflows/z-invalid", true);
+    setSchedulerRefEnabled("team//workflows/a-valid", true);
+    setSchedulerRefEnabled("team//workflows/z-invalid", true);
     const { backend, calls } = recordingBackend();
 
     const result = await akmTasksSync(
@@ -188,7 +188,7 @@ describe("WP7 scheduler desired-set durable v4 RED", () => {
       "workflows/release.yml",
       workflow("release", ["      - id: ship", "        run: echo before-sync"]),
     );
-    setSchedulerRefEnabled("workflow", "team//workflows/release", true);
+    setSchedulerRefEnabled("team//workflows/release", true);
     const { backend } = recordingBackend();
     await akmTasksSync(
       { backend, schedulerRuntime: () => ({ binding: ["/test/akm"], contextPath: "/test/context.json" }) },
@@ -212,7 +212,7 @@ describe("WP7 scheduler desired-set durable v4 RED", () => {
       "workflows/release.yml",
       workflow("release", ["      - id: child", "        uses: assets//tasks/child"]),
     );
-    setSchedulerRefEnabled("workflow", "team//workflows/release", true);
+    setSchedulerRefEnabled("team//workflows/release", true);
     const { backend, calls } = recordingBackend();
     let caught: unknown;
 

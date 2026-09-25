@@ -35,7 +35,6 @@ import {
   releaseLock,
   tryAcquireLockSync,
 } from "../core/file-lock";
-import { tryAcquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDbPath, getIndexWriterLockPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { sleepSync } from "../runtime";
@@ -123,18 +122,10 @@ function createLease(lockPath: string, ownership: LockOwnership): AssetMutationL
 
 function tryAcquireAssetMutationLease(lockPath: string, purpose: string): AssetMutationLease | undefined {
   while (true) {
-    const releaseBarrier = tryAcquireMaintenanceBarrier();
-    if (!releaseBarrier) return undefined;
-    try {
-      const ownership = tryAcquireLockSync(lockPath, buildPayload(purpose));
-      if (ownership) return createLease(lockPath, ownership);
-
-      // No `staleAfterMs`: only a verifiably dead holder is ever reclaimed.
-      const probe = probeLock(lockPath);
-      if (probe.state !== "stale" || !reclaimStaleLock(lockPath, probe)) return undefined;
-    } finally {
-      releaseBarrier();
-    }
+    const ownership = tryAcquireLockSync(lockPath, buildPayload(purpose));
+    if (ownership) return createLease(lockPath, ownership);
+    const probe = probeLock(lockPath);
+    if (probe.state !== "stale" || !reclaimStaleLock(lockPath, probe)) return undefined;
   }
 }
 

@@ -7,33 +7,25 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  type AkmInstall,
-  type AkmInstallManager,
-  BUN_GLOBAL_INSTALL_PATTERN,
-  enumerateAkmInstalls,
-  isUnlinkedNpmInstall,
-  PNPM_GLOBAL_INSTALL_PATTERN,
-  unlinkedNpmPackageRoot,
-} from "../../core/akm-installs";
-import {
   fetchWithRetry,
   IS_WINDOWS,
   ResponseTooLargeError,
   readBodyWithByteCap,
   readChunkWithDeadline,
 } from "../../core/common";
-import { ConfigError, UsageError } from "../../core/errors";
+import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
-import { resolveNpmDistTagVersion } from "../../registry/resolve";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
-import type { OtherAkmInstallStatus, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
+import type { UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
 import { runMigrationTool } from "../migration-tool";
 
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
+const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
+const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
 const MAX_BINARY_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_CHECKSUM_METADATA_BYTES = 1024 * 1024;
 
@@ -42,12 +34,6 @@ export type InstallMethod = UpgradeCheckResponse["installMethod"];
 export interface SelfUpdateDependencies {
   execPath: string;
   runMigrationTool: typeof runMigrationTool;
-  /**
-   * Injectable enumerator for the other-installs upgrade step ();
-   * defaults to the real {@link enumerateAkmInstalls}. Tests supply a fake
-   * so this never scans the real host's PATH/known install roots.
-   */
-  enumerateAkmInstalls: typeof enumerateAkmInstalls;
 }
 
 /**
@@ -220,33 +206,11 @@ export function getAkmBinaryName(): string {
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
-/** `--version`/`--tag`: mutually exclusive, an explicit `akm upgrade` target. */
-export interface UpgradeTargetOptions {
-  version?: string;
-  tag?: string;
-}
-
 export async function checkForUpdate(
   currentVersion: string,
   fetchOptions?: { timeout?: number; retries?: number },
-  target?: UpgradeTargetOptions,
 ): Promise<UpgradeCheckResponse> {
   const installMethod = detectInstallMethod();
-
-  if (target?.version && target?.tag) {
-    throw new UsageError("--version and --tag are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
-  }
-  if (target?.version || target?.tag) {
-    const resolvedVersion = await resolveExplicitUpgradeTarget(installMethod, target, fetchOptions);
-    return {
-      currentVersion,
-      latestVersion: resolvedVersion,
-      updateAvailable: resolvedVersion !== currentVersion,
-      installMethod,
-      requestedTarget: target,
-    };
-  }
-
   const url = `https://api.github.com/repos/${REPO}/releases/latest`;
   const response = await fetchWithRetry(url, { headers: githubHeaders() }, fetchOptions);
 
@@ -266,55 +230,6 @@ export async function checkForUpdate(
     updateAvailable: latestVersion !== "" && semverOrder(currentVersion, latestVersion) < 0,
     installMethod,
   };
-}
-
-/**
- * Resolve `--version`/`--tag` to a concrete version for `installMethod`. A
- * dist-tag is an npm concept, so it resolves through the npm registry and
- * only makes sense for npm/bun/pnpm installs; a version for the `binary`
- * method is checked against GitHub releases so a typo fails here rather than
- * mid-download.
- */
-export async function resolveExplicitUpgradeTarget(
-  installMethod: InstallMethod,
-  target: UpgradeTargetOptions,
-  fetchOptions?: { timeout?: number; retries?: number },
-): Promise<string> {
-  if (target.tag) {
-    if (installMethod !== "npm" && installMethod !== "bun" && installMethod !== "pnpm") {
-      throw new UsageError(
-        `--tag names an npm dist-tag; this install method is "${installMethod}". Use --version instead.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    return resolveNpmDistTagVersion(getInstalledPackageName(), target.tag);
-  }
-
-  const version = target.version;
-  if (!version) {
-    throw new UsageError("akm upgrade --version requires a value.", "INVALID_FLAG_VALUE");
-  }
-  if (installMethod === "binary") {
-    await verifyGithubReleaseExists(version, fetchOptions);
-  }
-  return version;
-}
-
-/** Confirm `v<version>` exists as a GitHub release before a binary install stages it. */
-async function verifyGithubReleaseExists(
-  version: string,
-  fetchOptions?: { timeout?: number; retries?: number },
-): Promise<void> {
-  const tag = `v${version}`;
-  const url = `https://api.github.com/repos/${REPO}/releases/tags/${tag}`;
-  const response = await fetchWithRetry(url, { headers: githubHeaders() }, fetchOptions);
-  await response.body?.cancel().catch(() => undefined);
-  if (!response.ok) {
-    throw new Error(
-      `Release ${tag} was not found on GitHub (${response.status} ${response.statusText}). ` +
-        `Check https://github.com/${REPO}/releases`,
-    );
-  }
 }
 
 /**
@@ -359,39 +274,18 @@ export async function performUpgrade(
       migration: await runMigrationStep(runTool),
     };
   }
-  // An explicit `--version`/`--tag` older than the running version is a
-  // downgrade: `updateAvailable` is true (it differs from current) but
-  // installing it needs an explicit `--force`, same as any other forced
-  // reinstall, so the reason is named rather than silently downgrading.
-  if (check.requestedTarget && !force && semverOrder(currentVersion, latestVersion) > 0) {
-    return {
-      currentVersion,
-      newVersion: latestVersion,
-      upgraded: false,
-      installMethod,
-      message: `akm v${currentVersion} is newer than the requested v${latestVersion}; downgrading requires --force.`,
-      migration: await runMigrationStep(runTool),
-    };
-  }
-
   if (!check.updateAvailable && !force) {
-    const migration = await runMigrationStep(runTool);
     return {
       currentVersion,
       newVersion: latestVersion,
       upgraded: false,
       installMethod,
       message: `akm v${currentVersion} is already the latest version`,
-      migration,
-      // The running install isn't moving, so other installs move to what IT
-      // has now (`currentVersion`), never `latestVersion` — on a host running
-      // a prerelease, `latestVersion` here is the last STABLE release, which
-      // is older than `currentVersion` and would silently downgrade a peer.
-      otherInstalls: upgradeOtherInstalls(currentVersion, dependencies),
+      migration: await runMigrationStep(runTool),
     };
   }
 
-  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod, undefined, latestVersion);
+  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
   if (packageManagerCommand) {
     return runPackageManagerUpgrade({
       packageManagerCommand,
@@ -400,7 +294,6 @@ export async function performUpgrade(
       installMethod,
       skipPostUpgrade,
       runTool,
-      dependencies,
     });
   }
 
@@ -550,7 +443,6 @@ export async function performUpgrade(
     checksumVerified,
     migration,
     postUpgrade: runPostUpgradeTasks(execPath, { skip: skipPostUpgrade }),
-    otherInstalls: upgradeOtherInstalls(latestVersion, dependencies),
   };
 }
 
@@ -581,35 +473,16 @@ async function runMigrationStep(runTool: typeof runMigrationTool): Promise<NonNu
 }
 
 /**
- * Rebuild the derived index, then re-sync scheduled tasks, after a
- * successful upgrade. Scheduler rows embed the runtime path
- * (`src/tasks/resolve-akm-bin.ts`), so a task/workflow install left pointing
- * at the pre-upgrade binary is exactly what `akm health`'s
- * `scheduler-binary` advisory exists to catch — running `akm task sync`
- * here closes that gap without waiting for the operator to notice it.
+ * Rebuild the derived index after a successful upgrade.
  */
 function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {
   if (opts.skip) {
     return {
       ok: true,
       skipped: true,
-      message:
-        "Upgrade completed. Skipped the index rebuild and task sync. Run `akm index` and `akm task sync` manually.",
+      message: "Upgrade completed. Skipped the index rebuild. Run `akm index` manually to rebuild the index.",
     };
   }
-  const index = runAkmIndex(akmBin);
-  const syncOutcome = runAkmTaskSync(akmBin);
-  // `index.message` alone reads as "the upgrade is done" even when the sync
-  // right after it failed — a text-format caller only ever sees this field,
-  // never `taskSync.message`, so a failed sync has to show up here too.
-  const message = syncOutcome.ok
-    ? index.message
-    : `${index.message} The scheduler was not re-synced: ${syncOutcome.error}; run \`akm task sync\`.`;
-  const taskSync = { ok: syncOutcome.ok, message: syncOutcome.message };
-  return { ...index, message, taskSync };
-}
-
-function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?: number | null; message: string } {
   try {
     const result = childProcess.spawnSync(akmBin, ["index"], {
       encoding: "utf8",
@@ -648,76 +521,6 @@ function runAkmIndex(akmBin: string): { ok: boolean; skipped: boolean; exitCode?
   }
 }
 
-type AkmTaskSyncOutcome = { ok: true; message: string } | { ok: false; message: string; error: string };
-
-/**
- * The CLI contract renders a failure as a `{ok:false, error, code}` envelope
- * at the END of stderr — pretty-printed over several lines by
- * `emitJsonError` (`src/cli/shared.ts`), or on one line from other writers.
- * A warning `akm task sync` printed ahead of it (e.g. a carried-forward
- * grant) must not be mistaken for the failure detail. Walks the lines from
- * the end and, at each line that opens an object, parses the remainder of
- * stderr as one JSON document; returns the first `error` string found. Falls
- * back to the last non-empty stderr line when nothing parses.
- */
-function lastAkmTaskSyncError(stderr: string): string | undefined {
-  const lines = stderr
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i]!.startsWith("{")) continue;
-    try {
-      const parsed = JSON.parse(lines.slice(i).join("\n")) as { error?: unknown };
-      if (typeof parsed.error === "string" && parsed.error.length > 0) return parsed.error;
-    } catch {
-      // Not the start of the envelope; keep scanning backward for it.
-    }
-  }
-  return lines.at(-1);
-}
-
-/**
- * `akm task sync` after the install: a failure is reported, never thrown.
- * `error` carries the short detail `runPostUpgradeTasks` folds into
- * `postUpgrade.message` on failure; it is not part of the public
- * `postUpgrade.taskSync` shape (`UpgradeResponse["postUpgrade"]`), so callers
- * strip it back off before returning `taskSync` to the caller.
- */
-function runAkmTaskSync(akmBin: string): AkmTaskSyncOutcome {
-  try {
-    const result = childProcess.spawnSync(akmBin, ["task", "sync"], {
-      encoding: "utf8",
-      env: process.env,
-      stdio: "pipe",
-    });
-    if (result.error) {
-      return {
-        ok: false,
-        message: `Post-upgrade \`akm task sync\` could not start: ${result.error.message}. Run \`akm task sync\` manually.`,
-        error: result.error.message,
-      };
-    }
-    if (result.status !== 0) {
-      const detail =
-        lastAkmTaskSyncError(result.stderr ?? "") || (result.stdout ?? "").trim() || `exit code ${result.status}`;
-      return {
-        ok: false,
-        message: `Post-upgrade \`akm task sync\` failed (${detail}). Run \`akm task sync\` manually.`,
-        error: detail,
-      };
-    }
-    return { ok: true, message: "Scheduled tasks were re-synced against the new binary." };
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    return {
-      ok: false,
-      message: `Post-upgrade \`akm task sync\` failed: ${detail}. Run \`akm task sync\` manually.`,
-      error: detail,
-    };
-  }
-}
-
 /**
  * The package-manager arm of {@link performUpgrade}: install → post-install
  * version verification → post-upgrade tasks.
@@ -730,17 +533,8 @@ async function runPackageManagerUpgrade(input: {
   installMethod: InstallMethod;
   skipPostUpgrade: boolean;
   runTool: typeof runMigrationTool;
-  dependencies?: Partial<SelfUpdateDependencies>;
 }): Promise<UpgradeResponse> {
-  const {
-    packageManagerCommand,
-    currentVersion,
-    latestVersion,
-    installMethod,
-    skipPostUpgrade,
-    runTool,
-    dependencies,
-  } = input;
+  const { packageManagerCommand, currentVersion, latestVersion, installMethod, skipPostUpgrade, runTool } = input;
   if (!latestVersion) {
     throw new Error(
       "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/akm/releases",
@@ -769,10 +563,9 @@ async function runPackageManagerUpgrade(input: {
     );
   }
 
-  // The package manager exiting 0 does not prove `akm` on PATH now resolves
-  // to what was just installed: the install pins an exact version
-  // (`getPackageManagerUpgradeCommand` below), so a mismatch here means
-  // another akm earlier on PATH is shadowing it, or the install is partial.
+  // The package manager exiting 0 does not prove it delivered
+  // `latestVersion`: a lagging `@latest` dist-tag (partial publish,
+  // registry mirror lag) "succeeds" while leaving the old version on PATH.
   // Re-read the version the shim actually reports before claiming an
   // upgrade, so stop before claiming success.
   const installedVersion = readInstalledCliVersion("akm");
@@ -784,9 +577,9 @@ async function runPackageManagerUpgrade(input: {
       installMethod,
       message:
         `\`${packageManagerCommand.displayCommand}\` succeeded, but \`akm --version\` still reports ` +
-        `v${installedVersion} (expected v${latestVersion}). Another akm earlier on PATH may be ` +
-        `shadowing the one just installed — check with \`which -a akm\` (or \`command -v akm\`), ` +
-        `or the install may be partial.`,
+        `v${installedVersion} (expected v${latestVersion}). The ${installMethod} registry's @latest tag ` +
+        `may be lagging the GitHub release — try again shortly, or install the exact version: ` +
+        `${packageManagerCommand.displayCommand.replace(/@latest\b/, `@${latestVersion}`)}`,
       migration: await runMigrationStep(runTool),
     };
   }
@@ -802,7 +595,6 @@ async function runPackageManagerUpgrade(input: {
         : `akm upgraded via ${installMethod} (installed version could not be verified)`,
     migration: await runMigrationStep(runTool),
     postUpgrade: runPostUpgradeTasks("akm", { skip: skipPostUpgrade }),
-    otherInstalls: upgradeOtherInstalls(latestVersion, dependencies),
   };
 }
 
@@ -864,31 +656,17 @@ function getInstalledPackageName(): string {
   return DEFAULT_PACKAGE_NAME;
 }
 
-/**
- * `binDir` defaults to the running process's own bin dir (the primary
- * upgrade path, unchanged). The other-installs upgrade step () passes
- * that OTHER install's own bin dir instead, so a multi-node-version host
- * (nvm) upgrades each install through its own adjacent npm/pnpm rather than
- * always the currently running one.
- */
-function resolveNodePackageManagerCommand(
-  name: "npm" | "pnpm",
-  binDir: string = path.dirname(process.execPath),
-): { command: string; resolvedInBinDir: boolean } {
+function resolveNodePackageManagerCommand(name: "npm" | "pnpm"): string {
   const extension = IS_WINDOWS ? ".cmd" : "";
-  const adjacent = path.join(binDir, `${name}${extension}`);
-  return fs.existsSync(adjacent)
-    ? { command: adjacent, resolvedInBinDir: true }
-    : { command: name, resolvedInBinDir: false };
+  const adjacent = path.join(path.dirname(process.execPath), `${name}${extension}`);
+  return fs.existsSync(adjacent) ? adjacent : name;
 }
 
 export function getPackageManagerUpgradeCommand(
   installMethod: InstallMethod,
   packageName = getInstalledPackageName(),
-  version = "latest",
-  binDir?: string,
-): { command: string; args: string[]; displayCommand: string; env?: NodeJS.ProcessEnv } | undefined {
-  const pkgRef = `${packageName}@${version}`;
+): { command: string; args: string[]; displayCommand: string } | undefined {
+  const pkgRef = `${packageName}@latest`;
 
   if (installMethod === "bun") {
     return {
@@ -898,183 +676,21 @@ export function getPackageManagerUpgradeCommand(
     };
   }
 
-  if (installMethod === "pnpm" || installMethod === "npm") {
-    const args = installMethod === "pnpm" ? ["add", "-g", pkgRef] : ["install", "-g", pkgRef];
-    const bareDisplay = `${installMethod} ${args.join(" ")}`;
-    const resolved = resolveNodePackageManagerCommand(installMethod, binDir);
-    // Only when a `binDir` was explicitly named (an OTHER install, never the
-    // primary's own default) AND that install actually has npm/pnpm adjacent
-    // to it: npm/pnpm scripts are `#!/usr/bin/env node`, so npm derives its
-    // global prefix from whichever `node` PATH resolves — prepending
-    // `binDir` makes that this install's own `node`, not the running
-    // process's (: without this, the command above already points at
-    // the right npm, but it still installs into the WRONG install because it
-    // runs under the wrong node).
-    if (binDir !== undefined && resolved.resolvedInBinDir) {
-      const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` };
-      const displayCommand = IS_WINDOWS
-        ? `${resolved.command} ${args.join(" ")}`
-        : `PATH="${binDir}:$PATH" ${bareDisplay}`;
-      return { command: resolved.command, args, displayCommand, env };
-    }
-    return { command: resolved.command, args, displayCommand: bareDisplay };
+  if (installMethod === "pnpm") {
+    return {
+      command: resolveNodePackageManagerCommand("pnpm"),
+      args: ["add", "-g", pkgRef],
+      displayCommand: `pnpm add -g ${pkgRef}`,
+    };
+  }
+
+  if (installMethod === "npm") {
+    return {
+      command: resolveNodePackageManagerCommand("npm"),
+      args: ["install", "-g", pkgRef],
+      displayCommand: `npm install -g ${pkgRef}`,
+    };
   }
 
   return undefined;
-}
-
-const MANAGED_INSTALL_MANAGERS = new Set<AkmInstallManager>(["npm", "bun", "pnpm"]);
-
-function isManagedInstallManager(manager: AkmInstallManager): manager is "npm" | "bun" | "pnpm" {
-  return MANAGED_INSTALL_MANAGERS.has(manager);
-}
-
-/** Every OTHER akm install on the host — excludes the one currently running, which `performUpgrade` already handled. Never throws: an enumeration failure degrades to "none found". */
-function findOtherAkmInstalls(enumerate: typeof enumerateAkmInstalls): AkmInstall[] {
-  try {
-    return enumerate(process.env).filter((install) => !install.isRunning);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The "can `akm upgrade` manage this install" decision, shared by
- * {@link describeOtherInstalls} (read-only) and {@link upgradeOtherInstall}
- * (the real upgrade) so the two can never drift. Returns
- * the terminal `ok: false` status for an install `akm upgrade` will never
- * touch — an npm global package the direct `akm-cli/dist` scan found but
- * nothing links onto any bin dir, so there is no package-manager link left
- * to update through — or `undefined` when the install is manageable
- * normally.
- */
-function unlinkedNpmOrphanStatus(install: AkmInstall): OtherAkmInstallStatus | undefined {
-  if (!isUnlinkedNpmInstall(install)) return undefined;
-  return {
-    path: install.path,
-    before: install.version,
-    after: install.version,
-    ok: false,
-    message: `Not linked onto any bin dir (orphaned npm global package at ${unlinkedNpmPackageRoot(install)}); left untouched — remove it or reinstall it by hand.`,
-  };
-}
-
-/**
- * `akm upgrade --check`: list every other akm install on the host, read-only
- * — `before`/`after` are the same because nothing is attempted here. `ok`
- * says whether that install already matches the version a real `akm
- * upgrade` would move it to: `check.latestVersion` when an update is
- * available, otherwise `check.currentVersion` (the running install's own
- * version) — so a peer already at that version isn't reported as needing an
- * update to an older `latestVersion` (e.g. a host running a prerelease).
- */
-export function describeOtherInstalls(
-  check: Pick<UpgradeCheckResponse, "currentVersion" | "latestVersion" | "updateAvailable">,
-  dependencies?: Partial<SelfUpdateDependencies>,
-): OtherAkmInstallStatus[] {
-  const targetVersion = check.updateAvailable ? check.latestVersion : check.currentVersion;
-  const enumerate = dependencies?.enumerateAkmInstalls ?? enumerateAkmInstalls;
-  return findOtherAkmInstalls(enumerate).map((install) => {
-    const orphan = unlinkedNpmOrphanStatus(install);
-    if (orphan) return orphan;
-    if (!isManagedInstallManager(install.manager)) {
-      return {
-        path: install.path,
-        before: install.version,
-        after: install.version,
-        ok: false,
-        message: `No package manager could be attributed to this ${install.manager} install; update it manually.`,
-      };
-    }
-    const ok = install.version === targetVersion;
-    return {
-      path: install.path,
-      before: install.version,
-      after: install.version,
-      ok,
-      message: ok
-        ? `Already v${install.version}.`
-        : `At v${install.version ?? "unknown"}; \`akm upgrade\` will update it via ${install.manager}.`,
-    };
-  });
-}
-
-/**
- * After the primary install succeeds, move every OTHER akm install on the
- * host it can (npm/bun/pnpm, via that install's own adjacent package
- * manager) and name the ones it cannot (no manager attributable — a
- * standalone binary or a checkout, never touched).
- */
-function upgradeOtherInstalls(
-  targetVersion: string,
-  dependencies?: Partial<SelfUpdateDependencies>,
-): OtherAkmInstallStatus[] {
-  const enumerate = dependencies?.enumerateAkmInstalls ?? enumerateAkmInstalls;
-  return findOtherAkmInstalls(enumerate).map((install) => upgradeOtherInstall(install, targetVersion));
-}
-
-function upgradeOtherInstall(install: AkmInstall, targetVersion: string): OtherAkmInstallStatus {
-  const orphan = unlinkedNpmOrphanStatus(install);
-  if (orphan) return orphan;
-
-  if (!isManagedInstallManager(install.manager)) {
-    return {
-      path: install.path,
-      before: install.version,
-      after: install.version,
-      ok: false,
-      message: `No package manager could be attributed to this ${install.manager} install; it was left untouched. Update it manually.`,
-    };
-  }
-
-  if (install.version === targetVersion) {
-    return {
-      path: install.path,
-      before: install.version,
-      after: install.version,
-      ok: true,
-      message: `Already v${install.version}.`,
-    };
-  }
-
-  const command = getPackageManagerUpgradeCommand(install.manager, undefined, targetVersion, install.binDir);
-  if (!command) {
-    return {
-      path: install.path,
-      before: install.version,
-      after: install.version,
-      ok: false,
-      message: "No upgrade command is available for this install.",
-    };
-  }
-
-  const result = childProcess.spawnSync(command.command, command.args, {
-    encoding: "utf8",
-    env: command.env ?? process.env,
-    stdio: "pipe",
-  });
-  if (result.error || result.status !== 0) {
-    const detail =
-      result.error?.message ??
-      ((result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`);
-    return {
-      path: install.path,
-      before: install.version,
-      after: install.version,
-      ok: false,
-      message: `${command.displayCommand} failed: ${detail}`,
-    };
-  }
-
-  const after = readInstalledCliVersion(install.path);
-  const ok = after === targetVersion;
-  return {
-    path: install.path,
-    before: install.version,
-    after,
-    ok,
-    message: ok
-      ? `Upgraded via ${install.manager} (verified: v${after}).`
-      : `${command.displayCommand} succeeded, but v${after ?? "unknown"} was reported afterward (expected v${targetVersion}).`,
-  };
 }

@@ -238,11 +238,7 @@ export interface AddResponse {
   schemaVersion: number;
   bundleDir: string;
   ref: string;
-  /**
-   * The configured bundle key this add resolved to (D6) — every add path
-   * (local, website, registry) carries this, so callers never have to guess
-   * it back out of `sourceAdded`/`installed`.
-   */
+  /** Config key the bundle was installed under (`bundles.<id>`). */
   bundleId: string;
   /** The registry install id (e.g. `npm:pkg`, `github:owner/repo`). Present for registry stash installs. */
   registryId?: string;
@@ -516,40 +512,11 @@ export interface ShowResponse extends FragmentProvenance {
   contextTruncated?: boolean;
 }
 
-/**
- * One OTHER akm install found on the host — never the install
- * that is currently running, which `currentVersion`/`newVersion` already
- * describe. `before`/`after` are `undefined` when that install's `--version`
- * probe failed.
- */
-export interface OtherAkmInstallStatus {
-  path: string;
-  before: string | undefined;
-  after: string | undefined;
-  ok: boolean;
-  message: string;
-}
-
 export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   installMethod: "binary" | "bun" | "npm" | "pnpm" | "package-local" | "unknown";
-  /**
-   * Present when `--version`/`--tag` named an explicit target instead of
-   * resolving the latest release. `latestVersion` above is that target's
-   * resolved version, not necessarily the newest one.
-   */
-  requestedTarget?: { version?: string; tag?: string };
-  /**
-   * `--check` lists every other akm install found on the host
-   * read-only: `before`/`after` are the same (nothing was attempted), `ok`
-   * says whether it already matches the version the running install would
-   * end up at (`latestVersion` when `updateAvailable`, otherwise the running
-   * install's own `currentVersion` — never an older `latestVersion` from a
-   * host running a prerelease newer than the last stable release).
-   */
-  otherInstalls?: OtherAkmInstallStatus[];
 }
 
 export interface UpgradeResponse {
@@ -569,8 +536,6 @@ export interface UpgradeResponse {
     skipped: boolean;
     exitCode?: number | null;
     message: string;
-    /** Result of the `akm task sync` run after the index rebuild. Absent when skipped. */
-    taskSync?: { ok: boolean; message: string };
   };
   /**
    * The `akm-migrate apply` plan run after the install step -- or in its
@@ -578,24 +543,6 @@ export interface UpgradeResponse {
    * `failed` means the migrator could not run at all; `error` says why.
    */
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
-  /**
-   * Every OTHER akm install found on the host: for a
-   * recognizable manager (npm/bun/pnpm), it is moved to the version the
-   * running install has AFTER this command — never an older `latestVersion`
-   * (a host running a prerelease newer than the last stable release would
-   * otherwise downgrade its other installs) — via that install's own
-   * adjacent package manager, run under that install's own `node` (its
-   * `binDir` prepended to `PATH`, since npm/pnpm resolve `node` through
-   * `#!/usr/bin/env node`), and re-verified with `--version` — or, when it
-   * is already at that version, left untouched and reported `ok: true`
-   * without spawning anything; an install with no manager (a standalone
-   * binary, a checkout) is listed with `ok: false` and never touched.
-   * Present whenever the primary install's own upgrade step ran, including
-   * when it was a no-op because the running install was already current;
-   * absent for the package-local and downgrade-refused branches, which
-   * return before that step.
-   */
-  otherInstalls?: OtherAkmInstallStatus[];
 }
 
 export interface InfoResponse {
@@ -641,25 +588,5 @@ export interface InfoResponse {
      * Absent on every healthy run, so no existing consumer sees a new key.
      */
     unreadable?: string;
-  };
-  /**
-   * Contracts plugins can gate on directly, instead of the `version` semver
-   * string (which says nothing about index/state/task/config/workflow
-   * shape or the plugin-facing JSON contract itself). Every value here is
-   * read from the constant that owns it (D1) — never a literal copy.
-   */
-  compat: {
-    /** `CANONICAL_INDEX_DB_VERSION` — the index.db generation this binary reads/writes. */
-    indexGeneration: number;
-    /** Id of the last entry in `STATE_MIGRATIONS` — the state.db ledger head. */
-    stateLedgerHead: string;
-    /** `TASK_SOURCE_V4_VERSION` — the task source document version this binary writes. */
-    taskSourceVersion: number;
-    /** `CURRENT_CONFIG_VERSION` — the `config.json` `configVersion` this binary writes. */
-    configVersion: string;
-    /** `WORKFLOW_IR_V5_VERSION` — the frozen workflow plan `irVersion` this binary writes. */
-    workflowIrVersion: number;
-    /** `PLUGIN_PROTOCOL_VERSION` — the JSON key-set contract of plugin-facing command results. */
-    pluginProtocol: number;
   };
 }

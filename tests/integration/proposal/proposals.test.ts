@@ -1125,7 +1125,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
   // needed for correctness and was a source of narrow-margin timing risk on
   // a loaded runner. `withAssetMutationLease` (src/indexer/index-writer-lock.ts,
   // `acquireAssetMutationLease`) makes its FIRST lock-acquisition attempt
-  // (`tryAcquireMaintenanceBarrier` + `tryAcquireLockSync` + `probeLock`,
+  // (`tryAcquireLockSync` + `probeLock`,
   // src/core/file-lock.ts) entirely synchronously — none of those calls
   // `await` anything. Per JS async-function semantics, that means by the
   // time `akmProposalAccept`/`akmProposalReject`/`akmProposalRevert` returns

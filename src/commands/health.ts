@@ -10,7 +10,7 @@ import { ConfigError, UsageError } from "../core/errors";
 import { readEvents } from "../core/events";
 import { openLogsDatabase } from "../core/logs-db";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir, getStateDir } from "../core/paths";
+import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { listExistingTableNames, listPendingStateMigrations, openStateDatabase } from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
 import { probeLlmEndpoint } from "../llm/client";
@@ -23,7 +23,6 @@ import { queryTaskHistory } from "../storage/repositories/task-history-repositor
 import { getStateDbFreelistInfo, runStateDbQuickCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectImproveAdvisories } from "./health/advisories";
-import { collectAkmInstallsAdvisory } from "./health/akm-installs";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -56,7 +55,6 @@ import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
 import { buildPerRunSummaries } from "./health/task-runs";
-import { collectTxnAwaitingRecoveryAdvisory, collectTxnQuarantineAdvisory } from "./health/txn-quarantine";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -71,7 +69,6 @@ import {
   type WindowResult,
   type WindowSpec,
 } from "./health/types";
-import { collectUpgradeAdvisories } from "./health/upgrade-advisories";
 import { collectVersionDriftAdvisory } from "./health/version-drift";
 import { buildWindowMetrics, computeDeltas, partitionLogBackedRows, resolveWindowCompare } from "./health/windows";
 
@@ -376,21 +373,19 @@ function gatherImproveSummaryPhase(
  * The best-effort advisory groups beyond the health-check registry: improve
  * advisories, the `stash-git-exposure` probe, the 08 surfaces group
  * (binary-config-skew, egress-endpoints), `type-directory-disagreement`
- * (#831), `data-dir-usage` (#896), `plugin-version` (itlackey/akm#832), and
- * the upgrade-break advisories (`version-reconcile`, `scheduler-grants`,
- * `scheduled-startup-failures`). Order matches emission order
- * in the returned array. A probe/filesystem failure in any try/catch must
- * not abort the health report — each group degrades to "no advisory"
- * independently.
+ * (#831), `data-dir-usage` (#896), and `plugin-version` (itlackey/akm#832).
+ * Order matches emission order in the returned array. A probe/filesystem
+ * failure in any try/catch must not abort the health report — each group
+ * degrades to "no advisory" independently.
  */
-async function gatherAncillaryAdvisories(
+function gatherAncillaryAdvisories(
   db: Database,
   stateDbPath: string,
   since: string,
   improveSummary: ImproveHealthMetrics,
   options: AkmHealthOptions,
   egressConfigView: EgressConfigView | undefined,
-): Promise<HealthCheckResult[]> {
+): HealthCheckResult[] {
   const advisories: HealthCheckResult[] = [...collectImproveAdvisories(db, stateDbPath, since, improveSummary)];
 
   const indexStateMismatch = detectIndexStateGenerationMismatch(db);
@@ -450,30 +445,6 @@ async function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
-  // A poisoned transaction journal `akm migrate apply` cannot recover is
-  // quarantined, not thrown (src/core/fs-txn.ts's recoverTxnsForRoot) — this
-  // is what surfaces a non-empty `$DATA/txn-quarantine` to an operator who
-  // isn't reading migrate's own output. Best-effort — an unreadable/missing
-  // quarantine dir must not abort the health report.
-  try {
-    const txnQuarantine = collectTxnQuarantineAdvisory(getDataDir());
-    if (txnQuarantine) advisories.push(txnQuarantine);
-  } catch {
-    // Non-fatal.
-  }
-
-  // A trusted, fenced journal whose recovery action failed is deferred, not
-  // quarantined (src/core/fs-txn.ts's recoverTxnsForRoot) — this is what
-  // surfaces a journal still stuck under `$DATA/txn` past its grace period
-  // to an operator who isn't reading migrate's own output. Best-effort — an
-  // unreadable/missing txn dir must not abort the health report.
-  try {
-    const txnAwaitingRecovery = collectTxnAwaitingRecoveryAdvisory(getDataDir());
-    if (txnAwaitingRecovery) advisories.push(txnAwaitingRecovery);
-  } catch {
-    // Non-fatal.
-  }
-
   // itlackey/akm#832: report installed Claude Code harness plugin version(s)
   // and warn when stale or when the plugin's own akm-cli version range no
   // longer admits this CLI. Best-effort — no plugin installed, an unreadable
@@ -481,35 +452,6 @@ async function gatherAncillaryAdvisories(
   // abort the health report.
   try {
     advisories.push(...collectPluginStalenessAdvisories({ cliVersion: pkgVersion }));
-  } catch {
-    // Non-fatal.
-  }
-
-  // name an upgrade break within one report — host-local state
-  // not reconciled to the running version, installed scheduler rows with no
-  // grant, and scheduled runs failing before their body starts. Best-effort
-  // — a stamp/scheduler/query failure must not abort the health report.
-  try {
-    advisories.push(
-      ...(await collectUpgradeAdvisories({
-        db,
-        since,
-        stateDir: getStateDir(),
-        cliVersion: pkgVersion,
-        probe: Boolean(options.probe),
-      })),
-    );
-  } catch {
-    // Non-fatal.
-  }
-
-  // every akm install on the host (PATH + known roots), version
-  // skew reported by path with the manager command that moves it.
-  // `--probe`-gated (enumeration spawns a `--version` probe per install) and
-  // best-effort — a filesystem/subprocess surprise must not abort the
-  // health report.
-  try {
-    advisories.push(collectAkmInstallsAdvisory(Boolean(options.probe), { cliVersion: pkgVersion }));
   } catch {
     // Non-fatal.
   }
@@ -795,9 +737,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 
     const { improveSummary } = gatherImproveSummaryPhase(db, stateDbPath, since, now);
 
-    advisories.push(
-      ...(await gatherAncillaryAdvisories(db, stateDbPath, since, improveSummary, options, egressConfigView)),
-    );
+    advisories.push(...gatherAncillaryAdvisories(db, stateDbPath, since, improveSummary, options, egressConfigView));
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
 

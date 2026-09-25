@@ -18,7 +18,6 @@
 
 import { randomUUID } from "node:crypto";
 import { TransientError, UsageError } from "../../core/errors";
-import { withMaintenanceStartBarrierAsync } from "../../core/maintenance-barrier";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunStepState, WorkflowRunSummary } from "../../sources/types";
@@ -375,18 +374,16 @@ function leaseExpiry(): string {
  * invocations cannot both win.
  */
 async function acquireRunLease(runId: string, holder: string): Promise<void> {
-  await withMaintenanceStartBarrierAsync(() =>
-    withWorkflowRunsRepo((repo) => {
-      if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
-      const row = repo.getRunById(runId);
-      throw new TransientError(
-        `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
-          `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
-          `wait for that invocation to finish or for the lease to expire.`,
-        "RUN_LEASE_HELD",
-      );
-    }),
-  );
+  await withWorkflowRunsRepo((repo) => {
+    if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
+    const row = repo.getRunById(runId);
+    throw new TransientError(
+      `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
+        `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
+        `wait for that invocation to finish or for the lease to expire.`,
+      "RUN_LEASE_HELD",
+    );
+  });
 }
 
 /**

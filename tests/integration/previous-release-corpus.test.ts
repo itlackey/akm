@@ -908,10 +908,8 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
         "utf8",
       );
       const defaultBundle = path.basename(stash.dir).toLowerCase();
-      setSchedulerRefEnabled("task", `${defaultBundle}//tasks/ping`, true);
-      expect(loadConfig().scheduler?.enabled).toEqual([
-        expect.objectContaining({ kind: "task", ref: `${defaultBundle}//tasks/ping`, sourceId: expect.any(String) }),
-      ]);
+      setSchedulerRefEnabled(`${defaultBundle}//tasks/ping`, true);
+      expect(loadConfig().scheduler?.enabled).toEqual([`${defaultBundle}//tasks/ping`]);
 
       // Matches the `backendFor` setup in tasks-sync.test.ts: this backend
       // never routes through the real launcher-eligibility path, so install

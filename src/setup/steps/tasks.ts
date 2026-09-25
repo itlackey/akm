@@ -11,7 +11,7 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { loadConfig, mutateConfig } from "../../core/config/config";
+import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,
@@ -20,17 +20,11 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import { schedulerActivationSourceId, schedulerActivations } from "../../tasks/activation-config";
+import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
 import type { SchedulerBackendInspection } from "../../tasks/scheduler-binding";
-import {
-  carryForwardSchedulerGrants,
-  pendingGrantsFromInstalled,
-  type SchedulerGrantCarryForwardResult,
-  staleSchedulerGrantWarning,
-} from "../../tasks/scheduler-grant-carry-forward";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { prompt } from "../prompt";
 
@@ -121,18 +115,13 @@ export interface ScheduledTasksDeps {
   sync: typeof akmTasksSync;
   /** Read-only native scheduler inventory, used to pre-check the review truthfully. */
   inspectInstalled: () => Promise<SchedulerBackendInspection>;
-  carryForward: () => Promise<SchedulerGrantCarryForwardResult>;
 }
 
 export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
   const config = loadConfig();
   const target = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false });
   const taskDir = path.join(target.source.path, "tasks");
-  const enabledRefs = new Set(
-    schedulerActivations(config)
-      .filter((activation) => activation.kind === "task")
-      .map((activation) => activation.ref),
-  );
+  const enabledRefs = new Set(schedulerEnabledRefs(config) ?? []);
   if (!fs.existsSync(taskDir)) return [];
 
   const tasks: SetupTaskDefinition[] = [];
@@ -246,17 +235,15 @@ export async function prepareSetupTaskDefinitions(
   );
   const managed = new Set(tasks.map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)));
   mutateConfig((current) => {
-    const existing = schedulerActivations(current);
-    const next = existing.filter((activation) => activation.kind !== "task" || !managed.has(activation.ref));
-    const sourceId = schedulerActivationSourceId(current, target.source.name);
-    if (selected.size > 0 && !sourceId) {
+    const existing = schedulerEnabledRefs(current) ?? [];
+    const next = existing.filter((ref) => !managed.has(ref));
+    if (selected.size > 0 && !isSchedulerBundleActive(current, target.source.name)) {
       throw new UsageError(`Cannot activate setup tasks from disabled bundle ${JSON.stringify(target.source.name)}.`);
     }
-    for (const ref of selected) {
-      next.push({ kind: "task", ref, sourceId: sourceId! });
-    }
-    next.sort((left, right) => left.ref.localeCompare(right.ref) || left.kind.localeCompare(right.kind));
-    if (JSON.stringify(existing) === JSON.stringify(next)) return current;
+    next.push(...selected);
+    next.sort((left, right) => left.localeCompare(right));
+    if (current.scheduler?.enabled !== undefined && JSON.stringify([...existing]) === JSON.stringify(next))
+      return current;
     return { ...current, scheduler: { ...current.scheduler, enabled: next } };
   });
 
@@ -271,7 +258,6 @@ const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
     const backend = selectBackend();
     return backend.inspectBindings ? await backend.inspectBindings({}) : { installed: [], artifacts: [] };
   },
-  carryForward: () => carryForwardSchedulerGrants(),
 };
 
 export async function stepScheduledTasks(
@@ -293,43 +279,25 @@ export async function stepScheduledTasks(
   const embedded = listEmbeddedTasks();
   if (embedded.length === 0) return;
 
+  // A config that predates `scheduler.enabled` means "keep what is installed":
+  // make that explicit before the review below reads and edits the list.
+  if (schedulerEnabledRefs(loadConfig()) === undefined) {
+    try {
+      const inspection = await deps.inspectInstalled();
+      const refs = enabledRefsFromInstalled(inspection.installed, loadConfig());
+      mutateConfig((current) => ({ ...current, scheduler: { ...current.scheduler, enabled: [...refs] } }));
+      resetConfigCache();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      p.log.warn(`Native scheduler bindings could not be inspected: ${message}`);
+    }
+  }
+
   const installed = await deps.list();
   const byId = new Map<string, SetupTaskDefinition>();
   for (const task of installed) byId.set(normaliseTaskIdForMatch(task.id), task);
 
-  // `akm setup` skips startup reconciliation, so on the first command after an
-  // install that dropped grants, `byId`'s `enabled` reflects a grant that a
-  // carry-forward would immediately restore. Pre-check an id the operator
-  // would see re-granted anyway, without mutating anything before the
-  // confirmation below. Only a pending grant in the same bundle
-  // `listSetupTaskDefinitions` reviews (the default write target) qualifies —
-  // an installed, ungranted `team//tasks/improve` must not pre-check the
-  // default bundle's `improve`.
-  const config = loadConfig();
-  let pendingTaskIds = new Set<string>();
-  try {
-    const inspection = await deps.inspectInstalled();
-    let defaultBundleName: string | undefined;
-    try {
-      defaultBundleName = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false }).source.name;
-    } catch {
-      defaultBundleName = undefined;
-    }
-    pendingTaskIds = new Set(
-      pendingGrantsFromInstalled(inspection.installed, config)
-        .filter((activation) => activation.kind === "task")
-        .map((activation) => parseBundleRef(activation.ref))
-        .filter((parsed) => parsed.bundle === defaultBundleName)
-        .map((parsed) => parsed.conceptId.replace(/^tasks\//, "")),
-    );
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    p.log.warn(`Native scheduler activation could not be inspected: ${message}`);
-  }
-
-  const preChecked = embedded
-    .filter((task) => byId.get(task.id)?.enabled === true || pendingTaskIds.has(task.id))
-    .map((task) => task.id);
+  const preChecked = embedded.filter((task) => byId.get(task.id)?.enabled === true).map((task) => task.id);
   // Battery heuristic preserved from the retired `registerDefaultTasks` path
   // (S6): suggest the nightly full sweep on a detected server install, same
   // as every other embedded template, still gated behind the confirmation
@@ -418,13 +386,6 @@ export async function stepScheduledTasks(
     return;
   }
 
-  // Carry forward any grant lost outside the wizard's own review (e.g. an upgrade that reset
-  // host-local config) before `prepare` revokes every managed ref the operator left unchecked.
-  // Otherwise `prepare`'s revocation is followed by carry-forward re-granting the very ref the
-  // operator just deselected.
-  const carryForwardResult = await deps.carryForward();
-  for (const warning of carryForwardResult.warnings) p.log.warn(warning);
-  for (const stale of carryForwardResult.staleGrants) p.log.warn(staleSchedulerGrantWarning(stale));
   const changed = await deps.prepare(plans);
   if (changed > 0) p.log.success(`Prepared ${changed} task definition${changed === 1 ? "" : "s"}.`);
   const syncResult = await deps.sync();

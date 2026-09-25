@@ -1341,10 +1341,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(fs.existsSync(stateDbPath)).toBe(false);
     expect(fs.existsSync(`${stateDbPath}-wal`)).toBe(false);
     expect(fs.existsSync(`${stateDbPath}-shm`)).toBe(false);
-    expect(fs.existsSync(path.join(path.dirname(stateDbPath), "maintenance-activities"))).toBe(false);
-    expect(fs.existsSync(path.join(path.dirname(stateDbPath), ".maintenance.barrier.lock.operations.sensitive"))).toBe(
-      false,
-    );
     expect(snapshotTree(storage.dataDir)).toEqual(dataTreeBefore);
     expect(snapshotTree(storage.root)).toEqual(storageTreeBefore);
   });

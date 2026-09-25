@@ -13,7 +13,6 @@ import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import { defaultConcurrencyForEndpoint } from "../core/loopback";
-import { sweepMaintenanceActivityOrphans } from "../core/maintenance-barrier";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
@@ -575,15 +574,6 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   try {
     onProgress({ phase: "finalize", message: "Clearing stale LLM cache entries." });
     clearStaleCacheEntries(db);
-  } catch {
-    /* ignore */
-  }
-
-  // Bounded, best-effort sweep of orphaned maintenance-activity lock files
-  // (leaked pre-fix mutex sidecars, dead-owner locks). Runs here rather than
-  // on the state.db open hot path that creates them.
-  try {
-    sweepMaintenanceActivityOrphans();
   } catch {
     /* ignore */
   }

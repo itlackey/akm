@@ -355,7 +355,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const defaultedInputs = applyInputDefaults(inputContract, materializedInputs);
 
   const document: PreparableTaskDocument = projectTaskSourceV4(parsed.v4);
-  const enabled = isSchedulerRefEnabled(loadConfig(), "task", makeBundleRef(bundle.source.name, taskConceptId));
+  const enabled = isSchedulerRefEnabled(loadConfig(), makeBundleRef(bundle.source.name, taskConceptId));
 
   const schedule: ScheduleBindingRow[] = parsed.v4.schedule.map((entry) => ({
     ordinal: entry.ordinal,

@@ -5,8 +5,7 @@
 /**
  * Ambient, run-scoped state.db connection reuse.
  *
- * `openStateDatabase` is NOT cheap: every call registers a `state-db`
- * maintenance activity (a lockfile create under the maintenance barrier), opens
+ * `openStateDatabase` is NOT cheap: every call opens
  * a throwaway read-only preflight handle to assert the migration ledger, then
  * opens the real handle and applies pragmas. Paying that per repository call
  * — twice per dispatched workflow unit (insert + finish), plus once per

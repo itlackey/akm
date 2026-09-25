@@ -81,7 +81,7 @@
     "lint:doc-examples": "bun scripts/lint-doc-examples.ts",
     "publish:devto": "npx -y @sinedied/devto-cli push \"docs/posts/**/*.md\" --token \"$DEVTO_TOKEN\" --repo \"$GITHUB_REPOSITORY\" --branch \"${GITHUB_REF_NAME:-main}\" --reconcile",
     "release:check": "./tests/release-check.sh",
-    "lint": "bunx biome check src/ tests/ scripts/ && bun scripts/lint-secret-resolver-boundary.ts && bun scripts/lint-shipped-assets.ts && bun scripts/lint-doc-examples.ts && bun scripts/lint-config-schema-compat.ts",
+    "lint": "bunx biome check src/ tests/ scripts/ && bun scripts/lint-secret-resolver-boundary.ts && bun scripts/lint-shipped-assets.ts && bun scripts/lint-doc-examples.ts",
     "lint:fix": "bunx biome check --write src/ tests/ scripts/",
     "format": "bunx biome format --write src/ tests/ scripts/",
     "prepublishOnly": "cp .github/README.npm.md README.md && bun run build",

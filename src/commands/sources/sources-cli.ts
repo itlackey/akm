@@ -41,7 +41,7 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import { pkgVersion } from "../../version";
-import { checkForUpdate, describeOtherInstalls, performUpgrade } from "./self-update";
+import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmClone } from "./source-clone";
 
 export const upgradeCommand = defineJsonCommand({
@@ -49,27 +49,16 @@ export const upgradeCommand = defineJsonCommand({
   args: {
     check: { type: "boolean", description: "Check for updates without installing", default: false },
     force: { type: "boolean", description: "Force upgrade even if on latest", default: false },
-    version: { type: "string", description: "Install this exact version instead of the latest release" },
-    tag: {
-      type: "string",
-      description: "Install this npm dist-tag (e.g. 'next') instead of the latest release. npm/bun/pnpm installs only.",
-    },
     "skip-post-upgrade": {
       type: "boolean",
-      description: "Skip the post-upgrade index rebuild and task sync",
+      description: "Skip the post-upgrade index rebuild",
       default: false,
     },
   },
   async run({ args }) {
-    const check = await checkForUpdate(pkgVersion, undefined, { version: args.version, tag: args.tag });
+    const check = await checkForUpdate(pkgVersion);
     if (args.check) {
-      // `--check` also lists every OTHER akm install on the
-      // host, read-only — `describeOtherInstalls` picks the target version
-      // from `check` itself.
-      output("upgrade", {
-        ...check,
-        otherInstalls: describeOtherInstalls(check),
-      });
+      output("upgrade", check);
       return;
     }
     const skipPostUpgrade = args["skip-post-upgrade"];

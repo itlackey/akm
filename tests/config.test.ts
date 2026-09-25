@@ -19,6 +19,7 @@ import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schem
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
   mockHomedir,
@@ -1245,25 +1246,26 @@ describe("extends inheritance (#945)", () => {
     );
 
     const warnings = captureWarnings(() => {
-      expect(loadConfig().scheduler?.enabled).toEqual([
-        { kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
-      ]);
+      expect(loadConfig().scheduler?.enabled).toEqual(["local//tasks/nightly"]);
     });
     expect(warnings.join("\n")).toMatch(/ignoring inherited config key "scheduler"/i);
   });
 
-  test("scheduler activation rejects non-canonical and duplicate grants", () => {
+  test("scheduler.enabled tolerates non-canonical and duplicate entries, including 0.9.17-alpha grant objects", () => {
     writeCurrentConfig({
       scheduler: {
         enabled: [
           { kind: "task", ref: "tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
           { kind: "task", ref: "team//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
-          { kind: "task", ref: "team//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
+          "team//tasks/nightly",
         ],
       },
     });
 
-    expect(() => loadConfig()).toThrow(/canonical fully-qualified ref|duplicates/i);
+    const warnings = captureWarnings(() => {
+      expect(schedulerEnabledRefs(loadConfig())).toEqual(["team//tasks/nightly"]);
+    });
+    expect(warnings.join("\n")).toMatch(/Ignoring scheduler\.enabled entry "tasks\/nightly"/);
   });
 
   test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {

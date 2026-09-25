@@ -166,14 +166,14 @@ afterEach(() => {
 describe("task lifecycle failure handling", () => {
   test("add grants host-local activation only after scheduler installation commits", async () => {
     failInstall = () => {
-      expect(isSchedulerRefEnabled(loadConfig(), "task", "stash//tasks/late-grant")).toBe(false);
+      expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/late-grant")).toBe(false);
       return false;
     };
 
     const result = await akmTasksAdd({ id: "late-grant", schedule: "0 3 * * *", command: "echo ready" }, { backend });
 
     expect(result.enabled).toBe(true);
-    expect(isSchedulerRefEnabled(loadConfig(), "task", "stash//tasks/late-grant")).toBe(true);
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/late-grant")).toBe(true);
   });
 
   test("add --disabled writes source, leaves activation absent, and removes an orphaned binding", async () => {
@@ -187,7 +187,7 @@ describe("task lifecycle failure handling", () => {
 
     expect(result.enabled).toBe(false);
     expect(fs.readFileSync(result.path, "utf8")).not.toMatch(/\benabled\s*:/);
-    expect(isSchedulerRefEnabled(loadConfig(), "task", "stash//tasks/quiet")).toBe(false);
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/quiet")).toBe(false);
     expect(uninstallCalls).toEqual(["quiet"]);
     expect(installed.has("quiet")).toBe(false);
     expect(installCalls).toEqual([]);
@@ -195,7 +195,7 @@ describe("task lifecycle failure handling", () => {
 
   test("add --disabled revokes an existing grant before publishing replacement source", async () => {
     writeTask("quiet-force", taskYaml("echo old", "0 2 * * *"));
-    setSchedulerRefEnabled("task", "stash//tasks/quiet-force", true);
+    setSchedulerRefEnabled("stash//tasks/quiet-force", true);
     installedContextPath = writeSchedulerContextDescriptor();
     installed.set("quiet-force", nativeBinding("quiet-force", "0 2 * * *"));
     let commits = 0;
@@ -206,7 +206,7 @@ describe("task lifecycle failure handling", () => {
         backend,
         commitBoundary() {
           commits += 1;
-          expect(isSchedulerRefEnabled(loadConfig(), "task", "stash//tasks/quiet-force")).toBe(false);
+          expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/quiet-force")).toBe(false);
         },
       },
     );
@@ -328,8 +328,8 @@ describe("task lifecycle failure handling", () => {
     // wording this test used to assert is unreachable for a version: 2
     // document under any routing this phase produces.
     writeTask("b-invalid", 'version: 2\nschedule: "@daily"\ncommand: echo no\n');
-    setSchedulerRefEnabled("task", "stash//tasks/a-valid", true);
-    setSchedulerRefEnabled("task", "stash//tasks/b-invalid", true);
+    setSchedulerRefEnabled("stash//tasks/a-valid", true);
+    setSchedulerRefEnabled("stash//tasks/b-invalid", true);
     let runtimeCalls = 0;
 
     const result = await akmTasksSync({
@@ -782,7 +782,7 @@ describe("task lifecycle failure handling", () => {
   test("sync installs command arguments without obsolete-command handling", async () => {
     const yaml = ["version: 4", "run: akm db backups", 'schedule: "0 3 * * 0"', ""].join("\n");
     writeTask("backup", yaml);
-    setSchedulerRefEnabled("task", "stash//tasks/backup", true);
+    setSchedulerRefEnabled("stash//tasks/backup", true);
 
     const result = await akmTasksSync({ backend });
 

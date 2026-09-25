@@ -418,11 +418,11 @@ const tasksSyncCommand = defineJsonCommand({
     rejectRetiredTaskTargetFlag();
     const rebind = args.rebind === true;
     if (args["dry-run"] === true) {
-      const preview = await akmTasksSyncPlan({}, args.bundle, { rebind, carryForward: true });
+      const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
       outputWithExitCode("task-sync-dry-run", preview, taskSyncDryRunExitCode(preview));
       return;
     }
-    const result = await akmTasksSync({}, args.bundle, { rebind, carryForward: true });
+    const result = await akmTasksSync({}, args.bundle, { rebind });
     // #867: sync degrades — sources that failed to parse/prepare are
     // excluded from reconciliation and reported in `result.failures` rather
     // than poisoning the whole sync, but their presence must still fail

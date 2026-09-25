@@ -30,7 +30,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { upsertAssetSalience } from "../../src/commands/improve/salience";
 import { conceptIdFromTypeName } from "../../src/core/asset/resolve-ref";
-import { acquireMaintenanceBarrier } from "../../src/core/maintenance-barrier";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
@@ -153,44 +152,4 @@ describe("R2 removal (#692) — default search no longer touches state.db", () =
     // state.db, is deleted outright, not merely made conditional.
     expect(fs.existsSync(dbPath)).toBe(false);
   });
-
-  // Regression guard for the pre-#692 5s stall. Deliberately asserts ONLY the
-  // observable result (hits were returned), not a manual wall-clock delta —
-  // this repo's lint-tests-isolation.ts (Rule 3) forbids `expect(elapsed)
-  // .toBeLessThan(...)` patterns as flaky under a loaded CI scheduler. The
-  // promptness assertion instead IS the tight test-level timeout below (2.5s,
-  // well under the old 5s stall): pre-#692, this call chain (searchLocal ->
-  // applyRankingRules -> loadSalienceRankScores ->
-  // acquireMaintenanceActivitySync) synchronously polled the held barrier via
-  // a blocking Atomics.wait loop for up to 5s before falling back, which
-  // would blow this budget and report as a hard timeout failure — loud, not
-  // just "slower".
-  test("search completes promptly even while the maintenance barrier is held (regression guard for the pre-#692 5s stall)", async () => {
-    await seedAndIndex();
-
-    // Mirror a realistic installation that has run `improve` before: state.db
-    // already exists and holds a legacy salience row for this asset. Before
-    // #692 this was exactly the precondition needed to reach the buggy
-    // acquireMaintenanceActivitySync("state-db") call in loadSalienceRankScores
-    // (it short-circuited before that call when state.db was absent).
-    const stateDb = openStateDatabase();
-    try {
-      upsertAssetSalience(stateDb, "stash//lessons/hot", {
-        encoding: 0.8,
-        outcome: 0.5,
-        retrieval: 0.9,
-        rankScore: 0.77,
-      });
-    } finally {
-      stateDb.close();
-    }
-
-    const releaseBarrier = acquireMaintenanceBarrier();
-    try {
-      const result = await search();
-      expect(result.hits.length).toBeGreaterThan(0);
-    } finally {
-      releaseBarrier();
-    }
-  }, 2500);
 });

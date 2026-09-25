@@ -21,11 +21,8 @@
  * absent-race and stale-reclaim retries `improve` established) and reports
  * whether the caller now owns the lock or, if not, who currently holds it.
  * It does not decide what "held" means — skip, throw, or warn-and-proceed is
- * entirely up to the caller — and it does not serialize the attempt itself:
- * every caller must wrap the call in
- * `withMaintenanceStartBarrier`/`tryWithMaintenanceStartBarrier`
- * (`core/maintenance-barrier.ts`) so two racing processes never both create
- * the sentinel in the same window.
+ * entirely up to the caller. Creating the sentinel is an `O_EXCL` write, so
+ * two racing processes never both create it.
  */
 
 import fs from "node:fs";

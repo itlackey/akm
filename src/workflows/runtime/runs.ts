@@ -982,8 +982,7 @@ function readWorkflowRun(repo: WorkflowRunsRepository, runId: string): WorkflowR
 
 /**
  * Self-heal a run's engine lease once it has expired — the orphaned-lease
- * case where an engine crashed without releasing it — mirroring the
- * maintenance barrier's self-reclaim of a wedged sentinel, applied at the
+ * case where an engine crashed without releasing it — applied at the
  * points a caller actually asks "what is this run's state". Never touches a
  * live lease: {@link WorkflowRunsRepository.reclaimExpiredEngineLease} is a
  * compare-and-swap on the exact (holder, until) this call observed, so a

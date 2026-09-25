@@ -43,7 +43,6 @@ import {
 } from "../../core/file-lock";
 import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
-import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
@@ -189,8 +188,6 @@ function extractSessionLockIsUnavailable(harness: string, sessionId: string, sta
  * extraction outright.
  */
 function acquireExtractSessionLock(lockPath: string): { proceed: boolean; ownership?: LockOwnership } {
-  const releaseBarrier = tryAcquireMaintenanceBarrier();
-  if (!releaseBarrier) return { proceed: false };
   try {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let ownership = tryAcquireLockSync(lockPath, createLockPayload());
@@ -203,8 +200,6 @@ function acquireExtractSessionLock(lockPath: string): { proceed: boolean; owners
     return ownership ? { proceed: true, ownership } : { proceed: false };
   } catch {
     return { proceed: true };
-  } finally {
-    releaseBarrier();
   }
 }
 

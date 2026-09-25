@@ -91,19 +91,6 @@ function runCli(args: string[], stashDir: string): CliRun {
   };
 }
 
-/**
- * Startup host-local reconciliation (`src/core/version-reconcile.ts`)
- * writes its own version stamp/lock under `$STATE` — and, the first time it
- * actually runs a real `akm-migrate apply --host-local` against a fresh
- * `$STATE`/`$CONFIG` pair (exactly what this file's per-call sandbox always
- * is), a `config.json.lck` lock-operation mutex db under `$CONFIG` — on
- * EVERY invocation, independent of `improve`'s own dry-run/artifact
- * contract. Excluded here so this file keeps pinning what it actually
- * means to pin: that `improve` itself writes nothing.
- */
-const RECONCILE_ARTIFACT_RE =
-  /^\d+:akm\/(version-reconcile\.json|locks\/|locks\/[^:]+|\.config\.json\.lck[^:]*)(:|\/|$)/;
-
 function snapshotRoots(roots: string[]): string[] {
   const entries: string[] = [];
   const walk = (root: string, current: string): void => {
@@ -120,22 +107,7 @@ function snapshotRoots(roots: string[]): string[] {
     }
   };
   for (const root of roots) walk(root, root);
-  // Drop reconcile-owned entries, then any directory line left with no
-  // surviving children (e.g. an "akm/" state dir that reconcile alone
-  // created) — repeated until stable, since dropping a leaf can empty its
-  // parent, and that parent's parent, in turn.
-  let filtered = entries.filter((entry) => !RECONCILE_ARTIFACT_RE.test(entry));
-  let shrank = true;
-  while (shrank) {
-    shrank = false;
-    filtered = filtered.filter((entry) => {
-      if (!entry.endsWith("/")) return true;
-      const hasChild = filtered.some((other) => other !== entry && other.startsWith(entry));
-      if (!hasChild) shrank = true;
-      return hasChild;
-    });
-  }
-  return filtered;
+  return entries;
 }
 
 /**

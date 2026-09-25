@@ -25,9 +25,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
 import { taskSyncDryRunExitCode, taskValidateExitCode } from "../src/commands/tasks/tasks-cli";
-import { resetConfigCache } from "../src/core/config/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { shapeForCommand } from "../src/output/shapes";
-import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import {
   resolveScheduledTaskContext,
@@ -65,7 +65,7 @@ function writeTask(id: string, schedule: string, enabled = true): void {
     `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
-  setSchedulerRefEnabled("task", `stash//tasks/${id}`, enabled);
+  setSchedulerRefEnabled(`stash//tasks/${id}`, enabled);
 }
 
 beforeEach(() => {
@@ -181,14 +181,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     expect(exec.current()).toContain("task run gamma");
   });
 
-  // A row `akm task sync` itself installed but whose grant is
-  // missing (e.g. `scheduler.enabled` was cleared outside `akm task
-  // disable`) is carried forward by the real, non-dry-run sync — so the
-  // `--dry-run` preview of the SAME state must not plan to remove it. Before
-  // this fix, the preview's `enabledActivations` was built from config alone
-  // and never saw the carry-forward, so it planned a `remove` for a ref it
-  // was simultaneously reporting under `carriedForward`.
-  test("carries a grant-less installed binding forward in the preview instead of planning to remove it", async () => {
+  test("a config without scheduler.enabled plans no removals and writes nothing on --dry-run", async () => {
     const exec = spyingMemoryExec();
     const backend = backendFor(exec);
     writeTask("orphan", "*/15 * * * *");
@@ -197,28 +190,25 @@ describe("akmTasksSyncPlan — dry-run", () => {
     const writesAfterInstall = exec.writeCalls;
     expect(afterInstall).toContain("task run orphan");
 
-    // Strip the grant outside `akm task disable`, exactly like a pre-upgrade
-    // config or an operator-edited `scheduler.enabled`.
-    writeSandboxConfig({ scheduler: { enabled: [] } });
+    // A pre-0.9.17 config has no list at all: the installed row is the choice.
+    const { scheduler: _dropped, ...withoutList } = loadConfig();
+    saveConfig(withoutList);
     resetConfigCache();
 
-    const preview = await akmTasksSyncPlan({ backend }, undefined, { carryForward: true });
-
-    expect(preview.carriedForward).toEqual(["stash//tasks/orphan"]);
+    const preview = await akmTasksSyncPlan({ backend });
     expect(preview.removes).toEqual([]);
     expect(preview.hasRemovals).toBe(false);
-
-    // Dry-run still never writes, and config still has no grant — the
-    // preview only PLANS the carry-forward, it does not apply it.
+    // Dry-run never writes: the scheduler is untouched and the list is still unwritten.
     expect(exec.writeCalls).toBe(writesAfterInstall);
     expect(exec.current()).toBe(afterInstall);
+    expect(schedulerEnabledRefs(loadConfig())).toBeUndefined();
 
-    // Control: the exact same state without `carryForward` still shows the
-    // `remove`, so the flag above is what changes the plan.
-    const previewNoCarry = await akmTasksSyncPlan({ backend }, undefined, {});
-    expect(previewNoCarry.carriedForward).toBeUndefined();
-    expect(previewNoCarry.removes.map((op) => op.id)).toEqual(["orphan"]);
-    expect(previewNoCarry.hasRemovals).toBe(true);
+    // An explicit empty list is a choice: the same state now plans the removal.
+    saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
+    resetConfigCache();
+    const previewEmpty = await akmTasksSyncPlan({ backend });
+    expect(previewEmpty.removes.map((op) => op.id)).toEqual(["orphan"]);
+    expect(previewEmpty.hasRemovals).toBe(true);
   });
 
   test("reports unchanged with hasRemovals: false and zero writes on a no-op re-sync", async () => {
@@ -340,7 +330,7 @@ describe("akmTasksSync / akmTasksSyncPlan — degrade on a bad source (#867)", (
       `version: 2\nschedule: '*/15 * * * *'\ncommand: echo unconvertible\n`,
       "utf8",
     );
-    setSchedulerRefEnabled("task", `stash//tasks/${id}`, true);
+    setSchedulerRefEnabled(`stash//tasks/${id}`, true);
   }
 
   test("akmTasksSyncPlan --dry-run reconciles the tasks that parse and reports the one that doesn't", async () => {

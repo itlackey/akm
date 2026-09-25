@@ -70,7 +70,7 @@ function writeTask(id: string, schedule: string): void {
     `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
-  setSchedulerRefEnabled("task", makeBundleRef(path.basename(stashDir).toLowerCase(), `tasks/${id}`), true);
+  setSchedulerRefEnabled(makeBundleRef(path.basename(stashDir).toLowerCase(), `tasks/${id}`), true);
 }
 
 beforeEach(() => {

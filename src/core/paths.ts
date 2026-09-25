@@ -282,10 +282,6 @@ export function getIndexRebuildLockPath(): string {
   return path.join(getDataDir(), "index.rebuild.lock");
 }
 
-export function getMaintenanceBarrierPath(): string {
-  return path.join(getDataDir(), "maintenance.barrier.lock");
-}
-
 /** Path to the state.db file in $DATA. */
 export function getStateDbPathInDataDir(): string {
   return path.join(getDataDir(), "state.db");

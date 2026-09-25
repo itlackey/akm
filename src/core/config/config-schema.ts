@@ -80,7 +80,7 @@ export {
 export { IndexConfigSchema, IndexPassConfigSchema } from "./schema/index-config";
 export { OutputConfigSchema } from "./schema/output";
 export { CURRENT_CONFIG_VERSION, LlmInvocationOverridesSchema } from "./schema/primitives";
-export { SchedulerActivationSchema, SchedulerConfigSchema } from "./schema/scheduler";
+export { SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
 export { SetupConfigSchema } from "./schema/setup";
 export {
@@ -217,30 +217,6 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: ["defaultWriteTarget"],
         message: `defaultWriteTarget "${config.defaultWriteTarget}" is disabled`,
-      });
-    }
-  }
-  const activationKeys = new Set<string>();
-  for (const [index, activation] of (config.scheduler?.enabled ?? []).entries()) {
-    try {
-      const parsed = parseBundleRef(activation.ref);
-      if (!parsed.bundle || parsed.fragment !== undefined || bundleRefToString(parsed) !== activation.ref) {
-        throw new Error("not canonical");
-      }
-      const key = `${activation.kind}\0${activation.ref}`;
-      if (activationKeys.has(key)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["scheduler", "enabled", index],
-          message: "duplicates an earlier scheduler activation",
-        });
-      }
-      activationKeys.add(key);
-    } catch {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scheduler", "enabled", index, "ref"],
-        message: "must be one canonical fully-qualified ref without a fragment",
       });
     }
   }

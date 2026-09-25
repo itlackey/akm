@@ -89,7 +89,6 @@ import { assertMigrationLedger, type MigrationLedgerState } from "../storage/eng
 import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
 import { pkgVersion } from "../version";
 import { TransientError } from "./errors";
-import { acquireMaintenanceActivitySync } from "./maintenance-barrier";
 import { getDataDir } from "./paths";
 import { runMigrations, STATE_MIGRATIONS } from "./state/migrations";
 import { warnOnce } from "./warn";
@@ -473,8 +472,6 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
       init: (db) => runMigrations(db, { freshDatabase: true }),
     });
   }
-  const isCanonical = path.resolve(resolvedPath) === path.resolve(canonicalPath);
-  const releaseActivity = isCanonical ? acquireMaintenanceActivitySync("state-db") : undefined;
   let freshReservation: OwnedFileReservation | undefined;
   let existingSource: StateDatabaseSource | undefined;
   let openedDb: Database | undefined;
@@ -546,28 +543,7 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
       closeFileIdentity(freshReservation);
       freshReservation = undefined;
     }
-    const db = openedDb;
-    if (!releaseActivity) return db;
-    let closed = false;
-    return {
-      prepare: db.prepare.bind(db),
-      exec: db.exec.bind(db),
-      run: db.run.bind(db),
-      transaction: db.transaction.bind(db),
-      loadExtension: db.loadExtension.bind(db),
-      get inTransaction() {
-        return db.inTransaction;
-      },
-      close() {
-        if (closed) return;
-        closed = true;
-        try {
-          db.close();
-        } finally {
-          releaseActivity();
-        }
-      },
-    };
+    return openedDb;
   } catch (error) {
     if (openedDb) {
       try {
@@ -578,7 +554,6 @@ export function openStateDatabase(dbPath?: string, options?: OpenStateDatabaseOp
     }
     if (existingSource) closeFileIdentity(existingSource);
     if (freshReservation) closeFileIdentity(freshReservation);
-    releaseActivity?.();
     throw error;
   }
 }

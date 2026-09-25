@@ -81,8 +81,8 @@ export interface SchedulerSyncPlanInput {
   readonly config?: AkmConfig;
   /** Bundle-aware local asset resolver used while freezing workflow/script targets. */
   readonly resolveAsset?: PrepareTaskV3ExecutionContext["resolveAsset"];
-  /** Exact host-local activation allow-list, keyed by kind and canonical ref. */
-  readonly enabledActivations?: ReadonlySet<string>;
+  /** Refs this host schedules (`scheduler.enabled`); sources for any other ref are skipped. */
+  readonly enabledRefs?: ReadonlySet<string>;
   readonly installOptions?: SchedulerInstallOptions;
   readonly rebind?: boolean;
   readonly expectedSignature?: (binding: SchedulerBinding, options?: SchedulerInstallOptions) => string;
@@ -123,13 +123,6 @@ export interface SchedulerSyncPlan {
   readonly sourceSnapshot: SchedulerSourceSnapshot;
   /** Sources that failed to parse/prepare (#867) — excluded from `desired`, never silently dropped. */
   readonly failures: readonly SchedulerSourceFailure[];
-  /**
-   * Refs granted from an installed native scheduler binding that had no
-   * grant yet (carry-forward) — present only when non-empty.
-   * A real sync already applied these; `--dry-run` reports them here
-   * without applying.
-   */
-  readonly carriedForward?: readonly string[];
 }
 
 /** One task/workflow source that could not be parsed/prepared into a scheduler binding. */
@@ -201,10 +194,6 @@ export async function prepareSchedulerSyncSourceSet(
     executableWorkflows: compiled.executableWorkflows,
     failures: compiled.failures,
   });
-}
-
-function schedulerActivationKey(kind: SchedulerBinding["logicalSource"]["kind"], ref: string): string {
-  return `${kind}\0${ref}`;
 }
 
 export function finalizeSchedulerSyncPlan(
@@ -599,7 +588,7 @@ async function compileTaskSources(
   for (const symlink of collector.symlinkSources()) {
     if (!isAuthoredTaskRelativePath(input.adapterId, symlink.relativePath)) continue;
     const qualifiedRef = makeBundleRef(input.bundleName, symlink.relativePath.slice(0, -4));
-    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("task", qualifiedRef))) {
+    if (input.enabledRefs && !input.enabledRefs.has(qualifiedRef)) {
       continue;
     }
     failures.push(taskFailure(symlink.sourcePath, qualifiedRef, symbolicSourceError(symlink.sourcePath)));
@@ -611,10 +600,7 @@ async function compileTaskSources(
     const conceptId = relative.slice(0, -4);
     const id = input.adapterId === "akm-task" ? conceptId : path.basename(sourcePath, ".yml");
     const qualifiedRefForFailure = makeBundleRef(input.bundleName, conceptId);
-    if (
-      input.enabledActivations &&
-      !input.enabledActivations.has(schedulerActivationKey("task", qualifiedRefForFailure))
-    ) {
+    if (input.enabledRefs && !input.enabledRefs.has(qualifiedRefForFailure)) {
       continue;
     }
     try {
@@ -758,7 +744,7 @@ async function compileWorkflowSources(
       input.bundleName,
       input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName,
     );
-    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("workflow", failureRef))) {
+    if (input.enabledRefs && !input.enabledRefs.has(failureRef)) {
       continue;
     }
     try {
@@ -892,7 +878,7 @@ function enumerateWorkflowLookups(
       input.bundleName,
       input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName,
     );
-    if (input.enabledActivations && !input.enabledActivations.has(schedulerActivationKey("workflow", failureRef))) {
+    if (input.enabledRefs && !input.enabledRefs.has(failureRef)) {
       continue;
     }
     failures.push(workflowFailure(symlink.sourcePath, failureRef, symbolicSourceError(symlink.sourcePath)));

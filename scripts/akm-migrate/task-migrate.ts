@@ -13,7 +13,6 @@ import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/co
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { pruneToNewest, withConfigLock } from "../../src/core/config/config-io";
 import { ConfigError } from "../../src/core/errors";
-import { withMaintenanceStartBarrier } from "../../src/core/maintenance-barrier";
 import { getDataDir } from "../../src/core/paths";
 import { resolveWritable } from "../../src/core/write-source";
 import { lockContentRootFor } from "../../src/integrations/lockfile";
@@ -203,8 +202,7 @@ export function pruneTaskMigrationBackups(generationBackupDir: string): void {
 
 /** Convert eligible task-v2 files to task v3 and return the resulting plan. */
 export function applyTaskV3Migration(): MigrationPlan {
-  return withConfigLock(() =>
-    withMaintenanceStartBarrier(() => {
+  return withConfigLock(() => {
       const before = inspectCurrentTaskPlan();
       // Blocked files are skipped, not fatal: migrate whatever in the batch
       // can be migrated and report the rest as blocked (the entrypoint exits
@@ -219,13 +217,12 @@ export function applyTaskV3Migration(): MigrationPlan {
       }
       pruneTaskMigrationBackups(backupRoot);
       return { ...after, backupPath, applied: applied.changed.length };
-    }),
-  );
+  });
 }
 
 // ─── Second generation: task v3 -> task source v4 (spec docs/plans/specs/p2b-input-bindings.md §5) ───
 // Wired the SAME way as the v2 -> v3 generation above: same withConfigLock +
-// withMaintenanceStartBarrier + timestamped-UUID backup root + --dry-run plan
+// timestamped-UUID backup root + --dry-run plan
 // + summary shape. `taskRoots` is version-agnostic (it only locates each
 // bundle's task directory; it never reads file contents) so it is reused
 // as-is — `TaskToV3Root`'s fields are structurally identical to `TaskToV4Root`.
@@ -309,8 +306,7 @@ export function inspectTaskV4MigrationStatus(): TaskV4MigrationStatus {
 
 /** Convert eligible task-v3 files to task source v4 and return the resulting plan. */
 export function applyTaskV4Migration(): TaskV4MigrationStatus {
-  return withConfigLock(() =>
-    withMaintenanceStartBarrier(() => {
+  return withConfigLock(() => {
       const before = inspectCurrentTaskV4Plan();
       // Blocked files are skipped, not fatal: migrate whatever in the batch
       // can be migrated and report the rest as blocked (the entrypoint exits
@@ -325,6 +321,5 @@ export function applyTaskV4Migration(): TaskV4MigrationStatus {
       }
       pruneTaskMigrationBackups(backupRoot);
       return { ...after, backupPath, applied: applied.changed.length };
-    }),
-  );
+  });
 }

@@ -43,7 +43,6 @@ export interface SchedulerPlanPreview {
   /** Sources that failed to parse/prepare (#867) — excluded from the plan, reported here instead of poisoning it. */
   readonly failures: readonly SchedulerSourceFailure[];
   /** Refs a real sync would grant from an installed, ungranted native scheduler binding. Present only when non-empty. */
-  readonly carriedForward?: readonly string[];
 }
 
 /**
@@ -57,7 +56,6 @@ export function renderSchedulerPlanPreview(
   operations: readonly SchedulerSyncOperation[],
   unchanged: readonly string[] = [],
   failures: readonly SchedulerSourceFailure[] = [],
-  carriedForward: readonly string[] = [],
 ): SchedulerPlanPreview {
   const adds: SchedulerPlanPreviewOperation[] = [];
   const updates: SchedulerPlanPreviewOperation[] = [];
@@ -93,11 +91,10 @@ export function renderSchedulerPlanPreview(
     unchanged: Object.freeze([...unchanged]),
     hasRemovals: removes.length > 0,
     failures: Object.freeze([...failures]),
-    ...(carriedForward.length > 0 ? { carriedForward: Object.freeze([...carriedForward]) } : {}),
   });
 }
 
 /** Convenience wrapper for the common case: previewing a whole {@link SchedulerSyncPlan}. */
 export function renderSchedulerSyncPlanPreview(backend: string, plan: SchedulerSyncPlan): SchedulerPlanPreview {
-  return renderSchedulerPlanPreview(backend, plan.operations, plan.unchanged, plan.failures, plan.carriedForward);
+  return renderSchedulerPlanPreview(backend, plan.operations, plan.unchanged, plan.failures);
 }

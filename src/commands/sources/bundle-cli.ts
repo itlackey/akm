@@ -225,10 +225,7 @@ const renameCommand = defineJsonCommand({
 });
 
 export function isSkippableBundleUpdateLock(error: unknown): error is TransientError {
-  return (
-    error instanceof TransientError &&
-    ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED", "MAINTENANCE_BARRIER_BUSY"].includes(error.code)
-  );
+  return error instanceof TransientError && ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED"].includes(error.code);
 }
 
 export const bundleCommand = defineGroupCommand({

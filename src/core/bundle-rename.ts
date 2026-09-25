@@ -60,7 +60,7 @@ export interface BundleRenamePlan {
   config: {
     defaultBundleChanges: boolean;
     defaultWriteTargetChanges: boolean;
-    /** `scheduler.enabled[].ref` values that carry the old `<old>//` prefix. */
+    /** `scheduler.enabled` refs that carry the old `<old>//` prefix. */
     schedulerRefs: string[];
   };
   lock: { present: boolean };
@@ -108,10 +108,16 @@ function validateRename(config: AkmConfig, oldId: string, newId: string): void {
   validateExplicitBundleName(withoutOld, newId);
 }
 
+function bundleOfRef(ref: string): string | undefined {
+  try {
+    return parseBundleRef(ref).bundle;
+  } catch {
+    return undefined;
+  }
+}
+
 function schedulerRefsToRewrite(config: AkmConfig, oldId: string): string[] {
-  return (config.scheduler?.enabled ?? [])
-    .map((activation) => activation.ref)
-    .filter((ref) => parseBundleRef(ref).bundle === oldId);
+  return (config.scheduler?.enabled ?? []).filter((ref) => bundleOfRef(ref) === oldId);
 }
 
 function renameBundleInConfig(config: AkmConfig, oldId: string, newId: string): AkmConfig {
@@ -126,11 +132,9 @@ function renameBundleInConfig(config: AkmConfig, oldId: string, newId: string): 
       ? config.scheduler
       : {
           ...config.scheduler,
-          enabled: enabled.map((activation) => {
-            const parsed = parseBundleRef(activation.ref);
-            if (parsed.bundle !== oldId) return activation;
-            return { ...activation, ref: bundleRefToString({ ...parsed, bundle: newId }) };
-          }),
+          enabled: enabled.map((ref) =>
+            bundleOfRef(ref) === oldId ? bundleRefToString({ ...parseBundleRef(ref), bundle: newId }) : ref,
+          ),
         };
   return {
     ...config,

@@ -15,12 +15,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { hasGitAncestor } from "../../core/akm-installs";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
-import { loadConfig, resetConfigCache } from "../../core/config/config";
+import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import {
   bundleComponentConfig,
   bundleKeyForContentRoot,
@@ -46,8 +45,9 @@ import type { InputFlag } from "../../execution/input-contract";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
 import {
-  activeSchedulerActivations,
+  enabledRefsFromInstalled,
   isSchedulerRefEnabled,
+  schedulerEnabledRefs,
   setSchedulerRefEnabled,
 } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
@@ -75,12 +75,6 @@ import {
   schedulerNativeArtifactKey,
   schedulerNativeBindingId,
 } from "../../tasks/scheduler-binding";
-import {
-  carryForwardSchedulerGrants,
-  pendingGrantsFromInstalled,
-  staleGrantsFromInstalled,
-  staleSchedulerGrantWarning,
-} from "../../tasks/scheduler-grant-carry-forward";
 import {
   schedulerContextDescriptor,
   schedulerContextPath,
@@ -248,6 +242,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
   const ref = taskAssetRef(id);
   const sched = deps.backend ?? selectBackend();
+  await ensureSchedulerChoice({ backend: sched });
   const writeAsset = deps.writeAsset ?? writeAssetToSource;
   const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
@@ -255,7 +250,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     // Revoke before publishing replacement bytes. If a write/commit/sync
     // fails, the safe partial state is an inert task, never an activated new
     // source (or a stale native binding that can still dispatch it).
-    setSchedulerRefEnabled("task", qualifiedRef, false);
+    setSchedulerRefEnabled(qualifiedRef, false);
     await writeAsset(writeTarget.source, writeTarget.config, ref, yaml);
     commitBoundary(writeTarget, `Update tasks/${id}`);
     await akmTasksSync(deps, bundle.bundleName);
@@ -359,10 +354,9 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     suppressNativeRollbackWhenExternalFails: true,
     allowNativeRollbackAfterExternalFailure: (error) => error instanceof TaskSourceRestoredBoundaryError,
   });
-  // Publish the host-local grant only after source and native state commit.
-  // A failure before this point therefore leaves any new binding inert at
-  // its scheduled-fire gate instead of authorizing partially committed code.
-  setSchedulerRefEnabled("task", qualifiedRef, true);
+  // Add the ref to this host's list only after source and native state
+  // commit, so a failure before this point leaves nothing scheduled.
+  setSchedulerRefEnabled(qualifiedRef, true);
 
   return {
     id,
@@ -420,7 +414,7 @@ export async function akmTasksRun(
   const scheduled = options.scheduled === true;
   const conceptId = adapterId === "akm" ? `tasks/${resolvedId}` : resolvedId;
   const qualifiedRef = makeBundleRef(bundle.source.name, conceptId);
-  if (scheduled && !isSchedulerRefEnabled(loadConfig(), "task", qualifiedRef)) {
+  if (scheduled && !isSchedulerRefEnabled(loadConfig(), qualifiedRef)) {
     throw new UsageError(
       `Scheduled task ${JSON.stringify(qualifiedRef)} is not enabled in local scheduler config; run \`akm task enable ${qualifiedRef}\`.`,
       "INVALID_FLAG_VALUE",
@@ -518,13 +512,45 @@ function resolveTaskActivation(
   return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
 }
 
+/**
+ * A config that predates `scheduler.enabled` means "keep what is installed":
+ * write that as the host's explicit list before one ref is added or removed,
+ * so enabling or disabling a single task never silently drops the others.
+ */
+async function ensureSchedulerChoice(deps: { backend?: SchedulerBackend }): Promise<void> {
+  const config = loadConfig();
+  if (schedulerEnabledRefs(config) !== undefined) return;
+  const sched = deps.backend ?? selectBackend();
+  const inspection = sched.inspectBindings ? await sched.inspectBindings({}) : { installed: [], artifacts: [] };
+  initializeSchedulerChoice(inspection.installed, config, { write: true });
+}
+
+function initializeSchedulerChoice(
+  installed: readonly InstalledSchedulerBinding[],
+  config: AkmConfig,
+  options: { write: boolean },
+): readonly string[] {
+  const refs = enabledRefsFromInstalled(installed, config);
+  if (options.write) {
+    mutateConfig((current) => ({ ...current, scheduler: { ...current.scheduler, enabled: [...refs] } }));
+    resetConfigCache();
+  }
+  warn(
+    `This host had no scheduler.enabled list; ${options.write ? "it was" : "it would be"} initialized from the ` +
+      `${refs.length} installed akm scheduler ${refs.length === 1 ? "binding" : "bindings"}` +
+      `${refs.length > 0 ? `: ${refs.join(", ")}` : ""}. Use \`akm task enable\`/\`akm task disable <ref>\` to change it.`,
+  );
+  return refs;
+}
+
 export async function akmTasksEnable(
   ref: string,
   options: { target?: string } = {},
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
 ): Promise<TasksActivationResult> {
   const resolved = resolveTaskActivation(ref, options.target, true);
-  const activation = setSchedulerRefEnabled("task", resolved.qualifiedRef, true);
+  await ensureSchedulerChoice(deps);
+  const activation = setSchedulerRefEnabled(resolved.qualifiedRef, true);
   const sync = await akmTasksSync(deps, resolved.bundleName);
   return { ref: resolved.qualifiedRef, enabled: true, changed: activation.changed, sync };
 }
@@ -535,12 +561,8 @@ export async function akmTasksDisable(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
 ): Promise<TasksActivationResult> {
   const resolved = resolveTaskActivation(ref, options.target, false);
-  const activation = setSchedulerRefEnabled("task", resolved.qualifiedRef, false);
-  // The grant just revoked above is still an installed, backed native
-  // binding — exactly what carry-forward exists to rescue elsewhere. This
-  // internal reconciling sync never opts in to carry-forward, so disabling
-  // a ref is not immediately undone by the same call that is supposed to
-  // remove it.
+  await ensureSchedulerChoice(deps);
+  const activation = setSchedulerRefEnabled(resolved.qualifiedRef, false);
   const sync = await akmTasksSync(deps, resolved.bundleName);
   return { ref: resolved.qualifiedRef, enabled: false, changed: activation.changed, sync };
 }
@@ -607,7 +629,7 @@ export interface TasksSyncResult {
 async function buildSchedulerSyncPlan(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime },
   bundleTarget: string | undefined,
-  options: { rebind?: boolean; dryRun?: boolean; carryForward?: boolean },
+  options: { rebind?: boolean; dryRun?: boolean },
 ): Promise<{
   sched: SchedulerBackend;
   plan: SchedulerSyncPlan;
@@ -626,31 +648,15 @@ async function buildSchedulerSyncPlan(
   }
   const inspection = await sched.inspectBindings({ rebind: options.rebind === true });
 
-  // Carry a host-local scheduler grant forward for any installed native
-  // binding that is the operator's own prior `akm task sync` but has no
-  // grant yet — before `desired` is computed below, which would otherwise
-  // remove it as ungranted. `--dry-run` only reports what would be carried
-  // forward; it never mutates config. Opt-in only: the CLI's `akm task
-  // sync` (and its `--dry-run` preview) is the only caller that passes
-  // `carryForward: true`. The internal reconciling
-  // syncs inside `akmTasksAdd`/`akmTasksEnable`/`akmTasksDisable` never
-  // carry forward — a caller that just revoked a grant and syncs must not
-  // have that revoke silently undone by the same call.
-  const pendingGrants = options.carryForward ? pendingGrantsFromInstalled(inspection.installed, config) : [];
-  const carriedForward = pendingGrants.map((activation) => activation.ref);
-  if (carriedForward.length > 0 && options.dryRun !== true) {
-    await carryForwardSchedulerGrants(inspection);
-    resetConfigCache();
-    config = loadConfig();
+  // A config that predates `scheduler.enabled` means "keep what is
+  // installed": the akm-written rows already in the scheduler become the
+  // host's choice (written unless this is a dry run) before `desired` is
+  // computed below, which would otherwise remove them.
+  let enabledRefs = schedulerEnabledRefs(config);
+  if (enabledRefs === undefined) {
+    enabledRefs = initializeSchedulerChoice(inspection.installed, config, { write: options.dryRun !== true });
+    if (options.dryRun !== true) config = loadConfig();
   }
-  if (carriedForward.length > 0) {
-    warn(
-      `${options.dryRun === true ? "Would carry forward" : "Carried forward"} ${carriedForward.length} ` +
-        `scheduler ${carriedForward.length === 1 ? "grant" : "grants"} from ${carriedForward.length === 1 ? "an installed scheduled binding that has" : "installed scheduled bindings that have"} no grant yet: ` +
-        `${carriedForward.join(", ")}. Run \`akm task disable <ref>\` to drop one.`,
-    );
-  }
-
   const rawEntries: Array<InstalledSchedulerBinding | RebindSchedulerBinding> = [...inspection.installed];
   const allEntries: InstalledSchedulerBinding[] = rawEntries.map((entry) => {
     const contextPath = "contextPath" in entry ? entry.contextPath : "";
@@ -700,7 +706,7 @@ async function buildSchedulerSyncPlan(
   const inactiveFailures = inactiveResult.failures;
   if (!bundleTarget && sourceNames.length === 0 && configuredSources.length > 0) {
     assertSchedulerBackendInspection({ installed: allEntries, artifacts: nativeArtifacts });
-    const plan = emptySchedulerSyncPlan(inactiveOperations, carriedForward, inactiveFailures);
+    const plan = emptySchedulerSyncPlan(inactiveOperations, inactiveFailures);
     return { sched, plan, sourceSnapshots: Object.freeze([]), prepared: undefined, warnings: [] };
   }
   const selectedNames = sourceNames.length > 0 ? sourceNames : [undefined];
@@ -709,17 +715,7 @@ async function buildSchedulerSyncPlan(
   // per-bundle try/catch below can turn a whole-operation anomaly into a
   // single bundle's reported failure while the others proceed.
   assertSchedulerBackendInspection({ installed: allEntries, artifacts: nativeArtifacts });
-  // A dry-run never mutates config, so `activeSchedulerActivations` above
-  // does not yet include `pendingGrants` (the applied path reloads config
-  // after `carryForwardSchedulerGrants` instead). Add them here so the
-  // preview plans the sync that would actually run after the carry-forward,
-  // instead of showing a `remove` for a ref it just reported as carried
-  // forward.
-  const enabled =
-    options.dryRun === true
-      ? [...activeSchedulerActivations(config), ...pendingGrants]
-      : activeSchedulerActivations(config);
-  const enabledActivations = new Set(enabled.map((activation) => `${activation.kind}\0${activation.ref}`));
+  const enabledRefSet = new Set(enabledRefs);
   const preparedSets: Array<{
     common: Parameters<typeof finalizeSchedulerSyncPlan>[0];
     preparedSources: Awaited<ReturnType<typeof prepareSchedulerSyncSourceSet>>;
@@ -748,7 +744,7 @@ async function buildSchedulerSyncPlan(
         installed: allEntries,
         nativeArtifacts,
         inspection: Object.freeze({ installed: allEntries, artifacts: nativeArtifacts }),
-        enabledActivations,
+        enabledRefs: enabledRefSet,
         rebind: options.rebind === true,
         config,
         resolveAsset: taskProjectionAssetResolver(config, resolved.source.name, stashDir),
@@ -795,12 +791,6 @@ async function buildSchedulerSyncPlan(
         allEntries.map((entry) => entry.binding),
       )
     : undefined;
-  // A grant bound to a stale sourceId is never carried forward (see the
-  // carriedForward block above) and `desired` below excludes it too, so
-  // sync would otherwise remove its row with no explanation.
-  for (const grant of staleGrantsFromInstalled(inspection.installed, config)) {
-    warnings.push(staleSchedulerGrantWarning(grant));
-  }
   const plans = survivingSets.map(({ common, preparedSources, syncTarget }) =>
     finalizeSchedulerSyncPlan(
       {
@@ -832,16 +822,12 @@ async function buildSchedulerSyncPlan(
   // activations as "missing", which is redundant noise on top of the one
   // bundle-level failure that already explains it.
   const selectedBundleNames = new Set(survivingSets.map(({ common }) => common.bundleName));
-  const missingActivationFailures = enabled
-    .filter((activation) => {
-      const bundle = parseBundleRef(activation.ref).bundle;
-      return bundle !== undefined && selectedBundleNames.has(bundle) && !representedRefs.has(activation.ref);
+  const missingActivationFailures = enabledRefs
+    .filter((ref) => {
+      const bundle = parseBundleRef(ref).bundle;
+      return bundle !== undefined && selectedBundleNames.has(bundle) && !representedRefs.has(ref);
     })
-    .map((activation) => ({
-      path: activation.ref,
-      ref: activation.ref,
-      reason: `Enabled ${activation.kind} ${JSON.stringify(activation.ref)} was not found or has no schedule.`,
-    }));
+    .map((ref) => ({ path: ref, ref, reason: `Enabled ref ${JSON.stringify(ref)} was not found or has no schedule.` }));
   const first = plans[0];
   if (!first) {
     // Every selected bundle failed. A scoped sync never reaches this point
@@ -852,7 +838,7 @@ async function buildSchedulerSyncPlan(
     // otherwise-empty plan rather than aborting the whole operation.
     return {
       sched,
-      plan: emptySchedulerSyncPlan(inactiveOperations, carriedForward, [...inactiveFailures, ...bundleFailures]),
+      plan: emptySchedulerSyncPlan(inactiveOperations, [...inactiveFailures, ...bundleFailures]),
       sourceSnapshots: Object.freeze([]),
       prepared,
       warnings,
@@ -875,7 +861,6 @@ async function buildSchedulerSyncPlan(
       ...bundleFailures,
       ...inactiveFailures,
     ]),
-    ...(carriedForward.length > 0 ? { carriedForward: Object.freeze([...carriedForward]) } : {}),
   });
 
   return { sched, plan, sourceSnapshots: plans.map((candidate) => candidate.sourceSnapshot), prepared, warnings };
@@ -926,7 +911,6 @@ function installedSchedulerBundle(config: AkmConfig, entry: InstalledSchedulerBi
 
 function emptySchedulerSyncPlan(
   operations: readonly Extract<SchedulerSyncOperation, { kind: "remove" }>[],
-  carriedForward: readonly string[] = [],
   failures: readonly SchedulerSourceFailure[] = [],
 ): SchedulerSyncPlan {
   const sourceSnapshot: SchedulerSyncPlan["sourceSnapshot"] = Object.freeze({
@@ -947,7 +931,6 @@ function emptySchedulerSyncPlan(
     operations: Object.freeze([...operations]),
     sourceSnapshot,
     failures: Object.freeze([...failures]),
-    ...(carriedForward.length > 0 ? { carriedForward: Object.freeze([...carriedForward]) } : {}),
   });
 }
 
@@ -984,13 +967,7 @@ function assertNoCrossBundleSchedulerCollisions(plans: readonly SchedulerSyncPla
 export async function akmTasksSync(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
   bundleTarget?: string,
-  /**
-   * `carryForward` is opt-in: only the `akm task sync` CLI command passes
-   * `true`. Internal reconciling syncs (`akmTasksAdd`,
-   * `akmTasksEnable`, `akmTasksDisable`) never do, so they cannot silently
-   * re-grant a binding they, or the caller, just revoked.
-   */
-  options: { rebind?: boolean; carryForward?: boolean } = {},
+  options: { rebind?: boolean } = {},
 ): Promise<TasksSyncResult> {
   const { sched, plan, sourceSnapshots, prepared, warnings } = await buildSchedulerSyncPlan(
     deps,
@@ -1030,7 +1007,7 @@ export async function akmTasksSync(
 export async function akmTasksSyncPlan(
   deps: { backend?: SchedulerBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
   bundleTarget?: string,
-  options: { rebind?: boolean; carryForward?: boolean } = {},
+  options: { rebind?: boolean } = {},
 ): Promise<SchedulerPlanPreview> {
   const { sched, plan } = await buildSchedulerSyncPlan(deps, bundleTarget, { ...options, dryRun: true });
   return renderSchedulerSyncPlanPreview(sched.name, plan);
@@ -1725,6 +1702,21 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding, invocation: T
   if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
   if (status.length === 0) status.push("ok");
   return status;
+}
+
+function hasGitAncestor(file: string): boolean {
+  let current: string;
+  try {
+    current = path.dirname(fs.realpathSync(file));
+  } catch {
+    return false;
+  }
+  for (;;) {
+    if (fs.existsSync(path.join(current, ".git"))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
 }
 
 function sameArgv(left: readonly string[], right: readonly string[]): boolean {

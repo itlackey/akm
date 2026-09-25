@@ -181,12 +181,19 @@ describe("akm bundle rename — applied", () => {
     // A lock entry (as a managed install would carry).
     await upsertLockEntry({ id: "original", source: "git", ref: "https://example.test/repo.git" });
 
-    // A scheduler grant naming the bundle.
+    // A scheduled ref naming the bundle, with the task file behind it.
+    const tasksDir = path.join(storage.stashDir, "tasks");
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tasksDir, "foo.yml"),
+      'version: 4\nrun: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
+      "utf8",
+    );
     const configWithScheduler = loadConfig();
     saveConfig({
       ...configWithScheduler,
       scheduler: {
-        enabled: [{ kind: "task", ref: "original//tasks/foo", sourceId: `sha256:${"0".repeat(64)}` }],
+        enabled: ["original//tasks/foo"],
       },
     });
 
@@ -228,7 +235,7 @@ describe("akm bundle rename — applied", () => {
     expect(Object.keys(configAfter.bundles ?? {})).toEqual(["renamed"]);
     expect(configAfter.defaultBundle).toBe("renamed");
     expect(configAfter.defaultWriteTarget).toBe("renamed");
-    expect(configAfter.scheduler?.enabled?.[0]?.ref).toBe("renamed//tasks/foo");
+    expect(configAfter.scheduler?.enabled?.[0]).toBe("renamed//tasks/foo");
 
     // Lockfile.
     expect(readLockfile().map((e) => e.id)).toEqual(["renamed"]);
@@ -287,7 +294,7 @@ describe("akm bundle rename — native scheduler sync", () => {
       'version: 4\nrun: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
       "utf8",
     );
-    setSchedulerRefEnabled("task", "original//tasks/foo", true);
+    setSchedulerRefEnabled("original//tasks/foo", true);
 
     const exec = memoryExec();
     const backend = fakeCronBackend(exec);
@@ -321,7 +328,7 @@ describe("akm bundle rename — native scheduler sync", () => {
       'version: 4\nrun: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
       "utf8",
     );
-    setSchedulerRefEnabled("task", "original//tasks/foo", true);
+    setSchedulerRefEnabled("original//tasks/foo", true);
 
     const exec = memoryExec();
     const backend = fakeCronBackend(exec);

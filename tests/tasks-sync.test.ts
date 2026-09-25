@@ -17,9 +17,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDisable, akmTasksSync } from "../src/commands/tasks/tasks";
-import { loadConfig, resetConfigCache } from "../src/core/config/config";
-import { filesystemBundleSourceId } from "../src/core/config/config-sources";
-import { isSchedulerRefEnabled, schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
+import { isSchedulerRefEnabled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../src/tasks/backends/types";
 import {
@@ -52,7 +51,7 @@ function writeTask(id: string, schedule: string, enabled = true): void {
     `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
-  setSchedulerRefEnabled("task", `stash//tasks/${id}`, enabled);
+  setSchedulerRefEnabled(`stash//tasks/${id}`, enabled);
 }
 
 beforeEach(() => {
@@ -210,50 +209,53 @@ describe("akmTasksSync — schedule drift", () => {
     );
 
     expect(result.enabled).toBe(false);
-    expect(isSchedulerRefEnabled(loadConfig(), "task", "stash//tasks/alpha")).toBe(false);
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/alpha")).toBe(false);
     expect(exec.current()).not.toContain("task run alpha --bundle stash --scheduled");
   });
 
-  test("carries forward a grant lost outside `disable` for an installed row with a backing file", async () => {
+  test("a config without scheduler.enabled takes the installed rows with a backing file as the host's choice", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("orphan", "*/5 * * * *", true);
     await akmTasksSync({ backend });
     expect(exec.current()).toContain("task run orphan");
 
-    // Simulate the grant record itself vanishing (e.g. an upgrade that
-    // reset host-local config) while the installed crontab row and the
-    // task file it backs both survive untouched — the exact 2026-09-24
-    // scenario. This is NOT `akm task disable`.
-    writeSandboxConfig({ scheduler: { enabled: [] } });
+    // A pre-0.9.17 config has no list at all: the installed row is the choice.
+    const { scheduler: _dropped, ...withoutList } = loadConfig();
+    saveConfig(withoutList);
     resetConfigCache();
-    expect(schedulerActivations(loadConfig())).toEqual([]);
+    expect(schedulerEnabledRefs(loadConfig())).toBeUndefined();
 
-    // Only `akm task sync` itself carries a grant forward;
-    // the internal reconciling syncs inside add/enable/disable never do.
-    const result = await akmTasksSync({ backend }, undefined, { carryForward: true });
+    const result = await akmTasksSync({ backend });
     expect(result.removed).not.toContain("orphan");
     expect(exec.current()).toContain("task run orphan");
-    expect(schedulerActivations(loadConfig())).toContainEqual(
-      expect.objectContaining({ kind: "task", ref: "stash//tasks/orphan" }),
-    );
+    expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/orphan");
+
+    // An explicit empty list is a choice, not a missing one.
+    saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
+    resetConfigCache();
+    const removed = await akmTasksSync({ backend });
+    expect(removed.removed).toEqual(["orphan"]);
+    expect(exec.current()).not.toContain("task run orphan");
+    expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
   });
 
-  test("an installed row with no backing file is still removed, not carried forward", async () => {
+  test("an installed row with no backing file is removed, not adopted as a choice", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     writeTask("ghost", "*/5 * * * *", true);
     await akmTasksSync({ backend });
     expect(exec.current()).toContain("task run ghost");
 
-    writeSandboxConfig({ scheduler: { enabled: [] } });
+    const { scheduler: _dropped, ...withoutList } = loadConfig();
+    saveConfig(withoutList);
     resetConfigCache();
     fs.rmSync(path.join(tasksDir, "ghost.yml"));
 
-    const result = await akmTasksSync({ backend }, undefined, { carryForward: true });
+    const result = await akmTasksSync({ backend });
     expect(result.removed).toEqual(["ghost"]);
     expect(exec.current()).not.toContain("task run ghost");
-    expect(schedulerActivations(loadConfig())).toEqual([]);
+    expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
   });
 
   test("removes orphaned scheduler entries with no backing file", async () => {
@@ -280,7 +282,7 @@ describe("akmTasksSync — schedule drift", () => {
       'schedule: "@hourly"\ncommand: akm improve --profile quick --auto-accept safe\nenabled: true\n',
       "utf8",
     );
-    setSchedulerRefEnabled("task", "stash//tasks/legacy", true);
+    setSchedulerRefEnabled("stash//tasks/legacy", true);
 
     const result = await akmTasksSync({ backend });
     expect(result.installed).toEqual([]);
@@ -388,40 +390,6 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).toBe(prior);
     expect(exec.current()).toContain("*/15 * * * *");
     expect(exec.current()).not.toContain("45 */6 * * *");
-  });
-
-  test("a stale-grant warning does not silence the ineligible-invocation warning", async () => {
-    const exec = memoryExec();
-    const backend = backendFor(exec);
-    writeTask("a", "*/15 * * * *", true);
-    await akmTasksSync({ backend });
-    expect(exec.current()).toContain("task run a --bundle stash --scheduled");
-
-    // Make a's grant stale (bound to a different sourceId than "stash"
-    // currently resolves to), so this sync also has a stale-grant warning
-    // to report alongside the ineligible-invocation one below.
-    const staleSourceId = filesystemBundleSourceId(path.join(stashDir, "..", "different-origin"));
-    writeSandboxConfig({ scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/a", sourceId: staleSourceId }] } });
-    resetConfigCache();
-
-    // A new install needs a runtime binding, which is what makes
-    // buildSchedulerSyncPlan resolve one and run warnIneligibleRebind.
-    writeTask("b", "0 2 * * *", true);
-
-    const result = await akmTasksSync({
-      backend,
-      schedulerRuntime: () => ({
-        binding: ["/repo/bun", "/repo/src/cli.ts"],
-        contextPath: "/new/context.json",
-        eligible: false,
-        kind: "checkout",
-      }),
-    });
-
-    expect(result.removed).toContain("a");
-    expect(result.warnings).toBeDefined();
-    expect(result.warnings?.some((warning) => warning.includes("ineligible checkout invocation"))).toBe(true);
-    expect(result.warnings?.some((warning) => warning.includes("akm task enable stash//tasks/a"))).toBe(true);
   });
 });
 

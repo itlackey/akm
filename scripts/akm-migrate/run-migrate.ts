@@ -15,7 +15,6 @@
 import { resolveStashDir } from "../../src/core/common";
 import { bundleContentRoots, bundleKeyForContentRoot, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
-import type { DeferredTxn, QuarantinedTxn } from "../../src/core/fs-txn";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import {
@@ -36,26 +35,13 @@ import {
   type ConfigRetiredKeysResult,
   findConfigRetiredKeys,
 } from "./migrate/config-retired-keys";
-import {
-  applyConfigSchedulerSourceIdMigration,
-  type ConfigSchedulerSourceIdPlan,
-  type ConfigSchedulerSourceIdResult,
-  findConfigSchedulerSourceIdMigration,
-} from "./migrate/config-scheduler-source-ids";
 import { type DeadResidueEntry, type DeadResidueRemoval, findDeadResidueEntries, removeDeadResidue } from "./migrate/dead-residue";
-import { findStaleTxnEntries, recoverStaleTxns, type StaleTxnEntry } from "./migrate/stale-txn";
 import {
   applyWriterRelocation,
   findWriterRelocationEntries,
   type WriterRelocationApplyResult,
   type WriterRelocationPlan,
 } from "./migrate/writer-relocation";
-import {
-  applySchedulerActivationMigration,
-  inspectSchedulerActivationMigration,
-  type SchedulerActivationMigrationPlan,
-  type SchedulerActivationMigrationResult,
-} from "./migrate/scheduler-activation";
 import {
   applyTaskV3Migration,
   applyTaskV4Migration,
@@ -80,13 +66,6 @@ export interface FailedMigrationStep {
 
 export interface CombinedMigrationPlan {
   schemaVersion: 1;
-  /**
-   * Present and `"host-local"` for `apply --host-local`/`status --host-local`
-   * (host-local reconciliation: `config.json`, `state.db`, scheduler grants,
-   * `$DATA/txn` — never bundle content). Absent for the full plan, which
-   * covers every migration step.
-   */
-  mode?: "host-local";
   status: MigrationStatus;
   blockers: string[];
   /**
@@ -103,12 +82,10 @@ export interface CombinedMigrationPlan {
   configLegacySourceShape?: ConfigLegacySourceShapeResult | { pending: ConfigLegacySourceShapePlan };
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   configExtraParams?: ConfigExtraParamsLiftResult | { pending: ConfigExtraParamsLiftPlan };
-  configSchedulerSourceIds?: ConfigSchedulerSourceIdResult | { pending: ConfigSchedulerSourceIdPlan };
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   configRetiredKeys?: ConfigRetiredKeysResult | { pending: ConfigRetiredKeysPlan };
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
-  schedulerActivation?: SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult;
   taskV3Migration?: MigrationPlan["taskV3Migration"];
   taskV4Migration?: TaskV4MigrationStatus["taskV4Migration"];
   backupPath?: string;
@@ -116,19 +93,12 @@ export interface CombinedMigrationPlan {
   taskV4BackupPath?: string;
   taskV4Applied?: number;
   deadResidue?: { pending: DeadResidueEntry[] } | { removed: DeadResidueRemoval[] };
-  staleTxns?:
-    | { pending: StaleTxnEntry[] }
-    | { recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] };
   // Keyed by bundle id (the default stash first, then every other
   // filesystem-backed bundle) — one filesystem bundle can trail live writer
   // residue as easily as another (itlackey/akm#890).
   writerRelocation?: { pending: Record<string, WriterRelocationPlan> } | { relocated: Record<string, WriterRelocationApplyResult> };
 }
 
-/** Shared by both `staleTxns` call sites so `migrationStep`'s two branches infer one common type. */
-type StaleTxnsStepResult =
-  | { pending: StaleTxnEntry[] }
-  | { recovered: StaleTxnEntry[]; quarantined: QuarantinedTxn[]; deferred: DeferredTxn[] };
 
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
   if (left === "blocked" || right === "blocked") return "blocked";
@@ -264,9 +234,8 @@ async function findWriterRelocations(
  * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
  * under its own lock and backup.
  */
-export async function runMigration(options: { apply: boolean; hostLocal?: boolean }): Promise<CombinedMigrationPlan> {
-  const { apply, hostLocal = false } = options;
-  const mode: Pick<CombinedMigrationPlan, "mode"> = hostLocal ? { mode: "host-local" } : {};
+export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
+  const { apply } = options;
   const configPath = getConfigPath();
   const failedSteps: FailedMigrationStep[] = [];
 
@@ -321,7 +290,6 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     }));
     return {
       schemaVersion: 1,
-      ...mode,
       status: statusWithFailedSteps("blocked", failedSteps),
       blockers: [...pendingLift.lifted, ...failedStepBlockers(failedSteps)],
       ...(failedSteps.length > 0 ? { failedSteps } : {}),
@@ -332,48 +300,6 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     };
   }
 
-  const configSchedulerSourceIds = await migrationStep(
-    failedSteps,
-    "configSchedulerSourceIds",
-    () =>
-      apply
-        ? applyConfigSchedulerSourceIdMigration(configPath)
-        : { pending: findConfigSchedulerSourceIdMigration(configPath) },
-    apply ? () => ({ pending: findConfigSchedulerSourceIdMigration(configPath) }) : undefined,
-  );
-  if (apply && (configSchedulerSourceIds as ConfigSchedulerSourceIdResult | undefined)?.applied) resetConfigCache();
-  const pendingSchedulerBindings = apply
-    ? undefined
-    : (configSchedulerSourceIds as { pending: ConfigSchedulerSourceIdPlan } | undefined)?.pending;
-  if (pendingSchedulerBindings && pendingSchedulerBindings.changes.length > 0) {
-    const stateMigrations = await migrationStep(failedSteps, "stateMigrations", () => ({
-      pending: listPendingStateMigrations(),
-    }));
-    return {
-      schemaVersion: 1,
-      ...mode,
-      status: statusWithFailedSteps("blocked", failedSteps),
-      blockers: [
-        ...pendingSchedulerBindings.changes.map(
-          (change) =>
-            `${change.kind === "bind" ? "bind" : "drop"} scheduler activation ${change.ref}` +
-            (change.reason ? `: ${change.reason}` : ""),
-        ),
-        ...failedStepBlockers(failedSteps),
-      ],
-      ...(failedSteps.length > 0 ? { failedSteps } : {}),
-      configLegacySourceShape,
-      configExtraParams,
-      configSchedulerSourceIds,
-      configRetiredKeys,
-      ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-    };
-  }
-
-  // State next, and before the task migrators: they open state.db themselves,
-  // and an ordinary open refuses a historical-destructive migration by design.
-  // This and `akm upgrade` (which runs this) are the only routes that admit
-  // one, always with the verified safety copy.
   const stateMigrations = await migrationStep(
     failedSteps,
     "stateMigrations",
@@ -383,67 +309,6 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
 
   // Capture activation from the host's proven native scheduler state before
   // task source migration removes the retired bundle-authored enabled flags.
-  const schedulerActivation = await migrationStep<SchedulerActivationMigrationPlan | SchedulerActivationMigrationResult>(
-    failedSteps,
-    "schedulerActivation",
-    () => (apply ? applySchedulerActivationMigration() : inspectSchedulerActivationMigration()),
-    apply ? () => inspectSchedulerActivationMigration() : undefined,
-  );
-
-  if (hostLocal) {
-    // Host-local reconciliation touches config.json, state.db, scheduler
-    // grants, and $DATA/txn only (policy: never bundle content) — no task
-    // v2/v3/v4 rewrite, no dead-residue sweep, no writer relocation. Stale
-    // transactions are still in scope: recovery only touches
-    // $DATA/txn/<rootNs>, never reads or writes the bundle itself (see
-    // ./migrate/stale-txn.ts). Resolving the stash dir runs as its own step:
-    // a config that fails to load here is this step's own failure, not an
-    // uncaught throw out of `runMigration`.
-    const stashDir = await migrationStep(failedSteps, "stashDir", () => stashDirIfConfigured());
-    const staleTxns =
-      stashDir !== undefined
-        ? await migrationStep<StaleTxnsStepResult>(
-            failedSteps,
-            "staleTxns",
-            () => (apply ? recoverStaleTxns(stashDir) : Promise.resolve({ pending: findStaleTxnEntries(stashDir) })),
-            apply ? () => Promise.resolve({ pending: findStaleTxnEntries(stashDir) }) : undefined,
-          )
-        : undefined;
-
-    const stateStatus: MigrationStatus =
-      stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
-    const schedulerStatus: MigrationStatus =
-      schedulerActivation && "pending" in schedulerActivation && schedulerActivation.pending.length > 0
-        ? "ready"
-        : "current";
-    const retiredKeysStatus: MigrationStatus =
-      configRetiredKeys && "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0
-        ? "ready"
-        : "current";
-    const legacySourceShapeStatus: MigrationStatus =
-      configLegacySourceShape &&
-      "pending" in configLegacySourceShape &&
-      configLegacySourceShape.pending.converted.length > 0
-        ? "ready"
-        : "current";
-    return {
-      schemaVersion: 1,
-      mode: "host-local",
-      status: statusWithFailedSteps(
-        worstStatus(worstStatus(stateStatus, schedulerStatus), worstStatus(retiredKeysStatus, legacySourceShapeStatus)),
-        failedSteps,
-      ),
-      blockers: [...failedStepBlockers(failedSteps)],
-      ...(failedSteps.length > 0 ? { failedSteps } : {}),
-      configLegacySourceShape,
-      configExtraParams,
-      configSchedulerSourceIds,
-      configRetiredKeys,
-      ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-      ...(schedulerActivation !== undefined ? { schedulerActivation } : {}),
-      ...(staleTxns !== undefined ? { staleTxns } : {}),
-    };
-  }
 
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
@@ -461,7 +326,7 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     () => (apply ? applyTaskV4Migration() : inspectTaskV4MigrationStatus()),
     apply ? () => inspectTaskV4MigrationStatus() : undefined,
   );
-  const stashSections: Pick<CombinedMigrationPlan, "deadResidue" | "staleTxns" | "writerRelocation"> = {};
+  const stashSections: Pick<CombinedMigrationPlan, "deadResidue" | "writerRelocation"> = {};
   if (stashDir !== undefined) {
     const deadResidue = await migrationStep(
       failedSteps,
@@ -470,13 +335,6 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
       apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
     );
     if (deadResidue !== undefined) stashSections.deadResidue = deadResidue;
-    const staleTxns = await migrationStep<StaleTxnsStepResult>(
-      failedSteps,
-      "staleTxns",
-      () => (apply ? recoverStaleTxns(stashDir) : Promise.resolve({ pending: findStaleTxnEntries(stashDir) })),
-      apply ? () => Promise.resolve({ pending: findStaleTxnEntries(stashDir) }) : undefined,
-    );
-    if (staleTxns !== undefined) stashSections.staleTxns = staleTxns;
   }
   // `writerRelocationTargets` calls `loadConfig()`, which throws for a
   // config the schema rejects (e.g. a non-string bundle `path`) — its own
@@ -494,10 +352,6 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
-  const schedulerStatus: MigrationStatus =
-    schedulerActivation && "pending" in schedulerActivation && schedulerActivation.pending.length > 0
-      ? "ready"
-      : "current";
   const retiredKeysStatus: MigrationStatus =
     configRetiredKeys && "pending" in configRetiredKeys && configRetiredKeys.pending.removed.length > 0
       ? "ready"
@@ -512,10 +366,7 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     schemaVersion: 1,
     status: statusWithFailedSteps(
       worstStatus(
-        worstStatus(
-          worstStatus(worstStatus(taskV3?.status ?? "blocked", taskV4?.status ?? "blocked"), stateStatus),
-          schedulerStatus,
-        ),
+        worstStatus(worstStatus(taskV3?.status ?? "blocked", taskV4?.status ?? "blocked"), stateStatus),
         worstStatus(retiredKeysStatus, legacySourceShapeStatus),
       ),
       failedSteps,
@@ -524,10 +375,8 @@ export async function runMigration(options: { apply: boolean; hostLocal?: boolea
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
     configLegacySourceShape,
     configExtraParams,
-    configSchedulerSourceIds,
     configRetiredKeys,
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-    ...(schedulerActivation !== undefined ? { schedulerActivation } : {}),
     taskV3Migration: taskV3?.taskV3Migration,
     taskV4Migration: taskV4?.taskV4Migration,
     ...(taskV3?.backupPath !== undefined ? { backupPath: taskV3.backupPath } : {}),

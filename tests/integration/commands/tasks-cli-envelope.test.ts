@@ -159,7 +159,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
-      setSchedulerRefEnabled("task", "scheduled//standalone", true);
+      setSchedulerRefEnabled("scheduled//standalone", true);
 
       const { code, stdout, stderr } = await runCliCapture([
         "task",
@@ -202,7 +202,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
-      setSchedulerRefEnabled("task", `scheduled//${taskId}`, true);
+      setSchedulerRefEnabled(`scheduled//${taskId}`, true);
 
       const run = await runCliCapture(["task", "run", taskId, "--bundle", "scheduled", "--scheduled"]);
       expect(run.code, run.stderr).toBe(0);
@@ -249,7 +249,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
-      setSchedulerRefEnabled("task", `scheduled//${taskId}`, true);
+      setSchedulerRefEnabled(`scheduled//${taskId}`, true);
 
       const run = await runCliCapture(["task", "run", taskId, "--bundle", "scheduled", "--scheduled"]);
       expect(run.code, run.stderr).toBe(0);
@@ -290,7 +290,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           },
         },
       });
-      setSchedulerRefEnabled("task", `scheduled//${taskId}`, true);
+      setSchedulerRefEnabled(`scheduled//${taskId}`, true);
 
       const run = await runCliCapture(["task", "run", taskId, "--bundle", "scheduled", "--scheduled"]);
       expect(run.code, run.stderr).toBe(0);

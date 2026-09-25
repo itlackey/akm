@@ -962,8 +962,7 @@ export class WorkflowRunsRepository {
    * Self-heal an engine lease its holder crashed without releasing: once
    * `engine_lease_until` has passed, clear it so a read (`workflow status`,
    * `workflow list`) stops reporting a run as engine-driven when the engine is
-   * long gone — mirroring the maintenance barrier's self-reclaim of a wedged
-   * sentinel (`tryAcquireMaintenanceBarrier`) rather than a bespoke mechanism.
+   * long gone.
    * The WHERE clause repeats the exact (holder, until) snapshot the caller
    * read, so a lease renewed or re-acquired in between never gets clobbered —
    * same compare-and-swap shape as the claim above. Never touches a lease
@@ -1328,9 +1327,8 @@ export class WorkflowRunsRepository {
  *   - Inside a {@link withWorkflowRunsConnection} scope, the ambient handle is
  *     BORROWED and left open for the rest of the scope. A wide `map` fan-out
  *     therefore opens ONE connection for the whole step instead of two per unit
- *     (insert + finish) — `openStateDatabase` registers a maintenance activity
- *     lockfile and opens a read-only ledger-preflight handle on every call, so
- *     the per-call cost is milliseconds, not microseconds.
+ *     (insert + finish) — `openStateDatabase` opens a read-only ledger-preflight
+ *     handle on every call, so the per-call cost is milliseconds, not microseconds.
  *   - Outside a scope the behaviour is unchanged: open a fresh connection, run
  *     `fn`, close it in a `finally`.
  *

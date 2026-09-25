@@ -48,7 +48,7 @@ function makeTask(schedule: string, id = "ping"): SchedulerBinding {
 }
 
 function activateTask(stashDir: string, id = "ping"): void {
-  setSchedulerRefEnabled("task", `${path.basename(stashDir).toLowerCase()}//tasks/${id}`, true);
+  setSchedulerRefEnabled(`${path.basename(stashDir).toLowerCase()}//tasks/${id}`, true);
 }
 
 describe("buildPlistXml", () => {
