@@ -62,7 +62,7 @@ export function validateExplicitBundleName(
       "INVALID_FLAG_VALUE",
     );
   }
-  if (name in bundles && name !== existingKeyForThisInstall) {
+  if (Object.hasOwn(bundles, name) && name !== existingKeyForThisInstall) {
     throw new UsageError(
       `Bundle name "${name}" already exists. Choose another name, or run ` +
         `\`akm bundle rename ${name} <new-name>\` first.`,

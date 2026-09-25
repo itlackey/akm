@@ -192,9 +192,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm bundle rename <old> <new>`. A DERIVED name (no `--name` given) is
   unaffected and keeps `deriveBundleId`'s forgiving `-<hash>` uniqueness
   fallback. Every `akm bundle add` result (local, website, and registry) now
-  also carries `bundleId` (the resolved bundle key) and `registryId` (the
-  registry install id, when it differs from `bundleId`), so a caller no
-  longer has to reconstruct the key from `sourceAdded`/`installed`.
+  also carries `bundleId` (the resolved bundle key), and a registry add's
+  result always carries `registryId` (the registry install id) rather than
+  only when it happens to differ from `bundleId`, so a caller no longer has
+  to reconstruct the key from `sourceAdded`/`installed`. A
+  `--name` that shadows an inherited `Object.prototype` member (e.g.
+  `toString`) is a legal bundle slug and is no longer rejected as "already
+  exists" — the existence check now tests the bundles map's own properties
+  (`Object.hasOwn`) instead of walking the prototype chain (`in`). The local
+  and website add paths also now share the one re-add-under-a-different-name
+  check (`validateExplicitBundleName`) instead of each keeping its own copy.
 - **A one-file change in a large directory no longer costs `akm index` half
   an hour.** Both full-text tables keyed their per-entry deletes on
   `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole

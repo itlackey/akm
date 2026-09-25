@@ -85,9 +85,10 @@ function createGitRemote(): string {
   return pathToFileURL(repo).href;
 }
 
-async function bundleAdd(...args: string[]): Promise<void> {
+async function bundleAdd(...args: string[]): Promise<Record<string, unknown>> {
   const result = await withEnv(fixtureEnv, () => runCliCapture(["bundle", "add", ...args, "--format=json"]), 30_000);
   expect(result.code, result.stderr).toBe(0);
+  return JSON.parse(result.stdout);
 }
 
 function bundleKeys(): string[] {
@@ -119,9 +120,11 @@ afterEach(() => {
 describe("akm bundle add <registry ref> --name", () => {
   for (const { ref, registryId } of REGISTRY_REFS) {
     test(`keys ${ref} by --name, not by its cache directory`, async () => {
-      await bundleAdd(ref, "--name", "my-bundle");
+      const result = await bundleAdd(ref, "--name", "my-bundle");
 
       expect(bundleKeys()).toEqual(["my-bundle"]);
+      expect(result.bundleId).toBe("my-bundle");
+      expect(result.registryId).toBe(registryId);
       // The install id stays recorded so remove/update still resolve the ref.
       expect(loadConfig().bundles?.["my-bundle"]?.registryId).toBe(registryId);
       expect(readLockfile().map((entry) => entry.id)).toEqual(["my-bundle"]);
@@ -142,9 +145,11 @@ describe("akm bundle add <registry ref> --name", () => {
 describe("akm bundle add <registry ref> without a usable --name", () => {
   for (const { ref, registryId, name } of REGISTRY_REFS) {
     test(`keys ${ref} by its package/repo name, not by its cache directory`, async () => {
-      await bundleAdd(ref);
+      const result = await bundleAdd(ref);
 
       expect(bundleKeys()).toEqual([name]);
+      expect(result.bundleId).toBe(name);
+      expect(result.registryId).toBe(registryId);
       expect(loadConfig().bundles?.[name]?.registryId).toBe(registryId);
       expect(readLockfile().map((entry) => entry.id)).toEqual([name]);
     });

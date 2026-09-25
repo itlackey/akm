@@ -96,12 +96,8 @@ async function addLocalSource(
   mutateConfig((config) => {
     const existing = bundleKeyForPath(config, resolvedPath);
     if (existing) {
-      if (explicitName !== undefined && explicitName !== existing) {
-        throw new UsageError(
-          `This path is already configured as bundle "${existing}". Re-adding it under a different name is ` +
-            `not supported — run \`akm bundle rename ${existing} ${explicitName}\` instead.`,
-          "INVALID_FLAG_VALUE",
-        );
+      if (explicitName !== undefined) {
+        validateExplicitBundleName(config.bundles ?? {}, explicitName, existing);
       }
       bundleKey = existing;
       const current = config.bundles?.[existing];
@@ -171,12 +167,8 @@ async function addWebsiteSource(
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
     const existingKey = bundleKeyForUrl(config, normalizedUrl);
-    if (existingKey && name !== undefined && name !== existingKey) {
-      throw new UsageError(
-        `This URL is already configured as bundle "${existingKey}". Re-adding it under a different name is ` +
-          `not supported — run \`akm bundle rename ${existingKey} ${name}\` instead.`,
-        "INVALID_FLAG_VALUE",
-      );
+    if (existingKey && name !== undefined) {
+      validateExplicitBundleName(bundles, name, existingKey);
     }
     // An explicit `--name` is a contract (D6) — validated strictly and used
     // as-is, never silently substituted. A DERIVED default (no --name) keeps
@@ -351,7 +343,7 @@ async function addRegistryStash(
     bundleDir: stashDir,
     ref,
     bundleId,
-    ...(synced.id !== bundleId ? { registryId: synced.id } : {}),
+    registryId: synced.id,
     installed: {
       id: synced.id,
       source: synced.source,
