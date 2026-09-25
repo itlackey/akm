@@ -29,7 +29,7 @@
  */
 
 import fs from "node:fs";
-import { akmTasksSync, type TasksSyncResult } from "../commands/tasks/tasks";
+import type { TasksSyncResult } from "../commands/tasks/tasks";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
 import {
   closeDatabase,
@@ -84,11 +84,16 @@ export interface BundleRenameResult extends BundleRenamePlan {
   /**
    * Outcome of re-syncing native scheduler rows under the new bundle id,
    * run immediately after the state rewrite below. Absent on `--dry-run`
-   * (nothing was renamed yet to sync against). A sync failure is reported
-   * here, not thrown — config, index, and state are already renamed by the
-   * time this runs.
+   * (nothing was renamed yet to sync against) or when `deps.syncTasks` was
+   * not supplied. `ok` is `false` both when the sync call itself threw
+   * (`error` carries the message, no `result`) and when it returned with
+   * one or more `result.failures` — a binding that failed to prepare has
+   * already lost its old native row (see `removeStaleNativeSchedulerRows`)
+   * and is not scheduled until `akm task sync` is re-run. Reported here,
+   * never thrown either way — config, index, and state are already renamed
+   * by the time this runs.
    */
-  taskSync?: { ok: true; result: TasksSyncResult } | { ok: false; error: string };
+  taskSync?: { ok: boolean; result: TasksSyncResult } | { ok: false; error: string };
 }
 
 /** Throws if `newId` cannot become `oldId`'s new key. Re-run under the config lock at apply time. */
@@ -272,7 +277,7 @@ async function removeStaleNativeSchedulerRows(sched: SchedulerBackend, oldId: st
     } catch {
       // Best-effort: a row this process can't remove is left for the
       // operator's own `akm task sync` to reconcile, same as every other
-      // per-item failure `akmTasksSync` itself reports rather than throws.
+      // per-item failure the sync itself reports rather than throws.
     }
   }
 }
@@ -282,13 +287,20 @@ async function removeStaleNativeSchedulerRows(sched: SchedulerBackend, oldId: st
  * `dryRun: true`, only {@link buildPlan} runs — nothing is written, matching
  * a `applied: false` result the caller renders as the plan. `deps.backend`
  * lets a caller (tests) inject a fake scheduler backend instead of the real
- * OS one `selectBackend()` would otherwise pick.
+ * OS one `selectBackend()` would otherwise pick. `deps.syncTasks` is how the
+ * caller runs the post-rename `akmTasksSync` — `src/core` sits below
+ * `src/commands` (see `src/core/improve-types.ts`'s note on the same
+ * direction), so this module never imports `akmTasksSync` itself; the real
+ * caller (`akm bundle rename`'s command handler) always supplies it.
  */
 export async function renameBundle(
   oldId: string,
   newId: string,
   options: { dryRun?: boolean } = {},
-  deps: { backend?: SchedulerBackend } = {},
+  deps: {
+    backend?: SchedulerBackend;
+    syncTasks?: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult>;
+  } = {},
 ): Promise<BundleRenameResult> {
   const config = loadConfig();
   validateRename(config, oldId, newId);
@@ -338,14 +350,19 @@ export async function renameBundle(
   // old bundle the moment the rename applies, instead of waiting on the
   // operator to run `akm task sync` by hand. Reported, never thrown:
   // config/index/state above are already renamed by this point, so a sync
-  // failure must not make the rename itself look like it failed.
+  // problem must not make the rename itself look like it failed. `ok` is
+  // false both when the sync call throws and when it comes back with
+  // `result.failures` — a binding that failed to prepare has already lost
+  // its old native row above and is not scheduled until a retry.
   let taskSync: BundleRenameResult["taskSync"];
-  try {
-    await removeStaleNativeSchedulerRows(sched, oldId);
-    const result = await akmTasksSync({ backend: sched }, newId);
-    taskSync = { ok: true, result };
-  } catch (cause) {
-    taskSync = { ok: false, error: taskSyncErrorMessage(cause) };
+  if (deps.syncTasks) {
+    try {
+      await removeStaleNativeSchedulerRows(sched, oldId);
+      const result = await deps.syncTasks(newId, sched);
+      taskSync = { ok: result.failures.length === 0, result };
+    } catch (cause) {
+      taskSync = { ok: false, error: taskSyncErrorMessage(cause) };
+    }
   }
 
   return { ...plan, applied: true, taskSync };

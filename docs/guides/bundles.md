@@ -200,14 +200,17 @@ akm bundle rename old-name new-name
 `akm bundle add` enforces. Rewritten: the config key,
 `defaultBundle`/`defaultWriteTarget` when they name the old id, every
 scheduler grant's ref, the lockfile entry, every indexed entry's `bundle_id`,
-the metadata-enrichment LLM cache keyed by the same `bundle_id`, and this
+the metadata-enrichment LLM cache keyed by the same `item_ref`, and this
 tool's own state rows that name the old bundle. Reported, never rewritten:
 refs inside the bundle's own content (cross-references, a task's `uses:`,
 `supersededBy`) — the command lists the files that still spell the old
 `<old>//` prefix so you can fix them by hand. A real run also re-syncs native
 scheduler bindings under the new name on its own, so scheduled tasks pick it
-up immediately; `--dry-run` lists the installed native rows that still name
-the old bundle, so you can see what that sync will replace.
+up immediately — but the result's `taskSync.ok` is `false` when a binding
+fails to re-sync too, not only when the sync call itself fails, so a partial
+re-sync is never reported as clean; `--dry-run` lists the installed native
+rows that still name the old bundle, so you can see what that sync will
+replace.
 
 ## akm clone
 
