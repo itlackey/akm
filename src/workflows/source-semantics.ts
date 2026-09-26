@@ -2,13 +2,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** Shared semantic validation for every workflow source-IR producer and decoder. */
+/** Semantic checks shared by the workflow grammars (`parser.ts`, `github-yaml.ts`) and freeze. */
 
 import fs from "node:fs";
 import path from "node:path";
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../commands/command/builtin-action";
-import { parseSchedule } from "../../tasks/schedule";
-import { classifyWorkflowSourceUses, type WorkflowSourceUsesClassifier, type WorkflowSourceUsesTarget } from "./uses";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../commands/command/builtin-action";
+import { classifyTargetRef } from "../execution/target-ref";
+import { parseSchedule } from "../tasks/schedule";
+import type { WorkflowCommandMode } from "./plan";
+
+/** A `uses:` target: an executable asset ref, or AKM's built-in `akm/command`. */
+export type WorkflowUsesTarget =
+  | { readonly kind: "command" | "script" | "task" | "workflow"; readonly ref: string }
+  | { readonly kind: "builtin-command"; readonly ref: "akm/command" };
 
 export class WorkflowSourceSemanticError extends Error {
   constructor(
@@ -20,7 +26,12 @@ export class WorkflowSourceSemanticError extends Error {
   }
 }
 
-export type WorkflowSourceCommandMode = "literal" | "portable-template" | "stored-ref";
+/** The argv a `run:` string executes under `shell`. */
+export function workflowShellCommand(shell: string, content: string): string[] {
+  if (shell === "cmd") return ["cmd", "/d", "/s", "/c", content];
+  if (shell === "pwsh" || shell === "powershell") return [shell, "-Command", content];
+  return [shell, "-c", content];
+}
 
 export function canonicalizeWorkflowCron(value: string): string {
   const canonical = value.trim().split(/\s+/).join(" ");
@@ -91,10 +102,7 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
-export function classifyWorkflowStepUses(
-  value: string,
-  classifier: WorkflowSourceUsesClassifier = classifyWorkflowSourceUses,
-): WorkflowSourceUsesTarget {
+export function classifyWorkflowStepUses(value: string): WorkflowUsesTarget {
   if (value.includes("${{")) {
     throw new WorkflowSourceSemanticError(
       "unsupported-github-expression",
@@ -107,20 +115,12 @@ export function classifyWorkflowStepUses(
       "uses must be one exact, non-empty executable ref",
     );
   }
-  let target: WorkflowSourceUsesTarget;
+  if (value === "akm/command") return { kind: "builtin-command", ref: "akm/command" };
   try {
-    target = classifier(value);
+    return classifyTargetRef(value);
   } catch (cause) {
     throw usesFailure(value, cause);
   }
-  // P3a (docs/plans/specs/p3a-plan-v5-child-freeze.md §1.3(2)/§4, A-N4): a
-  // `kind: "workflow"` target used to throw `nested-workflow-unsupported`
-  // here. That rejection is REMOVED — classification returns the workflow
-  // target like any other target-ref-shaped `uses:`, and freeze decides
-  // (`src/workflows/freeze/targets/child-workflow.ts`, the ONE recursive
-  // child-workflow resolver both the direct and task-wrapped composition
-  // forms route through).
-  return target;
 }
 
 /**
@@ -131,10 +131,7 @@ export function classifyWorkflowStepUses(
  * while a stored ref remains resolution-owned because its template bytes are
  * not available until the later resolver loads the command asset.
  */
-export function validateWorkflowBuiltinCommand(
-  value: unknown,
-  mode?: WorkflowSourceCommandMode,
-): ParsedBuiltinCommandAction {
+export function validateWorkflowBuiltinCommand(value: unknown, mode?: WorkflowCommandMode): ParsedBuiltinCommandAction {
   let action: ParsedBuiltinCommandAction;
   try {
     action = parseBuiltinCommandAction(value);
@@ -145,7 +142,7 @@ export function validateWorkflowBuiltinCommand(
     );
   }
 
-  const expectedMode: WorkflowSourceCommandMode = action.kind === "stored" ? "stored-ref" : "portable-template";
+  const expectedMode: WorkflowCommandMode = action.kind === "stored" ? "stored-ref" : "portable-template";
   const effectiveMode = mode ?? expectedMode;
   if (action.kind === "stored") {
     if (effectiveMode !== "stored-ref") {
@@ -169,12 +166,6 @@ export function validateWorkflowBuiltinCommand(
     );
   }
   return action;
-}
-
-export function rejectNulInArgv(command: readonly string[]): void {
-  if (command.some((argument) => argument.includes("\0"))) {
-    throw new WorkflowSourceSemanticError("invalid-exec-argv", "Direct exec argv may not contain NUL bytes.");
-  }
 }
 
 function usesFailure(value: string, cause: unknown): WorkflowSourceSemanticError {

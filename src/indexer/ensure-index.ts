@@ -152,43 +152,11 @@ function hasNewerIndexableFiles(
 
 /**
  * Check whether the local index is stale relative to the given stash directory.
- * Returns `true` when the index is missing, empty, or was built against a
- * different primary stash dir.
+ * Returns `true` when the index is missing, empty, was built against a
+ * different primary stash dir, or an indexable file is newer than it.
  */
 export function isIndexStale(stashDir: string): boolean {
-  const dbPath = getDbPath();
-  // Raises on an index we cannot READ rather than calling it stale — "stale"
-  // sends us into an inline reindex that will fail anyway, and whose failure is
-  // reported as the misleading "proceeding with existing index" (#791).
-  assertIndexPathReadable(dbPath);
-  if (classifyPathAccess(dbPath).access === "absent") return true;
-
-  let db: ReturnType<typeof openExistingDatabase> | undefined;
-  try {
-    db = openExistingDatabase(dbPath);
-    if (!hasCurrentEntriesTable(db)) return true;
-    const entryCount = getEntryCount(db);
-    if (entryCount === 0) return true;
-
-    const builtAt = getMeta(db, "builtAt");
-    if (hasNewerIndexableFiles(stashDir, builtAt, getIndexedFilePaths(db), getIndexedFileHashes(db))) return true;
-
-    const storedStashDir = getMeta(db, "stashDir");
-    if (storedStashDir !== stashDir) {
-      // Check if the incoming stashDir appears in the stored stashDirs array
-      try {
-        const storedDirs = JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[];
-        if (!storedDirs.includes(stashDir)) return true;
-      } catch {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return true;
-  } finally {
-    if (db) closeDatabase(db);
-  }
+  return !indexCanServeStash(stashDir, { requireFresh: true });
 }
 
 /**
@@ -199,10 +167,13 @@ export function isIndexStale(stashDir: string): boolean {
  * content-stale, so read paths serve it as-is. When it is false the existing
  * index has nothing relevant to return (no DB, no `entries` table, zero rows,
  * or built for a different stash), so those cases must rebuild inline.
+ * `requireFresh` also demands that no indexable file is newer than the index.
  */
-function indexCanServeStash(stashDir: string): boolean {
-  // Same rule as isIndexStale: unreadable is an error, not "cannot serve" (#791).
+function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean } = {}): boolean {
   const dbPath = getDbPath();
+  // Raises on an index we cannot READ rather than calling it unusable — that
+  // sends us into an inline reindex that will fail anyway, and whose failure
+  // is reported as the misleading "proceeding with existing index" (#791).
   assertIndexPathReadable(dbPath);
   if (classifyPathAccess(dbPath).access === "absent") return false;
 
@@ -211,6 +182,12 @@ function indexCanServeStash(stashDir: string): boolean {
     db = openExistingDatabase(dbPath);
     if (!hasCurrentEntriesTable(db)) return false;
     if (getEntryCount(db) === 0) return false;
+    if (
+      options.requireFresh &&
+      hasNewerIndexableFiles(stashDir, getMeta(db, "builtAt"), getIndexedFilePaths(db), getIndexedFileHashes(db))
+    ) {
+      return false;
+    }
 
     const storedStashDir = getMeta(db, "stashDir");
     if (storedStashDir === stashDir) return true;
@@ -226,38 +203,6 @@ function indexCanServeStash(stashDir: string): boolean {
   } finally {
     if (db) closeDatabase(db);
   }
-}
-
-async function runInlineReindex(
-  stashDir: string,
-  options: {
-    signal?: AbortSignal;
-    hydrateSources?: boolean;
-    onReindexTiming?: EnsureIndexOptions["onReindexTiming"];
-  } = {},
-): Promise<boolean> {
-  const { akmIndex } = await import("./indexer.js");
-  const startedMs = Date.now();
-  const response = await akmIndex({
-    stashDir,
-    implicit: true,
-    ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.hydrateSources === false ? { hydrateSources: false } : {}),
-  });
-  // R6: the implicit reindex's cost was previously discarded entirely
-  // (`await akmIndex(...)` and nothing else), making a 27-minute blocking
-  // rebuild invisible to both the operator and the improve result. Fall back
-  // to a wall-clock measurement when the response carries no `timing` block.
-  const durationMs = response.timing?.totalMs ?? Date.now() - startedMs;
-  const timing = response.timing;
-  warnVerbose(
-    `[ensure-index] implicit reindex completed in ${durationMs}ms` +
-      (timing
-        ? ` (walk=${timing.walkMs}ms llm=${timing.llmMs}ms embed=${timing.embedMs}ms finalize=${timing.finalizeMs}ms)`
-        : ""),
-  );
-  options.onReindexTiming?.({ durationMs, timing });
-  return true;
 }
 
 /**
@@ -280,22 +225,34 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
   // §11.5: warn (once) if the configured bundle ids drifted from the persisted
   // index prefixes (hand-renamed bundle key) BEFORE any rebuild could re-mint.
   warnOnBundleRenameDrift();
-  if (options.mode === "blocking") {
-    // Blocking callers (improve's planning preflight) are a sanctioned
-    // materialization point — hydrate cache-backed sources as usual.
-    if (!isIndexStale(stashDir)) return false;
-    return runInlineReindex(stashDir, {
-      ...(options.signal ? { signal: options.signal } : {}),
-      ...(options.onReindexTiming ? { onReindexTiming: options.onReindexTiming } : {}),
-    });
-  }
-  // Background = the READ path (`show` auto-index): query time must never clone/
-  // pull/fetch (spec §14.3 / D11). Build from already-materialized content only;
-  // absent source caches are skipped with a warning, not fetched.
-  if (indexCanServeStash(stashDir)) return false;
-  return runInlineReindex(stashDir, {
+  const blocking = options.mode === "blocking";
+  if (indexCanServeStash(stashDir, { requireFresh: blocking })) return false;
+
+  const { akmIndex } = await import("./indexer.js");
+  const startedMs = Date.now();
+  const response = await akmIndex({
+    stashDir,
+    implicit: true,
     ...(options.signal ? { signal: options.signal } : {}),
-    hydrateSources: false,
-    ...(options.onReindexTiming ? { onReindexTiming: options.onReindexTiming } : {}),
+    // Blocking callers (improve's planning preflight) are a sanctioned
+    // materialization point and hydrate cache-backed sources as usual. The
+    // background READ path (`show` auto-index) must never clone/pull/fetch at
+    // query time (spec §14.3 / D11): it builds from already-materialized
+    // content, and absent source caches are skipped with a warning.
+    ...(blocking ? {} : { hydrateSources: false }),
   });
+  // R6: the implicit reindex's cost was previously discarded entirely
+  // (`await akmIndex(...)` and nothing else), making a 27-minute blocking
+  // rebuild invisible to both the operator and the improve result. Fall back
+  // to a wall-clock measurement when the response carries no `timing` block.
+  const durationMs = response.timing?.totalMs ?? Date.now() - startedMs;
+  const timing = response.timing;
+  warnVerbose(
+    `[ensure-index] implicit reindex completed in ${durationMs}ms` +
+      (timing
+        ? ` (walk=${timing.walkMs}ms llm=${timing.llmMs}ms embed=${timing.embedMs}ms finalize=${timing.finalizeMs}ms)`
+        : ""),
+  );
+  options.onReindexTiming?.({ durationMs, timing });
+  return true;
 }

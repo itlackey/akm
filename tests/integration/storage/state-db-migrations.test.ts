@@ -16,7 +16,7 @@ import {
 import { openStateDatabase, upgradeHistoricalStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { type Database, openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 
 const roots: string[] = [];
 

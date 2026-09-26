@@ -104,7 +104,7 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window A: SIGKILL after the unit row is running but before finish → resume re-dispatches it exactly once and completes", async () => {
     writeProgram(storage.stashDir, "crash-solo", SOLO_WF);
     const started = await startWorkflowRun("workflows/crash-solo", {});
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
 
@@ -147,7 +147,7 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window B: SIGKILL after the unit completes but before the step does → resume reuses the unit, replaces the dangling gate row, finalizes once", async () => {
     writeProgram(storage.stashDir, "crash-gate", GATE_WF);
     const started = await startWorkflowRun("workflows/crash-gate", {});
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
 

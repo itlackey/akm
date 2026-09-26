@@ -455,10 +455,9 @@ function parseTaskV3TriggerFields(input: ExecutionJsonObject, ctx: ParseContext)
  * the original file this was moved body-intact from, and because
  * `parseTaskV3Document` shares its trigger-parsing helpers
  * (`parseTaskV3TriggerFields`/`compileTriggers`/`parseOn`/`parseAkm`) with
- * it. The LIVE, `src`-side classifier this was re-homed from is
- * `classifyWorkflowYamlTriggers` (`src/workflows/source-ir/triggers.ts`,
- * P4-N3) — that one, not this frozen copy, is what
- * `src/workflows/source-ir/compile.ts` injects.
+ * it. The LIVE, `src`-side `on:` parser is `parseTriggers`
+ * (`src/workflows/github-yaml.ts`, P4-N3) — that one, not this frozen copy,
+ * is what workflow compilation uses.
  */
 export function classifyTaskV3Triggers(value: unknown, options: ClassifyTaskV3TriggersOptions): TaskV3TriggerPlan {
   const ctx = ctxFrom(options);

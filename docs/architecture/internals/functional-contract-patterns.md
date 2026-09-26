@@ -85,7 +85,6 @@ Examples:
 
 - ranking signals
 - proposal validators
-- search-hit enrichers
 
 Shape:
 
@@ -261,7 +260,10 @@ Rule:
 (`PathResolver`, `MatchContributor`, `MetadataContributor`,
 `LintContributor`, `ImproveContributor`, `IndexPostProcessor`,
 `AgentRunner`) and were aspirational, not a contract any code followed.
-Trimmed to the five contributor contracts below. The engine-owned
+Trimmed to the contributor contracts below. `SearchHitEnricher` and
+`ActionContributor` were later folded into direct calls
+(`src/indexer/search/search-hit-enrichers.ts`, `buildLocalAction` in
+`src/indexer/search/db-search.ts`) — each had one implementation. The engine-owned
 `AgentRequestLowerer` is the separate structural boundary documented in
 §3.9, not a revival of the removed generic `AgentRunner`. See the [drift
 register](../specs/0.9.0-docs-code-drift-register.md#q-16--functional-contract-patternsmd-4-aspiration-or-contract)
@@ -272,19 +274,11 @@ implementation.
 
 For search score adjustments and explanations.
 
-## 4.2 `SearchHitEnricher`
-
-For post-ranking hit augmentation.
-
-## 4.3 `ActionContributor`
-
-For action text generation.
-
-## 4.4 `ProposalValidator`
+## 4.2 `ProposalValidator`
 
 For proposal acceptance checks.
 
-## 4.5 `SessionLogHarness`
+## 4.3 `SessionLogHarness`
 
 For raw session-log or history ingestion from external harnesses.
 

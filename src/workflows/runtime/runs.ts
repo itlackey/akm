@@ -26,12 +26,10 @@ import {
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { frozenSummaryJudge } from "../exec/frozen-judge";
 import { detectSecretShapedParams } from "../exec/param-secrets";
-import { collectWorkflowWarnings } from "../ir/compile";
-import { compileResolveFreezeWorkflowV4 } from "../ir/freeze-v4";
+import { freezeWorkflow } from "../freeze/freeze";
 import { materializeWorkflowParameterFlags, validateWorkflowParams, type WorkflowParameterFlag } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
-import type { IrRuntimeKind } from "../ir/schema";
-import type { WorkflowPlanGraphV4 } from "../ir/schema-v4";
+import type { WorkflowPlan, WorkflowRuntimeKind } from "../plan";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
@@ -59,14 +57,14 @@ export interface WorkflowRunDetail {
    */
   units?: WorkflowUnitDiagnostic[];
   /**
-   * The parent-child status tree (P3b, spec §4.5). Absent, never `[]`, when
+   * The parent-child status tree. Absent, never `[]`, when
    * this run has no children — so a childless run's envelope stays
-   * byte-identical to pre-P3b (Stable tier, row B-33).
+   * byte-identical to pre-P3b.
    */
   children?: WorkflowChildRunNode[];
 }
 
-/** One node of the parent-child status tree (P3b, spec §4.5, rows B-34…B-37). */
+/** One node of the parent-child status tree. */
 export interface WorkflowChildRunNode {
   runId: string;
   workflowRef: string;
@@ -86,18 +84,9 @@ export interface WorkflowChildRunNode {
 }
 
 /**
- * A per-unit diagnostic row for `akm workflow status --units` (PR #714 review
- * round 2, #22).
- *
- * Step EVIDENCE stays deterministic by design: a failed unit contributes only
- * its `failureReason` (the durable, journaled failure vocabulary) to the
- * artifact graph the reducer promotes — the engine's raw dispatch diagnostic is
- * never mixed into a hashed artifact (see `buildEvidence` in
- * `exec/step-work.ts`). This is the SEPARATE, honest surface for the human-
- * facing diagnostics that graph deliberately drops: it reads the unit journal
- * directly and reports each row's `failure_reason` plus whatever result/error
- * text the row itself carries (`result_json`, clipped). It never feeds back
- * into any artifact, reducer, or input hash.
+ * A per-unit diagnostic row for `akm workflow status --units`: each journal
+ * row's `failure_reason` and clipped `result_json` — the human-facing
+ * diagnostics step evidence deliberately drops. Never fed back into an artifact.
  */
 export interface WorkflowUnitDiagnostic {
   unitId: string;
@@ -112,38 +101,28 @@ export interface WorkflowUnitDiagnostic {
   failureReason: string | null;
   sessionId: string | null;
   /**
-   * The row's `result_json` rendered as text, clipped to
-   * {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP} chars — the same bound the dispatch
-   * path clips with before journaling. Re-clipped here regardless because the
-   * database is an untrusted persistence boundary. Null when the row journaled
-   * nothing.
-   *
-   * For a COMPLETED unit that is its result. For a FAILED unit it is the
-   * dispatch diagnostic the journal kept — already scrubbed by the dispatch
-   * redaction contract before it was written. For an `exec` unit that is where
-   * a failing command's stderr lands, and it is frequently the ONLY explanation
-   * of the failure: `failure_reason: non_zero_exit` says a command failed, and a
-   * command that explains itself on stderr with empty stdout would otherwise say
-   * nothing at all here.
+   * The row's `result_json` as text, clipped to {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP}:
+   * a completed unit's result, or a failed unit's redacted diagnostic (e.g. an
+   * exec unit's stderr). Null when the row journaled nothing.
    */
   diagnostic: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   engine: string | null;
   /** Journaled resolved runtime kind for a frozen-engine unit. */
-  runtimeKind: IrRuntimeKind | null;
+  runtimeKind: WorkflowRuntimeKind | null;
   platform: string | null;
 }
 
 /**
  * Membership test for the journaled `runner` column, which is an untyped string.
- * The `Record<IrRuntimeKind, …>` is exhaustiveness-checked, so a new runtime
+ * The `Record<WorkflowRuntimeKind, …>` is exhaustiveness-checked, so a new runtime
  * kind cannot be added to the union without being accepted here too.
  */
-const IR_RUNTIME_KINDS: Record<IrRuntimeKind, true> = { llm: true, agent: true, sdk: true, exec: true };
+const IR_RUNTIME_KINDS: Record<WorkflowRuntimeKind, true> = { llm: true, agent: true, sdk: true, exec: true };
 
-function runtimeKindOf(runner: string | null): IrRuntimeKind | null {
-  return runner !== null && Object.hasOwn(IR_RUNTIME_KINDS, runner) ? (runner as IrRuntimeKind) : null;
+function runtimeKindOf(runner: string | null): WorkflowRuntimeKind | null {
+  return runner !== null && Object.hasOwn(IR_RUNTIME_KINDS, runner) ? (runner as WorkflowRuntimeKind) : null;
 }
 
 function toUnitDiagnostic(row: WorkflowRunUnitRow): WorkflowUnitDiagnostic {
@@ -251,11 +230,11 @@ export async function startWorkflowRun(
   },
 ): Promise<WorkflowRunDetail> {
   const asset = await loadWorkflowAsset(ref);
-  // Frozen plan (redesign addendum, R1): compile the plan ONCE at start and
+  // Frozen plan: compile the plan ONCE at start and
   // persist it on the run row in the same transaction as the insert. Every
   // later invocation executes this snapshot — the asset file is never re-read
   // for an in-flight run; re-planning is an explicit new run.
-  const frozen = await compileResolveFreezeWorkflowV4(asset, loadConfig());
+  const frozen = await freezeWorkflow(asset, loadConfig());
   const plan = frozen.plan;
   if (options?.parameterFlags?.length && Object.keys(params).length > 0) {
     throw new UsageError("Workflow parameters must use either an object or per-parameter flags, not both.");
@@ -266,10 +245,10 @@ export async function startWorkflowRun(
   // Non-fatal WARNINGS: untyped-step and undeclared-param advisories surface
   // as `warn()` lines at start (stderr, consistent with the repo's other
   // author-facing warnings) without blocking the run.
-  for (const w of collectWorkflowWarnings(asset.sourceIr)) {
+  for (const w of frozen.warnings) {
     warn(`workflow run: ${asset.path}:${w.line} — ${w.message}`);
   }
-  // Reviewer #12: validate supplied parameters against the frozen param
+  // validate supplied parameters against the frozen param
   // schemas BEFORE creating the run, so a type-mismatched param (e.g. a string
   // for a `{ type: array }` param) is rejected with actionable errors instead
   // of flowing silently into a unit prompt. Programs without declared param
@@ -305,18 +284,9 @@ export async function startWorkflowRun(
     // so two terminals starting the same workflow could leave two runs racing.
     // The active-alias query and all inserts share one immediate transaction.
 
-    // #942: an active run of this ref may already exist in a DIFFERENT
-    // scope — the incident this issue reports (a scheduled task's cwd and a
-    // human's shell hash to different scope keys, so each believed it held
-    // no active run and each started one). The scope-local uniqueness guard
-    // stays scope-local (a documented, deliberate per-project partition —
-    // see storage-locations.md); this only warns, once, so the operator can
-    // resume or abandon the other run instead of silently accumulating a
-    // second one. `findActiveRunOutsideScope` excludes the caller's own
-    // scope IN SQL (never merely post-filtered) so the caller's own active
-    // run can never sort first under `LIMIT 1` and mask a genuinely different
-    // scope's run — the failure mode a same-scope-inclusive query plus a
-    // post-filter has with `--new`/`--force`.
+    // #942: an active run of this ref in a different scope (e.g. a scheduled
+    // task's cwd vs. a shell) is warned about once; the uniqueness guard stays
+    // scope-local. The query excludes the caller's own scope in SQL.
     const crossScopeActive = repo.findActiveRunOutsideScope(workflowRefs, scopeKey);
     const crossScopeWarning = crossScopeActive
       ? `Workflow ${asset.ref} already has an active run in another scope ` +
@@ -351,7 +321,6 @@ export async function startWorkflowRun(
       })),
       planJson,
       planHash,
-      revalidateSources: () => frozen.sourceCollector.revalidate(),
     });
 
     const result = await getWorkflowStatus(runId);
@@ -388,7 +357,7 @@ export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: b
 export async function listWorkflowRuns(input?: {
   workflowRef?: string;
   activeOnly?: boolean;
-  /** Include child workflow runs (P3b, B-N10). Default `false`. */
+  /** Include child workflow runs. Default `false`. */
   includeChildren?: boolean;
   /**
    * Search every scope instead of only the caller's current one (#942,
@@ -668,13 +637,8 @@ export async function completeWorkflowStep(
       if (input.signal?.aborted) throw interruptionReason(input.signal);
 
       const completedAt = new Date().toISOString();
-      // The promoted artifact is persisted WHOLE, unclipped (issue C): a
-      // step artifact that does not fit some cap used to be replaced by a
-      // truncation marker at this exact write, and the run looked fine right
-      // up until a LATER invocation (a resume, or any downstream step
-      // referencing it) found the marker instead of the value and failed
-      // permanently, with every prior paid step now unrecoverable. Persisting
-      // the real value here is what makes it readable again on resume.
+      // The promoted artifact is persisted whole, so a resume and every later
+      // reference read the real value.
       const evidenceJson = input.evidence ? JSON.stringify(input.evidence) : null;
       repo.updateStepCompletion({
         status: input.status,
@@ -689,13 +653,8 @@ export async function completeWorkflowStep(
       refreshedSteps = readWorkflowRunSteps(repo, run.id);
       const state = deriveRunState(refreshedSteps);
 
-      // P3b (spec §4.3, B-N13): resolve + persist declared outputs INSIDE
-      // this same transaction, immediately after the run is known to have
-      // COMPLETED. A resolution failure throws here, and the transaction
-      // rolls back whole — the step completion included — so the observable
-      // outcome is fail-before-mutation: the step stays pending, the run
-      // stays active, and (since appendEvent runs outside this transaction)
-      // no event is appended.
+      // Declared outputs resolve inside this transaction once the run
+      // completes; a failure rolls the step completion back whole.
       let outputsJson: string | null | undefined; // undefined = untouched, keep the row's existing value
       if (state.status === "completed" && plan.outputs) {
         const resolved = resolveWorkflowRunOutputs(plan, refreshedSteps);
@@ -892,7 +851,7 @@ function readWorkflowRun(repo: WorkflowRunsRepository, runId: string): WorkflowR
  * throw only covers a direct caller completing a step of a run whose plan is
  * unreadable.
  */
-function requireRunPlan(run: WorkflowRunRow): WorkflowPlanGraphV4 {
+function requireRunPlan(run: WorkflowRunRow): WorkflowPlan {
   const read = readRunPlan(run);
   if (read.ok) return read.plan;
   throw new UsageError(
@@ -924,34 +883,10 @@ function buildWorkflowRunDetail(
 }
 
 /**
- * Build the parent-child status tree rooted at `rootRunId`, recursively, for
- * whatever run's children are being listed (`forRunId`) — P3b, spec §4.5.
- * `rootRunId` is threaded unchanged through the recursion, so every blocked
- * node's `resume.then` names the SAME top-of-query run regardless of nesting
- * depth: `akm workflow resume <rootRunId> && akm workflow run <rootRunId>` —
- * never each node's own immediate parent, which the tree's caller has no
- * command for.
- *
- * That command is sufficient to clear a block exactly ONE level deep (the
- * root's own composing step blocked directly on this node) but NOT deeper
- * (code-review round 4, finding 6 / Review log R6 — corrects a false claim
- * this comment used to make here). Re-driving the root does **not** cascade
- * back down through every intermediate composing step: `driveChildWorkflowUnit`
- * (child-workflow.ts) never re-drives a child whose OWN status is `blocked`
- * (row A-22) — it is not driven at all — so a re-drive just RE-OBSERVES the
- * still-blocked status and re-propagates the block upward (an intermediate
- * run is always blocked when a descendant is, row A-21, applied
- * recursively), never reaching the deepest blocked node. Clearing a
- * depth-2-or-deeper block requires resuming EVERY blocked run in the chain,
- * deepest first, then re-running only the root — see "Recovering a blocked
- * child" in docs/guides/run-workflows.md and "Blocked-child recovery" in
- * docs/reference/workflow-schema.md for the worked multi-level sequence.
- * `resume.then` is deliberately not widened to enumerate that chain (no
- * envelope change, no new field) — the docs carry the multi-level sequence
- * instead.
- *
- * Absent, never `[]`, when `forRunId` has no children (P3a's `childRunsOf`
- * order: `created_at, id`).
+ * The parent-child status tree for `forRunId`'s children, recursively. Every
+ * blocked node's `resume.then` names the top-of-query run (`rootRunId`); a
+ * block deeper than one level needs every blocked run resumed, deepest first
+ * (docs/guides/run-workflows.md). Absent, never `[]`, when there are no children.
  */
 function childRunTree(
   repo: WorkflowRunsRepository,
@@ -965,7 +900,7 @@ function childRunTree(
 
 function toChildRunNode(repo: WorkflowRunsRepository, rootRunId: string, row: WorkflowRunRow): WorkflowChildRunNode {
   const spawnedByUnitId = row.parent_unit_id ?? "";
-  // B-36: the parent STEP that spawned it, resolved via the real journaled
+  // the parent STEP that spawned it, resolved via the real journaled
   // unit row — null when that unit row is gone.
   const stepId =
     row.parent_run_id && row.parent_unit_id
@@ -1011,9 +946,9 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
     agentHarness: run.agent_harness ?? null,
     agentSessionId: run.agent_session_id ?? null,
     planIrVersion: run.plan_ir_version ?? null,
-    // P3b (spec §4.5): all three optional and conditionally spread, so every
+    // P3b: all three optional and conditionally spread, so every
     // pre-existing (non-child, no-outputs-declared) run's envelope is
-    // byte-identical (Stable tier, rows B-27, B-45).
+    // byte-identical.
     ...(run.outputs_json ? { outputs: parseJsonObject(run.outputs_json) ?? {} } : {}),
     ...(run.parent_run_id ? { parentRunId: run.parent_run_id } : {}),
     ...(run.parent_unit_id ? { spawnedByUnitId: run.parent_unit_id } : {}),

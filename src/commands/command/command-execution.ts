@@ -366,7 +366,7 @@ function diagnosticNotices(notices: readonly Readonly<LoweringNotice>[]): readon
  */
 export function inspectPreparedCommandInvocation(prepared: PreparedCommandInvocation): CommandDryRunResult {
   const built = buildExecution(prepared.request, prepared.runner);
-  return Object.freeze({
+  return {
     schemaVersion: 1,
     shape: "command-dry-run",
     ok: true,
@@ -374,7 +374,7 @@ export function inspectPreparedCommandInvocation(prepared: PreparedCommandInvoca
     engine: prepared.request.engine.name,
     provenance: diagnosticProvenance(prepared.provenance),
     notices: diagnosticNotices(built.notices),
-  });
+  };
 }
 
 function resultEnvelope(

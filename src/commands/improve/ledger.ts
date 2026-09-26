@@ -3,14 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The improve stages' view of the `improve_ledger` table: one place to open
- * the right state.db handle (the run's borrowed connection, a dry-run read
- * snapshot, or a fresh managed open), record an attempt, and load the rows a
- * candidate selection needs before it spends an LLM call.
- *
- * The repository (`storage/repositories/improve-ledger-repository.ts`) owns
- * the schema and the outcome → cadence rule; this module only adds the
- * stage-side plumbing (contexts, best-effort writes, ref spellings).
+ * The stages' view of the `improve_ledger` table: record an attempt, and load
+ * the rows candidate selection reads before it spends an LLM call. The
+ * repository owns the schema and the outcome → cadence rule.
  */
 
 import fs from "node:fs";
@@ -27,10 +22,20 @@ import {
 } from "../../storage/repositories/improve-ledger-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
-import { improveStateReadRefs } from "./source-identity";
 
 export type { ImproveLedgerOutcome, ImproveLedgerRow };
 export { isLedgerBlocked };
+
+/** An improve candidate's durable state key: its index item_ref, else its conceptId. */
+export function stateKey(ref: string, itemRef?: string): string {
+  return itemRef ?? ref;
+}
+
+/** The conceptId part of a durable key (`bundle//conceptId` → `conceptId`). */
+export function stripBundle(ref: string): string {
+  const boundary = ref.indexOf("//");
+  return boundary >= 0 ? ref.slice(boundary + 2) : ref;
+}
 
 /** How a stage reaches state.db: the same seams its proposals and events use. */
 export interface LedgerAccess {
@@ -45,9 +50,9 @@ function ledgerDbPath(access: LedgerAccess | undefined): string | undefined {
 }
 
 /**
- * Run `fn` against the ledger's database. A borrowed run handle is reused;
- * a read-only caller gets a snapshot (or `undefined` when state.db does not
- * exist yet — nothing has been attempted, so nothing is blocked).
+ * Run `fn` against the ledger's database: the run's borrowed handle, a read
+ * snapshot for a read-only caller (`undefined` when state.db does not exist),
+ * or a managed open.
  */
 function withLedgerDb<T>(access: LedgerAccess | undefined, fn: (db: Database) => T): T | undefined {
   const borrowed = access?.eventsCtx?.db;
@@ -65,14 +70,9 @@ function withLedgerDb<T>(access: LedgerAccess | undefined, fn: (db: Database) =>
   return withStateDb(fn, dbPath !== undefined ? { path: dbPath } : undefined);
 }
 
-function ledgerNowIso(access: LedgerAccess | undefined): string {
-  const now = access?.proposalsCtx?.now ?? access?.eventsCtx?.now ?? Date.now;
-  return new Date(now()).toISOString();
-}
-
 export interface LedgerAttemptInput {
   stashDir: string;
-  /** Durable spelling of the attempted asset (`itemRef ?? conceptId`). */
+  /** Durable spelling of the attempted asset ({@link stateKey}). */
   ref: string;
   source: string;
   outcome: ImproveLedgerOutcome;
@@ -81,10 +81,9 @@ export interface LedgerAttemptInput {
 }
 
 /**
- * Record what a stage just did with one or more refs. Best-effort like every
- * other stage-side state write: a failure is warned about, never turns an LLM
- * result into a thrown error. (Proposal mints and decisions write the ledger
- * inside their own transactions — see `proposal/repository.ts`.)
+ * Record what a stage just did with one or more refs. Best-effort: a failure
+ * is a warning, never an error on top of an LLM result. (Proposal mints and
+ * decisions write the ledger in their own transactions.)
  */
 export function recordLedgerAttempt(
   access: LedgerAccess | undefined,
@@ -92,7 +91,8 @@ export function recordLedgerAttempt(
 ): void {
   const list: readonly LedgerAttemptInput[] = Array.isArray(inputs) ? inputs : [inputs as LedgerAttemptInput];
   if (list.length === 0 || access?.readOnly || access?.eventsCtx?.readOnly) return;
-  const at = ledgerNowIso(access);
+  const now = access?.proposalsCtx?.now ?? access?.eventsCtx?.now ?? Date.now;
+  const at = new Date(now()).toISOString();
   try {
     withLedgerDb(access, (db) =>
       withImmediateTransaction(db, () => {
@@ -111,10 +111,9 @@ export function recordLedgerAttempt(
     );
   } catch (error) {
     const first = list[0] as LedgerAttemptInput;
+    const more = list.length > 1 ? ` (+${list.length - 1} more)` : "";
     warn(
-      `[improve] ledger write failed for ${first.ref}${list.length > 1 ? ` (+${list.length - 1} more)` : ""} (${
-        first.source
-      } → ${first.outcome}): ${error instanceof Error ? error.message : String(error)}`,
+      `[improve] ledger write failed for ${first.ref}${more} (${first.source} → ${first.outcome}): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -126,11 +125,7 @@ export function ledgerKey(source: string, ref: string): string {
   return `${source}\0${ref}`;
 }
 
-/**
- * Load every ledger row for `sources` in one query. A read never creates
- * state.db: when it does not exist yet nothing has been attempted, so the
- * snapshot is empty.
- */
+/** Every ledger row for `sources` in one query; no state.db yet means nothing was attempted. */
 export function loadLedgerSnapshot(
   access: LedgerAccess | undefined,
   stashDir: string,
@@ -148,18 +143,14 @@ export function loadLedgerSnapshot(
   return out;
 }
 
-/** The row for a candidate under any of its durable spellings. */
+/** The row for a candidate under its durable key. */
 export function ledgerRowFor(
   snapshot: LedgerSnapshot,
   source: string,
   ref: string,
   itemRef?: string,
 ): ImproveLedgerRow | undefined {
-  for (const key of improveStateReadRefs(ref, itemRef)) {
-    const row = snapshot.get(ledgerKey(source, key));
-    if (row) return row;
-  }
-  return undefined;
+  return snapshot.get(ledgerKey(source, stateKey(ref, itemRef)));
 }
 
 /** `ref → last_attempt_at` for one source over a candidate set (the signal-delta cursor). */

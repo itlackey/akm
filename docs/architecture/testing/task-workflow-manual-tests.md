@@ -726,9 +726,7 @@ workflows/parent --format json`
 "child"`, `.expansion.childRef == "bundle//workflows/child"`,
 `.expansion.childVia == "direct"`, `.expansion.childOutputs ==
 ["message"]`; `.steps[0].expansion.steps` contains the child's own frozen
-graph (one entry, `stepId: "greet"`, `targetKind: "shell"`);
-`.sourceReadSet` contains both `"workflows/child.md"` and
-`"workflows/parent.yml"`.
+graph (one entry, `stepId: "greet"`, `targetKind: "shell"`).
 
 **Part B — `run` (actually executes):** `akm workflow run workflows/parent
 --format json`, then `akm workflow status <run-id> --format json`
@@ -1228,9 +1226,7 @@ akm index
    "task"`, `.expansion.childTaskRef ==
    "bundle//tasks/akm-manual-test-wf-task"`, `.expansion.childRef ==
    "bundle//workflows/leaf"`, `.expansion.steps[0].stepId == "work"` and
-   `.targetKind == "shell"`; `.sourceReadSet` contains all three of
-   `tasks/akm-manual-test-wf-task.yml`, `workflows/leaf.yml`,
-   `workflows/task-wrapped.yml`; exit `0`.
+   `.targetKind == "shell"`; exit `0`.
 2. `akm workflow run workflows/task-wrapped --format json` (this DOES
    publish a run — acceptable, scoped to isolated bundle/state dirs, not
    the OS scheduler), then `akm workflow status <runId> --format json`.
@@ -1470,9 +1466,7 @@ akm index
    this host's `scheduler.enabled` list does not name it.
 2. `akm workflow plan workflows/wrap-real-improve-task --format json` →
    `.steps[0].targetKind == "shell"`, `.steps[0].expansion ==
-   {"via":"task","taskRef":"tasks/akm-improve-catchup"}`,
-   `.sourceReadSet` contains `"tasks/akm-improve-catchup.yml"` — the real
-   shipped file's bytes are part of this plan's frozen identity.
+   {"via":"task","taskRef":"tasks/akm-improve-catchup"}`.
 
 **Do not** `workflow run` this composed workflow, and do not `task run
 akm-improve-catchup` directly — both would invoke the real `akm improve

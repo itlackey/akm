@@ -6,10 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  isConsolidationEligibleMemoryName,
-  isHotCapturedMemory,
-} from "../../../src/commands/improve/consolidate/eligibility";
+import { isConsolidationEligibleMemoryName, isHotCapturedMemory } from "../../../src/commands/improve/consolidate";
 
 let tmp: string;
 

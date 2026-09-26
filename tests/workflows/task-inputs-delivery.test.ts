@@ -82,8 +82,9 @@ import {
   type UnitDispatchRequest,
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
-import { decodeWorkflowPlanV4, type IrStepPlanV4, type WorkflowPlanGraphV4 } from "../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan, WorkflowPlanStep } from "../../src/workflows/plan";
 import { execContextLimits } from "../../src/workflows/resource-limits";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -144,11 +145,11 @@ function writeWorkflow(name: string, steps: string): void {
 }
 
 /** Index the fixture bundle, start the run, and return its first frozen step plus its run id. */
-async function firstStep(ref: string): Promise<{ runId: string; step: IrStepPlanV4 }> {
+async function firstStep(ref: string): Promise<{ runId: string; step: WorkflowPlanStep }> {
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const started = await startWorkflowRun(ref);
   const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-  const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null")) as WorkflowPlanGraphV4;
+  const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null")) as WorkflowPlan;
   const step = plan.steps[0];
   if (!step) throw new Error(`frozen plan for ${ref} has no steps`);
   return { runId: started.run.id, step };
@@ -352,7 +353,7 @@ describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const started = await startWorkflowRun("workflows/shell-delivery-ref");
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null")) as WorkflowPlanGraphV4;
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null")) as WorkflowPlan;
     const step = plan.steps[1];
     if (!step) throw new Error("expected a second (dispatch) step in the frozen plan");
 

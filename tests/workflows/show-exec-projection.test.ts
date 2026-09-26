@@ -22,7 +22,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { saveConfig } from "../../src/core/config/config";
-import "../../src/sources/providers/index";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const WORKFLOW = [

@@ -11,7 +11,6 @@ import { resolveImprovePlan } from "../../../src/commands/improve/improve-strate
 import { runImproveLoopStage, runImproveMaintenancePasses } from "../../../src/commands/improve/loop-stages";
 import { runImprovePreparationStage, runValidationAndRepairPass } from "../../../src/commands/improve/preparation";
 import { akmReflect } from "../../../src/commands/improve/reflect";
-import { createRunContext } from "../../../src/commands/improve/run-context";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { makeStashDir, withMockedFetch } from "../../_helpers/sandbox";
 
@@ -139,7 +138,7 @@ describe("improve engine-plan boundaries", () => {
     }
   });
 
-  test("nested contradiction remains a reported plan capability without invoking its writer", async () => {
+  test("a legacy nested contradictionDetection key is tolerated and invokes no writer", async () => {
     const stash = makeStashDir();
     try {
       const config: AkmConfig = {
@@ -163,15 +162,7 @@ describe("improve engine-plan boundaries", () => {
         },
       };
       const plan = resolveImprovePlan("contradictions", config);
-      const contradictionDetectionFn = mock(async () => ({
-        familiesExamined: 0,
-        pairsChecked: 0,
-        edgesWritten: 0,
-        warnings: [],
-      }));
-
       expect(plan.processes.consolidate.enabled).toBe(true);
-      expect(plan.strategy.config.processes?.consolidate?.contradictionDetection?.enabled).toBe(true);
       expect(configuredDirectAutonomyLanes()).toEqual(["memoryCleanup"]);
 
       await expect(
@@ -185,14 +176,11 @@ describe("improve engine-plan boundaries", () => {
             memorySummary: { eligible: 1, derived: 1 },
             strategyFilteredRefs: [],
           })) as never,
-          contradictionDetectionFn,
           runImprovePreparationStageFn: (async () => {
             throw new Error("stop after contradiction boundary");
           }) as never,
         }),
       ).rejects.toThrow("stop after contradiction boundary");
-
-      expect(contradictionDetectionFn).not.toHaveBeenCalled();
     } finally {
       stash.cleanup();
     }
@@ -238,14 +226,7 @@ describe("improve engine-plan boundaries", () => {
       let distillOptions: Record<string, unknown> | undefined;
       const dispatchedModels: string[] = [];
       await runImproveLoopStage({
-        ctx: createRunContext({
-          stashDir: stash.dir,
-          config,
-          eventsCtx: {},
-          proposalsCtx: {},
-          sourceRun: "test-run",
-          dryRun: false,
-        }),
+        eventsCtx: {},
         primaryStashDir: stash.dir,
         scope: { mode: "ref", value: "memories/source" },
         options: { config, stashDir: stash.dir },
@@ -292,7 +273,6 @@ describe("improve engine-plan boundaries", () => {
         distillCooledRefs: new Set(),
         distillOnlyRefs: [],
         recentErrors: {},
-        utilityMap: new Map(),
         startMs: Date.now(),
         budgetMs: 60_000,
         improveProfile: plan.strategy.config,

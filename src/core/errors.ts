@@ -100,7 +100,7 @@ export type UsageErrorCode =
   // tasks/<ref> target that declares no inputs: at all, and grows it to
   // commands/<ref> and scripts/<ref> targets, which are never binding
   // surfaces. Thrown from src/workflows/freeze/targets/task.ts's
-  // taskDispatch and src/workflows/freeze/resolve-steps.ts's resolveStep.
+  // taskDispatch and src/workflows/freeze/freeze.ts's resolveStep.
   | "COMPOSITION_INVALID"
   // P1a: the sourceError funnel in src/tasks/source-v3.ts, re-coded from
   // INVALID_FLAG_VALUE. Message text, field-path rendering (`$` for the
@@ -277,7 +277,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   //
   // Code-review finding: this default is reached ONLY by with:-rejection
   // throw sites (the ones above, plus task.ts's noDeclaredInputsError and
-  // resolve-steps.ts's rejectNonTaskBindingWith) — every other
+  // freeze.ts's resolveStep) — every other
   // COMPOSITION_INVALID throw site (multi-job source, composition
   // cycle/depth/size, invalid child-output reference, an env: on a
   // composing step) passes its own explicit constructor hint instead of

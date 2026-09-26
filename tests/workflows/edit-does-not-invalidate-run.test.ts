@@ -66,7 +66,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(resumed.warnings ?? []).toEqual([]);
   });
 
-  test("plan_ir_version stays 5 before and after an edit, and the resumed run keeps executing", async () => {
+  test("plan_ir_version stays the current version before and after an edit, and the resumed run keeps executing", async () => {
     const file = writeWorkflow("repro-919", "Do the ORIGINAL second thing.");
 
     // "akm workflow run workflows/repro-919 --max-steps=1"
@@ -78,7 +78,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(started.run.status).toBe("active");
 
     const before = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(before?.plan_ir_version).toBe(5);
+    expect(before?.plan_ir_version).toBe(6);
 
     // "edit ~/akm/workflows/repro-919.md — extend a step body"
     writeWorkflow("repro-919", "Do the EDITED second thing, now with more detail.");
@@ -112,6 +112,6 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(prompts[0]).not.toContain("EDITED");
 
     const after = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(after?.plan_ir_version).toBe(5);
+    expect(after?.plan_ir_version).toBe(6);
   });
 });

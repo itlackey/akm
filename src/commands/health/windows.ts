@@ -11,7 +11,7 @@ import { UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import type { Database } from "../../storage/database";
-import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
+import { queryTaskHistory, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import {
   buildImproveSkipSummary,
   computeWallTimeStats,
@@ -30,6 +30,7 @@ import {
   type HealthMetrics,
   IMPROVE_COMPLETED_EVENT,
   type ImproveHealthMetrics,
+  type ImproveRunSummary,
   type WindowResult,
   type WindowSpec,
 } from "./types";
@@ -152,31 +153,61 @@ interface WindowMetricsBundle {
   runs: number;
 }
 
-export function buildWindowMetrics(
-  db: Database,
-  stateDbPath: string,
-  since: string,
-  until: string,
-  now: () => number = () => Date.now(),
-): WindowMetricsBundle {
-  const untilMs = new Date(until).getTime();
-  const taskRows = queryTaskHistory(db, { since }).filter((row) => {
-    const startMs = new Date(row.started_at).getTime();
-    return !Number.isFinite(untilMs) || startMs < untilMs;
-  });
+export interface TaskWindowRates {
+  taskFailRate: number;
+  agentFailureRate: number;
+  agentFailureReasonCounts: Record<string, number>;
+  stuckActiveRuns: number;
+  /** Rows behind `stuckActiveRuns` — the main health path (`health.ts`) names each one; window-compare only needs the count. */
+  stuckActiveRows: TaskHistoryRow[];
+}
+
+/**
+ * Task-history-derived rates, shared by the main health path
+ * (`health.ts`'s `gatherTaskHistoryPhase`) and {@link buildWindowMetrics}
+ * below — previously computed twice with the only difference being whether
+ * the caller had already bounded `taskRows` by an `until`. Pure projection of
+ * already-queried rows; callers own the `since`/`until` query.
+ */
+export function computeTaskWindowRates(taskRows: readonly TaskHistoryRow[], now: () => number): TaskWindowRates {
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
-  const stuckActiveRuns = activeRows.filter(
-    (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
-  ).length;
+  const stuckActiveRows = activeRows.filter((row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS);
   const agentRows = taskRows.filter((row) => isAgentTaskHistoryRow(row));
   const agentFailures = agentRows.filter((row) => {
     const detail = taskFailureDetail(row);
     return typeof detail?.reason === "string" && detail.reason.length > 0;
   });
-  const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
-  const agentFailureRate = agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length;
+  return {
+    taskFailRate: taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length,
+    agentFailureRate: agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length,
+    agentFailureReasonCounts: countAgentFailureReasons(agentFailures),
+    stuckActiveRuns: stuckActiveRows.length,
+    stuckActiveRows,
+  };
+}
 
+export interface ImproveWindowSummary {
+  improve: ImproveHealthMetrics;
+  runCount: number;
+  /** Per-run rows for the same `[since, until)` — reused for `--group-by run` so callers never re-read `improve_runs`. */
+  perRunSummaries: ImproveRunSummary[];
+}
+
+/**
+ * Improve-pipeline window summary, shared by the main health path
+ * (`health.ts`) and {@link buildWindowMetrics} below: events-derived
+ * invoked/completed/skipped counts, the `result_json` aggregate, wall-time
+ * stats from the same per-run rows, and accepted-proposal coverage, all over
+ * one `[since, until)`.
+ */
+export function buildImproveWindowSummary(
+  db: Database,
+  stateDbPath: string,
+  since: string,
+  until: string,
+): ImproveWindowSummary {
+  const untilMs = new Date(until).getTime();
   const eventsBeforeUntil = (type: string) =>
     readEvents({ since, type }, { dbPath: stateDbPath }).events.filter(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
@@ -189,18 +220,35 @@ export function buildWindowMetrics(
   improve.skipReasons = skipSummary.skipReasons;
   // Wall times come from the same improve-runs window as the per-run
   // reporting so counts and percentiles stay aligned with it.
+  const perRunSummaries = buildPerRunSummaries(db, since, until);
   improve.wallTime = computeWallTimeStats(
-    buildPerRunSummaries(db, since, until)
-      .map((run) => run.wallTimeMs)
-      .filter((ms) => Number.isFinite(ms) && ms > 0),
+    perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0),
   );
   improve.coverage = computeWindowProposalCoverage(db, since, until);
 
+  return { improve, runCount, perRunSummaries };
+}
+
+export function buildWindowMetrics(
+  db: Database,
+  stateDbPath: string,
+  since: string,
+  until: string,
+  now: () => number = () => Date.now(),
+): WindowMetricsBundle {
+  const untilMs = new Date(until).getTime();
+  const taskRows = queryTaskHistory(db, { since }).filter((row) => {
+    const startMs = new Date(row.started_at).getTime();
+    return !Number.isFinite(untilMs) || startMs < untilMs;
+  });
+  const rates = computeTaskWindowRates(taskRows, now);
+  const { improve, runCount } = buildImproveWindowSummary(db, stateDbPath, since, until);
+
   const metrics: HealthMetrics = {
-    taskFailRate: roundRate(taskFailRate),
-    agentFailureRate: roundRate(agentFailureRate),
-    agentFailureReasonCounts: countAgentFailureReasons(agentFailures),
-    stuckActiveRuns,
+    taskFailRate: roundRate(rates.taskFailRate),
+    agentFailureRate: roundRate(rates.agentFailureRate),
+    agentFailureReasonCounts: rates.agentFailureReasonCounts,
+    stuckActiveRuns: rates.stuckActiveRuns,
     llmUsage: readLlmUsageAggregate(stateDbPath, since, until),
   };
 

@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { reduceStepOutcomes, type UnitOutcome, unitSchemaWarning } from "../../src/workflows/exec/step-work";
-import type { IrStepPlanV4 } from "../../src/workflows/ir/schema-v4";
+import type { WorkflowPlanStep } from "../../src/workflows/plan";
 
 const SCHEMA = {
   type: "object",
@@ -15,14 +15,14 @@ const SCHEMA = {
   required: ["verified", "research_path"],
 };
 
-function planWithUnitSchema(schema?: Record<string, unknown>): IrStepPlanV4 {
+function planWithUnitSchema(schema?: Record<string, unknown>): WorkflowPlanStep {
   return {
     stepId: "research",
     title: "research",
     sequenceIndex: 0,
     gate: { kind: "gate", id: "research.gate", stepId: "research", criteria: [] },
     root: { kind: "agent", id: "research.unit", instructions: "", onError: "fail", ...(schema ? { schema } : {}) },
-  } as unknown as IrStepPlanV4;
+  } as unknown as WorkflowPlanStep;
 }
 
 describe("unitSchemaWarning — advisory per-unit output check", () => {

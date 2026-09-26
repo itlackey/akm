@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { compileResolveFreezeWorkflowV4 } from "../../../src/workflows/ir/freeze-v4";
+import { workflowStepInstructions } from "../../../src/workflows/compile";
+import { freezeWorkflow } from "../../../src/workflows/freeze/freeze";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
@@ -55,9 +56,9 @@ describe("inline akm/command content is never scanned for native-tool constructs
     );
 
     const asset = await loadWorkflowAsset("workflows/gated");
-    expect(asset.steps[0]?.instructions).toBe("Review the diff against @docs/style-guide.md");
+    expect(workflowStepInstructions(asset.plan.steps[0]!)).toBe("Review the diff against @docs/style-guide.md");
 
-    const frozen = await compileResolveFreezeWorkflowV4(asset, loadConfig());
+    const frozen = await freezeWorkflow(asset, loadConfig());
     const target = frozen.plan.steps[0]?.root;
     if (!target || target.kind !== "unit" || target.frozenTarget.kind !== "command") {
       throw new Error("expected a frozen command unit");
@@ -82,7 +83,7 @@ describe("inline akm/command content is never scanned for native-tool constructs
 
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const asset = await loadWorkflowAsset("workflows/stored");
-    const frozen = await compileResolveFreezeWorkflowV4(asset, loadConfig());
+    const frozen = await freezeWorkflow(asset, loadConfig());
     const target = frozen.plan.steps[0]?.root;
     if (!target || target.kind !== "unit" || target.frozenTarget.kind !== "command") {
       throw new Error("expected a frozen command unit");

@@ -18,7 +18,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stageJudgedProposal } from "../src/commands/improve/distill/quality-gate";
+import { stageJudgedProposal } from "../src/commands/improve/stage";
 import { type DrainOptions, drainProposals } from "../src/commands/proposal/drain";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal/proposal";
 import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";

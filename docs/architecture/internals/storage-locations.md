@@ -595,7 +595,6 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | Consumer | Filter used | Purpose |
 |---|---|---|
 | `akm improve` | `feedback` within 30d | Signal-filter candidate selection |
-| `akm improve` | `schema_repair_invoked` per ref | Schema repair cooldown guard (7d) |
 | `akm improve` (distill pass) | `feedback` per ref | Builds LLM prompt context (last 20 events) |
 | `akm improve` (reflect pass) | `feedback` per ref | Builds agent prompt context (last 10 per-ref / 20 global) |
 | `akm show` | `show` per ref | Loop detection: warns at 3+ repeated shows |

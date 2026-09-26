@@ -15,19 +15,18 @@ commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 
 ## Frozen plans
 
-The first `akm workflow run <ref>` compiles either peer source format through
-source IR v1. Every new run/start creates and atomically publishes durable
-plan **`irVersion` 5** on the run row (`plan_json` + `plan_hash`); a new start
-never emits an older version. `plan_ir_version` and `plan_hash` are recorded
-provenance, not gates: a stored plan is decoded as it is, and one frozen by an
-older or newer akm that still decodes simply runs (with one warning).
+The first `akm workflow run <ref>` compiles either peer source format
+(Markdown or GitHub-Actions-style YAML) straight to the one plan type and
+stores it as durable plan **`irVersion` 6** on the run row (`plan_json` +
+`plan_hash`); a new start never emits an older version. `plan_ir_version` and
+`plan_hash` are recorded provenance, not gates: a stored plan is decoded as it
+is — irVersion 4 and 5 plans included — and one frozen by an older or newer
+akm that still decodes simply runs (with one warning). A newer akm's plan that
+does not decode is refused with a message naming "Upgrade akm".
 
-The durable plan includes a guarded, canonical `sourceReadSet` covering the
-workflow and every command/persona/task/script source it owns — and, for a
-step that composes a child workflow, every source the child transitively owns
-too (see [Child workflows](#child-workflows)). Each entry records logical and
-physical identity, content hash, and containment evidence, so aliases,
-replacements, and source races fail before publication.
+The durable plan records `sourceHash`, the sha256 of the workflow source file
+at freeze. It is used only for the resume warning below, never to refuse a
+run.
 
 Dispatch-significant material is immutable. The resolved request is frozen,
 the resolved target is frozen, and runner selection is frozen.

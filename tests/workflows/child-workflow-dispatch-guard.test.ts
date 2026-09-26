@@ -67,7 +67,7 @@ import { dispatchWorkflowExecution, type UnitDispatchRequest } from "../../src/w
  * A structurally minimal `FrozenChildWorkflowTarget`. Both dispatch entry
  * points under test decide on `.kind` alone before touching any other
  * field, so `frozenPlan` stays an empty object cast through `unknown` rather
- * than a fully valid `WorkflowPlanGraphV4` — mirrors
+ * than a fully valid `WorkflowPlan` — mirrors
  * `tests/workflows/hash-v6.test.ts`'s `asFrozenTarget` fixture, which
  * established the identical "cast through unknown for this one field, never
  * a real `@ts-expect-error`" convention for this exact target shape.

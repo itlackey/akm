@@ -154,16 +154,11 @@ export function countUsageEventsByType(db: Database, eventType: string): number 
 /**
  * Delete usage events older than the given number of days.
  */
-export function purgeOldUsageEvents(db: Database, retentionDays: number, options?: { stateSchema?: string }): void {
+export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
   if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
   try {
-    const stateSchema = options?.stateSchema;
-    if (stateSchema !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(stateSchema)) {
-      throw new Error("Invalid attached state schema name.");
-    }
-    const usageEvents = stateSchema === undefined ? "usage_events" : `"${stateSchema}".usage_events`;
     const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-    db.prepare(`DELETE FROM ${usageEvents} WHERE created_at < ?`).run(cutoff);
+    db.prepare("DELETE FROM usage_events WHERE created_at < ?").run(cutoff);
   } catch {
     /* Table may not exist yet */
   }

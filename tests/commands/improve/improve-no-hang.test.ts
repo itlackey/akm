@@ -121,8 +121,6 @@ describe("akmImprove: process does not hang after consolidation returns", () => 
           }),
           reflectFn: stubReflect,
           distillFn: stubDistill,
-          // Inject a no-op consolidate that returns immediately
-          consolidateOptions: { dryRun: true },
         }).then((result) => ({ timedOut: false, result })),
         new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), TIMEOUT_MS)),
       ]);
@@ -155,7 +153,6 @@ describe("akmImprove: process does not hang after consolidation returns", () => 
           }),
           reflectFn: stubReflect,
           distillFn: stubDistill,
-          consolidateOptions: { dryRun: true },
         }).then((result) => ({ timedOut: false, result })),
         new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), TIMEOUT_MS)),
       ]);

@@ -21,7 +21,7 @@ import {
   inspectConsolidationPool,
   loadExistingKnowledgeBodyHashes,
 } from "../../../src/commands/improve/consolidate";
-import { cacheHash } from "../../../src/commands/improve/content-hash";
+import { contentHash } from "../../../src/commands/improve/content-hash";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -137,7 +137,7 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     expect(pool.memories.map((memory) => memory.name)).toEqual(["fresh-newest"]);
   });
 
-  test("loadExistingKnowledgeBodyHashes and cacheHash agree on the same body despite frontmatter/whitespace differences", () => {
+  test("loadExistingKnowledgeBodyHashes and the body contentHash agree on the same body despite frontmatter/whitespace differences", () => {
     writeKnowledge(
       "already-promoted",
       "---\ndescription: promoted copy\ntags: [a, b]\n---\n\nShared canonical body text.\n\n",
@@ -147,6 +147,6 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     // Same body, different frontmatter and surrounding whitespace — the
     // shape a source memory takes relative to its promoted knowledge copy.
     const memoryBody = "---\ndescription: source memory\ncaptureMode: hot\n---\n\n  Shared canonical body text.  \n";
-    expect(existingHashes.has(cacheHash(memoryBody))).toBe(true);
+    expect(existingHashes.has(contentHash(memoryBody, "body"))).toBe(true);
   });
 });

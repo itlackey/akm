@@ -148,8 +148,14 @@ function normalizeRemoteUrl(value: string): string {
     .replace(/\.git$/i, "");
 }
 
-function replaceDirectory(stagedDir: string, destination: string): void {
+/**
+ * Move a fully materialized directory into place. POSIX cannot rename over a
+ * non-empty directory, so the old one is renamed aside first and restored if
+ * the second rename fails; the destination is missing for one syscall at most.
+ */
+export function replaceDirectory(stagedDir: string, destination: string): void {
   const backup = `${destination}.backup-${randomBytes(4).toString("hex")}`;
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
   const hadDestination = fs.existsSync(destination);
   if (hadDestination) fs.renameSync(destination, backup);
   try {

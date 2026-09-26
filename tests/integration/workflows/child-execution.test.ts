@@ -44,7 +44,7 @@
  *
  * A child's own frozen plan is built with the REAL, already-implemented
  * `freezeWorkflow` helper (`tests/_helpers/workflow.ts`) — a genuine,
- * dispatchable `WorkflowPlanGraphV4` — then wrapped into a
+ * dispatchable `WorkflowPlan` — then wrapped into a
  * `FrozenChildWorkflowTarget` by `buildChildTarget` below, mirroring
  * `tests/workflows/hash-v6.test.ts`'s established fixture-builder
  * convention for this exact target shape (kept local to this file per this
@@ -70,9 +70,9 @@ import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-h
 import type {
   FrozenChildWorkflowTarget,
   FrozenWorkflowTarget,
-  IrStepPlanV4,
-  WorkflowPlanGraphV4,
-} from "../../../src/workflows/ir/schema-v4";
+  WorkflowPlan,
+  WorkflowPlanStep,
+} from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow, plantRunLock } from "../../_helpers/workflow";
@@ -110,7 +110,7 @@ function childContentHash(fields: {
 }
 
 function buildChildTarget(
-  childPlan: WorkflowPlanGraphV4,
+  childPlan: WorkflowPlan,
   options: { ref?: string; inputBindings?: readonly TaskInputBinding[] } = {},
 ): FrozenChildWorkflowTarget {
   const ref = options.ref ?? "workflows/child";
@@ -127,7 +127,7 @@ function buildChildTarget(
 }
 
 /** A minimal one-step child plan with no declared params and no completion criteria. */
-function leafChildPlan(): WorkflowPlanGraphV4 {
+function leafChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", "Do the child's work.", ""].join(
       "\n",
@@ -137,7 +137,7 @@ function leafChildPlan(): WorkflowPlanGraphV4 {
 }
 
 /** A 4-step child plan (for A-26's "the child runs all its steps" claim). */
-function fourStepChildPlan(): WorkflowPlanGraphV4 {
+function fourStepChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     [
       "---",
@@ -171,7 +171,7 @@ function fourStepChildPlan(): WorkflowPlanGraphV4 {
 }
 
 /** A one-step child plan declaring a single required string param `scope`. */
-function paramChildPlan(): WorkflowPlanGraphV4 {
+function paramChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     [
       "---",
@@ -192,7 +192,7 @@ function paramChildPlan(): WorkflowPlanGraphV4 {
 }
 
 /** A one-step child plan whose step declares a non-empty completion criterion (a resolvable frozen judge, per `writeWorkflowTestConfig`'s `workflow.judgeEngine`). */
-function gatedChildPlan(): WorkflowPlanGraphV4 {
+function gatedChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     [
       "---",
@@ -263,24 +263,6 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
 /** A `journalBaseId`-shaped unit id, mirroring `unitIdFor`'s `<nodeId>:solo` convention (B-N8). */
 function parentUnitId(stepId: string): string {
   return `${stepId}:solo`;
-}
-
-/** A minimal, structurally-valid sourceReadSet entry — decodeWorkflowPlanV4 requires at least one. Mirrors `freezeWorkflow`'s own fixture entry (`tests/_helpers/workflow.ts`). */
-function fakeSourceReadSet(): WorkflowPlanGraphV4["sourceReadSet"] {
-  return [
-    {
-      identity: {
-        ref: "test//workflows/parent",
-        bundle: "test",
-        adapter: "akm-workflow",
-        file: "workflows/parent.yml",
-        hash: createHash("sha256").update("parent-fixture").digest("hex"),
-      },
-      containmentPhysicalIdentity: "test-fixture-root",
-      physicalIdentity: createHash("sha256").update("workflows/parent.yml\0parent-fixture").digest("hex"),
-      size: 0,
-    },
-  ];
 }
 
 /** Assembles a `DriveChildWorkflowInput`-shaped object (spec §3.3) ready for `driveChildWorkflowUnit`. */
@@ -411,7 +393,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child?.parent_run_id).toBe(parent.runId);
     expect(child?.parent_unit_id).toBe(parentUnitId(parent.stepId));
     expect(child?.scope_key).toBe(parent.scopeKey);
-    expect(child?.plan_ir_version).toBe(5);
+    expect(child?.plan_ir_version).toBe(6);
     // B-N14: a child run's workflow_entry_id is NULL — the index lookup
     // publishChildWorkflowRun has no access to.
     expect(child?.workflow_entry_id).toBeNull();
@@ -480,7 +462,7 @@ describe("A-11, A-12 — publication failures never publish a child row or event
     // — while params validation (step 1) still passes, since it does not
     // inspect step-id uniqueness.
     const duplicateStepId = childPlan.steps[0]!.stepId;
-    const corruptPlan: WorkflowPlanGraphV4 = {
+    const corruptPlan: WorkflowPlan = {
       ...childPlan,
       steps: [...childPlan.steps, { ...childPlan.steps[0]!, stepId: duplicateStepId, sequenceIndex: 1 }],
     };
@@ -546,7 +528,7 @@ describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
 describe("A-16 — a gate loop's changed gateFeedback yields a NEW child", () => {
   test("A-16: computeUnitInputHash differs under different gateFeedback, and feeding the two hashes into the seam yields two DIFFERENT child runs", async () => {
     const target = buildChildTarget(leafChildPlan());
-    const plan: IrStepPlanV4 = {
+    const plan: WorkflowPlanStep = {
       stepId: "compose",
       title: "compose",
       sequenceIndex: 0,
@@ -559,7 +541,7 @@ describe("A-16 — a gate loop's changed gateFeedback yields a NEW child", () =>
         frozenTarget: target as FrozenWorkflowTarget,
         environment: [],
       },
-      gate: { kind: "gate", id: "compose.gate", stepId: "compose", criteria: [], frozenJudge: null },
+      gate: { kind: "gate", id: "compose.gate", stepId: "compose", criteria: [], maxLoops: 1, frozenJudge: null },
     };
     const baseInput: WorkListInput = { runId: "run-1", params: {}, stepOutputs: {} };
     const loopedInput: WorkListInput = {
@@ -648,11 +630,10 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/evidence-child" });
-    const parentPlan: WorkflowPlanGraphV4 = {
+    const parentPlan: WorkflowPlan = {
       irVersion: 5,
       title: "Parent",
       execution: { maxConcurrency: 1 },
-      sourceReadSet: fakeSourceReadSet(),
       steps: [
         {
           stepId: parentStepId,
@@ -774,11 +755,10 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
     // alone returns only a UnitOutcome — it is finalizeExecutedStep
     // (run-workflow.ts's runStepGateLoop, on the PARENT's own spine) that
     // turns a childBlocked unit outcome into a blocked STEP with notes.
-    const parentPlan: WorkflowPlanGraphV4 = {
+    const parentPlan: WorkflowPlan = {
       irVersion: 5,
       title: "Parent",
       execution: { maxConcurrency: 1 },
-      sourceReadSet: fakeSourceReadSet(),
       steps: [
         {
           stepId: parentStepId,
@@ -1057,11 +1037,10 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/drain-child" });
-    const parentPlan: WorkflowPlanGraphV4 = {
+    const parentPlan: WorkflowPlan = {
       irVersion: 5,
       title: "Parent",
       execution: { maxConcurrency: 1 },
-      sourceReadSet: fakeSourceReadSet(),
       steps: [
         {
           stepId: parentStepId,
@@ -1164,11 +1143,10 @@ describe("A-26 — a composing step consumes exactly one parent maxSteps allowan
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const target = buildChildTarget(fourStepChildPlan(), { ref: "workflows/four-step-child" });
-    const parentPlan: WorkflowPlanGraphV4 = {
+    const parentPlan: WorkflowPlan = {
       irVersion: 5,
       title: "Parent",
       execution: { maxConcurrency: 1 },
-      sourceReadSet: fakeSourceReadSet(),
       steps: [
         {
           stepId: parentStepId,

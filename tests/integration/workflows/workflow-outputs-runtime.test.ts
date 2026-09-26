@@ -17,7 +17,7 @@
  *
  * Technique: a plan is built with the existing pure `freezeWorkflow` test
  * helper, then a plain `outputs` value is spliced onto it (an intersection
- * type, never a not-yet-existing `FrozenWorkflowOutput` import — see
+ * type, never a not-yet-existing `WorkflowOutput` import — see
  * {@link planWithOutputs}) before seeding it directly into state.db with the
  * existing `seedWorkflowRun`/`storeFrozenWorkflowPlan` helpers — the same
  * technique `tests/integration/workflows/persistence-write-path.test.ts`
@@ -87,7 +87,7 @@ interface OutputDeclaration {
   readonly schema?: Record<string, unknown>;
 }
 
-/** A plain intersection over the plan — never a not-yet-existing `FrozenWorkflowOutput` import. See file header. */
+/** A plain intersection over the plan — never a not-yet-existing `WorkflowOutput` import. See file header. */
 type PlanWithOutputs = WorkflowPlanFixture & { readonly outputs?: Record<string, OutputDeclaration> };
 
 function planWithOutputs(plan: WorkflowPlanFixture, outputs?: Record<string, OutputDeclaration>): PlanWithOutputs {

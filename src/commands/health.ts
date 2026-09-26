@@ -7,7 +7,6 @@ import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
-import { readEvents } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import {
@@ -39,38 +38,30 @@ import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
 import { engineLastUsedSince, readLastEngineUsage } from "./health/engine-usage";
-import {
-  buildImproveSkipSummary,
-  computeWallTimeStats,
-  computeWindowProposalCoverage,
-  countAgentFailureReasons,
-  emptyImproveMetrics,
-  isAgentTaskHistoryRow,
-  roundRate,
-  summarizeImproveRuns,
-  taskFailureDetail,
-} from "./health/improve-metrics";
+import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
-import { buildPerRunSummaries } from "./health/task-runs";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
-  ACTIVE_RUN_WARN_MS,
   type AkmHealthResult,
   type DeltaEntry,
   type HealthCheckResult,
   type HealthMetrics,
-  IMPROVE_COMPLETED_EVENT,
-  type ImproveHealthMetrics,
   type ImproveRunSummary,
   MIN_ROWS_FOR_WORST_TASK_FAIL_RATE,
   type WindowResult,
   type WindowSpec,
 } from "./health/types";
 import { collectVersionDriftAdvisory } from "./health/version-drift";
-import { buildWindowMetrics, computeDeltas, resolveWindowCompare } from "./health/windows";
+import {
+  buildImproveWindowSummary,
+  buildWindowMetrics,
+  computeDeltas,
+  computeTaskWindowRates,
+  resolveWindowCompare,
+} from "./health/windows";
 
 export interface AkmHealthOptions {
   since?: string;
@@ -294,21 +285,13 @@ function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string
   const stateDbIntegrity = runStateDbQuickCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
-  const taskRows = queryTaskHistory(db, { since });
-  const failedTaskRows = taskRows.filter((row) => row.status === "failed");
-  const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
-  const stuckActiveRows = activeRows.filter((row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS);
   // D8 (spec §5.3): a marked "command" row or a legacy (unmarked) "prompt"
   // row is the agent/LLM arm; an unmarked "command" row is the legacy
   // native shell/script arm and must not be counted here (see
-  // isAgentTaskHistoryRow's header comment for the full mapping).
-  const agentRows = taskRows.filter((row) => isAgentTaskHistoryRow(row));
-  const agentFailures = agentRows.filter((row) => {
-    const detail = taskFailureDetail(row);
-    return typeof detail?.reason === "string" && detail.reason.length > 0;
-  });
-  const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
-  const agentFailureRate = agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length;
+  // isAgentTaskHistoryRow's header comment, referenced from
+  // computeTaskWindowRates, for the full mapping).
+  const taskRows = queryTaskHistory(db, { since });
+  const rates = computeTaskWindowRates(taskRows, now);
 
   return {
     tableNames,
@@ -317,12 +300,12 @@ function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string
     stateDbIntegrity,
     stateDbFreelist,
     taskRowCount: taskRows.length,
-    stuckActiveRuns: stuckActiveRows.length,
-    stuckActiveTasks: dedupeStuckActiveTasks(stuckActiveRows, now),
-    taskFailRate,
+    stuckActiveRuns: rates.stuckActiveRuns,
+    stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
+    taskFailRate: rates.taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
-    agentFailureRate,
-    agentFailureReasonCounts: countAgentFailureReasons(agentFailures),
+    agentFailureRate: rates.agentFailureRate,
+    agentFailureReasonCounts: rates.agentFailureReasonCounts,
   };
 }
 
@@ -352,11 +335,6 @@ function gatherEgressConfigPhase(): EgressConfigPhase {
   return { egressConfigView, thinkingOffEngines };
 }
 
-interface ImproveSummaryPhase {
-  improveSummary: ImproveHealthMetrics;
-  perRunSummaries: ImproveRunSummary[];
-}
-
 /** Extract-ledger outcome counts for the `session-extraction` check's window, independent of `--since`. */
 function gatherSessionExtractionLedgerPhase(
   db: Database,
@@ -364,38 +342,6 @@ function gatherSessionExtractionLedgerPhase(
 ): HealthCheckContext["sessionExtractionLedger"] {
   const since = new Date(now() - daysToMs(SESSION_EXTRACTION_LEDGER_WINDOW_DAYS)).toISOString();
   return { since, rows: getExtractOutcomeCountsSince(db, since) };
-}
-
-/**
- * Assemble the window's improve-pipeline summary: invoked/completed/skipped
- * counts from events, the per-run result_json aggregate, wall-time stats, and
- * the accepted-proposal coverage rollup.
- */
-function gatherImproveSummaryPhase(
-  db: Database,
-  stateDbPath: string,
-  since: string,
-  now: () => number,
-): ImproveSummaryPhase {
-  const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
-  const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
-  const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events;
-  const { metrics: improveSummary } = summarizeImproveRuns(db, since);
-  improveSummary.invoked = improveInvoked;
-  improveSummary.completed = improveCompletedEvents.length;
-  const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
-  improveSummary.skipped = skipSummary.skipped;
-  improveSummary.skipReasons = skipSummary.skipReasons;
-  const perRunSummaries = buildPerRunSummaries(db, since);
-  const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
-  improveSummary.wallTime = computeWallTimeStats(wallTimes);
-
-  // Accepted-proposal coverage for the main health path (not just
-  // window-compare mode) — same computation windows.ts uses per-window.
-  const until = new Date(now()).toISOString();
-  improveSummary.coverage = computeWindowProposalCoverage(db, since, until);
-
-  return { improveSummary, perRunSummaries };
 }
 
 /**
@@ -735,7 +681,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 
     const { egressConfigView, thinkingOffEngines } = gatherEgressConfigPhase();
 
-    const { improveSummary } = gatherImproveSummaryPhase(db, stateDbPath, since, now);
+    // Same window bundle `--window-compare` builds per-window (windows.ts) —
+    // reused here for the main `--since` window's improve summary and for
+    // `--group-by run`, so neither re-reads `improve_runs`.
+    const until = new Date(now()).toISOString();
+    const { improve: improveSummary, perRunSummaries } = buildImproveWindowSummary(db, stateDbPath, since, until);
 
     advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
@@ -815,10 +765,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
 
     // ── Per-run mode (Phase 2) ────────────────────────────────────────────
-    let runs: ImproveRunSummary[] | undefined;
-    if (options.groupBy === "run") {
-      runs = buildPerRunSummaries(db, since);
-    }
+    const runs: ImproveRunSummary[] | undefined = options.groupBy === "run" ? perRunSummaries : undefined;
 
     return {
       schemaVersion: 3,

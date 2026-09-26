@@ -104,7 +104,7 @@ import {
   TASK_RUN_VALUE_FLAGS,
 } from "../../src/tasks/task-run-reserved-flags";
 import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
-import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/program/schema";
+import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/parser";
 import { WORKFLOW_MAX_SCHEMA_BYTES } from "../../src/workflows/resource-limits";
 import { overrideSeam } from "../_helpers/seams";
 

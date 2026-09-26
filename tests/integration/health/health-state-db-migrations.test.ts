@@ -26,7 +26,7 @@ import { resetConfigCache } from "../../../src/core/config/config";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

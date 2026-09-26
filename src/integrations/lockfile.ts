@@ -147,60 +147,29 @@ function assertLockfilePathReadable(target: string): void {
 
 /**
  * Like {@link readLockfile}, but THROWS instead of silently degrading to `[]`
- * when the on-disk lockfile exists yet is not parseable JSON or not a JSON
- * array (R-012).
+ * when the on-disk lockfile exists yet cannot be read or parsed (R-012, #791).
  *
  * `readLockfile`'s fail-open contract is intentional for READ paths — a
  * corrupt lock degrades a managed bundle to "unmanaged" rather than erroring
- * every read-only command (`list`, `installed-stashes`, …). But
- * {@link upsertLockEntry} and {@link removeLockEntry} read the current
- * entries and then WRITE `[...entries, change]` back out; if that read
- * silently returned `[]` for a corrupt file, the write would silently
- * replace the corrupt file with one containing only the single new/changed
- * entry — permanently destroying every other surviving lock record. Write
- * paths use this strict variant so a corrupt lockfile fails the operation
- * loudly instead of quietly deleting user state. A missing file is NOT corruption — there
- * is nothing to preserve, so that case still returns `[]`. Entries that fail
- * per-entry validation are still tolerated (filtered out), matching
- * `readLockfile`'s existing shape-tolerant behavior.
+ * every read-only command. But every writer below reads the current entries
+ * and writes the whole array back; if that read silently returned `[]` for a
+ * corrupt or unreadable file, the write would replace it with only the one
+ * entry being changed — permanently destroying every other lock record (a
+ * corrupt lockfile once wiped every entry this way). A missing file is NOT
+ * corruption: there is nothing to preserve, so that case returns `[]`.
  */
-export interface LockfileUpdateSnapshot {
-  /** Strictly parsed generation used for compare-and-swap checks. */
-  entries: LockfileEntry[];
-  /** Exact original bytes, or null when the lockfile did not exist. */
-  raw: string | null;
-  /** Original permission bits when the lockfile existed. */
-  mode: number;
-}
-
-function readLockfileSnapshotOrThrow(): LockfileUpdateSnapshot {
+function readLockfileOrThrow(): LockfileEntry[] {
   const lockfilePath = getLockfilePath();
-  let fd: number | undefined;
   let raw: string;
-  let mode: number;
   try {
-    // One descriptor owns both byte and metadata observation so a rename or
-    // chmod between separate path-based calls cannot synthesize a generation
-    // that never existed on disk.
-    fd = fs.openSync(lockfilePath, "r");
-    raw = fs.readFileSync(fd, "utf8");
-    mode = fs.fstatSync(fd).mode & 0o777;
+    raw = fs.readFileSync(lockfilePath, "utf8");
   } catch (err) {
     rethrowIfTestIsolationError(err);
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { entries: [], raw: null, mode: 0o600 };
-    }
-    // "Missing file" is the only failure with nothing to preserve. An
-    // UNREADABLE lockfile has everything to preserve and we cannot see it —
-    // degrading it to `[]` here is precisely the destructive overwrite this
-    // function was written to prevent, only triggered by a permission fault
-    // instead of a corrupt file (#791). Classify AFTER the failed read so the
-    // happy path costs no extra syscall and the answer describes the failure
-    // we actually got.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    // An UNREADABLE lockfile has everything to preserve and we cannot see it.
+    // Classify AFTER the failed read so the happy path costs no extra syscall.
     assertLockfilePathReadable(lockfilePath);
-    return { entries: [], raw: null, mode: 0o600 };
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    return [];
   }
   let parsed: unknown;
   try {
@@ -230,25 +199,7 @@ function readLockfileSnapshotOrThrow(): LockfileUpdateSnapshot {
       "INVALID_CONFIG_FILE",
     );
   }
-  return {
-    entries: parsed.filter(isValidLockfileEntry),
-    raw,
-    mode,
-  };
-}
-
-function readLockfileOrThrow(): LockfileEntry[] {
-  return readLockfileSnapshotOrThrow().entries;
-}
-
-/**
- * Read the exact lock generation that a source-lifecycle transaction may
- * replace. Unlike {@link readLockfile}, this refuses corrupt, malformed, or
- * unreadable state so an update can never treat state it could not snapshot as
- * an empty generation.
- */
-export function readLockfileForUpdate(): LockfileUpdateSnapshot {
-  return readLockfileSnapshotOrThrow();
+  return parsed as LockfileEntry[];
 }
 
 /**
@@ -285,61 +236,6 @@ export async function writeLockfile(entries: LockfileEntry[]): Promise<void> {
   const release = await acquireLockSentinel();
   try {
     writeLockfileUnlocked(entries);
-  } finally {
-    release();
-  }
-}
-
-/**
- * Publish an update from one exact raw + parsed lockfile generation and return
- * the exact bytes that were written. Formatting-only concurrent edits are a
- * generation change here: rollback must never overwrite bytes it did not
- * publish merely because they parse to an equivalent array.
- */
-export async function publishLockfileUpdate(
-  expected: LockfileUpdateSnapshot,
-  desired: LockfileEntry[],
-): Promise<LockfileUpdateSnapshot | null> {
-  const release = await acquireLockSentinel();
-  try {
-    const current = readLockfileSnapshotOrThrow();
-    if (
-      JSON.stringify(current.entries) !== JSON.stringify(expected.entries) ||
-      current.raw !== expected.raw ||
-      current.mode !== expected.mode
-    ) {
-      return null;
-    }
-    writeLockfileUnlocked(desired);
-    return readLockfileSnapshotOrThrow();
-  } finally {
-    release();
-  }
-}
-
-/** Restore an exact raw snapshot after verifying the exact generation we published. */
-export async function compareAndSwapLockfileSnapshot(
-  expected: LockfileUpdateSnapshot,
-  desired: LockfileUpdateSnapshot,
-): Promise<boolean> {
-  const release = await acquireLockSentinel();
-  try {
-    const current = readLockfileSnapshotOrThrow();
-    if (
-      JSON.stringify(current.entries) !== JSON.stringify(expected.entries) ||
-      current.raw !== expected.raw ||
-      current.mode !== expected.mode
-    ) {
-      return false;
-    }
-    const lockfilePath = getLockfilePath();
-    if (desired.raw === null) {
-      fs.rmSync(lockfilePath, { force: true });
-    } else {
-      fs.mkdirSync(path.dirname(lockfilePath), { recursive: true });
-      writeFileAtomic(lockfilePath, desired.raw, desired.mode);
-    }
-    return true;
   } finally {
     release();
   }

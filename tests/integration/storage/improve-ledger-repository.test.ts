@@ -12,7 +12,6 @@ import path from "node:path";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
 import {
   getImproveLedgerRow,
   isLedgerBlocked,
@@ -21,6 +20,7 @@ import {
   recordImproveLedger,
   recordImproveLedgerDecision,
 } from "../../../src/storage/repositories/improve-ledger-repository";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 
 const roots: string[] = [];
 afterEach(() => {

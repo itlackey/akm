@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { stageJudgedProposal } from "../../src/commands/improve/distill/quality-gate";
+import { stageJudgedProposal } from "../../src/commands/improve/stage";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { createProposal, getProposal } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";

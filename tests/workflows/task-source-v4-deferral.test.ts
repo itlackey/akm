@@ -41,7 +41,8 @@ import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import { decodeWorkflowPlanV4, type FrozenWorkflowTarget } from "../../src/workflows/ir/schema-v4";
+import type { FrozenWorkflowTarget } from "../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -107,7 +108,7 @@ describe("A-N6/F-A4 — a task source v4 target composes from a workflow step (s
     // The step freezes — no error, unlike the superseded LC-N1 deferral.
     const started = await startWorkflowRun(`workflows/${STEP_ID}`);
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const root = plan.steps[0]?.root;
     const target: FrozenWorkflowTarget | undefined = root && root.kind !== "map" ? root.frozenTarget : undefined;
 

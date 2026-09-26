@@ -3,22 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #954: `akm bundle update`'s coordinator used to call `akmIndex`
- * for its embedding phase too, INSIDE the same unified `BEGIN IMMEDIATE` that
- * covers content/lock/index/state — so every per-batch commit the
- * materializer opened nested as an unobservable SAVEPOINT (#954's own
- * per-batch-commit fix never actually reached this path). This drives the
- * REAL `akmUpdate` coordinator path (a real `index.db`, hence
- * tests/integration/ per the ORG-03..06 classification rule) with a fake
- * embedder and proves:
+ * #954: `akm bundle update` once ran its embedding phase inside an enclosing
+ * `BEGIN IMMEDIATE`, so every per-batch commit nested as an unobservable
+ * SAVEPOINT and a SIGKILL mid-run lost every embedding of the run. This drives
+ * the REAL `akmUpdate` path (a real `index.db`, hence tests/integration/ per
+ * the ORG-03..06 classification rule) with a fake embedder and proves:
  *
- *  1. a batch committed by the post-commit embedding pass is immediately
+ *  1. a batch committed during the update's embedding phase is immediately
  *     visible to a SECOND, independent read-only connection while the run is
  *     still in progress — real durable commits, not savepoints inside a
  *     transaction nobody else can see into; and
- *  2. a post-commit embedding pass that fails (provider down) still leaves
- *     the update itself successful, reporting `semanticStatus: "blocked"`
- *     rather than failing the whole update.
+ *  2. an embedding phase that fails (provider down) still leaves the update
+ *     itself successful, reporting `semanticStatus: "blocked"` rather than
+ *     failing the whole update.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -44,7 +41,7 @@ function makeDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) =>
   return { promise, resolve };
 }
 
-describe("akm bundle update: post-commit embedding pass durability (#954)", () => {
+describe("akm bundle update: embedding durability (#954)", () => {
   let storage: IsolatedAkmStorage;
 
   beforeEach(() => {
@@ -100,7 +97,7 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
     });
   }
 
-  test("a batch committed after the coordinator's commit is visible to a second connection mid-run", async () => {
+  test("an embedding batch committed mid-update is visible to a second connection", async () => {
     const id = "durability-probe";
     const fileCount = 4;
     configureManagedBundle(id, fileCount);
@@ -143,8 +140,8 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
         closeDatabase(reader);
       }
       // Only the FIRST batch's embeddings are visible so far — a real commit
-      // on a separate connection, not a SAVEPOINT invisible outside a
-      // still-open coordinator transaction.
+      // on a separate connection, not a SAVEPOINT invisible outside an
+      // enclosing transaction.
       expect(countMidway).toBeGreaterThan(0);
       expect(countMidway).toBeLessThan(fileCount);
 
@@ -165,7 +162,7 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
     }
   });
 
-  test("a post-commit embedding pass that fails still leaves the update successful, reporting semanticStatus blocked", async () => {
+  test("a failing embedding phase still leaves the update successful, reporting semanticStatus blocked", async () => {
     const id = "post-commit-failure-probe";
     configureManagedBundle(id, 3);
     await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });

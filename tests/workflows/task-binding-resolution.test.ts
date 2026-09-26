@@ -33,7 +33,7 @@
  * `computeStepWorkList` ignores it either way). This is a RUNTIME gap, not a
  * type-level one — no `@ts-expect-error` is needed in this file: every
  * symbol referenced (`computeStepWorkList`, `runWorkflowSteps`,
- * `getAttemptAccounting`, `decodeWorkflowPlanV4`) already exists today.
+ * `getAttemptAccounting`, `decodeWorkflowPlan`) already exists today.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -45,7 +45,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, unitIdFor } from "../../src/workflows/exec/step-work";
-import { decodeWorkflowPlanV4 } from "../../src/workflows/ir/schema-v4";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -137,7 +137,7 @@ describe("P2b pre-attempt — a reference resolves successfully against a prior 
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const started = await startWorkflowRun("workflows/collect-dispatch");
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 
     const computed = computeStepWorkList(plan.steps[1]!, {
       runId: started.run.id,
@@ -183,7 +183,7 @@ describe("P2b pre-attempt — a resolved reference violating its declared schema
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const started = await startWorkflowRun("workflows/collect-dispatch");
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 
     // Same plan as the success case above — ONLY the prior step's output value
     // changes, from "all" (valid) to "bogus" (violates scope's enum).
@@ -268,7 +268,7 @@ describe("P2b pre-attempt — a resolved reference violating its declared schema
     // (ir/compile.ts's `compileStep`), so its solo unit id is derived the
     // same way `computeStepWorkList` derives every unit id.
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const dispatchRoot = plan.steps[1]!.root;
     if (!dispatchRoot) throw new Error("expected the dispatch step to have a root exec node");
     const dispatchUnitId = unitIdFor(dispatchRoot.id, undefined, false, true);
@@ -297,7 +297,7 @@ describe("P2b pre-attempt — a reference that fails to resolve at all fails bef
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const started = await startWorkflowRun("workflows/collect-dispatch");
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 
     // "collect" ran, but its output never had a "scope" property at all.
     const computed = computeStepWorkList(plan.steps[1]!, {
@@ -327,7 +327,7 @@ describe("P2b pre-attempt — a literal binding passes through unchanged, with n
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const started = await startWorkflowRun("workflows/literal-only");
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 
     // No "collect" step exists in this plan at all — a literal binding needs
     // no stepOutputs to resolve, because there is nothing to resolve.

@@ -24,7 +24,7 @@ import {
 } from "../../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { readTaskHistory } from "../../../src/tasks/run/task-history";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

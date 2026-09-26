@@ -11,7 +11,7 @@
  * `src/storage/repositories/*-repository.ts` (events, proposals, task-history,
  * improve-runs, improve-ledger, extract-sessions, embeddings); the
  * migration registry lives in `./state/migrations` and the runner in
- * `storage/engines/sqlite-migrations`. The `BEGIN IMMEDIATE` helpers are
+ * `storage/sqlite-migrations`. The `BEGIN IMMEDIATE` helpers are
  * re-exported from `storage/sqlite-transaction`.
  *
  * ## Why a separate database from index.db
@@ -62,13 +62,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type Database, openDatabase, type SqlValue } from "../storage/database";
+import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
 import {
   assertMigrationLedger,
   type Migration,
   type MigrationLedgerState,
   runMigrations,
-} from "../storage/engines/sqlite-migrations";
-import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
+} from "../storage/sqlite-migrations";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { pkgVersion } from "../version";
 import { getDataDir } from "./paths";

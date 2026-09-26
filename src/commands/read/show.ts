@@ -65,14 +65,11 @@ import {
 } from "../../indexer/walk/file-context";
 import { resolveIndexPassExecution } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import type { FragmentContextMode, ShowDetailLevel, ShowResponse } from "../../sources/types";
 import { resolveStorageLocations } from "../../storage/locations";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
-import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
-// Eagerly import source providers to trigger self-registration.
-import "../../sources/providers/index";
-import type { FragmentContextMode, ShowDetailLevel, ShowResponse } from "../../sources/types";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
 import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
@@ -618,14 +615,6 @@ async function maybeExtractGraphInline(
     reportNotices(graphExecution.notices);
 
     let alreadyGraphed = false;
-    let bodyHash: string | undefined;
-    try {
-      const raw = fs.readFileSync(assetPath, "utf8");
-      bodyHash = computeBodyHash(parseFrontmatter(raw).content.trim());
-    } catch {
-      return; // file gone/unreadable ⇒ nothing to extract
-    }
-
     withIndexDb(
       (db) => {
         alreadyGraphed = hasGraphData(db, sourceStashDir, assetPath);
@@ -645,7 +634,7 @@ async function maybeExtractGraphInline(
     });
     try {
       await Promise.race([
-        extractGraphForSingleFile(db, sourceStashDir, assetPath, bodyHash, {
+        extractGraphForSingleFile(db, sourceStashDir, assetPath, {
           config,
           llmRunner: graphExecution.runner,
           onNotices: reportNotices,

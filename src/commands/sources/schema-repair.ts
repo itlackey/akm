@@ -7,7 +7,9 @@
  *
  * Attempts to patch missing frontmatter fields (`description`, `when_to_use`)
  * on assets that failed schema validation, using a single bounded in-tree LLM
- * call per asset. Results are recorded as `schema_repair_invoked` events.
+ * call per asset. Results are recorded as `schema_repair_invoked` events; a
+ * queued repair's `improve_ledger` row (written with the proposal) keeps the
+ * same asset from being re-queued inside the ledger's revisit window.
  *
  * This module is extracted from `improve.ts` to make the repair logic
  * independently testable and to use the shared structured execution seam.
@@ -20,7 +22,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { ConfigError } from "../../core/errors";
-import { appendEvent, readEvents } from "../../core/events";
+import { appendEvent } from "../../core/events";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { info } from "../../core/warn";
@@ -30,6 +32,7 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
+import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot } from "../improve/ledger";
 import { createProposal } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -43,7 +46,8 @@ export interface SchemaRepairFailure {
  * Schema-repair outcome values (M-3 / #387).
  *
  *   - `queued`  — LLM generated fields were written to the proposal queue.
- *   - `skipped` — Asset didn't need repair or was on cooldown.
+ *   - `skipped` — Asset didn't need repair, or its last repair is inside the
+ *                 improve ledger's revisit window.
  *   - `error`   — Provider/runtime call failed or JSON could not be parsed.
  *
  * Invalid configuration is not an outcome record: the original
@@ -79,20 +83,8 @@ export interface SchemaRepairOptions {
   chatFn?: typeof chatCompletion;
 }
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-/** Minimum gap between schema-repair attempts on the same asset. */
-const SCHEMA_REPAIR_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-/**
- * Per-ref attempt cap (O-6 / #379): maximum number of schema-repair attempts
- * allowed within SCHEMA_REPAIR_WINDOW_MS. Prevents indefinite nightly re-repair
- * of assets whose source content is genuinely ambiguous or inconsistently
- * structured. After cap, the asset is skipped until the window rolls over.
- * Self-Refine arXiv:2303.17651 — iteration must be bounded.
- */
-const SCHEMA_REPAIR_MAX_ATTEMPTS = 3;
-const SCHEMA_REPAIR_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+/** Proposal source and improve-ledger source for this pass. */
+const SCHEMA_REPAIR_SOURCE = "schema-repair";
 
 interface EligibleSchemaRepair {
   failure: SchemaRepairFailure;
@@ -113,27 +105,12 @@ async function classifySchemaRepairs(args: {
   const { failures, startMs, budgetMs, stashDir, findFilePath, isLessonCandidateFn, repairs } = args;
   const eligibleRepairs: EligibleSchemaRepair[] = [];
   const pendingErrors: SchemaRepairRecord[] = [];
+  const ledger = loadLedgerSnapshot(undefined, stashDir, [SCHEMA_REPAIR_SOURCE]);
+  const nowIso = new Date().toISOString();
   for (const failure of failures) {
     if (Date.now() - startMs >= budgetMs) break;
-    const recentRepairs = readEvents({ type: "schema_repair_invoked", ref: failure.ref });
-    const lastRepair = recentRepairs.events
-      .filter((event) => event.metadata?.outcome === "queued")
-      .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-    if (lastRepair?.ts && Date.now() - new Date(lastRepair.ts).getTime() < SCHEMA_REPAIR_COOLDOWN_MS) {
+    if (isLedgerBlocked(ledger.get(ledgerKey(SCHEMA_REPAIR_SOURCE, failure.ref)), nowIso)) {
       repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-      continue;
-    }
-    const windowStart = Date.now() - SCHEMA_REPAIR_WINDOW_MS;
-    const attemptsInWindow = recentRepairs.events.filter(
-      (event) => event.ts !== undefined && new Date(event.ts).getTime() >= windowStart,
-    ).length;
-    if (attemptsInWindow >= SCHEMA_REPAIR_MAX_ATTEMPTS) {
-      repairs.push({
-        ref: failure.ref,
-        reason: failure.reason,
-        outcome: "skipped",
-        error: `schema-repair attempt cap reached (${attemptsInWindow}/${SCHEMA_REPAIR_MAX_ATTEMPTS} in 30d window)`,
-      });
       continue;
     }
     const filePath = await findFilePath(failure.ref, stashDir);
@@ -293,7 +270,9 @@ export async function runSchemaRepairPass(
       // should be human-reviewable.
       const proposalResult = createProposal(stashDir, {
         ref: failure.ref,
-        source: "schema-repair",
+        source: SCHEMA_REPAIR_SOURCE,
+        // Key the ledger row by the ref this pass reads it back under.
+        attemptedRefs: [failure.ref],
         payload: {
           content: newContent,
           ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),

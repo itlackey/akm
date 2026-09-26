@@ -3,15 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Plan hashing for the frozen-plan contract.
- *
- * `workflow run` persists `plan_json` + `plan_hash` on the run row. The hash is
- * the sha256 (hex) of the plan's CANONICAL JSON — object keys recursively
- * sorted — so two structurally-equal plans hash identically regardless of key
- * insertion order. It is informational: a stored plan is read back as it is
- * (`runtime/run-plan.ts`), never gated on the hash.
- *
- * Pure module: no IO beyond node:crypto, no engine imports.
+ * Plan hashing: sha256 of the plan's canonical JSON (keys recursively sorted),
+ * stored beside `plan_json` as information — a stored plan is never gated on it.
  */
 
 import { createHash } from "node:crypto";

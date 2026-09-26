@@ -10,7 +10,6 @@
  * moved function body calls is exported here.
  */
 
-import path from "node:path";
 import type { PreparedCommandInvocation } from "../../commands/command/command-execution";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -18,9 +17,8 @@ import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution } from "../../integrations/agent/execution";
 import { resolveAssetPath } from "../../sources/resolve";
+import { checkWorkflowPlan, compileWorkflowSource } from "../../workflows/compile";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
-import { compileWorkflowPlan } from "../../workflows/ir/compile";
-import { compileWorkflowSource } from "../../workflows/source-ir/compile";
 import { isInferredSecretName } from "../log-redaction";
 import { SCHEDULED_TASK_CONTEXT_KEYS } from "../scheduler-invocation";
 import type { TaskV3Environment, TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
@@ -191,7 +189,7 @@ export function validateWorkflowRuntimeSource(
       isMultiJob ? COMPOSITION_INVALID_MULTI_JOB_HINT : undefined,
     );
   }
-  const planned = compileWorkflowPlan(compiled.ir, path.basename(file, path.extname(file)));
+  const planned = checkWorkflowPlan(compiled.plan);
   if (!planned.ok) {
     // Same mapping applied for consistency; `compiled.ir` is already
     // guaranteed exactly one job here, so this arm always resolves to

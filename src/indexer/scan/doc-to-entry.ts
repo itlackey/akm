@@ -28,7 +28,7 @@
  *     `basename(file)` in `applyPostContributorFields`, and `doc.path` IS that
  *     file, so the value is identical.
  *   - `fileSize` — never set by `recognize` NOR by the legacy flat-walk pass;
- *     both pipelines attach it at PERSIST time (`attachFileSize`). It is therefore
+ *     both pipelines attach it at PERSIST time (`withFileSize`). It is therefore
  *     intentionally absent here and added by the persist layer, exactly as
  *     before.
  *

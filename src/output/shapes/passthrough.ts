@@ -15,15 +15,6 @@ import type { OutputShapeEntry } from "./registry";
 // envelope. Never overwrites an existing `shape`, `schemaVersion`, or `ok`;
 // a command whose exit code grades the outcome emits through
 // `outputWithExitCode` (src/cli/shared.ts), which sets `ok` from that code.
-//
-// Builds a shallow copy rather than mutating `result` in place: several
-// command results (e.g. `akm task sync --dry-run`'s `SchedulerPlanPreview`,
-// see src/tasks/scheduler-sync-preview.ts) are deliberately `Object.freeze`d
-// by their producer as an immutability guarantee, and an in-place `obj.shape
-// = …` assignment throws ("Attempting to define property on object that is
-// not extensible") the moment it hits one. Copying tolerates both frozen and
-// mutable inputs uniformly, and `output()` never uses the result's identity
-// past this call, so a copy is safe here.
 function makeStampHandler(command: string) {
   return (result: unknown): unknown => {
     if (result === null || result === undefined) return result;

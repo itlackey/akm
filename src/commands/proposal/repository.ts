@@ -3,38 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proposal substrate (#225, storage consolidated in #578).
- *
- * One durable proposal store for every future reflection / generation flow
- * (`akm reflect`, `akm propose`, `akm distill`, lesson distillation, …).
- * Proposals are *queue state*, not source-of-truth assets — they sit in the
- * queue waiting for human (or automated) review and only become assets after
- * `akm proposal accept` validates and promotes them via
- * {@link writeAssetToSource}.
- *
- * # Storage
- *
- * The canonical store is the `proposals` table in `state.db` (SQLite, WAL
- * mode — see `src/core/state-db.ts`). Rows are partitioned by `stash_dir` so
- * multi-stash installs keep independent queues, and the `status` column
- * distinguishes the live queue (`pending`) from the archive (`accepted` /
- * `rejected` / `reverted`). There is no separate archive location — archival
- * is a status flip, and the full audit trail (review outcome, reason, backup
- * content for revert) lives on the row.
- *
- * # Why the queue bypasses `writeAssetToSource`
- *
- * The architectural rule "all writes go through `writeAssetToSource`" applies
- * to *assets*. Proposals are **not** assets — they live outside the asset
- * tree (in state.db, parallel to how events do). Routing them through
- * `writeAssetToSource` would force them into a placement stash-subdir slot, would commit
- * them to git, and would leak unaccepted drafts through the normal indexer.
- * The {@link promoteProposal} step is the bridge: it routes the accepted
- * payload through `writeAssetToSource` so the actual asset write still
- * funnels through the single dispatch point in `src/core/write-source.ts`.
+ * The proposal queue (#225; storage in state.db since #578). Proposals are
+ * queue state, not assets: rows in the `proposals` table partitioned by
+ * `stash_dir`, where archival is a status flip that keeps the full audit trail
+ * (review, reason, backup for revert). They never go through the asset writer
+ * until accepted — {@link promoteProposal} is the bridge that writes the
+ * accepted payload into the bundle.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -43,11 +20,7 @@ import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
-import {
-  carryForwardBookkeepingFrontmatter,
-  computeNormalizedContentHash,
-  parseFrontmatter,
-} from "../../core/asset/frontmatter";
+import { carryForwardBookkeepingFrontmatter, parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -84,12 +57,12 @@ import {
 } from "../../storage/repositories/proposals-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import { pkgVersion } from "../../version";
+import { contentHash } from "../improve/content-hash";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
 import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
 import {
   ASSET_MISSING_GATE_REASON,
-  AUTOMATED_PROPOSAL_SOURCES,
   type EligibilitySource,
   EXPIRED_GATE_REASON,
   isAutomatedProposalSource,
@@ -109,20 +82,6 @@ import {
 } from "./validators/proposal-validators";
 import { repairProposalContent, validateProposal } from "./validators/proposals";
 
-const PROMOTION_LINT_ISSUE_TYPES = new Set<LintIssueType>(["unquoted-colon", "missing-ref", "stale-path"]);
-
-// ── Proposal domain types (moved to ./proposal-types.ts, WI-9.8 KILL 1) ─────
-//
-// Proposal / ProposalStatus / ProposalPayload / ProposalReview /
-// ProposalGateDecision(Outcome) / ProposalSource / PROPOSAL_SOURCES /
-// AUTOMATED_PROPOSAL_SOURCES / isValidProposalSource / isAutomatedProposalSource
-// moved to the dependency-free leaf so validators/proposals.ts,
-// validators/proposal-validators.ts, storage/repositories/proposals-repository.ts,
-// and storage repositories can import the `Proposal` type without importing
-// this heavier transaction-engine module back. That back-edge was the
-// repository↔validators import cycle (plan §10.7 D.3). Every symbol this
-// module used to export directly is re-exported here verbatim so existing
-// import sites (`from "../proposal/repository"`) are unchanged.
 export {
   AUTOMATED_PROPOSAL_SOURCES,
   isAutomatedProposalSource,
@@ -136,65 +95,44 @@ export {
   type ProposalSource,
   type ProposalStatus,
 } from "./proposal-types";
+export { proposalContent };
 
-/**
- * Typed reasons {@link createProposal} can reject input. Emitted in the
- * `proposal_creation_rejected` event so we can quantify *which* check fires
- * most across runs and tune upstream pipelines.
- */
-export type ProposalRejectionReason =
+const PROMOTION_LINT_ISSUE_TYPES = new Set<LintIssueType>(["unquoted-colon", "missing-ref", "stale-path"]);
+const MS_PER_DAY = 86_400_000;
+
+type GateDecisionInput = Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+
+/** Why {@link createProposal} refused its input (the `proposal_creation_rejected` event's `reason`). */
+type ProposalRejectionReason =
   | "invalid_ref"
   | "unknown_type"
   | "empty_content"
   | "missing_description"
   | "invalid_canonical_structure";
 
-/** Result of {@link purgeOrphanProposals}. */
 export interface OrphanPurgeResult {
-  /** Total pending proposals scanned. */
   checked: number;
-  /** Number of proposals rejected as orphans. */
   rejected: number;
-  /** Wall-clock duration of the purge in ms. */
   durationMs: number;
-  /** Count of rejections by asset type prefix. */
   byType: Record<string, number>;
-  /** Per-orphan details for the event metadata. */
   orphans: Array<{ id: string; ref: string; reason: string }>;
 }
 
-/** Result of {@link expireStaleProposals} (Advantage D6b / Phase 6B). */
 export interface ExpireStaleResult {
-  /** Number of pending proposals scanned for expiry. */
   checked: number;
-  /** Number of proposals archived because they aged past the retention window. */
   expired: number;
-  /** Wall-clock duration of the expiration pass in ms. */
   durationMs: number;
-  /** Retention threshold (days) applied during this pass. */
   retentionDays: number;
-  /** Per-expired details for the event metadata. */
   expiredProposals: Array<{ id: string; ref: string; ageDays: number }>;
 }
 
-// The envelope's primary-content accessor lives in the dependency-free
-// core/file-change module; re-exported here so proposal consumers get it
-// alongside the repository API.
-export { proposalContent };
-
-/**
- * Copy of `p` with `content` replacing BOTH the payload's content and the
- * primary change's `after` — every in-memory content mutation must keep the
- * WI-6.2 invariant (`changes[0].after === payload.content`) intact.
- */
+/** `p` with `content` as both the payload and the primary change's `after` (they must agree). */
 function withProposalContent(p: Proposal, content: string): Proposal {
   return {
     ...p,
     payload: { ...p.payload, content },
-    changes: p.changes.map((c, i) =>
-      // A delete-op primary change carries no `after` (file-change.ts contract).
-      i === 0 && c.op !== "delete" ? { ...c, after: content } : c,
-    ),
+    // A delete-op primary change carries no `after`.
+    changes: p.changes.map((c, i) => (i === 0 && c.op !== "delete" ? { ...c, after: content } : c)),
   };
 }
 
@@ -203,153 +141,71 @@ export interface ProposalsContext {
   now?: () => number;
   /** Test seam — defaults to `crypto.randomUUID`. */
   randomUUID?: () => string;
-  /** Test seam — override the state.db path (mirrors `EventsContext.dbPath`). */
+  /** Test seam — the state.db path. */
   dbPath?: string;
-  /**
-   * Test seam — defaults to the OS username (`os.userInfo().username`,
-   * falling back to `"local"`). Used ONLY as the `<id>` in the v0.2
-   * `human:<id>` actor convention when {@link promoteProposal} stamps
-   * provenance onto a human-attributed promotion (#730 D2). AKM has no
-   * multi-user identity system; the OS account is the least-surprising
-   * stand-in for "the human at this keyboard."
-   */
+  /** The `<id>` of a `human:<id>` provenance actor; defaults to the OS username, else `local`. */
   actorId?: () => string;
 }
 
 export interface CreateProposalInput {
   ref: string;
-  /**
-   * Stable destination identity for the proposal. Callers creating proposals
-   * in a named queue should pass the resolved source name and materialized root
-   * rather than relying on path-derived bundle identity.
-   */
-  target?: {
-    source: string;
-    root: string;
-  };
-  /**
-   * Origin tag identifying the source subsystem (F-4 / #385).
-   *
-   * Should be one of {@link PROPOSAL_SOURCES}. Unknown values trigger a
-   * runtime warning but are not rejected.
-   * Automated sources ({@link AUTOMATED_PROPOSAL_SOURCES}) should include
-   * `sourceRun` for PROV-DM traceability.
-   */
+  /** The queue's bundle name and materialized root; derived from the stash when omitted. */
+  target?: { source: string; root: string };
+  /** One of {@link PROPOSAL_SOURCES}; an unknown value warns. */
   source: ProposalSource | string;
-  /**
-   * Run identifier for the automated job creating this proposal.
-   * Recommended when `source` is automated. Logged as a warning when omitted
-   * so the attribution gap is visible.
-   */
+  /** The automated run that made it (PROV-DM); an automated source without one warns. */
   sourceRun?: string;
   payload: ProposalPayload;
   /**
-   * Improve-ledger keys of the assets this proposal was generated from — the
-   * input memory for distill, the source memory for a consolidate promotion.
-   * Each gets an `improve_ledger` row (outcome `proposed`) in the same
-   * transaction as the mint. Defaults to the proposal's own ref.
+   * Ledger keys of the assets this proposal came from (distill's input memory,
+   * consolidate's source memory); each gets a `proposed` ledger row in the mint
+   * transaction. Defaults to the proposal's own ref.
    */
   attemptedRefs?: readonly string[];
-  /**
-   * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
-   *
-   * Values outside the closed interval `[0, 1]` and non-finite numbers
-   * (NaN / ±Infinity) are silently dropped at create time so the persisted
-   * proposal carries only well-formed scores. Callers that cannot estimate
-   * confidence should omit the field.
-   */
+  /** Confidence in [0, 1]; anything else is dropped. */
   confidence?: number;
-  /**
-   * Attribution tagging: the eligibility lane that selected the source asset for
-   * the improve run creating this proposal. Forwarded verbatim onto the persisted
-   * {@link Proposal} (`eligibilitySource`). Omitted by human-initiated sources
-   * (`propose`, `remember`, `import`) that have no eligibility lane.
-   */
+  /** The eligibility lane that selected the source asset. */
   eligibilitySource?: EligibilitySource;
 }
 
-const MS_PER_DAY = 86_400_000;
-
-// ── Store access ─────────────────────────────────────────────────────────────
-
 function nowIso(ctx?: ProposalsContext): string {
-  const fn = ctx?.now ?? Date.now;
-  return new Date(fn()).toISOString();
+  return new Date((ctx?.now ?? Date.now)()).toISOString();
 }
 
-function newId(ctx?: ProposalsContext): string {
-  const fn = ctx?.randomUUID ?? randomUUID;
-  return fn();
-}
-
-/**
- * Open the state database (honouring the `ctx.dbPath` test seam), hand the
- * connection to `fn`, and close it in a `finally`. Every public function in
- * this module funnels its store access through here.
- *
- * `stashDir` is threaded through the public API for the store's per-stash
- * partition.
- */
-function withProposalsDb<T>(_stashDir: string, ctx: ProposalsContext | undefined, fn: (db: Database) => T): T {
+function withProposalsDb<T>(ctx: ProposalsContext | undefined, fn: (db: Database) => T): T {
   return withStateDb(fn, { path: ctx?.dbPath });
 }
 
-/**
- * WI-8.5a — the durable `proposals.ref` key in the final `bundle//conceptId`
- * item_ref grammar (D-R3). The conceptId is BUILT from the D-R2 static table
- * ({@link conceptIdFromTypeName} = `<stash-subdir>/<name>`), never looked up, so a
- * proposal targeting a not-yet-existing asset (no index entry) still keys onto
- * its final spelling. The bundle is the configured write target's bundle id,
- * so a proposal's ref matches the item_ref the indexer mints for the accepted
- * asset byte-for-byte.
- *
- * Every explicit bundle qualifier remains part of the durable ref.
- */
-/**
- * Parse a user-supplied `--ref` / `idOrRef` filter. Qualified filters retain
- * their bundle instead of collapsing to the concept id, while short filters
- * intentionally match that concept in the selected queue. Invalid filters fail
- * loudly with the current ref grammar.
- */
 interface ProposalRefIdentity {
   conceptId: string;
   bundle?: string;
+}
+
+function isRetiredProposalConceptId(conceptId: string): boolean {
+  const colon = conceptId.indexOf(":");
+  return colon > 0 && stashDirFor(conceptId.slice(0, colon)) !== undefined;
 }
 
 function proposalRefIdentity(ref: string): ProposalRefIdentity | undefined {
   try {
     const parsed = parseBundleRef(ref);
     if (parsed.fragment !== undefined || isRetiredProposalConceptId(parsed.conceptId)) return undefined;
-    return {
-      conceptId: parsed.conceptId,
-      ...(parsed.bundle !== undefined ? { bundle: parsed.bundle } : {}),
-    };
+    return { conceptId: parsed.conceptId, ...(parsed.bundle !== undefined ? { bundle: parsed.bundle } : {}) };
   } catch {
     return undefined;
   }
 }
 
+/** A `--ref` filter: a short ref matches its concept in the queue, a qualified one also its bundle. */
 function filterRefIdentity(ref: string): ProposalRefIdentity {
-  try {
-    const p = parseBundleRef(ref);
-    if (p.fragment !== undefined || isRetiredProposalConceptId(p.conceptId)) {
-      throw new Error("not a current proposal identity");
-    }
-    return {
-      conceptId: p.conceptId,
-      ...(p.bundle !== undefined ? { bundle: p.bundle } : {}),
-    };
-  } catch {
+  const identity = proposalRefIdentity(ref);
+  if (!identity) {
     throw new UsageError(
       `Invalid asset-ref filter "${ref}". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.`,
       "INVALID_FLAG_VALUE",
     );
   }
-}
-
-function isRetiredProposalConceptId(conceptId: string): boolean {
-  const colon = conceptId.indexOf(":");
-  return colon > 0 && stashDirFor(conceptId.slice(0, colon)) !== undefined;
+  return identity;
 }
 
 function proposalMatchesRef(proposalRef: string, filter: ProposalRefIdentity): boolean {
@@ -361,20 +217,22 @@ function proposalMatchesRef(proposalRef: string, filter: ProposalRefIdentity): b
   );
 }
 
+/**
+ * The durable `proposals.ref`: `bundle//conceptId`, the conceptId built from
+ * the type table (so a not-yet-existing asset keys onto its final spelling) and
+ * the bundle the queue writes to — byte-identical to the item_ref the indexer
+ * mints for the accepted asset.
+ */
 function proposalDurableRef(parsedRef: AssetRef, target: NonNullable<CreateProposalInput["target"]>): string {
   const conceptId = conceptIdFromTypeName(parsedRef.type, parsedRef.name);
-  const { origin } = parsedRef;
   if (!isBundleSlug(target.source)) {
     throw new UsageError(`Proposal target source "${target.source}" is not a valid bundle name.`, "INVALID_FLAG_VALUE");
   }
-  if (origin !== undefined) {
-    if (target.source !== origin) {
-      throw new UsageError(
-        `Proposal ref bundle "${origin}" conflicts with target source "${target.source}".`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    return `${origin}//${conceptId}`;
+  if (parsedRef.origin !== undefined && target.source !== parsedRef.origin) {
+    throw new UsageError(
+      `Proposal ref bundle "${parsedRef.origin}" conflicts with target source "${target.source}".`,
+      "INVALID_FLAG_VALUE",
+    );
   }
   return `${target.source}//${conceptId}`;
 }
@@ -396,11 +254,8 @@ function resolveCreateProposalTarget(
   const config = loadConfig();
   const local = resolveProposalQueueTarget(stashDir, config);
   if (!bundle || bundle === local.source) return local;
-  if (bundle) {
-    const target = resolveBundleWriteTarget(config, bundle);
-    return { source: target.source.name, root: target.source.path };
-  }
-  return local;
+  const target = resolveBundleWriteTarget(config, bundle);
+  return { source: target.source.name, root: target.source.path };
 }
 
 export function resolveProposalQueueTarget(
@@ -424,60 +279,11 @@ export function resolveProposalQueueTarget(
   return { source: bundleId, root };
 }
 
-/** Mint-time target resolution for {@link createProposal}. */
-interface ProposalTargetInfo {
-  proposalTarget: NonNullable<CreateProposalInput["target"]>;
-  normalizedRef: string;
-  targetRoot: string;
-  targetRelPath: string;
-  beforeHash?: string;
-  /** Bookkeeping-insensitive counterpart of {@link beforeHash} (STALE, R20). */
-  beforeHashNormalized?: string;
-}
-
 /**
- * Resolve the durable target ref, target root/rel-path, and current
- * before-hash for a parsed proposal ref (WI-6.2).
- */
-function resolveProposalTargetInfo(
-  stashDir: string,
-  parsedRef: ReturnType<typeof parseRefInput>,
-  explicitTarget: CreateProposalInput["target"] | undefined,
-): ProposalTargetInfo {
-  const proposalTarget = resolveCreateProposalTarget(stashDir, explicitTarget, parsedRef.origin);
-  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
-  const targetRoot = path.resolve(proposalTarget.root);
-  let targetRelPath: string;
-  let mintBeforeContent: string | undefined;
-  try {
-    const typeRoot = path.join(targetRoot, stashDirFor(parsedRef.type) as string);
-    const targetAbs = assetPathForName(parsedRef.type, typeRoot, parsedRef.name);
-    targetRelPath = path.relative(targetRoot, targetAbs);
-    if (fs.existsSync(targetAbs)) mintBeforeContent = fs.readFileSync(targetAbs, "utf8");
-  } catch {
-    // Resolution failure degrades to a best-effort create — never blocks the mint.
-    targetRelPath = path.join(stashDirFor(parsedRef.type) as string, parsedRef.name);
-  }
-  return {
-    proposalTarget,
-    normalizedRef,
-    targetRoot,
-    targetRelPath,
-    beforeHash: mintBeforeContent !== undefined ? proposalHash(mintBeforeContent) : undefined,
-    beforeHashNormalized: mintBeforeContent !== undefined ? computeNormalizedContentHash(mintBeforeContent) : undefined,
-  };
-}
-
-// ── Public API ──────────────────────────────────────────────────────────────
-
-/**
- * Create a new pending proposal. The id is a stable random UUID, so two
- * proposals with the same `ref` never collide.
- *
- * The mint and its `improve_ledger` rows (outcome `proposed`, one per
- * {@link CreateProposalInput.attemptedRefs} entry) commit in one transaction.
- * Whether a ref may be proposed again is decided before generation, by the
- * stage's candidate selection reading that ledger — not here.
+ * Create a pending proposal (a random UUID id). Obviously invalid input is
+ * refused with a typed `proposal_creation_rejected` event. The mint and its
+ * `proposed` ledger rows commit in one transaction; whether a ref may be
+ * proposed again is decided earlier, by the stage's candidate selection.
  */
 export function createProposal(stashDir: string, input: CreateProposalInput, ctx?: ProposalsContext): Proposal {
   if (!isValidProposalSource(input.source)) {
@@ -492,11 +298,6 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         "Add sourceRun to enable accept-rate-per-run aggregation (W3C PROV-DM).",
     );
   }
-
-  // Deterministic input validation. Reject obviously-invalid proposals at
-  // the source rather than letting them enter the queue and waste reviewer
-  // time. Each rejection emits `proposal_creation_rejected` with a typed
-  // reason so we can see *which* check is firing in the event stream.
   const rejectProposal = (reason: ProposalRejectionReason, message: string): never => {
     appendEvent({
       eventType: "proposal_creation_rejected",
@@ -506,7 +307,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
     throw new UsageError(message, "INVALID_PROPOSAL");
   };
 
-  let parsedRef: ReturnType<typeof parseRefInput>;
+  let parsedRef: AssetRef;
   try {
     parsedRef = parseRefInput(input.ref);
   } catch (err) {
@@ -515,7 +316,8 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
       `Invalid proposal ref "${input.ref}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  if (!stashDirFor(parsedRef.type)) {
+  const typeDir = stashDirFor(parsedRef.type);
+  if (!typeDir) {
     return rejectProposal(
       "unknown_type",
       `Unknown asset type "${parsedRef.type}" in proposal ref "${input.ref}". Known types: ${[...placementTypes()].sort().join(", ")}.`,
@@ -530,11 +332,8 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
       `Qualified proposal ref bundle "${parsedRef.origin}" conflicts with queue target "${input.target.source}".`,
     );
   }
-  // Description check is only enforced for `consolidate` source — that's the
-  // automated pipeline that historically produced proposals with missing or
-  // malformed frontmatter, polluting the queue with hundreds of unusable
-  // entries. Reflect / distill / propose proposals have varied legitimate
-  // shapes and should not be rejected here for missing description.
+  // Only consolidate — the pipeline that historically flooded the queue with
+  // frontmatter-less proposals — must carry a description.
   if (input.source === "consolidate") {
     const desc = input.payload.frontmatter?.description;
     if (typeof desc !== "string" || desc.trim() === "") {
@@ -545,36 +344,30 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
     }
   }
 
-  // WI-6.2: derive the FileChange[] envelope + mint-time beforeHash. The
-  // target is resolved against the proposal's OWN stash (a local snapshot —
-  // accept re-resolves the write target from config at apply time), and only
-  // the before-state's HASH is kept: the change's `before` body is a
-  // transaction-time capture that does not exist at mint time.
-  const {
-    proposalTarget,
-    normalizedRef,
-    targetRoot,
-    targetRelPath,
-    beforeHash: mintedBeforeHash,
-    beforeHashNormalized: mintedBeforeHashNormalized,
-  } = resolveProposalTargetInfo(stashDir, parsedRef, input.target);
-  const proposalContent = targetRelPath.toLowerCase().endsWith(".md")
+  // The FileChange envelope, and the target's before-hashes as of mint (the
+  // freshness check at accept compares against them).
+  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
+  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
+  const targetRoot = path.resolve(proposalTarget.root);
+  let targetRelPath: string;
+  let beforeContent: string | undefined;
+  try {
+    const targetAbs = assetPathForName(parsedRef.type, path.join(targetRoot, typeDir), parsedRef.name);
+    targetRelPath = path.relative(targetRoot, targetAbs);
+    if (fs.existsSync(targetAbs)) beforeContent = fs.readFileSync(targetAbs, "utf8");
+  } catch {
+    targetRelPath = path.join(typeDir, parsedRef.name);
+  }
+  const content = targetRelPath.toLowerCase().endsWith(".md")
     ? ensureAkmMarkdownType(input.payload.content, parsedRef.type)
     : input.payload.content;
-  const mintedChanges: FileChange[] = [
-    {
-      path: targetRelPath,
-      after: proposalContent,
-      op: mintedBeforeHash !== undefined ? "update" : "create",
-    },
+  const changes: FileChange[] = [
+    { path: targetRelPath, after: content, op: beforeContent !== undefined ? "update" : "create" },
   ];
+  const proposedTarget = { source: proposalTarget.source, root: targetRoot };
 
   if (hasCanonicalProposalValidator(parsedRef.type)) {
-    // Mint-time gate: structural shape only (generic + canonical-per-type),
-    // NOT the full quality-validator list — see canonicalOnlyProposalValidators'
-    // doc comment (#952 review round 2). Quality validators (including the
-    // blocking reflect-truncation-marker guard) run at `proposal accept` /
-    // drain-promotion time via validateProposal instead.
+    // Mint checks structure only; the quality validators run at accept.
     const report = runProposalValidators(
       {
         id: "pending",
@@ -583,9 +376,9 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         source: input.source,
         createdAt: "",
         updatedAt: "",
-        payload: { ...input.payload, content: proposalContent },
-        changes: mintedChanges,
-        proposedTarget: { source: proposalTarget.source, root: targetRoot },
+        payload: { ...input.payload, content },
+        changes,
+        proposedTarget,
       },
       canonicalOnlyProposalValidators,
     );
@@ -599,23 +392,18 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
     }
   }
 
-  return withProposalsDb(stashDir, ctx, (db) => {
-    return withImmediateTransaction(db, () => {
+  const confidence =
+    typeof input.confidence === "number" &&
+    Number.isFinite(input.confidence) &&
+    input.confidence >= 0 &&
+    input.confidence <= 1
+      ? input.confidence
+      : undefined;
+  return withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
       const created = nowIso(ctx);
-
-      // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
-      // is dropped silently — we never store NaN, Infinity, or out-of-range values.
-      // Callers that mis-report confidence should not poison downstream readers.
-      const sanitizedConfidence =
-        typeof input.confidence === "number" &&
-        Number.isFinite(input.confidence) &&
-        input.confidence >= 0 &&
-        input.confidence <= 1
-          ? input.confidence
-          : undefined;
-
       const proposal: Proposal = {
-        id: newId(ctx),
+        id: (ctx?.randomUUID ?? randomUUID)(),
         ref: normalizedRef,
         status: "pending",
         source: input.source,
@@ -623,19 +411,17 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         createdAt: created,
         updatedAt: created,
         payload: {
-          content: proposalContent,
+          content,
           ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
         },
-        changes: mintedChanges,
-        proposedTarget: { source: proposalTarget.source, root: targetRoot },
-        ...(mintedBeforeHash !== undefined ? { beforeHash: mintedBeforeHash } : {}),
-        ...(mintedBeforeHashNormalized !== undefined ? { beforeHashNormalized: mintedBeforeHashNormalized } : {}),
-        ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
-        // Attribution tagging: persist the eligibility lane so it survives to
-        // accept/reject/revert time. See EligibilitySource.
+        changes,
+        proposedTarget,
+        ...(beforeContent !== undefined
+          ? { beforeHash: contentHash(beforeContent), beforeHashNormalized: contentHash(beforeContent, "normalized") }
+          : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
         ...(input.eligibilitySource !== undefined ? { eligibilitySource: input.eligibilitySource } : {}),
       };
-
       upsertProposal(db, proposal, stashDir);
       for (const ref of input.attemptedRefs ?? [normalizedRef]) {
         recordImproveLedger(db, {
@@ -648,139 +434,88 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         });
       }
       return proposal;
-    });
+    }),
+  );
+}
+
+type ListProposalsOptions = { includeArchive?: boolean; status?: ProposalStatus; ref?: string; type?: string };
+
+function queryProposals(db: Database, stashDir: string, options: ListProposalsOptions): Proposal[] {
+  // The live queue holds only pending proposals, so without the archive a
+  // non-pending status matches nothing.
+  if (!options.includeArchive && options.status !== undefined && options.status !== "pending") return [];
+  const status = options.includeArchive ? options.status : "pending";
+  const wantRef = options.ref !== undefined ? filterRefIdentity(options.ref) : undefined;
+  return listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter((p) => {
+    if (wantRef !== undefined && !proposalMatchesRef(p.ref, wantRef)) return false;
+    if (!options.type) return true;
+    try {
+      return parseRefInput(p.ref).type === options.type;
+    } catch {
+      return false;
+    }
   });
 }
 
-/**
- * List proposals for one stash. By default returns only the live (pending)
- * queue; pass `{ includeArchive: true }` to include accepted / rejected /
- * reverted entries as well.
- */
+/** One stash's proposals: the pending queue, or with `includeArchive` the decided ones too. */
 export function listProposals(
   stashDir: string,
-  options: { includeArchive?: boolean; status?: ProposalStatus; ref?: string; type?: string } = {},
+  options: ListProposalsOptions = {},
   ctx?: ProposalsContext,
 ): Proposal[] {
-  return withProposalsDb(stashDir, ctx, (db) => {
-    // Without includeArchive, only the live queue is visible — an explicit
-    // non-pending status filter therefore matches nothing (mirrors the
-    // historical live-directory scan).
-    if (!options.includeArchive && options.status !== undefined && options.status !== "pending") {
-      return [];
-    }
-    const status = options.includeArchive ? options.status : "pending";
-    // Short filters match by conceptId; qualified filters additionally retain
-    // bundle identity. Applied in JS because a short query does not equal the
-    // fully-qualified stored ref.
-    const wantRef = options.ref !== undefined ? filterRefIdentity(options.ref) : undefined;
-    return listStateProposals(db, {
-      stashDir,
-      ...(status !== undefined ? { status } : {}),
-    }).filter((p) => {
-      if (wantRef !== undefined && !proposalMatchesRef(p.ref, wantRef)) {
-        return false;
-      }
-      if (!options.type) return true;
-      try {
-        return parseRefInput(p.ref).type === options.type;
-      } catch {
-        return false;
-      }
-    });
-  });
+  return withProposalsDb(ctx, (db) => queryProposals(db, stashDir, options));
 }
 
 /**
- * Read proposal context without creating or migrating state.db.
- *
- * Prompt-building consumers call this before their first model dispatch. A
- * missing proposal store is therefore an empty snapshot, not a reason to
- * create durable state before a required symbolic credential is validated at
- * the dispatch boundary.
+ * {@link listProposals} on a read snapshot that never creates or migrates
+ * state.db: prompt building runs before the first dispatch has validated its
+ * credentials, and a missing store is simply empty.
  */
 export function listProposalsReadOnly(
   stashDir: string,
-  options: { includeArchive?: boolean; status?: ProposalStatus; ref?: string; type?: string } = {},
+  options: ListProposalsOptions = {},
   ctx?: ProposalsContext,
 ): Proposal[] {
   const dbPath = ctx?.dbPath ?? getStateDbPath();
   if (!fs.existsSync(dbPath)) return [];
-
-  let db: Database | undefined;
+  const db = openSqliteReadSnapshot(dbPath);
+  if (!db) return [];
   try {
-    db = openSqliteReadSnapshot(dbPath);
-    if (!db) return [];
-    if (!options.includeArchive && options.status !== undefined && options.status !== "pending") return [];
-    const status = options.includeArchive ? options.status : "pending";
-    const wantRef = options.ref !== undefined ? filterRefIdentity(options.ref) : undefined;
-    return listStateProposals(db, {
-      stashDir,
-      ...(status !== undefined ? { status } : {}),
-    }).filter((proposal) => {
-      if (wantRef !== undefined && !proposalMatchesRef(proposal.ref, wantRef)) return false;
-      if (!options.type) return true;
-      try {
-        return parseRefInput(proposal.ref).type === options.type;
-      } catch {
-        return false;
-      }
-    });
+    return queryProposals(db, stashDir, options);
   } finally {
-    db?.close();
+    db.close();
   }
 }
 
-/**
- * Look up a proposal by id (live or archived).
- * Throws `NotFoundError` when no match exists in this stash.
- */
+/** A proposal by id, live or archived. */
 export function getProposal(stashDir: string, id: string, ctx?: ProposalsContext): Proposal {
-  return withProposalsDb(stashDir, ctx, (db) => requireProposal(db, stashDir, id));
+  return withProposalsDb(ctx, (db) => requireProposal(db, stashDir, id));
 }
 
 function requireProposal(db: Database, stashDir: string, id: string): Proposal {
   const proposal = getStateProposal(db, id, stashDir);
-  if (!proposal) {
-    throw new NotFoundError(`Proposal "${id}" not found.`, "PROPOSAL_NOT_FOUND");
-  }
+  if (!proposal) throw new NotFoundError(`Proposal "${id}" not found.`, "PROPOSAL_NOT_FOUND");
   return proposal;
 }
 
 /**
- * Resolve a proposal by full UUID, UUID prefix, or asset ref.
- *
- * Resolution order:
- *   1. Exact UUID match (existing behaviour).
- *   2. Asset ref (contains `/`) — finds the most-recent pending proposal for
- *      that ref; falls back to archived if nothing is pending.
- *   3. UUID prefix — matches any PENDING proposal whose id starts with the
- *      given string; throws if ambiguous.
+ * A proposal by exact id; else, for an asset ref, its most recent pending
+ * proposal (then most recent archived); else by a unique pending id prefix.
  */
 export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: ProposalsContext): Proposal {
-  return withProposalsDb(stashDir, ctx, (db) => {
-    // 1. Exact UUID.
+  return withProposalsDb(ctx, (db) => {
     const exact = getStateProposal(db, idOrRef, stashDir);
     if (exact) return exact;
-
-    // 2. Asset ref — most recent pending, else most recent archived. Qualified
-    // refs retain bundle identity; short refs match by conceptId in this queue.
-    const wantRef = idOrRef.includes(":") || idOrRef.includes("/") ? filterRefIdentity(idOrRef) : undefined;
-    if (wantRef !== undefined) {
-      const byRecency = (proposals: Proposal[]): Proposal | undefined =>
-        proposals.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
-      const forConcept = (status?: string): Proposal[] =>
-        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter((p) =>
-          proposalMatchesRef(p.ref, wantRef),
-        );
-      const pending = byRecency(forConcept("pending"));
-      if (pending) return pending;
-      const archived = byRecency(forConcept());
-      if (archived) return archived;
+    if (idOrRef.includes(":") || idOrRef.includes("/")) {
+      const wantRef = filterRefIdentity(idOrRef);
+      const newest = (status?: string): Proposal | undefined =>
+        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
+          .filter((p) => proposalMatchesRef(p.ref, wantRef))
+          .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+      const found = newest("pending") ?? newest();
+      if (found) return found;
       throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "PROPOSAL_NOT_FOUND");
     }
-
-    // 3. UUID prefix (pending queue only).
     const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
     if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
     if (prefixMatches.length > 1) {
@@ -789,16 +524,14 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
         "INVALID_FLAG_VALUE",
       );
     }
-
     throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "PROPOSAL_NOT_FOUND");
   });
 }
 
 /**
- * The improve-ledger outcome a proposal decision records. A procedural
- * refusal — the retention expiry, the drain's stale-target auto-reject, an
- * orphan whose asset is gone — is not a judgement on the content, so it never
- * carries the rejection window.
+ * The ledger outcome of a decision. A procedural refusal (retention expiry, a
+ * stale target, a missing asset) judged nothing, so it never carries the
+ * rejection window.
  */
 function ledgerOutcomeForDecision(
   status: "accepted" | "rejected" | "reverted",
@@ -814,22 +547,17 @@ function ledgerOutcomeForDecision(
   return "rejected";
 }
 
-/**
- * Archive a proposal: flip its status to `accepted` / `rejected`, bump
- * `updatedAt`, and record the review block. Used by both accept and reject
- * paths so the live queue only contains pending entries. The decision lands
- * in the improve ledger in the same transaction.
- */
+/** Archive a pending proposal as accepted/rejected, recording the decision in the ledger in the same transaction. */
 export function archiveProposal(
   stashDir: string,
   id: string,
   status: "accepted" | "rejected",
   reason: string | undefined,
   ctx?: ProposalsContext,
-  gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string },
+  gateDecision?: GateDecisionInput,
 ): Proposal {
-  return withProposalsDb(stashDir, ctx, (db) => {
-    return withImmediateTransaction(db, () => {
+  return withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
       const existing = requireProposal(db, stashDir, id);
       if (existing.status !== "pending") {
         throw new UsageError(
@@ -842,11 +570,7 @@ export function archiveProposal(
         ...existing,
         status,
         updatedAt: decidedAt,
-        review: {
-          outcome: status,
-          ...(reason !== undefined ? { reason } : {}),
-          decidedAt,
-        },
+        review: { outcome: status, ...(reason !== undefined ? { reason } : {}), decidedAt },
         ...(gateDecision ? { gateDecision: { ...gateDecision, decidedAt: gateDecision.decidedAt ?? decidedAt } } : {}),
       };
       upsertProposal(db, updated, stashDir);
@@ -860,36 +584,24 @@ export function archiveProposal(
         ...(reason !== undefined ? { detail: reason } : {}),
       });
       return updated;
-    });
-  });
+    }),
+  );
 }
 
 /**
- * Record a gate's decision onto a proposal (#577): the triage drain's verdict,
- * or the generating stage's quality-judge pass / review deferral.
- *
- * Stamps `gateDecision` (decision / reason / measurement / thresholds) onto the
- * row so `akm proposal show` and `list` can explain why a proposal landed where
- * it did. The decision is metadata about the adjudication, so this does NOT
- * change `status` or bump `updatedAt` — a `deferred` proposal stays `pending`,
- * and the accept / reject status flips are owned by {@link promoteProposal} /
- * {@link archiveProposal}. `decidedAt` defaults to now when the caller omits it.
- *
- * A `deferred` decision (left for human review) records `review_needed` in the
- * improve ledger.
- *
- * Best-effort: a proposal that no longer exists (e.g. concurrently archived) is
- * skipped silently rather than throwing, so a gate run never aborts mid-batch.
- * Returns the updated proposal, or undefined when no matching row exists.
+ * Stamp a gate's decision (#577) on a pending proposal without changing its
+ * status: the drain's verdict, or the generating stage's judge pass or review
+ * deferral (`deferred` records `review_needed` in the ledger). A proposal no
+ * longer pending is skipped (`undefined`), so a batch never aborts.
  */
 export function recordGateDecision(
   stashDir: string,
   id: string,
-  decision: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string },
+  decision: GateDecisionInput,
   ctx?: ProposalsContext,
 ): Proposal | undefined {
-  return withProposalsDb(stashDir, ctx, (db) => {
-    return withImmediateTransaction(db, () => {
+  return withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
       const existing = getStateProposal(db, id, stashDir);
       if (!existing || existing.status !== "pending") return undefined;
       const decidedAt = decision.decidedAt ?? nowIso(ctx);
@@ -907,19 +619,14 @@ export function recordGateDecision(
         });
       }
       return updated;
-    });
-  });
+    }),
+  );
 }
 
 /**
- * Scan all pending proposals and reject those whose target asset no longer
- * exists on disk across any of `sourceDirs`. Intended to run as a periodic
- * maintenance pass (see `runImproveMaintenancePasses`) — it keeps the queue
- * from accumulating stale reviewer work after large refactors or deletes.
- *
- * Scope rule: only `source=reflect` proposals are subject to orphan rejection.
- * Lessons, propose, distill, and consolidate proposals legitimately target
- * assets that don't exist yet and must never be purged.
+ * Reject pending `reflect` proposals whose target no longer exists in any of
+ * `sourceDirs` (a maintenance pass). Other sources — lessons above all — may
+ * legitimately target assets that do not exist yet.
  */
 export function purgeOrphanProposals(
   stashDir: string,
@@ -927,113 +634,63 @@ export function purgeOrphanProposals(
   ctx?: ProposalsContext,
 ): OrphanPurgeResult {
   const t0 = Date.now();
-  const orphans: Array<{ id: string; ref: string; reason: string }> = [];
+  const orphans: OrphanPurgeResult["orphans"] = [];
   const byType: Record<string, number> = {};
-  const pending = listProposals(stashDir, { status: "pending" }, ctx);
-  const reflectPending = pending.filter((p) => p.source === "reflect");
-
+  const reflectPending = listProposals(stashDir, { status: "pending" }, ctx).filter((p) => p.source === "reflect");
   for (const p of reflectPending) {
-    let parsed: ReturnType<typeof parseRefInput>;
+    let parsed: AssetRef;
     try {
       parsed = parseRefInput(p.ref);
     } catch {
       continue;
     }
-    // Lessons are new-asset proposals by definition — they cannot be orphaned.
-    if (parsed.type === "lesson") continue;
     const spec = stashDirFor(parsed.type);
-    if (!spec) continue;
-
-    const exists = sourceDirs.some((root) => {
-      const typeRoot = path.join(root, spec);
-      const candidate = assetPathForName(parsed.type, typeRoot, parsed.name);
-      return fs.existsSync(candidate);
-    });
-
-    if (!exists) {
-      try {
-        archiveProposal(stashDir, p.id, "rejected", "Asset no longer exists on disk", ctx, {
-          outcome: "auto-rejected",
-          reason: ASSET_MISSING_GATE_REASON,
-          gate: "orphan-purge",
-        });
-        orphans.push({ id: p.id, ref: p.ref, reason: "asset_missing" });
-        byType[parsed.type] = (byType[parsed.type] ?? 0) + 1;
-      } catch (err) {
-        // Best-effort — the purge is non-fatal. Log and continue.
-        warn(
-          `[proposals] purgeOrphanProposals: failed to reject ${p.id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    if (parsed.type === "lesson" || !spec) continue;
+    const exists = sourceDirs.some((root) =>
+      fs.existsSync(assetPathForName(parsed.type, path.join(root, spec), parsed.name)),
+    );
+    if (exists) continue;
+    try {
+      archiveProposal(stashDir, p.id, "rejected", "Asset no longer exists on disk", ctx, {
+        outcome: "auto-rejected",
+        reason: ASSET_MISSING_GATE_REASON,
+        gate: "orphan-purge",
+      });
+      orphans.push({ id: p.id, ref: p.ref, reason: "asset_missing" });
+      byType[parsed.type] = (byType[parsed.type] ?? 0) + 1;
+    } catch (err) {
+      warn(
+        `[proposals] purgeOrphanProposals: failed to reject ${p.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
-
-  return {
-    checked: reflectPending.length,
-    rejected: orphans.length,
-    durationMs: Date.now() - t0,
-    byType,
-    orphans,
-  };
+  return { checked: reflectPending.length, rejected: orphans.length, durationMs: Date.now() - t0, byType, orphans };
 }
 
 /**
- * Archive pending proposals older than `config.archiveRetentionDays` (Advantage
- * D6b / Phase 6B).
- *
- * Reviewer fatigue and queue rot are the dominant failure modes of any
- * human-in-the-loop pipeline (Settles 2009 active-learning survey). Pending
- * proposals that have aged past the retention window are very rarely accepted
- * — the reviewer either intentionally declined to act on them, or the asset
- * they target has drifted enough that the proposal is no longer relevant.
- * Auto-expiring them keeps the live queue focused on actionable work; the
- * archive preserves the full audit trail.
- *
- * Each expired proposal is archived with status `rejected`, reason
- * `"expired: no action within retention window"` and an `expired` gate
- * decision, and records `expired` in the improve ledger — a short grace, never
- * the rejection window: nobody judged the content. A `proposal_expired` event
- * is appended for each expired proposal so downstream observability (events
- * dashboards, source-acceptance-rate aggregations) can see expiry separately
- * from explicit rejections.
- *
- * Idempotent: a second call within the same retention window finds nothing
- * to expire (the archived entries are no longer in the pending queue).
+ * Archive pending proposals older than `archiveRetentionDays` (default 90;
+ * 0 disables) as rejected with an `expired` gate decision and a
+ * `proposal_expired` event. The ledger records `expired` — a short grace, not
+ * the rejection window, since nobody judged the content.
  */
 export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: ProposalsContext): ExpireStaleResult {
   const t0 = Date.now();
   const retentionDays = config.archiveRetentionDays ?? 90;
-  const expiredProposals: Array<{ id: string; ref: string; ageDays: number }> = [];
-
-  // retentionDays === 0 disables TTL cleanup globally (mirrors how
-  // consolidate.ts interprets the same config value).
-  if (retentionDays <= 0) {
-    return {
-      checked: 0,
-      expired: 0,
-      durationMs: Date.now() - t0,
-      retentionDays,
-      expiredProposals,
-    };
-  }
-
-  const retentionMs = retentionDays * MS_PER_DAY;
+  const expiredProposals: ExpireStaleResult["expiredProposals"] = [];
+  if (retentionDays <= 0)
+    return { checked: 0, expired: 0, durationMs: Date.now() - t0, retentionDays, expiredProposals };
   const nowMs = (ctx?.now ?? Date.now)();
   const pending = listProposals(stashDir, { status: "pending" }, ctx);
-
   for (const p of pending) {
     const createdMs = new Date(p.createdAt).getTime();
-    if (!Number.isFinite(createdMs)) continue;
-    const ageMs = nowMs - createdMs;
-    if (ageMs < retentionMs) continue;
-
+    if (!Number.isFinite(createdMs) || nowMs - createdMs < retentionDays * MS_PER_DAY) continue;
     try {
       archiveProposal(stashDir, p.id, "rejected", "expired: no action within retention window", ctx, {
         outcome: "auto-rejected",
         reason: EXPIRED_GATE_REASON,
         gate: "retention",
       });
-      const ageDays = Math.floor(ageMs / MS_PER_DAY);
+      const ageDays = Math.floor((nowMs - createdMs) / MS_PER_DAY);
       expiredProposals.push({ id: p.id, ref: p.ref, ageDays });
       appendEvent({
         eventType: "proposal_expired",
@@ -1047,13 +704,11 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
         },
       });
     } catch (err) {
-      // Best-effort — a single failure must not block the pass.
       warn(
         `[proposals] expireStaleProposals: failed to expire ${p.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
-
   return {
     checked: pending.length,
     expired: expiredProposals.length,
@@ -1063,27 +718,15 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   };
 }
 
-/** SHA-256 hex digest of proposal/asset bytes. */
-export function proposalHash(content: string | Buffer): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
-/**
- * Hash of a proposal's primary content — what a `staged` gate decision
- * records, so a later reader can tell the judged bytes from an edited retry.
- */
+/** The hash a `staged` gate decision records, so a reader can tell the judged bytes from an edit. */
 export function proposalContentHash(proposal: Proposal): string {
-  return proposalHash(proposalContent(proposal));
-}
-
-function proposalFileHash(filePath: string): string {
-  return proposalHash(fs.readFileSync(filePath));
+  return contentHash(proposalContent(proposal));
 }
 
 /**
- * Record an accept or revert: the proposal row and its event in one state.db
- * transaction, after the asset file is already on disk. Idempotent — a
- * proposal already in the requested state is returned unchanged.
+ * Record an accept or revert — the row, its ledger decision and its event in
+ * one transaction — after the asset file is on disk. A proposal already in the
+ * requested state is returned unchanged.
  */
 function persistProposalDecision(
   stashDir: string,
@@ -1094,21 +737,21 @@ function persistProposalDecision(
         target: ResolvedWriteTarget;
         assetPath: string;
         content: string;
-        originalHash: string | null;
+        existed: boolean;
         backupContent?: string;
         eventMetadata?: Record<string, unknown>;
-        gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+        gateDecision?: GateDecisionInput;
         decidedAt: string;
       }
     | { operation: "revert"; assetPath: string; decidedAt: string },
   ctx?: ProposalsContext,
 ): Proposal {
-  return withProposalsDb(stashDir, ctx, (db) =>
+  return withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
       const current = requireProposal(db, stashDir, proposal.id);
       let next: Proposal;
       if (decision.operation === "accept") {
-        const publishedHash = proposalHash(decision.content);
+        const publishedHash = contentHash(decision.content);
         if (current.status === "accepted") {
           if (current.acceptedTarget?.contentHash !== publishedHash) {
             throw new Error(`Accepted proposal ${proposal.id} does not match the published content.`);
@@ -1128,7 +771,7 @@ function persistProposalDecision(
                 changes: [
                   {
                     path: path.relative(root, decision.assetPath),
-                    op: decision.originalHash === null ? "create" : "update",
+                    op: decision.existed ? "update" : "create",
                     after: decision.content,
                   },
                 ],
@@ -1171,18 +814,19 @@ function persistProposalDecision(
           },
         };
       }
+      const accept = decision.operation === "accept";
       upsertProposal(db, next, stashDir);
       recordImproveLedgerDecision(db, {
         proposalId: next.id,
         stashDir,
         ref: next.ref,
         source: next.source,
-        outcome: ledgerOutcomeForDecision(decision.operation === "accept" ? "accepted" : "reverted"),
+        outcome: ledgerOutcomeForDecision(accept ? "accepted" : "reverted"),
         at: decision.decidedAt,
-        ...(decision.operation === "revert" ? { detail: "reverted" } : {}),
+        ...(accept ? {} : { detail: "reverted" }),
       });
       insertEventOnce(db, {
-        eventType: decision.operation === "accept" ? "promoted" : "proposal_reverted",
+        eventType: accept ? "promoted" : "proposal_reverted",
         ts: decision.decidedAt,
         ref: next.ref,
         metadata: {
@@ -1193,7 +837,7 @@ function persistProposalDecision(
           ...(next.eligibilitySource !== undefined ? { eligibilitySource: next.eligibilitySource } : {}),
           ...(decision.operation === "accept" && decision.eventMetadata ? decision.eventMetadata : {}),
         },
-        idempotencyKey: `${next.id}:${decision.operation === "accept" ? "promoted" : "reverted"}`,
+        idempotencyKey: `${next.id}:${accept ? "promoted" : "reverted"}`,
       });
       return next;
     }),
@@ -1205,7 +849,7 @@ export function rejectProposalDurably(
   proposalId: string,
   reason?: string,
   ctx?: ProposalsContext,
-  gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string },
+  gateDecision?: GateDecisionInput,
 ): Proposal {
   const decidedAt = nowIso(ctx);
   const rejected = archiveProposal(
@@ -1216,7 +860,7 @@ export function rejectProposalDurably(
     { ...ctx, now: () => Date.parse(decidedAt) },
     gateDecision,
   );
-  withProposalsDb(stashDir, ctx, (db) =>
+  withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
       insertEventOnce(db, {
         eventType: "rejected",
@@ -1235,7 +879,7 @@ export function rejectProposalDurably(
   return rejected;
 }
 
-/** Write `content` to `assetPath` atomically (temp file + rename), keeping an existing file's mode. */
+/** Write `content` atomically (temp file + rename), keeping an existing file's mode. */
 function writeProposalAssetFile(assetPath: string, content: string): void {
   fs.mkdirSync(path.dirname(assetPath), { recursive: true });
   const mode = fs.existsSync(assetPath) ? fs.statSync(assetPath).mode & 0o777 : 0o644;
@@ -1265,9 +909,7 @@ async function indexWrittenProposalAsset(target: ResolvedWriteTarget, assetPath:
 
 export interface PromoteResult {
   proposal: Proposal;
-  /** Where the asset was written. */
   assetPath: string;
-  /** Normalised asset ref. */
   ref: string;
 }
 
@@ -1305,25 +947,28 @@ function resolveProposalWriteTarget(
   explicitTarget?: string,
   queueTarget?: ResolvedWriteTarget,
 ): ResolvedWriteTarget {
+  const named = (target: ResolvedWriteTarget): ResolvedWriteTarget => ({
+    ...target,
+    source: { ...target.source, name: canonicalBundleIdForTarget(config, target) },
+  });
   if (!proposal.proposedTarget) {
     const identity = proposalRefIdentity(proposal.ref);
     if (!identity) throw new UsageError(`Proposal ${proposal.id} has an invalid ref.`, "INVALID_PROPOSAL");
     if (identity.bundle !== undefined) {
-      const target = resolveBundleWriteTarget(config, identity.bundle);
-      const targetBundleId = canonicalBundleIdForTarget(config, target);
-      if (explicitTarget !== undefined) {
-        const explicit = resolveWriteTarget(config, explicitTarget);
-        if (canonicalBundleIdForTarget(config, explicit) !== identity.bundle) {
-          throw new UsageError(
-            `Proposal ${proposal.id} ref is bound to bundle "${identity.bundle}", which conflicts with --target "${explicitTarget}".`,
-            "INVALID_FLAG_VALUE",
-          );
-        }
+      const target = named(resolveBundleWriteTarget(config, identity.bundle));
+      if (
+        explicitTarget !== undefined &&
+        canonicalBundleIdForTarget(config, resolveWriteTarget(config, explicitTarget)) !== identity.bundle
+      ) {
+        throw new UsageError(
+          `Proposal ${proposal.id} ref is bound to bundle "${identity.bundle}", which conflicts with --target "${explicitTarget}".`,
+          "INVALID_FLAG_VALUE",
+        );
       }
       if (queueTarget && canonicalBundleIdForTarget(config, queueTarget) !== identity.bundle) {
         throw new UsageError(`Proposal ${proposal.id} is bound to a different queue target.`, "INVALID_FLAG_VALUE");
       }
-      return { ...target, source: { ...target.source, name: targetBundleId } };
+      return target;
     }
     const target = explicitTarget ? resolveWriteTarget(config, explicitTarget) : queueTarget;
     if (!target) {
@@ -1332,120 +977,58 @@ function resolveProposalWriteTarget(
         "INVALID_PROPOSAL",
       );
     }
-    const targetBundleId = canonicalBundleIdForTarget(config, target);
-    return { ...target, source: { ...target.source, name: targetBundleId } };
+    return named(target);
   }
-  if (queueTarget && explicitTarget === undefined) {
-    const queueBundleId = canonicalBundleIdForTarget(config, queueTarget);
-    if (
-      queueBundleId !== proposal.proposedTarget.source ||
-      path.resolve(queueTarget.source.path) !== path.resolve(proposal.proposedTarget.root)
-    ) {
-      throw new UsageError(`Proposal ${proposal.id} is bound to a different queue target.`, "INVALID_FLAG_VALUE");
-    }
+  if (
+    queueTarget &&
+    explicitTarget === undefined &&
+    (canonicalBundleIdForTarget(config, queueTarget) !== proposal.proposedTarget.source ||
+      path.resolve(queueTarget.source.path) !== path.resolve(proposal.proposedTarget.root))
+  ) {
+    throw new UsageError(`Proposal ${proposal.id} is bound to a different queue target.`, "INVALID_FLAG_VALUE");
   }
   return resolveRecordedProposalTarget(config, proposal.id, proposal.proposedTarget, explicitTarget);
 }
 
-// ── D2 (#730) — OKF v0.2 provenance stamping on promotion ───────────────────
-//
-// The proposals system already tracks exactly what OKF v0.2 wants on disk —
-// `source`/`sourceRun` (PROV-DM modeled, `proposal-types.ts` §80-120),
-// `gateDecision` (`:200-237`), `review` (`:170-174`) — but none of it leaves
-// state.db. This section projects it onto the written asset's frontmatter at
-// promotion time, AKM-native assets only (an OKF-adapter target never reaches
-// this function — `assertAkmAssetWrite` rejects it earlier in
-// `promoteProposalWithLease`, before any of this runs).
-//
-// Two DISTINCT actors, deliberately not conflated (documented judgment call —
-// see the PR body for the alternative considered and rejected):
-//   - `generated.by` answers "what produced the CONTENT" — keyed on
-//     `isAutomatedProposalSource(proposal.source)`: an automated pipeline
-//     (reflect/distill/consolidate/extract/improve/schema-repair) stamps
-//     `akm/<pkgVersion>`; a human-initiated source (propose/remember/import)
-//     or the semi-automated `feedback` source stamps `human:<actorId>`.
-//   - `verified[0].by` answers "what accepted/reviewed THIS promotion" —
-//     keyed on whether a `gateDecision` was supplied to THIS call: present
-//     (the automated drain/triage path decided) stamps `akm/<pkgVersion>`;
-//     absent (a human explicitly ran `akm proposal accept`) stamps
-//     `human:<actorId>`. Every promotion reaches this function via exactly
-//     one of those two paths, so `verified` is always stamped — there is no
-//     third, unreviewed path to disk.
+// ── OKF v0.2 provenance on promotion (#730) ─────────────────────────────────
+// `generated.by` names what produced the content (an automated source is
+// `akm/<version>`, anything else `human:<actor>`); `verified[].by` names what
+// accepted this promotion (a gate decision is `akm/<version>`, a direct
+// `akm proposal accept` is `human:<actor>`). Only AKM-native targets get here.
 
-/** Resolve the `human:<id>` actor id — the OS account, the least-surprising stand-in for "the human at this keyboard" in a system with no multi-user identity. */
 function resolveActorId(ctx?: ProposalsContext): string {
   if (ctx?.actorId) return ctx.actorId();
   try {
-    const username = os.userInfo().username?.trim();
-    return username ? username : "local";
+    return os.userInfo().username?.trim() || "local";
   } catch {
     return "local";
   }
 }
 
-/** `generated.by` — keyed on the SOURCE that produced the content (see file-header note above). */
-function generatedByActor(proposal: Proposal, ctx?: ProposalsContext): string {
-  return isAutomatedProposalSource(proposal.source) ? `akm/${pkgVersion}` : `human:${resolveActorId(ctx)}`;
-}
-
-/** `verified[0].by` — keyed on whether THIS promotion was gated (automated) or a direct human accept (see file-header note above). */
-function verifiedByActor(
-  gateDecision: (Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string }) | undefined,
-  ctx?: ProposalsContext,
-): string {
-  return gateDecision !== undefined ? `akm/${pkgVersion}` : `human:${resolveActorId(ctx)}`;
-}
-
-/** True for a plain (non-null, non-array) object. */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
- * Stamp OKF v0.2 provenance onto ONE promoted asset's frontmatter (D2.1/D2.2/
- * D2.3), in the **hybrid** on-disk shape settled by the #730 review:
- *
- * - `generated: {by, at}` and `verified: [{by, at}]` are written **bare at the
- *   top level**, exactly as OKF v0.2 spells them (SPEC §5.2/§5.3). Neither key
- *   has any pre-existing AKM consumer, so spelling them the spec's way costs
- *   nothing and makes `okf-support.md`'s "AKM Markdown is an OKF-compatible
- *   superset" positioning actually true for trust metadata: a third-party OKF
- *   v0.2 reader pointed at an AKM stash sees conformant provenance.
- * - `sources` stays namespaced under `provenance:`, because a bare top-level
- *   `sources:` genuinely collides with the pre-existing AKM-native wiki
- *   citation-**string** convention
- *   (`indexer/passes/metadata.ts#applyWikiFrontmatter`, which silently drops
- *   non-strings) on a promoted wiki page.
- *
- * The read side back into `IndexDocument.provenance` is
- * `metadata.ts#applyProvenanceFrontmatter` (which accepts both this shape and
- * the older fully-nested one), carried through `akm-adapter.ts`'s
- * `DOCUMENT_JSON_CARRIED_FIELDS` (D2.4).
- *
- * A no-op frontmatter mutation preserves the existing frontmatter block's raw
- * body bytes (mirrors `frontmatter.ts#mutateFrontmatter`'s documented
- * contract) rather than reshaping via `assembleAsset`, which would strip
- * leading body blank lines / force a trailing newline. A file with no
- * frontmatter block at all (non-conformant input) gains one via
- * `assembleAsset`, exactly as any other first-frontmatter write would.
+ * Stamp provenance onto a promoted asset's frontmatter: bare top-level
+ * `generated` and `verified` (as OKF v0.2 spells them; `verified` accumulates),
+ * and `sources` under `provenance:`, since a bare `sources:` is the wiki
+ * citation-string convention. An existing frontmatter block keeps its raw body
+ * bytes.
  */
 function stampProposalProvenance(
   content: string,
   proposal: Proposal,
-  gateDecision: (Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string }) | undefined,
+  gateDecision: GateDecisionInput | undefined,
   ctx: ProposalsContext | undefined,
   nowIsoStr: string,
 ): string {
   const parsed = parseFrontmatter(content);
   const fm: Record<string, unknown> = { ...parsed.data };
   const existingProvenance = isPlainRecord(fm.provenance) ? fm.provenance : {};
-
-  // Bare `generated:` — OKF v0.2's replacement for `timestamp` (SPEC §13).
-  fm.generated = { by: generatedByActor(proposal, ctx), at: nowIsoStr };
-
-  // Bare `verified:` — append, so independent confirmations accumulate rather
-  // than the newest overwriting the record. Both the bare list and the older
-  // nested spelling are absorbed, so a re-promotion never loses history.
+  const human = () => `human:${resolveActorId(ctx)}`;
+  fm.generated = { by: isAutomatedProposalSource(proposal.source) ? `akm/${pkgVersion}` : human(), at: nowIsoStr };
+  // The older nested `provenance.verified` spelling is absorbed too, so history is never lost.
   const priorVerified = Array.isArray(fm.verified)
     ? fm.verified
     : Array.isArray(existingProvenance.verified)
@@ -1453,44 +1036,29 @@ function stampProposalProvenance(
       : [];
   fm.verified = [
     ...priorVerified,
-    { by: verifiedByActor(gateDecision, ctx), at: gateDecision?.decidedAt ?? nowIsoStr },
+    { by: gateDecision !== undefined ? `akm/${pkgVersion}` : human(), at: gateDecision?.decidedAt ?? nowIsoStr },
   ];
-
-  // `sources` alone stays namespaced — bare `sources:` is the wiki
-  // citation-string convention. Drop the nested provenance block entirely when
-  // it would otherwise be empty, so unrelated assets gain no dead key.
   const provenance: Record<string, unknown> = { ...existingProvenance };
   delete provenance.generatedBy;
   delete provenance.generatedAt;
   delete provenance.verified;
-
-  const evidenceSources = fm.evidenceSources;
-  if (Array.isArray(evidenceSources)) {
-    const sources = evidenceSources
+  if (Array.isArray(fm.evidenceSources)) {
+    const sources = fm.evidenceSources
       .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       .map((resource) => ({ resource: resource.trim() }));
     if (sources.length > 0) provenance.sources = sources;
   }
-
   if (Object.keys(provenance).length > 0) fm.provenance = provenance;
   else delete fm.provenance;
-
   return parsed.frontmatter !== null
     ? `---\n${serializeFrontmatter(fm)}\n---\n${parsed.content}`
     : assembleAsset(fm, parsed.content);
 }
 
 /**
- * Validate a proposal, then promote it through the canonical
- * {@link writeAssetToSource} dispatch (the single place that branches on
- * `source.kind`). On success the proposal is archived with status `accepted`.
- * Validation failures throw a `UsageError` carrying every finding so the CLI
- * can render a single clear error envelope.
- *
- * Phase 6C: when the target asset already exists at the resolved write path,
- * its prior content is captured BEFORE the write and stored on the archived
- * proposal record (`backupContent`) so `akm proposal revert` can restore it.
- * Genuinely-new assets carry no backup.
+ * Validate, stamp and write an accepted proposal into its bound target, then
+ * archive it as accepted. Overwriting an existing asset keeps its prior content
+ * on the row (`backupContent`) for `akm proposal revert`.
  */
 export async function promoteProposal(
   stashDir: string,
@@ -1500,7 +1068,7 @@ export async function promoteProposal(
     target?: string;
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
-    gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+    gateDecision?: GateDecisionInput;
   } = {},
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1520,7 +1088,7 @@ function promotionLintBlockers(
   if (refType === "task") {
     try {
       const parsed = parseYaml(raw);
-      data = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+      data = isPlainRecord(parsed) ? parsed : {};
     } catch {
       data = {};
     }
@@ -1529,11 +1097,7 @@ function promotionLintBlockers(
   } else {
     ({ data, content: body, frontmatter } = parseFrontmatter(raw));
   }
-
   const resolvedRoot = path.resolve(targetRoot);
-  const extraStashRoots = resolveSourceEntries(targetRoot, config)
-    .map((source) => source.path)
-    .filter((sourcePath) => path.resolve(sourcePath) !== resolvedRoot);
   return runBaseChecks({
     filePath: assetPath,
     relPath: path.relative(targetRoot, assetPath),
@@ -1543,7 +1107,9 @@ function promotionLintBlockers(
     frontmatter,
     fix: false,
     stashRoot: targetRoot,
-    extraStashRoots,
+    extraStashRoots: resolveSourceEntries(targetRoot, config)
+      .map((source) => source.path)
+      .filter((sourcePath) => path.resolve(sourcePath) !== resolvedRoot),
   }).filter((finding) => PROMOTION_LINT_ISSUE_TYPES.has(finding.issue));
 }
 
@@ -1556,54 +1122,43 @@ export interface ProposalPromotionPreflight {
   stampedContent: string;
 }
 
-/** Build and validate the exact stamped bytes promotion would publish, without writing. */
+/** The exact stamped bytes a promotion would publish, validated, without writing. */
 export function preflightProposalPromotion(
   config: AkmConfig,
   proposal: Proposal,
-  options: {
-    target?: string;
-    queueTarget?: ResolvedWriteTarget;
-    gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
-  } = {},
+  options: { target?: string; queueTarget?: ResolvedWriteTarget; gateDecision?: GateDecisionInput } = {},
   ctx?: ProposalsContext,
 ): ProposalPromotionPreflight {
   const repairedContent = repairProposalContent(proposalContent(proposal));
-  const preparedProposal =
+  const prepared =
     repairedContent === proposalContent(proposal) ? proposal : withProposalContent(proposal, repairedContent);
-  const report = validateProposal(preparedProposal);
+  const report = validateProposal(prepared);
   if (!report.ok) {
-    const message = report.findings.map((finding) => `[${finding.kind}] ${finding.message}`).join("\n");
     throw new UsageError(
-      `Proposal ${proposal.id} failed validation:\n${message}`,
+      `Proposal ${proposal.id} failed validation:\n${report.findings.map((f) => `[${f.kind}] ${f.message}`).join("\n")}`,
       "MISSING_REQUIRED_ARGUMENT",
       "Fix the proposal payload (frontmatter / content) and try again, or reject the proposal with a reason.",
     );
   }
-
-  const ref = parseRefInput(preparedProposal.ref);
+  const ref = parseRefInput(prepared.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-  const target = resolveProposalWriteTarget(config, preparedProposal, options.target, options.queueTarget);
+  const target = resolveProposalWriteTarget(config, prepared, options.target, options.queueTarget);
   const assetPath = resolveAssetFilePathSafe(target.source, ref);
-  if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${preparedProposal.ref}.`, "INVALID_PROPOSAL");
+  if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${prepared.ref}.`, "INVALID_PROPOSAL");
   assertAkmAssetWrite(target.source);
-
-  let stampedContent = assetPath.toLowerCase().endsWith(".md")
-    ? stampProposalProvenance(repairedContent, preparedProposal, options.gateDecision, ctx, nowIso(ctx))
+  const markdown = assetPath.toLowerCase().endsWith(".md");
+  let stampedContent = markdown
+    ? stampProposalProvenance(repairedContent, prepared, options.gateDecision, ctx, nowIso(ctx))
     : repairedContent;
-  if (assetPath.toLowerCase().endsWith(".md") && fs.existsSync(assetPath)) {
-    // STALE (R20): carry the live target's akm bookkeeping frontmatter
-    // forward when the proposal's own frontmatter doesn't set it, so
-    // promoting never drops e.g. `inferenceProcessed` and makes memory
-    // inference reprocess the memory. Best-effort — an unreadable live file
-    // here doesn't block promotion; the freshness guard below is the real
-    // gate on staleness.
+  if (markdown && fs.existsSync(assetPath)) {
+    // Keep the live target's bookkeeping frontmatter the proposal doesn't set
+    // (STALE, R20) — dropping `inferenceProcessed` would re-run inference.
     try {
-      const liveRaw = fs.readFileSync(assetPath, "utf8");
-      stampedContent = carryForwardBookkeepingFrontmatter(stampedContent, liveRaw);
+      stampedContent = carryForwardBookkeepingFrontmatter(stampedContent, fs.readFileSync(assetPath, "utf8"));
     } catch {
-      // Best-effort — see comment above.
+      // best-effort; the freshness check is the real staleness gate
     }
   }
   const lintBlockers = promotionLintBlockers(stampedContent, assetPath, target.source.path, ref.type, config);
@@ -1611,8 +1166,67 @@ export function preflightProposalPromotion(
     const summary = lintBlockers.map((finding) => `[${finding.issue}] ${finding.detail}`).join("; ");
     warn(`[proposal] promotion lint for ${proposal.id} found (non-blocking): ${summary}`);
   }
+  return { proposal: prepared, repairedContent, ref, target, assetPath, stampedContent };
+}
 
-  return { proposal: preparedProposal, repairedContent, ref, target, assetPath, stampedContent };
+/**
+ * The target's current bytes, provided it is still the one the proposal was
+ * minted against (STALE, R20): compared bookkeeping-insensitively when the
+ * proposal carries a normalized before-hash, exactly otherwise. A target that
+ * already holds this proposal's content is a promotion that wrote but did not
+ * record — finishing it is allowed. Never overwrites newer content.
+ */
+export function readFreshProposalTarget(
+  proposal: Proposal,
+  assetPath: string,
+  stampedContent: string,
+): Buffer | undefined {
+  const current = fs.existsSync(assetPath) ? fs.readFileSync(assetPath) : undefined;
+  if (proposal.beforeHash !== undefined) {
+    const fresh =
+      current !== undefined &&
+      (proposal.beforeHashNormalized !== undefined
+        ? contentHash(current, "normalized") === proposal.beforeHashNormalized
+        : contentHash(current) === proposal.beforeHash);
+    const alreadyPublished =
+      current !== undefined && contentHash(current, "normalized") === contentHash(stampedContent, "normalized");
+    if (!fresh && !alreadyPublished) {
+      throw new UsageError(
+        `Proposal target changed after proposal ${proposal.id} was created; refusing to overwrite newer content.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+  } else if (current !== undefined && proposal.changes.some((change) => change.op === "create")) {
+    throw new UsageError(
+      `Proposal target was created after proposal ${proposal.id}; refusing to overwrite newer content.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return current;
+}
+
+/** The recorded asset path of an accepted/reverted proposal, provided `target` is the same binding. */
+function acceptedAssetPath(proposal: Proposal, target: ResolvedWriteTarget, ref: AssetRef): string {
+  const accepted = proposal.acceptedTarget;
+  const assetPath = resolveAssetFilePathSafe(target.source, ref);
+  if (
+    !accepted ||
+    !assetPath ||
+    accepted.source !== target.source.name ||
+    path.resolve(accepted.root) !== path.resolve(target.source.path) ||
+    path.resolve(accepted.path) !== path.resolve(assetPath)
+  ) {
+    throw new UsageError(`proposal ${proposal.id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
+  }
+  return assetPath;
+}
+
+function requireAcceptedTarget(proposal: Proposal): NonNullable<Proposal["acceptedTarget"]> {
+  if (!proposal.acceptedTarget) {
+    const label = proposal.status === "reverted" ? "Reverted" : "Accepted";
+    throw new UsageError(`${label} proposal ${proposal.id} has no recorded target.`, "INVALID_PROPOSAL");
+  }
+  return proposal.acceptedTarget;
 }
 
 async function promoteProposalWithLease(
@@ -1623,57 +1237,17 @@ async function promoteProposalWithLease(
     target?: string;
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
-    gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+    gateDecision?: GateDecisionInput;
   },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
-  let proposal = getProposal(stashDir, id, ctx);
-  const repairedContent = repairProposalContent(proposalContent(proposal));
-  const proposalToValidate =
-    repairedContent === proposalContent(proposal) ? proposal : withProposalContent(proposal, repairedContent);
-  const report = validateProposal(proposalToValidate);
-  if (!report.ok) {
-    const message = report.findings.map((finding) => `[${finding.kind}] ${finding.message}`).join("\n");
-    throw new UsageError(
-      `Proposal ${id} failed validation:\n${message}`,
-      "MISSING_REQUIRED_ARGUMENT",
-      "Fix the proposal payload (frontmatter / content) and try again, or reject the proposal with a reason.",
-    );
-  }
-  const ref = parseRefInput(proposalToValidate.ref);
-  if (!stashDirFor(ref.type)) {
-    throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
-  }
-
-  // Use the (possibly repaired) payload for the promotion write. Persist the
-  // repaired content back onto the DB row so the audit trail reflects the
-  // final promoted payload (not the defective original).
-  if (repairedContent !== proposalContent(proposal)) {
-    withProposalsDb(stashDir, ctx, (db) => {
-      upsertProposal(db, proposalToValidate, stashDir);
-    });
-  }
-
-  proposal = getProposal(stashDir, id, ctx);
+  const proposal = getProposal(stashDir, id, ctx);
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   if (proposal.status === "accepted") {
-    if (!proposal.acceptedTarget) {
-      throw new UsageError(`Accepted proposal ${id} has no recorded target.`, "INVALID_PROPOSAL");
-    }
-    const assetPath = resolveAssetFilePathSafe(target.source, ref);
-    if (
-      proposal.acceptedTarget.source !== target.source.name ||
-      path.resolve(proposal.acceptedTarget.root) !== path.resolve(target.source.path) ||
-      !assetPath ||
-      path.resolve(proposal.acceptedTarget.path) !== path.resolve(assetPath)
-    ) {
-      throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
-    }
-    if (
-      !assetPath ||
-      !fs.existsSync(assetPath) ||
-      proposalFileHash(assetPath) !== proposal.acceptedTarget.contentHash
-    ) {
+    // Accepting again is a no-op, provided the published bytes are still there.
+    const recorded = requireAcceptedTarget(proposal);
+    const assetPath = acceptedAssetPath(proposal, target, parseRefInput(proposal.ref));
+    if (!fs.existsSync(assetPath) || contentHash(fs.readFileSync(assetPath)) !== recorded.contentHash) {
       throw new UsageError(`Accepted proposal ${id} does not match the current asset content.`, "INVALID_FLAG_VALUE");
     }
     return { proposal, assetPath, ref: proposal.ref };
@@ -1685,79 +1259,18 @@ async function promoteProposalWithLease(
     );
   }
   const preflight = preflightProposalPromotion(config, proposal, { ...options, queueTarget: target }, ctx);
-
   const mutationTarget = prepareWriteTargetForMutation(target);
-  const assetPath = resolveAssetFilePathSafe(mutationTarget.source, ref);
+  const assetPath = resolveAssetFilePathSafe(mutationTarget.source, preflight.ref);
   if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
-  let backup: Buffer | undefined;
-  if (fs.existsSync(assetPath)) {
-    try {
-      backup = fs.readFileSync(assetPath);
-    } catch (error) {
-      throw new Error(
-        `Proposal backup read failed for ${assetPath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  if (proposal.beforeHash !== undefined) {
-    // STALE (R20): a proposal minted with a normalized before-hash is fresh
-    // when the CURRENT target's bookkeeping-stripped content still matches —
-    // insensitive to a same-run bookkeeping rewrite (salience scoring,
-    // inference dedup marking) of the target after mint. A legacy proposal
-    // without one keeps the exact raw-hash check it always had.
-    const fresh =
-      proposal.beforeHashNormalized !== undefined
-        ? backup !== undefined &&
-          computeNormalizedContentHash(backup.toString("utf8")) === proposal.beforeHashNormalized
-        : backup !== undefined && proposalHash(backup) === proposal.beforeHash;
-    // A file that already holds this proposal's content is a promotion that
-    // wrote the asset but did not get to record the decision: finish it.
-    const alreadyPublished =
-      backup !== undefined &&
-      computeNormalizedContentHash(backup.toString("utf8")) === computeNormalizedContentHash(preflight.stampedContent);
-    if (!fresh && !alreadyPublished) {
-      throw new UsageError(
-        `Proposal target changed after proposal ${id} was created; refusing to overwrite newer content.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-  }
-  if (
-    proposal.beforeHash === undefined &&
-    backup !== undefined &&
-    proposal.changes.some((change) => change.op === "create")
-  ) {
-    throw new UsageError(
-      `Proposal target was created after proposal ${id}; refusing to overwrite newer content.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
+  const backup = readFreshProposalTarget(proposal, assetPath, preflight.stampedContent);
   assertAkmAssetWrite(mutationTarget.source);
-  // D2 (#730): stamp OKF v0.2 provenance onto the promoted content BEFORE
-  // lint/write — reaching this point already proves the target is AKM-native
-  // (assertAkmAssetWrite above rejects an OKF-adapter target first), so the
-  // OKF write-rejection contract (runbook §10) is untouched: this code never
-  // runs for it. Markdown-only: a task/env/script/other non-markdown target
-  // has no frontmatter block to stamp into.
-  //
-  // workflow-format-unification removed the re-validation fallback that used
-  // to live here: every AKM-native markdown type (workflow included) now
-  // validates its frontmatter against a schema whose closed key set is
-  // `envelope ∪ type-keys` (`schemas/akm-workflow.json` $ref's
-  // `schemas/akm-asset-envelope.json`, which already admits `generated`/
-  // `verified`/`provenance`/`status`/`stale_after`). A validator rejecting the
-  // machine-stamped keys it is contractually required to admit is structurally
-  // impossible now, so falling back to unstamped content on rejection would
-  // only silently hide a real regression instead of promoting stamped content.
-  const stampedContent = preflight.stampedContent;
-  const proposalForPreflight = preflight.proposal;
-  const refIdentity = proposalRefIdentity(proposalForPreflight.ref);
+  const refIdentity = proposalRefIdentity(preflight.proposal.ref);
   const proposalForMutation: Proposal =
     refIdentity?.bundle === undefined
-      ? { ...proposalForPreflight, ref: `${target.source.name}//${refIdentity?.conceptId ?? ""}` }
-      : proposalForPreflight;
+      ? { ...preflight.proposal, ref: `${target.source.name}//${refIdentity?.conceptId ?? ""}` }
+      : preflight.proposal;
   const decidedAt = nowIso(ctx);
-  const content = stampedContent.endsWith("\n") ? stampedContent : `${stampedContent}\n`;
+  const content = preflight.stampedContent.endsWith("\n") ? preflight.stampedContent : `${preflight.stampedContent}\n`;
   writeProposalAssetFile(assetPath, content);
   commitWriteTargetBoundary(mutationTarget, `Update ${proposalForMutation.ref}`, { paths: [assetPath] });
   const accepted = persistProposalDecision(
@@ -1768,7 +1281,7 @@ async function promoteProposalWithLease(
       target: mutationTarget,
       assetPath,
       content,
-      originalHash: backup ? proposalHash(backup) : null,
+      existed: backup !== undefined,
       ...(backup !== undefined ? { backupContent: backup.toString("utf8") } : {}),
       ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
       ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
@@ -1780,37 +1293,16 @@ async function promoteProposalWithLease(
   return { proposal: accepted, assetPath, ref: accepted.ref };
 }
 
-// ── Reversion (Phase 6C) ────────────────────────────────────────────────────
-
-/** Result of {@link revertProposal} (Advantage D6c / Phase 6C). */
 export interface RevertResult {
-  /** Updated proposal record with status === `"reverted"`. */
   proposal: Proposal;
-  /** Path on disk that was restored from backup. */
   assetPath: string;
-  /** Asset ref the revert acted on (re-serialized for the CLI envelope). */
   ref: string;
 }
 
 /**
- * Restore the prior content of an accepted proposal from the backup captured
- * at promotion time (Advantage D6c / Phase 6C).
- *
- * Pre-conditions:
- *   - `id` resolves to a proposal with `status === "accepted"`.
- *   - The proposal carries `backupContent` (captured by promoteProposal when
- *     the target asset existed before the write).
- *
- * On success:
- *   - The backup content is written back through {@link writeAssetToSource},
- *     so the canonical write-dispatch invariant is preserved.
- *   - The proposal record is updated to `status: "reverted"`.
- *   - Caller emits a `proposal_reverted` event in the CLI layer (mirrors how
- *     `promoted` / `rejected` are emitted by the CLI command, not the core).
- *
- * Errors are thrown as `UsageError` / `NotFoundError` so the CLI can map them
- * cleanly to exit codes — see `src/commands/proposal/proposal.ts` for the
- * wrapper.
+ * Restore an accepted proposal's target from the backup taken at promotion.
+ * New-asset proposals have no backup; a target edited since acceptance is
+ * never clobbered. Reverting twice is a no-op.
  */
 export async function revertProposal(
   stashDir: string,
@@ -1829,64 +1321,33 @@ async function revertProposalWithLease(
   options: { target?: string; queueTarget?: ResolvedWriteTarget },
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
-  let proposal = getProposal(stashDir, id, ctx);
+  const proposal = getProposal(stashDir, id, ctx);
   const ref = parseRefInput(proposal.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-
-  proposal = getProposal(stashDir, id, ctx);
-  if (proposal.status === "reverted") {
-    if (!proposal.acceptedTarget) {
-      throw new UsageError(`Reverted proposal ${id} has no recorded target.`, "INVALID_PROPOSAL");
-    }
-    const target = resolveRecordedProposalTarget(config, id, proposal.acceptedTarget, options.target);
-    const requestedAssetPath = resolveAssetFilePathSafe(target.source, ref);
-    if (
-      !requestedAssetPath ||
-      proposal.acceptedTarget.source !== target.source.name ||
-      path.resolve(proposal.acceptedTarget.root) !== path.resolve(target.source.path) ||
-      path.resolve(proposal.acceptedTarget.path) !== path.resolve(requestedAssetPath)
-    ) {
-      throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
-    }
-    return {
-      proposal,
-      assetPath: requestedAssetPath,
-      ref: proposal.ref,
-    };
-  }
-  if (proposal.status !== "accepted") {
+  if (proposal.status !== "accepted" && proposal.status !== "reverted") {
     throw new UsageError(
       `only accepted proposals can be reverted (proposal ${id} status: ${proposal.status})`,
       "INVALID_FLAG_VALUE",
     );
   }
   const backupContent = proposal.backupContent;
-  if (backupContent === undefined) {
+  if (proposal.status === "accepted" && backupContent === undefined) {
     throw new UsageError(
       `no backup available for this proposal (id: ${id})`,
       "MISSING_REQUIRED_ARGUMENT",
       "Backups are only captured when a proposal overwrites an existing asset — new-asset proposals cannot be reverted via this path; delete the asset directly instead.",
     );
   }
-  if (!proposal.acceptedTarget) {
-    throw new UsageError(`Accepted proposal ${id} has no recorded target.`, "INVALID_PROPOSAL");
+  const recorded = requireAcceptedTarget(proposal);
+  const boundTarget = resolveRecordedProposalTarget(config, id, recorded, options.target);
+  const assetPath = acceptedAssetPath(proposal, boundTarget, ref);
+  if (proposal.status === "reverted" || backupContent === undefined) {
+    return { proposal, assetPath, ref: proposal.ref };
   }
-  let target = resolveRecordedProposalTarget(config, id, proposal.acceptedTarget, options.target);
-  const requestedAssetPath = resolveAssetFilePathSafe(target.source, ref);
-  if (
-    proposal.acceptedTarget.source !== target.source.name ||
-    path.resolve(proposal.acceptedTarget.root) !== path.resolve(target.source.path) ||
-    !requestedAssetPath ||
-    path.resolve(proposal.acceptedTarget.path) !== path.resolve(requestedAssetPath)
-  ) {
-    throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
-  }
-  const assetPath = requestedAssetPath;
-  const acceptedHash = proposal.acceptedTarget.contentHash;
-  target = prepareWriteTargetForMutation(target);
-  if (!fs.existsSync(assetPath) || proposalFileHash(assetPath) !== acceptedHash) {
+  const target = prepareWriteTargetForMutation(boundTarget);
+  if (!fs.existsSync(assetPath) || contentHash(fs.readFileSync(assetPath)) !== recorded.contentHash) {
     throw new UsageError(
       `asset content changed after proposal ${id} was accepted; refusing to clobber the newer content`,
       "INVALID_FLAG_VALUE",
@@ -1900,27 +1361,17 @@ async function revertProposalWithLease(
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
-// ── Diff helpers ────────────────────────────────────────────────────────────
-
 export interface ProposalDiff {
-  /** Existing asset content if one is currently materialised. */
+  /** The asset currently at the target, if any. */
   existing: string | null;
-  /** Proposed content (always present). */
   proposed: string;
-  /** Unified diff text — empty when `existing === proposed`. */
+  /** Unified diff; empty when nothing changes. */
   unified: string;
-  /** When true, no asset exists yet at the target ref. */
   isNew: boolean;
-  /** Path the diff would write to (if accepted). */
   targetPath?: string;
 }
 
-/**
- * Compute a diff between a proposal payload and the existing on-disk asset.
- * Uses {@link resolveWriteTarget} to find where the asset would land — so the
- * diff matches exactly what `accept` will write. Falls back to "new asset"
- * when no asset is currently materialised at the target ref.
- */
+/** The proposal against the asset its accept would overwrite (same target resolution as accept). */
 export function diffProposal(
   stashDir: string,
   config: AkmConfig,
@@ -1929,34 +1380,18 @@ export function diffProposal(
   ctx?: ProposalsContext,
 ): ProposalDiff {
   const proposal = getProposal(stashDir, id, ctx);
-  const ref = parseRefInput(proposal.ref);
-
-  let targetPath: string | undefined;
-  let existing: string | null = null;
-  const readTarget = (target: ResolvedWriteTarget): void => {
-    targetPath = resolveAssetFilePathSafe(target.source, ref);
-    if (targetPath && fs.existsSync(targetPath)) {
-      existing = fs.readFileSync(targetPath, "utf8");
-    }
-  };
-  readTarget(resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget));
-
+  const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
+  const targetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
+  const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;
   const proposed = proposalContent(proposal);
-  if (existing === null) {
-    return {
-      existing: null,
-      proposed,
-      unified: formatNewAssetDiff(proposal.ref, proposed),
-      isNew: true,
-      ...(targetPath ? { targetPath } : {}),
-    };
-  }
-
   return {
     existing,
     proposed,
-    unified: formatUnifiedDiff(existing, proposed, proposal.ref),
-    isNew: false,
+    unified:
+      existing === null
+        ? formatNewAssetDiff(proposal.ref, proposed)
+        : formatUnifiedDiff(existing, proposed, proposal.ref),
+    isNew: existing === null,
     ...(targetPath ? { targetPath } : {}),
   };
 }
@@ -1964,9 +1399,8 @@ export function diffProposal(
 function resolveAssetFilePathSafe(source: WriteTargetSource, ref: AssetRef): string | undefined {
   const typeDir = stashDirFor(ref.type);
   if (!typeDir) return undefined;
-  const typeRoot = path.join(source.path, typeDir);
   try {
-    return assetPathForName(ref.type, typeRoot, ref.name);
+    return assetPathForName(ref.type, path.join(source.path, typeDir), ref.name);
   } catch {
     return undefined;
   }

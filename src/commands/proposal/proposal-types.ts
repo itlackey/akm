@@ -3,70 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proposal domain types — dependency-free leaf.
- *
- * `Proposal` (+ its field types) and the validator-shared types
- * (`ProposalValidator`, `ProposalValidationContext`,
- * `ProposalValidationFinding`, `ProposalValidationReport`) used to live in
- * `./repository.ts` and `./validators/proposals.ts` / `./validators/proposal-validators.ts`
- * respectively. Both the storage repository (`storage/repositories/proposals-repository.ts`)
- * and the validators (`./validators/*.ts`) only need the *type*, not the txn engine or the
- * validator-combining logic — importing those heavier modules just for a
- * type created an import cycle (WI-9.8 KILL 1, plan §10.7 D.3: repository.ts
- * ↔ validators/proposals.ts / proposal-validators.ts / proposal-quality-validators.ts
- * ↔ storage/repositories/proposals-repository.ts).
- *
- * This module has NO imports back into `./repository.ts` or `./validators/*`
- * — every symbol here is moved verbatim, and the old homes re-export it so
- * existing import sites are unchanged.
+ * Proposal domain types — a dependency-free leaf, so the storage repository
+ * and the validators can share `Proposal` without importing each other.
  */
 
 import type { AssetRef } from "../../core/asset/resolve-ref";
 import type { FileChange } from "../../core/file-change";
 
 /**
- * Which eligibility lane selected an asset for an improve run (attribution
- * tagging). Recorded on `reflect_invoked` / `distill_invoked` / `promoted`
- * state.db events and persisted on the proposal record so downstream
- * accept / reject / revert / retrieval outcomes can be sliced by lane — i.e.
- * "does the PROACTIVE lane produce value vs the reactive lanes?".
- *
- *   - `"signal-delta"`   — asset had fresh feedback since its last proposal
- *                          (the reactive feedback-signal lane).
- *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
- *   - `"scope"`              — explicit `--scope <ref>` bypass (user intent wins).
- *   - `"forgetting-safety"` — WS-1 protective consolidation: asset fell from
- *                             top-200 to below position 500 in the stash-wide
- *                             salience ranking (scenario B rank-change report).
- *                             Force-included for one consolidation pass regardless
- *                             of cooldown / signal-delta status so it is not
- *                             silently dropped from the candidate pool.
- *   - `"replay"`             — #610 bounded replay budget: a top-salience ref
- *                              revisited even with zero reactive signal and
- *                              regardless of cooldown. The WEAKEST lane — it never
- *                              relabels a ref another lane already chose, and its
- *                              selection is strictly ADDITIVE on top of `--limit`
- *                              (never steals fresh work). Converged refs
- *                              (consecutive_no_ops >= dampener threshold) are skipped.
- *   - `"unknown"`            — origin lane could not be determined. NOT a silent
- *                              alias for `signal-delta`; only used when the lane
- *                              genuinely cannot be attributed.
- *
- * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `proactive` >
- * `high-salience` > `forgetting-safety` > `replay`. Replay is weakest so it never
- * relabels a ref another lane already chose.
- * A ref with real feedback is attributed to feedback even if it was also due
- * for proactive maintenance.
- *
- * Moved from `core/improve-types.ts` (WI-9.8 KILL 1): this is a
- * zero-dependency string union that `Proposal.eligibilitySource` also needs,
- * and core/improve-types.ts itself imports UP from commands/improve/* (the
- * §10.7 layering inversion KILL 2 fixes) — defining it there would drag this
- * dependency-free leaf (and everything that imports Proposal from it) back
- * into the still-cyclic improve-types SCC. core/improve-types.ts re-exports
- * this verbatim so `ImproveEligibleRef` and every improve/* consumer that
- * imports `EligibilitySource` from `core/improve-types` is unchanged.
+ * The eligibility lane that selected an asset for an improve run, carried on
+ * the invoked/promoted events and the proposal so outcomes can be sliced by
+ * lane. When several lanes qualify, the most specific reactive one wins:
+ * `scope` > `signal-delta` > `proactive` > `high-salience` >
+ * `forgetting-safety` > `replay`. `unknown` is only for a lane that genuinely
+ * cannot be attributed; `replay` appears on rows older releases wrote.
  */
 export type EligibilitySource =
   | "signal-delta"
@@ -77,39 +27,25 @@ export type EligibilitySource =
   | "replay"
   | "unknown";
 
-// ── Source allow-list (F-4 / #385) ──────────────────────────────────────────
-
 /**
- * Curated allow-list of valid `source` values for proposals (F-4 / #385).
- *
- * Rationale (W3C PROV-DM 2013): Provenance records require typed, validated
- * sources for meaningful aggregation. Accept-rate-per-source is the core
- * self-measurement metric for recursive self-improvement: if reflect proposals
- * are accepted at 20% and distill proposals at 60%, that guides resource
- * allocation. Free-text typos (`"reflct"`) produce unaggregatable events.
- *
- * Automated sources (those in {@link AUTOMATED_PROPOSAL_SOURCES}) require a
- * `sourceRun` field for full PROV-DM traceability.
+ * Valid proposal `source` values (#385): typed sources keep accept-rate per
+ * source aggregatable (PROV-DM). An unknown value is accepted with a warning.
  */
 export const PROPOSAL_SOURCES = [
-  // Automated sources — require sourceRun for traceability.
   "reflect",
   "distill",
   "consolidate",
   "extract",
   "improve",
-  // Semi-automated / tool-driven.
   "feedback",
-  // Human-initiated / CLI-driven.
   "propose",
   "remember",
   "import",
-  // Internal / system.
   "distill_quality_rejected",
   "schema-repair",
 ] as const;
 
-/** Automated sources that SHOULD include a `sourceRun` for PROV-DM traceability. */
+/** Automated sources, which should carry a `sourceRun`. */
 export const AUTOMATED_PROPOSAL_SOURCES = [
   "reflect",
   "distill",
@@ -119,51 +55,22 @@ export const AUTOMATED_PROPOSAL_SOURCES = [
   "schema-repair",
 ] as const satisfies ReadonlyArray<(typeof PROPOSAL_SOURCES)[number]>;
 
-/** Union of all valid proposal source values. */
 export type ProposalSource = (typeof PROPOSAL_SOURCES)[number];
 
-/**
- * Check whether a string is a valid {@link ProposalSource}.
- * Unknown source values are accepted with a runtime warning rather than a hard
- * error, to allow extensions without breaking existing callers.
- */
 export function isValidProposalSource(source: string): source is ProposalSource {
   return (PROPOSAL_SOURCES as readonly string[]).includes(source);
 }
 
-/**
- * Check whether a source value is an automated source requiring `sourceRun`.
- */
 export function isAutomatedProposalSource(source: string): source is (typeof AUTOMATED_PROPOSAL_SOURCES)[number] {
   return (AUTOMATED_PROPOSAL_SOURCES as readonly string[]).includes(source);
 }
 
-// ── Types ───────────────────────────────────────────────────────────────────
-
-/**
- * Lifecycle status of a proposal.
- *
- *   - `pending`   — Live queue entry awaiting review.
- *   - `accepted`  — Promoted into the asset tree via {@link promoteProposal}.
- *   - `rejected`  — Reviewer (or automated guard / orphan purge / expiration)
- *                   declined the proposal.
- *   - `reverted`  — Previously `accepted` proposal that was rolled back via the
- *                   `akm proposal revert <id>` flow (D6c). The asset on disk is
- *                   restored from the backup captured at promotion time.
- *
- * Any non-`pending` status is "archived": the row stays in the table for the
- * audit trail but leaves the live queue.
- */
+/** `pending` is the live queue; the rest are archived rows kept for the audit trail. */
 export type ProposalStatus = "pending" | "accepted" | "rejected" | "reverted";
 
 export interface ProposalPayload {
-  /**
-   * Full file content the accepted proposal will write to disk. Since WI-6.2
-   * this is, by construction, identical to `Proposal.changes[0].after` — the
-   * payload is the single-content view of the envelope's primary change.
-   */
+  /** The content accept writes — always equal to `changes[0].after`. */
   content: string;
-  /** Convenience parsed frontmatter, if the content is markdown-with-frontmatter. */
   frontmatter?: Record<string, unknown>;
 }
 
@@ -174,215 +81,75 @@ export interface ProposalReview {
 }
 
 /**
- * The verdict a gate (the triage drain, or the generating stage's quality judge) reached for this proposal
- * (#577). This is drain-owned audit machinery.
- *
- *   - `auto-accepted` — the gate promoted the proposal without review.
- *   - `deferred`      — the gate left the proposal pending for human (or
- *                       later automated) review.
- *   - `staged`        — judgment accepted this exact content in queue mode;
- *                       a promote run may consume it without re-judgment.
- *   - `auto-rejected` — the gate rejected the proposal without review.
+ * A gate's verdict (#577): `staged` means a judge passed this exact content
+ * (a promote run may accept it without judging again); `deferred` leaves it
+ * for review.
  */
 export type ProposalGateDecisionOutcome = "auto-accepted" | "deferred" | "staged" | "auto-rejected";
 
-/**
- * Per-proposal record of the automated gate decision (#577).
- *
- * Persisted onto the proposal row (in `metadata_json`) at gate time so tooling
- * can explain WHY each proposal is in its current state — e.g. `akm proposal
- * show` surfacing "deferred: max-diff-lines (210 > 200)" instead of forcing the
- * operator to reconstruct it from the run-level `triage_deferred` aggregate.
- *
- * Proposals that have not passed through a gate carry no `gateDecision`;
- * renderers omit gate fields for those proposals.
- */
+/** Why a proposal is where it is, stamped by the gate that put it there (`akm proposal show`). */
 export interface ProposalGateDecision {
   outcome: ProposalGateDecisionOutcome;
   /**
-   * Short machine-stable reason token chosen by the gate that recorded the
-   * decision. The triage drain (`triage` gate) writes `empty-diff`,
+   * Stable reason token. The drain (`triage` gate): `empty-diff`,
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
-   * `no-judge-configured`, `judgment-deferred` and `stale-target`. The
-   * generating stage's quality judge (`quality-gate` gate) writes
-   * `quality-judge` on a `staged` pass (with `contentHash`) and
-   * `quality-review` on a `review_needed` deferral, which must reach a human
-   * rather than the drain's judgment tier. The retention expiry writes
-   * `expired`, the orphan purge `asset-missing`. Rows written by older
-   * releases also carry `max-diff-lines`, `min-content-lines`,
-   * `policy-accept`, `mid-band` and `possible-dup`.
+   * `no-judge-configured`, `judgment-deferred`, `stale-target`. The stage
+   * quality judge (`quality-gate`): `quality-judge` on a staged pass,
+   * `quality-review` for a human. Also `expired` and `asset-missing`; older
+   * releases wrote `max-diff-lines`, `min-content-lines`, `policy-accept`,
+   * `mid-band` and `possible-dup`.
    */
   reason: string;
-  /**
-   * The value the gate actually measured and compared against the threshold
-   * (drain gate). For the over-band defer this is the proposed content's line
-   * count, for the body-floor defer the non-empty body-line count — so a full
-   * comparison such as "210 > 200" stays reconstructable, not just the bound.
-   */
+  /** What an older threshold gate measured (e.g. the line count in "210 > 200"). */
   measured?: number;
-  /**
-   * The thresholds in effect when the decision was made, so a comparison such
-   * as "72 < 90" stays reconstructable later. Sparse — a gate records only the
-   * knobs it actually consulted.
-   */
-  thresholds?: {
-    /** Maximum diff-line bound that deferred the proposal (drain gate). */
-    maxDiffLines?: number;
-    /** Minimum body-line floor that deferred the proposal (drain gate). */
-    minContentLines?: number;
-  };
-  /**
-   * SHA-256 hash of the proposal content the gate evaluated, when the gate needs
-   * to distinguish an unchanged retry from a reset/content edit.
-   */
+  thresholds?: { maxDiffLines?: number; minContentLines?: number };
+  /** SHA-256 of the content the gate evaluated, to tell an unchanged retry from an edit. */
   contentHash?: string;
-  /** Label of the gate that recorded the decision (e.g. `triage`, `quality-gate`). */
   gate?: string;
-  /** ISO timestamp the decision was recorded. */
   decidedAt: string;
 }
 
 export interface Proposal {
-  /** Stable random id (crypto.randomUUID()). Primary key in the store. */
   id: string;
-  /** Asset ref the proposal would create or update (`[bundle//]conceptId`). */
+  /** `[bundle//]conceptId` of the asset it creates or updates. */
   ref: string;
   status: ProposalStatus;
-  /**
-   * Origin tag identifying the source subsystem (F-4 / #385).
-   *
-   * Should be one of {@link PROPOSAL_SOURCES}. Automated sources (reflect,
-   * distill, consolidate, improve) additionally require `sourceRun` for
-   * PROV-DM traceability and accept-rate-per-source aggregation.
-   * Unknown values are accepted (warn at creation) to allow extensions.
-   */
   source: ProposalSource | string;
-  /**
-   * Stable run identifier for the automated job that created this proposal.
-   *
-   * Required for automated sources ({@link AUTOMATED_PROPOSAL_SOURCES}) so
-   * that accept-rate-per-source queries can be scoped to individual runs.
-   * Optional for human-initiated sources (`propose`, `remember`, `import`).
-   */
+  /** The automated run that made it. */
   sourceRun?: string;
   createdAt: string;
   updatedAt: string;
   payload: ProposalPayload;
-  /**
-   * The file mutations this proposal performs (plan §2.2). Multi-file capable;
-   * proposals minted from a single-content payload carry exactly one entry
-   * whose `after` IS `payload.content`. Derived at {@link createProposal} time.
-   */
+  /** The file mutations; a single-content proposal has one whose `after` is `payload.content`. */
   changes: FileChange[];
   /**
-   * Destination selected when the proposal was created. Named-queue creation
-   * and qualified refs bind both the durable bundle identity and its
-   * materialized root so a later accept cannot follow a changed default write
-   * target.
-   *
-   * Always set by {@link createProposal} for proposals minted by the current
-   * runtime — accept/revert re-resolve the write target from `ref` when this
-   * is absent (see `resolveProposalWriteTarget`). Absent on archived rows
-   * from before this field existed (~93% of the accepted/rejected archive on
-   * real installs, #859) — an already-accepted/archived proposal is counted
-   * and displayed, never re-applied, so its absence there is envelope
-   * metadata loss, not corruption.
+   * The bundle and root bound at mint, so a later accept cannot follow a
+   * changed default write target. Absent on rows from before it existed; those
+   * re-resolve from `ref`.
    */
-  proposedTarget?: {
-    source: string;
-    root: string;
-  };
-  /**
-   * SHA-256 hex of the content that existed at the primary change's target
-   * path in the proposal's OWN stash when the proposal was minted. Absent when
-   * the target did not exist (a `create`) or could not be resolved locally.
-   * Its presence marks an update; the promote freshness guard compares it
-   * only for proposals minted without {@link beforeHashNormalized}.
-   */
+  proposedTarget?: { source: string; root: string };
+  /** SHA-256 of the target as of mint (absent for a create). */
   beforeHash?: string;
   /**
-   * SHA-256 hex of the same mint-time target content as {@link beforeHash},
-   * but with akm's own bookkeeping frontmatter keys removed before hashing
-   * (`core/asset/frontmatter.ts`'s `computeNormalizedContentHash` /
-   * `BOOKKEEPING_FRONTMATTER_KEYS` — STALE, R20). Set whenever {@link
-   * beforeHash} is set — absent only on proposals minted before this field
-   * existed, or when there was no mint-time target to hash at all. Equal to
-   * `beforeHash` when the target has no parseable frontmatter block (the
-   * hash then degenerates to a plain hash of the raw content, same as
-   * `beforeHash`). The promote guard prefers this over `beforeHash` when present,
-   * so a same-run bookkeeping rewrite of the target (salience scoring,
-   * inference dedup marking) does not stale out the proposal; a real content
-   * change still refuses. `beforeHash` itself keeps its exact raw meaning.
+   * The same, with akm's bookkeeping frontmatter removed (STALE, R20): the
+   * freshness check prefers it, so a same-run bookkeeping rewrite of the target
+   * does not stale out the proposal while a real edit still does.
    */
   beforeHashNormalized?: string;
   review?: ProposalReview;
-  /**
-   * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
-   *
-   * When the proposal source can self-estimate quality (e.g. the reflect LLM
-   * returning a calibrated score with its draft), the score is persisted for
-   * reviewers and downstream tooling (`akm proposal show`, drain judgment
-   * context). It no longer drives any automated accept path — the `akm
-   * improve` confidence gate that promoted on threshold died in 0.9.0.
-   *
-   * Out-of-range or non-finite values are stripped at {@link createProposal}
-   * time so downstream code can rely on the invariant `0 <= confidence <= 1`.
-   */
+  /** Self-estimated confidence in [0, 1], for reviewers. */
   confidence?: number;
-  /**
-   * The drain/triage engine's verdict for this proposal (#577), recorded at
-   * adjudication time (drain-owned audit machinery).
-   *
-   * Carries the decision (auto-accepted / deferred / staged / auto-rejected), the reason
-   * token, measured value, and thresholds in effect, so `akm proposal show` /
-   * `list` can explain why a proposal is pending without the operator
-   * reconstructing it from run-level aggregates.
-   *
-   * Absent on proposals that never passed through a gate. Renderers omit gate
-   * fields when the decision is absent.
-   */
   gateDecision?: ProposalGateDecision;
-  /**
-   * Full content of the asset that existed at the target ref BEFORE promotion
-   * (Advantage D6c / Phase 6C). Captured exclusively by {@link promoteProposal}
-   * when the target file existed; absent for genuinely-new assets. Consumed by
-   * the `akm proposal revert <id>` flow to restore prior content.
-   *
-   * Never surfaced by the `akm proposal` output shapes — it is internal
-   * revert state carried on the row.
-   */
+  /** The target's content before promotion (absent for new assets), for revert. Never shown. */
   backupContent?: string;
-  /** Exact write target owned by the accepted content; prevents cross-target revert. */
-  acceptedTarget?: {
-    source: string;
-    root: string;
-    path: string;
-    contentHash: string;
-  };
-  /**
-   * Attribution tagging: which eligibility lane selected the source asset for the
-   * improve run that produced this proposal (`signal-delta`, `high-salience`,
-   * `proactive`, `scope`, or `unknown`). Persisted in `metadata_json` so the lane
-   * survives to accept/reject/revert time even across runs, letting downstream
-   * analysis measure whether the PROACTIVE lane produces value vs the reactive
-   * lanes. Absent on proposals created before this field shipped (treat as
-   * `"unknown"`) and on human-initiated sources that have no eligibility lane.
-   */
+  /** Exactly where the accepted content went; prevents cross-target revert. */
+  acceptedTarget?: { source: string; root: string; path: string; contentHash: string };
   eligibilitySource?: EligibilitySource;
 }
 
-/**
- * Gate-decision reason token for a promote refusal caused by the TARGET
- * changing after mint — often akm's own bookkeeping, not a merit judgement on
- * the proposed content (STALE, R20). The drain stamps this on the auto-reject
- * it issues instead of retrying a promote that will fail identically forever.
- */
+/** A promote refused because the target changed after mint (STALE, R20) — not a merit judgement. */
 export const STALE_TARGET_GATE_REASON = "stale-target";
-
-/** Gate-decision reason for a pending proposal archived by the retention expiry. */
 export const EXPIRED_GATE_REASON = "expired";
-
-/** Gate-decision reason for a pending proposal whose target asset no longer exists. */
 export const ASSET_MISSING_GATE_REASON = "asset-missing";
 
 const PROCEDURAL_GATE_REASONS: ReadonlySet<string> = new Set([
@@ -392,13 +159,10 @@ const PROCEDURAL_GATE_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * True for a rejected proposal nobody judged on its content: the drain's
- * stale-target auto-reject, the retention expiry, or the orphan purge. Readers
- * that treat a rejection as "this content was refused" — the Reflexion
- * "previously rejected" context (`improve/reflect.ts`, `improve/distill.ts`)
- * and the accept-rate health metric (`health/accept-rate.ts`) — exclude these
- * rows. Expiries archived before the gate reason existed are recognised by
- * their review reason.
+ * A rejection nobody judged on its content (stale target, expiry, orphan
+ * purge). The "previously rejected" prompt context and the accept-rate metric
+ * leave these out. Expiries archived before the gate reason existed are known
+ * by their review reason.
  */
 export function isProceduralRejection(proposal: Pick<Proposal, "gateDecision" | "review">): boolean {
   if (proposal.gateDecision?.outcome === "auto-rejected" && PROCEDURAL_GATE_REASONS.has(proposal.gateDecision.reason)) {
@@ -407,20 +171,10 @@ export function isProceduralRejection(proposal: Pick<Proposal, "gateDecision" | 
   return proposal.review?.reason?.startsWith("expired:") === true;
 }
 
-// ── Validator-shared types ───────────────────────────────────────────────────
-//
-// Moved from ./validators/proposals.ts (ProposalValidationFinding,
-// ProposalValidationReport) and ./validators/proposal-validators.ts
-// (ProposalValidationContext, ProposalValidator) — proposal-validators.ts and
-// proposal-quality-validators.ts each needed the OTHER's types, and
-// proposals.ts needed proposal-validators.ts's runProposalValidators while
-// proposal-validators.ts needed proposals.ts's Finding/Report types. Hoisting
-// the shared shapes here breaks both back-edges at once.
-
 export interface ProposalValidationFinding {
   kind: string;
   message: string;
-  /** "warn" findings are surfaced but do not block proposal acceptance. Defaults to error-level when absent. */
+  /** `warn` is shown but does not block acceptance. */
   severity?: "warn";
 }
 
@@ -432,15 +186,7 @@ export interface ProposalValidationReport {
 export interface ProposalValidationContext {
   parsedRef?: AssetRef;
   stop?: boolean;
-  /**
-   * Optional source-asset context for validators that need to compare the
-   * proposed payload against the asset it was derived from (improve-stage
-   * validators: reflect size guard, consolidate source-superseded guard).
-   *
-   * Populated by improve-stage call sites before invoking
-   * {@link runProposalValidators}; the `proposal accept` path leaves this
-   * absent and source-context-aware validators no-op.
-   */
+  /** The source asset, for the improve-stage guards; absent at accept, where they no-op. */
   source?: {
     content?: string;
     frontmatter?: Record<string, unknown>;

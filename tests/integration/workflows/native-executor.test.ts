@@ -17,7 +17,7 @@ import {
 } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computePlanHash } from "../../../src/workflows/ir/plan-hash";
-import type { IrStepPlanV4, WorkflowPlanGraphV4 } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { type Cleanup, sandboxEnvDir, writeSandboxConfig } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
@@ -75,26 +75,26 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
   }
 }
 
-function plan(markdown: string): WorkflowPlanGraphV4 {
+function plan(markdown: string): WorkflowPlan {
   return freezeWorkflow(markdown);
 }
 
-function executeStepPlan(step: IrStepPlanV4, ctx: StepExecutionContext): Promise<StepExecutionResult> {
+function executeStepPlan(step: WorkflowPlanStep, ctx: StepExecutionContext): Promise<StepExecutionResult> {
   return executeFrozenStepPlan(step, ctx);
 }
 
-function usePlan(markdown: string): () => Promise<WorkflowPlanGraphV4> {
+function usePlan(markdown: string): () => Promise<WorkflowPlan> {
   return useFrozenPlan(plan(markdown));
 }
 
-function useFrozenPlan(frozen: WorkflowPlanGraphV4): () => Promise<WorkflowPlanGraphV4> {
+function useFrozenPlan(frozen: WorkflowPlan): () => Promise<WorkflowPlan> {
   const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     storeFrozenWorkflowPlan(db, RUN_ID, frozen);
   } finally {
     db.close();
   }
-  return async () => JSON.parse(JSON.stringify(frozen)) as WorkflowPlanGraphV4;
+  return async () => JSON.parse(JSON.stringify(frozen)) as WorkflowPlan;
 }
 
 beforeEach(() => {
@@ -1205,13 +1205,9 @@ Do second.
     expect(dispatches).toBe(0);
   });
 
-  test("a stored plan carrying the removed dependsOn key is abandoned before dispatching", async () => {
-    // `dependsOn` was an IR-only surface no frontend ever emitted: ordering
-    // comes from `sequenceIndex` and data dependencies from `inputs:` /
-    // `steps.<id>.output` references. It is gone from `IrStepPlan`, so the
-    // decoder cannot read a hand-crafted plan that carries it — the engine
-    // abandons that run (a status change, never an exception) BEFORE any
-    // unit is dispatched.
+  test("a stored plan carrying a key this akm does not know (the removed dependsOn) still runs in step order", async () => {
+    // Readers tolerate what older releases wrote: an unknown key is kept, not
+    // refused. Ordering comes from `sequenceIndex`, so `dependsOn` changes nothing.
     seedRun({
       params: { flavor: "vanilla" },
       steps: [
@@ -1219,22 +1215,19 @@ Do second.
         { id: "second", title: "Second" },
       ],
     });
-    const outOfOrder = plan(TWO_STEP_WF);
-    // `dependsOn` is not part of `IrStepPlan` any more — a hand-crafted plan is
-    // the only way one can appear, so build it the way an attacker/drift would.
-    outOfOrder.steps[0] = { ...outOfOrder.steps[0]!, dependsOn: ["second"] } as unknown as IrStepPlanV4;
-    let dispatches = 0;
+    const withLegacyKey = plan(TWO_STEP_WF);
+    withLegacyKey.steps[0] = { ...withLegacyKey.steps[0]!, dependsOn: ["second"] } as unknown as WorkflowPlanStep;
+    const dispatched: string[] = [];
     const result = await runWorkflowSteps({
       target: RUN_ID,
-      dispatcher: async () => {
-        dispatches++;
-        return { ok: true, text: "must not run" };
+      dispatcher: async (request) => {
+        dispatched.push(request.stepId);
+        return { ok: true, text: "done" };
       },
-      loadPlan: useFrozenPlan(outOfOrder),
+      loadPlan: useFrozenPlan(withLegacyKey),
     });
-    expect(result.run.status).toBe("failed");
-    expect(result.warnings?.some((w) => w.includes("unknown key dependsOn") && w.includes("abandoned"))).toBe(true);
-    expect(dispatches).toBe(0);
+    expect(result.run.status).toBe("completed");
+    expect(dispatched).toEqual(["first", "second"]);
   });
 
   const ROUTED_WF = `---

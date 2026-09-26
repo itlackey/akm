@@ -27,7 +27,7 @@ export interface SyncOptions {
   writableRoot?: string;
   /** Configured component roots that must still exist in the fetched revision. */
   writableRequiredRoots?: readonly string[];
-  /** Override cache root directory — primarily for tests. */
+  /** Materialize under this cache root instead of the default (`akm bundle update` fetches into staging). */
   cacheRootDir?: string;
   /** Resolved HTTPS bearer credential. Never persisted or included in diagnostics. */
   credential?: string;

@@ -43,9 +43,9 @@ import { canonicalJson, computePlanHash } from "../../src/workflows/ir/plan-hash
 import type {
   FrozenChildWorkflowTarget,
   FrozenWorkflowTarget,
-  IrStepPlanV4,
-  WorkflowPlanGraphV4,
-} from "../../src/workflows/ir/schema-v4";
+  WorkflowPlan,
+  WorkflowPlanStep,
+} from "../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 import { freezeWorkflow, WORKFLOW_TEST_CONFIG } from "../_helpers/workflow";
 
@@ -80,7 +80,7 @@ function childContentHash(fields: {
     .digest("hex");
 }
 
-function buildChildTarget(childPlan: WorkflowPlanGraphV4, options: { ref?: string } = {}): FrozenChildWorkflowTarget {
+function buildChildTarget(childPlan: WorkflowPlan, options: { ref?: string } = {}): FrozenChildWorkflowTarget {
   const ref = options.ref ?? "workflows/child";
   const planHash = computePlanHash(childPlan);
   return {
@@ -93,7 +93,7 @@ function buildChildTarget(childPlan: WorkflowPlanGraphV4, options: { ref?: strin
   };
 }
 
-function leafChildPlan(sourcePath = "workflows/child.md"): WorkflowPlanGraphV4 {
+function leafChildPlan(sourcePath = "workflows/child.md"): WorkflowPlan {
   return freezeWorkflow(
     ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", "Do the child's work.", ""].join(
       "\n",
@@ -103,7 +103,7 @@ function leafChildPlan(sourcePath = "workflows/child.md"): WorkflowPlanGraphV4 {
 }
 
 /** A one-step child plan whose step declares a completion criterion (a resolvable frozen judge). */
-function gatedChildPlan(): WorkflowPlanGraphV4 {
+function gatedChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     [
       "---",
@@ -126,7 +126,7 @@ function gatedChildPlan(): WorkflowPlanGraphV4 {
 }
 
 /** A fan-out child plan over a declared `items` param, with a wide own execution.maxConcurrency (A-34's min() claim needs ctx.maxConcurrency, not the child's own plan cap, to be the binding constraint). The engine's own concurrency is also raised explicitly — the default engine's fallback LLM connection is a loopback endpoint, which otherwise caps concurrency at 1 regardless of every other width (concurrency-policy.ts's DEFAULT_LOCAL_LLM_ENGINE_CONCURRENCY) and would make this test measure that unrelated cap instead of the one under test. */
-function fanOutChildPlan(ownMaxConcurrency: number): WorkflowPlanGraphV4 {
+function fanOutChildPlan(ownMaxConcurrency: number): WorkflowPlan {
   const config = {
     ...WORKFLOW_TEST_CONFIG,
     engines: {
@@ -417,7 +417,7 @@ describe("A-35 — a child that itself composes a grandchild drives recursively"
     // under test here), mirroring tests/workflows/hash-v6.test.ts's and
     // tests/workflows/child-executor-seam.test.ts's established
     // stepPlanWithTarget convention.
-    const childStepPlan: IrStepPlanV4 = {
+    const childStepPlan: WorkflowPlanStep = {
       stepId: "spawn-grandchild",
       title: "spawn-grandchild",
       sequenceIndex: 0,
@@ -439,24 +439,10 @@ describe("A-35 — a child that itself composes a grandchild drives recursively"
         frozenJudge: null,
       },
     };
-    const childPlan: WorkflowPlanGraphV4 = {
+    const childPlan: WorkflowPlan = {
       irVersion: 5,
       title: "Child",
       execution: { maxConcurrency: 1 },
-      sourceReadSet: [
-        {
-          identity: {
-            ref: "test//workflows/child",
-            bundle: "test",
-            adapter: "akm-workflow",
-            file: "workflows/child.yml",
-            hash: createHash("sha256").update("child-fixture").digest("hex"),
-          },
-          containmentPhysicalIdentity: "test-fixture-root",
-          physicalIdentity: createHash("sha256").update("workflows/child.yml\0child-fixture").digest("hex"),
-          size: 0,
-        },
-      ],
       steps: [childStepPlan],
     };
     const childTarget = buildChildTarget(childPlan, { ref: "workflows/mid-child" });

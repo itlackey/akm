@@ -14,25 +14,26 @@
  * `installed-stashes.ts`.
  *
  * Factories use the `RegistryProviderFactory` type owned by
- * `src/registry/providers/types.ts`.
+ * `src/registry/providers/types.ts`. Exactly two providers exist
+ * (`static-index`, `skills-sh`, each self-registering on import via
+ * `./providers/index.ts`), so this is a plain `Map`.
  */
 
-import { createProviderRegistry } from "./create-provider-registry";
 import type { RegistryProviderFactory } from "./providers/types";
 
 // ── Factory map ─────────────────────────────────────────────────────────────
 
-const registry = createProviderRegistry<RegistryProviderFactory>();
+const factories = new Map<string, RegistryProviderFactory>();
 
 export function registerRegistryProvider(type: string, factory: RegistryProviderFactory): void {
-  registry.register(type, factory);
+  factories.set(type, factory);
 }
 
 export function resolveRegistryProviderFactory(type: string): RegistryProviderFactory | null {
-  return registry.resolve(type);
+  return factories.get(type) ?? null;
 }
 
 /** Test-only seam: removes a registration made with {@link registerRegistryProvider}. */
 export function unregisterRegistryProvider(type: string): void {
-  registry.unregister(type);
+  factories.delete(type);
 }

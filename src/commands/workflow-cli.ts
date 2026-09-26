@@ -18,7 +18,7 @@ import { warn } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
 import { assertWorkflowMarkdownName, createWorkflowAsset, getWorkflowTemplate } from "../workflows/authoring/authoring";
 import type { WorkflowParameterFlag } from "../workflows/ir/params";
-import { WORKFLOW_MAX_TIMEOUT_MS } from "../workflows/ir/schema";
+import { WORKFLOW_MAX_TIMEOUT_MS } from "../workflows/resource-limits";
 import {
   abandonWorkflowRun,
   getWorkflowStatus,

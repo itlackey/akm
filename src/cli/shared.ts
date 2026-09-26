@@ -11,12 +11,13 @@
 
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
+import { renderHealthHtml } from "../commands/health/renderers";
 import { assertNever } from "../core/assert";
 import { AkmError, UsageError } from "../core/errors";
 import { getOutputMode, type OutputMode } from "../output/context";
 import { renderGenericHtml, renderGenericMarkdown, renderGenericText } from "../output/generic-render";
 import { deliverRendered } from "../output/html-render";
-import { getHtmlRendererHandler, getMdRendererHandler } from "../output/render-registry";
+import { getMdRendererHandler } from "../output/render-registry";
 import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
 import { parseAllFlagValues } from "./invocation";
@@ -372,7 +373,10 @@ export function output(command: string, result: unknown): void {
       return;
     }
     case "html": {
-      const rendered = getHtmlRendererHandler(command)?.(shaped, mode.detail);
+      // `akm health` is the only command with a bespoke HTML report, so it is
+      // called directly rather than through a registry with one possible
+      // registrant (see `output/render-registry.ts`).
+      const rendered = command === "health" ? renderHealthHtml(shaped) : null;
       deliverRendered(rendered ?? renderGenericHtml(command, shaped), mode.outputPath);
       return;
     }

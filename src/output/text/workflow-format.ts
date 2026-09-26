@@ -347,12 +347,6 @@ export function formatWorkflowPlanPlain(result: Record<string, unknown>): string
     renderPlanStepLines(step, index + 1, lines);
   }
 
-  const sourceReadSet = Array.isArray(result.sourceReadSet) ? result.sourceReadSet : [];
-  if (sourceReadSet.length > 0) {
-    lines.push("read set:");
-    for (const entry of sourceReadSet) lines.push(`  ${String(entry)}`);
-  }
-
   const notices = Array.isArray(result.notices) ? result.notices : [];
   if (notices.length > 0) {
     lines.push("notices:");

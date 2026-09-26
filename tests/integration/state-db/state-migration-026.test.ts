@@ -25,8 +25,8 @@ import {
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
 import { listStateProposals } from "../../../src/storage/repositories/proposals-repository";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const MIGRATION_ID = "026-proposals-strip-legacy-fragment-refs";

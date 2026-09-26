@@ -179,7 +179,6 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
       query: "test",
       rankingMode: "fts",
       defaultStashDir: stashDir,
-      allSourceDirs: [stashDir],
       sources: [{ path: stashDir }],
       config: { semanticSearchMode: "off" },
     });
@@ -206,7 +205,6 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
         rankingMode: "fts",
         fragmentId: "akm-fragment-matched-heading",
         defaultStashDir: stashDir,
-        allSourceDirs: [stashDir],
         sources: [{ path: stashDir }],
         config: { semanticSearchMode: "off" },
       });
@@ -239,7 +237,6 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
         rankingMode: "fts" as const,
         lexicalMatch,
         defaultStashDir: stashDir,
-        allSourceDirs: [stashDir],
         sources: [{ path: stashDir }],
         config: { semanticSearchMode: "off" as const },
       };
@@ -936,7 +933,6 @@ describe("Issue #15: Hybrid ranking mode label", () => {
       query: "hybrid",
       rankingMode: "hybrid",
       defaultStashDir: stashDir,
-      allSourceDirs: [stashDir],
       sources: [{ path: stashDir }],
       config: { semanticSearchMode: "off" },
     });

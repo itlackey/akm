@@ -707,7 +707,7 @@ describe("OKF first-class conformance", () => {
     const loaded = await loadWorkflowAsset("native//deploy");
     expect(loaded.path).toBe(path.join(workflowRoot, "deploy.md"));
     expect(loaded.ref).toBe("native//deploy");
-    expect(loaded.steps.length).toBeGreaterThan(0);
+    expect(loaded.plan.steps.length).toBeGreaterThan(0);
 
     const created = createWorkflowAsset({ name: "authored" });
     expect(created.ref).toBe("authored");

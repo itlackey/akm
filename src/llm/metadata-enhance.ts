@@ -22,7 +22,7 @@ export type EnhancedMetadata = { description?: string; searchHints?: string[]; t
 
 /**
  * Outcome of an enrichment attempt. Distinguishes the three cases the caller
- * MUST treat differently (see `enhanceStashWithLlm`):
+ * MUST treat differently (see `enhanceEntriesWithLlm`):
  *   - `enriched`: a real LLM response was received and processed. `metadata`
  *     MAY be empty (`{}`) — an empty-but-successful response still counts as
  *     enriched so the caller caches it and avoids re-paying for a known no-op.

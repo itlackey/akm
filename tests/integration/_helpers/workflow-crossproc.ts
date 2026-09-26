@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
-import type { WorkflowPlanGraphV4 as WorkflowPlanGraph } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 
 export const RUNNER = path.join(__dirname, "workflow-chaos-runner.ts");
 

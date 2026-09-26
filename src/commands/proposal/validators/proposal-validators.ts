@@ -7,7 +7,7 @@ import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
-import { compileWorkflowSource } from "../../../workflows/source-ir/compile";
+import { compileWorkflowSource } from "../../../workflows/compile";
 import type {
   Proposal,
   ProposalValidationContext,

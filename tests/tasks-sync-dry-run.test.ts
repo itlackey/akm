@@ -244,10 +244,9 @@ describe("akmTasksSyncPlan — dry-run", () => {
   // releases, mirroring tests/integration/tasks-sync.test.ts's "reconciles a
   // pre-`--bundle` native entry instead of refusing it as an unproven owner")
   // is now correctly recognized as akm-owned, so `akmTasksSyncPlan` computes
-  // a real preview for it instead of throwing "unproven owner" — and that
-  // preview is `Object.freeze`d by `renderSchedulerPlanPreview`. Routing it
+  // a real preview for it instead of throwing "unproven owner". Routing it
   // through `shapeForCommand`, exactly as `akm task sync --dry-run`'s CLI
-  // leaf does via `output()`, must not crash on the frozen result.
+  // leaf does via `output()`, must not throw.
   test("previews a pre-`--bundle` native entry through the CLI output path without crashing", async () => {
     const exec = spyingMemoryExec();
     const backend = backendFor(exec);
@@ -261,7 +260,6 @@ describe("akmTasksSyncPlan — dry-run", () => {
     const preview = await akmTasksSyncPlan({ backend }, undefined, {});
 
     expect(preview.updates.map((op) => op.id)).toEqual(["alpha"]);
-    expect(Object.isFrozen(preview)).toBe(true);
 
     let shaped: Record<string, unknown> | undefined;
     expect(() => {

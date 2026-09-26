@@ -2,35 +2,47 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+/**
+ * The GitHub-shaped YAML workflow grammar: a strict `name`/`on`/`jobs`
+ * document with exactly one job, compiled straight to a {@link WorkflowPlan}.
+ * It is an AKM workflow format executed by AKM's own engine, not GitHub
+ * Actions: no expressions, no service events, `runs-on: [self-hosted]` only.
+ */
+
 import { isAlias, isMap, isScalar, isSeq, LineCounter, type Pair, type ParsedNode, parseDocument } from "yaml";
-import { utf8Bytes, WORKFLOW_MAX_SOURCE_BYTES } from "../resource-limits";
-import { WorkflowSourceFailure } from "./result";
 import {
-  WORKFLOW_SOURCE_HOST_SHELLS,
-  type WorkflowSourceEnvironmentValue,
-  type WorkflowSourceIrV1,
-  type WorkflowSourceJob,
-  type WorkflowSourceScalar,
-  type WorkflowSourceSpan,
-  type WorkflowSourceStep,
-  type WorkflowSourceTrigger,
-} from "./schema";
+  type SourceRef,
+  WORKFLOW_PLAN_VERSION,
+  type WorkflowCommandMode,
+  type WorkflowPlan,
+  type WorkflowPlanStep,
+  type WorkflowSchedule,
+  type WorkflowStepSpec,
+} from "./plan";
+import { utf8Bytes, WORKFLOW_MAX_SOURCE_BYTES } from "./resource-limits";
 import {
   canonicalizeWorkflowCron,
   canonicalizeWorkflowRun,
   canonicalizeWorkflowWorkingDirectory,
   classifyWorkflowStepUses,
   validateWorkflowBuiltinCommand,
-  type WorkflowSourceCommandMode,
   WorkflowSourceSemanticError,
-} from "./semantics";
-import {
-  classifyWorkflowSourceUses,
-  type WorkflowSourceTriggerClassifier,
-  type WorkflowSourceTriggerPlan,
-  type WorkflowSourceUsesClassifier,
-  type WorkflowSourceUsesTarget,
-} from "./uses";
+  type WorkflowUsesTarget,
+  workflowShellCommand,
+} from "./source-semantics";
+
+type WorkflowSourceScalar = string | number | boolean | null;
+
+/** A located compile failure; `compile.ts` turns it into a `WorkflowSourceError`. */
+export class WorkflowSourceFailure extends Error {
+  readonly error: { code: string; message: string; path: string; line: number };
+
+  constructor(code: string, message: string, source: SourceRef) {
+    super(message);
+    this.name = "WorkflowSourceFailure";
+    this.error = { code, message, path: source.path, line: source.start };
+  }
+}
 
 const ROOT_KEYS = ["name", "on", "jobs"] as const;
 const TRIGGER_KEYS = ["schedule", "workflow_dispatch"] as const;
@@ -38,7 +50,7 @@ const SCHEDULE_KEYS = ["cron"] as const;
 const JOB_KEYS = ["name", "needs", "runs-on", "steps"] as const;
 const STEP_KEYS = ["id", "name", "uses", "run", "with", "env", "shell", "working-directory"] as const;
 const UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
-const HOST_SHELLS = new Set<string>(WORKFLOW_SOURCE_HOST_SHELLS);
+const HOST_SHELLS = new Set<string>(["bash", "sh", "zsh", "pwsh", "powershell", "cmd"]);
 const SOURCE_ID = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
 const INPUT_KEY = /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -51,10 +63,7 @@ type YamlPair = Pair<ParsedNode, ParsedNode | null>;
 export interface GithubWorkflowSourceOptions {
   path: string;
   workspaceRoot?: string;
-  /** Canonical workflow uses: classifier; injectable only for bounded compiler tests/consumers. */
-  classifyUses?: WorkflowSourceUsesClassifier;
-  /** Canonical workflow YAML trigger classifier; injectable only for bounded compiler tests/consumers. */
-  classifyTriggers?: WorkflowSourceTriggerClassifier;
+  title: string;
 }
 
 /** A bounded, non-expanding ownership probe. Validation belongs to compilation. */
@@ -74,7 +83,7 @@ export function looksLikeGithubWorkflowSource(source: string): boolean {
   return keys.has("on") && keys.has("jobs");
 }
 
-export function parseGithubWorkflowSource(source: string, options: GithubWorkflowSourceOptions): WorkflowSourceIrV1 {
+export function parseGithubWorkflowSource(source: string, options: GithubWorkflowSourceOptions): WorkflowPlan {
   const documentSource = wholeSourceSpan(source, options.path);
   if (utf8Bytes(source) > WORKFLOW_MAX_SOURCE_BYTES) {
     throw new WorkflowSourceFailure("source-size-limit", "Workflow source exceeds the 1 MiB limit.", documentSource);
@@ -116,16 +125,10 @@ export function parseGithubWorkflowSource(source: string, options: GithubWorkflo
   reader.rejectAliases(parsedRoot);
   reader.checkTree(parsedRoot);
   const root = reader.fields(parsedRoot, ROOT_KEYS, "workflow");
-  const name = reader.requiredString(root, "name", "workflow");
-  const triggers = parseTriggers(reader, parsedRoot, reader.required(root, "on", "workflow"), options);
-  const jobs = parseJobs(reader, reader.required(root, "jobs", "workflow"), options);
-  return {
-    sourceIrVersion: 1,
-    name,
-    triggers,
-    jobs,
-    source: documentSource,
-  };
+  reader.requiredString(root, "name", "workflow");
+  const schedules = parseTriggers(reader, reader.required(root, "on", "workflow"));
+  const steps = parseJob(reader, reader.required(root, "jobs", "workflow"), options);
+  return { irVersion: WORKFLOW_PLAN_VERSION, title: options.title, schedules, steps };
 }
 
 class StrictYamlReader {
@@ -136,7 +139,7 @@ class StrictYamlReader {
     private readonly lineCounter: LineCounter,
   ) {}
 
-  span(node: ParsedNode | null | undefined): WorkflowSourceSpan {
+  span(node: ParsedNode | null | undefined): SourceRef {
     const range = node?.range;
     if (!range) return { path: this.filePath, start: 1, end: 1 };
     const start = this.lineCounter.linePos(range[0]).line;
@@ -248,30 +251,6 @@ class StrictYamlReader {
     this.fail("invalid-yaml-node", `${context} contains an unsupported YAML node.`, node);
   }
 
-  lineAt(root: ParsedNode, structuralPath: readonly (string | number)[]): number | undefined {
-    let current: ParsedNode | null = root;
-    for (const [index, segment] of structuralPath.entries()) {
-      if (typeof segment === "string" && isMap(current)) {
-        const pair: YamlPair | undefined = current.items.find(
-          (candidate) => isScalar(candidate.key) && candidate.key.value === segment,
-        ) as YamlPair | undefined;
-        if (!pair) return undefined;
-        if (pair.value === null) {
-          return index === structuralPath.length - 1 ? this.span(pair.key).start : undefined;
-        }
-        current = pair.value;
-        continue;
-      }
-      if (typeof segment === "number" && isSeq(current)) {
-        current = current.items[segment] ?? null;
-        if (current === null) return undefined;
-        continue;
-      }
-      return undefined;
-    }
-    return this.span(current).start;
-  }
-
   required(fields: Map<string, YamlPair>, key: string, context: string): ParsedNode | null {
     const pair = fields.get(key);
     if (!pair) this.fail("missing-key", `${context} is missing required key ${JSON.stringify(key)}.`, undefined);
@@ -326,12 +305,7 @@ class StrictYamlReader {
   }
 }
 
-function parseTriggers(
-  reader: StrictYamlReader,
-  root: ParsedNode,
-  node: ParsedNode | null,
-  options: GithubWorkflowSourceOptions,
-): WorkflowSourceTrigger[] {
+function parseTriggers(reader: StrictYamlReader, node: ParsedNode | null): WorkflowSchedule[] {
   const fields = reader.arbitraryFields(node, "workflow.on");
   for (const [key, pair] of fields) {
     if (!(TRIGGER_KEYS as readonly string[]).includes(key)) {
@@ -344,7 +318,7 @@ function parseTriggers(
   }
   if (fields.size === 0)
     reader.fail("trigger-required", "workflow.on must declare schedule or workflow_dispatch.", node);
-  const triggers: WorkflowSourceTrigger[] = [];
+  const schedules: WorkflowSchedule[] = [];
   const schedule = fields.get("schedule");
   if (schedule) {
     const records = reader.sequence(schedule.value, "workflow.on.schedule", 64);
@@ -352,7 +326,7 @@ function parseTriggers(
       const scheduleFields = reader.fields(record, SCHEDULE_KEYS, `workflow.on.schedule[${ordinal}]`);
       const cronNode = reader.required(scheduleFields, "cron", `workflow.on.schedule[${ordinal}]`);
       const cron = validateCron(reader, reader.string(cronNode, `workflow.on.schedule[${ordinal}].cron`), cronNode);
-      triggers.push({ kind: "schedule", cron, ordinal, source: reader.span(cronNode) });
+      schedules.push({ cron, ordinal, line: reader.span(cronNode).start });
     }
   }
   const manual = fields.get("workflow_dispatch");
@@ -374,77 +348,8 @@ function parseTriggers(
         );
       }
     }
-    triggers.push({ kind: "workflow_dispatch", source: reader.span(manual.key) });
   }
-  if (options.classifyTriggers) {
-    verifyOwnerTriggerPlan(reader, root, node, triggers, options);
-  }
-  return triggers;
-}
-
-function verifyOwnerTriggerPlan(
-  reader: StrictYamlReader,
-  root: ParsedNode,
-  onNode: ParsedNode | null,
-  triggers: WorkflowSourceTrigger[],
-  options: GithubWorkflowSourceOptions,
-): void {
-  const classifier = options.classifyTriggers;
-  if (!classifier) return;
-  let lastLine = reader.span(onNode).start;
-  let plan: WorkflowSourceTriggerPlan;
-  try {
-    plan = classifier(
-      { on: reader.plain(onNode, "workflow.on") },
-      {
-        filePath: options.path,
-        lineAt: (structuralPath) => {
-          const line = reader.lineAt(root, structuralPath);
-          if (line !== undefined) lastLine = line;
-          return line;
-        },
-      },
-    );
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    throw new WorkflowSourceFailure("invalid-trigger", message, {
-      path: options.path,
-      start: lastLine,
-      end: lastLine,
-    });
-  }
-  const expectedSchedules = triggers.filter(
-    (trigger): trigger is Extract<WorkflowSourceTrigger, { kind: "schedule" }> => trigger.kind === "schedule",
-  );
-  const expectedManual = triggers.some((trigger) => trigger.kind === "workflow_dispatch");
-  const matches =
-    plan !== null &&
-    typeof plan === "object" &&
-    plan.manual === expectedManual &&
-    Array.isArray(plan.schedules) &&
-    plan.schedules.length === expectedSchedules.length &&
-    plan.schedules.every((binding, index) => {
-      const expected = expectedSchedules[index];
-      let canonicalBindingCron: string;
-      try {
-        canonicalBindingCron = canonicalizeWorkflowCron(binding.cron);
-      } catch {
-        return false;
-      }
-      return (
-        expected !== undefined &&
-        canonicalBindingCron === expected.cron &&
-        binding.ordinal === expected.ordinal &&
-        binding.source === `on.schedule[${expected.ordinal}].cron`
-      );
-    });
-  if (!matches) {
-    throw new WorkflowSourceFailure(
-      "trigger-classifier-drift",
-      "The workflow trigger parser disagrees with the canonical workflow YAML trigger classifier.",
-      reader.span(onNode),
-    );
-  }
+  return schedules;
 }
 
 function validateCron(reader: StrictYamlReader, cron: string, node: ParsedNode | null): string {
@@ -456,100 +361,61 @@ function validateCron(reader: StrictYamlReader, cron: string, node: ParsedNode |
 }
 
 /**
- * The ONE place a job-count or job-dependency policy is enforced (P4 §3.3,
- * docs/plans/specs/p4-deletions-closeout.md): AKM's YAML adapter accepts a
- * familiar GitHub-step-shaped `name:`/`on:`/`jobs:` document, but requires
- * exactly one job (brief §10) — it is an AKM workflow format executed by
- * AKM's native engine, not a GitHub Actions graph. Job ordering, dependency
- * validation and the 256-job bound all existed only to support MULTIPLE
- * jobs; they are gone with the machinery, not relocated.
+ * Exactly one job: AKM's YAML is an AKM workflow format executed by AKM's
+ * native engine, not a GitHub Actions job graph.
  */
-function parseJobs(
+function parseJob(
   reader: StrictYamlReader,
   node: ParsedNode | null,
   options: GithubWorkflowSourceOptions,
-): WorkflowSourceJob[] {
-  const fields = reader.arbitraryFields(node, "workflow.jobs");
-  let first: [string, YamlPair] | undefined;
-  let second: [string, YamlPair] | undefined;
-  for (const entry of fields) {
-    if (!first) first = entry;
-    else if (!second) second = entry;
-  }
-  if (fields.size !== 1 || !first) {
+): WorkflowPlanStep[] {
+  const jobs = reader.arbitraryFields(node, "workflow.jobs");
+  const [first, second] = [...jobs];
+  if (jobs.size !== 1 || !first) {
     reader.fail(
       "multi-job-unsupported",
-      `AKM workflow YAML requires exactly one job; this document declares ${fields.size}. AKM's YAML is an AKM workflow format executed by AKM's native engine, not GitHub Actions — split the jobs into separate workflows.`,
+      `AKM workflow YAML requires exactly one job; this document declares ${jobs.size}. AKM's YAML is an AKM workflow format executed by AKM's native engine, not GitHub Actions — split the jobs into separate workflows.`,
       second ? second[1].key : node,
     );
   }
   const [id, pair] = first;
-  const job = parseJob(reader, id, pair, options);
-  if (job.needs.length > 0) {
-    reader.fail(
-      "multi-job-unsupported",
-      `Job ${job.id} declares needs, but an AKM workflow has exactly one job; remove needs.`,
-      pair.key,
-    );
+  const jobNode = pair.value;
+  if (!SOURCE_ID.test(id)) reader.fail("invalid-job-id", `Invalid job id ${JSON.stringify(id)}.`, jobNode);
+  const fields = reader.fields(jobNode, JOB_KEYS, `workflow.jobs.${id}`);
+  const runner = reader.required(fields, "runs-on", `workflow.jobs.${id}`);
+  if (
+    !isSeq(runner) ||
+    runner.items.length !== 1 ||
+    !isScalar(runner.items[0]) ||
+    runner.items[0].value !== "self-hosted"
+  ) {
+    reader.fail("unsupported-runner", `Job ${JSON.stringify(id)} must declare exactly runs-on: [self-hosted].`, runner);
   }
-  return [job];
-}
-
-function parseJob(
-  reader: StrictYamlReader,
-  id: string,
-  pair: YamlPair,
-  options: GithubWorkflowSourceOptions,
-): WorkflowSourceJob {
-  const node = pair.value;
-  if (!SOURCE_ID.test(id)) reader.fail("invalid-job-id", `Invalid job id ${JSON.stringify(id)}.`, node);
-  const fields = reader.fields(node, JOB_KEYS, `workflow.jobs.${id}`);
-  validateRunner(reader, reader.required(fields, "runs-on", `workflow.jobs.${id}`), id);
-  const needs = parseNeeds(reader, fields.get("needs"), id);
+  const needs = fields.get("needs");
+  if (needs) {
+    const values = isSeq(needs.value)
+      ? reader
+          .sequence(needs.value, `workflow.jobs.${id}.needs`, 256)
+          .map((item) => reader.string(item, `workflow.jobs.${id}.needs`))
+      : [reader.string(needs.value, `workflow.jobs.${id}.needs`)];
+    for (const need of values)
+      if (!SOURCE_ID.test(need)) reader.fail("invalid-job-id", `Invalid needs id ${need}.`, needs.value);
+    if (values.length > 0) {
+      reader.fail(
+        "multi-job-unsupported",
+        `Job ${id} declares needs, but an AKM workflow has exactly one job; remove needs.`,
+        pair.key,
+      );
+    }
+  }
+  reader.optionalString(fields, "name", `workflow.jobs.${id}`);
   const stepNodes = reader.sequence(
     reader.required(fields, "steps", `workflow.jobs.${id}`),
     `workflow.jobs.${id}.steps`,
     MAX_STEPS_PER_JOB,
   );
   const stepIds = new Set<string>();
-  const steps = stepNodes.map((step, index) => parseStep(reader, step, id, index, stepIds, options));
-  const name = reader.optionalString(fields, "name", `workflow.jobs.${id}`);
-  const keySource = reader.span(pair.key);
-  const valueSource = reader.span(node);
-  return {
-    id,
-    ...(name ? { name } : {}),
-    needs,
-    steps,
-    extensions: { "github.com/actions-workflow": { runsOn: ["self-hosted"] } },
-    source: { path: keySource.path, start: keySource.start, end: valueSource.end },
-  };
-}
-
-function validateRunner(reader: StrictYamlReader, node: ParsedNode | null, jobId: string): void {
-  if (!isSeq(node) || node.items.length !== 1 || !isScalar(node.items[0]) || node.items[0].value !== "self-hosted") {
-    reader.fail(
-      "unsupported-runner",
-      `Job ${JSON.stringify(jobId)} must declare exactly runs-on: [self-hosted].`,
-      node,
-    );
-  }
-}
-
-function parseNeeds(reader: StrictYamlReader, pair: YamlPair | undefined, jobId: string): string[] {
-  if (!pair) return [];
-  const values = isSeq(pair.value)
-    ? reader
-        .sequence(pair.value, `workflow.jobs.${jobId}.needs`, 256)
-        .map((item) => reader.string(item, `workflow.jobs.${jobId}.needs`))
-    : [reader.string(pair.value, `workflow.jobs.${jobId}.needs`)];
-  for (const need of values)
-    if (!SOURCE_ID.test(need)) reader.fail("invalid-job-id", `Invalid needs id ${need}.`, pair.value);
-  // Duplicate-entry checking (code duplicate-job-dependency) deleted with the
-  // rest of the multi-job dependency machinery (P4 §3.3): ANY non-empty
-  // needs — duplicated or not — is multi-job-unsupported at the caller
-  // (parseJobs), since a single-job workflow has nothing to depend on.
-  return values.sort();
+  return stepNodes.map((step, index) => parseStep(reader, step, id, index, stepIds, options));
 }
 
 function parseStep(
@@ -559,7 +425,7 @@ function parseStep(
   index: number,
   stepIds: Set<string>,
   options: GithubWorkflowSourceOptions,
-): WorkflowSourceStep {
+): WorkflowPlanStep {
   const context = `workflow.jobs.${jobId}.steps[${index}]`;
   const fields = reader.fields(node, STEP_KEYS, context);
   const id = reader.requiredString(fields, "id", context);
@@ -573,41 +439,41 @@ function parseStep(
   if ((usesPair === undefined) === (runPair === undefined)) {
     reader.fail("step-target-xor", `${context} must declare exactly one of uses or run.`, node);
   }
-  const common = parseStepCommon(reader, fields, context);
-  if (usesPair) return parseUsesStep(reader, usesPair, fields, options, { id, ...common, source: reader.span(node) });
-  if (!runPair) reader.fail("step-target-xor", `${context} must declare exactly one of uses or run.`, node);
-  return parseRunStep(reader, runPair, fields, options, { id, ...common, source: reader.span(node) });
-}
-
-function parseStepCommon(reader: StrictYamlReader, fields: Map<string, YamlPair>, context: string) {
-  const name = reader.optionalString(fields, "name", context);
+  reader.optionalString(fields, "name", context);
   const env = parseScalarMap(reader, fields.get("env"), `${context}.env`, ENV_KEY, false) as
-    | Record<string, WorkflowSourceEnvironmentValue>
+    | Record<string, string | number | boolean>
     | undefined;
-  return { ...(name ? { name } : {}), ...(env ? { env } : {}) };
+  const target = usesPair
+    ? parseUsesStep(reader, usesPair, fields)
+    : parseRunStep(reader, runPair as YamlPair, fields, options);
+  const spec: WorkflowStepSpec = { ...target, ...(env ? { env } : {}), source: reader.span(node) };
+  return {
+    stepId: id,
+    title: id,
+    sequenceIndex: index,
+    spec,
+    gate: { kind: "gate", id: `${id}.gate`, stepId: id, criteria: [], maxLoops: 1, frozenJudge: null },
+  };
 }
 
 function parseUsesStep(
   reader: StrictYamlReader,
   usesPair: YamlPair,
   fields: Map<string, YamlPair>,
-  options: GithubWorkflowSourceOptions,
-  common: Pick<WorkflowSourceStep, "id" | "name" | "env" | "source">,
-): WorkflowSourceStep {
+): Pick<WorkflowStepSpec, "uses" | "commandMode" | "with"> {
   if (fields.has("shell") || fields.has("working-directory")) {
     reader.fail("uses-field-conflict", "shell and working-directory are legal only with run.", usesPair.value);
   }
   const uses = reader.string(usesPair.value, "step.uses");
-  const target = classifyUses(reader, uses, usesPair.value, options.classifyUses ?? classifyWorkflowSourceUses);
-  // A-N3 (P2b, docs/plans/specs/p2b-input-bindings.md §1.7), widened in P3a
-  // (docs/plans/specs/p3a-plan-v5-child-freeze.md §4.2 step 7, row B-10) to
-  // ALSO cover a workflows/<ref> target: a tasks/<ref> or workflows/<ref>
-  // step's with: may bind any JSON value the composed target's declared
-  // input/param needs (an object/array literal, or a {from: "..."}
-  // reference) — decoding it through the scalar-only parseScalarMap would
-  // reject the very shapes both A-N3 and A-N8 exist to accept before
-  // decodeWorkflowSourceIrV1 (schema.ts) is ever reached. Every other target
-  // keeps the byte-identical scalar-only grammar.
+  let target: WorkflowUsesTarget;
+  try {
+    target = classifyWorkflowStepUses(uses);
+  } catch (cause) {
+    semanticReaderFail(reader, cause, usesPair.value);
+  }
+  // A tasks/<ref> or workflows/<ref> step's with: may bind any JSON value the
+  // composed target's declared input/param needs (an object/array literal, or
+  // a {from: "..."} reference); every other target keeps the scalar grammar.
   const withValues =
     target.kind === "task" || target.kind === "workflow"
       ? parsePlainMap(reader, fields.get("with"), "step.with", INPUT_KEY)
@@ -621,31 +487,17 @@ function parseUsesStep(
         )
       : undefined;
   return {
-    ...common,
     uses,
     ...(commandMode ? { commandMode } : {}),
     ...(withValues ? { with: withValues } : {}),
   };
 }
 
-function classifyUses(
-  reader: StrictYamlReader,
-  uses: string,
-  node: ParsedNode | null,
-  classifier: WorkflowSourceUsesClassifier,
-): WorkflowSourceUsesTarget {
-  try {
-    return classifyWorkflowStepUses(uses, classifier);
-  } catch (cause) {
-    semanticReaderFail(reader, cause, node);
-  }
-}
-
 function validateBuiltinCommand(
   reader: StrictYamlReader,
   values: Record<string, WorkflowSourceScalar> | undefined,
   node: ParsedNode | null | undefined,
-): WorkflowSourceCommandMode {
+): WorkflowCommandMode {
   try {
     const action = validateWorkflowBuiltinCommand(values);
     if (action.kind === "stored") return "stored-ref";
@@ -655,13 +507,13 @@ function validateBuiltinCommand(
   }
 }
 
+/** A `run:` step lowers to its shell's argv now; `instructions` keeps the authored command for display. */
 function parseRunStep(
   reader: StrictYamlReader,
   runPair: YamlPair,
   fields: Map<string, YamlPair>,
   options: GithubWorkflowSourceOptions,
-  common: Pick<WorkflowSourceStep, "id" | "name" | "env" | "source">,
-): WorkflowSourceStep {
+): Pick<WorkflowStepSpec, "exec" | "instructions"> {
   if (fields.has("with")) reader.fail("run-field-conflict", "with is legal only with uses.", fields.get("with")?.value);
   let run: string;
   try {
@@ -683,10 +535,8 @@ function parseRunStep(
     }
   }
   return {
-    ...common,
-    run,
-    ...(shell ? { shell: shell as WorkflowSourceStep["shell"] } : {}),
-    ...(workingDirectory ? { workingDirectory } : {}),
+    exec: { command: workflowShellCommand(shell ?? "sh", run), ...(workingDirectory ? { cwd: workingDirectory } : {}) },
+    instructions: `Run ${run}.`,
   };
 }
 
@@ -708,15 +558,7 @@ function parseScalarMap(
   return out;
 }
 
-/**
- * Like {@link parseScalarMap} but accepts an arbitrary JSON value per key —
- * a task-composition with: binding may be the declared input's own shape (an
- * object/array literal, or a `{from: "..."}` reference), not just a scalar
- * (A-N3). Depth/node bounds are already enforced document-wide by
- * `checkTree`/`rejectAliases` before any field-level parsing runs, so this
- * adds no new bound. `decodeWorkflowSourceIrV1` (schema.ts) decides what a
- * declared input actually accepts.
- */
+/** Like {@link parseScalarMap} but any JSON value per key (bounded document-wide by `checkTree`). */
 function parsePlainMap(
   reader: StrictYamlReader,
   pair: YamlPair | undefined,
@@ -734,11 +576,11 @@ function parsePlainMap(
   return out;
 }
 
-function wholeSourceSpan(source: string, filePath: string): WorkflowSourceSpan {
+function wholeSourceSpan(source: string, filePath: string): SourceRef {
   return { path: filePath, start: 1, end: Math.max(1, source.split(/\r?\n/).length) };
 }
 
-function spanAtOffset(filePath: string, counter: LineCounter, offset: number): WorkflowSourceSpan {
+function spanAtOffset(filePath: string, counter: LineCounter, offset: number): SourceRef {
   const line = counter.linePos(Math.max(0, offset)).line;
   return { path: filePath, start: line, end: line };
 }

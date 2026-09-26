@@ -72,9 +72,6 @@ const processLimitField = positiveInt.optional();
  */
 const qualityGateField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
 
-/** Consolidate process: gate for the M-1 (#367) contradiction-detection pass. */
-const contradictionDetectionField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
-
 /**
  * WS-3b: CLS (Complementary Learning System) interleaving (step 9).
  * distill/memoryInference prompts include embedding-retrieved existing adjacent
@@ -200,7 +197,6 @@ const CONSOLIDATE_PROCESS_FIELDS = {
   // accumulates; this value is only used on the very first run. Default 30s.
   p90ChunkSecondsDefault: z.number().finite().positive().optional(),
   antiCollapse: antiCollapseField,
-  contradictionDetection: contradictionDetectionField,
 };
 
 const MEMORY_INFERENCE_PROCESS_FIELDS = {

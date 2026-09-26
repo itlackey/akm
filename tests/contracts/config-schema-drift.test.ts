@@ -18,13 +18,13 @@ describe("config schema drift pins", () => {
     expect(properties.configVersion).toEqual({ type: "string", const: "0.9.0" });
     expect(root.required).toContain("configVersion");
   });
-  test("ImproveProcessConfig schema includes qualityGate + contradictionDetection sub-objects", () => {
+  test("ImproveProcessConfig schema includes the qualityGate sub-object and no longer declares contradictionDetection", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
     const ipc = defs.ImproveProcessConfig as { properties?: Record<string, unknown> };
     const keys = Object.keys(ipc.properties ?? {});
     expect(keys).toContain("qualityGate");
-    expect(keys).toContain("contradictionDetection");
+    expect(keys).not.toContain("contradictionDetection");
   });
 
   test("triage judgment JSON schema accepts boolean shorthand and passes unknown object keys through", () => {

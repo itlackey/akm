@@ -20,8 +20,8 @@
  *     database exactly as it was.
  */
 
-import type { Database } from "../database";
-import { withImmediateTransaction } from "../sqlite-transaction";
+import type { Database } from "./database";
+import { withImmediateTransaction } from "./sqlite-transaction";
 
 /** A single, append-only schema migration. */
 export interface Migration {
@@ -37,6 +37,16 @@ export interface MigrationLedgerState {
   detail?: string;
 }
 
+/**
+ * Reject a `MIGRATIONS` array containing a duplicate `id`.
+ *
+ * A compiled-in registry can't diverge at runtime, so this is a dev-time
+ * invariant, not a per-open guard: each consumer (state.db, logs.db) calls it
+ * once on its own array at module load, and `tests/storage/sqlite-migrations.test.ts`
+ * pins the duplicate-detection behavior directly. {@link inspectMigrationLedger}
+ * does NOT call this — re-scanning the same compiled-in array on every DB open
+ * added no safety over the module-load check, only repeated O(n) cost.
+ */
 export function assertMigrationRegistry(migrations: readonly Migration[]): void {
   const seen = new Set<string>();
   for (const migration of migrations) {
@@ -92,7 +102,6 @@ function inspectLedgerAgainst(db: Database, registryIds: readonly string[]): Mig
 }
 
 export function inspectMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
-  assertMigrationRegistry(migrations);
   return inspectLedgerAgainst(
     db,
     migrations.map((migration) => migration.id),

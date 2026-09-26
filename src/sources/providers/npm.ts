@@ -19,7 +19,6 @@ import { getRegistryCacheDir } from "../../core/paths";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { ParsedNpmRef } from "../../registry/types";
 import type { SourceProvider } from "../provider";
-import { registerSourceProvider } from "../provider-factory";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import {
   applyAkmIncludeConfig,
@@ -63,8 +62,6 @@ class NpmSourceProvider implements SourceProvider {
     await syncNpmRef(ref, { force: options?.force });
   }
 }
-
-registerSourceProvider("npm", (config) => new NpmSourceProvider(config));
 
 function npmRefFromConfig(config: SourceConfigEntry): string {
   const candidate = config.path;

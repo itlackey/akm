@@ -12,23 +12,22 @@ import {
   type ResolvedExecutionRequestV1,
 } from "../../../execution/resolved-request";
 import { fallbackAnnouncement } from "../../../integrations/agent/engine-fallback";
-import { buildExecution, resolveExecution } from "../../../integrations/agent/execution";
+import { buildExecution } from "../../../integrations/agent/execution";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
-import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding } from "../../ir/schema-v4";
-import type { ProgramUnit } from "../../program/schema";
-import type { WorkflowSourceStep } from "../../source-ir/schema";
-import { freezeEnvironment, guardedExecutionSource } from "../environment";
+import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding, WorkflowCommandMode } from "../../plan";
+import { freezeEnvironment, workflowExecutionSource } from "../environment";
 import { gitIdentity } from "../identity";
 import {
+  type BaseUnit,
   durableRequest,
   executionUnitValues,
-  executionValues,
+  type FreezeStep,
   type ResolutionContext,
   type ResolvedDispatch,
   targetConcurrency,
 } from "../step-values";
 
-function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowSourceStep["commandMode"]): unknown {
+function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowCommandMode | undefined): unknown {
   if (commandMode !== "portable-template") return action;
   const parsed = parseBuiltinCommandAction(action);
   if (parsed.kind !== "inline") return action;
@@ -36,46 +35,29 @@ function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowSourc
 }
 
 export async function commandDispatch(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
+  source: FreezeStep,
+  baseUnit: BaseUnit,
   action: unknown,
   context: ResolutionContext,
 ): Promise<ResolvedDispatch> {
   const prepared = await prepareCommandInvocation({
     action: inlineWorkflowCommandAction(action, source.commandMode),
     config: context.config,
-    ...(context.sourceIr.defaults
-      ? { invocationDefaults: executionUnitValues(context.sourceIr.defaults, context.asset.sourcePath) }
+    ...(context.plan.defaults
+      ? { invocationDefaults: executionUnitValues(context.plan.defaults, context.asset.sourcePath) }
       : {}),
     ...(source.commandMode === "literal" || source.commandMode === "portable-template"
       ? { inlineContentMode: "literal" as const }
       : {}),
-    current: executionValues(source, context.asset.sourcePath),
-    sourceLoader: (ref, kind) => guardedExecutionSource(ref, kind, context),
-  });
-  return commandResult(source, baseUnit, prepared, context);
-}
-
-export function inlineDispatch(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
-  context: ResolutionContext,
-): ResolvedDispatch {
-  const content = source.instructions ?? `Execute workflow step ${source.id}.`;
-  const prepared = resolveExecution({
-    content,
-    config: context.config,
-    ...(context.sourceIr.defaults
-      ? { invocationDefaults: executionUnitValues(context.sourceIr.defaults, context.asset.sourcePath) }
-      : {}),
-    current: executionValues(source, context.asset.sourcePath),
+    current: executionUnitValues(source.unit, context.asset.sourcePath),
+    sourceLoader: (ref, kind) => workflowExecutionSource(ref, kind, context),
   });
   return commandResult(source, baseUnit, prepared, context);
 }
 
 export function commandResult(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
+  source: FreezeStep,
+  baseUnit: BaseUnit,
   prepared: PreparedCommandInvocation,
   context: ResolutionContext,
   literals: readonly FrozenWorkflowEnvironmentBinding[] = [],
@@ -84,7 +66,7 @@ export function commandResult(
   const lowered = buildExecution(request, prepared.runner);
   const cwdIdentity = captureFrozenDirectoryIdentity(context.asset.sourcePath);
   const runner: RunnerSpec = lowered.runner;
-  const unit: ProgramUnit = {
+  const unit: BaseUnit = {
     ...baseUnit,
     engine: request.engine.name,
     ...(request.model ? { model: request.model.resolved } : {}),

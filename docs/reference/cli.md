@@ -938,8 +938,8 @@ Two output modes:
 - **`--format json`**: the full envelope — `ok`, `ref`, `title`,
   `sourceFormat`, `sourcePath`, `irVersion`, `planHash`, `published` (always
   `false`, so a consumer can never mistake this for a run envelope),
-  `execution`, `budget?`, `params?`, `outputs?`, `steps[]`, `sourceReadSet[]`,
-  `notices[]`, `warnings[]`. Each step entry carries an `expansion` field
+  `execution`, `budget?`, `params?`, `outputs?`, `steps[]`, `notices[]`,
+  `warnings[]`. Each step entry carries an `expansion` field
   naming how its target was reached: `{via: "direct"}`, `{via: "task",
   taskRef}`, or — for a step composing a child workflow —
   `{via: "child", childRef, childPlanHash, childOutputs, steps[]}` with the

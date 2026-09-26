@@ -87,8 +87,7 @@ function collectDangerousKeyFindings(
   return allFindings;
 }
 
-/** Scan only; callers that already obtained approval use this for a final materialization fence. */
-export function scanStashForDangerousKeys(installedStashRoot: string): DangerousKeyFinding[] {
+function scanStashForDangerousKeys(installedStashRoot: string): DangerousKeyFinding[] {
   const scanner =
     scannerOverride ??
     ((envPath: string, relPath: string) =>

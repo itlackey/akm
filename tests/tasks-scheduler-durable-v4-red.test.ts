@@ -135,7 +135,7 @@ describe("scheduled workflows under task sync", () => {
     const started = await startWorkflowRun("team//workflows/release", {}, { force: true });
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
 
-    expect(row?.plan_ir_version).toBe(5);
+    expect(row?.plan_ir_version).toBe(6);
     expect(row?.plan_json).toContain("echo after-sync");
     expect(row?.plan_json).not.toContain("echo before-sync");
   });

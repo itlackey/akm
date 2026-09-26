@@ -3,24 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm reflect [ref]` — proposal-producing agent command (#226).
+ * `akm reflect [ref]` — ask an engine for a revised asset and queue it as a
+ * proposal (`source: "reflect"`). Reflect never writes an asset: the proposal
+ * queue is the only path, `akm proposal accept` the bridge.
  *
- * Pipeline:
- *
- *   1. Emit `reflect_invoked` event at command entry (always, even on failure).
- *   2. If `ref` is provided, look the asset up via the FTS index and read its
- *      content. Pull recent feedback (`feedback` events for that ref) and
- *      lesson-lint findings to surface as schema hints.
- *   3. Build the prompt via {@link buildReflectPrompt}.
- *   4. Prepare, authorize, lower, and dispatch the frozen engine selection.
- *   5. Parse the agent's stdout into a {@link AgentProposalPayload}.
- *   6. Insert into the proposal queue via {@link createProposal} with
- *      `source: "reflect"`.
- *
- * Failures are surfaced as structured envelopes carrying an
- * {@link AgentFailureReason} discriminant. Reflect NEVER calls
- * `writeAssetToSource` directly — the proposal queue is the only path to
- * a committed asset, and the `accept` flow is the bridge.
+ * Every invocation closes with one `reflect_completed` event; `reflect_invoked`
+ * is emitted once the dispatch has validated its credentials (deterministic
+ * pre-dispatch refusals still emit both).
  */
 
 import fs from "node:fs";
@@ -30,6 +19,7 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
+import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { generatedContentRejection, stripReflectPromptScaffolding } from "../../core/content-safety";
@@ -41,7 +31,6 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warn, warnOnce } from "../../core/warn";
-import type { LoweringNotice } from "../../execution/resolved-request";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
@@ -61,7 +50,6 @@ import {
   REFLECT_TRUNCATION_MARKER,
   type ReflectLlmOutputMode,
   type ReflectPromptInput,
-  type RejectedProposalContext,
 } from "../../integrations/agent/prompts";
 import { type RunnerSpec, runnerIsLlm, runnerSupportsFileWrite } from "../../integrations/agent/runner";
 import {
@@ -71,190 +59,95 @@ import {
   runExecution,
 } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
-import { callStructured } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
-import { type EligibilitySource, isProceduralRejection } from "../proposal/proposal-types";
-import {
-  type CreateProposalInput,
-  listProposalsReadOnly,
-  type Proposal,
-  type ProposalsContext,
-  recordGateDecision,
-} from "../proposal/repository";
+import type { EligibilitySource } from "../proposal/proposal-types";
+import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
 import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { deriveLessonRef } from "./distill";
-import { runReflectQualityJudge, stageJudgedProposal } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveLlmExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
-import { emitProposal } from "./proposal-envelope";
-import { classifyReflectChange } from "./reflect-noise";
-import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
-import { MAX_REJECTED_PROPOSALS } from "./shared";
-import { durableImproveRef, improveStateReadRefs } from "./source-identity";
-
-function collectLoweringNotices(
-  target: Map<string, Readonly<LoweringNotice>>,
-  notices: readonly Readonly<LoweringNotice>[],
-): void {
-  for (const notice of notices) target.set(JSON.stringify(notice), notice);
-}
-
-function reflectNoticeFields(notices: Map<string, Readonly<LoweringNotice>>): {
-  notices?: readonly Readonly<LoweringNotice>[];
-} {
-  return notices.size > 0 ? { notices: Object.freeze([...notices.values()]) } : {};
-}
+import { classifyReflectChange, splitFrontmatter } from "./reflect-noise";
+import {
+  callStage,
+  type LlmRunner,
+  mintProposal,
+  type Notice,
+  noticeSet,
+  rejectedProposalContext,
+  runReflectQualityJudge,
+} from "./stage";
 
 export interface AkmReflectOptions {
-  /**
-   * Active improve profile for this run. When set, its per-process `reflect`
-   * override wins over the `default` profile (e.g. runner resolution); absent
-   * falls back to `default`.
-   */
+  /** Active improve profile; its per-process `reflect` override wins over the default strategy. */
   improveProfile?: ImproveProfileConfig;
-  /** Optional asset ref (`[bundle//]conceptId`, e.g. `lessons/my-lesson`) to focus on. */
+  /** Asset ref (`[bundle//]conceptId`) to focus on. */
   ref?: string;
-  /** Optional task hint passed through to the reflection prompt. */
+  /** Task hint passed through to the prompt. */
   task?: string;
-  /** Override the named engine (defaults to `defaults.engine`). */
+  /** Named engine override (defaults to `defaults.engine`). */
   engine?: string;
-  /** Override the spawn timeout. */
   timeoutMs?: number;
-  /** Shared improve deadline signal for direct LLM dispatch and judging. */
+  /** Shared improve deadline for dispatch and judging. */
   signal?: AbortSignal;
-  /** Test seam: override the stash dir. */
   stashDir?: string;
-  /** Resolved current bundle destination for proposals emitted by reflect. */
+  /** Bundle destination for the proposal. */
   target?: NonNullable<CreateProposalInput["target"]>;
-  /** Test seam: forwarded to runAgent for fake spawn / timers. */
+  /** Test seam: forwarded to the agent spawn. */
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
-  /** Test seam for SDK generation without starting a real SDK server. */
+  /** Test seam: SDK generation without a real SDK server. */
   runSdk?: RunExecutionOptions["runSdk"];
-  /** Test seam: stable id / clock for proposal creation. */
+  /** Test seam: proposal clock / id. */
   ctx?: ProposalsContext;
-  /**
-   * Events context carrying the improve run's long-lived state.db handle (or
-   * the C2 boundary-pinned path) so reflect's event emits take appendEvent's
-   * fast path instead of a per-event open/migrate/close (R25). Populated by
-   * the improve loop; standalone CLI reflect leaves it unset.
-   */
+  /** The improve run's events context (its long-lived state.db handle). */
   eventsCtx?: EventsContext;
-  /**
-   * Error patterns from earlier assets in the same improve run. When non-empty,
-   * injected into the reflect prompt so the agent avoids repeating the same
-   * mistakes across assets.
-   */
+  /** Recent reflect errors in this improve run, shown to the model as patterns to avoid. */
   avoidPatterns?: string[];
-  /**
-   * Optional chat seam for the proposal quality gate (R-5 / #374).
-   * Defaults to {@link chatCompletion}. Injected in tests to avoid real LLM calls.
-   */
+  /** Test seam: transport override for generation and the judge. */
   chat?: typeof chatCompletion;
-  /**
-   * Override the loaded AkmConfig (test seam + for the quality gate).
-   * Needed by R-5 to access the selected strategy's proposal quality gate
-   * without a real config file in tests.
-   */
-  config?: import("../../core/config/config").AkmConfig;
-  /**
-   * Event source for usage logging. Set to `"improve"` when called from
-   * `akm improve` so agent subprocess events are tagged and can be
-   * filtered out of user-facing history.
-   */
+  config?: AkmConfig;
+  /** `"improve"` tags agent subprocess events so they stay out of user history. */
   eventSource?: "user" | "improve";
-  /**
-   * #639 low-value filter (DEFAULT OFF). When true, "low-value" changes — a
-   * 2-3 changed-token prose micro-rewrite with no code/frontmatter/structural/
-   * negation/decision signal (see classifyReflectChange) — are deferred like
-   * noop/cosmetic instead of becoming proposals. The improve loop resolves this
-   * from the active strategy's `processes.reflect.lowValueFilter.enabled`; the
-   * standalone `akm reflect` command leaves it off.
-   */
+  /** Defer "low-value" micro-rewrites like no-op/cosmetic ones (`processes.reflect.lowValueFilter`). */
   lowValueFilter?: boolean;
-  /**
-   * Maximum number of iterative self-refinement passes (R-1 / #372).
-   * Default: 1 (single-shot, no refinement — preserves existing behaviour).
-   * Capped at 3 to prevent runaway loops.
-   *
-   * On each pass beyond the first the prior draft is injected back into the
-   * prompt as Self-Refine critique context (arXiv:2303.17651). The loop stops
-   * early if the agent returns the same content as the previous iteration.
-   */
+  /** Self-refine passes (default 1; each later pass critiques the prior draft). */
   maxRefineIters?: number;
-  /**
-   * Test seam: pre-loaded source asset content. When set, bypasses the
-   * indexer `lookup()` step so the safety-rail / sanitizer tests can pin
-   * down what reflect sees as the source — without needing a fully built
-   * FTS index in the test fixture.
-   *
-   * In production this is always `undefined`; the indexer drives lookup.
-   */
+  /** Test seam: pre-loaded source content instead of the index lookup. */
   assetContent?: string;
-  /**
-   * Attribution tagging: which eligibility lane (`signal-delta`, `high-salience`,
-   * `proactive`, `scope`) selected this asset for the current improve run. Set by
-   * `akm improve`'s loop from the partitioned {@link ImproveEligibleRef}. Recorded
-   * in `reflect_invoked` event metadata and persisted on the created proposal so
-   * accept/reject/revert/retrieval outcomes can be sliced by lane. Omitted for
-   * direct `akm reflect` invocations (no lane → downstream treats as `"unknown"`).
-   */
+  /** The improve lane that selected the asset, stamped on events and the proposal. */
   eligibilitySource?: EligibilitySource;
-  /**
-   * The resolved index entry's fully-qualified durable key
-   * (`<bundle>//<conceptId>`, from {@link ImproveEligibleRef.itemRef}).
-   * When absent, reflect uses the input conceptId as its durable key.
-   */
+  /** The asset's durable `item_ref`; direct invocations key by the conceptId. */
   itemRef?: string;
 }
 
 const MAX_FEEDBACK_LINES = 10;
 const MAX_GLOBAL_FEEDBACK_LINES = 20;
 
-/**
- * Pull recent `feedback` events from events.jsonl. When `ref` is present we
- * scope to that asset; otherwise we surface the most recent feedback across
- * all assets so `akm reflect` can operate in a general "review recent
- * signals" mode. Best-effort — a missing or empty events stream returns `[]`.
- */
-export function readOnlyEventsContext(ctx?: EventsContext): EventsContext {
+function readOnlyEventsContext(ctx?: EventsContext): EventsContext {
   return ctx?.db ? ctx : { ...(ctx ?? {}), readOnly: true };
 }
 
+/** Recent `feedback` lines for `ref` (or across all assets without one). Best-effort. */
 function readRecentFeedback(ref?: string, eventsCtx?: EventsContext): string[] {
   try {
     const events = readEvents({ type: "feedback", ...(ref ? { ref } : {}) }, readOnlyEventsContext(eventsCtx)).events;
-    const lines: string[] = [];
-    const limit = ref ? MAX_FEEDBACK_LINES : MAX_GLOBAL_FEEDBACK_LINES;
-    for (const event of events.slice(-limit)) {
-      const md = (event.metadata ?? {}) as Record<string, unknown>;
+    return events.slice(-(ref ? MAX_FEEDBACK_LINES : MAX_GLOBAL_FEEDBACK_LINES)).map((event) => {
+      const md = event.metadata ?? {};
       const signal = typeof md.signal === "string" ? md.signal : "?";
       const note = typeof md.reason === "string" ? md.reason : typeof md.note === "string" ? md.note : "";
       const details = note ? `[${signal}] ${note}` : `[${signal}]`;
-      lines.push(!ref && event.ref ? `${event.ref} ${details}` : details);
-    }
-    return lines;
+      return !ref && event.ref ? `${event.ref} ${details}` : details;
+    });
   } catch {
     return [];
   }
 }
 
 /**
- * Asset types that reflect is allowed to operate on.
- *
- * Reflect's canonical output shape is `frontmatter + markdown body`. Running it
- * against types whose on-disk form is NOT markdown (executable scripts, env files
- * env files, YAML tasks) blindly prepends `---\n…\n---\n` to the asset and
- * breaks the runtime contract — for example a `.ts` script with a YAML preamble
- * is a TypeScript syntax error.
- *
- * Whitelisting (rather than blacklisting) keeps the door closed by default as
- * new asset types are registered. To allow a custom registered type, extend
- * this set explicitly.
- *
- * Observed regression: proposal `8737ab63` (May 2026) prepended frontmatter to
- * a `.ts` script file via reflect. This whitelist prevents that.
+ * Types reflect may rewrite: its output is frontmatter + markdown, which would
+ * break a script or env file. Another type is allowed only when its current
+ * content already has that shape; secrets are never read.
  */
 export const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
   "knowledge",
@@ -268,73 +161,13 @@ export const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
 
 const REFLECT_REFUSED_TYPES: ReadonlySet<string> = new Set(["secret"]);
 
-function isReflectableSourceShape(content: string): boolean {
-  return parseFrontmatter(content).frontmatter !== null;
-}
-
-/**
- * Identity / structural frontmatter fields the LLM is NEVER allowed to change.
- *
- * Renaming `name` on a skill silently breaks ref resolution because the ref is
- * derived from the on-disk path. Similar reasoning for `ref`, `id`, `slug`,
- * and `type`. The post-processor below restores any of these fields if the
- * LLM tried to rewrite them.
- *
- * Observed regression: proposal `26941510` (May 2026) renamed
- * `skills/openpalm-stack-diagnostics`'s `name` field to `"diagnostic-checklist"`.
- */
+/** Identity fields the model may never change (a renamed `name` breaks ref resolution). */
 const PROTECTED_FRONTMATTER_FIELDS: ReadonlySet<string> = new Set(["name", "ref", "id", "slug", "type"]);
 
 /**
- * Read the last 1–3 archived rejected proposals for a given ref from the
- * proposal store. Returns `[]` when the proposals store is absent (not yet
- * created) or the ref is undefined — `listProposalsReadOnly` already handles
- * that case; a genuine read failure propagates instead of being swallowed,
- * since silently dropping this Reflexion-style context risks re-proposing
- * content that was already rejected (arXiv:2303.11366).
- */
-function readRejectedProposals(
-  stash: string,
-  ref?: string,
-  proposalsCtx?: ProposalsContext,
-): RejectedProposalContext[] {
-  if (!ref) return [];
-  // Exclude the drain's stale-target auto-rejects (STALE, R20): those are a
-  // procedural refusal (the target changed after mint), not a judgement on
-  // the content, and would mislead this Reflexion-style "don't repeat this"
-  // context.
-  return listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, proposalsCtx)
-    .filter((p) => !isProceduralRejection(p))
-    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
-    .slice(0, MAX_REJECTED_PROPOSALS)
-    .map((p) => ({
-      ref: p.ref,
-      reason: p.review?.reason ?? "no reason given",
-      // #legacy: `changes` is empty for pre-existing rows (storedToChanges),
-      // which makes `proposalContent` throw before reflect dispatch even
-      // runs. `payload.content` is populated for every row regardless, so
-      // read the preview from there instead.
-      contentPreview: p.payload.content.slice(0, 500),
-    }));
-}
-
-/**
- * Synthesize a tmp draft-file path for the agent/sdk file-write contract.
- *
- * Mirrors the draft-path synthesis in `src/commands/proposal/propose.ts` —
- * when the runner is agent-CLI or the OpenCode SDK, we instruct the agent to
- * write the proposal body directly to this file instead of inlining it in
- * JSON on stdout. This bypasses two
- * known failure modes for long assets: (a) ARG_MAX truncation on prompt
- * round-trips through fenced JSON, and (b) embedded-JSON parser brittleness
- * on multi-KB bodies (e.g. the `knowledge/systems/KOKORO_USAGE_GUIDE` 8.4KB
- * payload that produced 4/5 `parse_error` in May 2026 reflect validation).
- *
- * The path lives under {@link os.tmpdir} and embeds the (sanitized) ref +
- * timestamp + random suffix so concurrent reflect calls cannot collide.
- *
- * The LLM HTTP runner cannot use this path because chat-completion transport
- * has no filesystem access.
+ * A fresh tmp path per iteration for the agent/SDK file-write contract (long
+ * bodies are written to a file instead of fenced JSON on stdout). The direct
+ * LLM runner has no filesystem and never gets one.
  */
 function synthesizeReflectDraftPath(ref: string | undefined): string {
   const safeRef = (ref ?? "no-ref").replace(/[^a-z0-9_-]/gi, "_");
@@ -342,27 +175,10 @@ function synthesizeReflectDraftPath(ref: string | undefined): string {
   return path.join(os.tmpdir(), `akm-reflect-${safeRef}-${Date.now()}-${rand}.md`);
 }
 
-/**
- * Heuristic check that the agent honoured the file-write contract.
- * The contract instructs the agent to emit a single `DRAFT_WRITTEN` line on
- * stdout when it has finished writing the draft file. Some agents print
- * additional log lines; we match anywhere in the captured stdout.
- */
-function stdoutSignalsDraftWritten(stdout: string | undefined): boolean {
-  if (!stdout) return false;
-  return /\bDRAFT_WRITTEN\b/.test(stdout);
-}
-
-/**
- * Build schema/lint hints for the prompt. For lesson refs, run the lesson
- * lint over the current content and surface any findings — they are a
- * concrete starting point for the agent's revision.
- */
+/** Lesson lint findings for the prompt: a concrete starting point for the revision. */
 function buildSchemaHints(type: string, content: string | undefined): string[] {
-  if (!content) return [];
-  if (type !== "lesson") return [];
-  const report = lintLessonContent(content, "reflect");
-  return report.findings.map((f) => `[${f.kind}] ${f.message}`);
+  if (!content || type !== "lesson") return [];
+  return lintLessonContent(content, "reflect").findings.map((f) => `[${f.kind}] ${f.message}`);
 }
 
 interface RelatedLesson {
@@ -370,120 +186,87 @@ interface RelatedLesson {
   content: string;
 }
 
-function hasRelatedSkillSource(content: string, skillRef: string): boolean {
-  const parsed = parseFrontmatter(content);
-  const sources = parsed.data.sources;
-  return Array.isArray(sources) && sources.some((source) => typeof source === "string" && source.trim() === skillRef);
-}
-
+/**
+ * Lessons related to a skill: its derived lesson, lessons distilled from it,
+ * and lessons citing it in `sources`. Without independent feedback on the skill,
+ * lessons reflect itself produced are dropped so its own output is not fed
+ * back as evidence.
+ */
 async function readRelatedLessons(
-  ctx: RunContext,
   stash: string,
   ref: string,
   parsedRef: { type: string; name: string },
-  itemRef?: string,
+  itemRef: string | undefined,
+  eventsCtx: EventsContext | undefined,
 ): Promise<RelatedLesson[]> {
   if (parsedRef.type !== "skill") return [];
-
+  const cache = new Map<string, string>();
+  const read = (filePath: string): string => {
+    const key = path.resolve(filePath);
+    const cached = cache.get(key) ?? fs.readFileSync(filePath, "utf8");
+    cache.set(key, cached);
+    return cached;
+  };
   const related = new Map<string, RelatedLesson>();
   const derivedLessonRef = deriveLessonRef(ref);
   const candidateRefs = new Set<string>([derivedLessonRef]);
   const derivedLessonPath = path.join(stash, "lessons", `${parseRefInput(derivedLessonRef).name}.md`);
   if (fs.existsSync(derivedLessonPath)) {
-    // WI-9.10: genuine content read — routed through the per-invocation asset
-    // memo (D6). No write to this same path happens later in this invocation,
-    // so memoizing is safe (see run-context.ts's D6 seam docblock).
-    related.set(derivedLessonRef, { ref: derivedLessonRef, content: ctx.readAsset(derivedLessonPath) });
+    related.set(derivedLessonRef, { ref: derivedLessonRef, content: read(derivedLessonPath) });
   }
-
   try {
-    // Match events using the candidate's single durable state key.
-    const distillInvokedKeys = new Set(improveStateReadRefs(ref, itemRef));
-    const feedbackEvents = readEvents({ type: "distill_invoked" }, readOnlyEventsContext(ctx.eventsCtx)).events.filter(
-      (event) => event.ref !== undefined && distillInvokedKeys.has(event.ref),
-    );
-    for (const event of feedbackEvents) {
+    const keys = new Set([itemRef ?? ref]);
+    for (const event of readEvents({ type: "distill_invoked" }, readOnlyEventsContext(eventsCtx)).events) {
+      if (event.ref === undefined || !keys.has(event.ref)) continue;
       const proposalRef = typeof event.metadata?.proposalRef === "string" ? event.metadata.proposalRef : undefined;
       if (proposalRef && lenientRefType(proposalRef) === "lesson") candidateRefs.add(proposalRef);
     }
   } catch {
-    // Best effort only.
+    // best-effort
   }
-
   for (const candidateRef of candidateRefs) {
     try {
-      const filePath = await findAssetFilePath(durableImproveRef(candidateRef), stash);
-      if (!filePath || !fs.existsSync(filePath)) continue;
-      const content = ctx.readAsset(filePath);
-      related.set(candidateRef, { ref: candidateRef, content });
+      const filePath = await findAssetFilePath(candidateRef, stash);
+      if (filePath && fs.existsSync(filePath))
+        related.set(candidateRef, { ref: candidateRef, content: read(filePath) });
     } catch {
-      // Index miss is non-fatal.
+      // An index miss is not fatal.
     }
   }
-
   try {
     const lessonsDir = path.join(stash, "lessons");
     if (fs.existsSync(lessonsDir)) {
       for (const fileName of fs.readdirSync(lessonsDir)) {
         if (!fileName.endsWith(".md")) continue;
-        const content = ctx.readAsset(path.join(lessonsDir, fileName));
-        if (!hasRelatedSkillSource(content, ref)) continue;
-        const lessonName = fileName.slice(0, -3);
-        const lessonRef = conceptIdFromTypeName("lesson", lessonName);
-        if (!related.has(lessonRef)) {
-          related.set(lessonRef, { ref: lessonRef, content });
-        }
+        const content = read(path.join(lessonsDir, fileName));
+        const sources = parseFrontmatter(content).data.sources;
+        if (!Array.isArray(sources) || !sources.some((s) => typeof s === "string" && s.trim() === ref)) continue;
+        const lessonRef = conceptIdFromTypeName("lesson", fileName.slice(0, -3));
+        if (!related.has(lessonRef)) related.set(lessonRef, { ref: lessonRef, content });
       }
     }
   } catch {
-    // Best effort only.
+    // best-effort
   }
-
-  // R-4 / #373: Filter out lessons with `derived_from_reflect: true` unless
-  // independent feedback exists for the skill. This prevents the echo-chamber
-  // risk where reflect-output lessons feed back into the next reflect pass as
-  // "independent" evidence, amplifying their own prior outputs over time.
-  //
-  // ExpeL arXiv:2308.10144: rules need differential evidence from independent
-  // sources (success vs failure traces). A lesson that only ever appeared from
-  // reflect-internal signals has no such differential signal.
-  //
-  // "Independent feedback" = any usage_events "feedback" events for the skill
-  // ref itself, indicating a human or external system rated the skill.
-  let hasIndependentFeedback = false;
+  let hasIndependentFeedback = true;
   try {
-    const feedbackEventsForSkill = readEvents({ type: "feedback", ref }, readOnlyEventsContext(ctx.eventsCtx)).events;
-    hasIndependentFeedback = feedbackEventsForSkill.length > 0;
+    hasIndependentFeedback = readEvents({ type: "feedback", ref }, readOnlyEventsContext(eventsCtx)).events.length > 0;
   } catch {
-    // Best effort — if we can't check, allow all lessons through.
-    hasIndependentFeedback = true;
+    // Unknown: keep every lesson.
   }
-
   if (!hasIndependentFeedback) {
-    // No independent feedback: exclude all reflect-derived lessons to prevent
-    // echo-chamber amplification.
-    for (const [lessonRef, lesson] of related.entries()) {
+    for (const [lessonRef, lesson] of related) {
       try {
-        const lessonFm = parseFrontmatter(lesson.content);
-        if (lessonFm.data.derived_from_reflect === true) {
-          related.delete(lessonRef);
-        }
+        if (parseFrontmatter(lesson.content).data.derived_from_reflect === true) related.delete(lessonRef);
       } catch {
-        // If we can't parse the frontmatter, keep the lesson (safe default).
+        // Unparseable frontmatter: keep it.
       }
     }
   }
-
   return [...related.values()];
 }
 
-/**
- * Best-effort asset type for a maybe-ref string, in the 0.9.0 `[bundle//]conceptId`
- * grammar (`""` when it does not parse). Replaces the pre-0.9.0 `ref.split(":")[0]`
- * type-extraction, which yielded the whole conceptId (`lessons/my-lesson`) instead
- * of the type once refs stopped carrying a `type:` prefix (ref-grammar decision
- * D-R3). Lenient by design — the callers degrade gracefully on an empty type.
- */
+/** The asset type of a maybe-ref, or `""` when it does not parse. */
 function lenientRefType(ref: string | undefined): string {
   if (!ref) return "";
   try {
@@ -493,63 +276,31 @@ function lenientRefType(ref: string | undefined): string {
   }
 }
 
-/** Outcome of {@link sanitizeReflectPayload}. */
 export interface ReflectSanitizeResult {
-  /** Sanitized content (frontmatter preserved + identity fields restored). */
+  /** Sanitized content (source frontmatter restored + merged). */
   content: string;
-  /** Sanitized frontmatter object suitable for {@link CreateProposalInput.payload.frontmatter}. */
   frontmatter?: Record<string, unknown>;
-  /** Non-fatal warnings recorded in the event metadata. */
+  /** Non-fatal notes for the event. */
   warnings: string[];
-  /** When set, the proposal must be rejected with this reason / error. */
-  reject?: { reason: AgentFailureReason; error: string };
   sizeGuardRatio?: { code: "EXCESSIVE_SHRINKAGE" | "EXCESSIVE_EXPANSION"; ratio: number };
-  /** #952 — the model echoed REFLECT_TRUNCATION_MARKER into its rewrite. */
+  /** The model echoed REFLECT_TRUNCATION_MARKER into its rewrite. */
   truncationMarkerLeaked?: boolean;
 }
 
 /**
- * Split a markdown blob into `[frontmatterText, bodyText]`.
- *
- * Returns `[null, raw]` when the blob does not start with a frontmatter block.
- */
-function splitFrontmatter(raw: string): { fmText: string | null; body: string } {
-  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!m) return { fmText: null, body: raw };
-  return { fmText: m[1]!, body: m[2]! };
-}
-
-/**
- * Strip an LLM-appended duplicate frontmatter block from a body string.
- *
- * When the LLM echoes the original source file verbatim after its rewrite,
- * the resulting body contains a second `---...---` YAML block. We detect it
- * by requiring BOTH a balanced fence (opening + closing `---`) AND YAML-like
- * `key: value` content inside, so legitimate Markdown thematic breaks and
- * code-fence examples are never truncated.
+ * Cut a duplicate frontmatter block the model appended after its rewrite.
+ * Requires a balanced fence AND `key:` lines so thematic breaks survive.
  */
 function stripAppendedFrontmatter(body: string): string {
-  const fencePattern = /\n---\r?\n([\s\S]*?)\n---\r?\n/;
-  const match = body.match(fencePattern);
-  if (!match) return body;
-  // Only strip when the captured block looks like YAML frontmatter.
-  if (!/^\w[\w-]*:/m.test(match[1]!)) return body;
+  const match = body.match(/\n---\r?\n([\s\S]*?)\n---\r?\n/);
+  if (!match || !/^\w[\w-]*:/m.test(match[1]!)) return body;
   return body.slice(0, body.indexOf(match[0])).replace(/\s+$/, "");
 }
 
 /**
- * #636 — deterministically derive a valid `description` from an asset's existing
- * metadata when one is missing. Sources, in priority order: the `title:`
- * frontmatter field, the first `# Heading` in the (proposed or source) body, and
- * the first sentence of the opening body paragraph. The candidate is normalized
- * (whitespace collapsed, trailing punctuation/markdown stripped, clamped to the
- * description max) and only returned if it PASSES `isValidDescription` — so this
- * never produces a heading-fragment, truncated, or otherwise gate-failing value.
- * Returns `undefined` when nothing usable can be derived (caller leaves the
- * proposal as-is rather than fabricating prose).
- *
- * This is intentionally deterministic and lives in the reflect proposal-build
- * path — it does NOT touch the validators or the promote-time repair.
+ * A description derived from existing metadata (title, first heading, first
+ * prose sentence) that passes `isValidDescription`, or `undefined`. Never
+ * free-form invention.
  */
 function deriveDescriptionFromAsset(
   title: unknown,
@@ -557,37 +308,24 @@ function deriveDescriptionFromAsset(
   sourceBody: string,
   targetRef: string,
 ): string | undefined {
-  // Each candidate is tagged with its kind. A title or `# Heading` is a bare
-  // fragment ("Paged.js — Named Page") that reads poorly as a description even
-  // when it is long enough to pass the length gate, so for those we prefer the
-  // padded sentence form. A prose sentence is already a sentence, so it is used
-  // as-is (padding it would double-wrap an already-complete sentence).
   const candidates: Array<{ text: string; kind: "fragment" | "prose" }> = [];
-
-  // 1. title: frontmatter
   if (typeof title === "string" && title.trim()) candidates.push({ text: title.trim(), kind: "fragment" });
-
-  // 2. first `# Heading` (proposed body first, then source body)
   for (const body of [proposedBody, sourceBody]) {
-    const headingMatch = body.match(/^#{1,6}\s+(.+?)\s*$/m);
-    if (headingMatch?.[1]) candidates.push({ text: headingMatch[1].trim(), kind: "fragment" });
+    const heading = body.match(/^#{1,6}\s+(.+?)\s*$/m)?.[1];
+    if (heading) candidates.push({ text: heading.trim(), kind: "fragment" });
   }
-
-  // 3. first sentence of the opening prose paragraph (skip headings, fences,
-  //    list markers, blockquotes — those are not prose).
   for (const body of [proposedBody, sourceBody]) {
-    const firstSentence = firstProseSentence(body);
-    if (firstSentence) candidates.push({ text: firstSentence, kind: "prose" });
+    const sentence = firstProseSentence(body);
+    if (sentence) candidates.push({ text: sentence, kind: "prose" });
   }
-
   for (const { text, kind } of candidates) {
-    const normalized = normalizeDescriptionCandidate(text);
+    const normalized = text
+      .replace(/`/g, "")
+      .replace(/^[#>*\-\s]+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!normalized) continue;
-    // For a title/heading fragment, try the padded sentence form FIRST so the
-    // result reads as a sentence rather than a bare fragment — a short but valid
-    // title like "Paged.js — Named Page" (21 chars) would otherwise be returned
-    // verbatim. Fall back to the bare form only if the padded form fails the
-    // gate. A prose candidate is already a sentence, so it is used as-is.
+    // A bare title/heading reads poorly as a description: prefer the sentence form.
     const variants = kind === "fragment" ? [`Reference notes on ${normalized}.`, normalized] : [normalized];
     for (const v of variants) {
       const clamped = v.length > DESCRIPTION_MAX_CHARS ? v.slice(0, DESCRIPTION_MAX_CHARS).trimEnd() : v;
@@ -597,51 +335,21 @@ function deriveDescriptionFromAsset(
   return undefined;
 }
 
-/** Extract the first prose sentence from a markdown body, or `""` if none. */
 function firstProseSentence(body: string): string {
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line) continue;
-    if (/^(#{1,6}\s|```|~~~|[-*+]\s|\d+\.\s|>|\||<!--)/.test(line)) continue;
-    const sentenceMatch = line.match(/^(.+?[.!?])(\s|$)/);
-    return (sentenceMatch?.[1] ?? line).trim();
+    if (!line || /^(#{1,6}\s|```|~~~|[-*+]\s|\d+\.\s|>|\||<!--)/.test(line)) continue;
+    return (line.match(/^(.+?[.!?])(\s|$)/)?.[1] ?? line).trim();
   }
   return "";
 }
 
-/** Normalize a description candidate: strip markdown markers, collapse space. */
-function normalizeDescriptionCandidate(raw: string): string {
-  return raw
-    .replace(/`/g, "")
-    .replace(/^[#>*\-\s]+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 /**
- * Reflect post-processor — enforces the safety rails described at the top of
- * this file:
- *
- *   1. Restore the source frontmatter so reflect never strips load-bearing
- *      `description`, `when_to_use`, `tags`, etc. The LLM is only allowed to
- *      change the markdown body. Frontmatter fields proposed by the LLM are
- *      treated as a *merge on top* of the source — concrete field renames /
- *      identity changes (`name`, `ref`, `id`, `slug`, `type`) are reverted.
- *   2. Reject responses that shrink or expand the body past the configured
- *      ratio thresholds, when the source body is large enough to be reliable.
- *   3. Drop any leading `---` frontmatter block the LLM produced inside the
- *      body — the prompt asks it to emit body only, and a stray YAML preamble
- *      on top of an executable-typed asset is dangerous.
- *
- * Caller branches:
- *   - On `reject`: surface as a failure with the reported reason.
- *   - Otherwise: substitute `content` (and optional `frontmatter`) into the
- *     proposal payload.
- *
- * Source-less / new-asset case (`sourceContent === undefined`): we still strip
- * the LLM's frontmatter block from `content` and re-emit a clean block built
- * from `payload.frontmatter` so identity fields can be enforced. Size guard
- * is skipped because there is no source to compare against.
+ * Reflect's content rails: the source frontmatter is restored and the model's
+ * frontmatter merged on top except identity fields; a stray or appended
+ * frontmatter block and echoed run-only guidance are stripped; a missing
+ * required description is derived deterministically; a body outside the size
+ * ratios or echoing the truncation notice is flagged for review.
  */
 export function sanitizeReflectPayload(
   payload: { content: string; frontmatter?: Record<string, unknown> },
@@ -649,79 +357,47 @@ export function sanitizeReflectPayload(
   targetRef: string,
 ): ReflectSanitizeResult {
   const warnings: string[] = [];
-
   const { fmText: sourceFmText, body: sourceBody } = sourceContent
     ? splitFrontmatter(sourceContent)
     : { fmText: null, body: "" };
   const sourceFm = sourceFmText !== null ? parseFrontmatter(sourceContent ?? "").data : {};
-
   const { fmText: llmFmText, body: rawLlmBody } = splitFrontmatter(payload.content);
-  if (llmFmText !== null) {
-    warnings.push("LLM emitted frontmatter in content; stripped and merged through identity guard.");
-  }
-
-  // Parse the LLM-emitted frontmatter (if any) so we can merge its non-identity
-  // keys into the source frontmatter.
   let llmFm: Record<string, unknown> = {};
   if (llmFmText !== null) {
+    warnings.push("LLM emitted frontmatter in content; stripped and merged through identity guard.");
     try {
       llmFm = parseFrontmatter(payload.content).data;
     } catch {
       llmFm = {};
     }
   }
-  // Also accept the explicit `frontmatter` field on the payload.
-  if (payload.frontmatter && typeof payload.frontmatter === "object") {
-    llmFm = { ...llmFm, ...payload.frontmatter };
-  }
-
-  // Strip protected identity fields from any LLM-supplied frontmatter — they
-  // must come from the source asset, never from the LLM.
+  if (payload.frontmatter && typeof payload.frontmatter === "object") llmFm = { ...llmFm, ...payload.frontmatter };
   for (const field of PROTECTED_FRONTMATTER_FIELDS) {
     if (field in llmFm && llmFm[field] !== sourceFm[field]) {
       warnings.push(`LLM attempted to change protected frontmatter field "${field}"; restored from source.`);
       delete llmFm[field];
     }
   }
-
-  // Build the effective frontmatter: source overlaid with sanitized LLM fields.
-  // Source fields always win on identity keys.
   const mergedFm: Record<string, unknown> = { ...sourceFm, ...llmFm };
-  for (const field of PROTECTED_FRONTMATTER_FIELDS) {
-    if (field in sourceFm) {
-      mergedFm[field] = sourceFm[field];
-    }
-  }
+  for (const field of PROTECTED_FRONTMATTER_FIELDS) if (field in sourceFm) mergedFm[field] = sourceFm[field];
 
-  const withoutAppendedFrontmatter = stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, ""));
-  const promptScaffolding = stripReflectPromptScaffolding(withoutAppendedFrontmatter);
-  const cleanedBody = promptScaffolding.content;
-  if (promptScaffolding.stripped) {
+  const scaffolding = stripReflectPromptScaffolding(stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, "")));
+  const cleanedBody = scaffolding.content;
+  if (scaffolding.stripped) {
     warnings.push('Removed echoed run-only "Avoid These Patterns" guidance from the proposed asset body (#963).');
   }
 
-  // #636 — deterministic description fallback (reflect-side belt-and-suspenders).
-  // If the type requires a `description` and the merged frontmatter is still
-  // MISSING one (source had none AND the model didn't author one), derive a
-  // description DETERMINISTICALLY from the existing `title:` frontmatter or the
-  // first `# Heading` / opening body sentence — never free-form invention. This
-  // runs in the reflect proposal-build path, BEFORE the proposal is created, so
-  // the validator/promote path is left untouched (no gate fabricates content).
-  //
-  // Scope is the issue's target: a source asset that ALREADY carries frontmatter
-  // (e.g. scraped docs: `source`/`title`/`scraped`) but has a MISSING/empty
-  // `description`. We deliberately do NOT fire when:
-  //   - the source has no frontmatter block at all (injecting one would be a
-  //     structural change and would defeat the #580 no-op/cosmetic noise gate
-  //     for a pure body echo), or
-  //   - a present-but-otherwise-invalid description exists (too short, a heading
-  //     fragment) — overwriting authored content is out of scope; the prompt
-  //     instruction handles improving it instead.
+  // Only a source that already has frontmatter but no description gets one:
+  // injecting a whole block, or overwriting an authored one, is out of scope.
   const refType = lenientRefType(targetRef);
-  const mergedDesc = mergedFm.description;
-  const descIsMissing = typeof mergedDesc !== "string" || mergedDesc.trim().length === 0;
+  const desc = mergedFm.description;
   const sourceHadFrontmatter = sourceFmText !== null && Object.keys(sourceFm).length > 0;
-  if (refType && requiresDescription(refType) && descIsMissing && sourceHadFrontmatter) {
+  if (
+    refType &&
+    requiresDescription(refType) &&
+    (typeof desc !== "string" || desc.trim().length === 0) &&
+    sourceHadFrontmatter
+  ) {
     const derived = deriveDescriptionFromAsset(mergedFm.title, cleanedBody, sourceBody, targetRef);
     if (derived) {
       mergedFm.description = derived;
@@ -731,49 +407,25 @@ export function sanitizeReflectPayload(
     }
   }
 
-  // Size guard — only when source body is meaningfully large. The pure
-  // predicate lives in `core/proposal-quality-validators` so the same check
-  // also runs inside `runProposalValidators` on `proposal accept`.
-  const sizeOutcome = checkReflectSize(sourceBody, cleanedBody);
+  const size = checkReflectSize(sourceBody, cleanedBody);
   let sizeGuardRatio: ReflectSanitizeResult["sizeGuardRatio"];
-  if (!sizeOutcome.ok) {
-    const pct = (sizeOutcome.ratio * 100).toFixed(0);
-    const limit = sizeOutcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 250%";
-    const cause =
-      sizeOutcome.code === "EXCESSIVE_SHRINKAGE"
-        ? "Concrete content was likely deleted."
-        : "Speculative material was likely added.";
+  if (!size.ok) {
+    const shrink = size.code === "EXCESSIVE_SHRINKAGE";
     warnings.push(
-      `${sizeOutcome.code} — proposed body is ${pct}% of source (${limit}) for ref ${targetRef}. ${cause} Flagged for review.`,
+      `${size.code} — proposed body is ${(size.ratio * 100).toFixed(0)}% of source (${shrink ? "minimum 50%" : "maximum 250%"}) for ref ${targetRef}. ${shrink ? "Concrete content was likely deleted." : "Speculative material was likely added."} Flagged for review.`,
     );
-    sizeGuardRatio = { code: sizeOutcome.code, ratio: sizeOutcome.ratio };
+    sizeGuardRatio = { code: size.code, ratio: size.ratio };
   }
-
-  // Truncation-marker leak (#952) — a model that saw a capped/truncated
-  // asset sometimes echoes the "[truncated ...]" notice verbatim into its
-  // rewrite instead of proposing real content for the missing tail. The
-  // body-length ratio check above does not reliably catch this (a leaked
-  // marker can still fall inside the 50%-250% band). Flag and defer to
-  // human review — same "degrade with a warning" rung as the size guard,
-  // not a new hard reject.
   const truncationMarkerLeaked = cleanedBody.includes(REFLECT_TRUNCATION_MARKER);
   if (truncationMarkerLeaked) {
     warnings.push(
       `Proposed body for ref ${targetRef} contains the truncation-notice text the model was shown for a capped source asset ("${REFLECT_TRUNCATION_MARKER}"). The model likely echoed the notice instead of writing real content. Flagged for review.`,
     );
   }
-
-  // Reassemble final content: merged frontmatter + cleaned body.
-  // When there is no frontmatter at all (no source fm and no LLM fm), emit body
-  // only so we don't add a stray `---` to e.g. a script asset that bypassed the
-  // type guard via a custom registration.
+  // No frontmatter at all stays body-only, never gaining a stray `---`.
   const hasFrontmatter = Object.keys(mergedFm).length > 0;
-  const reassembled = hasFrontmatter
-    ? assembleAssetFromString(serializeFrontmatter(mergedFm), cleanedBody)
-    : cleanedBody;
-
   return {
-    content: reassembled,
+    content: hasFrontmatter ? assembleAssetFromString(serializeFrontmatter(mergedFm), cleanedBody) : cleanedBody,
     ...(hasFrontmatter ? { frontmatter: mergedFm } : {}),
     warnings,
     ...(sizeGuardRatio ? { sizeGuardRatio } : {}),
@@ -781,12 +433,8 @@ export function sanitizeReflectPayload(
   };
 }
 
-/**
- * JSON Schema for structured reflect output. Passed to `chatCompletion` when
- * {@link wantsJsonSchemaOutput} selects `outputMode: "json_schema"`, so the
- * model returns a strict JSON object containing only the target-scoped
- * fields AKM cannot derive.
- */
+// ── Direct-LLM output contract ───────────────────────────────────────────────
+
 const REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["description", "when_to_use"],
@@ -797,24 +445,21 @@ const REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
+const REFLECT_CONFIDENCE_SCHEMA = {
+  type: "number",
+  minimum: 0,
+  maximum: 1,
+  description:
+    "Self-reported quality confidence in [0, 1]. Persisted on the proposal for reviewers and the triage judge to read during adjudication.",
+};
+
 export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["content", "confidence", "frontmatterPatch"],
   additionalProperties: false,
   properties: {
     content: { type: "string", description: "Complete improved markdown body without YAML frontmatter." },
-    // Phase 6A (Advantage D6a): self-reported confidence in [0, 1]. When the
-    // LLM is well-calibrated, scores at or above the configured threshold
-    // (default 0.8) drive auto-accept in `akm improve`. Out-of-range or
-    // non-finite values are rejected by direct-output extraction. Agent and SDK
-    // confidence remains optional on their separate existing contracts.
-    confidence: {
-      type: "number",
-      minimum: 0,
-      maximum: 1,
-      description:
-        "Self-reported quality confidence in [0, 1]. Persisted on the proposal for reviewers and the triage judge to read during adjudication.",
-    },
+    confidence: REFLECT_CONFIDENCE_SCHEMA,
     frontmatterPatch: REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA,
   },
 };
@@ -826,91 +471,43 @@ const REFLECT_UNSCOPED_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     ref: { type: "string", description: "Selected asset ref as a subdir-qualified conceptId." },
     content: { type: "string", description: "Complete improved markdown body without YAML frontmatter." },
-    confidence: {
-      type: "number",
-      minimum: 0,
-      maximum: 1,
-      description: "Self-reported quality confidence in [0, 1].",
-    },
+    confidence: { type: "number", minimum: 0, maximum: 1, description: "Self-reported quality confidence in [0, 1]." },
     frontmatterPatch: REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA,
   },
 };
 
 /**
- * Whether to frame the reflect prompt for structured JSON output on this
- * connection. Optimistic by default — `chatCompletion` attempts
- * `response_format: json_schema` fresh on every call and falls back once on
- * a 4xx, so there is no persisted verdict to consult here. `false` only when
- * a human/workflow explicitly disabled it, or a real call already proved
- * this connection rejects it earlier in the same process.
+ * Frame for JSON Schema unless the connection disabled it or already proved
+ * this process that it rejects it (the transport retries plain text on a 4xx).
  */
 function wantsJsonSchemaOutput(connection: { endpoint: string; model: string; supportsJsonSchema?: boolean }): boolean {
   return connection.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(connection);
 }
 
-/** Critique prompt injected between prior draft and refinement request (Self-Refine loop). */
+/** Injected between the prior draft and the refinement request (self-refine). */
 const REFLECT_CRITIQUE_PROMPT =
   "Your previous proposal is shown above. Review it critically and provide an improved version that is more specific, actionable, and avoids any issues with the previous attempt. Return only the improved response using the output contract from the original prompt.";
 
-// Reflect no longer
-// derives a `max_tokens` cap from the prompt's character-based size policy.
-// llm/client.ts does not send `max_tokens` by default for exactly this
-// reason — the model/API already knows its own limits, and a character-to-
-// token conversion is inherently approximate (the very history this
-// function's old doc comment recorded: it had already cut a real response
-// off mid-envelope once and needed a 2,048-token fudge factor bolted on to
-// compensate). The content-size policy is still enforced twice over — the
-// prompt rules the model reads, and the post-processor's own size check —
-// so nothing is lost by not adding a third, byte-derived cap whose only
-// possible effect is truncating a response early.
-
-/** Options for the direct-LLM reflect runner selected by the current execution path. */
 export interface RunReflectViaLlmOptions {
-  /** Reflect prompt text (built by {@link buildReflectPrompt}). */
   prompt: string | undefined;
-  /** Exact symbolic runner selected before dispatch. */
-  runner: Extract<RunnerSpec, { kind: "llm" }>;
-  /** Hard timeout for the LLM request in ms. */
+  runner: LlmRunner;
   timeoutMs?: number | null;
-  /** Optional caller-driven cancellation signal. */
   signal?: AbortSignal;
-  /** Prior draft for Self-Refine critique (injected on iterations > 0). */
+  /** Prior draft for self-refine critique (iterations > 0). */
   priorDraft?: string;
-  /** Current refinement iteration (0-based). */
   iteration: number;
-  /**
-   * JSON Schema for structured output. When provided, passed through to
-   * `chatCompletion`, which attempts `response_format: json_schema` fresh on
-   * every call and falls back once to plain-text framing on a 4xx.
-   */
+  /** JSON Schema for structured output (the transport falls back once on a 4xx). */
   responseSchema?: Record<string, unknown>;
-  /** Test seam: override the chat function (avoids real LLM calls in tests). */
   chat?: typeof chatCompletion;
-  /**
-   * Hard output-token cap forwarded directly to `chatCompletion` as `max_tokens`.
-   * Derived from the same blended-bound formula used by {@link checkReflectSize}
-   * (via {@link buildReflectPrompt}) so the API layer enforces the same ceiling
-   * that the post-processor would reject anyway. Adds a buffer for JSON structure
-   * and response-envelope overhead (÷3 chars/token, +500 char overhead).
-   * Only set when the source body is ≥ REFLECT_SIZE_GUARD_MIN_BYTES (200 chars).
-   */
   maxTokens?: number;
-  /**
-   * Accepted for type consistency with agent/sdk runners but intentionally NO-OP
-   * for the LLM HTTP path: the chat-completion transport has no filesystem access,
-   * so it cannot honour a file-write contract. The reflect dispatcher must NEVER
-   * synthesize a draft path when the runner kind is `llm` — the prompt builder
-   * is also called WITHOUT `draftFilePath` so it emits the direct-LLM contract instead.
-   */
+  /** Ignored: the HTTP transport has no filesystem for the file-write contract. */
   draftFilePath?: string;
-  /** Direct-LLM extraction contract. */
   outputMode: ReflectLlmOutputMode;
-  /** Known target identity; direct target-scoped output never echoes this. */
+  /** Known target identity; target-scoped output never echoes it. */
   targetRef?: string;
-  /** Invocation-wide repair budget gate. Defaults to true for direct callers. */
+  /** Invocation-wide repair budget gate (default true). */
   allowRepair?: boolean;
-  /** Stable lowering diagnostics sink shared across refine/repair attempts. */
-  onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
+  onNotices?: (notices: readonly Notice[]) => void;
 }
 
 interface ReflectLlmTelemetry {
@@ -918,18 +515,17 @@ interface ReflectLlmTelemetry {
   repairAttempts: number;
 }
 
-function reflectLlmTelemetry(result: AgentRunResult): ReflectLlmTelemetry | undefined {
-  if (!result.parsed || typeof result.parsed !== "object" || Array.isArray(result.parsed)) return undefined;
-  const parsed = result.parsed as Record<string, unknown>;
-  if (parsed.outputMode !== "json_schema" && parsed.outputMode !== "framed_markdown") return undefined;
-  if (typeof parsed.repairAttempts !== "number") return undefined;
-  return { outputMode: parsed.outputMode, repairAttempts: parsed.repairAttempts };
+function parsedRecord(result: AgentRunResult): Record<string, unknown> | undefined {
+  return result.parsed && typeof result.parsed === "object" && !Array.isArray(result.parsed)
+    ? (result.parsed as Record<string, unknown>)
+    : undefined;
 }
 
-function reflectLlmPriorDraft(result: AgentRunResult): string | undefined {
-  if (!result.parsed || typeof result.parsed !== "object" || Array.isArray(result.parsed)) return undefined;
-  const priorDraft = (result.parsed as Record<string, unknown>).priorDraft;
-  return typeof priorDraft === "string" ? priorDraft : undefined;
+function reflectLlmTelemetry(result: AgentRunResult): ReflectLlmTelemetry | undefined {
+  const parsed = parsedRecord(result);
+  if (!parsed || (parsed.outputMode !== "json_schema" && parsed.outputMode !== "framed_markdown")) return undefined;
+  if (typeof parsed.repairAttempts !== "number") return undefined;
+  return { outputMode: parsed.outputMode, repairAttempts: parsed.repairAttempts };
 }
 
 function parseReflectConfidence(value: unknown): number {
@@ -1000,96 +596,56 @@ function parseFramedReflectOutput(raw: string, targetRef: string | undefined) {
     throw new Error("direct reflect response missing terminal AKM_REFLECT_CONTENT_END marker");
   }
   const headerLines = normalized.slice(0, beginIndex).trim().split("\n").filter(Boolean);
-  const confidenceLine = headerLines.find((line) => line.startsWith("AKM_REFLECT_CONFIDENCE:"));
-  const refLine = headerLines.find((line) => line.startsWith("AKM_REFLECT_REF:"));
-  const patchLine = headerLines.find((line) => line.startsWith("AKM_REFLECT_FRONTMATTER_PATCH:"));
-  const expectedHeaderLines = targetRef ? 2 : 3;
+  const header = (prefix: string) => headerLines.find((line) => line.startsWith(prefix));
+  const confidenceLine = header("AKM_REFLECT_CONFIDENCE:");
+  const refLine = header("AKM_REFLECT_REF:");
+  const patchLine = header("AKM_REFLECT_FRONTMATTER_PATCH:");
   const invalidRefLine = targetRef ? refLine !== undefined : refLine === undefined;
-  if (headerLines.length !== expectedHeaderLines || !confidenceLine || !patchLine || invalidRefLine) {
+  if (headerLines.length !== (targetRef ? 2 : 3) || !confidenceLine || !patchLine || invalidRefLine) {
     throw new Error("direct reflect response contained invalid frame metadata");
   }
   const confidenceText = confidenceLine.slice("AKM_REFLECT_CONFIDENCE:".length).trim();
   if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(confidenceText)) {
     throw new Error("direct reflect frame confidence must be a decimal number in [0, 1]");
   }
-  const confidence = parseReflectConfidence(Number(confidenceText));
   const ref = targetRef ?? refLine?.slice("AKM_REFLECT_REF:".length).trim() ?? "";
   if (!ref) throw new Error("direct reflect response contained an empty AKM_REFLECT_REF value");
   const content = normalized.slice(contentStart, endIndex);
   if (!content.trim()) throw new Error("direct reflect response contained empty framed content");
-  const patchText = patchLine.slice("AKM_REFLECT_FRONTMATTER_PATCH:".length).trim();
   let parsedPatch: unknown;
   try {
-    parsedPatch = JSON.parse(patchText);
+    parsedPatch = JSON.parse(patchLine.slice("AKM_REFLECT_FRONTMATTER_PATCH:".length).trim());
   } catch {
     throw new Error("direct reflect response contained invalid frontmatter patch JSON");
   }
   const frontmatter = parseReflectFrontmatterPatch(parsedPatch);
+  const confidence = parseReflectConfidence(Number(confidenceText));
   return { ref, content, confidence, ...(frontmatter ? { frontmatter } : {}) };
 }
 
-function parseDirectReflectOutput(raw: string, mode: ReflectLlmOutputMode, targetRef: string | undefined) {
-  return mode === "json_schema" ? parseSchemaReflectOutput(raw, targetRef) : parseFramedReflectOutput(raw, targetRef);
-}
-
 /**
- * Run a single reflect iteration directly via the LLM API (v2 config path).
- *
- * Returns an {@link AgentRunResult}-shaped object so it can slot into the same
- * dispatch loop as agent-based runners. Production calls extract the selected
- * direct-LLM contract and normalize it to proposal JSON in `stdout`. Errors
- * are captured into the result rather than thrown.
+ * One reflect iteration through the direct LLM runner, as an agent-shaped
+ * result (errors captured, never thrown except configuration). An unparseable
+ * response gets one repair turn within the original deadline.
  */
 export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<AgentRunResult> {
   const start = Date.now();
   let repairAttempts = 0;
-  const _connection = opts.runner.connection;
-  const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
   const configuredTimeout = Object.hasOwn(opts, "timeoutMs")
     ? (opts.timeoutMs ?? null)
     : Object.hasOwn(opts.runner, "timeoutMs")
       ? (opts.runner.timeoutMs ?? null)
       : DEFAULT_LLM_TIMEOUT_MS;
   const deadline = typeof configuredTimeout === "number" ? start + configuredTimeout : undefined;
-
+  const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
   if (opts.priorDraft !== undefined && opts.iteration > 0) {
-    messages.push({ role: "assistant", content: opts.priorDraft });
-    messages.push({ role: "user", content: REFLECT_CRITIQUE_PROMPT });
+    messages.push({ role: "assistant", content: opts.priorDraft }, { role: "user", content: REFLECT_CRITIQUE_PROMPT });
   }
-
-  const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> =>
-    callStructured<string>({
-      feature: "reflect_proposal",
-      runner: opts.runner,
-      messages: callMessages,
-      request: {
-        ...(repairTimeoutMs !== undefined
-          ? { timeoutMs: repairTimeoutMs }
-          : Object.hasOwn(opts, "timeoutMs")
-            ? { timeoutMs: opts.timeoutMs }
-            : {}),
-        ...(opts.signal ? { signal: opts.signal } : {}),
-        ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
-        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-        // Reflect requires a machine-readable payload. Visible chain-of-thought
-        // can consume the output cap before the model reaches the envelope.
-        enableThinking: false,
-        ...(opts.chat ? { chat: opts.chat } : {}),
-      },
-      ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
-      parse: (raw) => raw ?? "",
-      // Unreachable on the ungated path (errors propagate to the catch below).
-      onError: () => "",
-      fallback: "",
-    });
-
-  const failure = (
-    err: unknown,
-    reason: AgentFailureReason,
-    repairAttempts: number,
-    stdout = "",
-    exitCode = 1,
-  ): AgentRunResult => {
+  const parse = (raw: string) =>
+    opts.outputMode === "json_schema"
+      ? parseSchemaReflectOutput(raw, opts.targetRef)
+      : parseFramedReflectOutput(raw, opts.targetRef);
+  const failure = (err: unknown, reason: AgentFailureReason, stdout = "", exitCode = 1): AgentRunResult => {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
@@ -1102,45 +658,65 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
       parsed: { outputMode: opts.outputMode, repairAttempts },
     };
   };
+  const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> => {
+    const outcome = await callStage({
+      feature: "reflect_proposal",
+      runner: opts.runner,
+      prompt: callMessages.at(-1)?.content ?? "",
+      history: callMessages.slice(0, -1),
+      request: {
+        ...(repairTimeoutMs !== undefined
+          ? { timeoutMs: repairTimeoutMs }
+          : Object.hasOwn(opts, "timeoutMs")
+            ? { timeoutMs: opts.timeoutMs }
+            : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
+        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+        // Visible chain-of-thought can exhaust the output before the envelope.
+        enableThinking: false,
+        ...(opts.chat ? { chat: opts.chat } : {}),
+      },
+      ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
+    });
+    if (!outcome.ok) {
+      throw outcome.reason === "timeout"
+        ? new LlmCallError(outcome.error ?? "timeout", "timeout")
+        : new Error(outcome.error ?? "LLM call failed");
+    }
+    return outcome.raw;
+  };
 
   try {
     if (opts.signal?.aborted) throw new Error("Reflect request aborted");
     const stdout = await call(messages);
-
-    let payload: ReturnType<typeof parseDirectReflectOutput>;
+    let payload: ReturnType<typeof parse>;
     let acceptedOutput = stdout;
     try {
-      payload = parseDirectReflectOutput(stdout, opts.outputMode, opts.targetRef);
+      payload = parse(stdout);
     } catch (err) {
-      if (opts.allowRepair === false) return failure(err, "parse_error", 0, stdout, 0);
-      if (opts.signal?.aborted) return failure(new Error("Reflect request aborted"), "aborted", 0, stdout);
+      if (opts.allowRepair === false) return failure(err, "parse_error", stdout, 0);
+      if (opts.signal?.aborted) return failure(new Error("Reflect request aborted"), "aborted", stdout);
       const remaining = deadline === undefined ? undefined : deadline - Date.now();
       if (remaining !== undefined && remaining <= 0) {
         return failure(
           new LlmCallError("Reflect request timed out before output repair", "timeout"),
           "timeout",
-          0,
           stdout,
         );
       }
       repairAttempts = 1;
-      const repairMessages: ChatMessage[] = [
-        ...messages,
-        { role: "assistant", content: stdout },
-        {
-          role: "user",
-          content: buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined),
-        },
-      ];
-      const repaired = await call(repairMessages, remaining);
-      acceptedOutput = repaired;
+      const repairPrompt = buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined);
+      acceptedOutput = await call(
+        [...messages, { role: "assistant", content: stdout }, { role: "user", content: repairPrompt }],
+        remaining,
+      );
       try {
-        payload = parseDirectReflectOutput(repaired, opts.outputMode, opts.targetRef);
-      } catch (err) {
-        return failure(err, "parse_error", repairAttempts, repaired, 0);
+        payload = parse(acceptedOutput);
+      } catch (repairErr) {
+        return failure(repairErr, "parse_error", acceptedOutput, 0);
       }
     }
-
     return {
       ok: true,
       stdout: JSON.stringify(payload),
@@ -1156,520 +732,166 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
       : err instanceof LlmCallError && err.code === "timeout"
         ? "timeout"
         : "non_zero_exit";
-    return failure(err, reason, repairAttempts);
+    return failure(err, reason);
   }
 }
 
-function failureEnvelope(
-  result: AgentRunResult,
-  ref: string | undefined,
-  engine?: string,
-  fallbackReason: AgentFailureReason = "non_zero_exit",
-): AkmReflectFailure {
-  return {
-    ...baseFailureFields(result, fallbackReason),
-    schemaVersion: 2,
-    ...(ref ? { ref } : {}),
-    ...(engine ? { engine } : {}),
-  };
+// ── Invocation ───────────────────────────────────────────────────────────────
+
+type ReflectPayload = ReturnType<typeof parseAgentProposalPayload>;
+
+/** One reflect invocation: its runner, notices, and the closing-event helpers. */
+interface ReflectRun {
+  options: AkmReflectOptions;
+  stash: string;
+  config: AkmConfig;
+  runnerSpec: RunnerSpec;
+  engineName: string;
+  notices: ReturnType<typeof noticeSet>;
+  emitInvoked: () => void;
+  emitFailed: (reason: AgentFailureReason, subreason: string, ref?: string, extra?: Record<string, unknown>) => void;
 }
 
-/**
- * Reflect content-preservation + proposal creation: restore/reset protected
- * frontmatter and reject unsafe body-size ratios (sanitizeReflectPayload), the
- * #580 noise gate, the optional quality judge, then create the proposal (with
- * the R-4/#373 lesson provenance stamp) and emit `reflect_completed`. Extracted
- * verbatim from `akmReflect`; every reject/skip envelope and event is
- * byte-identical.
- */
-async function finalizeReflectProposal(args: {
-  payload: ReturnType<typeof parseAgentProposalPayload>;
-  assetContent: string | undefined;
-  result: AgentRunResult;
-  options: AkmReflectOptions;
-  engineName: string;
-  config: import("../../core/config/config").AkmConfig;
-  qualityGateEnabled: boolean;
-  qualityGateSkippedNoJudge: boolean;
-  qualityJudgeRunner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-  feedback: Parameters<typeof runReflectQualityJudge>[3];
-  stash: string;
-  emitReflectFailed: (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ) => void;
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
-}): Promise<AkmReflectResult> {
-  const {
-    assetContent,
-    result,
-    options,
-    engineName,
-    config,
-    qualityGateEnabled,
-    qualityGateSkippedNoJudge,
-    qualityJudgeRunner,
-    feedback,
-    stash,
-    emitReflectFailed,
-    onNotices,
-  } = args;
-  let payload = args.payload;
-  const outputTelemetry = reflectLlmTelemetry(result);
-
-  // 7. Reflect content-preservation rails:
-  //     - Restore source frontmatter so reflect can never strip indexable
-  //       fields (`description`, `when_to_use`, `tags`, ...).
-  //     - Reset protected identity fields (`name`, `ref`, `id`, `slug`,
-  //       `type`) the LLM tried to change.
-  //     - Reject proposals that shrink/expand the body past safe ratios.
-  //
-  // See REFLECT_ALLOWED_TYPES / sanitizeReflectPayload for the underlying
-  // hypotheses + observed regressions (`8737ab63`, `26941510`, and the
-  // catastrophic-shrinkage cases from the May 2026 review).
-  const sanitizeOutcome = sanitizeReflectPayload(
-    { content: payload.content, ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}) },
-    assetContent,
-    payload.ref,
-  );
-  if (sanitizeOutcome.reject) {
+/** The lazy `reflect_invoked` + failure-side `reflect_completed` emitters. */
+function reflectEmitters(options: AkmReflectOptions): Pick<ReflectRun, "emitInvoked" | "emitFailed"> {
+  let invoked = false;
+  const emitInvoked = (): void => {
+    if (invoked) return;
     appendEvent(
       {
-        eventType: "reflect_completed",
-        ref: payload.ref,
+        eventType: "reflect_invoked",
+        ...(options.ref ? { ref: options.itemRef ?? options.ref } : {}),
         metadata: {
-          source: "reflect",
-          sanitized: true,
-          rejected: true,
-          rejectReason: sanitizeOutcome.reject.error,
-          ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
-          ...(outputTelemetry ?? {}),
+          ...(options.task ? { task: options.task } : {}),
+          ...(options.engine ? { engine: options.engine } : {}),
+          ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
         },
       },
       options.eventsCtx,
     );
-    return {
-      schemaVersion: 2,
-      ok: false,
-      reason: sanitizeOutcome.reject.reason,
-      error: sanitizeOutcome.reject.error,
-      ...(options.ref ? { ref: options.ref } : {}),
-      engine: engineName,
-      exitCode: result.exitCode,
-    };
-  }
-  payload = {
-    ...payload,
-    content: sanitizeOutcome.content,
-    ...(sanitizeOutcome.frontmatter ? { frontmatter: sanitizeOutcome.frontmatter } : {}),
+    invoked = true;
   };
-
-  // 7c. Noise gate (#580): never queue a proposal whose sanitized content is
-  // identical to the current asset (empty diff) or differs only cosmetically
-  // (whitespace reflow, code-fence language hints, YAML scalar re-folding).
-  // Pure deterministic text comparison — see `reflect-noise.ts`. Skipped when
-  // there is no source asset (new-asset proposals have nothing to diff against).
-  if (assetContent !== undefined) {
-    const changeKind = classifyReflectChange(assetContent, payload.content);
-    // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
-    // pre-#639 behaviour (low-value treated the same as substantive). Resolved
-    // by the caller from the active improve strategy's
-    // `processes.reflect.lowValueFilter.enabled` and passed via options, so the
-    // running strategy decides.
-    const lowValueFilterEnabled = options.lowValueFilter === true;
-    const isDeferred =
-      changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);
-    if (isDeferred) {
-      const subreason =
-        changeKind === "noop"
-          ? "reflect_skipped_noop"
-          : changeKind === "low-value"
-            ? "reflect_skipped_low_value"
-            : "reflect_skipped_cosmetic";
-      emitReflectFailed("no_change", subreason, options.ref, { changeKind, ...(outputTelemetry ?? {}) });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "no_change" as const,
-        error:
-          changeKind === "noop"
-            ? `Reflect skipped: proposed content for ${payload.ref} is identical to the current asset (empty diff); no proposal created.`
-            : changeKind === "low-value"
-              ? `Reflect skipped: proposed content for ${payload.ref} is a low-value prose micro-rewrite (few changed tokens, no structural changes); no proposal created.`
-              : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-      };
-    }
-  }
-
-  // 7c. Judge the exact sanitized content that can be persisted. Fail closed
-  // on cancellation, transport failure, malformed output, or an invalid score.
-  // Skipped when the size guard or the truncation-marker leak already fired —
-  // that content is deferred to human review regardless of what the judge says.
-  if (qualityGateEnabled && !sanitizeOutcome.sizeGuardRatio && !sanitizeOutcome.truncationMarkerLeaked) {
-    const judgeResult = await runReflectQualityJudge(
-      config,
-      payload.content,
-      assetContent ?? "",
-      feedback,
-      options.chat,
+  const emitFailed: ReflectRun["emitFailed"] = (reason, subreason, ref, extra) => {
+    emitInvoked();
+    appendEvent(
       {
-        runnerSelectionFrozen: true,
-        ...(qualityJudgeRunner ? { llmRunner: qualityJudgeRunner } : {}),
-        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
-        ...(options.signal ? { signal: options.signal } : {}),
-        onNotices,
+        eventType: "reflect_completed",
+        ...(ref ? { ref } : {}),
+        metadata: { source: "reflect", ok: false, reason, subreason, ...(extra ?? {}) },
       },
+      options.eventsCtx,
     );
-    if (!judgeResult.pass) {
-      if (options.ref) {
-        recordLedgerAttempt(
-          { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx },
-          {
-            stashDir: stash,
-            ref: options.itemRef ?? durableImproveRef(options.ref),
-            source: "reflect",
-            outcome: "quality_rejected",
-            detail: judgeResult.reason,
-          },
-        );
-      }
-      appendEvent(
-        {
-          eventType: "reflect_completed",
-          ref: payload.ref,
-          metadata: {
-            source: "reflect",
-            qualityRejected: true,
-            qualityScore: judgeResult.score,
-            qualityReason: judgeResult.reason,
-            ...(judgeResult.criteria ? { qualityCriteria: judgeResult.criteria } : {}),
-            ...(outputTelemetry ?? {}),
-          },
-        },
-        options.eventsCtx,
-      );
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "quality_rejected" as const,
-        error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-      };
-    }
-  }
-
-  return createReflectProposal({
-    payload,
-    options,
-    stash,
-    engineName,
-    durationMs: result.durationMs,
-    outputTelemetry,
-    qualityGateSkippedNoJudge,
-    judgePassed: qualityGateEnabled && !sanitizeOutcome.sizeGuardRatio && !sanitizeOutcome.truncationMarkerLeaked,
-    sizeGuardRatio: sanitizeOutcome.sizeGuardRatio,
-    truncationMarkerLeaked: sanitizeOutcome.truncationMarkerLeaked,
-  });
+  };
+  return { emitInvoked, emitFailed };
 }
 
-/**
- * Create the reflect proposal from sanitized+judged payload: stamp the R-4/#373
- * lesson provenance marker, call `createProposal`, record the judge's verdict
- * as a gate decision, and emit the terminal `reflect_completed`.
- */
-function createReflectProposal(args: {
-  payload: ReturnType<typeof parseAgentProposalPayload>;
-  options: AkmReflectOptions;
-  stash: string;
-  engineName: string;
-  durationMs: number;
-  outputTelemetry?: ReflectLlmTelemetry;
-  qualityGateSkippedNoJudge: boolean;
-  /** The quality judge scored this exact content and passed it. */
-  judgePassed: boolean;
-  sizeGuardRatio?: { code: "EXCESSIVE_SHRINKAGE" | "EXCESSIVE_EXPANSION"; ratio: number };
-  truncationMarkerLeaked?: boolean;
-}): AkmReflectResult {
-  const {
-    payload,
-    options,
-    stash,
-    engineName,
-    durationMs,
-    outputTelemetry,
-    qualityGateSkippedNoJudge,
-    judgePassed,
-    sizeGuardRatio,
-    truncationMarkerLeaked,
-  } = args;
-  // 8. Create the proposal. The proposal queue is the ONLY thing reflect
-  // writes — promotion to a real asset is gated by `akm proposal accept`.
-  //
-  // R-4 / #373: Stamp `derived_from_reflect: true` in the frontmatter of any
-  // lesson proposal generated by reflect. This provenance marker lets
-  // `readRelatedLessons` exclude echo-chamber lessons (lessons that originate
-  // from prior reflect runs on the same skill) unless independent feedback
-  // evidence exists. ExpeL arXiv:2308.10144 — reject rules without success/
-  // failure differential from independent evidence.
-  const isLessonProposal = (() => {
-    try {
-      return parseRefInput(payload.ref).type === "lesson";
-    } catch {
-      return false;
-    }
-  })();
-  const basePayloadFrontmatter = payload.frontmatter ?? {};
-  const payloadFrontmatterWithProvenance: Record<string, unknown> = isLessonProposal
-    ? { ...basePayloadFrontmatter, derived_from_reflect: true }
-    : basePayloadFrontmatter;
-
-  const createInput: CreateProposalInput = {
-    ref: payload.ref,
-    ...(options.target ? { target: options.target } : {}),
-    source: "reflect",
-    sourceRun: `reflect-${Date.now()}`,
-    payload: {
-      content: payload.content,
-      ...(Object.keys(payloadFrontmatterWithProvenance).length > 0
-        ? { frontmatter: payloadFrontmatterWithProvenance }
-        : {}),
-    },
-    // Phase 6A: forward LLM-reported confidence into the proposal record.
-    // `parseAgentProposalPayload` already clamps to [0, 1] and drops non-
-    // finite values; `createProposal` runs its own sanitizer as a safety net.
-    ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
-    // Attribution tagging: persist the eligibility lane on the proposal so it
-    // survives to accept/reject/revert time even across runs. See EligibilitySource.
-    ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-    // The improve ledger keys the attempt by the candidate's durable state key.
-    ...(options.itemRef ? { attemptedRefs: [options.itemRef] } : {}),
-  };
-  let proposal: Proposal = emitProposal({ stashDir: stash, proposalsCtx: options.ctx }, createInput);
-
-  const reviewReasons: string[] = [];
-  if (qualityGateSkippedNoJudge) reviewReasons.push("no-judge-configured");
-  if (sizeGuardRatio) reviewReasons.push("reflect-size-ratio");
-  if (truncationMarkerLeaked) reviewReasons.push("reflect-truncation-leak");
-  if (reviewReasons.length > 0) {
-    proposal =
-      recordGateDecision(
-        stash,
-        proposal.id,
-        {
-          outcome: "deferred",
-          reason: reviewReasons.join("+"),
-          gate: "reflect",
-          ...(sizeGuardRatio ? { measured: Math.round(sizeGuardRatio.ratio * 100) } : {}),
-        },
-        options.ctx,
-      ) ?? proposal;
-  } else if (judgePassed) {
-    proposal = stageJudgedProposal(stash, proposal, options.ctx);
-  }
-
-  appendEvent(
-    {
-      eventType: "reflect_completed",
-      ref: proposal.ref,
-      metadata: {
-        proposalId: proposal.id,
-        source: "reflect",
-        engine: engineName,
-        ...(qualityGateSkippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
-        ...(sizeGuardRatio ? { sizeGuardRatio: sizeGuardRatio.code, sizeGuardRatioValue: sizeGuardRatio.ratio } : {}),
-        ...(truncationMarkerLeaked ? { truncationMarkerLeaked: true } : {}),
-        ...(outputTelemetry ?? {}),
-      },
-    },
-    options.eventsCtx,
-  );
-
+/** A post-dispatch failure envelope (with the run's notices). */
+function reflectFailure(
+  run: ReflectRun,
+  result: AgentRunResult,
+  reason: AgentFailureReason,
+  error: string,
+  withOutput: boolean,
+): AkmReflectFailure {
   return {
     schemaVersion: 2,
-    ok: true,
-    proposal,
-    ref: proposal.ref,
-    engine: engineName,
-    durationMs,
+    ok: false,
+    reason,
+    error,
+    ...(run.options.ref ? { ref: run.options.ref } : {}),
+    engine: run.engineName,
+    exitCode: result.exitCode,
+    ...(withOutput ? { stdout: result.stdout, ...(result.stderr ? { stderr: result.stderr } : {}) } : {}),
+    ...run.notices.fields(),
   };
 }
 
-/**
- * Resolve the agent's proposal payload from a successful run: the file-write
- * contract path (read `lastDraftPath`, extract self-rated confidence) or the
- * JSON-stdout path used by direct LLM runners. Returns the payload or a terminal
- * failure envelope.
- */
-function resolveReflectPayload(args: {
-  result: AgentRunResult;
-  lastDraftPath: string | undefined;
-  sensitiveValues: readonly string[];
-  options: AkmReflectOptions;
-  engineName: string;
-  emitReflectFailed: (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ) => void;
-}): { payload: ReturnType<typeof parseAgentProposalPayload> } | { failure: AkmReflectResult } {
-  const { result, lastDraftPath, sensitiveValues, options, engineName, emitReflectFailed } = args;
-  // 6. Resolve the proposal content.
-  //
-  // Path A (file-write contract — preferred for agent/sdk runners on long
-  // assets): the agent wrote the body to `lastDraftPath` and printed
-  // `DRAFT_WRITTEN` on stdout. Load the body from disk and synthesize a
-  // payload. The `EXCESSIVE_EXPANSION`/schema-shape gates downstream still
-  // apply — they validate content, not transport.
-  //
-  // Path B (JSON stdout): the direct LLM runner cannot honour file-write.
-  const draftFileExists =
-    lastDraftPath !== undefined && fs.existsSync(lastDraftPath) && fs.statSync(lastDraftPath).size > 0;
-  const draftSignaled = stdoutSignalsDraftWritten(result.stdout);
-
-  if (draftSignaled && lastDraftPath && !draftFileExists) {
-    // Agent claimed to write the draft but the file is missing or empty.
-    // Surface as a parse_error rather than silently falling through — the
-    // alternative would be parsing the `DRAFT_WRITTEN` sentinel as JSON,
-    // which is guaranteed to fail with a confusing message.
-    emitReflectFailed("parse_error", "draft_missing", options.ref, {
-      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-    });
-    return {
-      failure: {
-        schemaVersion: 2,
-        ok: false,
-        reason: "parse_error",
-        error: `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        ...(result.stderr ? { stderr: result.stderr } : {}),
-      },
-    };
-  }
-
-  if (draftFileExists && lastDraftPath) {
-    // Happy path: agent wrote the body to disk. Use the ref the caller
-    // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
-    // below has no effect when there is no expected ref).
-    const fileContent = redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues);
-    // Phase 6A: file-write contract carries self-rated confidence on the
-    // `DRAFT_WRITTEN confidence=<n>` sentinel line. Extract it so the
-    // file-write path is on equal footing with the JSON-stdout path for
-    // auto-accept gating in `akm improve`.
-    const draftConfidence = extractDraftConfidence(result.stdout);
-    return {
-      payload: {
-        ref: options.ref ?? "",
-        content: fileContent,
-        ...(draftConfidence !== undefined ? { confidence: draftConfidence } : {}),
-      },
-    };
-  }
-
-  try {
-    return { payload: parseAgentProposalPayload(result.stdout ?? "") };
-  } catch (err) {
-    emitReflectFailed("parse_error", "parse_error", options.ref, {
-      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-      ...(reflectLlmTelemetry(result) ?? {}),
-    });
-    return {
-      failure: {
-        schemaVersion: 2,
-        ok: false,
-        reason: "parse_error",
-        error: err instanceof Error ? err.message : String(err),
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        ...(result.stderr ? { stderr: result.stderr } : {}),
-      },
-    };
-  }
+function exitCodeMeta(result: AgentRunResult): Record<string, unknown> {
+  return result.exitCode !== null ? { exitCode: result.exitCode } : {};
 }
 
-function isReflectQualityGateEnabled(activeStrategy: ImproveProfileConfig | undefined): boolean {
-  return (
-    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
-    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true)
-  );
+function unsupportedTypeFailure(
+  ref: string,
+  type: string,
+  detail: string,
+  emitFailed: ReflectRun["emitFailed"],
+): { failure: AkmReflectResult } {
+  emitFailed("unsupported_type", "unsupported_type", ref, { type });
+  return {
+    failure: {
+      schemaVersion: 2,
+      ok: false,
+      reason: "unsupported_type" as AgentFailureReason,
+      error: `Reflect refused: asset type "${type}" is not supported by reflect (${detail}). Use \`akm proposal new\` or edit the file directly.`,
+      ref,
+      exitCode: null,
+    },
+  };
 }
 
-type ReflectQualityJudgeSelection = Readonly<{
-  enabled: boolean;
-  runner: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-}>;
-
-/** Resolve the exact judge transport before generation, so a missing judge credential fails before any work. */
-function resolveReflectQualityJudgeRunner(
-  config: AkmConfig,
-  runnerSpec: RunnerSpec,
-  enabled: boolean,
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void,
-): ReflectQualityJudgeSelection {
-  if (!enabled) return Object.freeze({ enabled: false, runner: undefined });
-  if (runnerIsLlm(runnerSpec)) return Object.freeze({ enabled: true, runner: runnerSpec });
-  const resolved = resolveImproveLlmExecution({ config, processName: "reflect_proposal_quality-judge" });
-  if (resolved) onNotices(resolved.notices);
-  return Object.freeze({ enabled: true, runner: resolved?.runner });
+/** The target's parsed ref and current content, or a refusal for a type reflect cannot rewrite. */
+async function resolveReflectSource(
+  options: AkmReflectOptions,
+  stash: string,
+  emitFailed: ReflectRun["emitFailed"],
+): Promise<{ assetContent: string | undefined; parsedRef: AssetRef | undefined } | { failure: AkmReflectResult }> {
+  if (!options.ref) return { assetContent: undefined, parsedRef: undefined };
+  const parsedRef = parseRefInput(options.ref);
+  // A secret's content is never read, whatever it looks like.
+  if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
+    return unsupportedTypeFailure(
+      options.ref,
+      parsedRef.type,
+      "secret material is never read or sent to an LLM",
+      emitFailed,
+    );
+  }
+  let assetContent = options.assetContent;
+  if (assetContent === undefined) {
+    try {
+      const qualifiedRef = options.itemRef ?? options.ref;
+      const localFilePath = await findAssetFilePath(qualifiedRef, stash);
+      if (localFilePath && fs.existsSync(localFilePath)) {
+        assetContent = fs.readFileSync(localFilePath, "utf8");
+      } else {
+        const entry = await lookup(parseRefInput(qualifiedRef));
+        if (entry?.filePath && fs.existsSync(entry.filePath)) assetContent = fs.readFileSync(entry.filePath, "utf8");
+      }
+    } catch {
+      // An index miss is not fatal: the agent can still propose a fresh asset.
+    }
+  }
+  if (
+    !REFLECT_ALLOWED_TYPES.has(parsedRef.type) &&
+    (assetContent === undefined || parseFrontmatter(assetContent).frontmatter === null)
+  ) {
+    return unsupportedTypeFailure(options.ref, parsedRef.type, "its content is not frontmatter + markdown", emitFailed);
+  }
+  return { assetContent, parsedRef };
 }
 
 /**
- * Lower `runnerSpec` through genuine preparation, then check its required
- * credentials (SDK fallback included), so a bad transport or a missing
- * credential fails before any reflect work starts.
- */
-function preflightReflectDispatch(
-  runnerSpec: RunnerSpec,
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void,
-): void {
-  const prepared = resolveExecution({
-    content: "Validate reflect operation transport before dispatch.",
-    runner: runnerSpec,
-  });
-  const lowered = buildExecution(prepared.request, prepared.runner);
-  onNotices(lowered.notices);
-  assertRunnerCredentials(lowered.runner);
-}
-
-/**
- * Resolve the single named engine for a reflect invocation (standalone --engine
- * / defaults.engine, or the improve strategy's LLM-only process overlay),
- * throwing on any incompatible or missing engine, and validating the unattended
- * LLM requirement. Extracted verbatim from `akmReflect`.
+ * The single engine for this invocation: `--engine`, the improve strategy's
+ * LLM-only reflect process, or `defaults.engine` (announced when it falls back
+ * to the SDK binary). Unattended improve refuses a tool-capable engine.
  */
 function resolveReflectRunner(options: AkmReflectOptions): {
-  config: import("../../core/config/config").AkmConfig;
-  activeStrategy: import("../../core/config/config").ImproveProfileConfig | undefined;
+  config: AkmConfig;
+  activeStrategy: ImproveProfileConfig | undefined;
   runnerSpec: RunnerSpec;
   engineName: string;
-  notices: readonly Readonly<LoweringNotice>[];
+  notices: readonly Notice[];
 } {
   const config = options.config ?? loadConfig();
   const activeStrategy =
     options.improveProfile ?? config.improve?.strategies?.[config.defaults?.improveStrategy ?? "default"];
-  let runnerSpec: RunnerSpec;
-  let notices: readonly Readonly<LoweringNotice>[] = [];
+  const lower = (selection: Parameters<typeof resolveExecution>[0]) => {
+    const prepared = resolveExecution(selection);
+    return buildExecution(prepared.request, prepared.runner);
+  };
+  let lowered: { runner: RunnerSpec; notices: readonly Notice[] };
   if (options.engine) {
-    const prepared = resolveExecution({
-      content: "reflect engine selection",
-      config,
-      current: { engine: options.engine },
-    });
-    const lowered = buildExecution(prepared.request, prepared.runner);
-    runnerSpec = lowered.runner;
-    notices = lowered.notices;
+    lowered = lower({ content: "reflect engine selection", config, current: { engine: options.engine } });
   } else if (options.improveProfile) {
     const resolved = resolveImproveLlmExecution({
       config,
@@ -1684,26 +906,18 @@ function resolveReflectRunner(options: AkmReflectOptions): {
         "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
       );
     }
-    runnerSpec = resolved.runner;
-    notices = resolved.notices;
+    lowered = resolved;
   } else {
     const { config: engineConfig, fallbackEngineName } = withEngineFallback(config);
     const defaultEngine = engineConfig.defaults?.engine;
-    // Announced, never silent — same contract as the workflow freeze boundary
-    // and the task runner. Only this arm can select the synthesized engine.
-    const engineAnnouncement = fallbackAnnouncement(fallbackEngineName, defaultEngine);
-    if (engineAnnouncement) warn(engineAnnouncement);
+    const announcement = fallbackAnnouncement(fallbackEngineName, defaultEngine);
+    if (announcement) warn(announcement);
     if (!defaultEngine) {
       throw new ConfigError(`reflect ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "INVALID_CONFIG_FILE");
     }
-    const prepared = resolveExecution({
-      content: "reflect engine selection",
-      config,
-    });
-    const lowered = buildExecution(prepared.request, prepared.runner);
-    runnerSpec = lowered.runner;
-    notices = lowered.notices;
+    lowered = lower({ content: "reflect engine selection", config });
   }
+  const runnerSpec = lowered.runner;
   if (options.eventSource === "improve" && !runnerIsLlm(runnerSpec)) {
     throw new ConfigError(
       `Unattended improve requires an LLM engine for reflect; engine "${runnerSpec.engine ?? options.engine ?? "unknown"}" is tool-capable.`,
@@ -1712,187 +926,62 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     );
   }
   const engineName = runnerSpec.engine ?? options.engine;
-  if (!engineName) {
-    throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
-  }
-  return { config, activeStrategy, runnerSpec, engineName, notices };
+  if (!engineName) throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
+  return { config, activeStrategy, runnerSpec, engineName, notices: lowered.notices };
 }
 
-function unsupportedTypeFailure(
-  ref: string,
-  type: string,
-  detail: string,
-  emitReflectFailed: (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ) => void,
-): { failure: AkmReflectResult } {
-  emitReflectFailed("unsupported_type", "unsupported_type", ref, { type });
-  return {
-    failure: {
-      schemaVersion: 2,
-      ok: false,
-      reason: "unsupported_type" as AgentFailureReason,
-      error: `Reflect refused: asset type "${type}" is not supported by reflect (${detail}). Use \`akm proposal new\` or edit the file directly.`,
-      ref,
-      exitCode: null,
-    },
-  };
+/** Lower a runner and check its credentials, so a bad transport fails before any work. */
+function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: readonly Notice[]) => void): void {
+  const prepared = resolveExecution({
+    content: "Validate reflect operation transport before dispatch.",
+    runner: runnerSpec,
+  });
+  const lowered = buildExecution(prepared.request, prepared.runner);
+  onNotices(lowered.notices);
+  assertRunnerCredentials(lowered.runner);
 }
 
 /**
- * Resolve the reflect target's parsed ref + current on-disk content: enforce the
- * REFLECT_ALLOWED_TYPES markdown-canonical type guard (returning a terminal
- * `unsupported_type` failure), honour the `options.assetContent` test seam, else
- * best-effort load via the local file path / index lookup. Extracted verbatim
- * from `akmReflect`.
- */
-async function resolveReflectSource(
-  options: AkmReflectOptions,
-  stash: string,
-  emitReflectFailed: (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ) => void,
-): Promise<{ assetContent: string | undefined; parsedRef: AssetRef | undefined } | { failure: AkmReflectResult }> {
-  let assetContent: string | undefined;
-  let parsedRef: AssetRef | undefined;
-  if (options.ref) {
-    parsedRef = parseRefInput(options.ref);
-
-    // 2a. Refuse `secret` before any content is read — a secret's content is
-    // never touched by reflect, regardless of what it happens to look like.
-    if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
-      return unsupportedTypeFailure(
-        options.ref,
-        parsedRef.type,
-        "secret material is never read or sent to an LLM",
-        emitReflectFailed,
-      );
-    }
-
-    if (options.assetContent !== undefined) {
-      // Test seam — caller pre-loaded the source content.
-      assetContent = options.assetContent;
-    } else {
-      try {
-        // Resolve the source by item_ref when planning supplied one, otherwise
-        // use the input conceptId.
-        const qualifiedRef = options.itemRef ?? durableImproveRef(options.ref);
-        const localFilePath = await findAssetFilePath(qualifiedRef, stash);
-        if (localFilePath && fs.existsSync(localFilePath)) {
-          assetContent = fs.readFileSync(localFilePath, "utf8");
-        } else {
-          const entry = await lookup(parseRefInput(qualifiedRef));
-          if (entry?.filePath && fs.existsSync(entry.filePath)) {
-            assetContent = fs.readFileSync(entry.filePath, "utf8");
-          }
-        }
-      } catch {
-        // Index miss is non-fatal — the agent can still propose a fresh asset.
-      }
-    }
-
-    if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
-      if (assetContent === undefined || !isReflectableSourceShape(assetContent)) {
-        return unsupportedTypeFailure(
-          options.ref,
-          parsedRef.type,
-          "its content is not frontmatter + markdown",
-          emitReflectFailed,
-        );
-      }
-    }
-  }
-  return { assetContent, parsedRef };
-}
-
-/**
- * #952 — the flat REFLECT_CONTENT_CAP (12 000 chars) exists only to avoid
- * E2BIG when the prompt travels through CLI argv (agent/SDK runners). The
- * direct-LLM HTTP path never touches argv, so it can use the resolved
- * engine's own context window instead. The reserve for "the rest of the
- * prompt" is measured directly (not guessed): build the same prompt with
- * the content cap forced to zero and use its length as the overhead, so
- * feedback/standards/schema-hints/prior-draft size is accounted for
- * exactly, per this call. A reflect rewrite returns a body roughly the
- * size of the input, so the budget only spends HALF of the usable window
- * on input content and reserves the other half for the model's own
- * output — otherwise a full-context request leaves no room for a
- * response. Never drops below the flat floor.
- *
- * Shared by the real dispatch path ({@link runReflectRefineIterations}) and
- * `renderReflectPromptPreview`'s `--show-prompt` preview, so the preview
- * renders the exact prompt reflect would actually send for LLM runners
- * instead of always the flat-cap prompt.
+ * The flat 12k content cap exists for CLI argv; the HTTP runner can spend half
+ * its context window (after the rest of the prompt) on the asset, reserving
+ * the other half for the rewrite. Never below the flat floor.
  */
 function computeReflectContentBudgetChars(promptInput: ReflectPromptInput, runnerSpec: RunnerSpec): number | undefined {
-  return runnerIsLlm(runnerSpec) && promptInput.assetContent?.trim()
-    ? Math.max(
-        REFLECT_CONTENT_CAP,
-        Math.floor(
-          ((runnerSpec.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN -
-            buildReflectPrompt({ ...promptInput, contentBudgetChars: 0 }).prompt.length) /
-            2,
-        ),
-      )
-    : undefined;
+  if (!runnerIsLlm(runnerSpec) || !promptInput.assetContent?.trim()) return undefined;
+  const window = (runnerSpec.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN;
+  const overhead = buildReflectPrompt({ ...promptInput, contentBudgetChars: 0 }).prompt.length;
+  return Math.max(REFLECT_CONTENT_CAP, Math.floor((window - overhead) / 2));
 }
 
 interface ReflectPromptSources {
   feedback: string[];
   schemaHints: string[];
   relatedLessons: RelatedLesson[];
-  rejectedProposals: RejectedProposalContext[];
+  rejectedProposals: ReturnType<typeof rejectedProposalContext>;
   standardsContext: string;
 }
 
-/**
- * #952 — gather every read-only prompt-input source {@link buildReflectPromptInput}
- * folds into a `ReflectPromptInput`: recent feedback, schema/lint hints, related
- * lessons, previously-rejected proposals, and stash standards context.
- *
- * Shared by the real dispatch path (`akmReflect`'s step 4, via
- * {@link runReflectRefineIterations}) and `renderReflectPromptPreview`'s
- * `--show-prompt` preview, so both gather from exactly one definition instead
- * of two copies that can drift out of agreement.
- */
+/** Every read-only prompt input, shared by dispatch and `--show-prompt`. */
 async function gatherReflectPromptSources(
   options: AkmReflectOptions,
   stash: string,
   parsedRef: AssetRef | undefined,
   assetContent: string | undefined,
-  assetCtx: RunContext,
 ): Promise<ReflectPromptSources> {
-  const feedback = readRecentFeedback(
-    options.ref ? (options.itemRef ?? durableImproveRef(options.ref)) : undefined,
-    options.eventsCtx,
-  );
-  const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
-  const relatedLessons =
-    options.ref && parsedRef ? await readRelatedLessons(assetCtx, stash, options.ref, parsedRef, options.itemRef) : [];
-  // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
-  // reproducing proposals that have already been reviewed and refused.
-  const rejectedProposals = readRejectedProposals(stash, options.ref, options.ctx);
-  // Standards "rulebook" for this target — stash convention/meta facts; empty
-  // when none fire.
-  const standardsContext = resolveStandardsContext(options.ref, stash);
-  return { feedback, schemaHints, relatedLessons, rejectedProposals, standardsContext };
+  return {
+    feedback: readRecentFeedback(options.ref ? (options.itemRef ?? options.ref) : undefined, options.eventsCtx),
+    schemaHints: buildSchemaHints(parsedRef?.type ?? "", assetContent),
+    relatedLessons:
+      options.ref && parsedRef
+        ? await readRelatedLessons(stash, options.ref, parsedRef, options.itemRef, options.eventsCtx)
+        : [],
+    rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx),
+    standardsContext: resolveStandardsContext(options.ref, stash),
+  };
 }
 
-/**
- * #952 — assemble the `ReflectPromptInput` object literal reflect actually
- * sends, from gathered sources plus the per-call values (draft path, prior
- * draft). Shared by the real dispatch path ({@link runReflectRefineIterations})
- * and `renderReflectPromptPreview`'s `--show-prompt` preview — including
- * `avoidPatterns`, which the preview previously omitted even though a live
- * improve loop passes it (recent-error context, O-5 / #378).
- */
-function buildReflectPromptInput(args: {
+/** The exact prompt reflect sends, shared by dispatch and `--show-prompt`. */
+function buildReflectPromptText(args: {
   options: AkmReflectOptions;
   parsedRef: AssetRef | undefined;
   assetContent: string | undefined;
@@ -1900,7 +989,7 @@ function buildReflectPromptInput(args: {
   runnerSpec: RunnerSpec;
   draftFilePath: string | undefined;
   priorDraft: string | undefined;
-}): ReflectPromptInput {
+}): { prompt: string; outputMode?: ReflectLlmOutputMode } {
   const { options, parsedRef, assetContent, sources, runnerSpec, draftFilePath, priorDraft } = args;
   const { feedback, schemaHints, relatedLessons, rejectedProposals, standardsContext } = sources;
   const outputMode: ReflectLlmOutputMode | undefined = runnerIsLlm(runnerSpec)
@@ -1908,7 +997,7 @@ function buildReflectPromptInput(args: {
       ? "json_schema"
       : "framed_markdown"
     : undefined;
-  return {
+  const input: ReflectPromptInput = {
     ...(options.ref ? { ref: options.ref } : {}),
     ...(parsedRef?.type ? { type: parsedRef.type } : {}),
     ...(parsedRef?.name ? { name: parsedRef.name } : {}),
@@ -1920,75 +1009,56 @@ function buildReflectPromptInput(args: {
     ...(standardsContext.trim() ? { standardsContext } : {}),
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
     ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
-    // R-1: inject prior draft as self-critique target on iterations > 0
     ...(priorDraft !== undefined ? { priorDraft } : {}),
-    // Issue A (#reflect-pipeline file-write contract): when the runner can
-    // touch the filesystem, instruct the agent to write the proposal body
-    // to a tmp file instead of inlining it in JSON. Avoids parse failures
-    // on long bodies (e.g. knowledge/systems/KOKORO_USAGE_GUIDE 8.4KB).
     ...(draftFilePath ? { draftFilePath } : {}),
     ...(outputMode ? { outputMode } : {}),
   };
+  const contentBudgetChars = computeReflectContentBudgetChars(input, runnerSpec);
+  const { prompt } = buildReflectPrompt({
+    ...input,
+    ...(contentBudgetChars !== undefined ? { contentBudgetChars } : {}),
+  });
+  return { prompt, ...(outputMode ? { outputMode } : {}) };
 }
 
 /**
- * Run the agent with the optional Self-Refine loop (R-1 / #372): up to
- * `maxRefineIters` invocations, each injecting the prior draft as self-critique
- * context and exiting early on a no-op refinement. Synthesizes per-iteration
- * draft paths into `draftPathsToCleanup` (mutated) and returns the final agent
- * result + last draft path. Extracted verbatim from `akmReflect`.
+ * Dispatch with the optional self-refine loop: up to `maxRefineIters` passes,
+ * each critiquing the prior draft, stopping early on an unchanged draft. The
+ * direct-LLM repair budget is shared across passes.
  */
 async function runReflectRefineIterations(args: {
-  options: AkmReflectOptions;
+  run: ReflectRun;
   parsedRef: AssetRef | undefined;
   assetContent: string | undefined;
   sources: ReflectPromptSources;
-  runnerSpec: RunnerSpec;
   agentEnv: Record<string, string>;
-  draftPathsToCleanup: string[];
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
+  draftPaths: string[];
 }): Promise<{ result: AgentRunResult; lastDraftPath: string | undefined }> {
-  const { options, parsedRef, assetContent, sources, runnerSpec, agentEnv, draftPathsToCleanup, onNotices } = args;
+  const { run, parsedRef, assetContent, sources, agentEnv, draftPaths } = args;
+  const { options, runnerSpec } = run;
   const maxRefineIters = Math.max(1, options.maxRefineIters ?? 1);
-  // Determine whether this dispatch can honour the file-write contract.
-  // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
-  // LLM HTTP runner does NOT.
-  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
-  // Initialized to a sentinel; always overwritten in the first loop iteration
-  // (maxRefineIters is clamped to >= 1 above).
+  const canWriteFile = runnerSupportsFileWrite(runnerSpec);
   let result = {} as AgentRunResult;
   let priorDraft: string | undefined;
   let lastDraftPath: string | undefined;
   let repairAttempts = 0;
-
   for (let iter = 0; iter < maxRefineIters; iter++) {
-    // Synthesize a fresh tmp path per iteration so refinement passes never
-    // clobber an earlier draft (and so reading back is unambiguous).
-    const iterDraftPath = canRunnerWriteFile ? synthesizeReflectDraftPath(options.ref) : undefined;
-    if (iterDraftPath) {
-      draftPathsToCleanup.push(iterDraftPath);
-      lastDraftPath = iterDraftPath;
+    const draftFilePath = canWriteFile ? synthesizeReflectDraftPath(options.ref) : undefined;
+    if (draftFilePath) {
+      draftPaths.push(draftFilePath);
+      lastDraftPath = draftFilePath;
     }
-
-    const promptInput = buildReflectPromptInput({
+    const { prompt, outputMode } = buildReflectPromptText({
       options,
       parsedRef,
       assetContent,
       sources,
       runnerSpec,
-      draftFilePath: iterDraftPath,
+      draftFilePath,
       priorDraft,
-    });
-    const contentBudgetChars = computeReflectContentBudgetChars(promptInput, runnerSpec);
-    const { prompt } = buildReflectPrompt({
-      ...promptInput,
-      ...(contentBudgetChars !== undefined ? { contentBudgetChars } : {}),
     });
     let iterResult: AgentRunResult;
     if (runnerIsLlm(runnerSpec)) {
-      // LLM HTTP runners cannot honor the file-write contract, so they return
-      // structured output through stdout. callStructured owns preparation,
-      // lowering, credential materialization, and direct transport dispatch.
       iterResult = await runReflectViaLlm({
         prompt,
         runner: runnerSpec,
@@ -1996,230 +1066,284 @@ async function runReflectRefineIterations(args: {
         ...(options.signal ? { signal: options.signal } : {}),
         priorDraft,
         iteration: iter,
-        ...(promptInput.outputMode === "json_schema"
+        ...(outputMode === "json_schema"
           ? { responseSchema: options.ref ? REFLECT_JSON_SCHEMA : REFLECT_UNSCOPED_JSON_SCHEMA }
           : {}),
-        outputMode: promptInput.outputMode ?? "framed_markdown",
+        outputMode: outputMode ?? "framed_markdown",
         ...(options.ref ? { targetRef: options.ref } : {}),
         allowRepair: repairAttempts === 0,
         ...(options.chat ? { chat: options.chat } : {}),
-        onNotices,
+        onNotices: run.notices.add,
       });
     } else {
-      const conversationPriorDraft = priorDraft;
-      const hasConversation = conversationPriorDraft !== undefined && iter > 0;
+      const conversation =
+        priorDraft !== undefined && iter > 0
+          ? [
+              { role: "user" as const, content: prompt },
+              { role: "assistant" as const, content: priorDraft },
+            ]
+          : undefined;
       const current = {
         ...(Object.hasOwn(options, "timeoutMs") ? { timeout: options.timeoutMs } : {}),
         ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
       };
       const prepared = resolveExecution({
-        content: hasConversation ? REFLECT_CRITIQUE_PROMPT : (prompt ?? ""),
-        ...(hasConversation
-          ? {
-              conversation: [
-                { role: "user" as const, content: prompt ?? "" },
-                { role: "assistant" as const, content: conversationPriorDraft as string },
-              ],
-            }
-          : {}),
+        content: conversation ? REFLECT_CRITIQUE_PROMPT : prompt,
+        ...(conversation ? { conversation } : {}),
         runner: runnerSpec,
         ...(Object.keys(current).length > 0 ? { current } : {}),
       });
       const lowered = buildExecution(prepared.request, prepared.runner);
-      onNotices(lowered.notices);
+      run.notices.add(lowered.notices);
       iterResult = await runExecution(lowered, {
         ...(options.runSdk ? { runSdk: options.runSdk } : {}),
-        runOptions: {
-          ...(options.signal ? { signal: options.signal } : {}),
-          ...(options.runAgentOptions ?? {}),
-        },
+        runOptions: { ...(options.signal ? { signal: options.signal } : {}), ...(options.runAgentOptions ?? {}) },
       });
     }
-
-    const iterTelemetry = reflectLlmTelemetry(iterResult);
-    if (iterTelemetry) repairAttempts += iterTelemetry.repairAttempts;
-    result = iterTelemetry
-      ? {
-          ...iterResult,
-          parsed: {
-            ...(iterResult.parsed as Record<string, unknown>),
-            ...iterTelemetry,
-            repairAttempts,
-          },
-        }
+    const telemetry = reflectLlmTelemetry(iterResult);
+    if (telemetry) repairAttempts += telemetry.repairAttempts;
+    result = telemetry
+      ? { ...iterResult, parsed: { ...(iterResult.parsed as Record<string, unknown>), ...telemetry, repairAttempts } }
       : iterResult;
-
-    if (!result.ok) break; // surface failure after loop
-
-    // On success, extract the draft content for the next iteration.
-    // If the agent returns the same content as the prior draft, stop early
-    // (no-op refinement) to avoid wasting tokens on identical iterations.
+    if (!result.ok) break;
     if (iter < maxRefineIters - 1) {
-      const nextDraft = reflectLlmPriorDraft(result) ?? result.stdout ?? "";
+      const priorFromLlm = parsedRecord(result)?.priorDraft;
+      const nextDraft = typeof priorFromLlm === "string" ? priorFromLlm : (result.stdout ?? "");
       if (priorDraft !== undefined && nextDraft === priorDraft) break;
       priorDraft = nextDraft;
     }
   }
-
   return { result, lastDraftPath };
 }
 
 /**
- * WI-9.10: build one `akm reflect` invocation's {@link RunContext} purely
- * from values `akmReflect` has already resolved by the time it calls this
- * (stash, config, runnerSpec) plus the caller-supplied seams on `options` —
- * no second config load, no new db handle. reflect has no `dryRun` option
- * (it never writes source assets directly, only the proposal queue — see the
- * module docblock) so `dryRun` is always `false` here. reflect also has no
- * `sourceRun` option; the value below mirrors the same `reflect-${Date.now()}`
- * convention already used inline at proposal creation time (see
- * `createInput` further down this file), as a fresh, independent token —
- * nothing yet reads `ctx.sourceRun`.
+ * The proposal payload from a successful run: the agent's draft file
+ * (file-write contract, `DRAFT_WRITTEN confidence=<n>` on stdout) or the JSON
+ * payload on stdout.
  */
-function buildReflectRunContext(args: {
-  options: AkmReflectOptions;
-  stash: string;
-  config: AkmConfig;
-  runnerSpec: RunnerSpec;
-}): RunContext {
-  const { options, stash, config, runnerSpec } = args;
-  return createRunContext({
-    stashDir: stash,
-    config,
-    eventsCtx: options.eventsCtx ?? {},
-    // Not yet wired into any proposal call site this stage (mirrors
-    // buildImproveRunContext's proposalsCtx comment in improve.ts).
-    proposalsCtx: options.ctx ?? {},
-    chat: options.chat,
-    getLlmRunner: () => (runnerIsLlm(runnerSpec) ? runnerSpec : null),
-    sourceRun: `reflect-${Date.now()}`,
-    dryRun: false,
-    signal: options.signal,
-  });
-}
-
-/**
- * Build idempotent `reflect_invoked` / `reflect_completed` emitters. Invocation
- * is delayed until canonical dispatch validates symbolic credentials, while
- * deterministic pre-dispatch failures still close an invoke/complete pair.
- *
- * Fix #3 (observability 0.8.0): every failure path below MUST emit
- * `reflect_completed` so observers can close the invoke/complete loop. The
- * three success-side `reflect_completed` emit sites carry rich metadata
- * (qualityRejected, sanitized, proposalId, etc.); the failure-side emits
- * carry `{ok: false, reason}` plus the ref when known. Stable failure
- * reasons line up with `AgentFailureReason`: "parse_error", "non_zero_exit",
- * "cooldown", "timeout", "spawn_failed", "llm_*", plus the synthetic
- * "ref_mismatch" / "enoent" / "draft_missing" subtypes for cases the agent
- * surface conflates as "parse_error". Sub-reasons land in `subreason`.
- */
-function buildReflectEventEmitters(options: AkmReflectOptions): {
-  emitInvoked: () => void;
-  emitFailed: (reason: AgentFailureReason, subreason: string, ref?: string, extra?: Record<string, unknown>) => void;
-} {
-  let invoked = false;
-  const emitInvoked = (): void => {
-    if (invoked) return;
-    appendEvent(
-      {
-        eventType: "reflect_invoked",
-        // Key on item_ref when planning supplied one, otherwise the conceptId.
-        ...(options.ref ? { ref: options.itemRef ?? durableImproveRef(options.ref) } : {}),
-        metadata: {
-          ...(options.task ? { task: options.task } : {}),
-          ...(options.engine ? { engine: options.engine } : {}),
-          // Attribution tagging: stamp the eligibility lane so reflect_invoked can be
-          // sliced by lane downstream. See EligibilitySource.
-          ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-        },
-      },
-      options.eventsCtx,
-    );
-    invoked = true;
-  };
-
-  const emitFailed = (reason: AgentFailureReason, subreason: string, ref?: string, extra?: Record<string, unknown>) => {
-    emitInvoked();
-    appendEvent(
-      {
-        eventType: "reflect_completed",
-        ...(ref ? { ref } : {}),
-        metadata: {
-          source: "reflect",
-          ok: false,
-          reason,
-          subreason,
-          ...(extra ?? {}),
-        },
-      },
-      options.eventsCtx,
-    );
-  };
-
-  return { emitInvoked, emitFailed };
-}
-
-function cleanupReflectDrafts(paths: readonly string[]): void {
-  for (const draftPath of paths) {
-    try {
-      if (fs.existsSync(draftPath)) fs.unlinkSync(draftPath);
-    } catch {
-      // Draft cleanup is best-effort; the proposal result remains authoritative.
-    }
+function resolveReflectPayload(
+  run: ReflectRun,
+  result: AgentRunResult,
+  lastDraftPath: string | undefined,
+  sensitiveValues: readonly string[],
+): { payload: ReflectPayload } | { failure: AkmReflectResult } {
+  const { options } = run;
+  const draftFileExists =
+    lastDraftPath !== undefined && fs.existsSync(lastDraftPath) && fs.statSync(lastDraftPath).size > 0;
+  const draftSignaled = /\bDRAFT_WRITTEN\b/.test(result.stdout ?? "");
+  if (draftSignaled && lastDraftPath && !draftFileExists) {
+    run.emitFailed("parse_error", "draft_missing", options.ref, exitCodeMeta(result));
+    return {
+      failure: reflectFailure(
+        run,
+        result,
+        "parse_error",
+        `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
+        true,
+      ),
+    };
   }
-}
-
-function validateReflectPayloadRef(args: {
-  payload: ReturnType<typeof parseAgentProposalPayload>;
-  result: AgentRunResult;
-  options: AkmReflectOptions;
-  engineName: string;
-  emitReflectFailed: ReturnType<typeof buildReflectEventEmitters>["emitFailed"];
-  executionNotices: Map<string, Readonly<LoweringNotice>>;
-}): AkmReflectResult | undefined {
-  const { payload, result, options, engineName, emitReflectFailed, executionNotices } = args;
-  if (!options.ref) return undefined;
+  if (draftFileExists && lastDraftPath) {
+    const draftConfidence = extractDraftConfidence(result.stdout);
+    return {
+      payload: {
+        ref: options.ref ?? "",
+        content: redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues),
+        ...(draftConfidence !== undefined ? { confidence: draftConfidence } : {}),
+      },
+    };
+  }
   try {
-    const expectedParsed = parseRefInput(options.ref);
-    const actualParsed = parseRefInput(payload.ref);
-    if (expectedParsed.type === actualParsed.type && expectedParsed.name === actualParsed.name) return undefined;
-    emitReflectFailed("parse_error", "ref_mismatch", options.ref, {
-      expectedRef: options.ref,
-      actualRef: payload.ref,
-      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+    return { payload: parseAgentProposalPayload(result.stdout ?? "") };
+  } catch (err) {
+    run.emitFailed("parse_error", "parse_error", options.ref, {
+      ...exitCodeMeta(result),
       ...(reflectLlmTelemetry(result) ?? {}),
     });
     return {
-      schemaVersion: 2,
-      ok: false,
-      reason: "parse_error",
-      error: `Agent retargeted proposal: expected ref "${options.ref}" but got "${payload.ref}". Proposal rejected to prevent silent ref hallucination.`,
-      ref: options.ref,
-      engine: engineName,
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
-      ...reflectNoticeFields(executionNotices),
+      failure: reflectFailure(run, result, "parse_error", err instanceof Error ? err.message : String(err), true),
     };
-  } catch {
-    // Malformed refs are rejected downstream by proposal validation.
-    return undefined;
   }
 }
 
+const NOISE_SUBREASONS = {
+  noop: "reflect_skipped_noop",
+  cosmetic: "reflect_skipped_cosmetic",
+  "low-value": "reflect_skipped_low_value",
+} as const;
+
 /**
- * #952 — render the composed reflect prompt for exactly one asset with no
- * engine dispatch. Reuses every read-only step `akmReflect` performs before
- * {@link buildReflectPrompt} (source resolution, runner resolution, feedback /
- * schema-hint / related-lesson / rejected-proposal gathering) and stops right
- * there: no credential is read, no request is sent, and — because the
- * `emitReflectFailed` callback passed to {@link resolveReflectSource} here is
- * a no-op — no `reflect_invoked`/`reflect_completed` event is appended either.
- *
- * `akm improve <ref> --show-prompt` (`improve-cli.ts`) is the CLI surface: a
- * field operator uses it to see the exact prompt reflect would send, in
- * seconds, without running a full improve cycle or needing a reachable
- * engine.
+ * Sanitize, drop a no-op/cosmetic (and optionally low-value) change, judge the
+ * exact content that would be persisted, then mint. Size-flagged or
+ * truncation-leaking content skips the judge and waits for review.
+ */
+async function finalizeReflectProposal(args: {
+  run: ReflectRun;
+  payload: ReflectPayload;
+  assetContent: string | undefined;
+  result: AgentRunResult;
+  judge: { enabled: boolean; skippedNoJudge: boolean; runner: LlmRunner | undefined };
+  feedback: string[];
+}): Promise<AkmReflectResult> {
+  const { run, assetContent, result, judge, feedback } = args;
+  const { options } = run;
+  const telemetry = reflectLlmTelemetry(result) ?? {};
+  const sanitized = sanitizeReflectPayload(
+    { content: args.payload.content, ...(args.payload.frontmatter ? { frontmatter: args.payload.frontmatter } : {}) },
+    assetContent,
+    args.payload.ref,
+  );
+  const payload: ReflectPayload = {
+    ...args.payload,
+    content: sanitized.content,
+    ...(sanitized.frontmatter ? { frontmatter: sanitized.frontmatter } : {}),
+  };
+
+  if (assetContent !== undefined) {
+    const changeKind = classifyReflectChange(assetContent, payload.content);
+    if (
+      changeKind === "noop" ||
+      changeKind === "cosmetic" ||
+      (changeKind === "low-value" && options.lowValueFilter === true)
+    ) {
+      run.emitFailed("no_change", NOISE_SUBREASONS[changeKind], options.ref, { changeKind, ...telemetry });
+      const what =
+        changeKind === "noop"
+          ? "identical to the current asset (empty diff)"
+          : changeKind === "low-value"
+            ? "a low-value prose micro-rewrite (few changed tokens, no structural changes)"
+            : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
+      return reflectFailure(
+        run,
+        result,
+        "no_change",
+        `Reflect skipped: proposed content for ${payload.ref} is ${what}; no proposal created.`,
+        false,
+      );
+    }
+  }
+
+  const flagged = Boolean(sanitized.sizeGuardRatio || sanitized.truncationMarkerLeaked);
+  const judged = judge.enabled && !flagged;
+  if (judged) {
+    const verdict = await runReflectQualityJudge(
+      run.config,
+      payload.content,
+      assetContent ?? "",
+      feedback,
+      options.chat,
+      {
+        runnerSelectionFrozen: true,
+        ...(judge.runner ? { llmRunner: judge.runner } : {}),
+        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+        onNotices: run.notices.add,
+      },
+    );
+    if (!verdict.pass) {
+      if (options.ref) {
+        recordLedgerAttempt(
+          { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx },
+          {
+            stashDir: run.stash,
+            ref: options.itemRef ?? options.ref,
+            source: "reflect",
+            outcome: "quality_rejected",
+            detail: verdict.reason,
+          },
+        );
+      }
+      appendEvent(
+        {
+          eventType: "reflect_completed",
+          ref: payload.ref,
+          metadata: {
+            source: "reflect",
+            qualityRejected: true,
+            qualityScore: verdict.score,
+            qualityReason: verdict.reason,
+            ...(verdict.criteria ? { qualityCriteria: verdict.criteria } : {}),
+            ...telemetry,
+          },
+        },
+        options.eventsCtx,
+      );
+      return reflectFailure(
+        run,
+        result,
+        "quality_rejected",
+        `Reflect proposal quality gate rejected: score=${verdict.score}, reason="${verdict.reason}"`,
+        false,
+      );
+    }
+  }
+
+  // A lesson reflect wrote is marked so a later reflect on the same skill does
+  // not read it back as independent evidence.
+  const frontmatter: Record<string, unknown> = {
+    ...(payload.frontmatter ?? {}),
+    ...(lenientRefType(payload.ref) === "lesson" ? { derived_from_reflect: true } : {}),
+  };
+  const reviewReasons = [
+    ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
+    ...(sanitized.sizeGuardRatio ? ["reflect-size-ratio"] : []),
+    ...(sanitized.truncationMarkerLeaked ? ["reflect-truncation-leak"] : []),
+  ];
+  const proposal = mintProposal(
+    run.stash,
+    options.ctx,
+    {
+      ref: payload.ref,
+      ...(options.target ? { target: options.target } : {}),
+      source: "reflect",
+      sourceRun: `reflect-${Date.now()}`,
+      payload: { content: payload.content, ...(Object.keys(frontmatter).length > 0 ? { frontmatter } : {}) },
+      ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
+      ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
+      ...(options.itemRef ? { attemptedRefs: [options.itemRef] } : {}),
+    },
+    reviewReasons.length > 0
+      ? {
+          review: {
+            reason: reviewReasons.join("+"),
+            gate: "reflect",
+            ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
+          },
+        }
+      : { judged },
+  );
+  appendEvent(
+    {
+      eventType: "reflect_completed",
+      ref: proposal.ref,
+      metadata: {
+        proposalId: proposal.id,
+        source: "reflect",
+        engine: run.engineName,
+        ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
+        ...(sanitized.sizeGuardRatio
+          ? { sizeGuardRatio: sanitized.sizeGuardRatio.code, sizeGuardRatioValue: sanitized.sizeGuardRatio.ratio }
+          : {}),
+        ...(sanitized.truncationMarkerLeaked ? { truncationMarkerLeaked: true } : {}),
+        ...telemetry,
+      },
+    },
+    options.eventsCtx,
+  );
+  return {
+    schemaVersion: 2,
+    ok: true,
+    proposal,
+    ref: proposal.ref,
+    engine: run.engineName,
+    durationMs: result.durationMs,
+    ...run.notices.fields(),
+  };
+}
+
+/**
+ * `akm improve <ref> --show-prompt`: the exact prompt reflect would send for
+ * one asset. Read-only: no credential, no dispatch, no event.
  */
 export async function renderReflectPromptPreview(
   options: AkmReflectOptions,
@@ -2228,189 +1352,119 @@ export async function renderReflectPromptPreview(
     throw new UsageError("renderReflectPromptPreview requires options.ref.", "INVALID_FLAG_VALUE");
   }
   const ref = options.ref;
-  const stash = resolveRunStashDir(options.stashDir);
-
-  const sourceResolved = await resolveReflectSource(options, stash, () => {
-    // No event emitted: this is a read-only preview, not a real invocation.
-  });
-  if ("failure" in sourceResolved) {
-    const { failure } = sourceResolved;
+  const stash = options.stashDir ?? resolveStashDir();
+  const source = await resolveReflectSource(options, stash, () => {});
+  if ("failure" in source) {
+    const { failure } = source;
     throw new UsageError(
       (!failure.ok && failure.error) || `Reflect cannot preview ref "${ref}".`,
       "INVALID_FLAG_VALUE",
     );
   }
-  const { assetContent, parsedRef } = sourceResolved;
-
   const { runnerSpec, engineName } = resolveReflectRunner(options);
-  const ctx = buildReflectRunContext({ options, stash, config: options.config ?? loadConfig(), runnerSpec });
-  const assetCtx = ctx.withFreshAssetMemo();
-
-  const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent, assetCtx);
-
-  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
-  // Same tmp-path synthesis a real dispatch would use (Issue A) — never
-  // written to, since this preview never runs the agent.
-  const draftFilePath = canRunnerWriteFile ? synthesizeReflectDraftPath(ref) : undefined;
-
-  const previewPromptInput = buildReflectPromptInput({
+  const sources = await gatherReflectPromptSources(options, stash, source.parsedRef, source.assetContent);
+  const { prompt } = buildReflectPromptText({
     options,
-    parsedRef,
-    assetContent,
+    parsedRef: source.parsedRef,
+    assetContent: source.assetContent,
     sources,
     runnerSpec,
-    draftFilePath,
+    // The same tmp-path shape a dispatch would use; never written.
+    draftFilePath: runnerSupportsFileWrite(runnerSpec) ? synthesizeReflectDraftPath(ref) : undefined,
     priorDraft: undefined,
   });
-  // #952 — mirror the real dispatch path's context-aware content budget (see
-  // computeReflectContentBudgetChars) so the preview shows the exact prompt
-  // reflect would send: an LLM engine with a large context window gets the
-  // full asset with no truncation marker, not the flat 12 000-char cap.
-  const contentBudgetChars = computeReflectContentBudgetChars(previewPromptInput, runnerSpec);
-  const { prompt } = buildReflectPrompt({
-    ...previewPromptInput,
-    ...(contentBudgetChars !== undefined ? { contentBudgetChars } : {}),
-  });
-
   return { ref, prompt, engine: engineName, engineKind: runnerSpec.kind };
 }
 
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
-  const stash = resolveRunStashDir(options.stashDir);
+  const stash = options.stashDir ?? resolveStashDir();
+  const { emitInvoked, emitFailed } = reflectEmitters(options);
+  const source = await resolveReflectSource(options, stash, emitFailed);
+  if ("failure" in source) return source.failure;
+  const { assetContent, parsedRef } = source;
 
-  // Build lazy event emitters. The invocation row is committed only after the
-  // canonical dispatch has validated symbolic credentials; deterministic
-  // pre-dispatch skips still emit it through emitReflectFailed.
-  const { emitInvoked: emitReflectInvoked, emitFailed: emitReflectFailed } = buildReflectEventEmitters(options);
-
-  // 2. Resolve target asset content (if a ref is supplied).
-  const sourceResolved = await resolveReflectSource(options, stash, emitReflectFailed);
-  if ("failure" in sourceResolved) return sourceResolved.failure;
-  const { assetContent, parsedRef } = sourceResolved;
-
-  // 3. Resolve exactly one named engine. Standalone reflect uses --engine or
-  // defaults.engine; improve resolves its LLM-only strategy/process overlay.
-  // An incompatible explicit engine is an error and never falls through.
   const { config, activeStrategy, runnerSpec, engineName, notices: resolutionNotices } = resolveReflectRunner(options);
-  const executionNotices = new Map<string, Readonly<LoweringNotice>>();
-  collectLoweringNotices(executionNotices, resolutionNotices);
-  const collectExecutionNotices = (notices: readonly Readonly<LoweringNotice>[]): void =>
-    collectLoweringNotices(executionNotices, notices);
-  let qualityJudgeSelection = resolveReflectQualityJudgeRunner(
-    config,
-    runnerSpec,
-    isReflectQualityGateEnabled(activeStrategy),
-    collectExecutionNotices,
-  );
-  const qualityGateSkippedNoJudge = qualityJudgeSelection.enabled && !qualityJudgeSelection.runner;
-  if (qualityGateSkippedNoJudge) {
+  const notices = noticeSet();
+  notices.add(resolutionNotices);
+  const run: ReflectRun = { options, stash, config, runnerSpec, engineName, notices, emitInvoked, emitFailed };
+
+  // Judge selection is frozen before dispatch so a missing judge credential fails first.
+  const judgeWanted =
+    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
+    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
+  let judgeRunner: LlmRunner | undefined;
+  if (judgeWanted) {
+    if (runnerIsLlm(runnerSpec)) {
+      judgeRunner = runnerSpec;
+    } else {
+      const resolved = resolveImproveLlmExecution({ config, processName: "reflect_proposal_quality-judge" });
+      if (resolved) notices.add(resolved.notices);
+      judgeRunner = resolved?.runner;
+    }
+  }
+  const skippedNoJudge = judgeWanted && !judgeRunner;
+  if (skippedNoJudge) {
     warnOnce(
       "reflect-quality-gate-no-judge",
       "Reflect proposal quality gate has no LLM configured to judge proposals (set defaults.llmEngine). Skipping the gate for this run; the proposal is queued for human review instead.",
     );
-    qualityJudgeSelection = Object.freeze({ enabled: false, runner: undefined });
   }
-  const qualityJudgeRunner = qualityJudgeSelection.runner;
-  preflightReflectDispatch(runnerSpec, collectExecutionNotices);
-  if (qualityJudgeRunner && qualityJudgeRunner !== runnerSpec) {
-    preflightReflectDispatch(qualityJudgeRunner, collectExecutionNotices);
-  }
+  preflightReflectDispatch(runnerSpec, notices.add);
+  if (judgeRunner && judgeRunner !== runnerSpec) preflightReflectDispatch(judgeRunner, notices.add);
 
-  // WI-9.10: RunContext, built only once config/runnerSpec exist so engine
-  // resolution's existing error-priority ordering is undisturbed (see
-  // buildReflectRunContext's docblock). D6: assetCtx is a fresh,
-  // per-invocation memo — readRelatedLessons below is its genuine
-  // content-read consumer.
-  const ctx = buildReflectRunContext({ options, stash, config, runnerSpec });
-  const assetCtx = ctx.withFreshAssetMemo();
-
-  // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
-  // proposals. These are stable across refinement iterations; only the
-  // `priorDraft` field changes per-iteration (R-1 / #372).
-  const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent, assetCtx);
-
-  // 5. Spawn the agent — with the optional Self-Refine loop (R-1 / #372),
-  // extracted to {@link runReflectRefineIterations}.
+  const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
   const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
     ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
     ...(options.runAgentOptions ?? {}),
   });
-
-  const draftPathsToCleanup: string[] = [];
-
-  // `result` / `lastDraftPath` / `payload` are populated inside the try. Hoisted
-  // here so the post-try sections (R-3 ref guard, sanitizer, quality gate,
-  // createProposal) can use them after the drafts have been cleaned up.
-  let result = {} as AgentRunResult;
-  let lastDraftPath: string | undefined;
-  let payload: ReturnType<typeof parseAgentProposalPayload>;
+  const draftPaths: string[] = [];
+  let result: AgentRunResult;
+  let payload: ReflectPayload;
   try {
-    const iterated = await runReflectRefineIterations({
-      options,
-      parsedRef,
-      assetContent,
-      sources,
-      runnerSpec,
-      agentEnv,
-      draftPathsToCleanup,
-      onNotices: collectExecutionNotices,
-    });
-    emitReflectInvoked();
+    const iterated = await runReflectRefineIterations({ run, parsedRef, assetContent, sources, agentEnv, draftPaths });
+    emitInvoked();
     result = iterated.result;
-    lastDraftPath = iterated.lastDraftPath;
-
-    const finalResult: AgentRunResult = result;
-
-    if (!finalResult.ok) {
-      // B3: ENOENT / not-found gives an actionable hint.
-      if (isEnoentFailure(finalResult)) {
-        emitReflectFailed("spawn_failed", "enoent", options.ref, {
-          ...(finalResult.exitCode !== undefined ? { exitCode: finalResult.exitCode } : {}),
+    if (!result.ok) {
+      if (isEnoentFailure(result)) {
+        emitFailed("spawn_failed", "enoent", options.ref, {
+          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
         });
         return {
-          ...failureEnvelope(finalResult, options.ref, engineName),
+          ...baseFailureFields(result),
+          schemaVersion: 2,
+          ...(options.ref ? { ref: options.ref } : {}),
+          engine: engineName,
           error: enoentHintMessage(runnerIsLlm(runnerSpec) ? engineName : runnerSpec.profile.bin),
-          ...reflectNoticeFields(executionNotices),
+          ...notices.fields(),
         };
       }
-      const envelope = failureEnvelope(finalResult, options.ref, engineName);
-      emitReflectFailed(
-        envelope.reason,
-        envelope.reason === "parse_error" ? "parse_error" : "agent_crash",
-        options.ref,
-        {
-          ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
-          ...(reflectLlmTelemetry(finalResult) ?? {}),
-        },
-      );
-      return { ...envelope, ...reflectNoticeFields(executionNotices) };
+      const envelope: AkmReflectFailure = {
+        ...baseFailureFields(result),
+        schemaVersion: 2,
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+      };
+      emitFailed(envelope.reason, envelope.reason === "parse_error" ? "parse_error" : "agent_crash", options.ref, {
+        ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
+        ...(reflectLlmTelemetry(result) ?? {}),
+      });
+      return { ...envelope, ...notices.fields() };
     }
-
-    // Re-alias to `result` for the downstream code that references it.
-    result = finalResult;
-
-    const resolved = resolveReflectPayload({
-      result,
-      lastDraftPath,
-      sensitiveValues,
-      options,
-      engineName,
-      emitReflectFailed,
-    });
-    if ("failure" in resolved) {
-      return { ...resolved.failure, ...reflectNoticeFields(executionNotices) };
-    }
+    const resolved = resolveReflectPayload(run, result, iterated.lastDraftPath, sensitiveValues);
+    if ("failure" in resolved) return resolved.failure;
     payload = resolved.payload;
   } catch (error) {
-    if (!(error instanceof ConfigError)) emitReflectInvoked();
+    if (!(error instanceof ConfigError)) emitInvoked();
     throw error;
   } finally {
-    // Always remove tmp draft files — success, failure, or exception. Returns
-    // inside the try above trigger this block before the function exits. Code
-    // after this point uses the already-loaded `payload` and never touches the
-    // draft paths.
-    cleanupReflectDrafts(draftPathsToCleanup);
+    for (const draftPath of draftPaths) {
+      try {
+        if (fs.existsSync(draftPath)) fs.unlinkSync(draftPath);
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   const unsafeContent = generatedContentRejection(
@@ -2418,45 +1472,41 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     redactSensitiveText(payload.content, sensitiveValues),
   );
   if (unsafeContent) {
-    emitReflectFailed("parse_error", "parse_error", options.ref, {
-      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-    });
-    return {
-      schemaVersion: 2,
-      ok: false,
-      reason: "parse_error",
-      error: unsafeContent,
-      ...(options.ref ? { ref: options.ref } : {}),
-      engine: engineName,
-      exitCode: result.exitCode,
-      ...reflectNoticeFields(executionNotices),
-    };
+    emitFailed("parse_error", "parse_error", options.ref, exitCodeMeta(result));
+    return reflectFailure(run, result, "parse_error", unsafeContent, false);
   }
-
-  const refFailure = validateReflectPayloadRef({
-    payload,
-    result,
-    options,
-    engineName,
-    emitReflectFailed,
-    executionNotices,
-  });
-  if (refFailure) return refFailure;
-
-  const finalized = await finalizeReflectProposal({
+  // A retargeted proposal is refused (malformed refs are left to proposal validation).
+  if (options.ref) {
+    let retargeted = false;
+    try {
+      const expected = parseRefInput(options.ref);
+      const actual = parseRefInput(payload.ref);
+      retargeted = expected.type !== actual.type || expected.name !== actual.name;
+    } catch {
+      retargeted = false;
+    }
+    if (retargeted) {
+      emitFailed("parse_error", "ref_mismatch", options.ref, {
+        expectedRef: options.ref,
+        actualRef: payload.ref,
+        ...exitCodeMeta(result),
+        ...(reflectLlmTelemetry(result) ?? {}),
+      });
+      return reflectFailure(
+        run,
+        result,
+        "parse_error",
+        `Agent retargeted proposal: expected ref "${options.ref}" but got "${payload.ref}". Proposal rejected to prevent silent ref hallucination.`,
+        true,
+      );
+    }
+  }
+  return finalizeReflectProposal({
+    run,
     payload,
     assetContent,
     result,
-    options,
-    engineName,
-    config,
-    qualityGateEnabled: qualityJudgeSelection.enabled,
-    qualityGateSkippedNoJudge,
-    qualityJudgeRunner,
+    judge: { enabled: judgeWanted && !skippedNoJudge, skippedNoJudge, runner: judgeRunner },
     feedback: sources.feedback,
-    stash,
-    emitReflectFailed,
-    onNotices: collectExecutionNotices,
   });
-  return { ...finalized, ...reflectNoticeFields(executionNotices) };
 }

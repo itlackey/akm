@@ -10,7 +10,7 @@ import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computePlanHash } from "../../../src/workflows/ir/plan-hash";
-import type { WorkflowPlanGraphV4 } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan } from "../../../src/workflows/plan";
 import {
   abandonWorkflowRun,
   completeWorkflowStep,
@@ -84,12 +84,12 @@ describe("plan freezing at workflow start (migration 006)", () => {
     expect(row?.plan_json).toBeTruthy();
     expect(row?.plan_hash).toBeTruthy();
 
-    const plan = JSON.parse(row?.plan_json ?? "") as WorkflowPlanGraphV4;
+    const plan = JSON.parse(row?.plan_json ?? "") as WorkflowPlan;
     expect(plan.steps.map((s) => s.stepId)).toEqual(["only-step"]);
-    expect(plan.irVersion).toBe(5);
-    if (plan.irVersion !== 5) throw new Error("fresh starts must persist plan irVersion 5");
+    expect(plan.irVersion).toBe(6);
+    expect(row?.plan_ir_version).toBe(6);
     expect(plan.steps[0]!.root?.kind).toBe("unit");
-    expect(Object.hasOwn(plan.execution, "engines")).toBe(false);
+    expect(plan.execution).toEqual({ maxConcurrency: expect.any(Number) });
     const root = plan.steps[0]!.root;
     if (!root || root.kind !== "unit") throw new Error("expected one current runtime unit");
     expect(root.frozenTarget.kind).toBe("command");

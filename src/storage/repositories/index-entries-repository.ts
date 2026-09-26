@@ -26,7 +26,7 @@ import {
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
-import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions, RelinkUsageEventsOptions } from "./index-entry-types";
+import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
@@ -1037,14 +1037,7 @@ function resolveUsageEventEntryId(db: Database, ref: string): number | undefined
  * distinct linked entry_ids in usage_events is small — and the re-resolution
  * reads `entries` from `indexDb`.
  */
-function qualifiedUsageEventsTable(stateSchema?: string): string {
-  if (stateSchema === undefined) return "usage_events";
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(stateSchema)) throw new Error("Invalid attached state schema name.");
-  return `"${stateSchema}".usage_events`;
-}
-
-export function relinkUsageEvents(indexDb: Database, stateDb: Database, options: RelinkUsageEventsOptions = {}): void {
-  const usageEvents = qualifiedUsageEventsTable(options.stateSchema);
+export function relinkUsageEvents(indexDb: Database, stateDb: Database): void {
   bestEffort(() => {
     // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
     // Leaving them in place would let `recomputeUtilityScores` aggregate by an
@@ -1053,7 +1046,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     // transaction. Nulled rows can be re-resolved by step 2 below; events whose
     // entry is permanently gone simply stay null and age out via retention.
     const linkedRows = stateDb
-      .prepare(`SELECT DISTINCT entry_id AS id, entry_ref AS ref FROM ${usageEvents} WHERE entry_id IS NOT NULL`)
+      .prepare("SELECT DISTINCT entry_id AS id, entry_ref AS ref FROM usage_events WHERE entry_id IS NOT NULL")
       .all() as Array<{ id: number; ref: string | null }>;
     const entryIdentity = indexDb.prepare("SELECT item_ref AS itemRef FROM entries WHERE id = ?");
     const staleLinks = linkedRows.filter(({ id, ref }) => {
@@ -1061,9 +1054,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
       return live == null || (ref !== null && live.itemRef !== ref);
     });
     if (staleLinks.length > 0) {
-      const nullOut = stateDb.prepare(
-        `UPDATE ${usageEvents} SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?`,
-      );
+      const nullOut = stateDb.prepare("UPDATE usage_events SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?");
       const nullTx = stateDb.transaction(() => {
         for (const { id, ref } of staleLinks) nullOut.run(id, ref);
       });
@@ -1073,10 +1064,10 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     // Step 2: re-resolve each fully-qualified ref. Bare rows are not current
     // durable identities and remain detached.
     const refs = stateDb
-      .prepare(`SELECT DISTINCT entry_ref AS ref FROM ${usageEvents} WHERE entry_id IS NULL AND entry_ref IS NOT NULL`)
+      .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_id IS NULL AND entry_ref IS NOT NULL")
       .all() as { ref: string }[];
 
-    const update = stateDb.prepare(`UPDATE ${usageEvents} SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL`);
+    const update = stateDb.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
     const relinkTx = stateDb.transaction(() => {
       for (const { ref } of refs) {
         let id: number | undefined;

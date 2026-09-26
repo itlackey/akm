@@ -92,9 +92,9 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   }
   if (typeof parsed.durationMs !== "number") metadataError("durationMs must be a number");
   const detail = "detail" in parsed ? parsed.detail : null;
-  if (parsed.engine !== undefined && parsed.engine !== null && typeof parsed.engine !== "string") {
-    metadataError("engine must be a string or null");
-  }
+  // A malformed `engine` (wrong type) is dropped like any other unrecognized
+  // field rather than rejecting the whole row over a non-essential value.
+  const engine = parsed.engine === null || typeof parsed.engine === "string" ? parsed.engine : undefined;
   if (parsed.targetVocab !== undefined && parsed.targetVocab !== 2) {
     warnOnce(
       `task-history-target-vocab:${String(parsed.targetVocab)}`,
@@ -115,7 +115,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     metadataVersion: 2,
     durationMs: parsed.durationMs,
     detail: cleanDetail,
-    ...(parsed.engine !== undefined ? { engine: parsed.engine as string | null } : {}),
+    ...(engine !== undefined ? { engine } : {}),
     ...(parsed.targetVocab === 2 ? { targetVocab: 2 as const } : {}),
   };
 }

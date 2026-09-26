@@ -809,8 +809,8 @@ one of the three per engine.
 
 `embedding.apiKey` accepts the same three forms and resolves `secret://` the
 same way, on every path that sends an embedding request: `akm index`
-(including its `bundle update` post-commit embedding pass and the targeted
-re-embed a write command like `akm remember` triggers), `akm improve`'s
+(including the reindex `akm bundle update` runs and the targeted re-embed a
+write command like `akm remember` triggers), `akm improve`'s
 consolidate pass (memory dedup and similarity clustering). All of them build the
 provider request through the same `RemoteEmbedder`/`resolveSecret` boundary,
 so a `secret://` reference resolves identically regardless of which command

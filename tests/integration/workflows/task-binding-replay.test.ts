@@ -27,7 +27,7 @@ import {
   type UnitDispatchResult,
 } from "../../../src/workflows/exec/native-executor";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
-import type { IrStepPlanV4, WorkflowPlanGraphV4 } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow, seedWorkflowRun, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
@@ -67,10 +67,10 @@ afterEach(() => storage.cleanup());
  * step's frozen target, seed + store the run so the journal has a home, and
  * return the consume step plan the executor is driven with.
  */
-function seedBoundConsumeStep(): IrStepPlanV4 {
+function seedBoundConsumeStep(): WorkflowPlanStep {
   // Deep-clone before grafting: freezeWorkflow Object.freezes its targets,
   // and the stored plan should carry the SAME bytes the executor is handed.
-  const plan = JSON.parse(JSON.stringify(freezeWorkflow(WF))) as WorkflowPlanGraphV4;
+  const plan = JSON.parse(JSON.stringify(freezeWorkflow(WF))) as WorkflowPlan;
   const root = plan.steps[1]!.root;
   if (!root || root.kind === "map") throw new Error("expected a solo consume root");
   (root.frozenTarget as { inputBindings?: readonly TaskInputBinding[] }).inputBindings = BINDINGS;
@@ -96,7 +96,7 @@ function countingDispatcher(reply: string) {
   return { dispatcher, prompts, count: () => calls };
 }
 
-function invoke(step: IrStepPlanV4, upstreamOutput: string, dispatcher: ReturnType<typeof countingDispatcher>) {
+function invoke(step: WorkflowPlanStep, upstreamOutput: string, dispatcher: ReturnType<typeof countingDispatcher>) {
   return executeStepPlan(step, {
     runId: RUN_ID,
     workflowRef: "workflows/demo",

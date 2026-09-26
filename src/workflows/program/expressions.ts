@@ -3,27 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The deterministic reference-string grammar for workflow frontmatter
- * (workflow-format-unification, spec §2.3). There is no template/interpolation
- * language any more — `${{ … }}` is gone. What remains is a bare
- * reference-string parser with exactly TWO roots:
+ * The workflow reference-string grammar — exactly two roots:
  *
  *   params.<ident>
  *   steps.<ident>.output( .<ident> | [<non-negative int>] )*
  *
- * where <ident> is `[A-Za-z_][A-Za-z0-9_-]*`. No functions, no clock, no
- * randomness, no ambient lookup — orchestration decisions stay pure functions
- * of (frozen plan, params, journaled unit results).
- *
- * `item`/`item_index` are deleted from the language: with no splicing there is
- * nothing to substitute — the engine attaches each map unit's item and index as
- * structured context alongside the prompt instead (see `exec/step-work.ts`).
- *
- * Used in exactly three frontmatter positions, all whole-value (no
- * delimiters needed): `map.over`, `route.input`, `inputs[]`. Prose bodies are
- * NEVER templated or scanned for this syntax.
- *
- * Pure module: no IO, no engine imports.
+ * where <ident> is `[A-Za-z_][A-Za-z0-9_-]*`. Whole-value only, in `map.over`,
+ * `route.input`, `inputs[]`, `outputs.<n>.from`, and a binding's `from`; prose
+ * is never scanned. No functions, no ambient lookup. Pure.
  */
 
 // ── Types ────────────────────────────────────────────────────────────────────

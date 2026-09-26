@@ -3,19 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Engine-driven workflow execution — the `akm workflow run`
- * start/resume/execute path, and the single execution surface for a run: akm
- * walks the frozen plan and dispatches every unit itself. Every step
- * advances through `completeWorkflowStep` (never a direct step-row write),
- * the plan is read from its frozen `plan_json` row rather than live source,
- * one O_EXCL lock file per run id keeps a second `akm workflow run` off a
- * run another process is driving (a dead holder's lock is reclaimed by pid
- * liveness), gate loops are bounded, and the SDK dispatch registry is drained
- * in a `finally` on every exit path so no child process keeps the event loop
- * open.
- *
- * See docs/architecture/decisions/0011-engine-run-loop-invariants.md for the
- * full design history behind each of these invariants.
+ * Engine-driven workflow execution — the `akm workflow run` start/resume/
+ * execute path. akm walks the frozen plan (read from `plan_json`, never live
+ * source) and dispatches every unit itself; every step advances through
+ * `completeWorkflowStep`; one O_EXCL lock file per run keeps a second driver
+ * off (a dead holder's lock is reclaimed); gate loops are bounded; and the
+ * SDK dispatch registry is drained on every exit so the process can exit.
+ * See docs/architecture/decisions/0011-engine-run-loop-invariants.md.
  */
 
 import { createHash } from "node:crypto";
@@ -29,10 +23,10 @@ import { disposeDispatchResources } from "../../integrations/agent/runner-dispat
 import type { WorkflowRunStepState, WorkflowRunSummary } from "../../sources/types";
 import { resolveStorageLocations } from "../../storage/locations";
 import { withWorkflowRunsConnection, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
-import { assertRunParamsSatisfyPlan, type WorkflowParameterFlag } from "../ir/params";
+import type { WorkflowParameterFlag } from "../ir/params";
 import { computePlanHash } from "../ir/plan-hash";
-import { decodeWorkflowPlanV4, type IrStepPlanV4, type WorkflowPlanGraphV4 } from "../ir/schema-v4";
-import { readRunPlan } from "../runtime/run-plan";
+import type { WorkflowPlan, WorkflowPlanStep } from "../plan";
+import { decodeWorkflowPlan, readRunPlan } from "../runtime/run-plan";
 import {
   abandonWorkflowRun,
   completeWorkflowStep,
@@ -92,7 +86,7 @@ export interface RunWorkflowOptions {
    * Test seam: asserts the injected plan is the run row's frozen plan. The
    * frozen `plan_json` row is always what executes.
    */
-  loadPlan?: (workflowRef: string) => Promise<WorkflowPlanGraphV4>;
+  loadPlan?: (workflowRef: string) => Promise<WorkflowPlan>;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
   /**
@@ -103,46 +97,15 @@ export interface RunWorkflowOptions {
    */
   summaryJudge?: SummaryJudge | null;
   /**
-   * Process-lifecycle disposal seam (owner finding 4 — leaked dispatch
-   * handles). The SDK dispatch path caches `opencode serve` CHILD PROCESSES in
-   * a per-env registry for reuse across units; each live child is an OS handle
-   * that keeps Bun's event loop open, and the registry's own teardown is wired
-   * only to `process.once('exit')`, which NEVER fires while a child holds the
-   * loop open (a deadlock that hangs the CLI after an otherwise-successful run).
-   * The engine therefore DRAINS the registry in its `finally` — on EVERY exit
-   * path (success, gate rejection, failure, abort) — so the process can exit
-   * cleanly instead of waiting out the caller's tool timeout. Defaults to
-   * {@link disposeDispatchResources} (a synchronous, idempotent close that is a
-   * no-op when no SDK server was ever started, so the agent/llm paths pay
-   * nothing). Injected by tests to assert the drain fires on each path.
+   * Drains cached `opencode serve` child processes on every exit path — a live
+   * child keeps the event loop open and would hang the CLI. Defaults to
+   * {@link disposeDispatchResources}; injected by tests.
    */
   disposeDispatchResources?: () => void | Promise<void>;
   /**
-   * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 2): the
-   * task runner's resolved provenance event source, threaded here instead of
-   * the removed global `process.env.AKM_EVENT_SOURCE` stamp
-   * (src/tasks/run/run-workflow-task.ts). Optional and undefined for every
-   * non-task caller (`akm workflow run` and its tests), so their behavior is
-   * byte-identical. When present, it reaches an exec unit's child env via
-   * native-executor.ts's `StepExecutionContext.eventSource` ->
-   * unit-dispatch.ts's `UnitDispatchRequest.eventSource` -> exec-unit.ts's
-   * `childEnv` for a "script"/"shell" unit — applied to the allowlisted BASE
-   * only, so an ambient value already present and an authored `env:` binding
-   * both still win — and via the same `UnitDispatchRequest.eventSource` ->
-   * `dispatchWorkflowExecution`'s `runExecution` `eventSource` option
-   * (runner-dispatch.ts's single-key child-env layering) for a "command" unit, so the agent/sdk arms observe it too —
-   * gated the same way there (precedence fix, code review round 2; see
-   * unit-dispatch.ts's `forwardedDispatchEventSource`): an authored `env:`
-   * binding on the unit still wins, in agreement with the script/shell arm
-   * above. Also threaded into the step's completion-criteria judge dispatch
-   * (`workflowSummaryJudge` -> `frozen-judge.ts`'s `frozenSummaryJudge`, gap
-   * closed — code review): the judge is a "command"-kind dispatch too, so
-   * without this it was the one dispatch on a task-run's path that silently
-   * kept losing the provenance stamp the pre-P1b global env mutation used to
-   * give it. Typed as a bare `string` (not `UsageEventSource`) — like the native arm's own
-   * `process.env.AKM_EVENT_SOURCE ?? provenance.eventSource`, this is an
-   * unvalidated raw value destined straight for a child env var, not a value
-   * checked against the `UsageEventSource` enum.
+   * The task runner's provenance event source, stamped as `AKM_EVENT_SOURCE`
+   * into every unit's and the gate judge's child environment (an authored
+   * `env:` binding still wins). Undefined for `akm workflow run` itself.
    */
   eventSource?: string;
 }
@@ -180,15 +143,9 @@ export interface RunWorkflowResult {
    */
   judgeFailure?: { stepId: string; message: string };
   /**
-   * Present when a composed child workflow is `blocked` (P3b, spec
-   * docs/plans/specs/p3b-child-executor.md §3.4). Like `judgeFailure`, no
-   * gate loop was consumed; the step and run are left `blocked` — but the
-   * child must be resumed FIRST (`resume`), then the parent
-   * (`resumeParentCommand`), since re-driving the parent is what advances
-   * the resumed child (row A-22: the child drive never calls
-   * `resumeWorkflowRun` itself). Named `resumeParentCommand`, not `then`
-   * (lint/style/noThenProperty — a `then` property risks being treated as
-   * a thenable by `await`).
+   * Present when a composed child workflow is `blocked`: no gate loop was
+   * consumed; resume the child first (`resume`), then re-drive the parent
+   * (`resumeParentCommand`).
    */
   childBlocked?: { stepId: string; childRunId: string; childRef: string; resume: string; resumeParentCommand: string };
   /** Present when cooperative cancellation stopped before advancing the step. */
@@ -299,7 +256,7 @@ async function runWorkflowAttempt(
   const runId = next.run.id;
   const lock = next.done ? undefined : acquireWorkflowRunLock(runId);
   try {
-    let plan: WorkflowPlanGraphV4 | undefined;
+    let plan: WorkflowPlan | undefined;
     const warnings: string[] = [...(next.startWarnings ?? [])];
     if (!next.done) {
       const row = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
@@ -327,16 +284,8 @@ async function runWorkflowAttempt(
         if (drift) warnings.push(drift);
       }
     }
-    // Run-wide state.db connection scope: `executeStepPlan` already opens one
-    // per STEP, so widening it to the whole drive loop additionally folds the
-    // spine writes (`completeWorkflowStep`), the journal reads, and
-    // `finalizeExecutedStep`'s gate-row journaling onto that one handle —
-    // `openStateDatabase` costs a maintenance-activity lockfile plus a
-    // read-only ledger preflight on EVERY call. Nesting is an idempotent join
-    // (`core/state-db-scope.ts`): the inner per-step scope reuses this handle
-    // and does not close it, and this scope's own `finally` closes on every
-    // exit path (return, throw, abort), after which escaped async work
-    // transparently falls back to opening its own connection.
+    // One state.db connection scope for the whole drive loop (the per-step
+    // scopes nest into it); each `openStateDatabase` is not free.
     const result = await withWorkflowRunsConnection(() => driveRun(options, next, plan, liveEvidence));
     // Creation/resume-time notices reach the caller only here: the run row
     // has no warnings column, and a later invocation of the same run must
@@ -397,10 +346,9 @@ function acquireWorkflowRunLock(runId: string): LockOwnership {
 async function workflowSourceDriftWarning(
   runId: string,
   workflowRef: string,
-  plan: WorkflowPlanGraphV4,
+  plan: WorkflowPlan,
 ): Promise<string | undefined> {
-  const frozen = plan.sourceReadSet.find((snapshot) => snapshot.identity.ref === workflowRef);
-  if (!frozen) return undefined;
+  if (!plan.sourceHash) return undefined;
   let sourcePath: string;
   try {
     sourcePath = (await loadWorkflowAsset(workflowRef)).path;
@@ -417,7 +365,7 @@ async function workflowSourceDriftWarning(
   } catch {
     return `Workflow run ${runId}: ${sourcePath} is no longer readable; continuing with the frozen plan.`;
   }
-  if (current === frozen.identity.hash) return undefined;
+  if (current === plan.sourceHash) return undefined;
   return (
     `Workflow run ${runId}: ${workflowRef} (${sourcePath}) has changed since this run was frozen; ` +
     `continuing with the frozen plan. Start a new run with 'akm workflow run ${workflowRef} --new' to pick up the edit.`
@@ -440,17 +388,12 @@ async function completedRunResult(runId: string): Promise<RunWorkflowResult> {
 
 function workflowSummaryJudge(
   options: RunWorkflowOptions,
-  stepPlan: IrStepPlanV4,
+  stepPlan: WorkflowPlanStep,
   signal: AbortSignal | undefined,
   owner: { runId: string; stepId: string },
 ): SummaryJudge | null {
   if (options.summaryJudge !== undefined) return options.summaryJudge;
-  // The judge dispatches under the REAL run/step identity; the per-loop gate row
-  // identity is threaded in per call by the completion path that journals it.
-  // eventSource (gap closed, code review): the judge's dispatch is a "command"
-  // request like any other exec/agent/sdk unit, so it goes through the same
-  // provenance thread `executeStepSubgraph` uses below — undefined for every
-  // non-task caller, byte-identical.
+  // The judge dispatches under the real run/step identity and the same event source as units.
   return frozenSummaryJudge(
     stepPlan.gate.frozenJudge,
     signal,
@@ -461,22 +404,10 @@ function workflowSummaryJudge(
 }
 
 /**
- * Seed the declared budget ceilings from the journal so they are truly
- * per-RUN: a resumed or re-invoked run must not restart a declared `budget`
- * at zero. The append-only attempt journal is authoritative: dispatch
- * attempts count against `budget.max_units`, and their known tokens count
- * against `budget.max_tokens`. Durable result reuse is free.
- *
- * Gate-evaluation rows (`phase = "gate"`, journaled by the completion-gate
- * judge) are EXCLUDED from the seed: the live path never consumes
- * DispatchBudget for a judge call, so counting its journal row on resume
- * would make an interrupted run hit `max_units` (and the lifetime cap)
- * earlier than the identical uninterrupted run — a spurious hard failure
- * that `on_error` cannot soften. The seed must reproduce exactly what live
- * accounting would have accumulated.
- *
- * Attempt rows are append-only, so retries cannot collapse or erase prior
- * dispatch accounting.
+ * Seed the run's budget from the append-only attempt journal so a resumed run
+ * does not restart it at zero: dispatch attempts count against `max_units`,
+ * their tokens against `max_tokens`. Gate-evaluation rows are excluded, as the
+ * live path never charges a judge call.
  */
 async function seedRunAccountingFromJournal(runId: string): Promise<{ unitsDispatched: number; tokensUsed: number }> {
   const accounting = await withWorkflowRunsRepo((repo) => repo.getAttemptAccounting(runId));
@@ -489,23 +420,17 @@ async function seedRunAccountingFromJournal(runId: string): Promise<{ unitsDispa
 /**
  * The row plan is the sole execution authority. The loader seam may assert an
  * expected plan in tests, but can never replace it.
- *
- * Reviewer #12: the journaled params row must still satisfy the frozen param
- * schemas before the engine resolves any unit prompt from it, so
- * schema-violating params — post-start corruption — fail loudly BEFORE any
- * unit is dispatched (start already validated the params it stored).
  */
 async function loadAuthoritativeRunPlan(
   options: RunWorkflowOptions,
   next: WorkflowNextResult,
-  stored: WorkflowPlanGraphV4,
-): Promise<WorkflowPlanGraphV4> {
+  stored: WorkflowPlan,
+): Promise<WorkflowPlan> {
   if (options.loadPlan) {
-    const expected = decodeWorkflowPlanV4(await options.loadPlan(next.run.workflowRef));
+    const expected = decodeWorkflowPlan(await options.loadPlan(next.run.workflowRef));
     if (computePlanHash(expected) !== computePlanHash(stored))
       throw new UsageError(`Injected workflow plan for run ${next.run.id} differs from its frozen plan.`);
   }
-  assertRunParamsSatisfyPlan(next.run.id, stored, next.run.params ?? {});
   return stored;
 }
 
@@ -517,13 +442,13 @@ async function loadAuthoritativeRunPlan(
 async function skipUnselectedRouteTarget(input: {
   runId: string;
   stepId: string;
-  stepPlan: IrStepPlanV4;
+  stepPlan: WorkflowPlanStep;
   skipInfo: RouteSkipInfo;
   routeUnselected: Map<string, RouteSkipInfo>;
   executed: ExecutedStepReport[];
 }): Promise<WorkflowNextResult> {
   const { runId, stepId, stepPlan, skipInfo, routeUnselected, executed } = input;
-  // Cascade (peer review R1): a skipped step that is ITSELF a router
+  // Cascade: a skipped step that is ITSELF a router
   // never evaluates its route, so none of its declared targets were
   // selected — mark them all skip-on-reach too (a target another
   // completed router selects stays protected via routeSelected). Without
@@ -541,27 +466,13 @@ async function skipUnselectedRouteTarget(input: {
 }
 
 /**
- * Crash-resume gate state (Codex P1): SEED the starting gate loop from the
- * journal through the SAME shared helpers the first pass used — no fork.
- * A run interrupted after a rejected gate was journaled
- * (`<step>.gate:l<n>`, complete:false) must resume at loop n+1 with the
- * stored corrective feedback threaded into the unit prompts; without this
- * the engine restarts at loop 1, reuses the rejected loop-1 rows, overwrites
- * `<step>.gate:l1`, and re-judges the stale artifact instead of continuing
- * where the interrupted run stopped. The rows
- * are re-read per step (NOT the once-at-start budget seed) so a step reached
- * later within THIS same invocation still starts fresh at loop 1.
- *
- * Only the STEP's rows are read (index-backed on `(run_id, step_id)`): both
- * helpers already discard every row carrying a different `step_id`, and gate
- * rows are journaled under the step's own id, so the narrow query returns a
- * superset of what they read. Re-reading the whole run journal here would
- * re-materialize every earlier step's `result_json` — synchronously, blocking
- * the event loop abort handling shares — once per step.
+ * Seed a step's starting gate loop and feedback from its journaled gate rows,
+ * so a run interrupted after a rejection resumes at the next loop with the
+ * stored feedback instead of re-judging loop 1. Reads only this step's rows.
  */
 async function recoverGateLoopState(
   runId: string,
-  stepPlan: IrStepPlanV4,
+  stepPlan: WorkflowPlanStep,
 ): Promise<{ startLoop: number; seededFeedback: GateFeedback | undefined }> {
   // A step with no effective completion criteria never reaches a judge
   // (`validateStepSummary` short-circuits before the gate-journaling wrapper),
@@ -579,8 +490,8 @@ async function recoverGateLoopState(
 interface StepDriveContext {
   options: RunWorkflowOptions;
   next: WorkflowNextResult;
-  plan: WorkflowPlanGraphV4;
-  stepPlan: IrStepPlanV4;
+  plan: WorkflowPlan;
+  stepPlan: WorkflowPlanStep;
   step: WorkflowRunStepState;
   /** Every prior step's evidence, keyed by step id (live values preferred over rows). */
   evidence: Record<string, Record<string, unknown> | undefined>;
@@ -602,19 +513,16 @@ interface StepDriveContext {
 }
 
 /**
- * Loop-control + accounting outcome of one step's bounded gate loop. `kind` is
- * the SINGLE discriminator every consumer derives from — whether the engine
- * keeps walking the spine (only `"advanced"` does) and whether the step consumed
- * its one `maxSteps` allowance ({@link STEP_FINISHED_KINDS}). A new exit point
- * must name its kind, so it cannot silently skew the remaining-steps accounting
- * the way a forgotten boolean could.
+ * Outcome of one step's bounded gate loop. `kind` alone decides whether the
+ * engine keeps walking (only `"advanced"`) and whether the step consumed its
+ * `maxSteps` allowance ({@link STEP_FINISHED_KINDS}).
  */
 interface StepGateLoopOutcome {
   kind: "advanced" | "failed" | "gate-exhausted" | "judge-failed" | "child-blocked" | "aborted";
   gateRejection?: RunWorkflowResult["gateRejection"];
   judgeFailure?: RunWorkflowResult["judgeFailure"];
   /**
-   * P3b §3.4: a composed child workflow is blocked. Like `judgeFailure`, this
+   * a composed child workflow is blocked. Like `judgeFailure`, this
    * consumes no gate loop — see {@link STEP_FINISHED_KINDS}.
    */
   childBlocked?: RunWorkflowResult["childBlocked"];
@@ -624,13 +532,8 @@ interface StepGateLoopOutcome {
 }
 
 /**
- * The kinds that FINISHED the step (completed / failed / gate-exhausted) — the
- * ONE `maxSteps` consumption for its whole gate loop. An abort and a judge
- * outage leave the step unfinished and consume nothing: the next invocation
- * still owes the work. A blocked child is the SAME shape as a judge outage
- * (P3b §3.4) — a gate is a gate for a child workflow too, so it is likewise
- * NOT in this set: `akm workflow resume` is what clears it, never an
- * automatic in-step re-dispatch.
+ * The kinds that finished the step — its one `maxSteps` consumption. An abort,
+ * a judge outage, and a blocked child consume nothing: the work is still owed.
  */
 const STEP_FINISHED_KINDS: ReadonlySet<StepGateLoopOutcome["kind"]> = new Set(["advanced", "failed", "gate-exhausted"]);
 
@@ -661,12 +564,12 @@ async function executeStepSubgraph(
         evidence,
         unitsDispatched,
         tokensUsed,
-        // Budget ceilings ride the FROZEN plan (addendum R2): a mid-run
+        // Budget ceilings ride the FROZEN plan: a mid-run
         // asset edit can never loosen or tighten a run's budget.
         ...(plan.budget ? { budget: plan.budget } : {}),
         gateLoop,
         ...(gateFeedback ? { gateFeedback } : {}),
-        // F-1 (spec §5.2 point 2): threaded to an exec unit's child env;
+        // F-1: threaded to an exec unit's child env;
         // undefined for every non-task caller (byte-identical, RunWorkflowOptions doc).
         ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
@@ -679,16 +582,9 @@ async function executeStepSubgraph(
 }
 
 /**
- * Drive ONE step's bounded gate loop (addendum R2, `gate.max_loops`): loop 1 is
- * the normal execution; a gate rejection with attempts left re-executes the
- * subgraph with the judge's feedback threaded into unit prompts.
- *
- * The engine owns only the loop control the shared completion path
- * (`finalizeExecutedStep`) maps onto — retry re-executes; advanced moves on;
- * failure/judge-failure/exhaustion stops this invocation — and returns that
- * decision plus the running budget totals to {@link driveRun}. `ctx.executed`
- * is appended in place (one report per iteration); everything else the caller
- * must observe travels back through {@link StepGateLoopOutcome}.
+ * Drive one step's bounded gate loop: a rejection with loops left re-executes
+ * the subgraph with the judge's feedback in the unit prompts. Returns the loop
+ * decision and running budget totals; `ctx.executed` is appended in place.
  */
 async function runStepGateLoop(
   ctx: StepDriveContext,
@@ -723,12 +619,7 @@ async function runStepGateLoop(
       ...(result.notices ? { notices: result.notices } : {}),
     });
 
-    // Route evaluation + artifact-judged completion gate + gate-row
-    // journaling + the bounded-loop rejection contract are the SHARED
-    // completion path (`finalizeExecutedStep`): every step advances through
-    // that one sequence, whether its units were just dispatched or rehydrated
-    // from the journal on resume, so the same frozen plan always promotes the
-    // same artifact and advances (or rejects) the spine identically.
+    // Route, gate, and advance: the shared completion path, live or resumed.
     let finalize: Awaited<ReturnType<typeof finalizeExecutedStep>>;
     try {
       finalize = await finalizeExecutedStep({
@@ -760,13 +651,8 @@ async function runStepGateLoop(
       continue;
     }
     if (finalize.kind === "advanced") {
-      // Hand the rest of this invocation the COMPLETE artifact — but only when
-      // some LATER step's frozen references can actually read it (set-time
-      // retention, see `referencedStepIds`). `finalize` has already journaled
-      // the step (and stamped any route decision onto `result.evidence`), and
-      // the persisted row may carry a truncation envelope in place of an
-      // over-cap value — the row bound must not change what the very next step
-      // reads.
+      // Keep the complete artifact for later steps of this invocation, but only
+      // when some later reference can read it (`referencedStepIds`).
       if (ctx.liveEvidenceConsumers.has(step.id)) ctx.liveEvidence.set(step.id, result.evidence);
       // A route-only step's summary IS its decision (finalize surfaces it).
       if (finalize.summaryOverride !== undefined) {
@@ -783,7 +669,7 @@ async function runStepGateLoop(
       return outcome({ kind: "judge-failed", judgeFailure: { stepId: step.id, message: finalize.summary } });
     }
     if (finalize.kind === "child-blocked") {
-      // P3b §3.4: a composed child workflow is blocked. Like judge-failed,
+      // a composed child workflow is blocked. Like judge-failed,
       // NO gate loop was consumed and the step does not count against
       // maxSteps. `result.childBlocked` (set by reduceStepOutcomes off the
       // failed unit's live-only childRun field) carries the identity
@@ -831,19 +717,10 @@ async function driveRun(
   options: RunWorkflowOptions,
   initial: WorkflowNextResult,
   /** The run row's decoded frozen plan; undefined only for a done run, which drives nothing. */
-  storedPlan: WorkflowPlanGraphV4 | undefined,
+  storedPlan: WorkflowPlan | undefined,
   /**
-   * The COMPLETE in-memory evidence of every step THIS call has completed,
-   * keyed by step id, preferred over the re-read row when the downstream scope
-   * is rebuilt below — avoiding a re-parse of a row this same invocation just
-   * wrote (step artifacts are persisted whole, so the two values agree; this
-   * is purely an avoided round trip, not a correctness dependency). A LATER
-   * `akm workflow run` starts with an empty map and reads the rows directly.
-   *
-   * Only steps some OTHER step's references NAME are stored (`referencedStepIds`
-   * — the set-time filter): a step nothing downstream reads has no consumer to
-   * keep it complete for, so retaining it would buy nothing and cost its bytes
-   * for the rest of the invocation.
+   * In-memory evidence of steps this call completed that a later step reads,
+   * preferred over re-parsing their rows (the values agree).
    */
   liveEvidence: Map<string, Record<string, unknown>>,
 ): Promise<RunWorkflowResult> {
@@ -879,15 +756,8 @@ async function driveRun(
   const routeSelected = new Set<string>();
   const routeUnselected = new Map<string, RouteSkipInfo>();
 
-  // Resume contract: route decisions are journaled in the route step's
-  // evidence (`evidence.route.selected`) and must be REPLAYED into the
-  // bookkeeping before the spine advances — a re-invoked run (crash, Ctrl-C,
-  // maxSteps, gate rejection after the route completed) would otherwise reach
-  // the unselected targets with empty in-memory state and execute the wrong
-  // branch. Decisions stay pure functions of (frozen plan, params, journaled
-  // results) — the addendum determinism bar. A done run skips the seeding:
-  // nothing will dispatch, so an unrecoverable prior decision must not
-  // block the no-op status return below.
+  // Replay journaled route decisions before the spine advances, so a
+  // re-invoked run skips the unselected branches. A done run skips this.
   if (!next.done) {
     seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
   }
@@ -924,7 +794,7 @@ async function driveRun(
     const evidence: Record<string, Record<string, unknown> | undefined> = {};
     for (const s of next.workflow.steps) evidence[s.id] = liveEvidence.get(s.id) ?? s.evidence;
 
-    // Bounded gate loop (addendum R2, `gate.max_loops`): loop 1 is the normal
+    // Bounded gate loop: loop 1 is the normal
     // execution; a gate rejection with attempts left re-executes the subgraph
     // with the judge's feedback threaded into unit prompts. The bound comes
     // from the shared derivation, which holds an exec step to a single
@@ -933,12 +803,8 @@ async function driveRun(
 
     const { startLoop, seededFeedback } = await recoverGateLoopState(next.run.id, stepPlan);
 
-    // Resume AFTER the FINAL rejection (`startLoop` past the loop bound): the
-    // gate was already exhausted before the crash, so there is NO fresh loop to
-    // run — reproduce the documented gateRejection outcome from the stored
-    // final-loop feedback instead of re-dispatching a spurious extra loop. The
-    // l1..l<maxLoops> rows stay untouched and the step stays active, exactly as
-    // when the engine first exhausted the gate.
+    // Resumed after the final rejection: reproduce the gate-exhausted outcome
+    // from the stored feedback instead of running an extra loop.
     if (startLoop > maxLoops) {
       gateRejection = {
         stepId: step.id,

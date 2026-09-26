@@ -16,15 +16,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isConsolidationEligibleMemoryName, type MemoryEntry } from "../../../src/commands/improve/consolidate";
 import {
   buildChunkPrompt,
   computeSafeChunkSize,
   DEFAULT_CONTEXT_LENGTH_TOKENS,
 } from "../../../src/commands/improve/consolidate/chunking";
-import { isConsolidationEligibleMemoryName } from "../../../src/commands/improve/consolidate/eligibility";
-import type { MemoryEntry } from "../../../src/commands/improve/consolidate/types";
-import { writeContradictEdge } from "../../../src/commands/improve/memory/memory-belief";
-import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -548,52 +545,5 @@ describe("consolidation memory eligibility", () => {
   it("excludes inferred derived memories from consolidation input", () => {
     expect(isConsolidationEligibleMemoryName("release-process")).toBe(true);
     expect(isConsolidationEligibleMemoryName("release-process.derived")).toBe(false);
-  });
-});
-
-// ── C-3 / #382 — memory-belief.ts writeContradictEdge ────────────────────────
-
-describe("C-3: writeContradictEdge writes contradictedBy frontmatter edges (#382)", () => {
-  const tmpDirs: string[] = [];
-
-  afterEach(() => {
-    for (const dir of tmpDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("writes contradictedBy and beliefState: contradicted to memory frontmatter", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-c3-"));
-    tmpDirs.push(tmpDir);
-    const memFile = path.join(tmpDir, "auth-a.md");
-    fs.writeFileSync(memFile, "---\ndescription: Auth tips A\n---\nContent A.\n", "utf8");
-
-    writeContradictEdge(memFile, "memories/auth-b");
-
-    const content = fs.readFileSync(memFile, "utf8");
-    const parsed = parseFrontmatter(content);
-    expect(parsed.data.beliefState).toBe("contradicted");
-    expect(Array.isArray(parsed.data.contradictedBy)).toBe(true);
-    expect(parsed.data.contradictedBy as string[]).toContain("memories/auth-b");
-  });
-
-  it("is idempotent — does not write duplicate edges", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-c3-idem-"));
-    tmpDirs.push(tmpDir);
-    const memFile = path.join(tmpDir, "auth-a.md");
-    fs.writeFileSync(
-      memFile,
-      "---\nbeliefState: contradicted\ncontradictedBy:\n  - memory:auth-b\n---\nContent A.\n",
-      "utf8",
-    );
-
-    // Write the same edge again — should be a no-op
-    writeContradictEdge(memFile, "memories/auth-b");
-
-    const content = fs.readFileSync(memFile, "utf8");
-    const parsed = parseFrontmatter(content);
-    const refs = parsed.data.contradictedBy as string[];
-    // Still exactly one edge (no duplicate)
-    expect(refs.filter((r) => r === "memories/auth-b")).toHaveLength(1);
   });
 });

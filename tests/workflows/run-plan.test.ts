@@ -36,6 +36,49 @@ describe("readRunPlan — an older plan runs", () => {
     }
   });
 
+  test("an irVersion 5 plan (source read set, host executable identity) decodes into the current plan", () => {
+    const current = JSON.parse(canonicalPlanJson(plan)) as Record<string, unknown> & {
+      steps: Array<{ root: { frozenTarget: Record<string, unknown> } }>;
+    };
+    const { sourceHash, ...rest } = current;
+    const target = current.steps[0]?.root.frozenTarget ?? {};
+    const v5 = {
+      ...rest,
+      irVersion: 5,
+      sourceReadSet: [
+        {
+          identity: {
+            ref: "local//workflows/demo",
+            bundle: "local",
+            adapter: "akm",
+            file: "workflows/demo.md",
+            hash: sourceHash,
+          },
+          containmentPhysicalIdentity: "inode:1:2",
+          physicalIdentity: "inode:1:3",
+          size: 10,
+        },
+      ],
+      steps: [
+        {
+          ...current.steps[0],
+          root: { ...current.steps[0]?.root, frozenTarget: { ...target, executable: { requested: "x" } } },
+        },
+      ],
+    };
+    const read = readRunPlan({
+      id: "v5-run",
+      plan_json: JSON.stringify(v5),
+      plan_ir_version: 5,
+      workflow_ref: "local//workflows/demo",
+    });
+    if (!read.ok) throw new Error(read.problem);
+    expect(read.plan.sourceHash).toBe(sourceHash as string);
+    expect(read.plan.steps[0]?.root?.kind).toBe("unit");
+    const unit = read.plan.steps[0]?.root;
+    expect(unit?.kind === "unit" ? unit.frozenTarget.kind : undefined).toBe("command");
+  });
+
   test("non-canonical bytes (whitespace, key order) decode — nothing re-hashes the stored plan", () => {
     const reordered = Object.fromEntries(Object.entries(JSON.parse(canonicalPlanJson(plan))).reverse());
     const read = readRunPlan({ id: "pretty", plan_json: JSON.stringify(reordered, null, 2), plan_ir_version: 5 });
@@ -65,11 +108,11 @@ describe("readRunPlan — an undecodable plan is a problem, not an exception", (
   });
 
   test("a newer akm's plan that does not decode names upgrading akm as the remedy", () => {
-    const read = readRunPlan({ id: "future-run", plan_json: '{"irVersion":6,"novel":true}', plan_ir_version: 6 });
+    const read = readRunPlan({ id: "future-run", plan_json: '{"irVersion":7,"novel":true}', plan_ir_version: 7 });
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.newer).toBe(true);
-    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 6)");
+    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 7)");
     expect(read.problem).toContain("Upgrade akm");
   });
 });

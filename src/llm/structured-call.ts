@@ -124,8 +124,7 @@ export interface CallStructuredOptions<T> {
   /**
    * Enablement already resolved by the owning command, forwarded to
    * `tryLlmFeature`. REQUIRED for gated features without a `FEATURE_LOCATION`
-   * resolver (`distill`, `memory_consolidation`,
-   * `memory_contradiction_detection`, the quality gates): for those keys
+   * resolver (`distill`, `memory_consolidation`, the quality gates): for those keys
    * `isLlmFeatureEnabled` returns `false` unless this override is passed, so
    * omitting it hard-disables the feature. Ignored on the ungated path.
    */

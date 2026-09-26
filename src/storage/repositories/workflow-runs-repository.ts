@@ -7,6 +7,7 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { openStateDatabase, withImmediateTransaction } from "../../core/state-db";
 import { borrowScopedStateDb, withStateDbScope } from "../../core/state-db-scope";
 import type { WorkflowRunStatus, WorkflowRunStepStatus } from "../../sources/types";
+import { WORKFLOW_PLAN_VERSION } from "../../workflows/plan";
 import type { Database } from "../database";
 import { escapeLikePattern } from "../like-pattern";
 import { resolveStorageLocations } from "../locations";
@@ -231,7 +232,7 @@ export interface InsertStepInput {
   sequenceIndex: number;
 }
 
-/** Complete, source-CAS-guarded publication envelope for a fresh v4 run. */
+/** Complete publication envelope for a fresh run. */
 export interface PublishWorkflowRunV4Input {
   readonly workflowRefs: readonly string[];
   readonly force?: boolean;
@@ -239,19 +240,13 @@ export interface PublishWorkflowRunV4Input {
   readonly steps: InsertStepInput[];
   readonly planJson: string;
   readonly planHash: string;
-  /** Final source/read-set CAS. Runs once under IMMEDIATE before the first write. */
-  readonly revalidateSources: () => void;
 }
 
 /**
- * Publication envelope for a child workflow run (migration 023, P3a §5.2).
- *
- * Unlike {@link PublishWorkflowRunV4Input}, this carries no `revalidateSources`
- * and no `workflowRefs`/`force` scope-conflict inputs: the child plan was
- * already compiled, validated, frozen, and CAS'd into the PARENT's read set
- * at parent freeze time (docs/plans/specs/p3a-plan-v5-child-freeze.md §4.4),
- * so {@link WorkflowRunsRepository.publishChildWorkflowRun} performs no
- * source access and applies no top-level scope-conflict rule of its own.
+ * Publication envelope for a child workflow run (migration 023). Unlike
+ * {@link PublishWorkflowRunV4Input} it carries no `workflowRefs`/`force`: the
+ * child plan was frozen into the parent's plan, and a child run applies no
+ * top-level scope-conflict rule of its own.
  */
 export interface PublishChildWorkflowRunInput {
   readonly parentRunId: string;
@@ -611,13 +606,12 @@ export class WorkflowRunsRepository {
   }
 
   /**
-   * Atomically publish the entire durable-v4 run spine after the final source
-   * CAS. No run row, partial spine, plan attachment, or started event can
-   * escape independently across a crash or statement failure.
+   * Atomically publish the entire run spine. No run row, partial spine, plan
+   * attachment, or started event can escape independently across a crash or
+   * statement failure.
    */
   publishWorkflowRunV4(input: PublishWorkflowRunV4Input): void {
     this.immediateTransaction((db) => {
-      input.revalidateSources();
       if (!input.force) {
         // The uniqueness guard must never silently skip its scope predicate
         // (#942) — every real caller (`startWorkflowRun`) stamps a concrete
@@ -639,9 +633,10 @@ export class WorkflowRunsRepository {
       }
       this.insertRun(input.run);
       this.insertSteps(input.steps);
-      db.prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = 5 WHERE id = ?").run(
+      db.prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = ? WHERE id = ?").run(
         input.planJson,
         input.planHash,
+        WORKFLOW_PLAN_VERSION,
         input.run.id,
       );
       insertEventOnce(db, {
@@ -666,15 +661,12 @@ export class WorkflowRunsRepository {
    * `(parent_run_id, invocation_key)` and return the existing child if
    * present; otherwise INSERT the child run row (parentage columns +
    * `invocation_key`), its step rows, attach the embedded frozen child plan
-   * (`plan_ir_version = 5`), and append its `workflow_started` event — then
-   * return the freshly-inserted row.
+   * (`plan_ir_version` = the current plan version), and append its
+   * `workflow_started` event — then return the freshly-inserted row.
    *
-   * Deliberately does NOT: call {@link findActiveRunForScope} or raise
+   * Deliberately does NOT call {@link findActiveRunForScope} or raise
    * `RESOURCE_ALREADY_EXISTS` (top-level scope-conflict rules do not apply to
-   * a child, C-10); call `revalidateSources` or read the filesystem in any
-   * way (the child plan was frozen and CAS'd into the PARENT's read set at
-   * parent freeze, C-11); or touch {@link publishWorkflowRunV4} /
-   * `startWorkflowRun` (untouched, C-12).
+   * a child), and reads no source: the child plan was frozen into the parent's.
    *
    * This method's serialization guarantee holds only when it is the
    * OUTERMOST transaction on the connection (spec Review log R10,
@@ -736,9 +728,10 @@ export class WorkflowRunsRepository {
         input.invocationKey,
       );
       this.insertSteps(input.steps);
-      db.prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = 5 WHERE id = ?").run(
+      db.prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = ? WHERE id = ?").run(
         input.planJson,
         input.planHash,
+        WORKFLOW_PLAN_VERSION,
         input.run.id,
       );
       insertEventOnce(db, {

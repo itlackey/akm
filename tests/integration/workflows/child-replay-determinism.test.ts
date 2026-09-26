@@ -20,7 +20,7 @@
  * references only already-existing, already-typed APIs (`runWorkflowSteps`,
  * `startWorkflowRun`, `resumeWorkflowRun`, `getWorkflowStatus`,
  * `withWorkflowRunsRepo`'s `childRunsOf`/`getUnitsForStep`,
- * `computeStepWorkList`, `decodeWorkflowPlanV4`), so no `@ts-expect-error`
+ * `computeStepWorkList`, `decodeWorkflowPlan`), so no `@ts-expect-error`
  * directive is needed anywhere in it.
  */
 
@@ -34,7 +34,7 @@ import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
-import { decodeWorkflowPlanV4 } from "../../../src/workflows/ir/schema-v4";
+import { decodeWorkflowPlan } from "../../../src/workflows/runtime/run-plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
@@ -289,7 +289,7 @@ describe("resume skips a completed composing unit whatever input_hash it recorde
     const runId = started.run.id;
 
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const work = computeStepWorkList(plan.steps[0]!, { runId, params: {}, stepOutputs: {} });
     if (!work.ok) throw new Error(work.error);
     const composingUnitId = work.list.units[0]!.journalBaseId;

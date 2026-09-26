@@ -23,7 +23,7 @@ import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { openDatabase } from "../../src/storage/database";
-import { runMigrations } from "../../src/storage/engines/sqlite-migrations";
+import { runMigrations } from "../../src/storage/sqlite-migrations";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const BEFORE_018 = STATE_MIGRATIONS.slice(

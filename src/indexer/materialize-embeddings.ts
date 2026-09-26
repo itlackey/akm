@@ -25,11 +25,8 @@ import { embedBatch } from "../llm/embedder";
 import { DETERMINISTIC_EMBED_MODEL_ID, isDeterministicEmbedEnabled } from "../llm/embedders/deterministic";
 import { DEFAULT_LOCAL_MODEL } from "../llm/embedders/local";
 import {
-  buildTokenBoundedBatches,
   capEmbeddingText,
   DEFAULT_MAX_INPUT_TOKENS,
-  DEFAULT_REMOTE_BATCH_SIZE,
-  DEFAULT_TOKEN_BUDGET,
   describeEmbeddingCredential,
   type EmbeddingBatchCommit,
   type EmbeddingBatchSkip,
@@ -138,10 +135,9 @@ export async function generateEmbeddingsForDb(
   // unobservable SAVEPOINT instead, so an interruption (competing-process
   // collision, SIGKILL) could lose the whole pass rather than only the batch
   // in flight. This is an internal contract error (a caller bug), not a
-  // user-facing failure class: callers with their own transaction (e.g. `akm
-  // bundle update`'s unified update transaction) must run the embedding
-  // phase on a separate connection AFTER their own transaction commits — see
-  // `runEmbeddingPass` in `src/indexer/indexer.ts`.
+  // user-facing failure class: a caller with its own transaction must run the
+  // embedding phase on a separate connection AFTER that transaction commits —
+  // see `runEmbeddingPass` in `src/indexer/indexer.ts`.
   if (db.inTransaction) {
     throw new Error(
       "generateEmbeddingsForDb was called with an ambient transaction already open on `db`: per-batch commits " +
@@ -279,38 +275,13 @@ export async function generateEmbeddingsForDb(
       message: `Generating embeddings for ${pendingEntries.length} entr${pendingEntries.length === 1 ? "y" : "ies"}.`,
     });
 
+    // Per-document sizes; the provider's actual request grouping is reported
+    // per batch below (and each skipped document is listed at the end).
     if (isVerbose()) {
-      // Mirror RemoteEmbedder's actual token-bounded batching (#874) so this
-      // log reflects the real request grouping rather than a fixed count of
-      // 100 that no longer matches what gets sent over the wire. Local runs
-      // don't batch by size at all (LocalEmbedder chunks by a fixed count
-      // for inference throughput only, never fails/skips), so there's
-      // nothing meaningful to report per-batch for them.
-      if (hasRemoteEndpoint(config.embedding ?? {})) {
-        // Mirrors RemoteEmbedder.embedBatch's own tokenBudget resolution
-        // (#956: contextLength no longer feeds this).
-        const tokenBudget = config.embedding?.maxTokens ?? DEFAULT_TOKEN_BUDGET;
-        const maxCount = config.embedding?.batchSize ?? DEFAULT_REMOTE_BATCH_SIZE;
-        const batches = buildTokenBoundedBatches(texts, tokenBudget, maxCount);
-        const batchNumberByIndex = new Map<number, number>();
-        batches.forEach((batch, batchIdx) => {
-          for (const i of batch.indices) batchNumberByIndex.set(i, batchIdx + 1);
-        });
-        for (const [i, entry] of pendingEntries.entries()) {
-          const chars = entry.searchText.length;
-          const tokens = estimateTokenCount(entry.searchText);
-          const batch = batches[batchNumberByIndex.get(i)! - 1];
-          const label = batch?.oversized
-            ? "oversized (skipped)"
-            : `batch ${batchNumberByIndex.get(i)}/${batches.length}`;
-          warnVerbose(`[embed] ${entry.itemRef} (${chars} chars, est. ${tokens} tokens) → ${label}`);
-        }
-      } else {
-        for (const entry of pendingEntries) {
-          warnVerbose(
-            `[embed] ${entry.itemRef} (${entry.searchText.length} chars, est. ${estimateTokenCount(entry.searchText)} tokens)`,
-          );
-        }
+      for (const entry of pendingEntries) {
+        warnVerbose(
+          `[embed] ${entry.itemRef} (${entry.searchText.length} chars, est. ${estimateTokenCount(entry.searchText)} tokens)`,
+        );
       }
     }
 

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stageJudgedProposal } from "../../../src/commands/improve/distill/quality-gate";
+import { stageJudgedProposal } from "../../../src/commands/improve/stage";
 import {
   buildJudgmentPrompt,
   type DrainOptions,
@@ -1033,7 +1033,7 @@ describe("drainProposals — judgment disabled", () => {
 
 // ── REVIEW: the quality gate's review_needed band must reach a human ────────
 //
-// `writeQualityRejection` (distill/quality-gate.ts) stamps a `review_needed`
+// `writeQualityRejection` (distill.ts) stamps a `review_needed`
 // mint `deferred`/`quality-gate`. `classifyPendingProposals` must skip that
 // row entirely — not classify it, not re-stamp it, not send it to the
 // judgment tier, which could auto-accept it under `applyMode: promote` with

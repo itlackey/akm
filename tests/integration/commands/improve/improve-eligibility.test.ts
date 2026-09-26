@@ -17,13 +17,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { inspectConsolidationPool } from "../../../../src/commands/improve/consolidate";
-import {
-  buildLatestFeedbackTsMap,
-  collectEligibleRefs,
-  dedupeRefs,
-  resolveImproveScope,
-} from "../../../../src/commands/improve/eligibility";
+import { collectEligibleRefs, dedupeRefs, resolveImproveScope } from "../../../../src/commands/improve/eligibility";
 import { akmImprove } from "../../../../src/commands/improve/improve";
+import { stateKey } from "../../../../src/commands/improve/ledger";
+import { buildSnapshotManifest } from "../../../../src/commands/improve/preparation";
 import type { AssetSalienceRow } from "../../../../src/commands/improve/salience";
 import {
   DEFAULT_ENCODING_SALIENCE,
@@ -31,7 +28,6 @@ import {
   isContentEncodingRow,
   upsertAssetSalience,
 } from "../../../../src/commands/improve/salience";
-import { improveStateReadRefs } from "../../../../src/commands/improve/source-identity";
 import { saveConfig } from "../../../../src/core/config/config";
 import type { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
@@ -283,10 +279,8 @@ test("live eligibility rejects an index without entries instead of receiving an 
 
 describe("durable eligibility keys", () => {
   test("uses exactly one durable key", () => {
-    expect(improveStateReadRefs("memories/auth-tips", "team//memories/auth-tips")).toEqual([
-      "team//memories/auth-tips",
-    ]);
-    expect(improveStateReadRefs("memories/auth-tips")).toEqual(["memories/auth-tips"]);
+    expect(stateKey("memories/auth-tips", "team//memories/auth-tips")).toBe("team//memories/auth-tips");
+    expect(stateKey("memories/auth-tips")).toBe("memories/auth-tips");
   });
 
   test("a durable feedback event correlates on the conceptId key", () => {
@@ -295,9 +289,11 @@ describe("durable eligibility keys", () => {
       { now: () => NEWER_MS },
     );
 
-    expect(buildLatestFeedbackTsMap(["memories/auth-tips"], new Date(0).toISOString())).toEqual(
-      new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
-    );
+    const snapshot = buildSnapshotManifest({
+      postCleanupRefs: [{ ref: "memories/auth-tips", reason: "scope-type" }],
+      validationFailureRefs: new Set(),
+    });
+    expect(snapshot.latestFeedbackTs).toEqual(new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]));
   });
 });
 

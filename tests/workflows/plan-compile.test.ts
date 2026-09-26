@@ -5,64 +5,45 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { compileWorkflowPlan, type WorkflowPlanDraft } from "../../src/workflows/ir/compile";
+import { checkWorkflowPlan, compileWorkflowSource } from "../../src/workflows/compile";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
-import {
-  WORKFLOW_IR_V5_VERSION as WORKFLOW_IR_VERSION,
-  type WorkflowPlanGraphV4 as WorkflowPlanGraph,
-} from "../../src/workflows/ir/schema-v4";
-import type { WorkflowError } from "../../src/workflows/schema";
-import { compileWorkflowSource } from "../../src/workflows/source-ir/compile";
-import type { WorkflowSourceIrV1 } from "../../src/workflows/source-ir/schema";
+import type { WorkflowError, WorkflowPlan } from "../../src/workflows/plan";
 import { freezeWorkflow } from "../_helpers/workflow";
 
 /**
- * Both authoring adapters compile to source IR, then `compileWorkflowPlan`
- * lowers that one representation into the structural
- * draft — reference-grammar validation, earlier-step checks, source selectors
- * retained for the single resolve/freeze boundary). This replaces the
- * pre-unification split between the classic linear-markdown compiler and the
- * YAML workflow-program compiler — both lowered into the same
- * `WorkflowPlanDraft` shape, which this file now exercises through the one
- * remaining frontend.
+ * A workflow source compiles straight to the plan (`compileWorkflowSource`);
+ * `checkWorkflowPlan` then validates cross-step references. Freeze-time
+ * resolution is exercised by the freeze suites; this file pins the compiled
+ * plan and the reference rules.
  */
 
-function parseMarkdown(markdown: string, path = "workflows/test.md"): WorkflowSourceIrV1 {
-  const result = compileWorkflowSource(markdown, { path });
+function compileOk(markdown: string, title = "t", path = "workflows/test.md"): WorkflowPlan {
+  const result = compileWorkflowSource(markdown, { path, title });
   if (!result.ok) {
     throw new Error(`source compile failed: ${result.errors.map((e) => `${e.line}: ${e.message}`).join(" | ")}`);
   }
-  return result.ir;
-}
-
-function compileOk(markdown: string, title = "t", path = "workflows/test.md"): WorkflowPlanDraft {
-  const result = compileWorkflowPlan(parseMarkdown(markdown, path), title);
-  if (!result.ok) {
-    throw new Error(`compile failed: ${result.errors.map((e) => `${e.line}: ${e.message}`).join(" | ")}`);
+  const checked = checkWorkflowPlan(result.plan);
+  if (!checked.ok) {
+    throw new Error(`compile failed: ${checked.errors.map((e) => `${e.line}: ${e.message}`).join(" | ")}`);
   }
   return result.plan;
 }
 
-function compileErrors(markdown: string, title = "t", path = "workflows/test.md"): WorkflowError[] {
-  const result = compileWorkflowPlan(parseMarkdown(markdown, path), title);
-  if (result.ok) throw new Error("expected compile errors, got a plan");
-  return result.errors;
+function compileErrors(markdown: string, path = "workflows/test.md"): WorkflowError[] {
+  const result = compileWorkflowSource(markdown, { path });
+  if (!result.ok) throw new Error(`source compile failed: ${JSON.stringify(result.errors)}`);
+  const checked = checkWorkflowPlan(result.plan);
+  if (checked.ok) throw new Error("expected compile errors, got a plan");
+  return checked.errors;
 }
 
-/**
- * Errors from EITHER stage: reference-syntax checks on `map.over`/`route.input`
- * now run at PARSE time (`parser.ts`'s `checkReferenceSyntax`), while the
- * earlier-step / self-reference semantic checks stay at COMPILE time
- * (`ir/compile.ts`). Tests that only care about the accumulated error set
- * (not which stage produced it) go through this helper instead of
- * `compileErrors`, which requires a clean parse.
- */
-function errorsFrom(markdown: string, title = "t", path = "workflows/test.md"): WorkflowError[] {
+/** Errors from either stage: the grammar (reference syntax) or the cross-step check. */
+function errorsFrom(markdown: string, path = "workflows/test.md"): WorkflowError[] {
   const source = compileWorkflowSource(markdown, { path });
   if (!source.ok) return source.errors.map(({ line, message }) => ({ line, message }));
-  const compiled = compileWorkflowPlan(source.ir, title);
-  if (compiled.ok) throw new Error("expected errors, got a plan");
-  return compiled.errors;
+  const checked = checkWorkflowPlan(source.plan);
+  if (checked.ok) throw new Error("expected errors, got a plan");
+  return checked.errors;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,63 +70,55 @@ Build the artifact.
 Deploy the artifact.
 `;
 
-describe("compileWorkflowPlan — structural golden", () => {
-  test("compiles to the golden structural plan", () => {
-    expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD), "Ship it")).toEqual({
-      ok: true,
-      warnings: expect.any(Array),
-      plan: {
-        title: "Ship it",
-        steps: [
-          {
+describe("compiled plan — structural golden", () => {
+  test("compiles to the golden plan", () => {
+    expect(compileOk(LINEAR_MD, "Ship it")).toEqual({
+      irVersion: 6,
+      title: "Ship it",
+      steps: [
+        {
+          stepId: "build",
+          // The unified format has no titles anywhere — a step is its id.
+          title: "build",
+          sequenceIndex: 0,
+          spec: {
+            uses: "akm/command",
+            commandMode: "literal",
+            with: { content: "Build the artifact." },
+            source: { path: "workflows/test.md", start: 4, end: 4 },
+          },
+          gate: {
+            kind: "gate",
+            id: "build.gate",
             stepId: "build",
-            // The unified format has no titles anywhere — a step is its id.
-            title: "build",
-            sequenceIndex: 0,
-            root: {
-              kind: "unit",
-              id: "build",
-              instructions: "Build the artifact.",
-              onError: "fail",
-              source: { path: "workflows/test.md", start: 4, end: 4 },
-            },
-            gate: { kind: "gate", id: "build.gate", stepId: "build", criteria: ["- artifact exists"] },
+            criteria: ["- artifact exists"],
+            maxLoops: 1,
+            frozenJudge: null,
           },
-          {
-            stepId: "deploy",
-            title: "deploy",
-            sequenceIndex: 1,
-            root: {
-              kind: "unit",
-              id: "deploy",
-              instructions: "Deploy the artifact.",
-              onError: "fail",
-              source: { path: "workflows/test.md", start: 5, end: 5 },
-            },
-            gate: { kind: "gate", id: "deploy.gate", stepId: "deploy", criteria: [] },
+        },
+        {
+          stepId: "deploy",
+          title: "deploy",
+          sequenceIndex: 1,
+          spec: {
+            uses: "akm/command",
+            commandMode: "literal",
+            with: { content: "Deploy the artifact." },
+            source: { path: "workflows/test.md", start: 5, end: 5 },
           },
-        ],
-      },
+          gate: { kind: "gate", id: "deploy.gate", stepId: "deploy", criteria: [], maxLoops: 1, frozenJudge: null },
+        },
+      ],
     });
   });
 
-  test("keeps executable versioning out of the unresolved draft", () => {
-    expect(WORKFLOW_IR_VERSION).toBe(5);
-    const result = compileWorkflowPlan(parseMarkdown(LINEAR_MD), "Ship it");
-    if (!result.ok) throw new Error("expected ok compile");
-    expect(result.plan).not.toHaveProperty("irVersion");
-  });
-
   test("compilation is deterministic (same document → same plan)", () => {
-    const doc = parseMarkdown(LINEAR_MD);
-    expect(compileWorkflowPlan(doc, "Ship it")).toEqual(compileWorkflowPlan(doc, "Ship it"));
+    expect(compileOk(LINEAR_MD, "Ship it")).toEqual(compileOk(LINEAR_MD, "Ship it"));
   });
 
   test("an empty gate section compiles with no validation criteria", () => {
     const emptyGate = LINEAR_MD.replace("### gate\n\n- artifact exists", "### gate\n");
-    const result = compileWorkflowPlan(parseMarkdown(emptyGate), "Ship it");
-    if (!result.ok) throw new Error("expected ok compile");
-    expect(result.plan.steps[0]?.gate.criteria).toEqual([]);
+    expect(compileOk(emptyGate, "Ship it").steps[0]?.gate.criteria).toEqual([]);
   });
 });
 
@@ -209,7 +182,7 @@ Ship it.
 Rework it.
 `;
 
-describe("compileWorkflowPlan — full-vocabulary golden", () => {
+describe("compiled and frozen plan — full-vocabulary golden", () => {
   test("the canonical workflow-format example parses and compiles", () => {
     const specPath = path.resolve(import.meta.dir, "../../docs/architecture/specs/workflow-format-unification.md");
     const spec = fs.readFileSync(specPath, "utf8");
@@ -218,90 +191,74 @@ describe("compileWorkflowPlan — full-vocabulary golden", () => {
     expect(compileOk(example[1], "github-issues", specPath).steps).toHaveLength(6);
   });
 
-  test("compiles the structural plan without executable engine fields", () => {
+  test("defaults, unit overrides, map, route, and schemas land where freeze reads them", () => {
     const plan = compileOk(FULL_WF, "review-changes", "workflows/test.md");
     expect(plan.title).toBe("review-changes");
     expect(plan.params).toEqual(["changed_files"]);
-    expect(plan.steps).toHaveLength(5);
-
-    const discover = plan.steps[0]!;
-    const review = plan.steps[1]!;
-    const triage = plan.steps[2]!;
-    const ship = plan.steps[3]!;
-    const rework = plan.steps[4]!;
-
-    // Step 1: selectors remain on the parsed source until engine freezing;
-    // instructions are ALWAYS "verbatim" now — the unified format has no
-    // second templated frontend (workflow-format-unification, spec §2.3).
-    expect(discover).toEqual({
-      stepId: "discover",
-      title: "discover",
-      sequenceIndex: 0,
-      root: {
-        kind: "unit",
-        id: "discover",
-        instructions: "List the files that need review.",
-        schema: { type: "object", properties: { files: { type: "array" } }, required: ["files"] },
-        onError: "continue",
-        source: expect.objectContaining({ path: "workflows/test.md" }),
-      },
-      gate: { kind: "gate", id: "discover.gate", stepId: "discover", criteria: ["every target is listed"] },
+    expect(plan.defaults).toEqual({
+      engine: "default-agent",
+      model: "balanced",
+      timeoutMs: 600_000,
+      onError: "continue",
     });
-
-    // Step 2: map step — per-unit declarations WIN over the defaults.
-    expect(review).toEqual({
-      stepId: "review",
-      title: "review",
-      sequenceIndex: 1,
-      root: {
-        kind: "map",
-        id: "review.map",
-        over: "steps.discover.output.files",
-        template: {
-          kind: "unit",
-          id: "review.unit",
-          instructions: "Review the assigned issue for bugs.",
+    expect(plan.steps.map((step) => step.stepId)).toEqual(["discover", "review", "triage", "ship", "rework"]);
+    expect(plan.steps[0]?.spec?.unit).toEqual({
+      output: { type: "object", properties: { files: { type: "array" } }, required: ["files"] },
+    });
+    expect(plan.steps[1]).toMatchObject({
+      spec: {
+        map: { over: "steps.discover.output.files", concurrency: 8, reducer: "vote" },
+        unit: {
+          engine: "reviewer",
+          model: "deep",
+          timeoutMs: 300_000,
           retry: { max: 1, on: ["timeout", "llm_rate_limit"] },
           onError: "fail",
-          source: expect.objectContaining({ path: "workflows/test.md" }),
         },
-        concurrency: 8,
-        reducer: "vote",
-        source: expect.objectContaining({ path: "workflows/test.md" }),
       },
       outputSchema: { type: "object", properties: { verdict: { type: "string" } } },
-      gate: {
-        kind: "gate",
-        id: "review.gate",
-        stepId: "review",
-        criteria: ["every changed file has a verdict"],
-        maxLoops: 2,
+      gate: { criteria: ["every changed file has a verdict"], maxLoops: 2 },
+    });
+    expect(plan.steps[2]).toMatchObject({
+      route: { input: "steps.review.output.verdict", when: { pass: "ship", fail: "rework" }, defaultStepId: "rework" },
+    });
+  });
+
+  test("freeze turns each step into its frozen node: unit ids, map template, defaults applied", () => {
+    const executable = FULL_WF.replace("default-agent", "test-agent").replace("engine: reviewer", "engine: test-agent");
+    const plan = freezeWorkflow(executable, "workflows/test.md");
+    const [discover, review, triage, ship] = plan.steps;
+    expect(discover?.root).toMatchObject({
+      kind: "unit",
+      id: "discover",
+      instructions: "List the files that need review.",
+      schema: { type: "object", properties: { files: { type: "array" } }, required: ["files"] },
+      onError: "continue",
+    });
+    expect(review?.root).toMatchObject({
+      kind: "map",
+      id: "review.map",
+      over: "steps.discover.output.files",
+      concurrency: 8,
+      reducer: "vote",
+      template: {
+        kind: "unit",
+        id: "review.unit",
+        retry: { max: 1, on: ["timeout", "llm_rate_limit"] },
+        onError: "fail",
       },
     });
-
-    // Step 3: route step — no root, bare reference input, when as a record.
-    expect(triage).toEqual({
-      stepId: "triage",
-      title: "triage",
-      sequenceIndex: 2,
-      route: {
-        input: "steps.review.output.verdict",
-        when: { pass: "ship", fail: "rework" },
-        defaultStepId: "rework",
-      },
-      gate: { kind: "gate", id: "triage.gate", stepId: "triage", criteria: [] },
-    });
-    expect(triage.root).toBeUndefined();
-
-    // Steps 4/5: policy defaults are structural; execution settings freeze later.
-    for (const step of [ship, rework]) {
-      if (step.root?.kind !== "unit") throw new Error("expected unit root");
-      expect(step.root.onError).toBe("continue");
-    }
+    expect(triage?.root).toBeUndefined();
+    expect(ship?.root).toMatchObject({ kind: "unit", onError: "continue" });
+    const ids = plan.steps.flatMap((step) => [
+      step.gate.id,
+      ...(step.root?.kind === "map" ? [step.root.id, step.root.template.id] : step.root ? [step.root.id] : []),
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   test("without a defaults block, units are fail-fast", () => {
-    const plan = compileOk(`---
+    const plan = freezeWorkflow(`---
 type: workflow
 steps:
   - id: a
@@ -311,38 +268,7 @@ steps:
 
 Do the thing.
 `);
-    const root = plan.steps[0]!.root;
-    if (root?.kind !== "unit") throw new Error("expected unit root");
-    expect(root.onError).toBe("fail");
-    expect(root).not.toHaveProperty("invocation");
-  });
-
-  test(`defaults "timeout: none" remains source configuration until freeze`, () => {
-    const plan = compileOk(`---
-type: workflow
-defaults: { timeout: none }
-steps:
-  - id: a
----
-
-## a
-
-Do the thing.
-`);
-    const root = plan.steps[0]!.root;
-    if (root?.kind !== "unit") throw new Error("expected unit root");
-    expect(root).not.toHaveProperty("timeoutMs");
-  });
-
-  test("node ids are unique and stable across the plan", () => {
-    const plan = compileOk(FULL_WF, "review-changes", "workflows/test.md");
-    const ids: string[] = [];
-    for (const step of plan.steps) {
-      ids.push(step.gate.id);
-      if (step.root?.kind === "unit") ids.push(step.root.id);
-      if (step.root?.kind === "map") ids.push(step.root.id, step.root.template.id);
-    }
-    expect(new Set(ids).size).toBe(ids.length);
+    expect(plan.steps[0]?.root).toMatchObject({ kind: "unit", onError: "fail" });
   });
 
   test("a budget block is carried onto the plan (and absent otherwise)", () => {
@@ -358,7 +284,6 @@ steps:
 Do the thing.
 `);
     expect(withBudget.budget).toEqual({ maxTokens: 5000, maxUnits: 7 });
-    // The budget is retained for the freeze boundary.
     const withoutBudget = compileOk(`---
 type: workflow
 steps:
@@ -370,7 +295,6 @@ steps:
 Do the thing.
 `);
     expect(withoutBudget.budget).toBeUndefined();
-    expect(withBudget).not.toEqual(withoutBudget);
   });
 });
 
@@ -390,7 +314,7 @@ Do the thing.
 // no equivalent — those roots no longer exist in the language at all (they
 // are not merely restricted to map units, per spec §2.3).
 
-describe("compileWorkflowPlan — expression validation", () => {
+describe("checkWorkflowPlan — reference validation", () => {
   test("steps.<id> must reference an EARLIER step (forward reference rejected)", () => {
     const errors = compileErrors(`---
 type: workflow
@@ -548,9 +472,7 @@ Find files.
 
 Review the assigned item.
 `);
-    const root = plan.steps[1]!.root;
-    if (root?.kind !== "map") throw new Error("expected map root");
-    expect(root.over).toBe("steps.discover.output.files");
+    expect(plan.steps[1]?.spec?.map?.over).toBe("steps.discover.output.files");
   });
 
   test("errors accumulate across steps instead of stopping at the first", () => {
@@ -597,7 +519,7 @@ z
 // wording. The underlying property (only a single whole-value reference is
 // legal here, never prose-with-an-expression-inside) is unchanged.
 
-describe("compileWorkflowPlan — whole-value references", () => {
+describe("checkWorkflowPlan — whole-value references", () => {
   test("map.over with surrounding literal text is rejected", () => {
     const errors = errorsFrom(`---
 type: workflow
@@ -712,7 +634,7 @@ describe("computePlanHash", () => {
 
   test("hash is key-order independent (canonical sorted-keys JSON)", () => {
     const plan = freezeWorkflow(executableWf, "workflows/test.md");
-    const reordered = Object.fromEntries(Object.entries(plan).reverse()) as WorkflowPlanGraph;
+    const reordered = Object.fromEntries(Object.entries(plan).reverse()) as WorkflowPlan;
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(plan));
     expect(computePlanHash(reordered)).toBe(computePlanHash(plan));
   });

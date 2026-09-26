@@ -23,6 +23,7 @@ import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
 import { walkMarkdownFiles } from "../../../indexer/walk/walker";
+import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
 export interface MemoryCleanupPlan {
@@ -795,7 +796,7 @@ function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<Memor
 // firstExistingRef's byRef map), so they are NORMALIZED to `memory:<name>` here.
 // On disk they arrive in either spelling — `memory:<name>` from pre-0.9.0
 // writes, or the `[<bundle>//]memories/<name>` conceptId that
-// `writeSupersededEdge`/`writeContradictEdge` persist today — and
+// `writeSupersededEdge` persists today — and
 // `parseMemoryName` accepts both. Reading only the first spelling silently
 // dropped every edge the current write path produces.
 function refArray(value: unknown): string[] {
@@ -820,13 +821,15 @@ function buildFingerprint(
   searchHints: string[],
   body: string,
 ): string {
-  return JSON.stringify({
-    title: normalizeSignal(title),
-    description: normalizeSignal(description),
-    tags: normalizeList(tags),
-    searchHints: normalizeList(searchHints),
-    body: normalizeBody(body),
-  });
+  return contentHash(
+    JSON.stringify({
+      title: normalizeSignal(title),
+      description: normalizeSignal(description),
+      tags: normalizeList(tags),
+      searchHints: normalizeList(searchHints),
+      body: normalizeBody(body),
+    }),
+  );
 }
 
 function normalizeBody(value: string): string {

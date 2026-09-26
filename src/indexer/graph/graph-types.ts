@@ -8,7 +8,7 @@
  *
  * Split out of `graph-extraction.ts` so that `indexer/db/graph-db.ts` — the
  * SQLite-backed store, which `graph-extraction.ts` imports
- * `drainExtractionQueue`/`loadStoredGraphSnapshot`/`replaceStoredGraph` from
+ * `peekExtractionQueue`/`loadStoredGraphSnapshot`/`replaceStoredGraph` from
  * by value — does not need to import back into `graph-extraction.ts` (the
  * orchestrator) just for these shapes. That back-edge was a static-graph
  * cycle even though it was type-only (chunk 9 WI-9.8 KILL 5 sever): the

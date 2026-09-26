@@ -142,15 +142,7 @@ export function validateStashEntry(entry: unknown): IndexDocument | null {
   if (typeof e.setup === "string" && e.setup.trim()) result.setup = e.setup.trim();
   if (typeof e.cwd === "string" && e.cwd.trim()) result.cwd = e.cwd.trim();
   if (typeof e.fileSize === "number" && Number.isFinite(e.fileSize) && e.fileSize >= 0) result.fileSize = e.fileSize;
-  if (
-    e.wikiRole === "schema" ||
-    e.wikiRole === "index" ||
-    e.wikiRole === "log" ||
-    e.wikiRole === "raw" ||
-    e.wikiRole === "page"
-  ) {
-    result.wikiRole = e.wikiRole;
-  }
+  if (isWikiRole(e.wikiRole)) result.wikiRole = e.wikiRole;
   if (typeof e.pageKind === "string" && e.pageKind.trim().length > 0) {
     result.pageKind = e.pageKind.trim();
   }
@@ -267,10 +259,6 @@ function normalizeIntent(value: unknown): StashIntent | undefined {
   return Object.keys(intent).length > 0 ? intent : undefined;
 }
 
-function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
-  return normalizeNonEmptyStringList(value);
-}
-
 /**
  * Normalize a current derived-memory parent ref to its `memories/<name>`
  * conceptId for the `derived_from` column. Returns `undefined` for a non-memory
@@ -313,19 +301,19 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
     entry.confidence = 0.9;
   }
 
-  const tags = normalizeStringListOrUndefined(fmData.tags);
+  const tags = normalizeNonEmptyStringList(fmData.tags);
   if (tags) entry.tags = normalizeTerms(tags);
 
-  const aliases = normalizeStringListOrUndefined(fmData.aliases);
+  const aliases = normalizeNonEmptyStringList(fmData.aliases);
   if (aliases) entry.aliases = normalizeTerms(aliases);
 
-  const searchHints = normalizeStringListOrUndefined(fmData.searchHints);
+  const searchHints = normalizeNonEmptyStringList(fmData.searchHints);
   if (searchHints) entry.searchHints = searchHints;
 
-  const usage = normalizeStringListOrUndefined(fmData.usage);
+  const usage = normalizeNonEmptyStringList(fmData.usage);
   if (usage) entry.usage = usage;
 
-  const examples = normalizeStringListOrUndefined(fmData.examples);
+  const examples = normalizeNonEmptyStringList(fmData.examples);
   if (examples) entry.examples = examples;
 
   const run = asNonEmptyString(fmData.run);
@@ -347,13 +335,13 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
   const beliefState = asNonEmptyString(fmData.beliefState);
   if (beliefState) entry.beliefState = beliefState as IndexDocument["beliefState"];
 
-  const supersededBy = normalizeStringListOrUndefined(fmData.supersededBy);
+  const supersededBy = normalizeNonEmptyStringList(fmData.supersededBy);
   if (supersededBy) entry.supersededBy = supersededBy;
 
-  const contradictedBy = normalizeStringListOrUndefined(fmData.contradictedBy);
+  const contradictedBy = normalizeNonEmptyStringList(fmData.contradictedBy);
   if (contradictedBy) entry.contradictedBy = contradictedBy;
 
-  const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
+  const currentBeliefRefs = normalizeNonEmptyStringList(fmData.currentBeliefRefs);
   if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
 
   // captureMode: "hot" | "background" — strict whitelist; unknown values are ignored.
@@ -372,7 +360,7 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
     entry.lessonStrength = Math.max(0, Math.floor(fmData.lessonStrength));
   }
 
-  const evidenceSources = normalizeStringListOrUndefined(fmData.evidenceSources);
+  const evidenceSources = normalizeNonEmptyStringList(fmData.evidenceSources);
   if (evidenceSources) entry.evidenceSources = evidenceSources;
 
   // Phase 5A / Advantage D5: capture parent ref for derived memories.
@@ -451,28 +439,20 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
  * frontmatter block and apply them to the entry. Tolerates missing or malformed values.
  */
 export function applyWikiFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
-  const role = fmData.wikiRole;
-  if (role === "schema" || role === "index" || role === "log" || role === "raw" || role === "page") {
-    entry.wikiRole = role;
-  }
+  if (isWikiRole(fmData.wikiRole)) entry.wikiRole = fmData.wikiRole;
   const pageKind = fmData.pageKind;
   if (typeof pageKind === "string" && pageKind.trim().length > 0) {
     entry.pageKind = pageKind.trim();
   }
-  const xrefs = fmData.xrefs;
-  if (Array.isArray(xrefs)) {
-    const filtered = xrefs
-      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-      .map((x) => x.trim());
-    if (filtered.length > 0) entry.xrefs = filtered;
-  }
-  const sources = fmData.sources;
-  if (Array.isArray(sources)) {
-    const filtered = sources
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (filtered.length > 0) entry.sources = filtered;
-  }
+  // Only lists: a bare string is not a citation list here.
+  const xrefs = Array.isArray(fmData.xrefs) ? normalizeNonEmptyStringList(fmData.xrefs) : undefined;
+  if (xrefs) entry.xrefs = xrefs;
+  const sources = Array.isArray(fmData.sources) ? normalizeNonEmptyStringList(fmData.sources) : undefined;
+  if (sources) entry.sources = sources;
+}
+
+function isWikiRole(value: unknown): value is NonNullable<IndexDocument["wikiRole"]> {
+  return value === "schema" || value === "index" || value === "log" || value === "raw" || value === "page";
 }
 
 /**
@@ -695,6 +675,26 @@ function parseIntentCommentLine(cleaned: string, metadata: CommentMetadata): boo
   return true;
 }
 
+/** `@tag value` comment lines, in match order; the first matching tag wins a line. */
+const COMMENT_TAGS: ReadonlyArray<readonly [RegExp, (metadata: CommentMetadata, value: string) => void]> = [
+  [/^@description\s+(.+)$/, (m, v) => (m.description = v.trim())],
+  [/^@tags?\s+(.+)$/, (m, v) => (m.tags = splitCommentList(v))],
+  [/^@aliases?\s+(.+)$/, (m, v) => (m.aliases = splitCommentList(v))],
+  [/^@searchHints?\s+(.+)$/, (m, v) => (m.searchHints = splitCommentList(v))],
+  [/^@usage\s+(.+)$/, (m, v) => (m.usage = [...(m.usage ?? []), v.trim()])],
+  [/^@examples?\s+(.+)$/, (m, v) => (m.examples = [...(m.examples ?? []), v.trim()])],
+  [/^@run\s+(.+)$/, (m, v) => (m.run = v.trim())],
+  [/^@setup\s+(.+)$/, (m, v) => (m.setup = v.trim())],
+  [/^@cwd\s+(.+)$/, (m, v) => (m.cwd = v.trim())],
+  [
+    /^@scope\s+(.+)$/,
+    (m, v) => {
+      const scope = parseCommentScope(v);
+      if (scope) m.scope = scope;
+    },
+  ],
+];
+
 export function extractCommentMetadata(filePath: string, content?: string): CommentMetadata | undefined {
   if (content === undefined) {
     try {
@@ -718,65 +718,12 @@ export function extractCommentMetadata(filePath: string, content?: string): Comm
     if (!cleaned) continue;
 
     if (parseIntentCommentLine(cleaned, metadata)) continue;
-
-    const descMatch = cleaned.match(/^@description\s+(.+)$/);
-    if (descMatch) {
-      metadata.description = descMatch[1]!.trim();
-      continue;
-    }
-
-    const tagsMatch = cleaned.match(/^@tags?\s+(.+)$/);
-    if (tagsMatch) {
-      metadata.tags = splitCommentList(tagsMatch[1]!);
-      continue;
-    }
-
-    const aliasesMatch = cleaned.match(/^@aliases?\s+(.+)$/);
-    if (aliasesMatch) {
-      metadata.aliases = splitCommentList(aliasesMatch[1]!);
-      continue;
-    }
-
-    const hintsMatch = cleaned.match(/^@searchHints?\s+(.+)$/);
-    if (hintsMatch) {
-      metadata.searchHints = splitCommentList(hintsMatch[1]!);
-      continue;
-    }
-
-    const usageMatch = cleaned.match(/^@usage\s+(.+)$/);
-    if (usageMatch) {
-      metadata.usage = [...(metadata.usage ?? []), usageMatch[1]!.trim()];
-      continue;
-    }
-
-    const examplesMatch = cleaned.match(/^@examples?\s+(.+)$/);
-    if (examplesMatch) {
-      metadata.examples = [...(metadata.examples ?? []), examplesMatch[1]!.trim()];
-      continue;
-    }
-
-    const runMatch = cleaned.match(/^@run\s+(.+)$/);
-    if (runMatch) {
-      metadata.run = runMatch[1]!.trim();
-      continue;
-    }
-
-    const setupMatch = cleaned.match(/^@setup\s+(.+)$/);
-    if (setupMatch) {
-      metadata.setup = setupMatch[1]!.trim();
-      continue;
-    }
-
-    const cwdMatch = cleaned.match(/^@cwd\s+(.+)$/);
-    if (cwdMatch) {
-      metadata.cwd = cwdMatch[1]!.trim();
-      continue;
-    }
-
-    const scopeMatch = cleaned.match(/^@scope\s+(.+)$/);
-    if (scopeMatch) {
-      const scope = parseCommentScope(scopeMatch[1]!);
-      if (scope) metadata.scope = scope;
+    for (const [pattern, apply] of COMMENT_TAGS) {
+      const match = cleaned.match(pattern);
+      if (match) {
+        apply(metadata, match[1]!);
+        break;
+      }
     }
   }
 
@@ -786,51 +733,22 @@ export function extractCommentMetadata(filePath: string, content?: string): Comm
 export function applyCommentMetadata(entry: IndexDocument, metadata: CommentMetadata | undefined): void {
   if (!metadata) return;
   let usedCommentMetadata = false;
+  const use = <K extends keyof IndexDocument>(key: K, value: IndexDocument[K]): void => {
+    entry[key] = value;
+    usedCommentMetadata = true;
+  };
 
-  if (metadata.description && !entry.description) {
-    entry.description = metadata.description;
-    usedCommentMetadata = true;
-  }
-  if (metadata.tags?.length && (!entry.tags || entry.tags.length === 0)) {
-    entry.tags = normalizeTerms(metadata.tags);
-    usedCommentMetadata = true;
-  }
-  if (metadata.aliases?.length) {
-    entry.aliases = normalizeTerms(metadata.aliases);
-    usedCommentMetadata = true;
-  }
-  if (metadata.searchHints?.length) {
-    entry.searchHints = metadata.searchHints;
-    usedCommentMetadata = true;
-  }
-  if (metadata.usage?.length) {
-    entry.usage = metadata.usage;
-    usedCommentMetadata = true;
-  }
-  if (metadata.examples?.length) {
-    entry.examples = metadata.examples;
-    usedCommentMetadata = true;
-  }
-  if (metadata.intent && Object.keys(metadata.intent).length > 0) {
-    entry.intent = metadata.intent;
-    usedCommentMetadata = true;
-  }
-  if (metadata.run) {
-    entry.run = metadata.run;
-    usedCommentMetadata = true;
-  }
-  if (metadata.setup) {
-    entry.setup = metadata.setup;
-    usedCommentMetadata = true;
-  }
-  if (metadata.cwd) {
-    entry.cwd = metadata.cwd;
-    usedCommentMetadata = true;
-  }
-  if (metadata.scope) {
-    entry.scope = metadata.scope;
-    usedCommentMetadata = true;
-  }
+  if (metadata.description && !entry.description) use("description", metadata.description);
+  if (metadata.tags?.length && (!entry.tags || entry.tags.length === 0)) use("tags", normalizeTerms(metadata.tags));
+  if (metadata.aliases?.length) use("aliases", normalizeTerms(metadata.aliases));
+  if (metadata.searchHints?.length) use("searchHints", metadata.searchHints);
+  if (metadata.usage?.length) use("usage", metadata.usage);
+  if (metadata.examples?.length) use("examples", metadata.examples);
+  if (metadata.intent && Object.keys(metadata.intent).length > 0) use("intent", metadata.intent);
+  if (metadata.run) use("run", metadata.run);
+  if (metadata.setup) use("setup", metadata.setup);
+  if (metadata.cwd) use("cwd", metadata.cwd);
+  if (metadata.scope) use("scope", metadata.scope);
 
   if (usedCommentMetadata && entry.source !== "frontmatter" && entry.source !== "manual") {
     entry.source = "comments";
@@ -1154,34 +1072,11 @@ export function projectMarkdownContent(body: string, truncationInfo?: { truncate
   const innerBlock = findInnerFrontmatterBlock(lines);
   const start = innerBlock && isFrontmatterShaped(lines, innerBlock) ? innerBlock.close + 1 : 0;
   const projected: string[] = [];
-  let fence: MarkdownFence | undefined;
-  const htmlComment = { inComment: false };
-  for (let i = start; i < lines.length; i += 1) {
-    const rawLine = lines[i]!;
-    if (fence) {
-      if (isMarkdownFenceClosing(rawLine, fence)) fence = undefined;
-      continue;
-    }
-
-    // A leading fence owns the whole line, including any info string that
-    // resembles HTML. Comment state therefore cannot begin inside a fence.
-    if (!htmlComment.inComment) {
-      const openingFence = parseMarkdownFenceOpening(rawLine);
-      if (openingFence) {
-        fence = openingFence;
-        continue;
-      }
-    }
-
-    let trimmed = stripMarkdownHtmlComments(rawLine, htmlComment).trim();
-    const openingFence = parseMarkdownFenceOpening(trimmed);
-    if (openingFence) {
-      fence = openingFence;
-      continue;
-    }
-    if (!trimmed || /^(-{3,}|\*{3,}|_{3,}|=+)$/.test(trimmed)) continue;
-    if (/^\s*\[[^\]]+\]:\s*\S+/.test(trimmed)) continue;
-    if (/^<[^>]+>$/.test(trimmed)) continue;
+  forEachVisibleMarkdownLine(lines, start, (_index, visible) => {
+    let trimmed = visible.trim();
+    if (!trimmed || /^(-{3,}|\*{3,}|_{3,}|=+)$/.test(trimmed)) return;
+    if (/^\s*\[[^\]]+\]:\s*\S+/.test(trimmed)) return;
+    if (/^<[^>]+>$/.test(trimmed)) return;
 
     // Preserve human-facing labels and inline identifiers, never destinations.
     trimmed = stripMarkdownLinkDestinations(trimmed);
@@ -1192,12 +1087,46 @@ export function projectMarkdownContent(body: string, truncationInfo?: { truncate
     trimmed = trimmed.replace(/[|]+/g, " ");
     trimmed = trimmed.replace(/\s+/g, " ").trim();
     if (trimmed) projected.push(trimmed);
-  }
+  });
 
   const text = projected.join(" ").replace(/\s+/g, " ").trim();
   if (!text) return undefined;
   if (truncationInfo) truncationInfo.truncated = text.length > MARKDOWN_CONTENT_MAX_CHARS;
   return truncateUnicodeSafe(text, MARKDOWN_CONTENT_MAX_CHARS);
+}
+
+/**
+ * Visit each line from `start` that lies outside fenced code, with HTML
+ * comments removed (`visible`); fence lines themselves are never visited.
+ */
+function forEachVisibleMarkdownLine(
+  lines: string[],
+  start: number,
+  visit: (index: number, visible: string) => void,
+): void {
+  let fence: MarkdownFence | undefined;
+  const htmlComment = { inComment: false };
+  for (let index = start; index < lines.length; index += 1) {
+    const rawLine = lines[index]!;
+    if (fence) {
+      if (isMarkdownFenceClosing(rawLine, fence)) fence = undefined;
+      continue;
+    }
+    // A leading fence owns the whole line, including any info string that
+    // resembles HTML. Comment state therefore cannot begin inside a fence.
+    const leadingFence = htmlComment.inComment ? undefined : parseMarkdownFenceOpening(rawLine);
+    if (leadingFence) {
+      fence = leadingFence;
+      continue;
+    }
+    const visible = stripMarkdownHtmlComments(rawLine, htmlComment);
+    const openingFence = parseMarkdownFenceOpening(visible.trim());
+    if (openingFence) {
+      fence = openingFence;
+      continue;
+    }
+    visit(index, visible);
+  }
 }
 
 // Fragment text is intentionally not an IndexDocument field. IndexDocument is
@@ -1222,6 +1151,20 @@ export function hasMarkdownFragmentContent(entry: IndexDocument): boolean {
 }
 
 /**
+ * A copy of `entry` carrying `filePath`'s size (and its fragment projection),
+ * or `entry` itself when the file cannot be stat'ed.
+ */
+export function withFileSize(entry: IndexDocument, filePath: string): IndexDocument {
+  try {
+    const sized = { ...entry, fileSize: fs.statSync(filePath).size };
+    if (hasMarkdownFragmentContent(entry)) setMarkdownFragmentContent(sized, getMarkdownFragmentContent(entry));
+    return sized;
+  } catch {
+    return entry;
+  }
+}
+
+/**
  * Produce a safe, structure-preserving projection for fragment indexing.
  * Excluded source lines are retained as blank lines so fragment locations map
  * exactly to authored line numbers. This must be called from both indexing and
@@ -1230,35 +1173,15 @@ export function hasMarkdownFragmentContent(entry: IndexDocument): boolean {
 export function projectMarkdownFragmentContent(raw: string): string | undefined {
   const lines = raw.split(/\r?\n/);
   const parsed = parseFrontmatter(raw);
-  const start = parsed.frontmatter ? parsed.bodyStartLine - 1 : 0;
   const projected = lines.map(() => "");
-  let fence: MarkdownFence | undefined;
-  const htmlComment = { inComment: false };
-  for (let index = start; index < lines.length; index++) {
-    const rawLine = lines[index]!;
-    if (fence) {
-      if (isMarkdownFenceClosing(rawLine, fence)) fence = undefined;
-      continue;
-    }
-    if (!htmlComment.inComment) {
-      const opening = parseMarkdownFenceOpening(rawLine);
-      if (opening) {
-        fence = opening;
-        continue;
-      }
-    }
-    let safe = stripMarkdownHtmlComments(rawLine, htmlComment);
-    const opening = parseMarkdownFenceOpening(safe.trim());
-    if (opening) {
-      fence = opening;
-      continue;
-    }
+  forEachVisibleMarkdownLine(lines, parsed.frontmatter ? parsed.bodyStartLine - 1 : 0, (index, visible) => {
     // Reference link destinations and standalone HTML are not retrieval
     // evidence and can contain credential-bearing URLs.
-    if (/^\s*\[[^\]]+\]:\s*\S+/.test(safe) || /^\s*<[^>]+>\s*$/.test(safe)) continue;
-    safe = stripMarkdownLinkDestinations(safe).replace(/<[^>]+>/g, " ");
-    projected[index] = safe.replace(/[ \t]+$/g, "");
-  }
+    if (/^\s*\[[^\]]+\]:\s*\S+/.test(visible) || /^\s*<[^>]+>\s*$/.test(visible)) return;
+    projected[index] = stripMarkdownLinkDestinations(visible)
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[ \t]+$/g, "");
+  });
   const text = projected.join("\n");
   return text.trim() ? text : undefined;
 }
@@ -1390,7 +1313,7 @@ export function applyPostContributorFields(
   entry.tags = normalizeTerms(entry.tags ?? []);
   entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
 
-  // Search hints are only generated when LLM is configured (via enhanceStashWithLlm)
+  // Search hints are only generated when LLM is configured (via enhanceEntriesWithLlm)
   // Heuristic search hints are too noisy to be useful for search quality
 
   entry.filename = path.basename(file);

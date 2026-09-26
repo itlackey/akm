@@ -1037,15 +1037,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "contradictionDetection": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -2759,15 +2750,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "contradictionDetection": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -3723,15 +3705,6 @@
           },
           "additionalProperties": true
         },
-        "contradictionDetection": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": true
-        },
         "minPendingCount": {
           "type": "integer",
           "minimum": 0
@@ -4248,15 +4221,6 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "contradictionDetection": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
                     }
                   },
                   "additionalProperties": true

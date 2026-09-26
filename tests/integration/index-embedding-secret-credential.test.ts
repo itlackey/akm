@@ -16,8 +16,7 @@
  * (since the field failure was specifically the CLI), plus every other path
  * that reaches `RemoteEmbedder`: an inherited credential that must not cross
  * the host-local config boundary while adapter detection persists mid-run;
- * `akm bundle update`'s post-commit
- * embedding pass (`runPostCommitEmbeddingPass`, reached via `akmUpdate`);
+ * `akm bundle update`'s reindex (reached via `akmUpdate`);
  * the `remember` write path (`indexWrittenAssets`, which calls
  * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the
  * improve consolidate path as the known-good control.
@@ -214,7 +213,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
   });
 });
 
-describe("akm bundle update: post-commit embedding pass carries the secret:// credential (#953)", () => {
+describe("akm bundle update: the update's embedding phase carries the secret:// credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -242,7 +241,7 @@ describe("akm bundle update: post-commit embedding pass carries the secret:// cr
     }
   }
 
-  test("runPostCommitEmbeddingPass (reached via akmUpdate) sends Bearer <store value> on every embedding request", async () => {
+  test("akmUpdate sends Bearer <store value> on every embedding request", async () => {
     setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("bundle-update-store-secret-value"));
 
     const capture = createAuthCapturingEmbeddingServer();
@@ -272,11 +271,11 @@ describe("akm bundle update: post-commit embedding pass carries the secret:// cr
       },
     ]);
 
-    // Establish the index first — the post-commit pass under test only runs
-    // as part of `akmUpdate`, not this seed run.
+    // Establish the index first — the embedding phase under test is the one
+    // `akmUpdate` runs, not this seed run.
     await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });
-    // Isolate the assertion below to requests made by the update's post-commit
-    // pass, not the seed run above (which the real fix also credentials, but
+    // Isolate the assertion below to requests made by the update's embedding
+    // phase, not the seed run above (which the real fix also credentials, but
     // that path is already covered by the in-process akmIndex variant).
     capture.authHeaders.length = 0;
 

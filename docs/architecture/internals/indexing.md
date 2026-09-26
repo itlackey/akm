@@ -126,17 +126,12 @@ stays `akm index`'s job.
 to run against a connection that already has a transaction open: its
 per-batch `db.transaction()` calls are only a durable commit when `db` has
 no ambient transaction, since one nested inside another SQLite transaction
-runs as an unobservable SAVEPOINT instead. `akm bundle update`'s coordinator
-(`src/commands/sources/installed-stashes.ts`) opens `index.db` under one
-outer `BEGIN IMMEDIATE` spanning content, lock, canonical entries, FTS, and
-state — but no longer runs the embedding phase inside it. `akmIndex` skips
-its embedding phase entirely when called with a borrowed update transaction
-and finalize records semantic state as `"pending"`, never `"ready"`; after
-the coordinator's own commit, it calls the shared `runEmbeddingPass`
-(`src/indexer/indexer.ts`) directly on a fresh, non-transactional
-connection. A failing post-commit pass (provider down) still leaves the
-update itself successful — content, lock, and index generation are already
-durably committed — with only the reported `semanticStatus: "blocked"`
+runs as an unobservable SAVEPOINT instead. `akm bundle update`
+(`src/commands/sources/installed-stashes.ts`) publishes the new content and
+lock entry, then runs an ordinary `akmIndex` with no outer transaction, so
+its embedding phase (`runEmbeddingPass`, `src/indexer/indexer.ts`) runs like
+any other index run's. A failing embedding pass (provider down) still leaves
+the update successful, with the reported `semanticStatus: "blocked"`
 (surfaced on `akm bundle update`'s own JSON response, `index.semanticStatus`)
 showing that semantic search fell behind, exactly like a plain `akm index`
 run whose embedding phase fails.

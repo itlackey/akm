@@ -3,38 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Best-effort secret-shaped-param detection (PR #714 review round 2, #13).
- *
- * ## Params are not a secret channel
- *
- * A workflow's run params are attached to every unit prompt as structured
- * context (`buildUnitPrompt` substitutes them into the engine preamble's
- * `{{PARAMS_JSON}}` placeholder — prose instructions are never interpolated),
- * so a unit sees them in clear, and they are stored on the run row and shown
- * by `akm workflow status`. Secrets belong in **env bindings** (`env:` refs),
- * which are carried by NAME ONLY through the plan and resolved from the
- * process environment at dispatch.
- *
- * This module is the loud, best-effort guardrail on top of that contract: it
- * scans params for values that LOOK like credentials (secret-suggesting key
- * names, long high-entropy strings, known token prefixes) and returns WARNING
- * strings surfaced when a run starts — it NEVER blocks a run and NEVER mutates
- * params. {@link secretShapedParamValues} feeds the same heuristic into the
- * dispatch redaction set, so a unit result or diagnostic that echoes such a
- * value is scrubbed before it is journaled. False positives and false
- * negatives are expected; it is a nudge, not a scanner.
- *
- * ## Reused as `akm task explain`'s redaction check
- *
- * `src/commands/tasks/explain.ts` reuses this same heuristic (via its own
- * `isSecretShapedValue` wrapper) to decide which task-input values to print
- * as `"<redacted>"` instead of in full. That reuse does NOT upgrade this
- * detector into a hard guarantee: `explain`'s redaction is exactly as
- * best-effort as the warnings above — a short, low-entropy, or
- * unusually-named credential that this function does not flag prints
- * UNREDACTED there too. Do not describe either surface as "secret-free by
- * construction"; describe it as "secret-shaped values are redacted on a
- * best-effort basis."
+ * Best-effort secret-shaped-param detection. Run params reach every unit
+ * prompt in clear and are shown by `akm workflow status`; secrets belong in
+ * `env:` bindings. This scans params for credential-looking keys or values and
+ * returns warnings at run start (never blocking), and feeds the same values
+ * into the dispatch redaction set. `akm task explain` reuses the heuristic to
+ * redact input values — best-effort there too, never a guarantee.
  */
 
 /**
@@ -91,12 +65,8 @@ const MOVE_TO_ENV =
   "only at dispatch instead of storing it as a run param.";
 
 /**
- * Scan run params for secret-shaped values. Returns human-readable WARNING
- * strings (best-effort; never throws, never blocks). Recurses into nested
- * objects and arrays, reporting the dotted/indexed path of each hit. A key whose
- * NAME suggests a secret is flagged regardless of value shape; any string value
- * that LOOKS like a credential is flagged regardless of key name. Each path is
- * reported at most once.
+ * Scan run params (recursively) for secret-suggesting key names or
+ * credential-looking string values; one warning per path. Never throws.
  */
 export function detectSecretShapedParams(params: Record<string, unknown>): string[] {
   const warnings: string[] = [];
@@ -110,12 +80,8 @@ export function detectSecretShapedParams(params: Record<string, unknown>): strin
 }
 
 /**
- * The string param values {@link detectSecretShapedParams} flags, for the
- * dispatch redaction set: a unit still receives its params in clear, but a
- * result or diagnostic echoing one of these is scrubbed before it reaches the
- * journal. Values under 8 characters are left out so a secret-NAMED param
- * holding something trivial (`token_limit: "1000"`) cannot blank out ordinary
- * output.
+ * The flagged string values, for the dispatch redaction set (values under 8
+ * characters are left out so `token_limit: "1000"` cannot blank out output).
  */
 export function secretShapedParamValues(params: Record<string, unknown>): string[] {
   const values = new Set<string>();

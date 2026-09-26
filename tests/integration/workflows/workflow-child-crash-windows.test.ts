@@ -82,8 +82,7 @@ import type { UnitDispatchResult } from "../../../src/workflows/exec/native-exec
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
-import { decodeWorkflowPlanV4 } from "../../../src/workflows/ir/schema-v4";
-import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
+import { decodeWorkflowPlan, frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { plantRunLock } from "../../_helpers/workflow";
@@ -186,7 +185,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     writeProgram(storage.stashDir, "cw1-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw1-parent", "workflows/cw1-leaf");
     const started = await startWorkflowRun("workflows/cw1-parent", {});
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const parentRunId = started.run.id;
 
     // Held on the child's own unit so the crasher can never race past this
@@ -391,7 +390,7 @@ describe("two-parent-process contention on one child (C-04)", () => {
     // reaching this composing step would each compute on their own, with no
     // coordination between them.
     const parentRow = await withWorkflowRunsRepo((repo) => repo.getRunById(parentRunId));
-    const plan = decodeWorkflowPlanV4(JSON.parse(parentRow?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(parentRow?.plan_json ?? "null"));
     const composingStep = plan.steps[0]!;
     const root = composingStep.root;
     if (!root) throw new Error("composing step must have a root");
@@ -542,7 +541,7 @@ describe("two-parent-process contention on one child (C-04)", () => {
     // derive for the composing unit (spec §3.3 steps 1-2), then pre-publish +
     // pre-lock the child directly — one level down at the CHILD row.
     const parentRow = await withWorkflowRunsRepo((repo) => repo.getRunById(parentRunId));
-    const plan = decodeWorkflowPlanV4(JSON.parse(parentRow?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(parentRow?.plan_json ?? "null"));
     const composingStep = plan.steps[0]!;
     const root = composingStep.root;
     if (!root) throw new Error("composing step must have a root");

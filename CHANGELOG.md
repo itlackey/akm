@@ -92,6 +92,20 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   filesystem transaction journals (`src/core/fs-txn.ts`) with their
   recovery, quarantine, deferral and fencing are removed, along with the
   `txn-quarantine`/`txn-awaiting-recovery` health advisories.
+- **`akm bundle update` publishes, records the lock entry, then reindexes —
+  with no rollback transaction.** An update still fetches into a staging
+  directory beside the cache and audits the staged bytes for dangerous env
+  keys before anything goes live; a blocked or failed audit changes nothing.
+  It then publishes with one rename (a fast-forward for a writable Git
+  checkout), writes the lock entry, and reindexes. If the reindex fails, the
+  new content and lock entry stay for the next `akm index`, and the previous
+  install directory is kept. The config, staged-content, lockfile-byte and
+  checkout-HEAD fences and the lockfile compare-and-swap restore are gone, so
+  an update no longer fails with "changed concurrently" or "changed after its
+  staged bytes were audited": it already runs under the asset-mutation lease,
+  and Git refuses a fast-forward that would overwrite local work. A website
+  source refreshes through its mirror's own snapshot staging, so a killed
+  refresh still keeps the previous mirror.
 - **A lock file is one `O_EXCL` create** (`src/core/file-lock.ts`). The
   SQLite lock-operation mutex, the maintenance barrier (a lock guarding lock
   registration) and its per-open activity registry — the source of the
@@ -109,12 +123,12 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
   reader owes data an earlier release wrote, plus a per-format table (config,
   `state.db`, `index.db`, task source, workflow IR, native scheduler rows,
-  proposal and task-history metadata, lock payloads,
-  guarded directory manifests, `.akm` residue) naming where each is written,
-  its version marker, its older/newer-data behavior, and which gate covers
-  it — with explicit `Gap:` notes where the code does not meet the contract
-  yet. Registered in `docs/architecture/README.md`. `AGENTS.md`'s "Reading
-  persisted data" section now points at this doc instead of a deleted file.
+  proposal and task-history metadata, lock payloads, `.akm` residue) naming
+  where each is written, its version marker, its older/newer-data behavior,
+  and which gate covers it — with explicit `Gap:` notes where the code does
+  not meet the contract yet. Registered in `docs/architecture/README.md`.
+  `AGENTS.md`'s "Reading persisted data" section now points at this doc
+  instead of a deleted file.
 
 - **Scheduler writes hold one lock and apply row by row.** `akm task sync`,
   `add`, `enable`, `disable` and `prune --yes` hold one `O_EXCL` lock,
@@ -155,7 +169,12 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   event-timestamp cursors, which disagreed with one another (quality
   rejections never reached the fingerprints; consolidate re-judged promoted
   memories). Distill and consolidate now key by their input refs, so each
-  such input may be attempted once more after upgrading.
+  such input may be attempted once more after upgrading. Schema repair paces
+  itself with the ledger too, replacing its private 7-day cooldown and
+  3-attempts-per-30-days cap. Every stage — reflect, distill, consolidate,
+  extract, triage, memory inference, graph extraction — runs through one
+  shared path (`src/commands/improve/stage.ts`): pick the runner, call the
+  model, judge the output, mint the proposal, record the usage.
 - **`akm proposal drain` has one rule.** A proposal the quality judge passed
   (a `staged` gate decision whose content hash still matches) is accepted, an
   empty diff is rejected, and everything else goes to the judgment tier
@@ -163,7 +182,11 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   proposals, which the `personal-stash` policy auto-accepted on size alone,
   carry no judge stamp, so they now go to the judgment tier — or wait for
   review when none is configured — instead of being accepted. The policies
-  and their flags are retired (see Removed).
+  and their flags are retired (see Removed). `--dry-run` now predicts what a
+  real drain does: a proposal whose target already holds its content (an
+  accept that wrote the file but was interrupted before recording it) is
+  reported as promoted, as the real drain finishes it, instead of as a
+  stale-target rejection.
 - **State migration `028-improve-ledger` creates the ledger and drops six
   tables.** It backfills the ledger from each ref's latest proposal and drops
   `proposal_fingerprints`, `improve_gate_thresholds`, `proposal_fs_imports`,
@@ -186,17 +209,26 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   Readers serve an older or newer layout as-is and say so once on stderr. An
   akm older than this release refuses a layout-24 index and asks to be
   upgraded.
-- **Workflow runs are never refused for their plan's version or hash.** A
-  stored plan that decodes runs whatever release froze it; one that does not
-  is marked abandoned and `akm workflow run <ref>` starts afresh; only a
-  plan a newer akm froze is refused, naming the upgrade
-  (`WORKFLOW_IR_VERSION_UNSUPPORTED` is gone). One driver per run is a lock
-  file, `<data dir>/workflow-run-locks/<run id>.lock`: a second `akm workflow
-  run` exits 75 (`RUN_LEASE_HELD`) naming the holder's pid, and a dead pid's
-  lock is reclaimed at once — the database run lease, its heartbeat and the
+- **`--verbose` embedding output lists each document's size without a
+  predicted batch number.** The per-batch lines already report every
+  provider request's document and token counts, and skipped documents are
+  listed at the end of the pass.
+- **Workflow runs are never refused for their plan's version or hash.**
+  Markdown and the GitHub-shaped YAML subset compile straight to one plan
+  type, and new runs record plan `irVersion` 6. A stored plan that decodes
+  runs whatever release froze it — irVersion 4 and 5 plans are read
+  tolerantly, and a key this release does not know is ignored instead of
+  abandoning the run; one that does not decode is marked abandoned and `akm
+  workflow run <ref>` starts afresh; only a plan a newer akm froze is
+  refused, with "Upgrade akm" (`WORKFLOW_IR_VERSION_UNSUPPORTED` is gone).
+  One driver per run is a lock file,
+  `<data dir>/workflow-run-locks/<run id>.lock`: a second `akm workflow run`
+  exits 75 (`RUN_LEASE_HELD`) naming the holder's pid, and a dead pid's lock
+  is reclaimed at once — the database run lease, its heartbeat and the
   check-ins are gone. Resume reuses every completed unit whatever its
-  recorded input hash, and warns when the workflow file changed since the
-  freeze. Executable identity (realpath, inode and hash captured at freeze,
+  recorded input hash, and warns once when the workflow file's sha256
+  differs from the one recorded at freeze, then continues on the frozen
+  plan. Executable identity (realpath, inode and hash captured at freeze,
   checked at dispatch) is gone, so upgrading `claude` mid-run no longer
   strands a run.
 - **Every execution goes through three plain functions:** `resolveExecution`
@@ -223,7 +255,12 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   research advisories (`outcome-proxy-adequacy`, `outcome-proxy-dead`,
   `salience-uniformity-collapse`, `enrichment-lane-minting`,
   `improve-churn-ratio`, `collapse-churn-detector`) and the report's
-  coverage, degradation and minting rollups.
+  coverage, degradation and minting rollups. The HTML report's embedded
+  `RUNS` data drops 11 per-run counters no chart or table read (scope mode,
+  consolidation `processed`/`failedChunks`/`totalChunks`, memory-inference
+  `considered`/`yieldRate`, graph-extraction `failures`, distill
+  `skipped`/`queued`/`llmFailed`, `orphansPurged`); `--group-by run` and
+  `--format md` are unchanged.
 - **`configVersion` is read, never gated on.** A missing field or `"0.9.0"`
   loads silently; any other value is named once and read as `0.9.0`.
   `UNSUPPORTED_CONFIG_VERSION` and `src/core/config/config-version-shim.ts`
@@ -310,6 +347,17 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Removed
 
+- **Guarded source reads around workflow runs.** `akm workflow run` no
+  longer records a read set of every source it touched or re-checks those
+  sources before publishing the run, so editing a command, task, script or
+  env file while a run is being created no longer fails creation; a source
+  that resolves outside its bundle is still refused. `akm workflow plan` no
+  longer prints a `read set:` block, and its JSON drops `sourceReadSet`. At
+  dispatch an env file is re-read from its recorded path (a changed key set
+  is still refused), so replacing or re-cloning the bundle directory no
+  longer fails a unit with "environment owner root physical identity
+  changed". The resume check that refused a run whose stored params row had
+  been edited is gone.
 - **Drain policies.** `processes.triage.policy` and
   `processes.triage.maxDiffLines` (config) and `akm proposal drain --policy`
   / `--max-diff-lines` are retired with `drain-policies.ts`; the flags now
@@ -320,6 +368,7 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   merge guards. Retired config keys (kept as unknown keys):
   `processes.consolidate.antiCollapse.{maxGeneration, lexicalDiversityCheck,
   mergeInformationFloor, minSpecificityRetention}`,
+  `processes.consolidate.contradictionDetection`,
   `improve.salience.replayBudget` and `improve.collapseDetector`. Retired
   events: `improve_salience_first_run`, `improve_replay_selected`,
   `collapse_detector_alert`, `improve_cycle_metrics_purged`,
@@ -460,6 +509,17 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   the CLI** instead of re-validating the descriptor with a stale copy of its
   schema, which rejected every descriptor 0.9.17 writes.
   (`scripts/node-runtime/akm`)
+- **A `task_history` row with a malformed `engine` value decodes.** The
+  decoder used to reject the whole row when `engine` was present but not a
+  string or `null`; it now drops the bad value and decodes the rest, the
+  tolerance it already applied to every other unrecognized field.
+  (`src/storage/repositories/task-history-repository.ts`)
+- **The LLM enrichment budget warning prints for every index run.** When the
+  metadata-enrichment pass ran out of its wall-clock budget during an index
+  another command started (`akm bundle update`, `akm setup`, `akm bundle
+  add`, improve's preflight, a read command's auto-index), it stopped
+  silently; it now prints the same "LLM enrichment budget exceeded" warning
+  `akm index` does.
 
 ## [0.9.17-alpha.3] - 2026-09-24
 

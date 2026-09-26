@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { writeQualityRejection } from "../../../../src/commands/improve/distill/quality-gate";
+import { writeQualityRejection } from "../../../../src/commands/improve/distill";
 import { getProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import { readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -47,18 +47,16 @@ function lastDistillEvent(): Record<string, unknown> | undefined {
 describe("writeQualityRejection — quality_rejected lands in the improve ledger (R16)", () => {
   test("criteria reach the event and the envelope; the input gets the distill rejection window", () => {
     const criteria = { novelty: 2, actionability: 3, nonRedundancy: 2 };
-    const result = writeQualityRejection(
-      stashDir,
-      "memories/source-ref",
-      "lessons/proposed-ref",
-      "proposed lesson body",
-      (criteria.novelty + criteria.actionability + criteria.nonRedundancy) / 3,
-      "judge reason",
-      { criteria },
-      undefined,
-      undefined,
-      { ledgerRef: "stash//memories/source-ref" },
-    );
+    const result = writeQualityRejection({
+      stash: stashDir,
+      inputRef: "memories/source-ref",
+      proposalRef: "lessons/proposed-ref",
+      content: "proposed lesson body",
+      score: (criteria.novelty + criteria.actionability + criteria.nonRedundancy) / 3,
+      reason: "judge reason",
+      meta: { criteria },
+      ledgerRef: "stash//memories/source-ref",
+    });
 
     expect(result.outcome).toBe("quality_rejected");
     expect((result as unknown as { criteria?: Record<string, number> }).criteria).toEqual(criteria);
@@ -73,15 +71,14 @@ describe("writeQualityRejection — quality_rejected lands in the improve ledger
   });
 
   test("no criteria supplied (structural/fidelity rejection) omits them", () => {
-    const result = writeQualityRejection(
-      stashDir,
-      "memories/source-ref",
-      "lessons/proposed-ref-no-criteria",
-      "proposed lesson body",
-      2.0,
-      "structural finding",
-      {},
-    );
+    const result = writeQualityRejection({
+      stash: stashDir,
+      inputRef: "memories/source-ref",
+      proposalRef: "lessons/proposed-ref-no-criteria",
+      content: "proposed lesson body",
+      score: 2.0,
+      reason: "structural finding",
+    });
     expect((result as unknown as { criteria?: unknown }).criteria).toBeUndefined();
     expect(lastDistillEvent()?.criteria).toBeUndefined();
     expect(ledgerRow("memories/source-ref")).toMatchObject({ outcome: "quality_rejected" });
@@ -92,15 +89,15 @@ describe("writeQualityRejection — REVIEW: review_needed mint is stamped for a 
   test("a review_needed mint carries a deferred/quality-gate gate decision and a review_needed ledger row", () => {
     const content =
       "---\ndescription: A lesson worth a human look\nwhen_to_use: Uncertain quality band\n---\n\nBody text.\n";
-    const result = writeQualityRejection(
-      stashDir,
-      "memories/source-ref",
-      "lessons/proposed-review-needed",
+    const result = writeQualityRejection({
+      stash: stashDir,
+      inputRef: "memories/source-ref",
+      proposalRef: "lessons/proposed-review-needed",
       content,
-      3.0,
-      "uncertain quality band",
-      { reviewNeeded: true },
-    );
+      score: 3.0,
+      reason: "uncertain quality band",
+      meta: { reviewNeeded: true },
+    });
 
     expect(result.outcome).toBe("review_needed");
     const proposalId = (result as unknown as { proposalId?: string }).proposalId;
@@ -120,15 +117,15 @@ describe("writeQualityRejection — REVIEW: review_needed mint is stamped for a 
     // No `description`/`when_to_use` frontmatter — the mint-time canonical
     // validator throws UsageError for a lesson. writeQualityRejection swallows
     // it: the ledger still records the attempt.
-    const result = writeQualityRejection(
-      stashDir,
-      "memories/source-ref",
-      "lessons/proposed-ref-invalid-structure",
-      "body with no description or when_to_use frontmatter",
-      3.0,
-      "uncertain quality band",
-      { reviewNeeded: true },
-    );
+    const result = writeQualityRejection({
+      stash: stashDir,
+      inputRef: "memories/source-ref",
+      proposalRef: "lessons/proposed-ref-invalid-structure",
+      content: "body with no description or when_to_use frontmatter",
+      score: 3.0,
+      reason: "uncertain quality band",
+      meta: { reviewNeeded: true },
+    });
 
     expect(result.outcome).toBe("review_needed");
     expect((result as unknown as { proposalId?: string }).proposalId).toBeUndefined();

@@ -20,29 +20,17 @@ export function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
-export function parseTaskMetadata(row: TaskHistoryRow): {
-  durationMs?: number;
-  detail?: Record<string, unknown>;
-  engine?: string | null;
-} {
-  const metadata = decodeTaskHistoryMetadata(row.metadata_json);
-  return {
-    ...(metadata.durationMs !== undefined ? { durationMs: metadata.durationMs } : {}),
-    ...(metadata.detail ? { detail: metadata.detail } : {}),
-    ...(metadata.engine !== undefined ? { engine: metadata.engine } : {}),
-  };
-}
-
 /**
- * `parseTaskMetadata`, but per-row skip-and-warn instead of throwing (mirrors
- * `listStateProposals`). `decodeTaskHistoryMetadata` already tolerates
- * legacy/additive shapes; only genuine corruption reaches this catch, and a
- * corrupt row must degrade the metric (excluded, not fatal) rather than abort
- * the whole `akm health` computation.
+ * `task_history.metadata_json`'s `detail` field, decoded and skip-and-warn on
+ * corruption instead of throwing (mirrors `listStateProposals`).
+ * `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes; only
+ * genuine corruption reaches this catch, and a corrupt row must degrade the
+ * metric (excluded, not fatal) rather than abort the whole `akm health`
+ * computation.
  */
 export function taskFailureDetail(row: TaskHistoryRow): Record<string, unknown> | undefined {
   try {
-    return parseTaskMetadata(row).detail;
+    return decodeTaskHistoryMetadata(row.metadata_json).detail ?? undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(

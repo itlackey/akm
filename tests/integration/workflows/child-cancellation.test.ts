@@ -43,11 +43,7 @@ import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow
 import { driveChildWorkflowUnit } from "../../../src/workflows/exec/child-workflow";
 import { runWorkflowSteps, workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
-import type {
-  FrozenChildWorkflowTarget,
-  FrozenWorkflowTarget,
-  WorkflowPlanGraphV4,
-} from "../../../src/workflows/ir/schema-v4";
+import type { FrozenChildWorkflowTarget, FrozenWorkflowTarget, WorkflowPlan } from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow } from "../../_helpers/workflow";
@@ -83,7 +79,7 @@ function childContentHash(fields: {
     .digest("hex");
 }
 
-function buildChildTarget(childPlan: WorkflowPlanGraphV4, options: { ref?: string } = {}): FrozenChildWorkflowTarget {
+function buildChildTarget(childPlan: WorkflowPlan, options: { ref?: string } = {}): FrozenChildWorkflowTarget {
   const ref = options.ref ?? "workflows/child";
   const planHash = computePlanHash(childPlan);
   return {
@@ -97,7 +93,7 @@ function buildChildTarget(childPlan: WorkflowPlanGraphV4, options: { ref?: strin
 }
 
 /** A two-step child plan — step 2 exists so a mid-drive abort has a second dispatch attempt to observe it at. */
-function twoStepChildPlan(): WorkflowPlanGraphV4 {
+function twoStepChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     [
       "---",
@@ -269,24 +265,10 @@ describe("A-30 — aborting the parent's drive mid-dispatch aborts the child dri
     const parentStepId = "compose";
     const childPlan = twoStepChildPlan();
     const target = buildChildTarget(childPlan, { ref: "workflows/lease-loss-child" });
-    const parentPlan: WorkflowPlanGraphV4 = {
+    const parentPlan: WorkflowPlan = {
       irVersion: 5,
       title: "Parent",
       execution: { maxConcurrency: 1 },
-      sourceReadSet: [
-        {
-          identity: {
-            ref: "test//workflows/parent",
-            bundle: "test",
-            adapter: "akm-workflow",
-            file: "workflows/parent.yml",
-            hash: createHash("sha256").update("parent-fixture").digest("hex"),
-          },
-          containmentPhysicalIdentity: "test-fixture-root",
-          physicalIdentity: createHash("sha256").update("workflows/parent.yml\0parent-fixture").digest("hex"),
-          size: 0,
-        },
-      ],
       steps: [
         {
           stepId: parentStepId,

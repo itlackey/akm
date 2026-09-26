@@ -23,13 +23,12 @@ import type { AkmConfig } from "../core/config/config-types";
 import { UsageError } from "../core/errors";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
 import { applyInputDefaults, validateInputs } from "../execution/input-contract";
-import { compileWorkflowPlan } from "../workflows/ir/compile";
+import { checkWorkflowPlan, compileWorkflowSource } from "../workflows/compile";
 import {
   WorkflowSourceCollisionError,
   WorkflowSourceNameError,
   workflowNameForSourcePath,
 } from "../workflows/source-files";
-import { compileWorkflowSource } from "../workflows/source-ir/compile";
 import { prepareTaskV3Execution } from "./prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "./prepare/prepared-execution";
 import { parseSchedule, type ScheduleBackend } from "./schedule";
@@ -206,18 +205,18 @@ function compileWorkflowSources(
           "WORKFLOW_SOURCE_INVALID",
         );
       }
-      const planDraft = compileWorkflowPlan(compiled.ir, canonicalName);
+      const planDraft = checkWorkflowPlan(compiled.plan);
       if (!planDraft.ok) {
         throw new UsageError(
           planDraft.errors.map((error) => `${relative}:${error.line} ${error.message}`).join("; "),
           "WORKFLOW_SOURCE_INVALID",
         );
       }
-      const schedules = compiled.ir.triggers.flatMap((trigger) =>
-        trigger.kind === "schedule"
-          ? [{ cron: trigger.cron, source: `${trigger.source.path}:${trigger.source.start}`, ordinal: trigger.ordinal }]
-          : [],
-      );
+      const schedules = (compiled.plan.schedules ?? []).map((schedule) => ({
+        cron: schedule.cron,
+        source: `${relative}:${schedule.line}`,
+        ordinal: schedule.ordinal,
+      }));
       for (const binding of compileWorkflowSchedulerBindings({ qualifiedRef: ref, schedules })) {
         parseSchedule(binding.cron, input.backend);
         desired.push(binding);
@@ -622,16 +621,16 @@ export function renderSchedulerPlanPreview(
       });
     }
   }
-  return Object.freeze({
+  return {
     backend,
     dryRun: true,
-    adds: Object.freeze(adds),
-    updates: Object.freeze(updates),
-    removes: Object.freeze(removes),
-    unchanged: Object.freeze([...unchanged]),
+    adds,
+    updates,
+    removes,
+    unchanged: [...unchanged],
     hasRemovals: removes.length > 0,
-    failures: Object.freeze([...failures]),
-  });
+    failures: [...failures],
+  };
 }
 
 function errorMessage(cause: unknown): string {

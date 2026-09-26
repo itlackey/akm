@@ -404,12 +404,7 @@ export interface ConsolidateResult {
    * all. Surfaced so health/report readers see why `processed` dropped.
    */
   prefilteredAlreadyPromoted?: number;
-  /**
-   * Planned consolidate ops. Only the op-kind discriminant is used by core
-   * consumers (e.g. the `op !== "promote"` advisory-op check in
-   * `preparation.ts`); the full `ConsolidateOperation` shape lives in
-   * commands/improve/consolidate/types.ts, which core must not import.
-   */
+  /** Planned consolidate ops; core reads only the op-kind discriminant. */
   planned?: { op: ConsolidateOpKind }[];
   warnings: string[];
   durationMs: number;

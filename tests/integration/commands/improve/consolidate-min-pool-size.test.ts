@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../../../../src/commands/health";
-import type { AkmConsolidateOptions } from "../../../../src/commands/improve/consolidate";
+import { akmConsolidate } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
@@ -64,14 +64,12 @@ function configWithMinPoolSize(minPoolSize: number): AkmConfig {
 /** Drive an improve(memory) run with no LLM connection configured. */
 async function runImprove(
   config: AkmConfig,
-  consolidateOptions?: AkmConsolidateOptions,
   overrides?: { scope?: string; strategy?: string },
 ): Promise<Awaited<ReturnType<typeof akmImprove>>> {
   return akmImprove({
     scope: "memory",
     config,
     stashDir,
-    consolidateOptions,
     ensureIndexFn: async () => false,
     reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
     ...overrides,
@@ -169,7 +167,7 @@ describe("#553 consolidate minPoolSize guard", () => {
       writeMemory("only-mem", "A single memory — well below the guard.");
       await akmIndex({ stashDir, full: true });
 
-      await runImprove(configWithMinPoolSize(3), undefined, { strategy: "default" });
+      await runImprove(configWithMinPoolSize(3), { strategy: "default" });
 
       expect(poolBelowMinSizeEvents().length).toBe(0);
     },
@@ -182,7 +180,7 @@ describe("#553 consolidate minPoolSize guard", () => {
       writeMemory("only-mem", "A single memory — well below the guard.");
       await akmIndex({ stashDir, full: true });
 
-      await runImprove(configWithMinPoolSize(3), undefined, { scope: "memories/only-mem" });
+      await runImprove(configWithMinPoolSize(3), { scope: "memories/only-mem" });
 
       expect(poolBelowMinSizeEvents().length).toBe(0);
     },
@@ -282,9 +280,13 @@ describe("#553 consolidate minPoolSize guard", () => {
     const unusableDbPath = path.join(stashDir, "proposal-db-directory");
     fs.mkdirSync(unusableDbPath);
 
-    const result = await runImprove(configWithMinPoolSize(0), { proposalsCtx: { dbPath: unusableDbPath } });
+    const result = await akmConsolidate({
+      config: configWithMinPoolSize(0),
+      stashDir,
+      proposalsCtx: { dbPath: unusableDbPath },
+    });
 
-    expect(result.consolidation?.failedPromotions).toBe(1);
+    expect(result.failedPromotions).toBe(1);
     expect(consolidateLedgerRows()).toEqual([]);
   });
 

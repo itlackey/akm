@@ -2,133 +2,37 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Proposal validation and content repair.
- *
- * The proposal repository and domain service moved to `../repository.ts` (#578
- * storage consolidation). This module keeps only the two proposal *validators* — {@link validateProposal} and
- * {@link repairProposalContent}.
- */
+/** Proposal validation and the one content repair applied before promotion. */
 
 import { repairTruncatedDescription } from "../../../core/text-truncation";
+import { splitFrontmatter } from "../../improve/reflect-noise";
 import type { Proposal, ProposalValidationReport } from "../proposal-types";
 import { runProposalValidators } from "./proposal-validators";
 
-// ── Validation ──────────────────────────────────────────────────────────────
-
-// ProposalValidationFinding / ProposalValidationReport moved to
-// ../proposal-types.ts (WI-9.8 KILL 1 — sever the validators-internal cycle
-// through proposal-validators.ts, which needed these types back). Re-exported
-// here so existing import sites are unchanged.
 export type { ProposalValidationFinding, ProposalValidationReport } from "../proposal-types";
 
 /**
- * Validate a proposal payload before promotion. Generic by default — any
- * proposal must parse cleanly and carry a non-empty body. Asset types in the
- * fail-closed canonical registry run their existing parser or validator; types
- * without one remain on generic validation.
+ * Validate a proposal before promotion: it must parse and carry a body, and a
+ * type with a canonical validator runs it.
  */
 export function validateProposal(proposal: Proposal): ProposalValidationReport {
   return runProposalValidators(proposal);
 }
 
-// ── Content repair ──────────────────────────────────────────────────────────
-
 /**
- * Attempt bounded, deterministic repair of mechanically-fixable defects in a
- * proposal's markdown content. NEVER fabricates text — only strips known-bad
- * structure and applies {@link repairTruncatedDescription} to a truncated
- * description when one is detected.
- *
- * Repairs performed:
- *   1. Apply {@link repairTruncatedDescription} to a truncated/hanging
- *      `description` field in the frontmatter.
- *
- * It deliberately does NOT delete body lines. Two earlier repairs dropped
- * every body line that restated a frontmatter key and every `---` in a body
- * with frontmatter. Both fired inside fenced code blocks, so any asset
- * documenting frontmatter — a note about akm, Claude Code skills, Jekyll,
- * Hugo — was silently gutted on `proposal accept`, and the repaired bytes
- * were written back over the original in the proposals database. A repair
- * that can destroy content is not a repair.
- *
- * Returns the repaired content string. When no repairs apply the input is
- * returned byte-identical so callers can use strict equality to detect
- * whether a repair actually happened.
- *
- * CRITICAL: This function is CONTENT-PRESERVING. Callers MUST re-validate the
- * repaired output via {@link validateProposal} / {@link runProposalValidators}
- * before promotion — a repair that makes things *worse* (or is simply
- * insufficient) must be caught by the existing gate.
+ * Normalize line endings and complete a truncated frontmatter `description`
+ * (`repairTruncatedDescription`, with the body as context). Nothing else: an
+ * earlier repair that deleted body lines gutted any asset documenting
+ * frontmatter. Callers re-validate the result.
  */
 export function repairProposalContent(content: string): string {
   if (typeof content !== "string" || content.trim() === "") return content;
-
-  // Determine whether the content has a frontmatter block so we know how
-  // many `---` fence lines are expected.
-  const hasFrontmatter = /^---\r?\n[\s\S]*?\r?\n---/.test(content);
-
-  // Split into lines for structural repairs.
-  const lines = content.split(/\r?\n/);
-
-  // Track whether we are inside the opening frontmatter block so we can
-  // leave it untouched and only repair the body.
-  let inFrontmatter = false;
-
-  // Frontmatter fence index tracking: first fence opens FM, second closes it.
-  let fmOpenSeen = false;
-  let fmCloseSeen = false;
-
-  const repairedLines: string[] = [];
-
-  for (const line of lines) {
-    const isFence = /^---\s*$/.test(line);
-
-    // Track frontmatter fences (first two `---` fences delimit the FM block).
-    if (isFence && !fmCloseSeen) {
-      if (!fmOpenSeen) {
-        fmOpenSeen = true;
-        inFrontmatter = true;
-        repairedLines.push(line);
-        continue;
-      }
-      if (inFrontmatter) {
-        fmCloseSeen = true;
-        inFrontmatter = false;
-        repairedLines.push(line);
-        continue;
-      }
-    }
-
-    // We are now in the body (past the frontmatter or no frontmatter).
-    if (inFrontmatter) {
-      // Still inside the frontmatter — keep as-is.
-      repairedLines.push(line);
-      continue;
-    }
-
-    repairedLines.push(line);
-  }
-
-  let repaired = repairedLines.join("\n");
-
-  // Repair 3: Apply repairTruncatedDescription to the description field.
-  // We operate on the raw text rather than re-parsing YAML to avoid
-  // reformatting unrelated frontmatter keys.
-  if (hasFrontmatter) {
-    // Extract the body text (after the second `---`) so we can pass it to
-    // repairTruncatedDescription as context for the swap-in heuristic.
-    const bodyMatch = repaired.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
-    const bodyText = bodyMatch?.[1] ?? "";
-
-    repaired = repaired.replace(
-      /^(description:\s*)(.*?)(\r?\n)/m,
-      (_match, prefix: string, rawDesc: string, nl: string) => {
-        const fixed = repairTruncatedDescription(rawDesc.trim(), bodyText);
-        return `${prefix}${fixed}${nl}`;
-      },
-    );
-  }
-
-  return repaired;
+  const repaired = content.replace(/\r\n/g, "\n");
+  const { fmText, body } = splitFrontmatter(repaired);
+  if (fmText === null) return repaired;
+  return repaired.replace(
+    /^(description:\s*)(.*?)(\r?\n)/m,
+    (_match, prefix: string, rawDesc: string, nl: string) =>
+      `${prefix}${repairTruncatedDescription(rawDesc.trim(), body)}${nl}`,
+  );
 }

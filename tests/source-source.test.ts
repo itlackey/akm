@@ -386,7 +386,6 @@ describe("isEditable", () => {
       query: "guide",
       rankingMode: "fts",
       defaultStashDir: stashDir,
-      allSourceDirs: sources.map((source) => source.path),
       sources,
       config: { semanticSearchMode: "off" },
     });
@@ -480,7 +479,6 @@ describe("isEditable", () => {
         query: "guide",
         rankingMode: "fts",
         defaultStashDir: stashDir,
-        allSourceDirs: [stashDir, sourceDir],
         sources: [
           { path: stashDir, writable: true },
           { path: sourceDir, registryId: "team", type: "git", writable: false },
@@ -516,7 +514,6 @@ describe("isEditable", () => {
             query: "shared",
             rankingMode: "fts",
             defaultStashDir: stashDir,
-            allSourceDirs: roots,
             sources: roots.map((sourceRoot, sourceIndex) => ({
               path: sourceRoot,
               registryId: `bundle-${sourceIndex + 1}`,

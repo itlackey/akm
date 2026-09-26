@@ -20,7 +20,6 @@ import {
   prepareImproveLoopEnv,
   processImproveLoopRef,
 } from "../../../src/commands/improve/loop-stages";
-import { createRunContext } from "../../../src/commands/improve/run-context";
 import type { Proposal } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
@@ -357,22 +356,10 @@ describe("processImproveLoopRef — distill half", () => {
 });
 
 describe("prepareImproveLoopEnv — derived guards", () => {
-  // WI-9.10: ImproveRunContext is deleted — ImproveLoopState wraps a RunContext
-  // (`ctx`) and keeps `primaryStashDir` as an honest optional (undefined here
-  // when the caller sets no stashDir). `ctx.stashDir` is REQUIRED by
-  // the RunContext contract, so the fixture falls back to "" for it; nothing
-  // in these tests reads `ctx.stashDir`.
   function runCtx(overrides: Partial<ImproveLoopState>): ImproveLoopState {
     const stashDir = (overrides.options as { stashDir?: string } | undefined)?.stashDir;
     return {
-      ctx: createRunContext({
-        stashDir: stashDir ?? "",
-        config: {} as AkmConfig,
-        eventsCtx: {},
-        proposalsCtx: {},
-        sourceRun: "test-run",
-        dryRun: false,
-      }),
+      eventsCtx: {},
       primaryStashDir: stashDir,
       scope: { mode: "all" },
       options: { config: {} as AkmConfig },
@@ -384,7 +371,6 @@ describe("prepareImproveLoopEnv — derived guards", () => {
       distillCooledRefs: new Set(),
       distillOnlyRefs: [],
       recentErrors: {},
-      utilityMap: new Map(),
       startMs: Date.now(),
       budgetMs: 60_000,
       improveProfile: {},

@@ -6,9 +6,9 @@
 // append-only ordered source of truth: new migrations are APPENDED here and an
 // existing fragment is NEVER renumbered or reordered (that would corrupt the
 // schema_migrations ledger on already-deployed databases). The shared runner
-// at src/storage/engines/sqlite-migrations.ts applies them in array order.
+// at src/storage/sqlite-migrations.ts applies them in array order.
 
-import { assertMigrationRegistry, type Migration } from "../../storage/engines/sqlite-migrations";
+import { assertMigrationRegistry, type Migration } from "../../storage/sqlite-migrations";
 
 export type StateMigrationSafety = "additive" | "data-preserving-rebuild" | "historical-destructive";
 

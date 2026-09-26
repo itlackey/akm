@@ -124,59 +124,12 @@ export interface OpenDatabaseOptions {
 }
 
 /**
- * A storage provider: one SQLite engine (and, later, a Postgres adapter) behind
- * the structural {@link Database} contract. This is the provider seam — adding a
- * backend means adding a provider to {@link PROVIDERS}, with NO call-site
- * changes. It is deliberately a tiny registry over the existing driver
- * factories, NOT a DI container or a ports-and-adapters hierarchy: the
- * {@link Database} type IS the port and `open` IS the adapter.
- */
-interface StorageProvider {
-  /** Stable identifier, for diagnostics and selection. */
-  readonly name: string;
-  /** Whether this provider can run in the current runtime. */
-  supported(): boolean;
-  /** Open a handle conforming to the structural {@link Database} type. */
-  open(path: string, opts?: OpenDatabaseOptions): Database;
-}
-
-// bun:sqlite — Bun built-in, no native build. Cannot run on Node.
-const bunSqliteProvider: StorageProvider = {
-  name: "bun:sqlite",
-  supported: () => isBun,
-  open: openBunDatabase,
-};
-
-// better-sqlite3 — native Node driver. Cannot run on Bun (oven-sh/bun#4290).
-const nodeSqliteProvider: StorageProvider = {
-  name: "better-sqlite3",
-  supported: () => !isBun,
-  open: openNodeDatabase,
-};
-
-/**
- * Ordered provider registry. The factory selects the first supported provider.
- * A future Postgres provider is appended here — and only here. Both SQLite
- * engines are kept as distinct providers (not collapsed) because no single
- * SQLite driver runs on both Bun and Node today.
- */
-const PROVIDERS: readonly StorageProvider[] = [bunSqliteProvider, nodeSqliteProvider];
-
-/** Select the provider for the current runtime. */
-function selectProvider(): StorageProvider {
-  const provider = PROVIDERS.find((p) => p.supported());
-  if (!provider) {
-    throw new Error(`No storage provider supports the current runtime (${isBun ? "Bun" : "Node"}).`);
-  }
-  return provider;
-}
-
-/**
- * Open a SQLite database handle at `path` via the active {@link StorageProvider}.
- * Returns a handle conforming to the structural {@link Database} type.
+ * Open a SQLite database handle at `path` on the current runtime's driver
+ * (`bun:sqlite` on Bun, `better-sqlite3` on Node). Returns a handle conforming
+ * to the structural {@link Database} type.
  */
 export function openDatabase(path: string, opts?: OpenDatabaseOptions): Database {
-  return selectProvider().open(path, opts);
+  return isBun ? openBunDatabase(path, opts) : openNodeDatabase(path, opts);
 }
 
 /**
@@ -200,7 +153,7 @@ export function openDatabase(path: string, opts?: OpenDatabaseOptions): Database
  * force-finalizing under them changes behavior they were built on.
  */
 export function openDatabaseFinalizing(path: string, opts?: OpenDatabaseOptions): Database {
-  const db = selectProvider().open(path, opts);
+  const db = openDatabase(path, opts);
   const tracked = new Set<{ finalize?: () => void }>();
   const origPrepare = db.prepare.bind(db);
   const origClose = db.close.bind(db);

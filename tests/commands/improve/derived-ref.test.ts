@@ -5,11 +5,9 @@
 /**
  * WI-7.4 — the single keyed-on-ref derived-memory helpers (R12).
  *
- * Pins producer/consumer agreement: both `memory-improve.ts` (consumer) and
- * `memory-contradiction-detect.ts` (producer) now resolve a derived memory's
- * parent through this one impl, so they cannot disagree (plan §6). The suite
- * also pins the INTENDED producer-side widening — `derivedFrom`-keyed families
- * and current bundle-qualified `source:` values resolve consistently.
+ * Every reader resolves a derived memory's parent through this one impl
+ * (plan §6): `derivedFrom`-keyed families and bundle-qualified `source:`
+ * values resolve consistently.
  */
 
 import { describe, expect, test } from "bun:test";

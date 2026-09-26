@@ -2,19 +2,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+/** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
+
 import fs from "node:fs";
 import path from "node:path";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
-import { type AkmConfig, DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
+import {
+  type AkmConfig,
+  DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE,
+  type ImproveProfileConfig,
+  loadConfig,
+} from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import type {
-  AkmDistillResult,
-  AkmReflectResult,
-  ImproveActionResult,
-  ImproveEligibleRef,
-} from "../../core/improve-types";
+import type { AkmDistillResult, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
@@ -33,7 +35,6 @@ import {
 } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { isProcessEnabled } from "../../llm/feature-gate";
-import { withLlmStage } from "../../llm/usage-telemetry";
 import type { Database } from "../../storage/database";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
@@ -61,7 +62,6 @@ import { readFreelistInfo, vacuumStateDbIfReclaimable } from "../../storage/stat
 import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
-// Eligibility / candidate-selection predicates live in ./eligibility.
 import { findAssetFilePath, isDistillCandidateRef } from "./eligibility";
 import type {
   AkmImproveOptions,
@@ -72,30 +72,70 @@ import type {
   ImproveScope,
 } from "./improve-run-types";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
-import { type ImproveLedgerOutcome, recordLedgerAttempt } from "./ledger";
+import { type ImproveLedgerOutcome, recordLedgerAttempt, stateKey, stripBundle } from "./ledger";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
+import { pushRecentError } from "./preparation";
 import type { AkmReflectOptions } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
-import { errMessage } from "./shared";
-import { bareImproveRef, durableImproveRef } from "./source-identity";
+import { attributeStage, errMessage } from "./stage";
 
-// ── improve loop / post-loop / maintenance stages ───────────────────
-// The cycle stages run by akmImprove, extracted from improve.ts.
+/** Everything constant across the loop's per-ref passes. */
+export interface ImproveLoopEnv {
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  reflectFn: ImproveLoopState["reflectFn"];
+  distillFn: ImproveLoopState["distillFn"];
+  signalBearingSet: Set<string>;
+  distillCooledRefs: Set<string>;
+  /** These refs skip the reflect call and only distill. */
+  distillOnlyRefSet: Set<string>;
+  /** Per-originator rolling error windows; pushes come back on the tally. */
+  recentErrors: Record<string, string[]>;
+  eventsCtx?: EventsContext;
+  improveProfile: ImproveProfileConfig;
+  resolvedPlan: ResolvedImprovePlan;
+  budgetSignal?: AbortSignal;
+  /** `distill.requirePlannedRefs` with no reflect-eligible ref in the loop: distill-only refs skip. */
+  skipDistillDueToRequirePlannedRefs: boolean;
+  remainingBudgetMs: () => number;
+}
 
-/** O-5 / #378: rolling per-originator error-window cap. */
-const RECENT_ERRORS_CAP = 3;
+export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
+  const distillOnlyRefSet = new Set(args.distillOnlyRefs.map((r) => r.ref));
+  const requirePlannedRefs = args.improveProfile?.processes?.distill?.requirePlannedRefs === true;
+  return {
+    scope: args.scope,
+    options: args.options,
+    primaryStashDir: args.primaryStashDir,
+    reflectFn: args.reflectFn,
+    distillFn: args.distillFn,
+    signalBearingSet: args.signalBearingSet,
+    distillCooledRefs: args.distillCooledRefs,
+    distillOnlyRefSet,
+    recentErrors: args.recentErrors,
+    eventsCtx: args.eventsCtx,
+    improveProfile: args.improveProfile,
+    resolvedPlan: args.resolvedPlan,
+    budgetSignal: args.budgetSignal,
+    skipDistillDueToRequirePlannedRefs: requirePlannedRefs && args.loopRefs.every((r) => distillOnlyRefSet.has(r.ref)),
+    remainingBudgetMs: () => Math.max(0, args.budgetMs - (Date.now() - args.startMs)),
+  };
+}
 
-/** O-5 / #378: push a per-originator error into the rolling window. */
-function pushRecentError(recentErrors: Record<string, string[]>, originator: string, msg: string): void {
-  if (!recentErrors[originator]) recentErrors[originator] = [];
-  recentErrors[originator].push(msg);
-  if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
+/** What one ref's iteration produced; the orchestrator folds it into run state. */
+export interface LoopRefTally {
+  actions: ImproveActionResult[];
+  /** 1 when the reflect call carried recent-error avoidPatterns. */
+  reflectsWithErrorContext: number;
+  recentErrorPushes: { originator: string; message: string }[];
+  /** Memory refs distilled but not promoted this ref — queued for inference. */
+  memoryRefsForInference: string[];
 }
 
 /**
- * Record one loop attempt in the improve ledger under the candidate's durable
- * state key. Proposals and quality rejections record themselves (the mint and
- * the judge own those rows); the loop records what they cannot see.
+ * Record a loop attempt in the improve ledger. Proposals and quality
+ * rejections record themselves; the loop records what they cannot see.
  */
 function recordLoopAttempt(
   planned: ImproveEligibleRef,
@@ -110,7 +150,7 @@ function recordLoopAttempt(
     { eventsCtx: env.eventsCtx },
     {
       stashDir,
-      ref: planned.itemRef ?? durableImproveRef(planned.ref),
+      ref: stateKey(planned.ref, planned.itemRef),
       source,
       outcome,
       ...(detail !== undefined ? { detail } : {}),
@@ -118,134 +158,26 @@ function recordLoopAttempt(
   );
 }
 
-/**
- * Per-run environment shared by every per-ref pass of the improve loop —
- * everything that is constant across refs. Built once by
- * {@link prepareImproveLoopEnv} so the per-ref passes take `(ref, env, tally)`
- * instead of closing over `runImproveLoopStage` locals.
- */
-export interface ImproveLoopEnv {
-  scope: ImproveScope;
-  options: AkmImproveOptions;
-  primaryStashDir?: string;
-  reflectFn: ImproveLoopState["reflectFn"];
-  distillFn: ImproveLoopState["distillFn"];
-  signalBearingSet: Set<string>;
-  distillCooledRefs: Set<string>;
-  /** O(1) membership test — these refs skip the reflect call (Bug D2). */
-  distillOnlyRefSet: Set<string>;
-  /**
-   * Per-originator rolling error windows (O-5 / #378). Read-only inside the
-   * passes; pushes are returned on the {@link LoopRefTally} and folded into
-   * this record by the orchestrator between refs.
-   */
-  recentErrors: Record<string, string[]>;
-  eventsCtx?: EventsContext;
-  /** Active improve profile, resolved from profile name + config. */
-  improveProfile: ImproveLoopState["improveProfile"];
-  /** Engine/materialized-connection snapshot shared by every process in this run. */
-  resolvedPlan: ResolvedImprovePlan;
-  budgetSignal?: AbortSignal;
-  /**
-   * requirePlannedRefs guard: when the distill profile sets this flag, skip
-   * distill for distill-only refs if the reflect phase produced no planned refs.
-   * Prevents the distill loop from generating hundreds of distill-skipped events
-   * on quiet passes (all refs on reflect cooldown, no new signal to distill).
-   */
-  skipDistillDueToRequirePlannedRefs: boolean;
-  /** O-1 (#364): remaining wall-clock budget, computed at call time. */
-  remainingBudgetMs: () => number;
+/** Plasticity counter: repeated no-ops dampen an asset's selection score; a change lifts it. */
+function recordPlasticity(env: ImproveLoopEnv, planned: ImproveEligibleRef, outcome: "noop" | "changed" | undefined) {
+  const db = env.eventsCtx?.db;
+  if (!db || !outcome) return;
+  const key = stateKey(planned.ref, planned.itemRef);
+  try {
+    if (outcome === "noop") recordNoOp(db, key);
+    else resetConsecutiveNoOps(db, key);
+  } catch {
+    // best-effort
+  }
 }
 
-/** Build the per-run loop environment from the run context: the derived guards. */
-export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
-  const {
-    ctx,
-    scope,
-    options,
-    reflectFn,
-    distillFn,
-    loopRefs,
-    signalBearingSet,
-    distillCooledRefs,
-    distillOnlyRefs,
-    recentErrors,
-    startMs,
-    budgetMs,
-    improveProfile,
-    resolvedPlan,
-  } = args;
-  // WI-9.10: the legacy dual context's optional eventsCtx/budgetSignal are
-  // now RunContext's required eventsCtx / optional signal — renamed local
-  // aliases so the rest of this function (and the ImproveLoopEnv object
-  // literal below) is unchanged. `primaryStashDir` deliberately comes from
-  // the state's honest optional field, NOT `ctx.stashDir`: the rare
-  // unresolvable-primary path must keep skipping the `if (primaryStashDir)`
-  // guards below (see the field's doc in ./improve-run-types).
-  const primaryStashDir = args.primaryStashDir;
-  const eventsCtx = ctx.eventsCtx;
-  const budgetSignal = ctx.signal;
-
-  // O-1 (#364): compute remaining budget at call time so each sub-call
-  // receives only its fair share of the wall-clock budget.
-  const remainingBudgetMs = () => Math.max(0, budgetMs - (Date.now() - startMs));
-
-  // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
-  const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
-
-  // requirePlannedRefs guard: when the distill profile sets this flag, skip
-  // distill for distill-only refs if the reflect phase produced no planned refs.
-  // Prevents the distill loop from generating hundreds of distill-skipped events
-  // on quiet passes (all refs on reflect cooldown, no new signal to distill).
-  const requirePlannedRefs = improveProfile?.processes?.distill?.requirePlannedRefs === true;
-  const hasReflectEligibleRefs = loopRefs.some((r) => !distillOnlyRefSet.has(r.ref));
-  const skipDistillDueToRequirePlannedRefs = requirePlannedRefs && !hasReflectEligibleRefs;
-
-  return {
-    scope,
-    options,
-    primaryStashDir,
-    reflectFn,
-    distillFn,
-    signalBearingSet,
-    distillCooledRefs,
-    distillOnlyRefSet,
-    recentErrors,
-    eventsCtx,
-    improveProfile,
-    resolvedPlan,
-    budgetSignal,
-    skipDistillDueToRequirePlannedRefs,
-    remainingBudgetMs,
-  };
+function recordSkip(tally: LoopRefTally, ref: string, reason: string, event?: { env: ImproveLoopEnv; reason: string }) {
+  tally.actions.push({ ref, mode: "distill-skipped", result: { ok: true, reason } });
+  if (event)
+    appendEvent({ eventType: "improve_skipped", ref, metadata: { reason: event.reason } }, event.env.eventsCtx);
 }
 
-/**
- * Tally of one per-ref loop iteration, folded into run-level state by the
- * orchestrator. Sub-passes append to THIS object and never touch run-level
- * state, so the run counters stop being shared mutable closures. The tally is
- * threaded INTO the sub-passes (rather than assembled from pure returns)
- * deliberately: the per-ref try/catch must preserve actions that were already
- * recorded when a later side effect throws — exactly as the pre-decomposition
- * inline loop body did.
- */
-export interface LoopRefTally {
-  /** Actions recorded for this ref, in emission order. */
-  actions: ImproveActionResult[];
-  /** 1 when the reflect call carried recent-error avoidPatterns (O-5 / #378). */
-  reflectsWithErrorContext: number;
-  /** Errors to fold into the per-originator rolling windows (O-5 / #378). */
-  recentErrorPushes: { originator: string; message: string }[];
-  /** Memory refs distilled-but-not-promoted this ref — queued for inference. */
-  memoryRefsForInference: string[];
-}
-
-/**
- * One improve-loop iteration for a single planned ref: the reflect pass, then
- * the distill pass, with the per-ref error classification (B7) around both.
- * `continue` in the old inline loop body is an early `return` inside the
- * passes; the orchestrator folds the returned tally and owns the run counters.
- */
+/** One loop iteration: reflect, then distill. A distill UsageError is a validation failure. */
 export async function processImproveLoopRef(planned: ImproveEligibleRef, env: ImproveLoopEnv): Promise<LoopRefTally> {
   const tally: LoopRefTally = {
     actions: [],
@@ -254,18 +186,11 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
     memoryRefsForInference: [],
   };
   try {
-    // Bug D2: distillOnlyRefs skip the reflect call but still run the distill path.
-    // Bug D1: in-loop distill-cooldown check removed — distill-cooled candidates
-    //         have their synthetic actions emitted in runImprovePreparationStage.
     const isDistillOnly = env.distillOnlyRefSet.has(planned.ref);
-    const parsedPlannedRef = parseRefInput(planned.ref);
-    await runLoopReflectPass(planned, isDistillOnly, env, tally);
-    // isDistillOnly refs: no reflect action emitted — proceed directly to the distill pass.
-    await runLoopDistillPass(planned, parsedPlannedRef, isDistillOnly, env, tally);
+    const parsed = parseRefInput(planned.ref);
+    if (!isDistillOnly) await runLoopReflectPass(planned, env, tally);
+    await runLoopDistillPass(planned, parsed.type, isDistillOnly, env, tally);
   } catch (err) {
-    // B7: UsageError thrown by akmDistill on validation_failed should be recorded
-    // as mode:"distill" with outcome:"validation_failed", NOT as a generic error.
-    // The distill_invoked event was already emitted inside akmDistill before the throw.
     if (err instanceof UsageError) {
       recordLoopAttempt(planned, env, "distill", "failed", err.message);
       tally.actions.push({
@@ -274,405 +199,186 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
         result: { ok: false, outcome: "validation_failed", error: err.message } as unknown as AkmDistillResult,
       });
     } else {
-      tally.actions.push({
-        ref: planned.ref,
-        mode: "error",
-        result: { ok: false, error: errMessage(err) },
-      });
+      tally.actions.push({ ref: planned.ref, mode: "error", result: { ok: false, error: errMessage(err) } });
     }
   }
   return tally;
 }
 
-/**
- * Reflect half of one loop iteration: type/profile gates, the reflect call with
- * recent-error avoidPatterns, outcome classification (cooldown / guard-reject /
- * type-refused / noise-gate), and plasticity counters. Records onto the per-ref
- * tally only.
- */
-async function runLoopReflectPass(
-  planned: ImproveEligibleRef,
-  isDistillOnly: boolean,
-  env: ImproveLoopEnv,
-  tally: LoopRefTally,
-): Promise<void> {
-  const { options, primaryStashDir, reflectFn, eventsCtx, improveProfile, resolvedPlan, budgetSignal } = env;
-  // B6: derived memories are machine-generated; skip reflect to avoid noisy proposals.
-  // shouldDistillMemoryRef already returns false for .derived refs, so the distill
-  // path is also a no-op for them — we just avoid unnecessary agent spawns.
-  // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
-  if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-    // Type guard: skip reflect for unsupported types (script, env, task, etc.)
-    // and raw wiki directories, driven by the active improve profile.
-    const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
-    if (reflectSkip.skip) {
-      tally.actions.push({
-        ref: planned.ref,
-        mode: "reflect-skipped",
-        result: { ok: true, reason: reflectSkip.reason },
-      });
-    } else {
-      // O-5 / #378: only inject reflect-originator errors into the reflect call.
-      // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
-      const reflectErrors = env.recentErrors.reflect ?? [];
-      if (reflectErrors.length > 0) tally.reflectsWithErrorContext++;
-      // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
-      // bounded by the wall-clock deadline rather than the default per-profile timeout.
-      const reflectBudgetMs = env.remainingBudgetMs();
-      const reflectEngine = resolvedPlan.processes.reflect.runner?.engine;
-      const reflectTarget =
-        options.sourceName && primaryStashDir ? { source: options.sourceName, root: primaryStashDir } : undefined;
-      // Re-enter canonical named-engine lowering with the config snapshot and
-      // process profile frozen into the invocation plan. The loop never injects
-      // a RunnerSpec seam or observes later caller-config mutations.
-      const reflectCallArgs = {
-        ref: planned.ref,
-        // Carry the resolved item_ref so reflect uses the same durable key for
-        // events and state reads.
-        ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),
-        task: options.task,
-        // Active strategy supplies non-engine process tuning.
-        ...(improveProfile ? { improveProfile } : {}),
-        config: resolvedPlan.config as AkmConfig,
-        ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
-        ...(reflectTarget ? { target: reflectTarget } : {}),
-        ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
-        eventSource: "improve" as const,
-        // #639 — resolve the low-value filter from the ACTIVE improve profile
-        // (default off when unset), so the running strategy decides.
-        lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
-        ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
-        signal: budgetSignal,
-        // R25: reflect's event emits reuse the run's long-lived state.db handle.
-        eventsCtx: env.eventsCtx,
-        // Attribution: carry the eligibility lane so reflect stamps it on
-        // the reflect_invoked event and the persisted proposal.
-        ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-      } satisfies AkmReflectOptions;
-      const reflectResult: AkmReflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
-        engine: reflectEngine,
-        process: "reflect",
-      });
-      // Content-policy guard hits (reflect size-rail rejections) are NOT
-      // LLM faults — the agent responded fine, the downstream guard
-      // blocked the output. Route them to a distinct `reflect-guard-rejected`
-      // mode so health metrics can split deterministic guard hits out of
-      // true LLM failures. See
-      // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
-      const isGuardReject = !reflectResult.ok && reflectResult.reason === "content_policy_reject";
-      // Type-guard rejection (reflect refused a script/env/task ref) is
-      // also NOT an LLM failure — the LLM is never invoked. Route to the
-      // existing `reflect-skipped` bucket so it does not inflate the
-      // failure-rate numerator. ~9% of `reflect-failed` events in the
-      // user's stack were this case; see review §1a row "Reflect refused
-      // asset type".
-      const isTypeRefused = !reflectResult.ok && reflectResult.reason === "unsupported_type";
-      // Noise-gate suppression (#580): the candidate edit was an empty
-      // diff or a cosmetic-only reformat of the current asset. Like
-      // `unsupported_type`, this is a deterministic skip — not an LLM
-      // fault — so it routes to the `reflect-skipped` bucket and stays
-      // out of recentErrors/avoidPatterns.
-      const isNoChange = !reflectResult.ok && reflectResult.reason === "no_change";
-      // Quality-gate rejection (R3): the judge rejected an otherwise
-      // well-parsed proposal. Stays in the `reflect-failed` bucket for
-      // metrics continuity, but — like the deterministic skips above —
-      // must not be injected into recentErrors/avoidPatterns: the judge's
-      // rejection text is not a reusable "avoid this pattern" lesson, and
-      // feeding it back in poisoned later prompts in the same run.
-      const isQualityRejected = !reflectResult.ok && reflectResult.reason === "quality_rejected";
-      tally.actions.push({
-        ref: planned.ref,
-        mode: reflectResult.ok
-          ? "reflect"
-          : isGuardReject
-            ? "reflect-guard-rejected"
-            : isTypeRefused || isNoChange
-              ? "reflect-skipped"
-              : "reflect-failed",
-        result: reflectResult,
-      });
-      // The improve ledger: a proposal and a quality rejection recorded
-      // themselves; a no-op is `unchanged` (revisit cadence); anything else is
-      // a `failed` attempt.
-      if (!reflectResult.ok && !isQualityRejected) {
-        recordLoopAttempt(
-          planned,
-          env,
-          "reflect",
-          isTypeRefused || isNoChange ? "unchanged" : "failed",
-          reflectResult.reason,
-        );
-      }
-      // Guard rejects, type-refused skips, noise-gate skips, and quality-gate
-      // rejections are not failures — do not pollute recentErrors with them
-      // (those get injected as `avoidPatterns` into the next reflect prompt).
-      // Guard rejects ARE worth showing the LLM as a learn-signal so the next
-      // iteration sees "your last expansion was too large"; type-refused,
-      // no-change, and quality-rejected are deterministic/judge-side and add
-      // no learning signal.
-      if (!reflectResult.ok && !isTypeRefused && !isNoChange && !isQualityRejected) {
-        const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-        tally.recentErrorPushes.push({ originator: "reflect", message: errMsg });
-      }
-      // improve_reflect_outcome — per-asset metric for tuning the reflect path.
-      appendEvent(
-        {
-          eventType: "improve_reflect_outcome",
-          ref: planned.ref,
-          metadata: {
-            ok: reflectResult.ok,
-            durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
-            engine: reflectResult.engine,
-            reason: reflectResult.ok ? undefined : reflectResult.reason,
-          },
-        },
-        eventsCtx,
-      );
-
-      // Plasticity counter (plan §WS-1 step 8): record no-ops so the
-      // WS-1 selection comparator (effectiveScore, ~line 3073) can dampen
-      // repeatedly-silent assets during consolidation-selection.
-      // A no_change reflect means the LLM was invoked but found nothing to
-      // improve — the asset is stable. Track it. A successful reflect means
-      // the asset changed; reset the counter so the dampener lifts.
-      // Use the same item_ref-or-conceptId salience key as preparation/distill.
-      const plasticityKey = planned.itemRef ?? durableImproveRef(planned.ref);
-      if (isNoChange && eventsCtx?.db) {
-        try {
-          recordNoOp(eventsCtx.db, plasticityKey);
-        } catch {
-          // best-effort: plasticity counter failure never blocks the run
-        }
-      } else if (reflectResult.ok && eventsCtx?.db) {
-        try {
-          resetConsecutiveNoOps(eventsCtx.db, plasticityKey);
-        } catch {
-          // best-effort
-        }
-      }
-    } // end else (reflect type/profile check)
-  } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
-    // B6: .derived refs skip reflect; record synthetic skip action.
-    tally.actions.push({
-      ref: planned.ref,
-      mode: "distill-skipped",
-      result: { ok: true, reason: "derived-memory-reflect-skipped" },
-    });
-    appendEvent(
-      {
-        eventType: "improve_skipped",
-        ref: planned.ref,
-        metadata: { reason: "derived_memory_reflect_skipped" },
-      },
-      eventsCtx,
-    );
-  }
-}
-
-/**
- * Distill half of one loop iteration: the profile / requirePlannedRefs /
- * candidate-type / weak-signal / ledger gates, then
- * {@link invokeDistillAndRecord}. Each gate that was a `continue` in the old
- * inline loop body is an early `return` here.
- */
-async function runLoopDistillPass(
-  planned: ImproveEligibleRef,
-  parsedPlannedRef: ReturnType<typeof parseRefInput>,
-  isDistillOnly: boolean,
-  env: ImproveLoopEnv,
-  tally: LoopRefTally,
-): Promise<void> {
-  const { options, eventsCtx, improveProfile } = env;
-  const hasRecentFeedbackSignal = env.signalBearingSet.has(planned.ref);
-  const explicitRefScope = env.scope.mode === "ref";
-  // Profile gate: apply the full type-filter / raw-wiki / disabled rules to
-  // distill so callers who configure `profile.processes.distill.allowedTypes`
-  // or land on raw-wiki refs get a recorded skip action instead of silently
-  // proceeding.
-  const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
-  if (distillSkip.skip) {
-    tally.actions.push({
-      ref: planned.ref,
-      mode: "distill-skipped",
-      result: { ok: true, reason: distillSkip.reason },
-    });
+async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopEnv, tally: LoopRefTally) {
+  const { options, primaryStashDir, improveProfile, resolvedPlan } = env;
+  // Derived memories are machine-generated: never reflected.
+  if (planned.ref.endsWith(".derived")) {
+    recordSkip(tally, planned.ref, "derived-memory-reflect-skipped", { env, reason: "derived_memory_reflect_skipped" });
     return;
   }
-  // requirePlannedRefs guard: skip distill for distill-only refs when no
-  // reflect-eligible refs were planned this run, preventing mass skip events.
-  if (env.skipDistillDueToRequirePlannedRefs && isDistillOnly) {
-    tally.actions.push({
-      ref: planned.ref,
-      mode: "distill-skipped",
-      result: { ok: true, reason: "require_planned_refs" },
-    });
+  const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
+  if (reflectSkip.skip) {
+    tally.actions.push({ ref: planned.ref, mode: "reflect-skipped", result: { ok: true, reason: reflectSkip.reason } });
     return;
   }
-  // See `isDistillCandidateRef` — excludes `lesson:*` (and anything else in
-  // DISTILL_REFUSED_INPUT_TYPES) so distill never gets queued for an input
-  // it will refuse.
-  const shouldAttemptDistill = isDistillCandidateRef(planned.ref, options.stashDir);
-  const skipMemoryDistillForWeakSignal =
-    !isDistillOnly && parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
-
-  // distillCooledRefs: refs the improve ledger holds for distill (preparation
-  // recorded their synthetic skip actions).
-  // O-2 (#365): bypass it when the user explicitly targeted this ref via
-  // --scope — their intent overrides unattended-run policies.
-  if (
-    shouldAttemptDistill &&
-    !skipMemoryDistillForWeakSignal &&
-    (!env.distillCooledRefs.has(planned.ref) || explicitRefScope)
-  ) {
-    await invokeDistillAndRecord(planned, parsedPlannedRef, env, tally);
-  } else if (skipMemoryDistillForWeakSignal) {
-    tally.actions.push({
-      ref: planned.ref,
-      mode: "distill-skipped",
-      result: { ok: true, reason: "memory requires recent feedback signal" },
-    });
-    appendEvent(
-      {
-        eventType: "improve_skipped",
-        ref: planned.ref,
-        metadata: { reason: "memory_distill_requires_feedback" },
-      },
-      eventsCtx,
-    );
-  }
-}
-
-/**
- * The distill invocation for one ref that passed every gate: the `distillFn`
- * call, memory-inference queueing, and plasticity counters.
- */
-async function invokeDistillAndRecord(
-  planned: ImproveEligibleRef,
-  parsedPlannedRef: ReturnType<typeof parseRefInput>,
-  env: ImproveLoopEnv,
-  tally: LoopRefTally,
-): Promise<void> {
-  const { options, primaryStashDir, distillFn, eventsCtx, improveProfile, resolvedPlan, budgetSignal } = env;
-  const distillResult = await withLlmStage(
-    "distill",
-    () =>
-      distillFn({
-        ref: planned.ref,
-        // Carry the resolved item_ref so distill matches preparation's state key.
-        ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),
-        ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
-        ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
-        // Active profile so distill's per-process reads honor `--profile`.
-        ...(improveProfile ? { improveProfile } : {}),
-        config: options.config,
-        llmRunner: resolvedPlan.processes.distill.runner,
-        signal: budgetSignal,
-        // R25: distill's event emits reuse the run's long-lived state.db handle.
-        eventsCtx,
-        // Attribution: carry the eligibility lane so distill stamps it on the
-        // distill_invoked event and the persisted proposal.
-        ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-      }),
-    { engine: resolvedPlan.processes.distill.runner?.engine, process: "distill" },
-  );
-  tally.actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
-  // The improve ledger: `queued` and the quality outcomes recorded themselves;
-  // a `skipped` distill looked and had nothing to add. A transport failure or a
-  // disabled process is not an attempt — the ref stays eligible.
-  if (distillResult.outcome === "skipped") {
-    recordLoopAttempt(planned, env, "distill", "unchanged", distillResult.skipReason ?? distillResult.message);
-  }
-  if (parsedPlannedRef.type === "memory") {
-    const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
-    if (!promotedToKnowledge) tally.memoryRefsForInference.push(planned.ref);
-  }
-  // Plasticity counter (plan §WS-1 step 8) for the distill path.
-  // quality_rejected: the LLM ran but produced output that didn't pass the
-  // quality gate — the asset is not yielding useful distill output.
-  // queued: a proposal was produced; reset the no-op counter.
-  if (eventsCtx?.db) {
-    // Use the same item_ref-or-conceptId key as the distill/preparation writers.
-    const plasticityKey = planned.itemRef ?? durableImproveRef(planned.ref);
-    try {
-      if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
-        recordNoOp(eventsCtx.db, plasticityKey);
-      } else if (distillResult.outcome === "queued") {
-        resetConsecutiveNoOps(eventsCtx.db, plasticityKey);
-      }
-    } catch {
-      // best-effort: plasticity counter failure never blocks the run
+  // Only reflect's own recent errors reach its prompt.
+  const reflectErrors = env.recentErrors.reflect ?? [];
+  if (reflectErrors.length > 0) tally.reflectsWithErrorContext++;
+  const budgetMs = env.remainingBudgetMs();
+  const reflectArgs = {
+    ref: planned.ref,
+    ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),
+    task: options.task,
+    ...(improveProfile ? { improveProfile } : {}),
+    config: resolvedPlan.config as AkmConfig,
+    ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
+    ...(options.sourceName && primaryStashDir ? { target: { source: options.sourceName, root: primaryStashDir } } : {}),
+    ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
+    eventSource: "improve" as const,
+    lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
+    ...(budgetMs > 0 ? { timeoutMs: budgetMs } : {}),
+    signal: env.budgetSignal,
+    eventsCtx: env.eventsCtx,
+    ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+  } satisfies AkmReflectOptions;
+  const result = await attributeStage(resolvedPlan, "reflect", () => env.reflectFn(reflectArgs));
+  const reason = result.ok ? undefined : result.reason;
+  // A refused type or an unchanged asset is a deterministic skip, not an LLM
+  // fault; a guard rejection (size rail) gets its own bucket for health.
+  const skipped = reason === "unsupported_type" || reason === "no_change";
+  tally.actions.push({
+    ref: planned.ref,
+    mode: result.ok
+      ? "reflect"
+      : reason === "content_policy_reject"
+        ? "reflect-guard-rejected"
+        : skipped
+          ? "reflect-skipped"
+          : "reflect-failed",
+    result,
+  });
+  // A quality rejection recorded itself, and the judge's text is no lesson for
+  // the next prompt; skips revisit on the `unchanged` cadence.
+  if (!result.ok && reason !== "quality_rejected") {
+    recordLoopAttempt(planned, env, "reflect", skipped ? "unchanged" : "failed", reason);
+    if (!skipped) {
+      tally.recentErrorPushes.push({
+        originator: "reflect",
+        message: result.error ?? reason ?? "unknown reflect error",
+      });
     }
   }
-}
-
-/**
- * Wall-clock budget exhausted mid-loop (O-1 / #364): emit the improve_skipped
- * events for the current and remaining refs (B11) and return the terminal
- * error action for the orchestrator to record before breaking out of the loop.
- */
-function recordBudgetExhausted(args: {
-  planned: ImproveEligibleRef;
-  loopRefs: ImproveEligibleRef[];
-  completedCount: number;
-  startMs: number;
-  eventsCtx?: EventsContext;
-}): ImproveActionResult {
-  const { planned, loopRefs, completedCount, startMs, eventsCtx } = args;
-  const remaining = loopRefs.length - completedCount;
-  info(
-    `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
-  );
   appendEvent(
     {
-      eventType: "improve_skipped",
+      eventType: "improve_reflect_outcome",
       ref: planned.ref,
       metadata: {
-        reason: "budget_exhausted",
-        remaining,
+        ok: result.ok,
+        durationMs: result.ok ? result.durationMs : undefined,
+        engine: result.engine,
+        reason,
       },
     },
-    eventsCtx,
+    env.eventsCtx,
   );
-  // B11: Emit improve_skipped for all remaining assets that will not be processed.
-  for (const remainingRef of loopRefs.slice(completedCount + 1)) {
-    appendEvent(
-      {
-        eventType: "improve_skipped",
-        ref: remainingRef.ref,
-        metadata: { reason: "budget_exhausted_batch", remaining: loopRefs.length - completedCount - 1 },
-      },
-      eventsCtx,
-    );
+  recordPlasticity(env, planned, reason === "no_change" ? "noop" : result.ok ? "changed" : undefined);
+}
+
+async function runLoopDistillPass(
+  planned: ImproveEligibleRef,
+  refType: string,
+  isDistillOnly: boolean,
+  env: ImproveLoopEnv,
+  tally: LoopRefTally,
+) {
+  const { options, primaryStashDir, improveProfile, resolvedPlan } = env;
+  const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
+  if (distillSkip.skip) return recordSkip(tally, planned.ref, distillSkip.reason);
+  if (env.skipDistillDueToRequirePlannedRefs && isDistillOnly) {
+    return recordSkip(tally, planned.ref, "require_planned_refs");
   }
-  return {
-    ref: planned.ref,
-    mode: "error",
-    result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
-  };
+  const explicitRefScope = env.scope.mode === "ref";
+  const weakMemorySignal =
+    !isDistillOnly && refType === "memory" && !env.signalBearingSet.has(planned.ref) && !explicitRefScope;
+  if (weakMemorySignal) {
+    return recordSkip(tally, planned.ref, "memory requires recent feedback signal", {
+      env,
+      reason: "memory_distill_requires_feedback",
+    });
+  }
+  // The ledger holds cooled refs; an explicit `--scope` ref overrides it.
+  if (!isDistillCandidateRef(planned.ref, options.stashDir)) return;
+  if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
+
+  const result = await attributeStage(resolvedPlan, "distill", () =>
+    env.distillFn({
+      ref: planned.ref,
+      ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),
+      ...(refType === "memory" ? { proposalKind: "auto" as const } : {}),
+      ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
+      ...(improveProfile ? { improveProfile } : {}),
+      config: options.config,
+      llmRunner: resolvedPlan.processes.distill.runner,
+      signal: env.budgetSignal,
+      eventsCtx: env.eventsCtx,
+      ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+    }),
+  );
+  tally.actions.push({ ref: planned.ref, mode: "distill", result });
+  // `queued` and the quality outcomes recorded themselves; a transport failure
+  // or a disabled process is not an attempt, so the ref stays eligible.
+  if (result.outcome === "skipped") {
+    recordLoopAttempt(planned, env, "distill", "unchanged", result.skipReason ?? result.message);
+  }
+  if (refType === "memory" && !(result.outcome === "queued" && result.proposalKind === "knowledge")) {
+    tally.memoryRefsForInference.push(planned.ref);
+  }
+  recordPlasticity(
+    env,
+    planned,
+    result.outcome === "quality_rejected" || result.outcome === "skipped"
+      ? "noop"
+      : result.outcome === "queued"
+        ? "changed"
+        : undefined,
+  );
 }
 
 export async function runImproveLoopStage(args: ImproveLoopState): Promise<ImproveLoopResult> {
-  const { ctx, loopRefs, actions, recentErrors, startMs, budgetMs } = args;
-  const eventsCtx = ctx.eventsCtx;
+  const { loopRefs, actions, recentErrors, startMs, budgetMs, eventsCtx } = args;
   const env = prepareImproveLoopEnv(args);
-
-  let completedCount = 0;
   let reflectsWithErrorContext = 0;
   const memoryRefsForInference = new Set<string>();
 
-  for (const planned of loopRefs) {
+  for (const [index, planned] of loopRefs.entries()) {
     if (Date.now() - startMs >= budgetMs) {
-      actions.push(recordBudgetExhausted({ planned, loopRefs, completedCount, startMs, eventsCtx }));
+      const remaining = loopRefs.length - index;
+      info(
+        `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
+      );
+      appendEvent(
+        { eventType: "improve_skipped", ref: planned.ref, metadata: { reason: "budget_exhausted", remaining } },
+        eventsCtx,
+      );
+      for (const rest of loopRefs.slice(index + 1)) {
+        appendEvent(
+          {
+            eventType: "improve_skipped",
+            ref: rest.ref,
+            metadata: { reason: "budget_exhausted_batch", remaining: remaining - 1 },
+          },
+          eventsCtx,
+        );
+      }
+      actions.push({
+        ref: planned.ref,
+        mode: "error",
+        result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
+      });
       break;
     }
     const tally = await processImproveLoopRef(planned, env);
-    // Fold the per-ref tally into run-level state — the passes never touch it.
     actions.push(...tally.actions);
     for (const push of tally.recentErrorPushes) pushRecentError(recentErrors, push.originator, push.message);
     reflectsWithErrorContext += tally.reflectsWithErrorContext;
     for (const ref of tally.memoryRefsForInference) memoryRefsForInference.add(ref);
-    completedCount++;
-    info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+    info(`[improve] ${index + 1}/${loopRefs.length} ${planned.ref}`);
   }
 
   return { reflectsWithErrorContext, memoryRefsForInference };
@@ -687,51 +393,21 @@ export async function runImprovePostLoopStage(args: {
   cleanupWarnings: string[];
   memoryRefsForInference: Set<string>;
   eventsCtx?: EventsContext;
-  /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
   budgetSignal?: AbortSignal;
-  /** Active improve profile, resolved from profile name + config. */
-  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
+  improveProfile?: ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
 }): Promise<ImprovePostLoopResult> {
-  const {
-    scope,
-    options,
-    primaryStashDir,
-    actionableRefs,
-    appliedCleanup,
-    cleanupWarnings,
-    memoryRefsForInference,
-    eventsCtx,
-    budgetSignal,
-    improveProfile,
-    resolvedPlan,
-  } = args;
-  const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
+  const { scope, primaryStashDir, actionableRefs } = args;
+  const allWarnings = [...args.cleanupWarnings, ...(args.appliedCleanup?.warnings ?? [])];
   info("[improve] post-loop maintenance starting");
-  const maintenanceResult = await runImproveMaintenancePasses({
-    options,
-    primaryStashDir,
-    actionableRefs,
-    memoryRefsForInference,
-    allWarnings,
-    // O-1 (#364): forward the budget signal to memory inference + graph extraction.
-    budgetSignal,
-    eventsCtx,
-    improveProfile,
-    resolvedPlan,
-  });
+  const maintenance = await runImproveMaintenancePasses({ ...args, allWarnings });
 
   let deadUrls: DeadUrl[] | undefined;
   let deadUrlCoverage: DeadUrlCoverage | undefined;
   if (scope.mode === "all" && primaryStashDir && actionableRefs.length > 0) {
     try {
-      // Every actionable knowledge ref is scanned for URLs — there used to be
-      // a `.slice(0, 10)` here, capping the scan to the first ten refs while
-      // `deadUrlCoverage.total` counted only those, so a real bundle reported
-      // checked === total while most refs were never looked at (#892). URL
-      // extraction (a regex over already-loaded text) is cheap; it is the
-      // network requests that are expensive, and those are bounded by
-      // `checkDeadUrls`'s concurrency limit, not by trimming what gets scanned.
+      // Every actionable knowledge ref is scanned; checkDeadUrls bounds the
+      // network concurrency (#892).
       const knowledgeEntries = actionableRefs
         .filter((r) => {
           try {
@@ -741,9 +417,6 @@ export async function runImprovePostLoopStage(args: {
           }
         })
         .map((r) => {
-          // The URL scan needs the document body; filePath is pre-resolved on
-          // eligible refs at planning time (#591). Best-effort — an unreadable
-          // or unresolved file contributes no URLs, same as before.
           let body = "";
           if (r.filePath) {
             try {
@@ -772,165 +445,91 @@ export async function runImprovePostLoopStage(args: {
     allWarnings,
     deadUrls,
     ...(deadUrlCoverage ? { deadUrlCoverage } : {}),
-    ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
-    ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
-    ...(maintenanceResult.actions && maintenanceResult.actions.length > 0
-      ? { maintenanceActions: maintenanceResult.actions }
-      : {}),
-    memoryInferenceDurationMs: maintenanceResult.memoryInferenceDurationMs,
-    graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
-    orphansPurged: maintenanceResult.orphansPurged,
-    proposalsExpired: maintenanceResult.proposalsExpired,
+    ...(maintenance.memoryInference ? { memoryInference: maintenance.memoryInference } : {}),
+    ...(maintenance.graphExtraction ? { graphExtraction: maintenance.graphExtraction } : {}),
+    ...(maintenance.actions && maintenance.actions.length > 0 ? { maintenanceActions: maintenance.actions } : {}),
+    memoryInferenceDurationMs: maintenance.memoryInferenceDurationMs,
+    graphExtractionDurationMs: maintenance.graphExtractionDurationMs,
+    orphansPurged: maintenance.orphansPurged,
+    proposalsExpired: maintenance.proposalsExpired,
   };
 }
 
-// TODO(refactor): `runImproveMaintenancePasses` mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass. (The extracted passes below already return their warnings; only the exported signature keeps the side channel.)
-
 /**
- * The one irreducible mutable seam of the maintenance stage: the index.db
- * handle. A reindex-like operation (e.g. indexWrittenAssets) must close the
- * CURRENT handle before running and reopen a fresh one in `finally` even when
- * it throws (#584), and the lease-scoped `finally` must close whatever handle
- * is current — neither can be expressed as a pure return value, so the passes
- * share this cell instead of a closure-mutated `let`.
+ * The index.db handle the maintenance passes share. A pass that writes the
+ * index itself closes it first and reopens it after, even on failure (#584).
  */
 export interface IndexDbCell {
   current?: Database;
 }
 
-/** Run-scoped carriers shared by every maintenance pass (built once per run). */
 export interface MaintenanceCtx {
   config: AkmConfig;
   sources: ReturnType<typeof resolveSourceEntries>;
   primaryStashDir: string;
   eventsCtx?: EventsContext;
-  /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
   budgetSignal?: AbortSignal;
-  /** Active improve profile, resolved from profile name + config. */
-  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
+  improveProfile?: ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
   memoryInferenceFn: typeof runMemoryInferencePass;
   graphExtractionFn: typeof runGraphExtractionPass;
 }
 
-// Exported for tests (#584/#585 DB-locking regression coverage); production
-// callers reach it only through akmImprove → runImprovePostLoopStage.
+/**
+ * Memory inference → index what it wrote → graph extraction → proposal hygiene
+ * (orphan purge, expiration) → orphan-state GC → retention purges. Warnings go
+ * to `allWarnings`.
+ */
 export async function runImproveMaintenancePasses(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
   actionableRefs: ImproveEligibleRef[];
   memoryRefsForInference: Set<string>;
   allWarnings: string[];
-  /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
   budgetSignal?: AbortSignal;
   eventsCtx?: EventsContext;
-  /** Active improve profile, resolved from profile name + config. */
-  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
+  improveProfile?: ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
 }): Promise<ImproveMaintenanceResult> {
-  const { options, primaryStashDir, memoryRefsForInference, allWarnings, budgetSignal, eventsCtx } = args;
-  if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
-  if (budgetSignal?.aborted) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
-
+  const { options, primaryStashDir, allWarnings, budgetSignal, eventsCtx } = args;
+  if (!primaryStashDir || budgetSignal?.aborted) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
   const config = options.config ?? loadConfig();
-  const sources = resolveSourceEntries(options.stashDir, config);
-  const memoryInferenceFn = options.memoryInferenceFn ?? runMemoryInferencePass;
-  const graphExtractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
-
-  const openIndexDb = () =>
-    openIndexDatabase(
-      getDbPath(),
-      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-    );
-
-  const dbCell: IndexDbCell = {};
-
   const ctx: MaintenanceCtx = {
     config,
-    sources,
+    sources: resolveSourceEntries(options.stashDir, config),
     primaryStashDir,
     eventsCtx,
     budgetSignal,
     improveProfile: args.improveProfile,
     resolvedPlan: args.resolvedPlan,
-    memoryInferenceFn,
-    graphExtractionFn,
+    memoryInferenceFn: options.memoryInferenceFn ?? runMemoryInferencePass,
+    graphExtractionFn: options.graphExtractionFn ?? runGraphExtractionPass,
   };
-
-  const collected = await runMaintenancePassesUnderLease(ctx, dbCell, {
-    actionableRefs: args.actionableRefs,
-    memoryRefsForInference,
-    allWarnings,
-    openIndexDb,
-  });
-
-  return {
-    ...(collected.memoryInference ? { memoryInference: collected.memoryInference } : {}),
-    ...(collected.graphExtraction ? { graphExtraction: collected.graphExtraction } : {}),
-    ...(collected.actions.length > 0 ? { actions: collected.actions } : {}),
-    memoryInferenceDurationMs: collected.memoryInferenceDurationMs,
-    graphExtractionDurationMs: collected.graphExtractionDurationMs,
-    orphansPurged: collected.orphansPurged,
-    proposalsExpired: collected.proposalsExpired,
-  };
-}
-
-/** Everything the lease-scoped maintenance sequence accumulates for the caller. */
-interface MaintenanceUnderLeaseResult {
-  memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
-  actions: ImproveActionResult[];
-  memoryInferenceDurationMs: number;
-  graphExtractionDurationMs: number;
-  orphansPurged: number;
-  proposalsExpired: number;
-}
-
-/**
- * The maintenance sequence (formerly the ~389-line anonymous
- * `withIndexWriterLease` callback, before #872 removed the index-rebuild
- * lease): memory inference → reindex-after-inference → graph extraction →
- * proposal hygiene (orphan purge, expiration) → retention purges. Each pass
- * returns its results and warnings; this orchestrator folds warnings into the
- * caller's `allWarnings` sink at the same points the inline code pushed them.
- */
-async function runMaintenancePassesUnderLease(
-  ctx: MaintenanceCtx,
-  dbCell: IndexDbCell,
-  args: {
-    actionableRefs: ImproveEligibleRef[];
-    memoryRefsForInference: Set<string>;
-    allWarnings: string[];
-    openIndexDb: () => Database;
-  },
-): Promise<MaintenanceUnderLeaseResult> {
-  const { allWarnings } = args;
+  const openIndexDb = () =>
+    openIndexDatabase(
+      getDbPath(),
+      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
+    );
+  const dbCell: IndexDbCell = {};
   const actions: ImproveActionResult[] = [];
   try {
-    dbCell.current = args.openIndexDb();
+    dbCell.current = openIndexDb();
 
     const inference = await runMemoryInferenceMaintenancePass(ctx, dbCell, args.memoryRefsForInference);
     if (inference.action) actions.push(inference.action);
     allWarnings.push(...inference.warnings);
-    const memoryInference = inference.memoryInference;
-
-    // R78: index exactly the files memory inference wrote (derived children
-    // + rewritten parents) instead of a full reindex — typically one written
-    // fact per run, which used to pay a full-corpus reindex regardless.
-    if (memoryInference && memoryInference.writtenPaths.length > 0) {
-      info(`[improve] indexing ${memoryInference.writtenPaths.length} file(s) written by memory inference`);
+    const written = inference.memoryInference?.writtenPaths ?? [];
+    if (written.length > 0) {
+      // Index exactly the files inference wrote. indexWrittenAssets opens its
+      // own write handle, so ours closes first and reopens after.
+      info(`[improve] indexing ${written.length} file(s) written by memory inference`);
       try {
-        // #584: indexWrittenAssets opens its own write handle on the same
-        // index.db WAL file, so the maintenance handle must be closed first
-        // and a fresh one reopened after, even on failure.
-        if (dbCell.current) {
-          closeDatabase(dbCell.current);
-          dbCell.current = undefined;
-        }
+        if (dbCell.current) closeDatabase(dbCell.current);
+        dbCell.current = undefined;
         try {
-          await indexWrittenAssets(ctx.primaryStashDir, memoryInference.writtenPaths);
+          await indexWrittenAssets(primaryStashDir, written);
         } finally {
-          dbCell.current = args.openIndexDb();
+          dbCell.current = openIndexDb();
         }
         info("[improve] indexing after memory inference complete");
       } catch (err) {
@@ -938,56 +537,49 @@ async function runMaintenancePassesUnderLease(
       }
     }
 
-    const graph = await runGraphExtractionMaintenancePass(ctx, dbCell, {
-      actionableRefs: args.actionableRefs,
-      memoryRefsForInference: args.memoryRefsForInference,
-    });
+    const graph = await runGraphExtractionMaintenancePass(ctx, dbCell, args);
     if (graph.action) actions.push(graph.action);
     allWarnings.push(...graph.warnings);
 
-    const orphan = runOrphanProposalPurgePass(ctx);
-    allWarnings.push(...orphan.warnings);
-
-    // #733: orphan-state GC — stamps/clears/(optionally) collects
-    // asset_salience/asset_outcome rows whose ref no longer resolves in
-    // index.db. Needs the SAME already-open index.db handle (dbCell.current)
-    // the passes above share.
-    const stateGc = runOrphanStateGcPass(ctx, dbCell);
-    allWarnings.push(...stateGc.warnings);
-
-    const expiration = runProposalExpirationPass(ctx);
-    allWarnings.push(...expiration.warnings);
-
+    const hygiene = runProposalHygienePass(ctx);
+    allWarnings.push(...hygiene.warnings);
+    allWarnings.push(...runOrphanStateGcPass(ctx, dbCell).warnings);
     allWarnings.push(...runRetentionPurgePass(ctx).warnings);
 
     return {
-      memoryInference,
-      graphExtraction: graph.graphExtraction,
-      actions,
+      ...(inference.memoryInference ? { memoryInference: inference.memoryInference } : {}),
+      ...(graph.graphExtraction ? { graphExtraction: graph.graphExtraction } : {}),
+      ...(actions.length > 0 ? { actions } : {}),
       memoryInferenceDurationMs: inference.durationMs,
       graphExtractionDurationMs: graph.durationMs,
-      orphansPurged: orphan.orphansPurged,
-      proposalsExpired: expiration.proposalsExpired,
+      orphansPurged: hygiene.orphansPurged,
+      proposalsExpired: hygiene.proposalsExpired,
     };
   } finally {
     if (dbCell.current) closeDatabase(dbCell.current);
   }
 }
 
+interface LlmPassOutcome<T> {
+  result?: T;
+  durationMs: number;
+  warnings: string[];
+}
+
+/** Time one LLM maintenance pass; a throw becomes a `<label> failed: …` warning. */
+async function timedLlmPass<T>(label: string, run: () => Promise<T>): Promise<LlmPassOutcome<T>> {
+  const start = Date.now();
+  try {
+    const result = await run();
+    return { result, durationMs: Date.now() - start, warnings: [] };
+  } catch (err) {
+    return { durationMs: Date.now() - start, warnings: [`${label} failed: ${errMessage(err)}`] };
+  }
+}
+
 /**
- * Memory inference candidate-discovery (post-Item 9 fix from
- * memories/akm-improve-critical-review-2026-05-20). Previously this pass
- * was gated on memoryRefsForInference.size > 0 AND passed those refs as a
- * candidateRefs filter. But memoryRefsForInference is populated from refs
- * distilled THIS RUN — by the time that happens, those parents are
- * already split (`inferenceProcessed: true`) and `isPendingMemory` excludes
- * them. The genuinely-pending parents in the stash never entered the
- * filter. Result: 0/0/0 for 25 consecutive runs.
- *
- * Fix: always run the pass when the feature is enabled; let the pass's
- * own `collectPendingMemories` + `isPendingMemory` predicate find
- * candidates from the filesystem-of-truth. The this-run set is still
- * logged as a hint but no longer used as a filter.
+ * Memory inference over every pending parent in the stash. The pass discovers
+ * its own candidates; the refs distilled this run are only logged as a hint.
  */
 export async function runMemoryInferenceMaintenancePass(
   ctx: MaintenanceCtx,
@@ -999,226 +591,159 @@ export async function runMemoryInferenceMaintenancePass(
   action?: ImproveActionResult;
   warnings: string[];
 }> {
-  const { config, sources, primaryStashDir, budgetSignal, improveProfile, resolvedPlan, memoryInferenceFn } = ctx;
-  const warnings: string[] = [];
-  let memoryInference: MemoryInferenceResult | undefined;
-  let durationMs = 0;
-  let action: ImproveActionResult | undefined;
-
-  const memoryInferenceDisabledByProfile = improveProfile?.processes?.memoryInference?.enabled === false;
-  const minPendingCount = improveProfile?.processes?.memoryInference?.minPendingCount;
-  const pendingBelowMinCount = (() => {
-    if (!primaryStashDir || minPendingCount === undefined || minPendingCount <= 0) return false;
+  const { config, sources, primaryStashDir, resolvedPlan } = ctx;
+  const settings = ctx.improveProfile?.processes?.memoryInference;
+  if (settings?.enabled === false) {
+    info("[improve] memory inference skipped (disabled by improve profile)");
+    return { durationMs: 0, warnings: [] };
+  }
+  const minPendingCount = settings?.minPendingCount;
+  if (primaryStashDir && minPendingCount !== undefined && minPendingCount > 0) {
     const pending = collectPendingMemories(primaryStashDir).length;
     if (pending < minPendingCount) {
       info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
-      return true;
-    }
-    return false;
-  })();
-  if (memoryInferenceDisabledByProfile) {
-    info("[improve] memory inference skipped (disabled by improve profile)");
-  } else if (pendingBelowMinCount) {
-    // skipped — message already emitted above
-  } else {
-    const hintRefs = memoryRefsForInference.size;
-    info(
-      hintRefs > 0
-        ? `[improve] memory inference starting (${hintRefs} hint refs touched this run; pass discovers all pending)`
-        : "[improve] memory inference starting (discovering pending parents)",
-    );
-    const inferenceStart = Date.now();
-    try {
-      // O-1 (#364): pass budget signal so a hung inference call is cancelled.
-      memoryInference = await withLlmStage(
-        "memory-inference",
-        () =>
-          memoryInferenceFn({
-            config,
-            ...(resolvedPlan
-              ? {
-                  llmRunner: resolvedPlan.processes.memoryInference.runner,
-                }
-              : {}),
-            sources,
-            signal: budgetSignal,
-            db: dbCell.current,
-            reEnrich: false,
-            onProgress: (event) => {
-              const current = event.currentRef ? ` ${event.currentRef}` : "";
-              info(
-                `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
-              );
-            },
-          }),
-        { engine: resolvedPlan?.processes.memoryInference.runner?.engine, process: "memoryInference" },
-      );
-      durationMs = Date.now() - inferenceStart;
-      // Synthetic sentinel ref (ref-grammar decision D-R3): a colon-free
-      // `<domain>/_<marker>` label on the event row, never parsed as an asset
-      // ref. The domain is the asset stash-subdir for asset-scoped sentinels
-      // (`memories/…`) and the subsystem name for maintenance/artifact sentinels
-      // (`graph/…`, `events/…`, `proposals/…`, `health/…`, …). Readers match the
-      // event by `eventType`, never by this string.
-      action = { ref: "memories/_inference", mode: "memory-inference", result: memoryInference };
-      info(
-        `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
-      );
-    } catch (err) {
-      durationMs = Date.now() - inferenceStart;
-      warnings.push(`memory inference failed: ${errMessage(err)}`);
+      return { durationMs: 0, warnings: [] };
     }
   }
-
-  return { memoryInference, durationMs, action, warnings };
+  const hintRefs = memoryRefsForInference.size;
+  info(
+    hintRefs > 0
+      ? `[improve] memory inference starting (${hintRefs} hint refs touched this run; pass discovers all pending)`
+      : "[improve] memory inference starting (discovering pending parents)",
+  );
+  const pass = await timedLlmPass("memory inference", () =>
+    attributeStage(resolvedPlan, "memoryInference", () =>
+      ctx.memoryInferenceFn({
+        config,
+        ...(resolvedPlan ? { llmRunner: resolvedPlan.processes.memoryInference.runner } : {}),
+        sources,
+        signal: ctx.budgetSignal,
+        db: dbCell.current,
+        reEnrich: false,
+        onProgress: (event) => {
+          const current = event.currentRef ? ` ${event.currentRef}` : "";
+          info(
+            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+          );
+        },
+      }),
+    ),
+  );
+  const memoryInference = pass.result;
+  if (!memoryInference) return { durationMs: pass.durationMs, warnings: pass.warnings };
+  info(
+    `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
+  );
+  return {
+    memoryInference,
+    durationMs: pass.durationMs,
+    // Sentinel refs (`<domain>/_<marker>`) label maintenance events; never parsed as assets.
+    action: { ref: "memories/_inference", mode: "memory-inference", result: memoryInference },
+    warnings: pass.warnings,
+  };
 }
 
 /**
- * Graph-extraction maintenance pass.
- *
- * INVARIANT: graph extraction normally runs only on files touched by
- * actionable refs (candidatePaths). Full-corpus scans are opt-in via
- * profile.processes.graphExtraction.fullScan = true (used by the
- * `graph-refresh` built-in profile and its weekly scheduled task).
- * The empty-Set fallback is intentional when no refs were touched —
- * the extractor's filter rejects every file and returns empty, keeping
- * the pass invoked so the action is recorded and tests stay exercised.
+ * Graph extraction over the files this run touched, or the whole corpus when
+ * the profile sets `graphExtraction.fullScan` (the `graph-refresh` strategy).
+ * With nothing touched the pass still runs and extracts nothing.
  */
 export async function runGraphExtractionMaintenancePass(
   ctx: MaintenanceCtx,
   dbCell: IndexDbCell,
-  args: {
-    actionableRefs: ImproveEligibleRef[];
-    memoryRefsForInference: Set<string>;
-  },
+  args: { actionableRefs: ImproveEligibleRef[]; memoryRefsForInference: Set<string> },
 ): Promise<{
   graphExtraction?: GraphExtractionResult;
   durationMs: number;
   action?: ImproveActionResult;
   warnings: string[];
 }> {
-  const { config, sources, primaryStashDir, budgetSignal, improveProfile, resolvedPlan, graphExtractionFn } = ctx;
-  const warnings: string[] = [];
-  let graphExtraction: GraphExtractionResult | undefined;
-  let durationMs = 0;
-  let action: ImproveActionResult | undefined;
-
+  const { config, sources, primaryStashDir, resolvedPlan } = ctx;
+  const settings = ctx.improveProfile?.processes?.graphExtraction;
   const graphEnabled = resolvedPlan ? true : isProcessEnabled("index", "graph_extraction", config);
-  const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
-  const graphExtractionFullScan = improveProfile?.processes?.graphExtraction?.fullScan === true;
-  // #624 P2: optional incremental high-signal-first cap. Unset = process all
-  // eligible (byte-identical to today; no ranking/slice).
-  const graphExtractionTopN = improveProfile?.processes?.graphExtraction?.topN;
-  const graphExtractionIncludeTypes = improveProfile?.processes?.graphExtraction?.includeTypes ?? [
-    ...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
-  ];
-  const graphExtractionBatchSize =
-    improveProfile?.processes?.graphExtraction?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
-  const graphExtractionMaxChunksPerAsset = improveProfile?.processes?.graphExtraction?.maxChunksPerAsset;
-  // Build the set of refs actually touched this run.
-  const touchedRefs = new Set<string>();
-  for (const r of args.actionableRefs) touchedRefs.add(r.ref);
-  for (const r of args.memoryRefsForInference) touchedRefs.add(r);
-
-  if (graphExtractionDisabledByProfile) {
+  if (settings?.enabled === false) {
     info("[improve] graph extraction skipped (disabled by improve profile)");
-  } else if (sources.length > 0 && graphEnabled) {
-    info(`[improve] graph extraction starting${graphExtractionFullScan ? " (full-corpus scan)" : ""}`);
-    const extractionStart = Date.now();
-    try {
-      // Resolve touched refs to absolute file paths. Skipped for fullScan
-      // (candidatePaths stays undefined → extractor processes all files).
-      let candidatePaths: Set<string> | undefined;
-      if (!graphExtractionFullScan) {
-        candidatePaths = new Set<string>();
-        if (primaryStashDir && touchedRefs.size > 0) {
-          const writableBundleIds = deriveWritableBundleIds(resolveSourceEntries(primaryStashDir));
-          const resolved = await Promise.all(
-            [...touchedRefs].map((ref) => findAssetFilePath(ref, primaryStashDir, writableBundleIds).catch(() => null)),
-          );
-          for (const p of resolved) {
-            if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
-          }
-        }
-      }
-      const progressHandler = (event: {
-        processed: number;
-        total: number;
-        extracted: number;
-        totalEntities: number;
-        totalRelations: number;
-        currentPath?: string;
-      }) => {
-        const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
-        info(
-          `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
-        );
-      };
-      // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
-      graphExtraction = await withLlmStage(
-        "graph-extraction",
-        () =>
-          graphExtractionFn({
-            config,
-            ...(resolvedPlan
-              ? {
-                  llmRunner: resolvedPlan.processes.graphExtraction.runner,
-                }
-              : {}),
-            sources,
-            signal: budgetSignal,
-            db: dbCell.current,
-            reEnrich: false,
-            onProgress: progressHandler,
-            options: {
-              candidatePaths,
-              includeTypes: graphExtractionIncludeTypes,
-              batchSize: graphExtractionBatchSize,
-              ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}),
-              ...(graphExtractionMaxChunksPerAsset != null
-                ? { maxChunksPerAsset: graphExtractionMaxChunksPerAsset }
-                : {}),
-            },
-          }),
-        { engine: resolvedPlan?.processes.graphExtraction.runner?.engine, process: "graphExtraction" },
-      );
-      durationMs = Date.now() - extractionStart;
-      // Synthetic sentinel ref (D-R3): `graph` has no asset stash-subdir, so the
-      // colon-free `graph/_artifact` names the subsystem, per the sentinel
-      // convention documented at the memory-inference writer above.
-      action = { ref: "graph/_artifact", mode: "graph-extraction", result: graphExtraction };
-      info(
-        `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
-      );
-    } catch (err) {
-      durationMs = Date.now() - extractionStart;
-      warnings.push(`graph extraction failed: ${errMessage(err)}`);
-    }
-  } else if (sources.length > 0 && !graphEnabled) {
-    info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
+    return { durationMs: 0, warnings: [] };
   }
-
-  return { graphExtraction, durationMs, action, warnings };
+  if (sources.length === 0) return { durationMs: 0, warnings: [] };
+  if (!graphEnabled) {
+    info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
+    return { durationMs: 0, warnings: [] };
+  }
+  const fullScan = settings?.fullScan === true;
+  info(`[improve] graph extraction starting${fullScan ? " (full-corpus scan)" : ""}`);
+  const pass = await timedLlmPass("graph extraction", async () => {
+    let candidatePaths: Set<string> | undefined;
+    if (!fullScan) {
+      candidatePaths = new Set<string>();
+      const touched = new Set([...args.actionableRefs.map((r) => r.ref), ...args.memoryRefsForInference]);
+      if (primaryStashDir && touched.size > 0) {
+        const writableBundleIds = deriveWritableBundleIds(resolveSourceEntries(primaryStashDir));
+        const resolved = await Promise.all(
+          [...touched].map((ref) => findAssetFilePath(ref, primaryStashDir, writableBundleIds).catch(() => null)),
+        );
+        for (const p of resolved) if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
+      }
+    }
+    return attributeStage(resolvedPlan, "graphExtraction", () =>
+      ctx.graphExtractionFn({
+        config,
+        ...(resolvedPlan ? { llmRunner: resolvedPlan.processes.graphExtraction.runner } : {}),
+        sources,
+        signal: ctx.budgetSignal,
+        db: dbCell.current,
+        reEnrich: false,
+        onProgress: (event) => {
+          const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
+          info(
+            `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
+          );
+        },
+        options: {
+          candidatePaths,
+          includeTypes: settings?.includeTypes ?? [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES],
+          batchSize: settings?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE,
+          ...(settings?.topN != null ? { topN: settings.topN } : {}),
+          ...(settings?.maxChunksPerAsset != null ? { maxChunksPerAsset: settings.maxChunksPerAsset } : {}),
+        },
+      }),
+    );
+  });
+  const graphExtraction = pass.result;
+  if (!graphExtraction) return { durationMs: pass.durationMs, warnings: pass.warnings };
+  info(
+    `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
+  );
+  return {
+    graphExtraction,
+    durationMs: pass.durationMs,
+    action: { ref: "graph/_artifact", mode: "graph-extraction", result: graphExtraction },
+    warnings: pass.warnings,
+  };
 }
 
 /**
- * Orphan proposal purge — reject pending reflect proposals whose target
- * asset no longer exists on disk. Runs after graph extraction so newly
- * promoted assets from accept flows during this run are already present.
+ * Reject pending proposals whose target no longer exists, then expire pending
+ * proposals past the retention window; each emits a roll-up event.
  */
-function runOrphanProposalPurgePass(ctx: MaintenanceCtx): { orphansPurged: number; warnings: string[] } {
-  const { primaryStashDir, sources, eventsCtx } = ctx;
+function runProposalHygienePass(ctx: MaintenanceCtx): {
+  orphansPurged: number;
+  proposalsExpired: number;
+  warnings: string[];
+} {
+  const { primaryStashDir, eventsCtx } = ctx;
   const warnings: string[] = [];
   let orphansPurged = 0;
+  let proposalsExpired = 0;
   try {
-    const purgeResult = purgeOrphanProposals(
+    const purge = purgeOrphanProposals(
       primaryStashDir,
-      sources.map((s) => s.path),
+      ctx.sources.map((s) => s.path),
     );
-    orphansPurged = purgeResult.rejected;
-    if (purgeResult.rejected > 0) {
+    orphansPurged = purge.rejected;
+    if (purge.rejected > 0) {
       info(
-        `[improve] orphan purge: ${purgeResult.rejected}/${purgeResult.checked} orphaned proposals rejected (${purgeResult.durationMs}ms)`,
+        `[improve] orphan purge: ${purge.rejected}/${purge.checked} orphaned proposals rejected (${purge.durationMs}ms)`,
       );
     }
     appendEvent(
@@ -1226,11 +751,11 @@ function runOrphanProposalPurgePass(ctx: MaintenanceCtx): { orphansPurged: numbe
         eventType: "proposal_orphan_purge",
         ref: "proposals/_orphan-purge",
         metadata: {
-          checked: purgeResult.checked,
-          rejected: purgeResult.rejected,
-          durationMs: purgeResult.durationMs,
-          byType: purgeResult.byType,
-          orphans: purgeResult.orphans.map((o) => o.ref),
+          checked: purge.checked,
+          rejected: purge.rejected,
+          durationMs: purge.durationMs,
+          byType: purge.byType,
+          orphans: purge.orphans.map((o) => o.ref),
         },
       },
       eventsCtx,
@@ -1238,27 +763,13 @@ function runOrphanProposalPurgePass(ctx: MaintenanceCtx): { orphansPurged: numbe
   } catch (err) {
     warnings.push(`orphan purge failed: ${errMessage(err)}`);
   }
-  return { orphansPurged, warnings };
-}
-
-/**
- * Phase 6B (Advantage D6b): expire pending proposals that have aged past
- * the retention window. Runs AFTER orphan purge so we never double-archive
- * a proposal that orphan-purge already moved. `expireStaleProposals` emits
- * its own per-proposal `proposal_expired` events; we additionally emit a
- * single roll-up event here for parity with the orphan-purge surface.
- */
-function runProposalExpirationPass(ctx: MaintenanceCtx): { proposalsExpired: number; warnings: string[] } {
-  const { primaryStashDir, config, eventsCtx } = ctx;
-  const warnings: string[] = [];
-  let proposalsExpired = 0;
   try {
-    const expireResult = expireStaleProposals(primaryStashDir, config);
-    proposalsExpired = expireResult.expired;
-    if (expireResult.expired > 0) {
+    const expiry = expireStaleProposals(primaryStashDir, ctx.config);
+    proposalsExpired = expiry.expired;
+    if (expiry.expired > 0) {
       info(
-        `[improve] expiration: ${expireResult.expired}/${expireResult.checked} pending proposals expired ` +
-          `(retention=${expireResult.retentionDays}d, ${expireResult.durationMs}ms)`,
+        `[improve] expiration: ${expiry.expired}/${expiry.checked} pending proposals expired ` +
+          `(retention=${expiry.retentionDays}d, ${expiry.durationMs}ms)`,
       );
     }
     appendEvent(
@@ -1266,11 +777,11 @@ function runProposalExpirationPass(ctx: MaintenanceCtx): { proposalsExpired: num
         eventType: "proposal_expiration_pass",
         ref: "proposals/_expiration",
         metadata: {
-          checked: expireResult.checked,
-          expired: expireResult.expired,
-          durationMs: expireResult.durationMs,
-          retentionDays: expireResult.retentionDays,
-          expiredProposals: expireResult.expiredProposals,
+          checked: expiry.checked,
+          expired: expiry.expired,
+          durationMs: expiry.durationMs,
+          retentionDays: expiry.retentionDays,
+          expiredProposals: expiry.expiredProposals,
         },
       },
       eventsCtx,
@@ -1278,193 +789,87 @@ function runProposalExpirationPass(ctx: MaintenanceCtx): { proposalsExpired: num
   } catch (err) {
     warnings.push(`proposal expiration failed: ${errMessage(err)}`);
   }
-  return { proposalsExpired, warnings };
+  return { orphansPurged, proposalsExpired, warnings };
 }
 
 /**
- * Fix #2 (observability 0.8.0): trim the events table in state.db so it
- * doesn't grow unbounded. `akm health` writes a `health_probe` row on every
- * invocation, and every command surface emits at least one event besides —
- * without this trim, state.db is a permanent append-only log. Config key
- * `improve.eventRetentionDays` (default 90, set 0 to disable) controls the
- * window. The purge runs against state.db (a different SQLite file from
- * the index handle the other passes use).
+ * Trim the observability data that grows append-only — state.db events and
+ * improve_runs, logs.db task_logs, and the per-run task log files — to
+ * `improve.eventRetentionDays` (default 90; 0 disables), then VACUUM state.db
+ * when enough pages are free. Each store fails on its own. state.db work
+ * borrows the run's long-lived handle: a second writer on the same WAL file
+ * locks (#585).
  */
 export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[] } {
   const { config, eventsCtx } = ctx;
   const warnings: string[] = [];
   const retentionDays = typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
-  if (retentionDays > 0) {
-    // #585: reuse the long-lived eventsCtx.db connection when akmImprove
-    // opened one — opening a second state.db write connection while
-    // eventsDb is still live made two simultaneous writers contend on the
-    // same WAL file ("database is locked"). Only the eventsCtx.dbPath
-    // fallback path (state.db failed to open up-front) opens — and then
-    // owns and closes — its own handle. C2 still holds: the fallback uses
-    // the boundary-pinned path, never a live `process.env` re-read.
+  if (retentionDays <= 0) return { warnings };
+  const report = (eventType: string, ref: string, purgedCount: number, what: string) => {
+    if (purgedCount > 0) info(`[improve] ${eventType}: ${purgedCount} ${what} older than ${retentionDays}d removed`);
+    appendEvent({ eventType, ref, metadata: { purgedCount, retentionDays } }, eventsCtx);
+  };
+
+  try {
+    withStateDb(
+      (stateDb) => {
+        report("events_purged", "events/_purge", purgeOldEvents(stateDb, retentionDays), "event(s)");
+        report("improve_runs_purged", "improve_runs/_purge", purgeOldImproveRuns(stateDb, retentionDays), "run(s)");
+        const vacuum = vacuumStateDbIfReclaimable(stateDb, readFreelistInfo(stateDb), eventsCtx);
+        if (vacuum.ran) info(`[improve] state.db vacuum: ${vacuum.pagesBefore} -> ${vacuum.pagesAfter} pages`);
+      },
+      { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
+    );
+  } catch (err) {
+    warnings.push(`events purge failed: ${errMessage(err)}`);
+  }
+
+  let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
+  try {
+    logsDb = openLogsDatabase();
+    report("task_logs_purged", "task_logs/_purge", purgeOldTaskLogs(logsDb, retentionDays), "log line(s)");
+  } catch (err) {
+    warnings.push(`task_logs purge failed: ${errMessage(err)}`);
+  } finally {
     try {
-      withStateDb(
-        (stateDb) => {
-          const purgedCount = purgeOldEvents(stateDb, retentionDays);
-          if (purgedCount > 0) {
-            info(`[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`);
-          }
-          appendEvent(
-            {
-              eventType: "events_purged",
-              ref: "events/_purge",
-              metadata: { purgedCount, retentionDays },
-            },
-            eventsCtx,
-          );
-
-          // improve_runs uses the same retention window as events — both are
-          // observability/audit data, both grow append-only, both have a
-          // dedicated purge helper. Mirroring the events purge here means a
-          // single retention knob (improve.eventRetentionDays) governs both.
-          const improveRunsPurged = purgeOldImproveRuns(stateDb, retentionDays);
-          if (improveRunsPurged > 0) {
-            info(
-              `[improve] improve_runs purge: ${improveRunsPurged} run(s) older than ${retentionDays}d removed from state.db`,
-            );
-          }
-          appendEvent(
-            {
-              eventType: "improve_runs_purged",
-              ref: "improve_runs/_purge",
-              metadata: { purgedCount: improveRunsPurged, retentionDays },
-            },
-            eventsCtx,
-          );
-
-          // R0 step 3: opportunistic post-purge VACUUM. Reads the freelist
-          // off this same connection (no second state.db handle) and only
-          // runs when reclaimable space crosses STATE_DB_FREELIST_WARN_RATIO.
-          const vacuumOutcome = vacuumStateDbIfReclaimable(stateDb, readFreelistInfo(stateDb), eventsCtx);
-          if (vacuumOutcome.ran) {
-            info(`[improve] state.db vacuum: ${vacuumOutcome.pagesBefore} -> ${vacuumOutcome.pagesAfter} pages`);
-          }
-        },
-        { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
-      );
-    } catch (err) {
-      warnings.push(`events purge failed: ${errMessage(err)}`);
+      logsDb?.close();
+    } catch {
+      // best-effort
     }
+  }
 
-    // task_logs in logs.db (#579) shares the same retention window as
-    // events/improve_runs — all three are observability data governed by
-    // the single improve.eventRetentionDays knob. Separate try/finally
-    // because logs.db is a different file: a locked/missing logs.db must
-    // not block the state.db purges above.
-    let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
-    try {
-      logsDb = openLogsDatabase();
-      const taskLogsPurged = purgeOldTaskLogs(logsDb, retentionDays);
-      if (taskLogsPurged > 0) {
-        info(
-          `[improve] task_logs purge: ${taskLogsPurged} log line(s) older than ${retentionDays}d removed from logs.db`,
-        );
-      }
-      appendEvent(
-        {
-          eventType: "task_logs_purged",
-          ref: "task_logs/_purge",
-          metadata: { purgedCount: taskLogsPurged, retentionDays },
-        },
-        eventsCtx,
-      );
-    } catch (err) {
-      warnings.push(`task_logs purge failed: ${errMessage(err)}`);
-    } finally {
-      if (logsDb) {
-        try {
-          logsDb.close();
-        } catch {
-          // best-effort
-        }
-      }
-    }
-
-    // Per-run flat log files under getTaskLogDir() (#951): logs.db above is
-    // the durable record and already retention-purged, so the transitional
-    // `<taskId>/<timestamp>.log` tail files can be deleted on the same
-    // window without losing anything. A separate try/catch — a filesystem
-    // problem here must not block the DB purges above.
-    try {
-      const taskLogFilesPurged = purgeOldTaskLogFiles(undefined, retentionDays);
-      if (taskLogFilesPurged > 0) {
-        info(
-          `[improve] task log files purge: ${taskLogFilesPurged} file(s) older than ${retentionDays}d removed from ${getTaskLogDir()}`,
-        );
-      }
-      appendEvent(
-        {
-          eventType: "task_log_files_purged",
-          ref: "task_log_files/_purge",
-          metadata: { purgedCount: taskLogFilesPurged, retentionDays },
-        },
-        eventsCtx,
-      );
-    } catch (err) {
-      warnings.push(`task log files purge failed: ${errMessage(err)}`);
-    }
+  try {
+    report(
+      "task_log_files_purged",
+      "task_log_files/_purge",
+      purgeOldTaskLogFiles(undefined, retentionDays),
+      `file(s) under ${getTaskLogDir()}`,
+    );
+  } catch (err) {
+    warnings.push(`task log files purge failed: ${errMessage(err)}`);
   }
   return { warnings };
 }
 
-// ── #733 — orphan-state GC pass (Workstream C) ──────────────────────────────
-//
-// Deliberately lean: one maintenance pass, one additive migration (021), one
-// event type (asset_state_gc), one config gate (improve.stateGc.collect,
-// default false). See docs/architecture/specs/0.9.0-close-out-plan.md
-// Workstream C for the full design rationale. No quarantine archive, no
-// circuit breaker, no health-advisory plumbing, no new tables.
-
 /**
- * Grace window (ms) before an unresolved `asset_salience` / `asset_outcome`
- * row becomes delete-eligible — only when `improve.stateGc.collect` is true.
- * A named constant, not a config knob (owner ruling — see the close-out
- * plan's Workstream C).
+ * Grace window before an unresolved salience/outcome row may be deleted (only
+ * when `improve.stateGc.collect` is true).
  */
 export const STATE_GC_GRACE_MS = daysToMs(7);
 
 /**
- * Resolve one state-table's stored `asset_ref` against the live index.
- *
- * "ref not present in entries.item_ref" is the authoritative-deletion
- * predicate (see the pass doc comment below), so this checks the same two
- * spellings `getEntryByRef` (index-entries-repository.ts) resolves — an exact
- * bundle-qualified item_ref, or a bare conceptId matched by suffix across all
- * bundles — but against a prebuilt {@link LiveRefSnapshot}
- * (`getLiveRefSnapshot`) instead of a database round trip per row: with up to
- * a few thousand pending rows per run, one probe per row was the dominant
- * cost R78.
- *
- * On top of that, falls back to the BARE conceptId form (`bareImproveRef` —
- * the same primitive `preparation.ts`'s `normalizeStoredKey` map is built
- * from via `improveStateReadRefs`) when the stored ref carries a bundle
- * prefix that no longer matches exactly. This is the legacy-spelling
- * normalization trap: a naive `asset_ref NOT IN (SELECT item_ref FROM
- * entries)` would treat a live asset whose row predates bundle-qualification
- * (or whose bundle prefix is stale) as an orphan and delete it. Preferring
- * "never delete a live row" over "never miss a genuinely dead one" mirrors
- * `getEntryByRef`'s own bare-conceptId suffix-match trade-off.
+ * A stored state ref is live when it, or its bare conceptId, resolves in the
+ * index. The bare fallback keeps a live asset whose row predates
+ * bundle-qualification from being collected.
  */
 function isStateRefLive(snapshot: LiveRefSnapshot, storedRef: string): boolean {
   if (isRefLiveInSnapshot(snapshot, storedRef)) return true;
-  const bare = bareImproveRef(storedRef);
+  const bare = stripBundle(storedRef);
   return bare !== storedRef && isRefLiveInSnapshot(snapshot, bare);
 }
 
-/** Per-table sweep result — the {pending, collected} shape the event and pass summary report. */
-interface StateGcTableResult {
-  pending: number;
-  collected: number;
-}
-
-/** The four repository operations {@link gcOneStateTable} needs, injected so both tables share one sweep body. */
-interface StateGcTableOps {
-  refRows: ReadonlyArray<{ asset_ref: string; missing_since: number | null }>;
+interface StateGcTable {
+  rows: ReadonlyArray<{ asset_ref: string; missing_since: number | null }>;
   stamp: (refs: string[], now: number) => number;
   clear: (refs: string[]) => number;
   deleteOlderThan: (cutoffMs: number) => number;
@@ -1472,136 +877,71 @@ interface StateGcTableOps {
 }
 
 /**
- * Sweep ONE state table: stamp refs that just went unresolved, clear refs
- * that resolved again, and — only when `collect` is true — delete rows whose
- * `missing_since` is older than {@link STATE_GC_GRACE_MS}. `pending` is a
- * point-in-time snapshot taken AFTER stamp/clear/delete (re-queried, not
- * accumulated), so it reflects the current backlog rather than this run's
- * delta — "every run emits the counts either way, so live data accumulates
- * proof" (close-out plan, Workstream C).
- */
-function gcOneStateTable(
-  args: { liveRefs: LiveRefSnapshot; now: number; collect: boolean } & StateGcTableOps,
-): StateGcTableResult {
-  const { refRows, liveRefs, now, collect, stamp, clear, deleteOlderThan, countPending } = args;
-  const toStamp: string[] = [];
-  const toClear: string[] = [];
-  for (const row of refRows) {
-    const live = isStateRefLive(liveRefs, row.asset_ref);
-    if (!live && row.missing_since == null) toStamp.push(row.asset_ref);
-    else if (live && row.missing_since != null) toClear.push(row.asset_ref);
-  }
-  if (toStamp.length > 0) stamp(toStamp, now);
-  if (toClear.length > 0) clear(toClear);
-
-  const collected = collect ? deleteOlderThan(now - STATE_GC_GRACE_MS) : 0;
-  const pending = countPending();
-
-  return { pending, collected };
-}
-
-/**
- * Orphan-state GC — #733 (Workstream C). For each of the two per-asset state
- * tables (`asset_salience`, `asset_outcome`), stamps `missing_since` on refs
- * that no longer resolve against `entries.item_ref` in index.db, clears the
- * stamp on refs that resolve again, and — only when `improve.stateGc.collect`
- * is true — deletes rows whose stamp is older than {@link STATE_GC_GRACE_MS}.
- *
- * "ref not present in entries.item_ref" IS the authoritative-deletion
- * predicate: "absent ≠ deleted" is inherited from the indexer, not
- * re-implemented here — an incomplete or failed source scan preserves that
- * source's last-known-good `entries` rows (indexer.ts ~1195-1199), and
- * mass-wipe is already gated upstream (`preserveExistingIndex` +
- * `fullDelete && scanComplete`). A temporarily unreachable source therefore
- * never surfaces candidates; no separate scan-status tracking is needed.
- *
- * Runs under the SAME index-writer lease / borrowed-state.db-connection
- * discipline as the neighboring maintenance passes: `dbCell.current` supplies
- * the already-open index.db handle (#584), and state.db access goes through
- * `withStateDb(..., { borrowed: eventsCtx?.db })` so this never opens a
- * second live writer alongside a long-lived `eventsCtx.db` connection — see
- * the #585 comment on {@link runRetentionPurgePass}'s events-purge call for
- * why that matters ("database is locked").
- *
- * Exported for direct test coverage (tests/integration/commands/improve/
- * state-gc.test.ts), mirroring the `runMemoryInferenceMaintenancePass` /
- * `runGraphExtractionMaintenancePass` / `runRetentionPurgePass` precedent;
- * production callers reach it only through `runMaintenancePassesUnderLease`.
+ * Orphan-state GC (#733) over `asset_salience` and `asset_outcome`: stamp
+ * `missing_since` on refs that no longer resolve in index.db, clear it on refs
+ * that resolve again, and — only with `improve.stateGc.collect` — delete rows
+ * stamped longer ago than {@link STATE_GC_GRACE_MS}. An unreachable source keeps
+ * its last-known index rows, so it never surfaces candidates. `pending` is the
+ * backlog after the sweep; the event is emitted only when there is something to
+ * report.
  */
 export function runOrphanStateGcPass(
   ctx: MaintenanceCtx,
   dbCell: IndexDbCell,
 ): { pending: number; collected: number; warnings: string[] } {
-  const { eventsCtx, config } = ctx;
-  const warnings: string[] = [];
+  const { eventsCtx } = ctx;
   const indexDb = dbCell.current;
-  if (!indexDb) {
-    warnings.push("orphan state GC skipped: no index.db handle available");
-    return { pending: 0, collected: 0, warnings };
-  }
-
-  const collect = config.improve?.stateGc?.collect === true;
+  if (!indexDb)
+    return { pending: 0, collected: 0, warnings: ["orphan state GC skipped: no index.db handle available"] };
+  const collect = ctx.config.improve?.stateGc?.collect === true;
   const now = Date.now();
   let pending = 0;
   let collected = 0;
-
   try {
-    // R78: one query for every live item_ref, shared by both tables' sweeps
-    // below — replaces a `getEntryByRef` round trip per pending row. Inside
-    // the try so a schema mismatch (e.g. a DB version upgrade that dropped
-    // `entries`) degrades to the "orphan state GC failed" warning below
-    // instead of escaping this pass and failing the whole maintenance run.
     const liveRefs = getLiveRefSnapshot(indexDb);
+    const sweep = (table: StateGcTable) => {
+      const toStamp: string[] = [];
+      const toClear: string[] = [];
+      for (const row of table.rows) {
+        const live = isStateRefLive(liveRefs, row.asset_ref);
+        if (!live && row.missing_since == null) toStamp.push(row.asset_ref);
+        else if (live && row.missing_since != null) toClear.push(row.asset_ref);
+      }
+      if (toStamp.length > 0) table.stamp(toStamp, now);
+      if (toClear.length > 0) table.clear(toClear);
+      const removed = collect ? table.deleteOlderThan(now - STATE_GC_GRACE_MS) : 0;
+      return { pending: table.countPending(), collected: removed };
+    };
     withStateDb(
       (stateDb) => {
-        const salienceResult = gcOneStateTable({
-          refRows: listAssetSalienceMissingState(stateDb),
-          liveRefs,
-          now,
-          collect,
-          stamp: (refs, ts) => stampAssetSalienceMissing(stateDb, refs, ts),
-          clear: (refs) => clearAssetSalienceMissing(stateDb, refs),
-          deleteOlderThan: (cutoffMs) => deleteAssetSalienceMissingBefore(stateDb, cutoffMs),
-          countPending: () => countAssetSalienceMissing(stateDb),
-        });
-
-        const outcomeResult = gcOneStateTable({
-          refRows: listAssetOutcomeMissingState(stateDb),
-          liveRefs,
-          now,
-          collect,
-          stamp: (refs, ts) => stampAssetOutcomeMissing(stateDb, refs, ts),
-          clear: (refs) => clearAssetOutcomeMissing(stateDb, refs),
-          deleteOlderThan: (cutoffMs) => deleteAssetOutcomeMissingBefore(stateDb, cutoffMs),
-          countPending: () => countAssetOutcomeMissing(stateDb),
-        });
-
-        // Table-name-shaped keys ("salience"/"outcome", not the guarded
-        // "asset_salience"/"asset_outcome" table names) — this file sits
-        // outside src/storage/repositories/**, where the state-table-sql
-        // lint rule (#672) forbids naming those tables even in a log string
-        // or an object key, not just in raw SQL.
-        const byTable = { salience: salienceResult, outcome: outcomeResult };
-        pending = salienceResult.pending + outcomeResult.pending;
-        collected = salienceResult.collected + outcomeResult.collected;
-
+        // Keys avoid the state table names: the state-table-sql lint rule (#672)
+        // forbids them outside the repositories.
+        const byTable = {
+          salience: sweep({
+            rows: listAssetSalienceMissingState(stateDb),
+            stamp: (refs, ts) => stampAssetSalienceMissing(stateDb, refs, ts),
+            clear: (refs) => clearAssetSalienceMissing(stateDb, refs),
+            deleteOlderThan: (cutoff) => deleteAssetSalienceMissingBefore(stateDb, cutoff),
+            countPending: () => countAssetSalienceMissing(stateDb),
+          }),
+          outcome: sweep({
+            rows: listAssetOutcomeMissingState(stateDb),
+            stamp: (refs, ts) => stampAssetOutcomeMissing(stateDb, refs, ts),
+            clear: (refs) => clearAssetOutcomeMissing(stateDb, refs),
+            deleteOlderThan: (cutoff) => deleteAssetOutcomeMissingBefore(stateDb, cutoff),
+            countPending: () => countAssetOutcomeMissing(stateDb),
+          }),
+        };
+        pending = byTable.salience.pending + byTable.outcome.pending;
+        collected = byTable.salience.collected + byTable.outcome.collected;
         if (pending > 0 || collected > 0) {
           info(
             `[improve] orphan state GC: ${pending} pending, ${collected} collected ` +
-              `(salience ${salienceResult.pending}/${salienceResult.collected}, ` +
-              `outcome ${outcomeResult.pending}/${outcomeResult.collected})`,
+              `(salience ${byTable.salience.pending}/${byTable.salience.collected}, ` +
+              `outcome ${byTable.outcome.pending}/${byTable.outcome.collected})`,
           );
-          // #733 — asset_state_gc reports the current per-table backlog
-          // snapshot (`pending`) plus this run's deletions (`collected`);
-          // emitted only when there is something to report (mirrors the
-          // rekey script's no-op-stays-silent precedent) so a perpetually
-          // clean stash never accumulates events.
           appendEvent(
-            {
-              eventType: "asset_state_gc",
-              ref: "asset_state/_gc",
-              metadata: { pending, collected, byTable },
-            },
+            { eventType: "asset_state_gc", ref: "asset_state/_gc", metadata: { pending, collected, byTable } },
             eventsCtx,
           );
         }
@@ -1609,8 +949,7 @@ export function runOrphanStateGcPass(
       { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
     );
   } catch (err) {
-    warnings.push(`orphan state GC failed: ${errMessage(err)}`);
+    return { pending, collected, warnings: [`orphan state GC failed: ${errMessage(err)}`] };
   }
-
-  return { pending, collected, warnings };
+  return { pending, collected, warnings: [] };
 }

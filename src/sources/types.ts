@@ -4,7 +4,7 @@
 
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
-import type { ProgramExecCore } from "../workflows/program/schema";
+import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
 
 export type AkmSearchType = string;
 export type SearchSource = "local" | "registry" | "all";
@@ -164,7 +164,7 @@ export interface WorkflowStepOrchestrationSummary {
    * so what `show` prints is what runs. `passEnv`/`inheritEnv` describe the
    * child's environment SCOPE by variable name; no value is ever projected.
    *
-   * The SHARED projection shape (`workflows/program/schema.ts`), not a mirror
+   * The SHARED projection shape (`WorkflowExec`, `workflows/plan.ts`), not a mirror
    * of it: a field added there must not be able to reach the frozen plan while
    * silently missing from what `show` describes.
    */

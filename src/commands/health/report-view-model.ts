@@ -101,6 +101,15 @@ function coercePct(raw: number | string | undefined): number | undefined {
 
 // ── Per-run reshape (port of collect.py reshape_run) ─────────────────────────
 
+/**
+ * Fields the HTML report actually reads — either server-side
+ * (`html-report.ts`'s `vm.latest`/`vm.lastRun`) or client-side (the `RUNS`
+ * array embedded via `%%RUNS_JS_CONST%%`, consumed by
+ * `src/assets/templates/html/health.html`'s chart/table script). A per-run
+ * counter that neither reads does not belong here, even though the
+ * underlying `ImproveRunSummary` may still carry it for `--group-by run` /
+ * the Markdown renderer (see `./types-runs.ts`, `./md-report.ts`).
+ */
 export interface ReportRun {
   id: string;
   resultStatus: "valid" | "invalid";
@@ -111,7 +120,6 @@ export interface ReportRun {
   completedAt: string;
   wallTimeMs: number;
   ok: boolean;
-  mode: string;
   consDurationMs: number;
   miDurationMs: number;
   geDurationMs: number;
@@ -121,18 +129,9 @@ export interface ReportRun {
   deleted: number;
   contradicted: number;
   judgedNoAction: number;
-  processed: number;
-  failedChunks: number;
-  totalChunks: number;
   miWritten: number;
-  miConsidered: number;
-  miYieldRate: number;
   geEntities: number;
   geRelations: number;
-  geFailures: number;
-  distillSkipped: number;
-  distillQueued: number;
-  distillLlmFailed: number;
   distillByReason: Record<string, number>;
   reflectOk: number;
   reflectFailed: number;
@@ -140,7 +139,6 @@ export interface ReportRun {
   eligible: number;
   lintFlagged: number;
   lintFixed: number;
-  orphansPurged: number;
 }
 
 function reshapeRun(r: ImproveRunSummary): ReportRun {
@@ -161,7 +159,6 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     completedAt: r.completedAt,
     wallTimeMs: wall,
     ok: r.ok,
-    mode: r.scope.mode,
     consDurationMs: consMs,
     miDurationMs: miMs,
     geDurationMs: geMs,
@@ -171,18 +168,9 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     deleted: cons.deleted,
     contradicted: cons.contradicted,
     judgedNoAction: cons.judgedNoAction,
-    processed: cons.processed,
-    failedChunks: cons.failedChunks,
-    totalChunks: cons.totalChunks,
     miWritten: mi.written,
-    miConsidered: mi.considered,
-    miYieldRate: mi.yieldRate,
     geEntities: ge.entities,
     geRelations: ge.relations,
-    geFailures: ge.failures,
-    distillSkipped: r.actions.distill.skipped,
-    distillQueued: r.actions.distill.queued,
-    distillLlmFailed: r.actions.distill.llmFailed,
     distillByReason: r.actions.distill.skippedByReason,
     reflectOk: r.actions.reflect.ok,
     reflectFailed: r.actions.reflect.failed,
@@ -190,7 +178,6 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     eligible: r.memorySummary.eligible,
     lintFlagged: r.lintFlagged,
     lintFixed: r.lintFixed,
-    orphansPurged: r.orphansPurged,
   };
 }
 

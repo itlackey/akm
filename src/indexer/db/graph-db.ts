@@ -307,39 +307,6 @@ export function enqueueGraphExtraction(
   }
 }
 
-/**
- * #624-P3 — drain up to `limit` queued files for a stash, highest-priority
- * first (then oldest queued_at). The returned rows are DELETED from the queue
- * in the SAME transaction (SELECT-then-DELETE-by-PK), so a drain is exactly
- * once. Tolerant of a missing table / db error (returns []), but never masks
- * the bun-test isolation guard.
- */
-export function drainExtractionQueue(
-  db: Database,
-  stashRoot: string,
-  limit: number,
-): Array<{ filePath: string; bodyHash: string; priority: number }> {
-  try {
-    return db.transaction(() => {
-      const rows = db
-        .prepare(
-          `SELECT file_path, body_hash, priority
-             FROM graph_extraction_queue
-             WHERE stash_root = ?
-             ORDER BY priority DESC, queued_at ASC
-             LIMIT ?`,
-        )
-        .all(stashRoot, limit) as Array<{ file_path: string; body_hash: string; priority: number }>;
-      const del = db.prepare("DELETE FROM graph_extraction_queue WHERE stash_root = ? AND file_path = ?");
-      for (const row of rows) del.run(stashRoot, row.file_path);
-      return rows.map((row) => ({ filePath: row.file_path, bodyHash: row.body_hash, priority: row.priority }));
-    })();
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    return [];
-  }
-}
-
 /** Read queued graph work without claiming or deleting it. */
 export function peekExtractionQueue(
   db: Database,
