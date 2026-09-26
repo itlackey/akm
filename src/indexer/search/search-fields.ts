@@ -25,13 +25,6 @@ import type { IndexDocument } from "../passes/metadata";
  *  - content: bounded native/adapter body projection + TOC headings + parameters
  *    (lowest-weight catch-all)
  */
-// NOTE (R5): the collapse detector's frozen canary queries are built from the
-// same surface this function indexes (name tokens / tags / description) and
-// scored via FTS against it. Changing what buildSearchFields includes shifts
-// the detector's recall baseline for ALL existing canary sets — coordinate
-// with src/commands/improve/collapse-detector.ts (buildCanaryQuery) and expect
-// operators to re-mint via `bun scripts/refresh-canary-set.ts --refresh` after
-// such a change.
 export function buildSearchFields(entry: IndexDocument): {
   name: string;
   description: string;

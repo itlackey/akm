@@ -16,7 +16,6 @@
  */
 
 import path from "node:path";
-import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { compareCodePoints } from "../../core/common";
@@ -24,7 +23,7 @@ import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
 import { systemErrorCode } from "../../core/system-error";
-import { allowsFragmentRef, defaultRendererRegistry, type RendererRegistry } from "../../core/type-presentation";
+import { allowsFragmentRef, presentationFor } from "../../core/type-presentation";
 import { normalizeEmbeddingEndpoint } from "../../llm/embedders/remote";
 import type {
   AkmSearchType,
@@ -47,7 +46,6 @@ import {
   getPositiveFeedbackCountsByIds,
 } from "../../storage/repositories/index-entries-repository";
 import {
-  getIndexedMarkdownFragment,
   getIndexedMarkdownFragments,
   type IndexedMarkdownFragment,
   searchFts,
@@ -102,18 +100,8 @@ function buildStaleIndexHint(db: Database): string | undefined {
   }
 }
 
-function indexedProvenance(
-  entry: RankedEntryInput & IndexedProvenance,
-): Pick<IndexedProvenance, "itemRef" | "bundleId" | "conceptId"> {
-  return { itemRef: entry.itemRef, bundleId: entry.bundleId, conceptId: entry.conceptId };
-}
-
-export function buildLocalAction(
-  type: string,
-  ref: string,
-  registry: RendererRegistry = defaultRendererRegistry,
-): string {
-  return buildActionFromContributors({ type, ref }, defaultActionContributors(registry)) ?? `akm show ${ref}`;
+export function buildLocalAction(type: string, ref: string): string {
+  return presentationFor(type).action?.(ref) ?? `akm show ${ref}`;
 }
 
 function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance, defaultBundleId?: string): string {
@@ -126,10 +114,6 @@ function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance
     },
     defaultBundleId,
   );
-}
-
-function resolveSearchHitOrigin(source?: SearchSource): string | null {
-  return source?.registryId ?? null;
 }
 
 /**
@@ -168,15 +152,13 @@ function hasConfiguredEmbeddingProvider(config: {
   return Boolean(config.embedding?.endpoint && config.embedding?.model);
 }
 
-export async function searchLocal(input: {
+export interface SearchLocalInput {
   query: string;
   searchType: AkmSearchType;
   limit: number;
   stashDir: string;
   sources: SearchSource[];
   config: AkmConfig;
-  /** Optional renderer registry override for test isolation. */
-  rendererRegistry?: RendererRegistry;
   /**
    * Optional scope filter (`user`, `agent`, `run`, `channel`). When present,
    * hits whose `entry.scope` does not satisfy every supplied key are dropped
@@ -210,7 +192,9 @@ export async function searchLocal(input: {
   disableProjectContext?: boolean;
   /** Disable scoped-utility ranking for this invocation only. */
   disableScopedUtility?: boolean;
-}): Promise<{
+}
+
+export async function searchLocal(input: SearchLocalInput): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
   warnings?: string[];
@@ -219,16 +203,7 @@ export async function searchLocal(input: {
   /** Actual ranking mode, including a failed semantic attempt. */
   mode: SearchExecutionMode;
 }> {
-  const { query, searchType, limit, stashDir, sources, config } = input;
-  const filters = input.filters;
-  const includeProposed = input.includeProposed === true;
-  const beliefFilter = input.beliefFilter ?? "all";
-  const restrictToSources = input.restrictToSources === true;
-  const includeExcludedTypes = input.includeExcludedTypes === true;
-  const disableProjectContext = input.disableProjectContext === true;
-  const disableScopedUtility = input.disableScopedUtility === true;
-  const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
-  const allSourceDirs = sources.map((s) => s.path);
+  const { query, stashDir, config } = input;
   const warnings: string[] = [];
   // Semantic search is attempted fresh on every query (see `tryVecScores`);
   // there is no cached readiness verdict to consult here. The only thing
@@ -276,24 +251,7 @@ export async function searchLocal(input: {
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning } = await searchDatabase(
-      db,
-      query,
-      searchType,
-      limit,
-      stashDir,
-      allSourceDirs,
-      config,
-      sources,
-      rendererRegistry,
-      filters,
-      includeProposed,
-      beliefFilter,
-      restrictToSources,
-      includeExcludedTypes,
-      disableProjectContext,
-      disableScopedUtility,
-    );
+    const { hits, embedMs, rankMs, mode, semanticWarning } = await searchDatabase(db, input);
     if (semanticWarning) warnings.push(semanticWarning);
     return {
       hits,
@@ -370,13 +328,9 @@ function buildSearchResultComparator(query: string): (a: RankedEntryInput, b: Ra
     if (scoreDiff !== 0) return scoreDiff;
     const rawScoreDiff = stableRankScore(b.score) - stableRankScore(a.score);
     if (rawScoreDiff !== 0) return rawScoreDiff;
-    // Ceiling values are intentionally allowed to demote visibility, but not
-    // to erase relevance. Prefer the score before a relaxed body-only ceiling;
-    // a later belief-state ceiling has its own minScore handoff and must not
-    // overwrite this ordering evidence. Belief-only ceilings fall back to
-    // their `preCeilingScore`.
-    const preCeilingRelevance = (item: RankedEntryInput): number =>
-      item.preRelaxedCeilingScore ?? item.preCeilingScore ?? item.score;
+    // The relaxed body-only ceiling is allowed to demote visibility, but not
+    // to erase relevance: prefer the score before it.
+    const preCeilingRelevance = (item: RankedEntryInput): number => item.preRelaxedCeilingScore ?? item.score;
     const ceilingDiff = stableRankScore(preCeilingRelevance(b)) - stableRankScore(preCeilingRelevance(a));
     if (ceilingDiff !== 0) return ceilingDiff;
     const nameDiff = bNameTier - aNameTier;
@@ -394,21 +348,7 @@ function buildSearchResultComparator(query: string): (a: RankedEntryInput, b: Ra
 
 async function searchDatabase(
   db: Database,
-  query: string,
-  searchType: AkmSearchType,
-  limit: number,
-  stashDir: string,
-  allSourceDirs: string[],
-  config: AkmConfig,
-  sources: SearchSource[],
-  rendererRegistry: RendererRegistry = defaultRendererRegistry,
-  filters?: StashEntryScope,
-  includeProposed = false,
-  beliefFilter: BeliefFilterMode = "all",
-  restrictToSources = false,
-  includeExcludedTypes = false,
-  disableProjectContext = false,
-  disableScopedUtility = false,
+  input: SearchLocalInput,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -416,6 +356,11 @@ async function searchDatabase(
   mode: SearchExecutionMode;
   semanticWarning?: string;
 }> {
+  const { query, searchType, limit, stashDir, sources, config, filters } = input;
+  const allSourceDirs = sources.map((s) => s.path);
+  const includeProposed = input.includeProposed === true;
+  const beliefFilter = input.beliefFilter ?? "all";
+  const restrictToSources = input.restrictToSources === true;
   const hasSearchableTokens = query.length > 0 && buildLexicalQueryPlan(query).tokens.length > 0;
 
   // #627 — resolve the default type-exclusion policy. It applies ONLY on the
@@ -423,7 +368,7 @@ async function searchDatabase(
   // `includeExcludedTypes`. When the config key is ABSENT a built-in default of
   // ['session'] is applied; an explicit empty list disables exclusion.
   const defaultExcludes =
-    searchType === "any" && !includeExcludedTypes ? (config.search?.defaultExcludeTypes ?? ["session"]) : [];
+    searchType === "any" && !input.includeExcludedTypes ? (config.search?.defaultExcludeTypes ?? ["session"]) : [];
 
   // D4 — conceptId-prefix queries (`memories/projecta/`, `bundle//`,
   // `bundle//skills/`) translate to a deterministic enumeration narrowed by
@@ -441,10 +386,8 @@ async function searchDatabase(
     query,
     limit,
     stashDir,
-    allSourceDirs,
     sources,
     config,
-    rendererRegistry,
     filters,
     includeProposed,
     beliefFilter,
@@ -498,18 +441,10 @@ async function searchDatabase(
   // candidate set cannot alter a pre-existing row's base score.
   const ftsScoreMap = normalizeFtsScores(ftsResults);
 
-  // Build embedding score map (cosine similarities already 0-1)
-  const embedScoreMap = new Map<number, number>();
-  if (embeddingScores) {
-    for (const [id, cosine] of embeddingScores) {
-      embedScoreMap.set(id, cosine);
-    }
-  }
-
-  // ── Combine FTS + vector scores ──────────────────────────────────────
+  // ── Combine FTS + vector scores (cosine similarities already 0-1) ─────
   const scored = combineSearchScores({
     ftsScoreMap,
-    embedScoreMap,
+    embedScoreMap: embeddingScores ?? new Map(),
     getEntryById: (id) => getEntryById(db, id) ?? undefined,
     typeFilter,
     // #627 — also exclude default-hidden types from the vector-only branch so a
@@ -534,18 +469,16 @@ async function searchDatabase(
   // graph contributes nothing. The graph signal feeds this single
   // FTS5+boosts loop as ONE additive component (CLAUDE.md / spec §6:
   // one scoring pipeline, no parallel SearchHit scorer).
-  const graphContext: GraphBoostContext | null = (() => {
-    // Search across all source dirs; the graph file lives next to the
-    // primary source root. Cache misses are silent — the helper handles
-    // missing files internally and returns `null` instead of throwing.
-    if (allSourceDirs.length === 0) return null;
-    return loadGraphBoostContext(allSourceDirs, query, config, db);
-  })();
+  // Search across all source dirs; the graph file lives next to the primary
+  // source root. Cache misses are silent — the helper handles missing files
+  // internally and returns `null` instead of throwing.
+  const graphContext: GraphBoostContext | null =
+    allSourceDirs.length === 0 ? null : loadGraphBoostContext(allSourceDirs, query, config, db);
 
   // Resolve project-context tokens from the current working directory once
   // per search invocation. Returns null when running from home dir / /tmp,
   // or when the caller passed `--no-project-context` (disableProjectContext).
-  const projectContext = disableProjectContext ? null : resolveProjectContext(process.cwd());
+  const projectContext = input.disableProjectContext ? null : resolveProjectContext(process.cwd());
 
   // Phase 2A / Rec 5: resolve forgetting-curve config and skip the feedback
   // count query when the boost cannot make a difference (default ≤ 1.0 means
@@ -568,7 +501,7 @@ async function searchDatabase(
   // opts out (e.g. for registry searches or tests).
   let scopeKey: string | undefined;
   try {
-    scopeKey = disableScopedUtility ? undefined : getCurrentWorkflowScopeKey();
+    scopeKey = input.disableScopedUtility ? undefined : getCurrentWorkflowScopeKey();
   } catch {
     // Non-fatal — ranking proceeds without scoped utility on any error.
   }
@@ -592,15 +525,9 @@ async function searchDatabase(
   // Drop semantic-only hits (cosine-only, no FTS match) whose score falls
   // below the configured floor. FTS hits and hybrid hits are always kept.
   // Default floor: 0.2. Set search.minScore = 0 in config to disable.
-  // Judged on the PRE-ceiling score when a demoting belief state clamped the
-  // item (`preCeilingScore`): the belief ceilings can sit below this floor
-  // (archived 0.15 < 0.2), and a demotion must rank the hit last, not
-  // silently remove a result that would otherwise have listed.
   const minScore = config.search?.minScore ?? 0.2;
   const preFilter =
-    minScore > 0
-      ? scored.filter((item) => item.rankingMode !== "semantic" || (item.preCeilingScore ?? item.score) >= minScore)
-      : scored;
+    minScore > 0 ? scored.filter((item) => item.rankingMode !== "semantic" || item.score >= minScore) : scored;
 
   preFilter.sort(buildSearchResultComparator(query));
 
@@ -647,7 +574,9 @@ async function searchDatabase(
       return buildDbHit({
         entry,
         path: filePath,
-        ...indexedProvenance(ranked),
+        itemRef: ranked.itemRef,
+        bundleId: ranked.bundleId,
+        conceptId: ranked.conceptId,
         score: Math.round(finalScore * 10000) / 10000,
         query,
         rankingMode,
@@ -655,13 +584,11 @@ async function searchDatabase(
         fragmentId: ranked.fragmentId,
         indexedFragment: ranked.fragmentId ? (selectedFragmentByEntryId.get(ranked.id) ?? null) : undefined,
         defaultStashDir: stashDir,
-        allSourceDirs,
         sources,
         config,
         utilityBoosted,
         graphContext,
         attributionSource: ranked,
-        rendererRegistry,
         db,
       });
     }),
@@ -742,16 +669,14 @@ async function enumerateEntries(opts: {
   bundle?: string;
   limit: number;
   stashDir: string;
-  allSourceDirs: string[];
   sources: SearchSource[];
   config: AkmConfig;
-  rendererRegistry: RendererRegistry;
   filters?: StashEntryScope;
   includeProposed: boolean;
   beliefFilter: BeliefFilterMode;
   restrictToSources: boolean;
 }): Promise<{ hits: SourceSearchHit[] }> {
-  const { db, query, sources, config, rendererRegistry, filters, beliefFilter } = opts;
+  const { db, query, sources, config, filters, beliefFilter } = opts;
   const allEntries = getAllEntries(db, opts.typeFilter, opts.excludeTypes).filter(hasIndexedProvenance);
   // Explicit listing order: type, then name, then filePath. The underlying
   // SELECT carries no ORDER BY, so its row order tracks the query plan and the
@@ -777,12 +702,7 @@ async function enumerateEntries(opts: {
       ? bundleFiltered.filter((ie) => ie.conceptId.toLowerCase().startsWith(conceptIdPrefix))
       : bundleFiltered;
   // Deduplicate by file path — multiple entries can share the same file
-  const seenFilePaths = new Set<string>();
-  const uniqueEntries = prefixFiltered.filter((ie) => {
-    if (seenFilePaths.has(ie.filePath)) return false;
-    seenFilePaths.add(ie.filePath);
-    return true;
-  });
+  const uniqueEntries = deduplicateByPath(prefixFiltered);
   // Source → scope → proposed-quality → derived-twin belief inheritance →
   // belief: the post-candidate filter chain shared with searchDatabase's
   // scored path (see applyEntryFilters). Filtering happens BEFORE the limit
@@ -811,10 +731,8 @@ async function enumerateEntries(opts: {
         query,
         rankingMode: "fts",
         defaultStashDir: opts.stashDir,
-        allSourceDirs: opts.allSourceDirs,
         sources,
         config,
-        rendererRegistry,
         db,
       }),
     ),
@@ -1037,14 +955,11 @@ export async function buildDbHit(input: {
   /** Preloaded by the search batch; null means the indexed selector was absent. */
   indexedFragment?: IndexedMarkdownFragment | null;
   defaultStashDir: string;
-  allSourceDirs: string[];
   sources: SearchSource[];
   config?: AkmConfig;
   utilityBoosted?: boolean;
   graphContext?: GraphBoostContext | null;
   attributionSource?: object;
-  /** Optional renderer registry override for test isolation. */
-  rendererRegistry?: RendererRegistry;
   /**
    * Phase 5A / Advantage D5: open DB connection threaded into the search-hit
    * enricher pipeline so the derived-memory enricher can resolve parent→child
@@ -1053,9 +968,9 @@ export async function buildDbHit(input: {
    */
   db?: Database;
 }): Promise<SourceSearchHit> {
-  const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const absolutePath = path.resolve(input.path);
-  const entryStashDir = findSourceForPath(absolutePath, input.sources)?.path ?? input.defaultStashDir;
+  const source = findSourceForPath(absolutePath, input.sources);
+  const entryStashDir = source?.path ?? input.defaultStashDir;
 
   // Quality and confidence boosts are now applied in the main scoring
   // phase (searchDatabase). buildDbHit receives the already-final score and
@@ -1084,7 +999,6 @@ export async function buildDbHit(input: {
 
   const graphHit = input.graphContext ? collectGraphRelatedHit(input.graphContext, absolutePath) : null;
 
-  const source = findSourceForPath(absolutePath, input.sources);
   const defaultBundleId =
     input.config?.defaultBundle ??
     (source && path.resolve(source.path) === path.resolve(input.defaultStashDir)
@@ -1097,12 +1011,7 @@ export async function buildDbHit(input: {
   const ref = input.fragmentId && allowsFragmentRef(input.entry.type) ? `${parentRef}#${input.fragmentId}` : parentRef;
 
   const editable = isEditable(absolutePath, input.config, input.sources);
-  const indexedFragment =
-    input.indexedFragment === undefined
-      ? input.fragmentId && input.db
-        ? getIndexedMarkdownFragment(input.db, input.itemRef, input.fragmentId)
-        : undefined
-      : (input.indexedFragment ?? undefined);
+  const indexedFragment = input.indexedFragment ?? undefined;
   const selectedRef = input.fragmentId && ref !== parentRef ? `${parentRef}#${input.fragmentId}` : undefined;
   const parentEstimatedTokens =
     typeof input.entry.fileSize === "number"
@@ -1119,13 +1028,13 @@ export async function buildDbHit(input: {
     name: input.entry.name,
     path: absolutePath,
     ref,
-    origin: resolveSearchHitOrigin(source),
+    origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(ref) } : {}),
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),
-    action: buildLocalAction(input.entry.type, ref, rendererRegistry),
+    action: buildLocalAction(input.entry.type, ref),
     score,
     whyMatched,
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
@@ -1178,7 +1087,6 @@ export async function buildDbHit(input: {
     type: input.entry.type,
     stashDir: entryStashDir,
     bundleId: input.bundleId,
-    rendererRegistry,
     db: input.db,
   });
 

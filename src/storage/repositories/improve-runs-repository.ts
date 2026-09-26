@@ -10,8 +10,8 @@
  * resolve.
  *
  * The `improve_gate_thresholds` per-phase auto-tune store (migration 012)
- * lost its readers with the 0.9.0 confidence-gate deletion; the table itself
- * remains (migrations are append-only).
+ * lost its readers with the 0.9.0 confidence-gate deletion; migration 028
+ * drops the table.
  *
  * @module improve-runs-repository
  */

@@ -12,7 +12,6 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { __setTestServer } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import {
   completeWorkflowStep,
-  getNextWorkflowStep,
   getWorkflowStatus,
   type SummaryValidationFailure,
 } from "../../../src/workflows/runtime/runs";
@@ -307,20 +306,6 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.workflow.steps[0]?.status).toBe("pending");
     expect(status.run.status).toBe("active");
-  });
-
-  test("getNextWorkflowStep surfaces a continue directive when the run is stalled", async () => {
-    // Back-date updated_at + checkin_armed_at far enough to exceed the stall window.
-    const db = openStateDatabase(path.join(tmpDir, "state.db"));
-    try {
-      const old = new Date(Date.now() - 10 * 60_000).toISOString();
-      db.prepare("UPDATE workflow_runs SET updated_at = ?, checkin_armed_at = ? WHERE id = ?").run(old, old, RUN_ID);
-    } finally {
-      db.close();
-    }
-    const next = await getNextWorkflowStep(RUN_ID);
-    expect(next.checkin?.signal).toBe("continue");
-    expect(next.checkin?.directive).toContain("CONTINUE");
   });
 });
 

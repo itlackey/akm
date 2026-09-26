@@ -40,9 +40,10 @@ import { _setWarnSinkForTests } from "../../src/core/warn";
 import type { TaskInputBinding } from "../../src/execution/input-contract";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import { compileResolveFreezeWorkflowV4 } from "../../src/workflows/ir/freeze-v4";
+import { freezeWorkflow } from "../../src/workflows/freeze/freeze";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
-import { decodeWorkflowPlanV4, type FrozenWorkflowTarget } from "../../src/workflows/ir/schema-v4";
+import type { FrozenWorkflowTarget } from "../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
@@ -112,7 +113,7 @@ async function planRow(runId: string) {
   return withWorkflowRunsRepo((repo) => repo.getRunById(runId));
 }
 
-function stepTarget(plan: ReturnType<typeof decodeWorkflowPlanV4>, index: number): FrozenWorkflowTarget | undefined {
+function stepTarget(plan: ReturnType<typeof decodeWorkflowPlan>, index: number): FrozenWorkflowTarget | undefined {
   const root = plan.steps[index]?.root;
   if (!root) return undefined;
   return root.kind === "map" ? root.template.frozenTarget : root.frozenTarget;
@@ -208,19 +209,19 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     // test proves the EMBEDDED plan really is the child's own frozen plan,
     // not merely that SOME plan got embedded.
     const childAsset = await loadWorkflowAsset("workflows/child");
-    const independentChild = await compileResolveFreezeWorkflowV4(childAsset, loadConfig());
+    const independentChild = await freezeWorkflow(childAsset, loadConfig());
     const expectedChildPlanHash = computePlanHash(independentChild.plan);
 
     const started = await startWorkflowRun("workflows/direct-basic");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
 
     expect(target).toMatchObject({ kind: "child-workflow", via: "direct" });
     const fields = childWorkflowFields(target);
     expect(fields.ref).toMatch(/\/\/workflows\/child$/);
     expect(fields.planHash).toBe(expectedChildPlanHash);
-    expect(fields.frozenPlanIrVersion).toBe(5);
+    expect(fields.frozenPlanIrVersion).toBe(6);
     expect(fields.taskRef).toBeUndefined();
   });
 
@@ -236,7 +237,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
 
     const started = await startWorkflowRun("workflows/direct-with");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const fields = childWorkflowFields(stepTarget(plan, 0));
 
     expect(fields.inputBindings).toEqual([{ kind: "literal", name: "scope", value: "urgent" }]);
@@ -325,7 +326,7 @@ describe("task-wrapped child workflows — uses: tasks/<t> where t targets a wor
 
     const started = await startWorkflowRun("workflows/v4-wrapped");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
 
     expect(target).toMatchObject({ kind: "child-workflow", via: "task" });
@@ -345,7 +346,7 @@ describe("task-wrapped child workflows — uses: tasks/<t> where t targets a wor
 
     const started = await startWorkflowRun("workflows/v4-env-wrapped");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
 
     expect(target).toMatchObject({ kind: "child-workflow", via: "task" });
@@ -387,7 +388,7 @@ describe("a step composing a child workflow that also authors env: warns instead
     );
     expect(warnCalls.some((w) => w.includes("dispatch") && w.includes("//workflows/child"))).toBe(true);
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     expect(stepTarget(plan, 0)).toMatchObject({ kind: "child-workflow", via: "direct" });
   });
 
@@ -413,7 +414,7 @@ describe("a step composing a child workflow that also authors env: warns instead
     );
     expect(warnCalls.some((w) => w.includes("dispatch"))).toBe(true);
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     expect(stepTarget(plan, 0)).toMatchObject({ kind: "child-workflow", via: "task" });
   });
 
@@ -433,7 +434,7 @@ describe("a step composing a child workflow that also authors env: warns instead
     );
     expect(warnCalls).toEqual([]);
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     expect(stepTarget(plan, 0)).toMatchObject({ kind: "child-workflow", via: "direct" });
   });
 });
@@ -471,8 +472,8 @@ describe("direct and task-wrapped composition of the SAME child lower to the sam
 
     const directRun = await startWorkflowRun("workflows/compare-direct");
     const taskRun = await startWorkflowRun("workflows/compare-task");
-    const directPlan = decodeWorkflowPlanV4(JSON.parse((await planRow(directRun.run.id))?.plan_json ?? "null"));
-    const taskPlan = decodeWorkflowPlanV4(JSON.parse((await planRow(taskRun.run.id))?.plan_json ?? "null"));
+    const directPlan = decodeWorkflowPlan(JSON.parse((await planRow(directRun.run.id))?.plan_json ?? "null"));
+    const taskPlan = decodeWorkflowPlan(JSON.parse((await planRow(taskRun.run.id))?.plan_json ?? "null"));
     const directFields = childWorkflowFields(stepTarget(directPlan, 0));
     const taskFields = childWorkflowFields(stepTarget(taskPlan, 0));
 
@@ -579,12 +580,12 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     // `toMatchObject({ kind: "child-workflow" })` alone cannot distinguish
     // from a wrong, stale, or empty embedded plan on either occurrence).
     const leafAsset = await loadWorkflowAsset("workflows/diamond-leaf");
-    const independentLeaf = await compileResolveFreezeWorkflowV4(leafAsset, loadConfig());
+    const independentLeaf = await freezeWorkflow(leafAsset, loadConfig());
     const expectedPlanHash = computePlanHash(independentLeaf.plan);
 
     const started = await startWorkflowRun("workflows/diamond-root");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 
     const fields1 = childWorkflowFields(stepTarget(plan, 0));
     const fields2 = childWorkflowFields(stepTarget(plan, 1));
@@ -614,7 +615,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
 
     const started = await startWorkflowRun("workflows/aggregate-root");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     for (let i = 0; i < 5; i++) {
       const fields = childWorkflowFields(stepTarget(plan, i));
       expect(fields.ref).toMatch(new RegExp(`//workflows/big-${i}$`));

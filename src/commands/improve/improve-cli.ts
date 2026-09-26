@@ -47,15 +47,9 @@ export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
 }
 
 /**
- * Handle the `--auto-accept` flag retired in 0.9.0, returning the scope the run
- * should actually use.
- *
- * citty is non-strict, so the removed flag is silently absorbed rather than
- * rejected — which is the dangerous case. The SPACE-separated spelling
- * (`--auto-accept 90`) leaves `90` sitting in the positional slot, where it is
- * read as the asset-type scope: the run then matches nothing and exits 0, so a
- * 0.8-era crontab goes dark with no error at all. Warn about the flag, and drop
- * the poisoned positional so the run behaves as an unscoped improve instead.
+ * `--auto-accept` (removed in 0.9): citty absorbs it silently, and
+ * `--auto-accept 90` would leave `90` as the scope — a 0.8-era crontab would
+ * match nothing and exit 0. Warn, and drop that positional.
  */
 function resolveScopeAfterRetiredAutoAccept(scopeArg: string | undefined): string | undefined {
   const invocation = getParsedInvocation();
@@ -73,29 +67,16 @@ function resolveScopeAfterRetiredAutoAccept(scopeArg: string | undefined): strin
   return scopeArg;
 }
 
-/**
- * `akm improve canary` was removed in 0.9 (moved to
- * `scripts/refresh-canary-set.ts`). Without this check "canary" falls through
- * to the generic scope positional, where resolveImproveScope treats any bare
- * word as a type filter that matches zero entries — so an unmigrated caller
- * silently acquires the improve lock and exits 0 having done nothing, instead
- * of getting an error.
- */
+/** `akm improve canary` (removed in 0.9) would otherwise be a type scope matching nothing, exiting 0. */
 function rejectRetiredCanaryScope(scopeArg: string | undefined): void {
   if (scopeArg !== "canary") return;
   throw new UsageError(
-    '"akm improve canary" was removed in 0.9. Use `bun scripts/refresh-canary-set.ts [--refresh]` instead.',
+    '"akm improve canary" was removed in 0.9; the collapse-detector canary set it managed no longer exists.',
     "INVALID_FLAG_VALUE",
   );
 }
 
-/**
- * `--target` was renamed to `--bundle` on `improve` in 0.9 (S8). citty is
- * non-strict, so the retired spelling is silently absorbed rather than
- * rejected — accepted proposals then write into the default bundle instead
- * of the one the caller named, with exit 0 and no error. Reject it
- * explicitly instead.
- */
+/** `--target` (renamed `--bundle` in 0.9) would otherwise be absorbed and write to the default bundle. */
 function rejectRetiredImproveTargetFlag(): void {
   if (!getParsedInvocation().hasFlag("--target")) return;
   throw new UsageError(
@@ -105,15 +86,9 @@ function rejectRetiredImproveTargetFlag(): void {
 }
 
 /**
- * `--require-engines` (#957): abort before any lock, log, or index side
- * effect when the resolved plan already knows a process the active strategy
- * would enable cannot run. Without this flag improve degrades gracefully —
- * it skips the affected processes and reports them in `skippedProcesses` —
- * which is right for an interactive run but wrong for a scheduled one that
- * would rather fail loudly than burn its budget re-indexing and then skip
- * everything. Names the unresolved credential reference per process (not
- * just the process name) so an operator whose own shell passes config
- * validation can see exactly what the scheduler's environment is missing.
+ * `--require-engines` (#957): fail before any side effect when an enabled
+ * process cannot run, naming what each is missing — a scheduled run would
+ * rather fail loudly than index and then skip everything.
  */
 function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
   if (plan.engineUnavailable.length === 0) return;
@@ -131,11 +106,7 @@ interface RequiredEngineTarget {
   connection: LlmConnectionConfig;
 }
 
-/**
- * Every distinct `kind: "llm"` connection the active strategy's plan would
- * actually dispatch against — the main per-process runners plus triage's own
- * judgment engine, which is resolved separately (#957).
- */
+/** Every LLM connection the plan would dispatch to, triage's judgment engine included. */
 function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngineTarget[] {
   const targets: RequiredEngineTarget[] = [];
   for (const [processName, process] of Object.entries(plan.processes) as [
@@ -157,24 +128,10 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
 }
 
 /**
- * `--require-engines` field re-test (#957): the static check above only
- * proves an engine is configured and credentialed — it cannot see a dead
- * endpoint. A field run against an unreachable engine sat silent for
- * minutes instead of hitting the documented exit-78 path. Exercise the real
- * model completion path with a tiny response and a three-second bound. The
- * `/models` endpoint used by the lightweight health check is deliberately
- * insufficient here: a gateway can list a model while its upstream completion
- * route is dead (#980). Deduplicate by endpoint + model, not endpoint alone,
- * because model backends behind one gateway can fail independently.
- *
- * R17: a probe that PASSES used to leave no trace — a slow or flapping
- * gateway was invisible in the improve result. On success, return one
- * {@link EngineProbeOutcome} per target (process, engine, endpoint,
- * reachable, latencyMs) so the caller can record it on the run result;
- * targets sharing a deduplicated probe share its measured latency.
- *
- * Exported for unit tests, which inject a fake `probeReachable` (the
- * "probe seam") instead of hitting a real endpoint.
+ * `--require-engines`, live: probe each connection's real completion path
+ * (a gateway can list a model whose completion route is dead, #980) with a 3s
+ * bound, once per endpoint + model. Returns each target's latency for the run
+ * result (R17); an unreachable one fails the run.
  */
 export async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
@@ -223,14 +180,7 @@ export async function assertRequiredEnginesReachable(
   }));
 }
 
-/**
- * `--show-prompt` (#952): render the composed reflect prompt for one asset ref
- * and exit, before any lock, log, index write, or engine dispatch — the field
- * had no cheap way to confirm the #952 prompt fix (unverified-feedback framing,
- * no-truncation-marker instruction) without running a full improve cycle.
- * Reuses `renderReflectPromptPreview` (reflect.ts), which stops before the
- * dispatch lease reflect would otherwise acquire, so this never calls an engine.
- */
+/** `--show-prompt` (#952): print reflect's composed prompt for one ref — no lock, write or dispatch. */
 async function runShowPromptCli(
   refArg: string,
   parsedRef: AssetRef,
@@ -261,14 +211,7 @@ async function runShowPromptCli(
   });
 }
 
-/**
- * `akm improve report` (#944): a scope value that dispatches to the per-run
- * LLM usage/routing report instead of a real improve run — "report" is not,
- * and will never be, a real asset type (`DEFAULT_ALLOWED_TYPES` in
- * improve-strategies.ts), so this already matched zero assets before this
- * flag existed, matching the precedent `rejectRetiredCanaryScope` set for
- * intercepting a special scope word ahead of any lock/log/index side effect.
- */
+/** `akm improve report` (#944): the per-run LLM usage/routing report ("report" is no asset type). */
 function runImproveReportCli(args: { run?: string; since?: string }): void {
   const runIdArg = getStringArg(args, "run");
   const sinceArg = getStringArg(args, "since");
@@ -276,16 +219,7 @@ function runImproveReportCli(args: { run?: string; since?: string }): void {
   output("improve-report", { ok: true, ...result });
 }
 
-/**
- * `--run`/`--since` only mean anything with the "report" scope, which
- * intercepts before this point in the `run` handler below. citty is
- * non-strict, so passing either with a real scope (or no scope at all) used
- * to be silently ignored — the flag's value was read nowhere else, and the
- * run proceeded as an ordinary improve run with no error, discarding the
- * operator's intent. Reject explicitly instead, matching the precedent
- * `rejectRetiredCanaryScope`/`rejectRetiredImproveTargetFlag` set for other
- * flag misuse on this command.
- */
+/** `--run`/`--since` belong to `improve report`; elsewhere citty would silently ignore them. */
 function rejectReportOnlyFlags(args: { run?: string; since?: string }): void {
   const flag =
     getStringArg(args, "run") !== undefined
@@ -306,9 +240,7 @@ export const improveCommand = defineCommand({
     description:
       "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when the selected strategy enables consolidate.",
   },
-  // Raw defineCommand, so the global output flags are declared here explicitly.
-  // Without them citty treats `--format` as a boolean and its space-separated
-  // value falls through to the `scope` positional.
+  // Declared explicitly: otherwise citty takes `--format`'s value as the scope.
   args: {
     ...GLOBAL_OUTPUT_ARGS,
     scope: {
@@ -387,27 +319,16 @@ export const improveCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      // #944 — dispatch before any lock/log/index side effect, same
-      // interception point as rejectRetiredCanaryScope below.
       if (getStringArg(args, "scope") === "report") {
         runImproveReportCli(args);
         return;
       }
       rejectReportOnlyFlags(args);
       rejectRetiredImproveTargetFlag();
-      // D7 — `--format` used to be rejected here outright. It is a global flag on
-      // a command that does emit an envelope through `output()` (always on
-      // `--dry-run`, otherwise with `--json-to-stdout`), so rejecting it made
-      // improve a fourth inconsistent format behaviour rather than a documented
-      // exemption. It now applies to that envelope; progress output stays on
-      // stderr regardless.
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
-      // #947 — `--plan` is a zero-logic discoverability alias for `--dry-run`;
-      // it must never fork the computation, only set the same flag. #952 —
-      // `--show-prompt` implies the same read-only posture (it never reaches
-      // akmImprove at all, but keeps writeTarget/resolvedPlan unset the same way).
+      // `--plan` is an alias for `--dry-run`; `--show-prompt` is read-only too.
       const dryRun = args["dry-run"] || args.plan || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
@@ -423,16 +344,9 @@ export const improveCommand = defineCommand({
         : scopeRef
           ? resolveMutationTarget(effectiveConfig, scopeRef, targetArg).target
           : resolveWriteTarget(effectiveConfig, targetArg);
-      // Resolve every enabled model-backed process before logging, signal
-      // lifecycle setup, or any filesystem/database side effect.
-      // #800/#957 round 3 — `--dry-run`/`--plan` never dispatches, so the
-      // "no improve process can run" guard must not throw when every process
-      // is disabled purely by an unreachable credential; a live run keeps
-      // throwing (allowAllDisabled unset).
+      // Every model-backed process resolves before any side effect; a dry run
+      // never dispatches, so it tolerates every process being disabled.
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
-      // #952 — same interception point as the `report` scope above: before any
-      // lock, log, or index side effect. Requires a single fully-qualified
-      // asset ref (not a type or whole-bundle scope).
       if (args["show-prompt"]) {
         if (!scopeArg || !scopeRef) {
           throw new UsageError(
@@ -450,9 +364,7 @@ export const improveCommand = defineCommand({
       }
       const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
-      // Only set the keys the user actually passed (citty leaves the flag
-      // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
-      // so the resolved profile `sync` block wins by default.
+      // Only flags actually passed override the strategy's `sync` block.
       const syncFlag = args.sync;
       const pushFlag = args.push;
       const syncOverride: { enabled?: boolean; push?: boolean } = {};
@@ -471,17 +383,11 @@ export const improveCommand = defineCommand({
       const startedAtMs = Date.now();
       const startedAtIso = new Date(startedAtMs).toISOString();
 
-      // Mint the run-id up front so signal handlers can persist a partial
-      // record if the process is killed mid-run. Pre-2026-05-26 the runId
-      // was minted at end-of-run, so SIGTERM'd runs (cron timeout) left no
-      // row in improve_runs and effectively disappeared from `akm health`.
+      // The run id is minted up front so a killed run still leaves an improve_runs row.
       const runId = buildImproveRunId();
       const primaryStashDir = writeTarget?.source.path;
       const inferredScopeMode = scopeRef ? "ref" : scopeArg ? "type" : "all";
 
-      // Signal handler + exception path both flow through this helper so
-      // every abnormal termination produces a row with ok:false and a
-      // reason in metadata.terminated.
       let runRecorded = false;
       const persistTerminated = (reason: TerminationReason, errorMessage?: string): void => {
         if (dryRun) return;
@@ -504,14 +410,7 @@ export const improveCommand = defineCommand({
         }
       };
 
-      // R8: the signal table / handlers / watchdog / persist-before-exit
-      // choreography lives in `runImproveSession`. It registers the
-      // SIGTERM/SIGINT/SIGHUP handlers (each persists the terminated-run row
-      // BEFORE process.exit so a SIGTERM'd run — e.g. cron timeout — always
-      // leaves a row in improve_runs), awaits the work, then removes the
-      // handlers on the way out. `onTerminate` persists synchronously
-      // (recordTerminatedImproveRun -> bun:sqlite writes are sync), and the
-      // 2000ms watchdog inside the session force-exits if that ever hangs.
+      // The session persists the terminated-run row before exiting on a signal.
       let improveResult: Awaited<ReturnType<typeof akmImprove>>;
       try {
         improveResult = await runImproveSession(
@@ -532,11 +431,6 @@ export const improveCommand = defineCommand({
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
                 ...(engineProbe !== undefined ? { engineProbe } : {}),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
-                consolidateOptions: {
-                  target: targetArg,
-                  dryRun,
-                  task: taskArg,
-                },
               }),
           },
           {
@@ -552,48 +446,24 @@ export const improveCommand = defineCommand({
           },
         );
       } catch (err) {
-        // akmImprove threw — record the failure before letting runWithJsonErrors
-        // emit the standard JSON error envelope. Without this, exceptions in
-        // the main loop (LLM provider crash, OOM, etc.) leave no improve_runs
-        // row, matching the SIGTERM gap.
         persistTerminated("exception", err instanceof Error ? err.message : String(err));
         throw err;
       } finally {
         clearLogFile();
       }
       if (dryRun) {
-        // A dry-run never persists its result, so stdout is its only result
-        // channel. F4: was `process.exit(0)`, which terminates synchronously
-        // and skips pending cleanup (e.g. the `finally { clearLogFile(); }`
-        // above already ran, but any citty/runWithJsonErrors-level cleanup
-        // on the way out would not). Exit code is 0 either way — `return`
-        // alone is sufficient since success is the default `process.exitCode`.
+        // A dry run persists nothing: stdout is its only result channel.
         output("improve", improveResult);
         return;
       }
 
-      // Default mode (0.8.0+): persist the full result as a row in the
-      // `improve_runs` table of state.db (migration 003) and emit NOTHING
-      // on stdout. The verbose JSON would otherwise scroll earlier progress
-      // logs out of the terminal buffer. The existing `[improve] ...`
-      // progress log lines on stderr remain the canonical console UX — the
-      // usage-report table below (#944) follows that same convention
-      // (stderr, `[improve]`-prefixed), it is not new stdout noise.
-      //
-      // Pre-0.8.0 wrote `<stash>/.akm/runs/<run-id>/improve-result.json`;
-      // those files are no longer authored. Query recent runs with:
-      //   sqlite3 "$AKM_DATA_DIR/state.db" \
-      //     "SELECT id, started_at, ok, dry_run FROM improve_runs \
-      //      ORDER BY started_at DESC LIMIT 10"
-      // runId + primaryStashDir minted up-top so signal handlers can record
-      // partial runs; reuse them here for the success path.
-      runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
+      // A live run's result goes to state.db's improve_runs, not stdout
+      // (progress stays on stderr). The success path owns the row now.
+      runRecorded = true;
       if (primaryStashDir) {
         try {
           recordImproveRunResult(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
         } catch (err) {
-          // Stderr warning on the failure path is preferable to crashing
-          // the run after all the work has completed.
           process.stderr.write(
             `warning: failed to record improve run ${runId}: ${err instanceof Error ? err.message : String(err)}\n`,
           );
@@ -604,20 +474,12 @@ export const improveCommand = defineCommand({
         );
       }
 
-      // #944 — same table `akm improve report` renders, appended to every
-      // real (non-dry-run) run so an operator sees the routing/cost split
-      // without a separate command. Omitted when the run made no LLM calls
-      // and skipped no enabled process (nothing to report).
+      // The `akm improve report` table, on stderr, when there is anything to report (#944).
       if (improveResult.usageReport) {
         process.stderr.write(`${formatUsageReportTable(improveResult.usageReport)}\n`);
       }
 
       if (jsonToStdout) output("improve", improveResult);
-
-      // F4: was `process.exit(0)` — the run has already been fully recorded
-      // above (recordImproveRunResult / the warning path), so nothing here
-      // depends on an immediate synchronous exit. This is the last statement
-      // in the handler, so a plain fall-through is equivalent.
     });
   },
 });

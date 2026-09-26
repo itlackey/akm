@@ -168,61 +168,6 @@ describe("reclaimStaleLock", () => {
     expect(readWorkerResult(thirdResult)).toBe(false);
     expect(fs.readFileSync(lock, "utf8")).toBe(newerPayload);
   });
-
-  test("quarantine and acquisition are mutually exclusive across processes", async () => {
-    const lock = path.join(dir, "serialized-quarantine.lock");
-    fs.writeFileSync(lock, "2147480000");
-    const holderReady = path.join(dir, "holder.ready");
-    const holderGate = path.join(dir, "holder.go");
-    const holderResult = path.join(dir, "holder.result");
-    const holder = spawn("bun", [INTERLEAVING_WORKER, "hold-reclaim", lock, holderReady, holderGate, holderResult], {
-      stdio: "inherit",
-    });
-    await waitForFile(holderReady);
-
-    const contenderReady = path.join(dir, "contender.ready");
-    const contenderResult = path.join(dir, "contender.result");
-    const contenderPayload = JSON.stringify({ pid: process.pid, owner: "third-contender" });
-    const contender = spawn(
-      "bun",
-      [
-        INTERLEAVING_WORKER,
-        "acquire",
-        lock,
-        contenderReady,
-        path.join(dir, "unused"),
-        contenderResult,
-        contenderPayload,
-      ],
-      { stdio: "inherit" },
-    );
-    await waitForFile(contenderReady);
-    expect(fs.existsSync(contenderResult)).toBe(false);
-
-    fs.writeFileSync(holderGate, "go");
-    await Promise.all([waitForExit(holder), waitForExit(contender)]);
-    expect(readWorkerResult(holderResult)).toBe(true);
-    expect(readWorkerResult(contenderResult)).toBe(true);
-    expect(fs.readFileSync(lock, "utf8")).toBe(contenderPayload);
-    expect(tryAcquireLockSync(lock, "2147480002")).toBeUndefined();
-  });
-
-  test("a crashed operation-mutex holder cannot leave a stale guard", async () => {
-    const lock = path.join(dir, "crashed-operation.lock");
-    fs.writeFileSync(lock, "2147480000");
-    const ready = path.join(dir, "crash.ready");
-    const holder = spawn(
-      "bun",
-      [INTERLEAVING_WORKER, "hold-reclaim", lock, ready, path.join(dir, "never"), path.join(dir, "never.result")],
-      { stdio: "inherit" },
-    );
-    await waitForFile(ready);
-    holder.kill("SIGKILL");
-    await new Promise<void>((resolve) => holder.once("exit", () => resolve()));
-
-    expect(tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, owner: "after-crash" }))).toBeDefined();
-    expect(fs.readFileSync(lock, "utf8")).toContain("after-crash");
-  });
 });
 
 describe("lock release on process.exit (SIGTERM-leak regression, #improve.lock)", () => {

@@ -153,7 +153,7 @@ describe("canonical entry mutation", () => {
   });
 });
 
-test("a second full generation removes every child row owned by the first generation", async () => {
+test("a full run keeps an entry's id; changed content drops only its stale vector", async () => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     bundles: { primary: { path: storage.stashDir, writable: true } },
@@ -177,15 +177,11 @@ test("a second full generation removes every child row owned by the first genera
       oldId,
       Array.from({ length: 384 }, () => 0.25),
     );
-    oldDb.prepare("INSERT INTO utility_scores (entry_id, utility) VALUES (?, ?)").run(oldId, 1);
-    oldDb
-      .prepare("INSERT INTO utility_scores_scoped (entry_id, scope_key, utility, last_used_at) VALUES (?, ?, ?, ?)")
-      .run(oldId, "test-scope", 1, Date.now());
   } finally {
     closeDatabase(oldDb);
   }
 
-  fs.appendFileSync(asset, "\nSecond generation content.\n", "utf8");
+  fs.appendFileSync(asset, "\nSecond generation zeppelin content.\n", "utf8");
   await akmIndex({ stashDir: storage.stashDir, full: true });
 
   const currentDb = openExistingDatabase();
@@ -193,12 +189,10 @@ test("a second full generation removes every child row owned by the first genera
     const newRow = currentDb
       .prepare("SELECT id FROM entries WHERE item_ref = ?")
       .get("primary//knowledge/printmd/preview-server-usage") as { id: number } | undefined;
-    if (!newRow) throw new Error("missing second-generation row");
-    expect(newRow.id).not.toBe(oldId);
-    expect(rowCount(currentDb, "entries_fts", "WHERE entry_id = ?", [oldId])).toBe(0);
+    expect(newRow?.id).toBe(oldId);
+    expect(rowCount(currentDb, "entries_fts", "WHERE rowid = ?", [oldId])).toBe(1);
+    expect(searchFts(currentDb, "zeppelin", 10).map((hit) => hit.id)).toEqual([oldId]);
     expect(rowCount(currentDb, "embeddings", "WHERE id = ?", [oldId])).toBe(0);
-    expect(rowCount(currentDb, "utility_scores", "WHERE entry_id = ?", [oldId])).toBe(0);
-    expect(rowCount(currentDb, "utility_scores_scoped", "WHERE entry_id = ?", [oldId])).toBe(0);
     const hasVec = currentDb
       .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'")
       .get() as { present: number } | undefined;
@@ -255,7 +249,7 @@ for (const scenario of [
     let searchRefs: string[];
     try {
       expect(rowCount(finalDb, "entries", "WHERE item_ref = ?", [oldRef])).toBe(0);
-      expect(rowCount(finalDb, "entries_fts", "WHERE entry_id = ?", [oldId])).toBe(0);
+      expect(rowCount(finalDb, "entries_fts", "WHERE rowid = ?", [oldId])).toBe(0);
       expect(rowCount(finalDb, "embeddings", "WHERE id = ?", [oldId])).toBe(0);
       expect(rowCount(finalDb, "utility_scores", "WHERE entry_id = ?", [oldId])).toBe(0);
       expect(rowCount(finalDb, "entries")).toBe(result.totalEntries);

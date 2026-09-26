@@ -22,8 +22,6 @@ import {
   type AkmHealthResult,
   type DeltaEntry,
   type HealthCheckResult,
-  type ImproveDegradationMetrics,
-  type ImprovePerfTelemetry,
   type ImproveRunSummary,
   TASK_FAIL_RATE_WARN,
 } from "./types";
@@ -103,6 +101,15 @@ function coercePct(raw: number | string | undefined): number | undefined {
 
 // ── Per-run reshape (port of collect.py reshape_run) ─────────────────────────
 
+/**
+ * Fields the HTML report actually reads — either server-side
+ * (`html-report.ts`'s `vm.latest`/`vm.lastRun`) or client-side (the `RUNS`
+ * array embedded via `%%RUNS_JS_CONST%%`, consumed by
+ * `src/assets/templates/html/health.html`'s chart/table script). A per-run
+ * counter that neither reads does not belong here, even though the
+ * underlying `ImproveRunSummary` may still carry it for `--group-by run` /
+ * the Markdown renderer (see `./types-runs.ts`, `./md-report.ts`).
+ */
 export interface ReportRun {
   id: string;
   resultStatus: "valid" | "invalid";
@@ -113,31 +120,18 @@ export interface ReportRun {
   completedAt: string;
   wallTimeMs: number;
   ok: boolean;
-  mode: string;
   consDurationMs: number;
   miDurationMs: number;
   geDurationMs: number;
   otherMs: number;
-  consRan: boolean;
   promoted: number;
   merged: number;
   deleted: number;
   contradicted: number;
   judgedNoAction: number;
-  processed: number;
-  failedChunks: number;
-  totalChunks: number;
   miWritten: number;
-  miConsidered: number;
-  miYieldRate: number;
-  miCacheHits: number;
   geEntities: number;
   geRelations: number;
-  geCacheHitRate: number;
-  geFailures: number;
-  distillSkipped: number;
-  distillQueued: number;
-  distillLlmFailed: number;
   distillByReason: Record<string, number>;
   reflectOk: number;
   reflectFailed: number;
@@ -145,8 +139,6 @@ export interface ReportRun {
   eligible: number;
   lintFlagged: number;
   lintFixed: number;
-  reflectsWithErrorContext: number;
-  orphansPurged: number;
 }
 
 function reshapeRun(r: ImproveRunSummary): ReportRun {
@@ -167,31 +159,18 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     completedAt: r.completedAt,
     wallTimeMs: wall,
     ok: r.ok,
-    mode: r.scope.mode,
     consDurationMs: consMs,
     miDurationMs: miMs,
     geDurationMs: geMs,
     otherMs: Math.max(0, wall - consMs - miMs - geMs),
-    consRan: cons.ran,
     promoted: cons.promoted,
     merged: cons.merged,
     deleted: cons.deleted,
     contradicted: cons.contradicted,
     judgedNoAction: cons.judgedNoAction,
-    processed: cons.processed,
-    failedChunks: cons.failedChunks,
-    totalChunks: cons.totalChunks,
     miWritten: mi.written,
-    miConsidered: mi.considered,
-    miYieldRate: mi.yieldRate,
-    miCacheHits: mi.cacheHits,
     geEntities: ge.entities,
     geRelations: ge.relations,
-    geCacheHitRate: ge.cacheHitRate,
-    geFailures: ge.failures,
-    distillSkipped: r.actions.distill.skipped,
-    distillQueued: r.actions.distill.queued,
-    distillLlmFailed: r.actions.distill.llmFailed,
     distillByReason: r.actions.distill.skippedByReason,
     reflectOk: r.actions.reflect.ok,
     reflectFailed: r.actions.reflect.failed,
@@ -199,8 +178,6 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     eligible: r.memorySummary.eligible,
     lintFlagged: r.lintFlagged,
     lintFixed: r.lintFixed,
-    reflectsWithErrorContext: r.reflectsWithErrorContext,
-    orphansPurged: r.orphansPurged,
   };
 }
 
@@ -234,11 +211,7 @@ export interface TrendBlock {
 
 function buildTrend(deltas: Record<string, DeltaEntry>): TrendBlock {
   const decisionQuality = classify(deltas, ["improve.memoryInference.yieldRate", "improve.consolidation.promoted"]);
-  const outputVolume = classify(deltas, [
-    "improve.consolidation.promoted",
-    "improve.memoryInference.written",
-    "improve.sessionExtraction.proposalsCreated",
-  ]);
+  const outputVolume = classify(deltas, ["improve.consolidation.promoted", "improve.memoryInference.written"]);
   const failures = classify(deltas, ["improve.graphExtraction.failures"], true);
   const latency = classify(deltas, ["improve.wallTime.medianMs", "improve.wallTime.p95Ms"], true);
   const score = [decisionQuality, outputVolume, failures, latency].reduce(
@@ -346,10 +319,7 @@ export interface HealthReportViewModel {
   memoryInference: AkmHealthResult["improve"]["memoryInference"];
   graphExtraction: AkmHealthResult["improve"]["graphExtraction"];
   wallTime: AkmHealthResult["improve"]["wallTime"];
-  perf: ImprovePerfTelemetry;
   coverage: AkmHealthResult["improve"]["coverage"];
-  degradation: ImproveDegradationMetrics | undefined;
-  minting: AkmHealthResult["improve"]["enrichmentMinting"];
   llm: AkmHealthResult["metrics"]["llmUsage"];
   memorySummary: AkmHealthResult["improve"]["memorySummary"];
   includedResultRows: number;
@@ -424,10 +394,7 @@ type AggregatesPhase = Pick<
   | "memoryInference"
   | "graphExtraction"
   | "wallTime"
-  | "perf"
   | "coverage"
-  | "degradation"
-  | "minting"
   | "llm"
   | "memorySummary"
   | "includedResultRows"
@@ -457,19 +424,7 @@ function buildAggregatesPhase(result: AkmHealthResult, runsPhase: RunsPhase): Ag
   const mi = improve.memoryInference;
   const ge = improve.graphExtraction;
   const wallTime = improve.wallTime;
-  // WS-5: perf telemetry, coverage, and degradation metrics.
-  const perf: ImprovePerfTelemetry = improve.perfTelemetry ?? {
-    dedupPoolSize: 0,
-    llmPoolSize: 0,
-    embedMs: 0,
-    embedCacheHits: 0,
-    embedCacheMisses: 0,
-    overBudgetRuns: 0,
-    runsWithTelemetry: 0,
-  };
   const coverage = improve.coverage;
-  const degradation: ImproveDegradationMetrics | undefined = improve.degradation;
-  const minting = improve.enrichmentMinting;
   // #576: real per-stage LLM token/time accounting (replaces the GPU-time
   // proxy). Optional-guarded so reports built from older health JSON without
   // the aggregate still render.
@@ -495,10 +450,7 @@ function buildAggregatesPhase(result: AkmHealthResult, runsPhase: RunsPhase): Ag
     memoryInference: mi,
     graphExtraction: ge,
     wallTime,
-    perf,
     coverage,
-    degradation,
-    minting,
     llm,
     memorySummary: improve.memorySummary,
     includedResultRows: improve.resultRows?.included ?? totalRuns,
@@ -617,7 +569,7 @@ function groupProposalsBySource(proposals: PendingProposalLike[]): Array<[string
 
 /** Summary table rows: the base metric set + the WS-5 coverage/minting/perf/degradation extensions, when present. */
 function buildSummaryRows(aggregates: AggregatesPhase, trend: TrendBlock): SummaryRow[] {
-  const { consolidation: cons, graphExtraction: ge, wallTime, llm, coverage, minting, perf, degradation } = aggregates;
+  const { consolidation: cons, graphExtraction: ge, wallTime, llm, coverage } = aggregates;
 
   const summaryRows: SummaryRow[] = [
     ["Task fail rate", aggregates.taskFailRate, "flat"],
@@ -663,97 +615,19 @@ function buildSummaryRows(aggregates: AggregatesPhase, trend: TrendBlock): Summa
       "Tokens spent on model reasoning/thinking, billed separately from prompt and completion.",
     ],
     ["LLM wall time", fmtMs(llm.totalDurationMs), trend.latency],
+    [
+      "Coverage accepted",
+      num(coverage.acceptedProposals),
+      "flat",
+      "Accepted proposals in the window (raw volume — includes repeated rewrites of the same asset).",
+    ],
+    [
+      "Distinct assets touched",
+      num(coverage.distinctRefs),
+      "flat",
+      "Distinct assets touched by accepted proposals in the window.",
+    ],
   ];
-
-  // WS-5: denominator-fixed coverage rows (only when we have real data).
-  if (coverage && !Number.isNaN(coverage.rate)) {
-    summaryRows.push(
-      [
-        "Coverage rate",
-        pct(coverage.rate, 1),
-        "flat",
-        "Distinct accepted refs / total stash assets (denominator-fixed). Shows what fraction of the corpus has been touched.",
-      ],
-      [
-        "Eligible fraction",
-        pct(coverage.eligibleFraction, 1),
-        "flat",
-        "Eligible assets / total stash assets. Fraction the improve pipeline actively considers.",
-      ],
-      [
-        "Coverage accepted",
-        num(coverage.acceptedProposals),
-        "flat",
-        "Total accepted proposals in the window (raw volume — includes repeated rewrites of the same asset).",
-      ],
-      [
-        "Churn ratio",
-        Number.isFinite(coverage.churnRatio) ? num(coverage.churnRatio) : "—",
-        Number.isFinite(coverage.churnRatio) && coverage.churnRatio > 1.5 ? "down" : "flat",
-        "Accepted proposals / distinct refs touched. >1.5 = the loop is repeatedly rewriting the same assets (churn, not coverage).",
-      ],
-    );
-  }
-
-  // Enrichment-vs-minting policy rollup (reporting-only).
-  if (minting && Number.isFinite(minting.share)) {
-    summaryRows.push([
-      "Enrichment-lane minted share",
-      pct(minting.share, 1),
-      minting.share > 0.05 ? "down" : "flat",
-      `New assets minted by enrichment lanes / their accepted total (${minting.minted} minted vs ${minting.updated} updated). Enrichment lanes are ratified to edit existing assets only; WARN >5%, FAIL >15%.`,
-    ]);
-  }
-
-  // WS-5: perf telemetry rows (only when at least one run reported telemetry).
-  if (perf.runsWithTelemetry > 0) {
-    const embedCacheTotal = perf.embedCacheHits + perf.embedCacheMisses;
-    const embedCacheHitRate = embedCacheTotal > 0 ? pct(perf.embedCacheHits / embedCacheTotal, 1) : "—";
-    summaryRows.push(
-      [
-        "Embed cache hit rate",
-        embedCacheHitRate,
-        "flat",
-        "Fraction of embedding lookups served from cache (>95% is healthy). Aggregated across WS-5 runs.",
-      ],
-      [
-        "Embed wall time",
-        fmtMs(perf.embedMs),
-        "flat",
-        "Cumulative embedding wall-clock time across consolidation runs in the window.",
-      ],
-      [
-        "Dedup pool size",
-        num(perf.dedupPoolSize),
-        "flat",
-        "Memory pool size after incremental narrowing, before the limit cap. WS-5 perf telemetry.",
-      ],
-      [
-        "Over-budget consolidation runs",
-        String(perf.overBudgetRuns),
-        perf.overBudgetRuns > 0 ? "down" : "flat",
-        "Runs where consolidation alone exceeded the total run budget (estimatedBudgetFractionUsed > 1.0).",
-      ],
-    );
-  }
-
-  // WS-5: degradation metrics rows.
-  if (degradation) {
-    summaryRows.push(
-      [
-        "Corpus diversity (Gini)",
-        num(degradation.corpusCentroidDistance),
-        degradation.entrenchmentFlagged || degradation.salienceUniformityFlagged ? "down" : "flat",
-        `Gini coefficient of positive retrieval_salience values across ${degradation.retrievalSalienceSampleSize} resolvable assets. Two-tailed: >0.35 = entrenchment risk; <0.08 = collapsed toward uniform.`,
-      ],
-      [
-        "Merge fidelity contradiction rate",
-        pct(degradation.mergeFidelityContradictionRate, 1),
-        "flat",
-        "Fraction of consolidated proposals that involved a contradiction, from consolidation result envelopes.",
-      ],
-    );
-  }
 
   return summaryRows;
 }

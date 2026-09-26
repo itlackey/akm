@@ -7,8 +7,6 @@ import { saveConfig } from "../src/core/config/config";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { buildDbHit } from "../src/indexer/search/db-search";
 
-// Trigger source-provider self-registration
-import "../src/sources/providers/index";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // Generic fixture dirs (not AKM env paths) — raw mkdtempSync is fine here.
@@ -170,7 +168,6 @@ describe("estimatedTokens in search hits", () => {
       query: "test",
       rankingMode: "fts",
       defaultStashDir: tmpDir,
-      allSourceDirs: [tmpDir],
       sources: [{ path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
@@ -206,7 +203,6 @@ describe("estimatedTokens approximation", () => {
       query: "sized",
       rankingMode: "fts",
       defaultStashDir: tmpDir,
-      allSourceDirs: [tmpDir],
       sources: [{ path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
@@ -236,7 +232,6 @@ describe("estimatedTokens approximation", () => {
       query: "no",
       rankingMode: "fts",
       defaultStashDir: tmpDir,
-      allSourceDirs: [tmpDir],
       sources: [{ path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });

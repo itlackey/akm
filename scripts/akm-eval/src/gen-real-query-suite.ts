@@ -34,7 +34,7 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { isCanonicalIndexGeneration } from "../../../src/storage/repositories/index-entry-schema";
+import { hasCurrentEntriesTable } from "../../../src/storage/repositories/index-entry-schema";
 import { resolveDataDir } from "./sources/paths";
 import { normalizeRef } from "./lib/ref-normalize";
 
@@ -512,8 +512,8 @@ function main(): number {
   const indexDb = new Database(opts.indexDb, { readonly: true });
   let currentRefs: Set<string>;
   try {
-    if (!isCanonicalIndexGeneration(indexDb)) {
-      throw new Error("index database lacks the current canonical entries schema; rebuild it with `akm index --full`");
+    if (!hasCurrentEntriesTable(indexDb)) {
+      throw new Error("index database has no entries table this akm reads; build it with `akm index`");
     }
     currentRefs = new Set(
       (indexDb.query("SELECT item_ref FROM entries").all() as Array<{ item_ref: string }>).map((row) => row.item_ref),

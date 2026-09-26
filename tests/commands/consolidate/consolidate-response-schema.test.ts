@@ -19,8 +19,7 @@
 import { describe, expect, test } from "bun:test";
 
 import consolidateSystemPrompt from "../../../src/assets/prompts/consolidate-system.md" with { type: "text" };
-import { CONSOLIDATE_PLAN_JSON_SCHEMA } from "../../../src/commands/improve/consolidate";
-import { isValidOp } from "../../../src/commands/improve/consolidate/merge";
+import { CONSOLIDATE_PLAN_JSON_SCHEMA, isValidOp } from "../../../src/commands/improve/consolidate";
 
 // Internal-shape view of the schema for assertion convenience.
 interface SchemaView {

@@ -4,11 +4,12 @@
 
 import { describe, expect, test } from "bun:test";
 import type { LlmConnectionConfig } from "../../src/core/config/config";
+import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import type { AgentRunResult } from "../../src/integrations/agent";
+import { type BuiltExecution, buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
-// X3: the unified RunnerSpec dispatch seam (executeRunner in runner-dispatch.ts).
-import { executeRunner, type RunnerSeams } from "../../src/integrations/agent/runner-dispatch";
+import { type RunExecutionOptions, runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { withEnv } from "../_helpers/sandbox";
 
 function okResult(stdout: string): AgentRunResult {
@@ -17,6 +18,7 @@ function okResult(stdout: string): AgentRunResult {
 
 const agentProfile: AgentProfile = {
   name: "opencode-default",
+  platform: "opencode",
   bin: "opencode",
   args: ["run"],
   stdio: "captured",
@@ -26,6 +28,7 @@ const agentProfile: AgentProfile = {
 
 const sdkProfile: AgentProfile = {
   name: "opencode-sdk",
+  platform: "opencode-sdk",
   bin: "opencode",
   args: [],
   stdio: "captured",
@@ -39,138 +42,93 @@ const llmConnection: LlmConnectionConfig = {
   model: "gpt-4o-mini",
 } as LlmConnectionConfig;
 
-describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
-  test("(a) {kind:'agent'} routes to the runAgent seam with profile + prompt", async () => {
-    const calls: Array<{ profile: AgentProfile; prompt: string | undefined }> = [];
-    const seams: RunnerSeams = {
+function built(runner: RunnerSpec, content = "prompt", current?: UnresolvedExecutionDefaults): BuiltExecution {
+  const resolved = resolveExecution({ content, runner, ...(current ? { current } : {}) });
+  return buildExecution(resolved.request, resolved.runner);
+}
+
+const refuse = (kind: string) => async (): Promise<AgentRunResult> => {
+  throw new Error(`the ${kind} transport must not be called`);
+};
+
+describe("runExecution routes each runner kind to its transport", () => {
+  test("an agent runner goes to runAgent with its profile and prompt", async () => {
+    const calls: Array<{ profile: AgentProfile; prompt: string }> = [];
+    const result = await runExecution(built({ kind: "agent", engine: "agent", profile: agentProfile }, "hello"), {
       runAgent: async (profile, prompt) => {
         calls.push({ profile, prompt });
         return okResult("from-agent");
       },
-      runSdk: async () => {
-        throw new Error("sdk seam must not be called for an agent spec");
-      },
-    };
-    const spec: RunnerSpec = { kind: "agent", engine: "agent", profile: agentProfile, timeoutMs: 1234 };
-
-    const result = await executeRunner(spec, "hello-prompt", {}, seams);
-
+      runSdk: refuse("sdk"),
+    });
     expect(result.stdout).toBe("from-agent");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.profile).toBe(agentProfile);
-    expect(calls[0]?.prompt).toBe("hello-prompt");
+    expect(calls[0]?.profile.bin).toBe("opencode");
+    expect(calls[0]?.prompt).toBe("hello");
   });
 
-  test("(b) {kind:'sdk'} routes to the runSdk seam with profile + prompt", async () => {
-    const calls: Array<{ profile: AgentProfile; prompt: string }> = [];
-    const seams: RunnerSeams = {
-      runAgent: async () => {
-        throw new Error("agent seam must not be called for an sdk spec");
-      },
-      runSdk: async (profile, prompt) => {
-        calls.push({ profile, prompt });
-        return okResult("from-sdk");
-      },
-    };
-    const spec: RunnerSpec = { kind: "sdk", engine: "sdk", profile: sdkProfile };
-
-    const result = await executeRunner(spec, "sdk-prompt", {}, seams);
-
-    expect(result.stdout).toBe("from-sdk");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.profile).toBe(sdkProfile);
-    expect(calls[0]?.prompt).toBe("sdk-prompt");
-  });
-
-  test("uses the spec timeout when the caller does not provide one and passes SDK fallback connection", async () => {
+  test("an sdk runner goes to runSdk with its timeout and LLM fallback connection", async () => {
     const fallbackConnection = { endpoint: "https://example.test/v1/chat/completions", model: "fallback" };
-    let received: { timeoutMs?: number | null; fallback?: LlmConnectionConfig } | undefined;
-    const spec: RunnerSpec = { kind: "sdk", engine: "sdk", profile: sdkProfile, timeoutMs: null, fallbackConnection };
-
-    await executeRunner(
-      spec,
-      "sdk-prompt",
-      {},
+    let received: { prompt: string; timeoutMs?: number | null; fallback?: LlmConnectionConfig } | undefined;
+    await runExecution(
+      built({ kind: "sdk", engine: "sdk", profile: sdkProfile, timeoutMs: null, fallbackConnection }, "sdk-prompt"),
       {
-        runSdk: async (_profile, _prompt, opts, fallback) => {
-          received = { timeoutMs: opts.timeoutMs, fallback };
+        runAgent: refuse("agent"),
+        runSdk: async (_profile, prompt, opts, fallback) => {
+          received = { prompt, timeoutMs: opts.timeoutMs, fallback };
           return okResult("from-sdk");
         },
       },
     );
-
-    expect(received).toEqual({ timeoutMs: null, fallback: { ...fallbackConnection, timeoutMs: null } });
+    expect(received).toEqual({
+      prompt: "sdk-prompt",
+      timeoutMs: null,
+      fallback: { ...fallbackConnection, timeoutMs: null },
+    });
   });
 
-  test("(c) {kind:'llm'} routes to the llm handler seam with the connection", async () => {
-    const calls: Array<{ connection: LlmConnectionConfig; prompt: string }> = [];
-    const seams: RunnerSeams = {
-      llm: async (spec, prompt) => {
-        calls.push({ connection: spec.connection, prompt });
-        return okResult("from-llm");
+  test("an llm runner goes to chat with the connection and the user message", async () => {
+    const calls: Array<{ connection: LlmConnectionConfig; messages: unknown }> = [];
+    const result = await runExecution(built({ kind: "llm", engine: "llm", connection: llmConnection }, "llm-prompt"), {
+      runAgent: refuse("agent"),
+      runSdk: refuse("sdk"),
+      chat: async (connection, messages) => {
+        calls.push({ connection, messages });
+        return "from-llm";
       },
-      runAgent: async () => {
-        throw new Error("agent seam must not be called for an llm spec");
-      },
-      runSdk: async () => {
-        throw new Error("sdk seam must not be called for an llm spec");
-      },
-    };
-    const spec: RunnerSpec = { kind: "llm", engine: "llm", connection: llmConnection };
-
-    const result = await executeRunner(spec, "llm-prompt", {}, seams);
-
+    });
     expect(result.stdout).toBe("from-llm");
-    expect(calls).toHaveLength(1);
     expect(calls[0]?.connection).toEqual({ ...llmConnection, timeoutMs: null });
-    expect(calls[0]?.prompt).toBe("llm-prompt");
+    expect(calls[0]?.messages).toEqual([{ role: "user", content: "llm-prompt" }]);
   });
 
-  test("materializes the current symbolic credential for every dispatch", async () => {
+  test("reads the current symbolic credential at every dispatch", async () => {
     const seen: string[] = [];
-    const spec: RunnerSpec = {
+    const runner: RunnerSpec = {
       kind: "llm",
       engine: "rotating",
       connection: llmConnection,
       credential: { names: ["ROTATING_RUNNER_API_KEY"], required: true },
       timeoutMs: 1234,
     };
-    const dispatch = () =>
-      executeRunner(
-        spec,
-        "prompt",
-        {},
-        {
-          llm: async (resolved) => {
-            seen.push(resolved.connection.apiKey ?? "");
-            return okResult("ok");
-          },
-        },
-      );
-
-    await withEnv({ ROTATING_RUNNER_API_KEY: "first-key" }, async () => {
-      await dispatch();
-      await withEnv({ ROTATING_RUNNER_API_KEY: "second-key" }, dispatch);
-    });
-
-    expect(seen).toEqual(["first-key", "second-key"]);
-    expect(spec.connection.apiKey).toBeUndefined();
-  });
-
-  test("(d) a bogus kind hits the assertNever exhaustiveness arm", async () => {
-    const seams: RunnerSeams = {
-      llm: async () => okResult("x"),
-      runAgent: async () => okResult("x"),
-      runSdk: async () => okResult("x"),
+    const execution = built(runner);
+    const options: RunExecutionOptions = {
+      chat: async (connection) => {
+        seen.push(connection.apiKey ?? "");
+        return "ok";
+      },
     };
-    // Force an invalid union member past the type system to exercise the
-    // runtime exhaustiveness guard.
-    const bogus = { kind: "telepathy" } as unknown as RunnerSpec;
-
-    await expect(executeRunner(bogus, "p", {}, seams)).rejects.toThrow();
+    await withEnv({ ROTATING_RUNNER_API_KEY: "first-key" }, async () => {
+      await runExecution(execution, options);
+      await withEnv({ ROTATING_RUNNER_API_KEY: "second-key" }, () => runExecution(execution, options));
+    });
+    expect(seen).toEqual(["first-key", "second-key"]);
+    expect(JSON.stringify(execution)).not.toContain("key");
   });
+});
 
-  test("redacts echoed engine, binding, profile-env, and non-allowlisted passthrough values", async () => {
+describe("runExecution redacts what the child could have seen", () => {
+  test("engine credentials, bound env, profile env and non-allowlisted passthrough values", async () => {
     const values = {
       engine: "ENGINE-ECHO-SENTINEL",
       binding: "BINDING-ECHO-SENTINEL",
@@ -201,46 +159,38 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
         "CODEX_CONFIG",
       ],
     };
-    const spec: RunnerSpec = {
+    const runner: RunnerSpec = {
       kind: "sdk",
       engine: "sdk",
       profile,
       fallbackConnection: { ...llmConnection, apiKey: values.engine },
     };
     const echoed = Object.values(values).join(" | ");
-
-    const result = await executeRunner(
-      spec,
-      "p",
+    const result = await runExecution(
+      built(runner, "p", { environment: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource } }),
       {
-        env: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource },
-        envSource: {
-          PATH: values.safePath,
-          CUSTOM_AGENT_TOKEN: values.passthrough,
-          AWS_PROFILE: values.safeProfile,
-          AWS_REGION: values.safeRegion,
-          LLM_MODEL: values.safeModel,
-          LLM_BASE_URL: values.safeBaseUrl,
-          OPENCODE_CONFIG: values.safeOpencodeConfig,
-          CLAUDE_CONFIG: values.safeClaudeConfig,
-          CODEX_CONFIG: values.safeCodexConfig,
+        runOptions: {
+          envSource: {
+            PATH: values.safePath,
+            CUSTOM_AGENT_TOKEN: values.passthrough,
+            AWS_PROFILE: values.safeProfile,
+            AWS_REGION: values.safeRegion,
+            LLM_MODEL: values.safeModel,
+            LLM_BASE_URL: values.safeBaseUrl,
+            OPENCODE_CONFIG: values.safeOpencodeConfig,
+            CLAUDE_CONFIG: values.safeClaudeConfig,
+            CODEX_CONFIG: values.safeCodexConfig,
+          },
         },
-      },
-      {
-        runSdk: async () => ({
-          ...okResult(echoed),
-          stderr: echoed,
-          error: echoed,
-          parsed: { echoed },
-        }),
+        runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
       },
     );
 
     for (const secret of [values.engine, values.binding, values.asset, values.passthrough]) {
       expect(JSON.stringify(result)).not.toContain(secret);
     }
-    expect(JSON.stringify(result)).toContain(values.safePath);
     for (const nonsecret of [
+      values.safePath,
       values.safeProfile,
       values.safeRegion,
       values.safeModel,
@@ -255,7 +205,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
     expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(4);
   });
 
-  test("redacts credential-bearing values even when their passthrough names are allowlisted", async () => {
+  test("credential-bearing values even when their passthrough names are allowlisted", async () => {
     const userinfo = "https://user:password@example.test/v1";
     const signed = "https://example.test/object?X-Amz-Credential=owner&X-Amz-Signature=signed-secret";
     const clientAssertion = "https://example.test/token?client_assertion=RUNNER%2BASSERTION%2BSENTINEL";
@@ -264,14 +214,10 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       ...sdkProfile,
       envPassthrough: ["LLM_BASE_URL", "AWS_PROFILE", "OPENCODE_CONFIG", "CLAUDE_CONFIG"],
     };
-    const credentialUrls = [userinfo, signed, clientAssertion, codeVerifier];
     const partialCredentials = ["password", "signed-secret", "RUNNER+ASSERTION+SENTINEL", "RUNNER PKCE SENTINEL"];
     const echoed = partialCredentials.join(" | ");
-
-    const result = await executeRunner(
-      { kind: "sdk", engine: "sdk", profile },
-      "p",
-      {
+    const result = await runExecution(built({ kind: "sdk", engine: "sdk", profile }), {
+      runOptions: {
         envSource: {
           LLM_BASE_URL: userinfo,
           AWS_PROFILE: signed,
@@ -279,10 +225,12 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
           CLAUDE_CONFIG: codeVerifier,
         },
       },
-      { runSdk: async () => ({ ...okResult(echoed), parsed: { echoed } }) },
-    );
+      runSdk: async () => ({ ...okResult(echoed), parsed: { echoed } }),
+    });
 
-    for (const url of credentialUrls) expect(JSON.stringify(result)).not.toContain(url);
+    for (const url of [userinfo, signed, clientAssertion, codeVerifier]) {
+      expect(JSON.stringify(result)).not.toContain(url);
+    }
     for (const secret of partialCredentials) expect(JSON.stringify(result)).not.toContain(secret);
     expect(result.stdout).toBe("[REDACTED] | [REDACTED] | [REDACTED] | [REDACTED]");
   });

@@ -5,19 +5,19 @@
 import { z } from "zod";
 import { nonEmptyString } from "./primitives";
 
-/** One host-local grant allowing an authored asset to create scheduler bindings. */
-export const SchedulerActivationSchema = z
-  .object({
-    kind: z.enum(["task", "workflow"]),
-    ref: nonEmptyString,
-    /** Identity of the configured source this host approved, not merely its mutable bundle name. */
-    sourceId: z.string().regex(/^sha256:[0-9a-f]{64}$/),
-  })
-  .strict();
+/** A 0.9.17-alpha `{kind, ref, sourceId}` activation, read as its ref. */
+const LegacySchedulerActivationSchema = z
+  .object({ ref: nonEmptyString })
+  .passthrough()
+  .transform((activation) => activation.ref);
 
-/** Absence from this allow-list means disabled. */
 export const SchedulerConfigSchema = z
   .object({
-    enabled: z.array(SchedulerActivationSchema).default([]),
+    /**
+     * Fully-qualified refs (`bundle//tasks/x`, `bundle//workflows/y`) this host
+     * schedules. Absent when the host has never chosen: `akm task sync` then
+     * takes the akm-written rows already installed as the choice and writes it.
+     */
+    enabled: z.array(z.union([nonEmptyString, LegacySchedulerActivationSchema])).optional(),
   })
-  .strict();
+  .passthrough();

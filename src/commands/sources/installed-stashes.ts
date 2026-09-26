@@ -15,38 +15,25 @@
  * `akm bundle update`); a bundle with no lock is a plain filesystem/git/website source.
  */
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
-import {
-  acquireConfigReadFence,
-  bundleComponentConfig,
-  getSources,
-  loadConfig,
-  resolveSecret,
-} from "../../core/config/config";
+import { bundleComponentConfig, getSources, loadConfig, resolveSecret } from "../../core/config/config";
 import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
-import { beginImmediateTransaction, getStateDbPath, openStateDatabase } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { akmIndex, runEmbeddingPass } from "../../indexer/indexer";
+import { akmIndex } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
-import {
-  compareAndSwapLockfileSnapshot,
-  publishLockfileUpdate,
-  readLockfile,
-  readLockfileForUpdate,
-} from "../../integrations/lockfile";
+import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
-import { sha256Hex } from "../../runtime";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
+import { replaceDirectory } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { createWebsiteProvider } from "../../sources/providers/website";
@@ -65,24 +52,12 @@ import type {
   UpdateResultItem,
   UpdateSkippedItem,
 } from "../../sources/types";
-import { getWebsiteCachePaths } from "../../sources/website-url";
 import type { Database } from "../../storage/database";
-import {
-  closeDatabase,
-  openIndexDatabase,
-  openReadonlyExistingDatabase,
-} from "../../storage/repositories/index-connection";
+import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
-import { auditStashForDangerousKeys, type DangerousKeyFinding, scanStashForDangerousKeys } from "./dangerous-env-audit";
+import { auditStashForDangerousKeys } from "./dangerous-env-audit";
 import { removeInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
-import {
-  cleanupStagingParent,
-  createStagingParent,
-  type DirectoryPublication,
-  prepareDirectoryPublication,
-  prepareWritableGitPublication,
-} from "./update-transaction";
 
 /**
  * A registry-managed source: its `bundles` entry (desired locator) joined with
@@ -101,64 +76,7 @@ interface ManagedInstall {
   writable: boolean;
   componentRoot: string;
   requiredRoots: string[];
-  auditConfigGeneration: string;
   credential?: string;
-}
-
-interface BundleAuditFence {
-  componentRoot: string;
-  generation: string;
-  writable: boolean;
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      // Codepoint order, NOT localeCompare: this string feeds sha256Hex for the
-      // bundle-audit generation, and localeCompare is ICU/locale-dependent — the
-      // same object could hash differently on two machines. Matches the other
-      // canonicalJson implementations (workflows/ir/plan-hash.ts).
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function bundleAuditGeneration(entry: BundleConfigEntry | undefined): string {
-  return sha256Hex(canonicalJson(entry ?? null));
-}
-
-function bundleAuditFence(config: AkmConfig, id: string): BundleAuditFence {
-  const bundle = config.bundles?.[id];
-  if (!bundle) throw new ConfigError(`Source "${id}" disappeared before update staging.`);
-  return {
-    componentRoot: bundleComponentConfig(bundle)?.root ?? ".",
-    generation: bundleAuditGeneration(bundle),
-    writable: bundleComponentConfig(bundle)?.writable ?? bundle.writable === true,
-  };
-}
-
-function assertBundleAuditFence(config: AkmConfig, id: string, expectedGeneration: string): void {
-  const current = config.bundles?.[id];
-  if (bundleAuditGeneration(current) !== expectedGeneration) {
-    throw new ConfigError(
-      `Source "${id}" config changed after its staged bytes were audited; refusing to publish without re-staging and re-auditing.`,
-    );
-  }
-}
-
-function currentPlainSource(
-  config: AkmConfig,
-  id: string,
-  type: "git" | "website" | "npm",
-): ReturnType<typeof getSources>[number] {
-  const source = getSources(config).find((candidate) => candidate.name === id && candidate.type === type);
-  if (!source) {
-    throw new ConfigError(`Source "${id}" changed or disappeared before update staging; retry to re-resolve it.`);
-  }
-  return source;
 }
 
 /** Enumerate the registry-managed installs (lock-backed bundles) in a config. */
@@ -182,7 +100,6 @@ function listManagedInstalls(config: AkmConfig): ManagedInstall[] {
       writable: componentWritable ?? bundle.writable === true,
       componentRoot,
       requiredRoots: lock.localRoot ? [path.resolve(lock.localRoot, componentRoot)] : [],
-      auditConfigGeneration: bundleAuditGeneration(bundle),
       ...(bundle.credential !== undefined ? { credential: bundle.credential } : {}),
     });
   }
@@ -242,8 +159,8 @@ function describeComponents(entry: BundleConfigEntry, bundleRoot: string | undef
   const names = Object.keys(configuredComponents);
   if (names.length === 0) {
     // No explicit component at all — the implicit single component every
-    // bundle gets (spec §1.2 rule 5; `deriveInstallations`/`componentForSource`
-    // apply the same "main"-shaped default at index time).
+    // bundle gets (spec §1.2 rule 5; `deriveInstallations` applies the same
+    // "main"-shaped default at index time).
     const adapter = bundleRoot !== undefined ? detectAdapterId(bundleRoot) : "akm";
     return [{ name: "main", adapter, detected: true }];
   }
@@ -439,10 +356,13 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
 
 // ── akmUpdate helpers ────────────────────────────────────────────────────────
 
-type UpdateIndexSummary = Pick<
-  Awaited<ReturnType<typeof akmIndex>>,
-  "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"
-> & { scanComplete?: boolean; verification?: Awaited<ReturnType<typeof akmIndex>>["verification"] };
+type IndexResult = Awaited<ReturnType<typeof akmIndex>>;
+type ConfiguredSource = ReturnType<typeof getSources>[number];
+
+type UpdateIndexSummary = Pick<IndexResult, "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"> & {
+  scanComplete?: boolean;
+  verification?: IndexResult["verification"];
+};
 
 /**
  * Read the current index generation without creating or hydrating anything.
@@ -521,317 +441,35 @@ function incompleteFilesystemOutcome(id: string): UpdateSkippedItem {
   };
 }
 
-export type UpdateTransactionPoint =
-  | "staged"
-  | "audited"
-  | "fenced"
-  | "published"
-  | "before-index"
-  | "indexed"
-  | "before-commit";
-
-export interface UpdateTransactionHookContext {
-  db?: Database;
-}
-
-let updateTransactionHookForTests:
-  | ((point: UpdateTransactionPoint, id: string, context?: UpdateTransactionHookContext) => void)
-  | undefined;
-
-/** TEST-ONLY. Inject faults at source-update transaction boundaries. */
-export function _setUpdateTransactionHookForTests(
-  hook?: (point: UpdateTransactionPoint, id: string, context?: UpdateTransactionHookContext) => void,
-): void {
-  updateTransactionHookForTests = hook;
-}
-
-function updateTransactionHook(
-  point: UpdateTransactionPoint,
-  id: string,
-  context?: UpdateTransactionHookContext,
-): void {
-  updateTransactionHookForTests?.(point, id, context);
-}
-
-interface PreparedUpdate {
+/**
+ * A fetched update that is not live yet. Every remote update fetches into a
+ * staging directory beside its cache, is audited there for dangerous env keys,
+ * and only then is published: one rename for a read-only cache, a fast-forward
+ * for a writable checkout. A blocked or failed update never touches the live
+ * content, the lock, or the index.
+ */
+interface StagedUpdate {
+  /** The component root inside the staged candidate that the audit scans. */
   auditRoot: string;
-  publishedAuditRoot?: string;
-  publishedAuditContainmentRoot?: string;
-  publishedAuditExpectedPhysicalRoot?: string;
-  auditedContentGeneration?: string;
-  approvedDangerousFindings?: string;
-  publication?: DirectoryPublication;
+  publish(): void;
   cleanup(): void;
 }
 
-interface PreparedManagedUpdate extends PreparedUpdate {
-  synced: SourceLockData;
+function createStagingParent(parent: string): string {
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  return fs.mkdtempSync(path.join(parent, ".akm-update-stage-"));
 }
 
-function gitHead(repoDir: string): string | undefined {
-  const result = runGit(["-C", repoDir, "rev-parse", "HEAD"]);
-  return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : undefined;
+/** A bundle's single component root and writability. */
+function bundleComponent(config: AkmConfig, id: string): { root: string; writable: boolean } {
+  const bundle = config.bundles?.[id];
+  const component = bundleComponentConfig(bundle);
+  return { root: component?.root ?? ".", writable: component?.writable ?? bundle?.writable === true };
 }
 
-function invalidWritableGitPublication(repoDir: string): DirectoryPublication {
-  return {
-    publish() {
-      throw new ConfigError(
-        `Writable Git source at ${repoDir} is not a valid checkout; refusing to replace its live directory.`,
-      );
-    },
-    rollback() {},
-    commit() {},
-  };
-}
-
-function writableGitPublication(opts: {
-  stagedRepo: string;
-  liveRepo: string;
-  expectedOldHead?: string;
-  auditedTargetHead?: string;
-}): DirectoryPublication {
-  const auditedTargetHead = opts.auditedTargetHead ?? gitHead(opts.stagedRepo);
-  if (!opts.expectedOldHead || !auditedTargetHead) return invalidWritableGitPublication(opts.liveRepo);
-  return prepareWritableGitPublication({
-    stagedRepo: opts.stagedRepo,
-    liveRepo: opts.liveRepo,
-    expectedOldHead: opts.expectedOldHead,
-    auditedTargetHead,
-  });
-}
-
-const UPDATE_STATE_SCHEMA = "akm_update_state";
-
-interface UnifiedUpdateTransaction {
-  db: Database;
-  stateActivity: Database;
-  deferred: {
-    db: Database;
-    stateSchema: string;
-  };
-}
-
-function sqliteStringLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function openUnifiedUpdateTransaction(): UnifiedUpdateTransaction {
-  // Keep canonical state activity registered for the entire attached
-  // transaction so maintenance/migration cannot replace state.db underneath
-  // the borrowed index connection.
-  const stateActivity = openStateDatabase();
-  try {
-    const statePath = getStateDbPath();
-    const db = openIndexDatabase(undefined, {
-      beforeSchema: (candidate) => {
-        candidate.exec(`ATTACH DATABASE ${sqliteStringLiteral(statePath)} AS "${UPDATE_STATE_SCHEMA}"`);
-        // openIndexDatabase invokes this before ensureSchema, so the outer
-        // transaction begins before the first update-owned index mutation.
-        beginImmediateTransaction(candidate);
-      },
-    });
-    return {
-      db,
-      stateActivity,
-      deferred: { db, stateSchema: UPDATE_STATE_SCHEMA },
-    };
-  } catch (error) {
-    stateActivity.close();
-    throw error;
-  }
-}
-
-function rollbackUnifiedUpdateTransaction(transaction: UnifiedUpdateTransaction): unknown {
-  if (!transaction.db.inTransaction) return undefined;
-  try {
-    transaction.db.exec("ROLLBACK");
-    return undefined;
-  } catch (error) {
-    return error;
-  }
-}
-
-function commitUnifiedUpdateTransaction(transaction: UnifiedUpdateTransaction): void {
-  if (!transaction.db.inTransaction) {
-    throw new Error("Source update index returned without its active unified index/state transaction.");
-  }
-  transaction.db.exec("COMMIT");
-}
-
-function closeUnifiedUpdateTransaction(transaction: UnifiedUpdateTransaction, committed: boolean): void {
-  let closeError = rollbackUnifiedUpdateTransaction(transaction);
-  try {
-    transaction.db.close();
-  } catch (error) {
-    closeError ??= error;
-  }
-  try {
-    transaction.stateActivity.close();
-  } catch (error) {
-    closeError ??= error;
-  }
-  if (closeError) {
-    warn(
-      committed
-        ? `[akm bundle update] committed, but closing its database handles failed: ${String(closeError)}`
-        : `[akm bundle update] rolled back, but closing its database handles failed: ${String(closeError)}`,
-    );
-  }
-}
-
-/**
- * Run the embedding phase AFTER the coordinator's atomic commit, on its own
- * fresh connection (#954). Before this, `akmUpdate` called
- * `akmIndex()` for its embedding phase too, INSIDE this same unified
- * `BEGIN IMMEDIATE` — so every per-batch commit the materializer opened
- * nested as an unobservable SAVEPOINT, and a SIGKILL mid-run lost every
- * embedding of the run rather than just the one in flight. The
- * ambient-transaction drift guard (#954) now rejects that outright, so
- * `akmIndex`'s own embedding phase is skipped for a deferred update
- * transaction and this runs instead, once content/lock/index/state are
- * already durably committed.
- *
- * A failing pass (provider down, timeout) does NOT fail the update: the
- * bundle content and index are already committed successfully, exactly like
- * a plain `akm index` whose embedding phase fails — only the reported
- * `verification` reflects the shortfall (`semanticStatus: "blocked"`).
- */
-async function runPostCommitEmbeddingPass(
-  index: Awaited<ReturnType<typeof akmIndex>>,
-): Promise<Awaited<ReturnType<typeof akmIndex>>> {
-  const config = loadConfig();
-  let db: Database | undefined;
-  try {
-    const embeddingDim = config.embedding?.dimension;
-    db = openIndexDatabase(getDbPath(), embeddingDim ? { embeddingDim } : undefined);
-    const { verification } = await runEmbeddingPass({ db, config, onProgress: () => {} });
-    return { ...index, verification };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    warn(`[akm bundle update] post-commit embedding pass failed: ${message}`);
-    return {
-      ...index,
-      verification: { ...index.verification, ok: false, semanticStatus: "blocked", message },
-    };
-  } finally {
-    if (db) closeDatabase(db);
-  }
-}
-
-function pathAtOrBelow(candidate: string, root: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
-function remapStagedPath(candidate: string, stagedRoot: string, liveRoot: string): string {
-  if (!pathAtOrBelow(candidate, stagedRoot)) return candidate;
-  return path.join(liveRoot, path.relative(stagedRoot, candidate));
-}
-
-function dangerousFindingGeneration(findings: readonly DangerousKeyFinding[]): string {
-  return JSON.stringify(
-    findings
-      .map(({ envRef, keyName, relPath }) => ({ envRef, keyName, relPath }))
-      .sort((left, right) =>
-        `${left.relPath}\0${left.envRef}\0${left.keyName}`.localeCompare(
-          `${right.relPath}\0${right.envRef}\0${right.keyName}`,
-        ),
-      ),
-  );
-}
-
-async function contentGeneration(root: string): Promise<string> {
-  const hash = createHash("sha256");
-  const resolvedRoot = path.resolve(root);
-  const walk = async (directory: string): Promise<void> => {
-    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      if (entry.name === ".git") continue;
-      const absolute = path.join(directory, entry.name);
-      const relative = path.relative(resolvedRoot, absolute).replaceAll(path.sep, "/");
-      const before = fs.lstatSync(absolute);
-      if (before.isDirectory()) {
-        hash.update(`D\0${relative}\0${before.mode & 0o777}\0`);
-        await walk(absolute);
-      } else if (before.isSymbolicLink()) {
-        hash.update(`L\0${relative}\0${fs.readlinkSync(absolute)}\0`);
-      } else if (before.isFile()) {
-        hash.update(`F\0${relative}\0${before.mode & 0o777}\0${before.size}\0`);
-        for await (const chunk of fs.createReadStream(absolute)) hash.update(chunk as Buffer);
-        const after = fs.lstatSync(absolute);
-        if (after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
-          throw new ConfigError(`Source content changed while ${relative} was being audited; retry the update.`);
-        }
-        hash.update("\0");
-      } else {
-        throw new ConfigError(`Unsupported filesystem entry ${absolute}; refusing to audit an unstable source tree.`);
-      }
-    }
-  };
-  if (!fs.statSync(resolvedRoot).isDirectory()) throw new ConfigError(`Expected ${resolvedRoot} to be a directory.`);
-  await walk(resolvedRoot);
-  return hash.digest("hex");
-}
-
-async function verifyPublishedAudit(prepared: PreparedUpdate, id: string): Promise<void> {
-  const liveRoot = prepared.publishedAuditRoot;
-  if (!liveRoot) return;
-  const resolveLiveAuditRoot = (): string => {
-    const physicalRoot = canonicalWritablePath(liveRoot, `published component root for "${id}"`);
-    const containmentRoot = prepared.publishedAuditContainmentRoot;
-    if (containmentRoot && !pathAtOrBelow(physicalRoot, containmentRoot)) {
-      throw new ConfigError(
-        `Published component root ${liveRoot} resolves outside its physical checkout at ${containmentRoot}.`,
-        "DANGEROUS_ENV_AUDIT_FAILED",
-      );
-    }
-    const expected = prepared.publishedAuditExpectedPhysicalRoot;
-    if (expected && path.resolve(physicalRoot) !== path.resolve(expected)) {
-      throw new ConfigError(
-        `Published component root ${liveRoot} resolves to ${physicalRoot}, not its audited staged target ${expected}.`,
-        "DANGEROUS_ENV_AUDIT_FAILED",
-      );
-    }
-    return physicalRoot;
-  };
-  const beforeRoot = resolveLiveAuditRoot();
-  const beforeAudit = await contentGeneration(beforeRoot);
-  let findings: DangerousKeyFinding[];
-  try {
-    const scanRoot = resolveLiveAuditRoot();
-    if (scanRoot !== beforeRoot) throw new Error("configured component symlink changed during re-audit");
-    findings = scanStashForDangerousKeys(scanRoot);
-  } catch (error) {
-    throw new ConfigError(
-      `Dangerous environment-key re-audit failed after materializing "${id}"; rolling the update back. ${error instanceof Error ? error.message : String(error)}`,
-      "DANGEROUS_ENV_AUDIT_FAILED",
-    );
-  }
-  const afterRoot = resolveLiveAuditRoot();
-  const afterAudit = await contentGeneration(afterRoot);
-  if (
-    afterRoot !== beforeRoot ||
-    beforeAudit !== prepared.auditedContentGeneration ||
-    afterAudit !== prepared.auditedContentGeneration ||
-    dangerousFindingGeneration(findings) !== prepared.approvedDangerousFindings
-  ) {
-    throw new ConfigError(
-      `Writable source "${id}" changed while its audited Git target was materialized; refusing to activate unaudited bytes.`,
-      "DANGEROUS_ENV_AUDIT_FAILED",
-    );
-  }
-}
-
-async function auditPreparedUpdate(
-  prepared: PreparedUpdate,
-  id: string,
-  ref: string,
-  allowDangerousEnvKeys: boolean,
-): Promise<void> {
-  updateTransactionHook("staged", id);
+async function auditStagedUpdate(auditRoot: string, ref: string, allowDangerousEnvKeys: boolean): Promise<void> {
   const decision = await auditStashForDangerousKeys({
-    stashRoot: prepared.auditRoot,
+    stashRoot: auditRoot,
     ref,
     allowDangerousKeys: allowDangerousEnvKeys,
     isTTY: process.stdin.isTTY === true,
@@ -839,421 +477,204 @@ async function auditPreparedUpdate(
     renderBlockedError: false,
   });
   if (decision.blocked) throw new NotFoundError(decision.error, decision.code);
-  prepared.approvedDangerousFindings = dangerousFindingGeneration(decision.findings);
-  prepared.auditedContentGeneration = await contentGeneration(prepared.auditRoot);
-  updateTransactionHook("audited", id);
 }
 
-function canonicalWritablePath(candidate: string, description: string): string {
-  try {
-    return fs.realpathSync(candidate);
-  } catch (error) {
-    throw new ConfigError(
-      `Cannot resolve ${description} at ${candidate}; refusing writable Git update. ${error instanceof Error ? error.message : String(error)}`,
+function gitOrThrow(repoDir: string, args: string[]): string {
+  const result = runGit(["-C", repoDir, ...args], { timeout: 120_000 });
+  if (result.status !== 0) {
+    throw new UsageError(
+      `git ${args[0]} failed in ${repoDir}: ${result.stderr.trim() || result.stdout.trim() || "unknown error"}`,
     );
   }
+  return result.stdout.trim();
 }
 
-function containedWritablePath(candidate: string, physicalRepo: string, description: string): string {
-  const physicalCandidate = canonicalWritablePath(candidate, description);
-  if (!pathAtOrBelow(physicalCandidate, physicalRepo)) {
-    throw new ConfigError(`${description} ${candidate} resolves outside its physical checkout at ${physicalRepo}.`);
-  }
-  return physicalCandidate;
+/**
+ * Publish an audited writable checkout: fast-forward the live checkout to
+ * exactly the staged commit. Git refuses a non-fast-forward or a merge that
+ * would overwrite local work, and changes nothing in that case.
+ */
+function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
+  const head = gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]);
+  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head]);
+  gitOrThrow(liveRepo, ["merge", "--ff-only", "--no-overwrite-ignore", head]);
 }
 
-function prepareWritableManagedUpdate(managed: ManagedInstall, force: boolean): Promise<PreparedManagedUpdate> {
-  const physicalLocalRoot = canonicalWritablePath(managed.localRoot, "managed content root");
-  const topLevel = runGit(["-C", physicalLocalRoot, "rev-parse", "--show-toplevel"]);
-  // Production writable installs are Git checkouts. Falling back to the
-  // locked root keeps the provider seam testable; the real Git provider still
-  // refuses a copied non-checkout before publication.
-  const liveRepo =
-    topLevel.status === 0 && topLevel.stdout.trim()
-      ? canonicalWritablePath(topLevel.stdout.trim(), "managed Git top-level")
-      : physicalLocalRoot;
-  if (!pathAtOrBelow(physicalLocalRoot, liveRepo)) {
-    throw new ConfigError(
-      `Writable Git content root ${managed.localRoot} resolves outside its physical checkout at ${liveRepo}.`,
-    );
-  }
-  // Keep the configured component path as a lexical identity relative to the
-  // content root. Resolving it to today's symlink target here would pin the old
-  // target and miss an upstream commit that retargets the symlink.
-  const lexicalLocalRoot = path.resolve(managed.localRoot);
-  const configuredLiveRoots = managed.requiredRoots.map((root) => {
-    const lexicalRoot = path.resolve(root);
-    if (!pathAtOrBelow(lexicalRoot, lexicalLocalRoot)) {
-      throw new ConfigError(
-        `Configured writable Git component root ${lexicalRoot} escapes content root ${lexicalLocalRoot}.`,
-      );
-    }
-    return path.resolve(physicalLocalRoot, path.relative(lexicalLocalRoot, lexicalRoot));
+/**
+ * Reindex after an update. Sources are not re-fetched (the update just did
+ * that) and detected adapters are not written to config.json — an update
+ * leaves config alone; the next `akm index` records them.
+ */
+function reindexAfterUpdate(stashDir: string): Promise<IndexResult> {
+  return akmIndex({ stashDir, full: true, hydrateSources: false, persistDetectedAdapters: false });
+}
+
+/** Publish, then reindex, holding the asset-mutation lease so no other writer interleaves. */
+function publishAndIndex(stashDir: string, publish: () => Promise<void> | void): Promise<IndexResult> {
+  return withAssetMutationLease("source-update", async () => {
+    await publish();
+    return reindexAfterUpdate(stashDir);
   });
-  const physicalRequiredRoots = configuredLiveRoots.map((root) =>
-    containedWritablePath(root, liveRepo, `Configured component root for "${managed.installId}"`),
-  );
-  // The Git provider must preserve ordinary component directories, but not a
-  // symlink's current physical target. The configured lexical path is audited
-  // again after sync, so retaining the old target here would reject a valid
-  // upstream retarget before the new target can reach that audit.
-  const preservedPhysicalRequiredRoots = physicalRequiredRoots.filter(
-    (root, index) => configuredLiveRoots[index] === root,
-  );
-  const expectedOldHead = gitHead(liveRepo);
-  const stagingParent = createStagingParent(path.dirname(liveRepo));
-  const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
-  fs.cpSync(liveRepo, stagedRepo, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-  const stagedContentRoot = remapStagedPath(physicalLocalRoot, liveRepo, stagedRepo);
-  const stagedPhysicalRequiredRoots = preservedPhysicalRequiredRoots.map((root) =>
-    remapStagedPath(root, liveRepo, stagedRepo),
-  );
-  const stagedConfiguredRoots = configuredLiveRoots.map((root) => remapStagedPath(root, liveRepo, stagedRepo));
-
-  return syncFromRef(managed.ref, {
-    force,
-    writable: true,
-    writableRoot: stagedContentRoot,
-    ...(stagedPhysicalRequiredRoots.length > 0 ? { writableRequiredRoots: stagedPhysicalRequiredRoots } : {}),
-    ...(managed.credential ? { credential: resolveSecret(managed.credential, storeSecretResolver.resolveSecret) } : {}),
-  })
-    .then((staged) => {
-      const auditedTargetHead = gitHead(stagedRepo);
-      const physicalStagedRepo = canonicalWritablePath(stagedRepo, "staged managed Git checkout");
-      const auditedConfiguredRoots = stagedConfiguredRoots.map((root) =>
-        containedWritablePath(root, physicalStagedRepo, `Post-sync component root for "${managed.installId}"`),
-      );
-      const expectedPublishedRoots = auditedConfiguredRoots.map((root) =>
-        path.join(liveRepo, path.relative(physicalStagedRepo, root)),
-      );
-      const synced: SourceLockData = {
-        ...staged,
-        resolvedRevision: auditedTargetHead ?? staged.resolvedRevision,
-        contentDir: remapStagedPath(staged.contentDir, stagedRepo, liveRepo),
-        cacheDir: remapStagedPath(staged.cacheDir, stagedRepo, liveRepo),
-        extractedDir: remapStagedPath(staged.extractedDir, stagedRepo, liveRepo),
-      };
-      return {
-        synced,
-        auditRoot: auditedConfiguredRoots[0] ?? staged.contentDir,
-        publishedAuditRoot: configuredLiveRoots[0] ?? synced.contentDir,
-        publishedAuditContainmentRoot: liveRepo,
-        publishedAuditExpectedPhysicalRoot: expectedPublishedRoots[0] ?? synced.contentDir,
-        publication: writableGitPublication({ stagedRepo, liveRepo, expectedOldHead, auditedTargetHead }),
-        cleanup: () => cleanupStagingParent(stagingParent),
-      };
-    })
-    .catch((error) => {
-      cleanupStagingParent(stagingParent);
-      throw error;
-    });
 }
 
-async function prepareManagedUpdate(managed: ManagedInstall, force: boolean): Promise<PreparedManagedUpdate> {
-  if (managed.writable && managed.localRoot) return prepareWritableManagedUpdate(managed, force);
+/** Fetch a registry-managed install into staging without touching its live content. */
+async function stageManagedUpdate(
+  managed: ManagedInstall,
+  force: boolean,
+): Promise<{ synced: SourceLockData; staged: StagedUpdate }> {
+  const credential = managed.credential
+    ? resolveSecret(managed.credential, storeSecretResolver.resolveSecret)
+    : undefined;
+
+  if (managed.writable && managed.localRoot) {
+    // A writable install is a checkout that may carry local commits: the
+    // provider fast-forwards a copy, the copy is audited, and the live
+    // checkout is then fast-forwarded to exactly the audited commit.
+    const topLevel = runGit(["-C", managed.localRoot, "rev-parse", "--show-toplevel"]);
+    if (topLevel.status !== 0 || !topLevel.stdout.trim()) {
+      throw new UsageError(`Writable Git install at ${managed.localRoot} is not a checkout; refusing to update it.`);
+    }
+    const liveRepo = topLevel.stdout.trim();
+    const stagingParent = createStagingParent(path.dirname(liveRepo));
+    try {
+      const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
+      fs.cpSync(liveRepo, stagedRepo, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+      const stagedRoot = path.join(stagedRepo, path.relative(liveRepo, fs.realpathSync(managed.localRoot)));
+      const fetched = await syncFromRef(managed.ref, {
+        force,
+        writable: true,
+        writableRoot: stagedRoot,
+        writableRequiredRoots: managed.requiredRoots.map((root) =>
+          path.join(stagedRoot, path.relative(managed.localRoot, root)),
+        ),
+        ...(credential ? { credential } : {}),
+      });
+      return {
+        synced: { ...fetched, contentDir: managed.localRoot, cacheDir: liveRepo, extractedDir: liveRepo },
+        staged: {
+          auditRoot: path.resolve(fetched.contentDir, managed.componentRoot),
+          publish: () => fastForwardCheckout(liveRepo, stagedRepo),
+          cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
+        },
+      };
+    } catch (error) {
+      cleanupDirectoryBestEffort(stagingParent, "bundle update");
+      throw error;
+    }
+  }
 
   if (managed.source === "local") {
+    // The user's own directory: nothing to fetch or publish.
     const synced = await syncFromRef(managed.ref, { force, writable: managed.writable });
     return {
       synced,
-      auditRoot: resolveComponentAuditRoot(synced.contentDir, managed.componentRoot, managed.installId),
-      cleanup: () => {},
+      staged: { auditRoot: path.resolve(synced.contentDir, managed.componentRoot), publish() {}, cleanup() {} },
     };
   }
 
-  const canonicalCacheRoot = getRegistryCacheDir();
-  const stagingParent = createStagingParent(canonicalCacheRoot);
+  const cacheRoot = getRegistryCacheDir();
+  const stagingParent = createStagingParent(cacheRoot);
   try {
-    const staged = await syncFromRef(managed.ref, {
+    const fetched = await syncFromRef(managed.ref, {
       force,
       writable: false,
       cacheRootDir: stagingParent,
-      ...(managed.credential
-        ? { credential: resolveSecret(managed.credential, storeSecretResolver.resolveSecret) }
-        : {}),
+      ...(credential ? { credential } : {}),
     });
-    if (!pathAtOrBelow(staged.cacheDir, stagingParent)) {
-      // Test/provider seams may return an already-isolated candidate. It remains
-      // invisible until the lock points at it, so no directory promotion is needed.
-      return {
-        synced: staged,
-        auditRoot: resolveComponentAuditRoot(staged.contentDir, managed.componentRoot, managed.installId),
-        cleanup: () => cleanupStagingParent(stagingParent),
-      };
-    }
-    const liveCacheDir = path.join(canonicalCacheRoot, path.relative(stagingParent, staged.cacheDir));
-    const synced: SourceLockData = {
-      ...staged,
-      contentDir: remapStagedPath(staged.contentDir, staged.cacheDir, liveCacheDir),
-      cacheDir: liveCacheDir,
-      extractedDir: remapStagedPath(staged.extractedDir, staged.cacheDir, liveCacheDir),
-    };
+    const liveCacheDir = path.join(cacheRoot, path.relative(stagingParent, fetched.cacheDir));
+    const toLive = (candidate: string): string => path.join(liveCacheDir, path.relative(fetched.cacheDir, candidate));
     return {
-      synced,
-      auditRoot: resolveComponentAuditRoot(staged.contentDir, managed.componentRoot, managed.installId),
-      publication: prepareDirectoryPublication(staged.cacheDir, liveCacheDir),
-      cleanup: () => cleanupStagingParent(stagingParent),
+      synced: {
+        ...fetched,
+        cacheDir: liveCacheDir,
+        contentDir: toLive(fetched.contentDir),
+        extractedDir: toLive(fetched.extractedDir),
+      },
+      staged: {
+        auditRoot: path.resolve(fetched.contentDir, managed.componentRoot),
+        publish: () => replaceDirectory(fetched.cacheDir, liveCacheDir),
+        cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
+      },
     };
   } catch (error) {
-    cleanupStagingParent(stagingParent);
+    cleanupDirectoryBestEffort(stagingParent, "bundle update");
     throw error;
   }
 }
 
-function resolveComponentAuditRoot(contentRoot: string, componentRoot: string, id: string): string {
-  const resolved = path.resolve(contentRoot, componentRoot);
-  if (!pathAtOrBelow(resolved, contentRoot)) {
-    throw new ConfigError(`Component root "${componentRoot}" escapes staged bundle "${id}".`);
-  }
-  return resolved;
-}
-
-async function publishPreparedPlainUpdate(
-  id: string,
-  ref: string,
-  prepared: PreparedUpdate,
+/** Fetch a plain git source into staging, audit it, publish it, and reindex. */
+async function syncGitPlainSource(
+  config: AkmConfig,
+  gitSource: ConfiguredSource,
   stashDir: string,
   allowDangerousEnvKeys: boolean,
-  full: boolean,
-  expectedConfigGeneration: string,
-): Promise<Awaited<ReturnType<typeof akmIndex>>> {
-  try {
-    await auditPreparedUpdate(prepared, id, ref, allowDangerousEnvKeys);
-    return await withAssetMutationLease("source-update", async () => {
-      let transaction: UnifiedUpdateTransaction | undefined;
-      let releaseConfigFence: (() => void) | undefined;
-      let contentPublished = false;
-      let committed = false;
-      try {
-        const configFence = acquireConfigReadFence();
-        releaseConfigFence = configFence.release;
-        assertBundleAuditFence(configFence.config, id, expectedConfigGeneration);
-        updateTransactionHook("fenced", id);
-        if (prepared.publication) {
-          prepared.publication.publish();
-          contentPublished = true;
-        }
-        await verifyPublishedAudit(prepared, id);
-        updateTransactionHook("published", id);
-        updateTransactionHook("before-index", id);
-        transaction = openUnifiedUpdateTransaction();
-        const index = await akmIndex({
-          stashDir,
-          ...(full ? { full: true } : {}),
-          hydrateSources: false,
-          persistDetectedAdapters: false,
-          deferredUpdateTransaction: transaction.deferred,
-        });
-        updateTransactionHook("indexed", id, { db: transaction.db });
-        // Re-fence the exact published worktree after the potentially long
-        // index pass and immediately before the coordinator commit. This
-        // catches cooperating or observable external writes that land after
-        // the first post-materialization audit.
-        await verifyPublishedAudit(prepared, id);
-        updateTransactionHook("before-commit", id, { db: transaction.db });
-        commitUnifiedUpdateTransaction(transaction);
-        committed = true;
-        prepared.publication?.commit();
-        return await runPostCommitEmbeddingPass(index);
-      } catch (error) {
-        let recoveryError = transaction ? rollbackUnifiedUpdateTransaction(transaction) : undefined;
-        try {
-          if (contentPublished) prepared.publication?.rollback();
-        } catch (rollbackError) {
-          recoveryError ??= rollbackError;
-        }
-        if (recoveryError) throw recoveryError;
-        throw error;
-      } finally {
-        try {
-          if (transaction) closeUnifiedUpdateTransaction(transaction, committed);
-        } finally {
-          releaseConfigFence?.();
-        }
-      }
-    });
-  } finally {
-    prepared.cleanup();
-  }
-}
-
-async function prepareGitPlainUpdate(
-  gitSource: ReturnType<typeof getSources>[number],
-  componentRoot: string,
-  writable: boolean,
-): Promise<PreparedUpdate> {
-  if (!gitSource.url) throw new ConfigError(`Git source "${gitSource.name ?? "git"}" has no URL.`);
-  const repo = parseGitRepoUrl(gitSource.url);
-  const livePaths = getCachePaths(repo.canonicalUrl);
+): Promise<{ item: UpdatePlainSyncedItem; index: IndexResult }> {
+  const id = gitSource.name ?? gitSource.url ?? "";
+  const ref = gitSource.url ?? "";
+  if (!gitSource.url) throw new ConfigError(`Git source "${id}" has no URL.`);
+  const component = bundleComponent(config, id);
+  const canonicalUrl = parseGitRepoUrl(gitSource.url).canonicalUrl;
+  const livePaths = getCachePaths(canonicalUrl);
   const stagingParent = createStagingParent(path.dirname(livePaths.rootDir));
-  const stagedPaths = getCachePaths(repo.canonicalUrl, stagingParent);
   try {
-    const hasLiveCheckout = writable && fs.existsSync(livePaths.repoDir);
-    const expectedOldHead = hasLiveCheckout ? gitHead(livePaths.repoDir) : undefined;
-    if (hasLiveCheckout) {
-      fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
-    }
-    const staged = await syncMirroredRepo(gitSource, {
+    const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
+    // A writable mirror may carry local commits: pull into a copy, then
+    // fast-forward the live checkout once the copy passes the audit.
+    const liveCheckout = component.writable && fs.existsSync(livePaths.repoDir);
+    if (liveCheckout) fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
+    await syncMirroredRepo(gitSource, {
       force: true,
-      writable,
+      writable: component.writable,
       cacheRootDir: stagingParent,
       ...(gitSource.credential
         ? { credential: resolveSecret(gitSource.credential, storeSecretResolver.resolveSecret) }
         : {}),
     });
-    const configuredStagedAuditRoot = resolveComponentAuditRoot(
-      resolveGitContentRoot(staged.contentDir),
-      componentRoot,
-      gitSource.name ?? "git",
+    await auditStagedUpdate(
+      path.resolve(resolveGitContentRoot(stagedPaths.repoDir), component.root),
+      ref,
+      allowDangerousEnvKeys,
     );
-    if (!pathAtOrBelow(staged.cacheDir, stagingParent)) {
-      if (pathAtOrBelow(configuredStagedAuditRoot, livePaths.rootDir)) {
-        throw new ConfigError(
-          `Git provider for "${gitSource.name ?? gitSource.url}" wrote into the active cache instead of the update staging root; refusing to index it.`,
-        );
-      }
-      // A provider test seam may hand back an already-isolated candidate.
-      // Audit it, but do not move an unowned directory into the canonical
-      // cache. Real providers honor cacheRootDir and use the promotion below.
-      return {
-        auditRoot: configuredStagedAuditRoot,
-        cleanup: () => cleanupStagingParent(stagingParent),
-      };
-    }
-    let auditRoot = configuredStagedAuditRoot;
-    let publishedAuditRoot: string | undefined;
-    let publishedAuditContainmentRoot: string | undefined;
-    let publishedAuditExpectedPhysicalRoot: string | undefined;
-    if (writable) {
-      const physicalStagedRepo = canonicalWritablePath(stagedPaths.repoDir, "staged plain Git checkout");
-      auditRoot = containedWritablePath(
-        configuredStagedAuditRoot,
-        physicalStagedRepo,
-        `Post-sync component root for "${gitSource.name ?? "git"}"`,
-      );
-      publishedAuditRoot = remapStagedPath(configuredStagedAuditRoot, staged.cacheDir, livePaths.rootDir);
-      if (hasLiveCheckout) {
-        publishedAuditContainmentRoot = canonicalWritablePath(livePaths.repoDir, "plain Git checkout");
-      } else {
-        const physicalCacheParent = canonicalWritablePath(path.dirname(livePaths.rootDir), "plain Git cache parent");
-        publishedAuditContainmentRoot = path.join(
-          physicalCacheParent,
-          path.basename(livePaths.rootDir),
-          path.relative(livePaths.rootDir, livePaths.repoDir),
-        );
-      }
-      publishedAuditExpectedPhysicalRoot = path.join(
-        publishedAuditContainmentRoot,
-        path.relative(physicalStagedRepo, auditRoot),
-      );
-    }
-    return {
-      auditRoot,
-      ...(publishedAuditRoot ? { publishedAuditRoot } : {}),
-      ...(publishedAuditContainmentRoot ? { publishedAuditContainmentRoot } : {}),
-      ...(publishedAuditExpectedPhysicalRoot ? { publishedAuditExpectedPhysicalRoot } : {}),
-      publication:
-        writable && hasLiveCheckout
-          ? writableGitPublication({
-              stagedRepo: stagedPaths.repoDir,
-              liveRepo: livePaths.repoDir,
-              expectedOldHead,
-            })
-          : prepareDirectoryPublication(staged.cacheDir, livePaths.rootDir),
-      cleanup: () => cleanupStagingParent(stagingParent),
-    };
-  } catch (error) {
-    cleanupStagingParent(stagingParent);
-    throw error;
-  }
-}
-
-async function syncGitPlainSource(
-  gitSource: ReturnType<typeof getSources>[number],
-  stashDir: string,
-  allowDangerousEnvKeys: boolean,
-): Promise<{ item: UpdatePlainSyncedItem; index: Awaited<ReturnType<typeof akmIndex>> }> {
-  const id = gitSource.name ?? gitSource.url ?? "";
-  const currentConfig = loadConfig();
-  const currentSource = currentPlainSource(currentConfig, id, "git");
-  const ref = currentSource.url ?? "";
-  const fence = bundleAuditFence(currentConfig, id);
-  const prepared = await prepareGitPlainUpdate(currentSource, fence.componentRoot, fence.writable);
-  const index = await publishPreparedPlainUpdate(
-    id,
-    ref,
-    prepared,
-    stashDir,
-    allowDangerousEnvKeys,
-    true,
-    fence.generation,
-  );
-  return { item: { id, kind: "git", ref }, index };
-}
-
-async function prepareWebsitePlainUpdate(
-  websiteSource: ReturnType<typeof getSources>[number],
-  componentRoot: string,
-): Promise<PreparedUpdate> {
-  if (!websiteSource.url) throw new ConfigError(`Website source "${websiteSource.name ?? "website"}" has no URL.`);
-  const livePaths = getWebsiteCachePaths(websiteSource.url);
-  const stagingParent = createStagingParent(path.dirname(livePaths.rootDir));
-  const stagedPaths = getWebsiteCachePaths(websiteSource.url, stagingParent);
-  try {
-    const provider = createWebsiteProvider(websiteSource);
-    await provider.sync({
-      force: true,
-      secrets: storeSecretResolver,
-      ensureWebsiteMirror: (config, options) =>
-        ensureWebsiteMirror(config, {
-          ...options,
-          resolveSecret: options?.resolveSecret ?? storeSecretResolver.resolveSecret,
-          cacheRootDir: stagingParent,
-        }),
+    const index = await publishAndIndex(stashDir, () => {
+      if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir);
+      else replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
     });
-    return {
-      auditRoot: resolveComponentAuditRoot(stagedPaths.stashDir, componentRoot, websiteSource.name ?? "website"),
-      publication: prepareDirectoryPublication(stagedPaths.rootDir, livePaths.rootDir),
-      cleanup: () => cleanupStagingParent(stagingParent),
-    };
-  } catch (error) {
-    cleanupStagingParent(stagingParent);
-    throw error;
+    return { item: { id, kind: "git", ref }, index };
+  } finally {
+    cleanupDirectoryBestEffort(stagingParent, "bundle update");
   }
 }
 
+/**
+ * Re-crawl a website source and reindex. The website provider already builds
+ * its snapshot in a staging directory and swaps it in, so a killed refresh
+ * keeps the previous mirror; a snapshot holds only knowledge pages, so there
+ * is no env file to audit.
+ */
 async function syncWebsitePlainSource(
-  websiteSource: ReturnType<typeof getSources>[number],
+  websiteSource: ConfiguredSource,
   stashDir: string,
-  allowDangerousEnvKeys: boolean,
-): Promise<{ item: UpdatePlainSyncedItem; index: Awaited<ReturnType<typeof akmIndex>> }> {
+): Promise<{ item: UpdatePlainSyncedItem; index: IndexResult }> {
   const id = websiteSource.name ?? websiteSource.url ?? "";
-  const currentConfig = loadConfig();
-  const currentSource = currentPlainSource(currentConfig, id, "website");
-  const ref = currentSource.url ?? "";
-  const fence = bundleAuditFence(currentConfig, id);
-  const prepared = await prepareWebsitePlainUpdate(currentSource, fence.componentRoot);
-  const index = await publishPreparedPlainUpdate(
-    id,
-    ref,
-    prepared,
-    stashDir,
-    allowDangerousEnvKeys,
-    true,
-    fence.generation,
-  );
-  return { item: { id, kind: "website", ref }, index };
+  await createWebsiteProvider(websiteSource).sync({
+    force: true,
+    secrets: storeSecretResolver,
+    ensureWebsiteMirror,
+  });
+  const index = await reindexAfterUpdate(stashDir);
+  return { item: { id, kind: "website", ref: websiteSource.url ?? "" }, index };
 }
 
 /** Sync a git-mirrored (plain) source and return an UpdateResponse (single-target path). */
 async function updateGitSource(
+  config: AkmConfig,
   stashDir: string,
   target: string,
   all: boolean,
-  gitSource: ReturnType<typeof getSources>[number],
+  gitSource: ConfiguredSource,
   allowDangerousEnvKeys: boolean,
 ): Promise<UpdateResponse> {
-  const synced = await syncGitPlainSource(gitSource, stashDir, allowDangerousEnvKeys);
+  const synced = await syncGitPlainSource(config, gitSource, stashDir, allowDangerousEnvKeys);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -1262,10 +683,9 @@ async function updateWebsiteSource(
   stashDir: string,
   target: string,
   all: boolean,
-  websiteSource: ReturnType<typeof getSources>[number],
-  allowDangerousEnvKeys: boolean,
+  websiteSource: ConfiguredSource,
 ): Promise<UpdateResponse> {
-  const synced = await syncWebsitePlainSource(websiteSource, stashDir, allowDangerousEnvKeys);
+  const synced = await syncWebsitePlainSource(websiteSource, stashDir);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -1274,7 +694,7 @@ async function updateFilesystemSource(
   stashDir: string,
   target: string,
   all: boolean,
-  filesystemSource: ReturnType<typeof getSources>[number],
+  filesystemSource: ConfiguredSource,
 ): Promise<UpdateResponse> {
   const id = filesystemSource.name ?? filesystemSource.path ?? target;
   const ref = filesystemSource.path ?? target;
@@ -1303,30 +723,24 @@ async function updateFilesystemSource(
  * {@link updateManagedInstall} verbatim rather than duplicating its lock/config
  * bookkeeping.
  */
-function managedInstallViewOfPlainNpm(npmSource: ReturnType<typeof getSources>[number]): ManagedInstall {
+function managedInstallViewOfPlainNpm(config: AkmConfig, npmSource: ConfiguredSource): ManagedInstall {
   const id = npmSource.name ?? npmSource.path ?? "";
-  const config = loadConfig();
-  const currentSource = currentPlainSource(config, id, "npm");
-  const spec = currentSource.path ?? "";
-  const ref = spec.startsWith("npm:") ? spec : `npm:${spec}`;
-  const fence = bundleAuditFence(config, id);
+  const spec = npmSource.path ?? "";
   return {
     bundleKey: id,
     installId: id,
     source: "npm",
-    ref,
+    ref: spec.startsWith("npm:") ? spec : `npm:${spec}`,
     localRoot: "",
-    resolvedVersion: undefined,
-    resolvedRevision: undefined,
     writable: false,
-    componentRoot: fence.componentRoot,
+    componentRoot: bundleComponent(config, id).root,
     requiredRoots: [],
-    auditConfigGeneration: fence.generation,
   };
 }
 
 /**
- * Sync a single registry-managed install and return the processed record.
+ * Sync a single registry-managed install and return the processed record:
+ * fetch into staging, audit, publish, write its lock entry, reindex.
  *
  * `yes` gates ONLY the destructive branch below (deleting a previous
  * `localRoot` whose content moved) — it has no effect on the sync itself. A
@@ -1342,17 +756,10 @@ async function updateManagedInstall(
   yes: boolean,
   stashDir: string,
   allowDangerousEnvKeys: boolean,
-): Promise<{ item: UpdateResultItem; index: Awaited<ReturnType<typeof akmIndex>> }> {
-  // No pre-cleanup of the old root, even under --force: the providers already
-  // re-materialize staging-first (git clones into a `.tmp-*` sibling and swaps
-  // only on success), so destroying `managed.localRoot` BEFORE `syncFromRef`
-  // succeeds would turn any sync failure (network down, bad ref) into losing a
-  // previously-working install. The old root is cleaned up below only after
-  // config/lock publication and reindexing both succeed.
-  const prepared = await prepareManagedUpdate(managed, force);
+): Promise<{ item: UpdateResultItem; index: IndexResult }> {
+  const { synced, staged } = await stageManagedUpdate(managed, force);
   try {
-    await auditPreparedUpdate(prepared, managed.installId, managed.ref, allowDangerousEnvKeys);
-    const synced = prepared.synced;
+    await auditStagedUpdate(staged.auditRoot, managed.ref, allowDangerousEnvKeys);
 
     const installedEntry: InstalledBundle = {
       id: managed.installId,
@@ -1384,10 +791,9 @@ async function updateManagedInstall(
         throw new UsageError(`Update cancelled for "${managed.installId}"; no configuration was changed.`);
     }
 
-    return await withAssetMutationLease("source-update", async () => {
-      const oldLockSnapshot = readLockfileForUpdate();
-      const oldLocks = oldLockSnapshot.entries;
-      const desiredLock: LockfileEntry = {
+    const index = await publishAndIndex(stashDir, async () => {
+      staged.publish();
+      await upsertLockEntry({
         id: managed.bundleKey,
         // Preserve the STORED install kind: a `github:`-ref entry recorded as
         // source "git" must not be reclassified by the sync flow's re-derivation.
@@ -1398,141 +804,43 @@ async function updateManagedInstall(
         integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
         localRoot: synced.contentDir,
         installedAt: synced.syncedAt,
-      };
-      const desiredLocks = [...oldLocks.filter((entry) => entry.id !== desiredLock.id), desiredLock];
-      const desiredLockGeneration = generationHash(desiredLocks);
-      let transaction: UnifiedUpdateTransaction | undefined;
-      let releaseConfigFence: (() => void) | undefined;
-      let contentPublished = false;
-      let lockPublished = false;
-      let publishedLockSnapshot: ReturnType<typeof readLockfileForUpdate> | null | undefined;
-      let committed = false;
-      let index: Awaited<ReturnType<typeof akmIndex>>;
-      try {
-        const configFence = acquireConfigReadFence();
-        releaseConfigFence = configFence.release;
-        assertBundleAuditFence(configFence.config, managed.bundleKey, managed.auditConfigGeneration);
-        updateTransactionHook("fenced", managed.installId);
-        if (prepared.publication) {
-          prepared.publication.publish();
-          contentPublished = true;
-        }
-        await verifyPublishedAudit(prepared, managed.installId);
-        publishedLockSnapshot = await publishLockfileUpdate(oldLockSnapshot, desiredLocks);
-        if (!publishedLockSnapshot) throw concurrentGenerationError(managed);
-        lockPublished = true;
-        updateTransactionHook("published", managed.installId);
-        updateTransactionHook("before-index", managed.installId);
-        transaction = openUnifiedUpdateTransaction();
-        index = await akmIndex({
-          stashDir,
-          full: true,
-          hydrateSources: false,
-          persistDetectedAdapters: false,
-          deferredUpdateTransaction: transaction.deferred,
-        });
-        const currentLockSnapshot = readLockfileForUpdate();
-        if (
-          generationHash(currentLockSnapshot.entries) !== desiredLockGeneration ||
-          currentLockSnapshot.raw !== publishedLockSnapshot.raw ||
-          currentLockSnapshot.mode !== publishedLockSnapshot.mode
-        ) {
-          throw concurrentGenerationError(managed);
-        }
-        updateTransactionHook("indexed", managed.installId, { db: transaction.db });
-        // Indexing can be long enough for a local writer to race the first
-        // post-materialization audit. Re-verify the exact bytes/findings at the
-        // final cross-store commit boundary while every AKM fence is held.
-        await verifyPublishedAudit(prepared, managed.installId);
-        updateTransactionHook("before-commit", managed.installId, { db: transaction.db });
-        commitUnifiedUpdateTransaction(transaction);
-        committed = true;
-      } catch (error) {
-        let recoveryError = transaction ? rollbackUnifiedUpdateTransaction(transaction) : undefined;
-        let concurrentGeneration = false;
-        let concurrentGenerationOwnsPublishedRoot = false;
-        if (lockPublished) {
-          try {
-            if (
-              !publishedLockSnapshot ||
-              !(await compareAndSwapLockfileSnapshot(publishedLockSnapshot, oldLockSnapshot))
-            ) {
-              concurrentGeneration = true;
-              const concurrentLocks = readLockfileForUpdate().entries;
-              const concurrentEntry = concurrentLocks.find((entry) => entry.id === desiredLock.id);
-              concurrentGenerationOwnsPublishedRoot =
-                prepared.publication !== undefined &&
-                concurrentEntry?.localRoot !== undefined &&
-                path.resolve(concurrentEntry.localRoot) === path.resolve(synced.contentDir);
-            }
-          } catch (compensationError) {
-            recoveryError ??= compensationError;
-          }
-        }
-
-        if (!concurrentGenerationOwnsPublishedRoot) {
-          try {
-            if (contentPublished) prepared.publication?.rollback();
-          } catch (rollbackError) {
-            recoveryError ??= rollbackError;
-          }
-        }
-
-        if (recoveryError) throw recoveryError;
-        if (concurrentGeneration) throw concurrentGenerationError(managed);
-        throw error;
-      } finally {
-        try {
-          if (transaction) closeUnifiedUpdateTransaction(transaction, committed);
-        } finally {
-          releaseConfigFence?.();
-        }
-      }
-
-      prepared.publication?.commit();
-      index = await runPostCommitEmbeddingPass(index);
-
-      if (movedRoot) {
-        const currentConfig = loadConfig();
-        const currentLocks = readLockfile();
-        if (referencesRoot(managed.localRoot, currentConfig, currentLocks)) {
-          warn(
-            `[akm bundle update] kept previous install directory at ${managed.localRoot} because another configured or locked bundle still references it.`,
-          );
-        } else {
-          cleanupDirectoryBestEffort(managed.localRoot, "update");
-        }
-      }
-
-      const versionChanged = (managed.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
-      const revisionChanged = (managed.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
-      return {
-        index,
-        item: {
-          id: managed.installId,
-          source: managed.source,
-          ref: managed.ref,
-          previous: {
-            resolvedVersion: managed.resolvedVersion,
-            resolvedRevision: managed.resolvedRevision,
-            cacheDir: managed.localRoot,
-          },
-          installed: { ...installedEntry, extractedDir: synced.extractedDir },
-          changed: {
-            version: versionChanged,
-            revision: revisionChanged,
-            any: versionChanged || revisionChanged,
-          },
-        },
-      };
+      });
     });
-  } finally {
-    prepared.cleanup();
-  }
-}
 
-function generationHash(value: unknown): string {
-  return sha256Hex(JSON.stringify(value));
+    if (movedRoot) {
+      if (referencesRoot(managed.localRoot, loadConfig(), readLockfile())) {
+        warn(
+          `[akm bundle update] kept previous install directory at ${managed.localRoot} because another configured or locked bundle still references it.`,
+        );
+      } else {
+        cleanupDirectoryBestEffort(managed.localRoot, "update");
+      }
+    }
+
+    const versionChanged = (managed.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
+    const revisionChanged = (managed.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
+    return {
+      index,
+      item: {
+        id: managed.installId,
+        source: managed.source,
+        ref: managed.ref,
+        previous: {
+          resolvedVersion: managed.resolvedVersion,
+          resolvedRevision: managed.resolvedRevision,
+          cacheDir: managed.localRoot,
+        },
+        installed: { ...installedEntry, extractedDir: synced.extractedDir },
+        changed: {
+          version: versionChanged,
+          revision: revisionChanged,
+          any: versionChanged || revisionChanged,
+        },
+      },
+    };
+  } finally {
+    staged.cleanup();
+  }
 }
 
 function referencesRoot(target: string, config: AkmConfig, locks: LockfileEntry[]): boolean {
@@ -1554,14 +862,6 @@ function isRootAtOrBelow(candidate: string, root: string): boolean {
   const lexicallyWithin =
     relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
   return lexicallyWithin || isWithin(candidate, root);
-}
-
-function concurrentGenerationError(managed: ManagedInstall): ConfigError {
-  return new ConfigError(
-    `Managed source "${managed.installId}" changed concurrently; retained both materialized roots and deleted nothing.`,
-    "INVALID_CONFIG_FILE",
-    "Inspect `akm bundle list` and retry the update after the concurrent source operation completes.",
-  );
 }
 
 // ── akmUpdate dispatcher ─────────────────────────────────────────────────────
@@ -1617,7 +917,7 @@ export async function akmUpdate(input?: {
       }
       return false;
     });
-    if (gitMatch) return updateGitSource(stashDir, target, all, gitMatch, allowDangerousEnvKeys);
+    if (gitMatch) return updateGitSource(config, stashDir, target, all, gitMatch, allowDangerousEnvKeys);
 
     const websiteMatch = stashes.find((s) => {
       if (s.type !== "website") return false;
@@ -1626,7 +926,7 @@ export async function akmUpdate(input?: {
       if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
       return false;
     });
-    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch, allowDangerousEnvKeys);
+    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch);
 
     // Plain npm source (bundle without a lock) — sync via the registry
     // pipeline and promote to a managed install (see
@@ -1640,7 +940,7 @@ export async function akmUpdate(input?: {
     });
     if (npmMatch) {
       const updated = await updateManagedInstall(
-        managedInstallViewOfPlainNpm(npmMatch),
+        managedInstallViewOfPlainNpm(config, npmMatch),
         force,
         yes,
         stashDir,
@@ -1664,7 +964,7 @@ export async function akmUpdate(input?: {
   const processed: UpdateResponse["processed"] = [];
   const plainSynced: UpdatePlainSyncedItem[] = [];
   const skipped: UpdateSkippedItem[] = [];
-  let latestIndex: Awaited<ReturnType<typeof akmIndex>> | undefined;
+  let latestIndex: IndexResult | undefined;
   for (const managed of selected) {
     try {
       const updated = await updateManagedInstall(managed, force, yes, stashDir, allowDangerousEnvKeys);
@@ -1679,10 +979,10 @@ export async function akmUpdate(input?: {
   // `--all` must account for EVERY configured source, not only the
   // registry-managed (lock-backed) ones (R-015) — `selectManagedTargets`
   // above returns only `installs` for `all`, so plain sources were
-  // previously never even looked at. Git/npm plain sources are synced here
-  // too (git and website through staged promotion; npm promoted to managed,
-  // same as the single-target path above). Filesystem sources reflect their
-  // files in place and are reported as intentionally skipped.
+  // previously never even looked at. Git/website/npm plain sources are synced
+  // here too (npm is promoted to managed, same as the single-target path
+  // above). Filesystem sources reflect their files in place and are reported
+  // as intentionally skipped.
   if (all) {
     const managedKeys = new Set(managedInstalls.map((m) => m.bundleKey));
     const plainSources = getSources(config).filter(
@@ -1693,12 +993,12 @@ export async function akmUpdate(input?: {
       const id = plain.name ?? plain.path ?? plain.url ?? "";
       try {
         if (plain.type === "git") {
-          const updated = await syncGitPlainSource(plain, stashDir, allowDangerousEnvKeys);
+          const updated = await syncGitPlainSource(config, plain, stashDir, allowDangerousEnvKeys);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "npm") {
           const updated = await updateManagedInstall(
-            managedInstallViewOfPlainNpm(plain),
+            managedInstallViewOfPlainNpm(config, plain),
             force,
             yes,
             stashDir,
@@ -1707,7 +1007,7 @@ export async function akmUpdate(input?: {
           processed.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "website") {
-          const updated = await syncWebsitePlainSource(plain, stashDir, allowDangerousEnvKeys);
+          const updated = await syncWebsitePlainSource(plain, stashDir);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else {

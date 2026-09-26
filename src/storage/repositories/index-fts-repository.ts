@@ -7,6 +7,14 @@
  *
  * Owns the `entries_fts` full-text query path, per-entry projections, and the
  * explicit full recovery rebuild.
+ *
+ * Both FTS5 tables are contentless (`content=''`, see index-entry-schema.ts):
+ * the text lives once in `entries` / `entry_fragments`, and an FTS row is
+ * addressed only by its rowid. Readers therefore derive the owning entry from
+ * the rowid; the `COALESCE(f.entry_id, f.rowid)` joins below also read the
+ * content-bearing tables older releases wrote (where the UNINDEXED columns are
+ * populated), so a read-only open of a not-yet-migrated index still answers
+ * correctly.
  */
 
 import { splitMarkdownFragments } from "../../core/asset/markdown-fragments";
@@ -20,9 +28,30 @@ import type { DbSearchResult } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
 const INSERT_FTS_SQL =
-  "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)";
+  "INSERT INTO entries_fts (rowid, entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?, ?)";
 const INSERT_FRAGMENT_SQL =
-  "INSERT INTO entry_fragments_fts (entry_id, fragment_id, fragment_ordinal, content) VALUES (?, ?, ?, ?)";
+  "INSERT INTO entry_fragments_fts (rowid, entry_id, fragment_id, fragment_ordinal, content) VALUES (?, ?, ?, ?, ?)";
+
+// `entries_fts.rowid = entries.id`. `entry_fragments_fts` carries many rows
+// per entry, so its rowid encodes both the owning entry and the fragment's
+// ordinal: `entryId * 2^20 + ordinal`. A per-entry delete is then a rowid
+// lookup or a rowid RANGE (`>= start < end`), never a scan.
+const FRAGMENT_ROWID_ORDINAL_BITS = 20;
+const FRAGMENT_ROWID_ORDINAL_SPAN = 2 ** FRAGMENT_ROWID_ORDINAL_BITS; // 1,048,576
+
+/** No file is expected to reach a million fragments; one that does must not silently collide with the next entry's rowid range. */
+function fragmentFtsRowid(entryId: number, ordinal: number): number {
+  if (ordinal < 0 || ordinal >= FRAGMENT_ROWID_ORDINAL_SPAN) {
+    throw new Error(
+      `Fragment ordinal ${ordinal} for entry ${entryId} exceeds the encoded FTS rowid span (${FRAGMENT_ROWID_ORDINAL_SPAN}).`,
+    );
+  }
+  return entryId * FRAGMENT_ROWID_ORDINAL_SPAN + ordinal;
+}
+
+function fragmentFtsRowidRangeStart(entryId: number): number {
+  return entryId * FRAGMENT_ROWID_ORDINAL_SPAN;
+}
 
 interface FtsMutationStatements {
   deleteOne: ReturnType<Database["prepare"]>;
@@ -39,9 +68,9 @@ function getFtsMutationStatements(db: Database): FtsMutationStatements {
   const existing = ftsMutationStatementsByDb.get(db);
   if (existing) return existing;
   const statements = {
-    deleteOne: db.prepare("DELETE FROM entries_fts WHERE entry_id = ?"),
+    deleteOne: db.prepare("DELETE FROM entries_fts WHERE rowid = ?"),
     insert: db.prepare(INSERT_FTS_SQL),
-    deleteFragments: db.prepare("DELETE FROM entry_fragments_fts WHERE entry_id = ?"),
+    deleteFragments: db.prepare("DELETE FROM entry_fragments_fts WHERE rowid >= ? AND rowid < ?"),
     upsertFragmentSource: db.prepare(
       "INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET safe_markdown = excluded.safe_markdown",
     ),
@@ -62,29 +91,40 @@ export function replaceFtsEntry(
   const fields = buildSearchFields(entry);
   const statements = getFtsMutationStatements(db);
   statements.deleteOne.run(entryId);
-  statements.insert.run(entryId, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+  statements.insert.run(entryId, entryId, fields.name, fields.description, fields.tags, fields.hints, fields.content);
   if (fragmentContent === undefined) {
     // Metadata-only re-upserts and re-keys deserialize the public document
     // without the internal substrate. Leave the persisted source untouched.
     // A scan that did read Markdown always supplies a value below.
     return;
   }
-  statements.deleteFragments.run(entryId);
+  const rangeStart = fragmentFtsRowidRangeStart(entryId);
+  statements.deleteFragments.run(rangeStart, rangeStart + FRAGMENT_ROWID_ORDINAL_SPAN);
   statements.deleteFragmentSource.run(entryId);
   if (!fragmentContent) return;
   statements.upsertFragmentSource.run(entryId, fragmentContent);
   for (const fragment of splitMarkdownFragments(fragmentContent)) {
-    statements.insertFragment.run(entryId, fragment.fragmentId, fragment.ordinal, fragment.text.toLowerCase());
+    statements.insertFragment.run(
+      fragmentFtsRowid(entryId, fragment.ordinal),
+      entryId,
+      fragment.fragmentId,
+      fragment.ordinal,
+      fragment.text.toLowerCase(),
+    );
   }
 }
 
 /** Delete derived FTS projections for canonical entries that are being removed. */
 export function deleteFtsEntries(db: Database, entryIds: readonly number[]): void {
+  const statements = getFtsMutationStatements(db);
   for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
-    db.prepare(`DELETE FROM entry_fragments_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
+    db.prepare(`DELETE FROM entries_fts WHERE rowid IN (${placeholders})`).run(...chunk);
+    for (const entryId of chunk) {
+      const rangeStart = fragmentFtsRowidRangeStart(entryId);
+      statements.deleteFragments.run(rangeStart, rangeStart + FRAGMENT_ROWID_ORDINAL_SPAN);
+    }
     db.prepare(`DELETE FROM entry_fragments WHERE entry_id IN (${placeholders})`).run(...chunk);
   }
 }
@@ -255,7 +295,7 @@ function runFtsQuery(
       -- large, and only rows admitted through the BM25 boundary need it.
       SELECT e.id, bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
     FROM entries_fts f
-    JOIN entries e ON e.id = f.entry_id
+    JOIN entries e ON e.id = COALESCE(f.entry_id, f.rowid)
     WHERE entries_fts MATCH ?
       ${filterClause}
     ), boundary AS (
@@ -363,17 +403,22 @@ function runFragmentQuery(
   // the TypeScript ranker to decide with its non-BM25 contributors. This has
   // one FTS query and no OFFSET walk; the returned boundary is intentionally
   // data-bound for a pathological all-tied query, just like parent FTS.
+  // The contentless table reads its UNINDEXED columns back as NULL, so the
+  // owning entry and the ordinal come from the encoded rowid; the fragment id
+  // is resolved afterwards from the stored Markdown for the few admitted rows.
   const sql = `
     WITH matches AS MATERIALIZED (
       -- Keep repeated child rows as narrow as parent FTS's scored CTE. The
       -- document projection can be large; hydrate it only after the one-child
       -- per-parent collapse and BM25 boundary filtering below.
-      SELECT e.id, f.fragment_id AS fragmentId, f.fragment_ordinal AS fragmentOrdinal,
+      SELECT e.id, f.fragment_id AS fragmentId,
+             COALESCE(f.fragment_ordinal, f.rowid % ${FRAGMENT_ROWID_ORDINAL_SPAN}) AS fragmentOrdinal,
              bm25(entry_fragments_fts) AS bm25Score
-      FROM entry_fragments_fts f JOIN entries e ON e.id = f.entry_id
+      FROM entry_fragments_fts f
+      JOIN entries e ON e.id = COALESCE(f.entry_id, f.rowid / ${FRAGMENT_ROWID_ORDINAL_SPAN})
       WHERE entry_fragments_fts MATCH ? ${filter}
     ), ranked AS MATERIALIZED (
-      SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY bm25Score ASC, fragmentOrdinal ASC, fragmentId ASC) AS parentRank
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY bm25Score ASC, fragmentOrdinal ASC) AS parentRank
       FROM matches
     ), parents AS MATERIALIZED (
       SELECT * FROM ranked WHERE parentRank = 1
@@ -382,7 +427,7 @@ function runFragmentQuery(
     )
     SELECT e.id, e.file_path AS filePath, e.document_json AS documentJson, e.search_text AS searchText,
            e.item_ref AS itemRef, e.bundle_id AS bundleId, e.concept_id AS conceptId, e.adapter_id AS adapterId,
-           parents.fragmentId, parents.bm25Score
+           parents.fragmentId, parents.fragmentOrdinal, parents.bm25Score
     FROM parents JOIN entries e ON e.id = parents.id
     WHERE NOT EXISTS (SELECT 1 FROM boundary)
        OR parents.bm25Score <= (SELECT bm25Score FROM boundary)
@@ -396,21 +441,48 @@ function runFragmentQuery(
     bundleId: string;
     conceptId: string;
     adapterId: string;
-    fragmentId: string;
+    fragmentId: string | null;
+    fragmentOrdinal: number;
     bm25Score: number;
   }>;
+  const fragmentIdsByEntry = resolveFragmentIds(
+    db,
+    rows.filter((row) => row.fragmentId === null).map((row) => row.id),
+  );
   const results: DbSearchResult[] = [];
   for (const row of rows) {
+    const fragmentId = row.fragmentId ?? fragmentIdsByEntry.get(row.id)?.[row.fragmentOrdinal];
+    if (fragmentId === undefined) continue;
     const [result] = materializeRows([row], lexicalMatch);
     if (result) {
       results.push({
         ...result,
-        fragmentId: row.fragmentId,
+        fragmentId,
         lexicalScore: stableFtsScore(result.bm25Score, "fragment"),
       });
     }
   }
   return results;
+}
+
+/** Fragment ids by ordinal for each entry, split from the stored safe Markdown. */
+function resolveFragmentIds(db: Database, entryIds: readonly number[]): Map<number, string[]> {
+  const byEntry = new Map<number, string[]>();
+  const targets = [...new Set(entryIds)];
+  for (let offset = 0; offset < targets.length; offset += SQLITE_CHUNK_SIZE) {
+    const chunk = targets.slice(offset, offset + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT entry_id, safe_markdown FROM entry_fragments WHERE entry_id IN (${placeholders})`)
+      .all(...chunk) as Array<{ entry_id: number; safe_markdown: string }>;
+    for (const row of rows) {
+      byEntry.set(
+        row.entry_id,
+        splitMarkdownFragments(row.safe_markdown).map((fragment) => fragment.fragmentId),
+      );
+    }
+  }
+  return byEntry;
 }
 
 function mergeParentAndFragmentResults(parents: DbSearchResult[], fragments: DbSearchResult[]): DbSearchResult[] {
@@ -439,33 +511,38 @@ export function rebuildFts(db: Database): void {
   db.transaction(() => {
     db.exec("DELETE FROM entries_fts");
     db.exec("DELETE FROM entry_fragments_fts");
-    const rows = db
-      .prepare(
-        "SELECT e.id, e.document_json, f.safe_markdown FROM entries e LEFT JOIN entry_fragments f ON f.entry_id = e.id",
-      )
-      .all() as Array<{
-      id: number;
-      document_json: string;
-      safe_markdown: string | null;
-    }>;
+    // Keyset pages, so a large index is never held in memory at once.
+    const page = db.prepare(
+      "SELECT e.id, e.document_json, f.safe_markdown FROM entries e LEFT JOIN entry_fragments f ON f.entry_id = e.id " +
+        "WHERE e.id > ? ORDER BY e.id LIMIT 500",
+    );
     const insertStmt = db.prepare(INSERT_FTS_SQL);
     const fragmentStmt = db.prepare(INSERT_FRAGMENT_SQL);
 
     let skipped = 0;
-    for (const row of rows) {
-      let entry: IndexDocument;
-      let fields: ReturnType<typeof buildSearchFields>;
-      try {
-        entry = JSON.parse(row.document_json) as IndexDocument;
-        fields = buildSearchFields(entry);
-      } catch {
-        skipped++;
-        continue;
-      }
-      insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
-      if (row.safe_markdown) {
+    let afterId = -1;
+    for (;;) {
+      const rows = page.all(afterId) as Array<{ id: number; document_json: string; safe_markdown: string | null }>;
+      if (rows.length === 0) break;
+      afterId = rows[rows.length - 1]!.id;
+      for (const row of rows) {
+        let fields: ReturnType<typeof buildSearchFields>;
+        try {
+          fields = buildSearchFields(JSON.parse(row.document_json) as IndexDocument);
+        } catch {
+          skipped++;
+          continue;
+        }
+        insertStmt.run(row.id, row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+        if (!row.safe_markdown) continue;
         for (const fragment of splitMarkdownFragments(row.safe_markdown)) {
-          fragmentStmt.run(row.id, fragment.fragmentId, fragment.ordinal, fragment.text.toLowerCase());
+          fragmentStmt.run(
+            fragmentFtsRowid(row.id, fragment.ordinal),
+            row.id,
+            fragment.fragmentId,
+            fragment.ordinal,
+            fragment.text.toLowerCase(),
+          );
         }
       }
     }

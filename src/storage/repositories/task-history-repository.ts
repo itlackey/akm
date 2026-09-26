@@ -14,6 +14,7 @@
 import { isRecord } from "../../core/common";
 import { warnOnce } from "../../core/warn";
 import type { Database, SqlValue } from "../database";
+import { escapeLikePattern } from "../like-pattern";
 
 export type TaskHistoryDetail = {
   runId?: string;
@@ -91,9 +92,9 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   }
   if (typeof parsed.durationMs !== "number") metadataError("durationMs must be a number");
   const detail = "detail" in parsed ? parsed.detail : null;
-  if (parsed.engine !== undefined && parsed.engine !== null && typeof parsed.engine !== "string") {
-    metadataError("engine must be a string or null");
-  }
+  // A malformed `engine` (wrong type) is dropped like any other unrecognized
+  // field rather than rejecting the whole row over a non-essential value.
+  const engine = parsed.engine === null || typeof parsed.engine === "string" ? parsed.engine : undefined;
   if (parsed.targetVocab !== undefined && parsed.targetVocab !== 2) {
     warnOnce(
       `task-history-target-vocab:${String(parsed.targetVocab)}`,
@@ -114,7 +115,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     metadataVersion: 2,
     durationMs: parsed.durationMs,
     detail: cleanDetail,
-    ...(parsed.engine !== undefined ? { engine: parsed.engine as string | null } : {}),
+    ...(engine !== undefined ? { engine } : {}),
     ...(parsed.targetVocab === 2 ? { targetVocab: 2 as const } : {}),
   };
 }
@@ -317,4 +318,33 @@ export function queryCompletedTaskIntervals(db: Database, since: string, until?:
     ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
     : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
   return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as TaskIntervalRow[];
+}
+
+/**
+ * Preview counterpart of {@link renameTaskHistoryTargetRefs} for `akm bundle
+ * rename --dry-run`: the same `WHERE` predicate, read-only.
+ */
+export function countTaskHistoryTargetRefs(db: Database, oldBundleId: string): number {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  return (
+    db.prepare(`SELECT COUNT(*) AS n FROM task_history WHERE target_ref LIKE ? ESCAPE '\\'`).get(`${prefix}%`) as {
+      n: number;
+    }
+  ).n;
+}
+
+/**
+ * Rewrite every `task_history.target_ref` naming `oldBundleId` (a workflow
+ * run's fully-qualified `<bundle>//conceptId` target) to `newBundleId`
+ * (`akm bundle rename`, D6). A row whose `target_ref` is unset or not
+ * bundle-qualified is not matched by the `LIKE` prefix and is left alone.
+ * Returns the number of rows rewritten.
+ */
+export function renameTaskHistoryTargetRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  return Number(
+    db
+      .prepare(`UPDATE task_history SET target_ref = ? || substr(target_ref, ?) WHERE target_ref LIKE ? ESCAPE '\\'`)
+      .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+  );
 }

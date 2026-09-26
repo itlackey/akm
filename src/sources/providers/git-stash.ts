@@ -80,8 +80,6 @@ export interface SaveGitStashOptions {
   repoDir?: string;
   paths?: string[];
   transactionId?: string;
-  /** Base commit the caller already bound its durable transaction to. */
-  expectedBaseHead?: string | null;
   /** Exact post-mutation blobs the commit must contain. */
   expectedSnapshots?: GitExactPathSnapshots;
 }
@@ -99,9 +97,7 @@ const ZERO_OID = "0000000000000000000000000000000000000000";
  *    passed, and the branch ref is about to be compare-and-swapped from
  *    `baseHead` to it. A concurrent process that commits at exactly this
  *    instant is the race the `update-ref <ref> <new> <old>` CAS defends
- *    against, and it is the ONLY guard on the `akm sync` path (`akm sync`
- *    passes no `expectedBaseHead`, so the earlier preflight check is inert
- *    there).
+ *    against, and it is the ONLY guard on the `akm sync` path.
  */
 export type GitExactCommitPoint = "before-update-ref";
 
@@ -268,9 +264,6 @@ export function saveGitStash(
   assertNoIgnoredExactPaths(repoDir, requestedPaths);
 
   const baseHead = readOptionalHead(repoDir);
-  if (options?.expectedBaseHead !== undefined && (baseHead ?? null) !== options.expectedBaseHead) {
-    throw new Error(`Git target advanced before its exact-path commit could be created.`);
-  }
 
   const remoteResult = runGit(["-C", repoDir, "remote"]);
   if (remoteResult.status !== 0) {
@@ -386,27 +379,6 @@ export function assertNoIgnoredExactPaths(repoDir: string, paths: string[]): voi
     throw new UsageError(
       `Exact Git publication path is ignored: ${ignored[0]}. Update .gitignore or choose a tracked destination before writing.`,
     );
-  }
-}
-
-/** Reject exact staged/unstaged paths before an AKM filesystem mutation. */
-export function assertGitExactPathsClean(repoDir: string, paths: string[]): void {
-  const normalized = normalizeExactPaths(repoDir, paths);
-  assertNoIgnoredExactPaths(repoDir, normalized);
-  for (const result of runExactPathChunks(
-    repoDir,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    normalized,
-  )) {
-    if (result.status !== 0) {
-      throw new Error(`git status failed: ${result.stderr.trim() || "unknown error"}`);
-    }
-    if (result.stdout.length > 0) {
-      const record = result.stdout.split("\0").find(Boolean) ?? "";
-      throw new UsageError(
-        `Exact Git operation path has staged or unstaged work: ${record.slice(3)}. Commit, stash, or discard that path before retrying.`,
-      );
-    }
   }
 }
 

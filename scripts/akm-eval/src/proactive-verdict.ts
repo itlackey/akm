@@ -48,7 +48,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { getMeasurementVerdictsDir } from "../../../src/core/paths";
-import { isCanonicalIndexGeneration } from "../../../src/storage/repositories/index-entry-schema";
+import { hasCurrentEntriesTable } from "../../../src/storage/repositories/index-entry-schema";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
 import {
   assertMatchingSuiteFingerprints,
@@ -604,8 +604,8 @@ function main(): number {
   if (indexAvailable) {
     const idb = new Database(opts.indexDb, { readonly: true });
     try {
-      if (!isCanonicalIndexGeneration(idb)) {
-        throw new Error("index database lacks the current canonical entries schema; rebuild it with `akm index --full`");
+      if (!hasCurrentEntriesTable(idb)) {
+        throw new Error("index database has no entries table this akm reads; build it with `akm index`");
       }
       const entryRows = idb.query(`SELECT item_ref FROM entries`).all() as Array<{
         item_ref: string;

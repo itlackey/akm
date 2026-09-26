@@ -7,8 +7,7 @@ import { warn } from "../core/warn";
 import { cloneExecutionJsonObject } from "../execution/json";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
-import { lowerResolvedExecutionRequest } from "../integrations/agent/execution-lowering";
-import { prepareInlineExecution } from "../integrations/agent/inline-execution";
+import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { StructuredLlmRunner } from "./structured-call";
 
 const NO_LOWERING_NOTICES: readonly Readonly<LoweringNotice>[] = Object.freeze([]);
@@ -52,14 +51,13 @@ export function resolveIndexPassExecution(passName: string, config: AkmConfig): 
     ...indexExecutionDefaults(defaults),
     ...(!own(defaults, "engine") && fallbackLlmEngine ? { engine: fallbackLlmEngine } : {}),
   } satisfies UnresolvedExecutionDefaults;
-  const prepared = prepareInlineExecution({
+  const prepared = resolveExecution({
     content: "",
     config,
-    invocationKind: "direct",
     invocationDefaults,
     current: indexExecutionDefaults(pass),
   });
-  const lowered = lowerResolvedExecutionRequest(prepared.request, prepared.config);
+  const lowered = buildExecution(prepared.request, prepared.runner);
   if (lowered.runner.kind !== "llm") {
     warn("[akm] Index pass %s requires an LLM engine; %s is not one. Skipping this pass.", passName, selectedEngine);
     return Object.freeze({ runner: undefined, notices: NO_LOWERING_NOTICES });

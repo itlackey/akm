@@ -114,7 +114,6 @@ test("improve dedupes safe lowering notices through JSON and text output", async
             durationMs: 0,
             notices: [notice],
           },
-          consolidationRan: false,
         })) as never,
         runImproveLoopStageFn: (async () => ({
           reflectsWithErrorContext: 0,
@@ -220,7 +219,6 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
             warnings: [],
             durationMs: 0,
           },
-          consolidationRan: false,
         };
       }) as never,
       runImproveLoopStageFn: (async () => ({

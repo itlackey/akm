@@ -3,9 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Improve-pipeline metric projection for `akm health`: turning
- * `improve_runs.result_json` envelopes and `improve_*` events into the
- * aggregated {@link ImproveHealthMetrics} / {@link ImproveRunSummary} shapes.
+ * Improve-pipeline metric projection for `akm health`: `improve_runs.result_json`
+ * envelopes and `improve_*` events → the aggregated {@link ImproveHealthMetrics}
+ * / {@link ImproveRunSummary} shapes, plus the window's accepted-proposal
+ * coverage read from the proposals table.
  */
 
 import type { readEvents } from "../../core/events";
@@ -19,29 +20,17 @@ export function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
-export function parseTaskMetadata(row: TaskHistoryRow): {
-  durationMs?: number;
-  detail?: Record<string, unknown>;
-  engine?: string | null;
-} {
-  const metadata = decodeTaskHistoryMetadata(row.metadata_json);
-  return {
-    ...(metadata.durationMs !== undefined ? { durationMs: metadata.durationMs } : {}),
-    ...(metadata.detail ? { detail: metadata.detail } : {}),
-    ...(metadata.engine !== undefined ? { engine: metadata.engine } : {}),
-  };
-}
-
 /**
- * `parseTaskMetadata`, but per-row skip-and-warn instead of throwing (mirrors
- * `listStateProposals`). `decodeTaskHistoryMetadata` already tolerates
- * legacy/additive shapes; only genuine corruption reaches this catch, and a
- * corrupt row must degrade the metric (excluded, not fatal) rather than abort
- * the whole `akm health` computation.
+ * `task_history.metadata_json`'s `detail` field, decoded and skip-and-warn on
+ * corruption instead of throwing (mirrors `listStateProposals`).
+ * `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes; only
+ * genuine corruption reaches this catch, and a corrupt row must degrade the
+ * metric (excluded, not fatal) rather than abort the whole `akm health`
+ * computation.
  */
 export function taskFailureDetail(row: TaskHistoryRow): Record<string, unknown> | undefined {
   try {
-    return parseTaskMetadata(row).detail;
+    return decodeTaskHistoryMetadata(row.metadata_json).detail ?? undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(
@@ -56,9 +45,8 @@ export function taskFailureDetail(row: TaskHistoryRow): Record<string, unknown> 
  * that represents a prepared command (agent/LLM) result. `target_kind` is
  * read in the current (post-D8) vocabulary — the
  * `025-task-history-vocabulary-backfill` state migration rewrites every
- * legacy-vocabulary row (which stored the agent/LLM arm as `"prompt"` and
- * the native shell/script arm as `"command"`) before this ever runs against
- * it, so a `"command"` row here is unambiguously the agent/LLM arm.
+ * legacy-vocabulary row before this ever runs against it, so a `"command"`
+ * row here is unambiguously the agent/LLM arm.
  */
 export function isAgentTaskHistoryRow(row: TaskHistoryRow): boolean {
   return row.target_kind === "command";
@@ -68,8 +56,7 @@ export function isAgentTaskHistoryRow(row: TaskHistoryRow): boolean {
  * #943: reason-value breakdown for a set of agent (command-kind) task
  * failure rows — how much of the observed failures are `timeout` vs
  * `non_zero_exit` vs `spawn_failed` etc., so `akm health`'s `task-fail-rate`
- * advisory can say "timeout-dominant" from data rather than log grep. Keeps
- * the existing `AgentFailureReason` vocabulary verbatim (spawn.ts) — a
+ * advisory can say "timeout-dominant" from data rather than log grep. A
  * reason-per-row read failure (already warned by {@link taskFailureDetail})
  * still counts under `"unknown"` rather than being dropped, so the total
  * always equals `agentFailures.length`.
@@ -83,17 +70,16 @@ export function countAgentFailureReasons(agentFailures: readonly TaskHistoryRow[
   return counts;
 }
 
-function createUnknownImproveMetrics(): ImproveHealthMetrics {
+/** A zeroed accumulator — also what health reports when it could not read state.db at all (#791). */
+export function emptyImproveMetrics(): ImproveHealthMetrics {
   return {
     invoked: 0,
     completed: 0,
     skipped: 0,
     skipReasons: {},
     resultRows: { total: 0, included: 0, skipped: { invalid: 0 } },
-    plannedRefs: 0,
-    strategyFilteredRefs: 0,
     actions: {
-      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0, skippedByReason: {} },
+      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0 },
       distill: {
         queued: 0,
         llmFailed: 0,
@@ -102,8 +88,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
         configDisabled: 0,
         skipped: 0,
         skippedByReason: {},
-        deferred: 0,
-        deferredByReason: {},
       },
       memoryPrune: 0,
       memoryInference: 0,
@@ -111,111 +95,26 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       error: 0,
     },
     autoAccept: { promoted: 0, validationFailed: 0 },
-    reflectsWithErrorContext: 0,
-    coverageGapCount: 0,
-    deadUrlCount: 0,
-    deadUrlsChecked: 0,
-    deadUrlsTotal: 0,
-    deadUrlsSkipped: 0,
     memorySummary: { eligible: 0, derived: 0 },
-    memoryCleanup: {
-      pruneCandidates: 0,
-      contradictionCandidates: 0,
-      beliefStateTransitions: 0,
-      consolidationCandidates: 0,
-      archived: 0,
-      warnings: 0,
-    },
     consolidation: {
-      ran: false,
       processed: 0,
       promoted: 0,
       merged: 0,
       deleted: 0,
       contradicted: 0,
       judgedNoAction: 0,
-      mergedSecondaries: 0,
-      failedChunkMemories: 0,
-      skipReasons: {},
       failedChunks: 0,
       totalChunks: 0,
       durationMs: 0,
     },
-    memoryInference: {
-      ran: false,
-      considered: 0,
-      cacheHits: 0,
-      retryAttempts: 0,
-      freshAttempts: 0,
-      splitParents: 0,
-      written: 0,
-      skippedNoFacts: 0,
-      skippedChildExists: 0,
-      skippedAborted: 0,
-      unaccounted: 0,
-      htmlErrorCount: 0,
-      yieldRate: 0,
-      durationMs: 0,
-    },
-    graphExtraction: {
-      ran: false,
-      extractedFiles: 0,
-      consideredFiles: 0,
-      entities: 0,
-      relations: 0,
-      extractionCoverage: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
-      cacheHitRate: 0,
-      truncations: 0,
-      failures: 0,
-      htmlErrors: 0,
-      retryAttempts: 0,
-      nonArrayBatchFailures: 0,
-      durationMs: 0,
-    },
-    sessionExtraction: {
-      ran: false,
-      sessionsScanned: 0,
-      sessionsExtracted: 0,
-      sessionsSkipped: 0,
-      proposalsCreated: 0,
-      warnings: 0,
-      durationMs: 0,
-    },
-    wallTime: {
-      count: 0,
-      medianMs: 0,
-      p95Ms: 0,
-      minMs: 0,
-      maxMs: 0,
-      byPhase: {
-        consolidation: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
-        memoryInference: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
-        graphExtraction: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
-      },
-    },
-    perfTelemetry: {
-      dedupPoolSize: 0,
-      llmPoolSize: 0,
-      embedMs: 0,
-      embedCacheHits: 0,
-      embedCacheMisses: 0,
-      overBudgetRuns: 0,
-      runsWithTelemetry: 0,
-    },
-    coverage: {
-      rate: Number.NaN,
-      eligibleFraction: Number.NaN,
-      acceptedProposals: 0,
-      distinctRefs: 0,
-      churnRatio: Number.NaN,
-      totalAssets: 0,
-    },
+    memoryInference: { considered: 0, freshAttempts: 0, written: 0, skippedNoFacts: 0, yieldRate: 0, durationMs: 0 },
+    graphExtraction: { extractedFiles: 0, entities: 0, relations: 0, failures: 0, durationMs: 0 },
+    wallTime: { medianMs: 0, p95Ms: 0 },
+    coverage: { acceptedProposals: 0, distinctRefs: 0 },
   };
 }
 
-export function toFiniteNumber(value: unknown): number {
+function toFiniteNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
     const parsed = Number(value);
@@ -224,50 +123,9 @@ export function toFiniteNumber(value: unknown): number {
   return 0;
 }
 
-/**
- * Event-derived metrics. Only `completed` and skipReasons/invoked are sourced
- * from events in v2 — the richer fields come from {@link summarizeImproveRuns}.
- * The function still receives `improve_completed` events so that the completed
- * count reflects the canonical event stream (it lines up 1:1 with improve_runs
- * rows in practice, but the events table remains the system-of-record for the
- * existence of a run).
- */
-export function summarizeImproveCompleted(events: ReturnType<typeof readEvents>["events"]): ImproveHealthMetrics {
-  const metrics = createUnknownImproveMetrics();
-  metrics.completed = events.length;
-  return metrics;
-}
-
-/**
- * Read the machine-readable reason from a distill `outcome: "skipped"` result.
- */
-function classifyDistillSkipReason(r: Record<string, unknown> | undefined): string {
-  const explicitReason = typeof r?.skipReason === "string" ? r.skipReason : undefined;
-  return explicitReason || "unknown";
-}
-
-// ── projectRunMetrics phase helpers (chunk-9 WI-9.5c; file-level decompose of
-// the single-envelope projection — each helper mutates its own disjoint
-// subtree of the accumulator from the raw envelope, so call order does not
-// matter; kept in envelope-field order for readability) ──────────────────────
-
-/** plannedRefs / strategyFilteredRefs ref-count accounting. */
-function applyPlannedRefs(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
-  // plannedRefs (array of {ref, reason})
-  const plannedRefs = result.plannedRefs;
-  if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
-
-  // strategyFilteredRefs (array of {ref, reason}) — 2026-05-27: pre-filter
-  // bucket from `collectEligibleRefs` so the metric reflects work the
-  // planner dropped before signal-delta / per-pass dispatch.
-  const strategyFilteredRefs = result.strategyFilteredRefs;
-  if (Array.isArray(strategyFilteredRefs)) metrics.strategyFilteredRefs += strategyFilteredRefs.length;
-}
-
-/** One `actions[]` entry → the matching counter bucket (see ImproveHealthMetrics.actions jsdoc for the taxonomy). */
+/** One `actions[]` entry → its counter bucket; unknown modes/outcomes are not counted. */
 function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unknown>): void {
-  const mode = typeof action.mode === "string" ? action.mode : "";
-  switch (mode) {
+  switch (typeof action.mode === "string" ? action.mode : "") {
     case "reflect":
       metrics.actions.reflect.ok += 1;
       break;
@@ -277,20 +135,12 @@ function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unkno
     case "reflect-cooldown":
       metrics.actions.reflect.cooldown += 1;
       break;
-    case "reflect-skipped": {
+    case "reflect-skipped":
       metrics.actions.reflect.skipped += 1;
-      const r = action.result as Record<string, unknown> | undefined;
-      const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
-      metrics.actions.reflect.skippedByReason[reason] = (metrics.actions.reflect.skippedByReason[reason] ?? 0) + 1;
-      break;
-    }
-    case "reflect-guard-rejected":
-      metrics.actions.reflect.guardRejected += 1;
       break;
     case "distill": {
-      const r = action.result as Record<string, unknown> | undefined;
-      const outcome = typeof r?.outcome === "string" ? r.outcome : "";
-      switch (outcome) {
+      const result = action.result as Record<string, unknown> | undefined;
+      switch (typeof result?.outcome === "string" ? result.outcome : "") {
         case "queued":
           metrics.actions.distill.queued += 1;
           break;
@@ -307,21 +157,6 @@ function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unkno
         case "config_disabled":
           metrics.actions.distill.configDisabled += 1;
           break;
-        case "skipped": {
-          // Previously dropped on the floor. The four sub-paths that emit
-          // `outcome: "skipped"` (see distill.ts:893, 1024, 1120, 1576):
-          //   - recursive_lesson_input (type guard refused a lesson input)
-          //   - conflict_noop (LLM resolved destination conflict as NOOP)
-          //   - proposal-skipped cooldown / dedup at persistence
-          // 465 events/7d in the user's live stack. The result message
-          // typically encodes the reason; we also accept an explicit
-          // `skipReason` field when downstream code sets it.
-          metrics.actions.distill.deferred += 1;
-          const reason = classifyDistillSkipReason(r);
-          metrics.actions.distill.deferredByReason[reason] =
-            (metrics.actions.distill.deferredByReason[reason] ?? 0) + 1;
-          break;
-        }
         default:
           break;
       }
@@ -339,264 +174,99 @@ function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unkno
     case "error":
       metrics.actions.error += 1;
       break;
+    default:
+      break;
   }
 }
 
-/** actions: split reflect / distill by outcome, count others. */
-function applyActionsList(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
-  const actions = result.actions;
-  if (!Array.isArray(actions)) return;
-  for (const action of actions as Array<Record<string, unknown>>) {
-    applyAction(metrics, action);
-  }
-}
+/** Project one `improve_runs.result_json` envelope into a single-run accumulator. */
+function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetrics {
+  const metrics = emptyImproveMetrics();
 
-/**
- * Read the bounded `distillSkipped` aggregate into the corresponding total and
- * per-reason health metrics.
- */
-function applyDistillSkippedAggregate(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
+  if (Array.isArray(result.actions)) {
+    for (const action of result.actions as Array<Record<string, unknown>>) applyAction(metrics, action);
+  }
+
   const distillSkipped = result.distillSkipped as { total?: unknown; byReason?: Record<string, unknown> } | undefined;
-  if (!distillSkipped || typeof distillSkipped !== "object") return;
-  metrics.actions.distill.skipped += toFiniteNumber(distillSkipped.total);
-  const byReason = distillSkipped.byReason;
-  if (byReason && typeof byReason === "object") {
-    for (const [reason, count] of Object.entries(byReason)) {
+  if (distillSkipped && typeof distillSkipped === "object") {
+    metrics.actions.distill.skipped += toFiniteNumber(distillSkipped.total);
+    for (const [reason, count] of Object.entries(distillSkipped.byReason ?? {})) {
       metrics.actions.distill.skippedByReason[reason] =
         (metrics.actions.distill.skippedByReason[reason] ?? 0) + toFiniteNumber(count);
     }
   }
-}
 
-/** autoAccept + the small envelope-level counters (reflectsWithErrorContext, coverageGaps, deadUrls). */
-function applyMiscCounters(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   metrics.autoAccept.promoted += toFiniteNumber(result.gateAutoAcceptedCount);
   metrics.autoAccept.validationFailed += toFiniteNumber(result.gateAutoAcceptFailedCount);
-  metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
-  if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
-  if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
-  const deadUrlCoverage = result.deadUrlCoverage as
-    | { checked?: unknown; total?: unknown; skipped?: unknown }
-    | undefined;
-  if (deadUrlCoverage && typeof deadUrlCoverage === "object") {
-    metrics.deadUrlsChecked += toFiniteNumber(deadUrlCoverage.checked);
-    metrics.deadUrlsTotal += toFiniteNumber(deadUrlCoverage.total);
-    metrics.deadUrlsSkipped += toFiniteNumber(deadUrlCoverage.skipped);
-  }
-}
 
-function applyMemorySummary(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const memorySummary = result.memorySummary as Record<string, unknown> | undefined;
-  if (!memorySummary) return;
-  metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
-  metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
-}
+  if (memorySummary) {
+    metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
+    metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
+  }
 
-function applyMemoryCleanup(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
-  const memoryCleanup = result.memoryCleanup as Record<string, unknown> | undefined;
-  if (!memoryCleanup) return;
-  if (Array.isArray(memoryCleanup.pruneCandidates))
-    metrics.memoryCleanup.pruneCandidates += memoryCleanup.pruneCandidates.length;
-  if (Array.isArray(memoryCleanup.contradictionCandidates))
-    metrics.memoryCleanup.contradictionCandidates += memoryCleanup.contradictionCandidates.length;
-  if (Array.isArray(memoryCleanup.beliefStateTransitions))
-    metrics.memoryCleanup.beliefStateTransitions += memoryCleanup.beliefStateTransitions.length;
-  if (Array.isArray(memoryCleanup.consolidationCandidates))
-    metrics.memoryCleanup.consolidationCandidates += memoryCleanup.consolidationCandidates.length;
-  if (Array.isArray(memoryCleanup.archived)) metrics.memoryCleanup.archived += memoryCleanup.archived.length;
-  if (Array.isArray(memoryCleanup.warnings)) metrics.memoryCleanup.warnings += memoryCleanup.warnings.length;
-}
-
-function applyConsolidation(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const consolidation = result.consolidation as Record<string, unknown> | undefined;
-  if (!consolidation) return;
-  metrics.consolidation.processed += toFiniteNumber(consolidation.processed);
-  metrics.consolidation.merged += toFiniteNumber(consolidation.merged);
-  metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
-  metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
-  if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
-  metrics.consolidation.failedChunks += toFiniteNumber(consolidation.failedChunks);
-  metrics.consolidation.totalChunks += toFiniteNumber(consolidation.totalChunks);
-  metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
-  metrics.consolidation.judgedNoAction += toFiniteNumber(consolidation.judgedNoAction);
-  metrics.consolidation.mergedSecondaries += toFiniteNumber(consolidation.mergedSecondaries);
-  metrics.consolidation.failedChunkMemories += toFiniteNumber(consolidation.failedChunkMemories);
-  // Structured emitter (new on this branch): consolidate.ts now pushes
-  // per-ref grouped `{ref, skips: [{op, reason}]}` entries to `skipReasons`
-  // for every deterministic post-LLM rejection. Each ref appears once but
-  // may carry multiple skips; aggregate every reason. Pre-fix envelopes have
-  // neither field, so be defensive.
-  const skipReasons = consolidation.skipReasons;
-  if (Array.isArray(skipReasons)) {
-    for (const entry of skipReasons) {
-      if (!entry || typeof entry !== "object") continue;
-      const skips = (entry as Record<string, unknown>).skips;
-      if (!Array.isArray(skips)) continue;
-      for (const skip of skips) {
-        if (!skip || typeof skip !== "object") continue;
-        const reason = (skip as Record<string, unknown>).reason;
-        if (typeof reason !== "string" || !reason.trim()) continue;
-        metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
-      }
-    }
+  if (consolidation) {
+    const cons = metrics.consolidation;
+    cons.processed += toFiniteNumber(consolidation.processed);
+    if (Array.isArray(consolidation.promoted)) cons.promoted += consolidation.promoted.length;
+    cons.merged += toFiniteNumber(consolidation.merged);
+    cons.deleted += toFiniteNumber(consolidation.deleted);
+    cons.contradicted += toFiniteNumber(consolidation.contradicted);
+    cons.judgedNoAction += toFiniteNumber(consolidation.judgedNoAction);
+    cons.failedChunks += toFiniteNumber(consolidation.failedChunks);
+    cons.totalChunks += toFiniteNumber(consolidation.totalChunks);
+    cons.durationMs += toFiniteNumber(consolidation.durationMs);
   }
-  // WS-5: extract perf telemetry from the consolidation envelope.
-  // Pre-WS-5 envelopes lack `perfTelemetry`; be defensive.
-  const perf = consolidation.perfTelemetry as Record<string, unknown> | undefined;
-  if (perf) {
-    metrics.perfTelemetry.runsWithTelemetry += 1;
-    metrics.perfTelemetry.dedupPoolSize += toFiniteNumber(perf.dedupPoolSize);
-    metrics.perfTelemetry.llmPoolSize += toFiniteNumber(perf.llmPoolSize);
-    metrics.perfTelemetry.embedMs += toFiniteNumber(perf.embedMs);
-    metrics.perfTelemetry.embedCacheHits += toFiniteNumber(perf.embedCacheHits);
-    metrics.perfTelemetry.embedCacheMisses += toFiniteNumber(perf.embedCacheMisses);
-    const budgetFrac = toFiniteNumber(perf.estimatedBudgetFractionUsed);
-    if (budgetFrac > 1.0) metrics.perfTelemetry.overBudgetRuns += 1;
-  }
-}
 
-function applyMemoryInference(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
   if (memoryInference) {
     const considered = toFiniteNumber(memoryInference.considered);
-    const writtenFacts = toFiniteNumber(memoryInference.writtenFacts);
-    metrics.memoryInference.considered += considered;
-    metrics.memoryInference.cacheHits += toFiniteNumber(memoryInference.cacheHits);
-    metrics.memoryInference.retryAttempts += toFiniteNumber(memoryInference.retryAttempts);
-    metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
-    metrics.memoryInference.written += writtenFacts;
-    metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
-    metrics.memoryInference.skippedChildExists += toFiniteNumber(memoryInference.skippedChildExists);
-    metrics.memoryInference.skippedAborted += toFiniteNumber(memoryInference.skippedAborted);
-    metrics.memoryInference.unaccounted += toFiniteNumber(memoryInference.unaccounted);
-    metrics.memoryInference.htmlErrorCount += toFiniteNumber(memoryInference.htmlErrorCount);
+    const mi = metrics.memoryInference;
+    mi.considered += considered;
+    // Cache hits and budget-aborted records never reached the LLM; excluding
+    // them keeps the yield rate a statement about real inference attempts.
+    mi.freshAttempts += Math.max(
+      0,
+      considered - toFiniteNumber(memoryInference.cacheHits) - toFiniteNumber(memoryInference.skippedAborted),
+    );
+    mi.written += toFiniteNumber(memoryInference.writtenFacts);
+    mi.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
   }
   metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
-}
 
-function applyGraphExtraction(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
   if (graphExtraction) {
+    const ge = metrics.graphExtraction;
     const quality = graphExtraction.quality as Record<string, unknown> | undefined;
-    if (quality) {
-      metrics.graphExtraction.extractedFiles += toFiniteNumber(quality.extractedFiles);
-      metrics.graphExtraction.consideredFiles += toFiniteNumber(quality.consideredFiles);
-    }
-    metrics.graphExtraction.entities += toFiniteNumber(graphExtraction.totalEntities);
-    metrics.graphExtraction.relations += toFiniteNumber(graphExtraction.totalRelations);
+    ge.extractedFiles += toFiniteNumber(quality?.extractedFiles);
+    ge.entities += toFiniteNumber(graphExtraction.totalEntities);
+    ge.relations += toFiniteNumber(graphExtraction.totalRelations);
     const telemetry = graphExtraction.telemetry as Record<string, unknown> | undefined;
-    if (telemetry) {
-      metrics.graphExtraction.cacheHits += toFiniteNumber(telemetry.cacheHits);
-      metrics.graphExtraction.cacheMisses += toFiniteNumber(telemetry.cacheMisses);
-      metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
-      metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
-      metrics.graphExtraction.htmlErrors += toFiniteNumber(telemetry.htmlErrorCount);
-      metrics.graphExtraction.retryAttempts += toFiniteNumber(telemetry.retryAttempts);
-      metrics.graphExtraction.nonArrayBatchFailures += toFiniteNumber(telemetry.nonArrayBatchFailures);
-    }
+    ge.failures += toFiniteNumber(telemetry?.failureCount);
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
-}
 
-function applySessionExtraction(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
-  if (!Array.isArray(result.extract)) return;
-  for (const e of result.extract as Record<string, unknown>[]) {
-    metrics.sessionExtraction.sessionsScanned += toFiniteNumber(e.sessionsProcessed);
-    metrics.sessionExtraction.sessionsSkipped += toFiniteNumber(e.sessionsSkipped);
-    if (Array.isArray(e.sessions)) {
-      metrics.sessionExtraction.sessionsExtracted += (e.sessions as Record<string, unknown>[]).filter(
-        (s) => Array.isArray(s.proposalIds) && (s.proposalIds as unknown[]).length > 0,
-      ).length;
-    }
-    metrics.sessionExtraction.proposalsCreated += Array.isArray(e.proposals) ? (e.proposals as unknown[]).length : 0;
-    metrics.sessionExtraction.warnings += Array.isArray(e.warnings) ? (e.warnings as unknown[]).length : 0;
-    metrics.sessionExtraction.durationMs += toFiniteNumber(e.durationMs);
-  }
-}
-
-/**
- * Project a single `improve_runs.result_json` envelope into an accumulator-shaped
- * ImproveHealthMetrics. The aggregator merges these per-row metrics into one
- * window-level metric. File-level decomposed (chunk-9 WI-9.5c) into one
- * `apply*` helper per envelope section above; each mutates its own disjoint
- * subtree of the accumulator so the call order below is not load-bearing.
- */
-function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetrics {
-  const metrics = createUnknownImproveMetrics();
-  applyPlannedRefs(metrics, result);
-  applyActionsList(metrics, result);
-  applyDistillSkippedAggregate(metrics, result);
-  applyMiscCounters(metrics, result);
-  applyMemorySummary(metrics, result);
-  applyMemoryCleanup(metrics, result);
-  applyConsolidation(metrics, result);
-  applyMemoryInference(metrics, result);
-  applyGraphExtraction(metrics, result);
-  applySessionExtraction(metrics, result);
   return metrics;
 }
 
-/**
- * Finalize derived flags and rates on an accumulator. Used both for the
- * window-level aggregate and for each per-run row in --detail per-run mode
- * so the single-row metrics still expose `ran` / `yieldRate` / `cacheHitRate`.
- */
+/** Derived rates on an accumulator (window aggregate or single run). */
 function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
-  metrics.consolidation.ran =
-    metrics.consolidation.processed > 0 ||
-    metrics.consolidation.durationMs > 0 ||
-    metrics.consolidation.promoted > 0 ||
-    metrics.consolidation.merged > 0 ||
-    metrics.consolidation.deleted > 0 ||
-    metrics.consolidation.contradicted > 0 ||
-    metrics.consolidation.totalChunks > 0;
-  metrics.memoryInference.ran =
-    metrics.memoryInference.considered > 0 ||
-    metrics.memoryInference.written > 0 ||
-    metrics.memoryInference.durationMs > 0;
-  // Yield denominator excludes cache hits and aborted records.
-  metrics.memoryInference.freshAttempts = Math.max(
-    0,
-    metrics.memoryInference.considered - metrics.memoryInference.cacheHits - metrics.memoryInference.skippedAborted,
-  );
-  metrics.memoryInference.yieldRate =
-    metrics.memoryInference.freshAttempts > 0
-      ? roundRate(metrics.memoryInference.written / metrics.memoryInference.freshAttempts)
-      : 0;
-  metrics.graphExtraction.ran =
-    metrics.graphExtraction.extractedFiles > 0 ||
-    metrics.graphExtraction.entities > 0 ||
-    metrics.graphExtraction.durationMs > 0;
-  const cacheTotal = metrics.graphExtraction.cacheHits + metrics.graphExtraction.cacheMisses;
-  metrics.graphExtraction.cacheHitRate = cacheTotal > 0 ? roundRate(metrics.graphExtraction.cacheHits / cacheTotal) : 0;
-  metrics.graphExtraction.extractionCoverage =
-    metrics.graphExtraction.consideredFiles > 0
-      ? roundRate(metrics.graphExtraction.extractedFiles / metrics.graphExtraction.consideredFiles)
-      : 0;
-  metrics.sessionExtraction.ran =
-    metrics.sessionExtraction.sessionsScanned > 0 ||
-    metrics.sessionExtraction.proposalsCreated > 0 ||
-    metrics.sessionExtraction.durationMs > 0;
+  const mi = metrics.memoryInference;
+  mi.yieldRate = mi.freshAttempts > 0 ? roundRate(mi.written / mi.freshAttempts) : 0;
 }
 
 /**
- * Merge per-row metrics from `src` into accumulator `dst`. All numeric fields
- * are additive; cumulative rates are recomputed by finalizeImproveMetrics.
+ * Merge per-run metrics from `src` into accumulator `dst`. Every counter is
+ * additive; `memorySummary` is a whole-stash snapshot and is deliberately NOT
+ * merged (summing it across runs inflated it ~N× — the 1.2M-eligible bug), and
+ * the derived rate is recomputed by {@link finalizeImproveMetrics}.
  */
 function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetrics): void {
-  dst.plannedRefs += src.plannedRefs;
-  // strategyFilteredRefs is the count of refs the planner drops up-front for the
-  // active strategy — recomputed against the (stable) stash every run, so it is a
-  // snapshot, NOT a per-run increment. Summing it re-counts the same refs each
-  // run (the ~2.4M bug). Set from the most recent run in summarizeImproveRuns.
   dst.actions.reflect.ok += src.actions.reflect.ok;
   dst.actions.reflect.failed += src.actions.reflect.failed;
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
   dst.actions.reflect.skipped += src.actions.reflect.skipped;
-  dst.actions.reflect.guardRejected += src.actions.reflect.guardRejected;
-  for (const [reason, count] of Object.entries(src.actions.reflect.skippedByReason)) {
-    dst.actions.reflect.skippedByReason[reason] = (dst.actions.reflect.skippedByReason[reason] ?? 0) + count;
-  }
   dst.actions.distill.queued += src.actions.distill.queued;
   dst.actions.distill.llmFailed += src.actions.distill.llmFailed;
   dst.actions.distill.judgeRejected += src.actions.distill.judgeRejected;
@@ -606,92 +276,34 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   for (const [reason, count] of Object.entries(src.actions.distill.skippedByReason)) {
     dst.actions.distill.skippedByReason[reason] = (dst.actions.distill.skippedByReason[reason] ?? 0) + count;
   }
-  dst.actions.distill.deferred += src.actions.distill.deferred;
-  for (const [reason, count] of Object.entries(src.actions.distill.deferredByReason)) {
-    dst.actions.distill.deferredByReason[reason] = (dst.actions.distill.deferredByReason[reason] ?? 0) + count;
-  }
   dst.actions.memoryPrune += src.actions.memoryPrune;
   dst.actions.memoryInference += src.actions.memoryInference;
   dst.actions.graphExtraction += src.actions.graphExtraction;
   dst.actions.error += src.actions.error;
   dst.autoAccept.promoted += src.autoAccept.promoted;
   dst.autoAccept.validationFailed += src.autoAccept.validationFailed;
-  dst.reflectsWithErrorContext += src.reflectsWithErrorContext;
-  dst.coverageGapCount += src.coverageGapCount;
-  dst.deadUrlCount += src.deadUrlCount;
-  dst.deadUrlsChecked += src.deadUrlsChecked;
-  dst.deadUrlsTotal += src.deadUrlsTotal;
-  dst.deadUrlsSkipped += src.deadUrlsSkipped;
-  // NOTE: memorySummary (derived/eligible) is a WHOLE-STASH snapshot recorded on
-  // every run, NOT a per-run increment — summing it across the window inflates
-  // it ~N× (the 1.2M-eligible bug). It is set from the most recent run in
-  // summarizeImproveRuns instead, so it is intentionally not merged here.
-  dst.memoryCleanup.pruneCandidates += src.memoryCleanup.pruneCandidates;
-  dst.memoryCleanup.contradictionCandidates += src.memoryCleanup.contradictionCandidates;
-  dst.memoryCleanup.beliefStateTransitions += src.memoryCleanup.beliefStateTransitions;
-  dst.memoryCleanup.consolidationCandidates += src.memoryCleanup.consolidationCandidates;
-  dst.memoryCleanup.archived += src.memoryCleanup.archived;
-  dst.memoryCleanup.warnings += src.memoryCleanup.warnings;
   dst.consolidation.processed += src.consolidation.processed;
   dst.consolidation.promoted += src.consolidation.promoted;
   dst.consolidation.merged += src.consolidation.merged;
   dst.consolidation.deleted += src.consolidation.deleted;
   dst.consolidation.contradicted += src.consolidation.contradicted;
+  dst.consolidation.judgedNoAction += src.consolidation.judgedNoAction;
   dst.consolidation.failedChunks += src.consolidation.failedChunks;
   dst.consolidation.totalChunks += src.consolidation.totalChunks;
   dst.consolidation.durationMs += src.consolidation.durationMs;
-  dst.consolidation.judgedNoAction += src.consolidation.judgedNoAction;
-  dst.consolidation.mergedSecondaries += src.consolidation.mergedSecondaries;
-  dst.consolidation.failedChunkMemories += src.consolidation.failedChunkMemories;
-  for (const [reason, count] of Object.entries(src.consolidation.skipReasons)) {
-    dst.consolidation.skipReasons[reason] = (dst.consolidation.skipReasons[reason] ?? 0) + count;
-  }
   dst.memoryInference.considered += src.memoryInference.considered;
-  dst.memoryInference.cacheHits += src.memoryInference.cacheHits;
-  dst.memoryInference.splitParents += src.memoryInference.splitParents;
+  dst.memoryInference.freshAttempts += src.memoryInference.freshAttempts;
   dst.memoryInference.written += src.memoryInference.written;
   dst.memoryInference.skippedNoFacts += src.memoryInference.skippedNoFacts;
-  dst.memoryInference.skippedChildExists += src.memoryInference.skippedChildExists;
-  dst.memoryInference.skippedAborted += src.memoryInference.skippedAborted;
-  dst.memoryInference.unaccounted += src.memoryInference.unaccounted;
-  dst.memoryInference.htmlErrorCount += src.memoryInference.htmlErrorCount;
-  dst.memoryInference.retryAttempts += src.memoryInference.retryAttempts;
   dst.memoryInference.durationMs += src.memoryInference.durationMs;
   dst.graphExtraction.extractedFiles += src.graphExtraction.extractedFiles;
-  dst.graphExtraction.consideredFiles += src.graphExtraction.consideredFiles;
   dst.graphExtraction.entities += src.graphExtraction.entities;
   dst.graphExtraction.relations += src.graphExtraction.relations;
-  dst.graphExtraction.cacheHits += src.graphExtraction.cacheHits;
-  dst.graphExtraction.cacheMisses += src.graphExtraction.cacheMisses;
-  dst.graphExtraction.truncations += src.graphExtraction.truncations;
   dst.graphExtraction.failures += src.graphExtraction.failures;
-  dst.graphExtraction.htmlErrors += src.graphExtraction.htmlErrors;
-  dst.graphExtraction.nonArrayBatchFailures += src.graphExtraction.nonArrayBatchFailures;
-  dst.graphExtraction.retryAttempts += src.graphExtraction.retryAttempts;
   dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
-  dst.sessionExtraction.sessionsScanned += src.sessionExtraction.sessionsScanned;
-  dst.sessionExtraction.sessionsExtracted += src.sessionExtraction.sessionsExtracted;
-  dst.sessionExtraction.sessionsSkipped += src.sessionExtraction.sessionsSkipped;
-  dst.sessionExtraction.proposalsCreated += src.sessionExtraction.proposalsCreated;
-  dst.sessionExtraction.warnings += src.sessionExtraction.warnings;
-  dst.sessionExtraction.durationMs += src.sessionExtraction.durationMs;
-  // WS-5: merge perf telemetry (additive sums).
-  dst.perfTelemetry.dedupPoolSize += src.perfTelemetry.dedupPoolSize;
-  dst.perfTelemetry.llmPoolSize += src.perfTelemetry.llmPoolSize;
-  dst.perfTelemetry.embedMs += src.perfTelemetry.embedMs;
-  dst.perfTelemetry.embedCacheHits += src.perfTelemetry.embedCacheHits;
-  dst.perfTelemetry.embedCacheMisses += src.perfTelemetry.embedCacheMisses;
-  dst.perfTelemetry.overBudgetRuns += src.perfTelemetry.overBudgetRuns;
-  dst.perfTelemetry.runsWithTelemetry += src.perfTelemetry.runsWithTelemetry;
-  // coverage: acceptedProposals is additive; totalAssets is a snapshot (like memorySummary).
-  // totalAssets is intentionally NOT merged here — set from the most recent run in summarizeImproveRuns.
-  dst.coverage.acceptedProposals += src.coverage.acceptedProposals;
 }
 
-// The improve_runs read lives in its repository so this command holds no raw SQL.
-type ImproveRunRow = ImproveRunSummaryRow;
-
-function compareImproveRunRecency(a: ImproveRunRow, b: ImproveRunRow): number {
+function compareImproveRunRecency(a: ImproveRunSummaryRow, b: ImproveRunSummaryRow): number {
   const started = a.started_at.localeCompare(b.started_at);
   if (started !== 0) return started;
   const completed = a.completed_at.localeCompare(b.completed_at);
@@ -699,114 +311,60 @@ function compareImproveRunRecency(a: ImproveRunRow, b: ImproveRunRow): number {
   return a.id.localeCompare(b.id);
 }
 
+/**
+ * Aggregate the window's `improve_runs` rows. `runCount` is every non-dry-run
+ * row in the window; rows whose envelope does not decode are counted under
+ * `resultRows.skipped.invalid` and excluded from the result-derived metrics.
+ */
 export function summarizeImproveRuns(
   db: Database,
   since: string,
   until?: string,
 ): { metrics: ImproveHealthMetrics; runCount: number } {
-  const accum = createUnknownImproveMetrics();
+  const accum = emptyImproveMetrics();
   const rows = queryImproveRuns(db, since, until);
-
-  // Per-phase wall-time samples. Each entry is one envelope's durationMs for
-  // that phase. Phases that did not run on a given envelope are simply
-  // omitted (NOT counted as 0) so the median/p95 reflect actual phase work.
-  const phaseDurations = {
-    consolidation: [] as number[],
-    memoryInference: [] as number[],
-    graphExtraction: [] as number[],
-  };
+  const resultRows = { total: rows.length, included: 0, skipped: { invalid: 0 } };
 
   // memorySummary is a whole-stash snapshot per run, so the window value is the
-  // MOST RECENT run's snapshot (current state) — not a sum across runs.
-  let latestCompleteRow: ImproveRunRow | undefined;
-  let latestMemorySummary: ImproveHealthMetrics["memorySummary"] | undefined;
-  let latestStrategyFilteredRefs = 0;
-
-  if (!accum.resultRows) throw new Error("invariant: improve result-row accounting was not initialized");
-  accum.resultRows.total = rows.length;
+  // newest complete run's snapshot (current state) — not a sum across runs.
+  let latest: { row: ImproveRunSummaryRow; memorySummary: ImproveHealthMetrics["memorySummary"] } | undefined;
 
   for (const row of rows) {
-    let decoded: ReturnType<typeof decodeImproveResult>;
+    let result: Record<string, unknown>;
     try {
-      decoded = decodeImproveResult(row.result_json);
+      result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
     } catch {
-      accum.resultRows.skipped.invalid += 1;
+      resultRows.skipped.invalid += 1;
       continue;
     }
-    accum.resultRows.included += 1;
-    const result = decoded.envelope as unknown as Record<string, unknown>;
+    resultRows.included += 1;
     const perRow = projectRunMetrics(result);
     mergeImproveMetrics(accum, perRow);
-
-    const startMs = new Date(row.started_at).getTime();
     if (
       result.terminated === undefined &&
-      Number.isFinite(startMs) &&
-      (latestCompleteRow === undefined || compareImproveRunRecency(row, latestCompleteRow) > 0)
+      Number.isFinite(new Date(row.started_at).getTime()) &&
+      (latest === undefined || compareImproveRunRecency(row, latest.row) > 0)
     ) {
-      latestCompleteRow = row;
-      latestMemorySummary = perRow.memorySummary;
-      latestStrategyFilteredRefs = perRow.strategyFilteredRefs;
+      latest = { row, memorySummary: perRow.memorySummary };
     }
-
-    // Collect per-phase durations directly off the envelope. consolidation's
-    // duration lives inside the sub-object; memoryInference and graphExtraction
-    // expose top-level *DurationMs keys (`memoryInferenceDurationMs`,
-    // `graphExtractionDurationMs`) when they actually ran on that envelope.
-    const consol = result.consolidation as { durationMs?: unknown } | undefined;
-    const consolMs = toFiniteNumber(consol?.durationMs);
-    if (consolMs > 0) phaseDurations.consolidation.push(consolMs);
-    const memMs = toFiniteNumber(result.memoryInferenceDurationMs);
-    if (memMs > 0) phaseDurations.memoryInference.push(memMs);
-    const graphMs = toFiniteNumber(result.graphExtractionDurationMs);
-    if (graphMs > 0) phaseDurations.graphExtraction.push(graphMs);
   }
 
   finalizeImproveMetrics(accum);
-  if (latestMemorySummary) accum.memorySummary = latestMemorySummary;
-  accum.strategyFilteredRefs = latestStrategyFilteredRefs;
-  accum.wallTime.byPhase = {
-    consolidation: summarizePhaseDurations(phaseDurations.consolidation),
-    memoryInference: summarizePhaseDurations(phaseDurations.memoryInference),
-    graphExtraction: summarizePhaseDurations(phaseDurations.graphExtraction),
-  };
+  accum.resultRows = resultRows;
+  if (latest) accum.memorySummary = latest.memorySummary;
   return { metrics: accum, runCount: rows.length };
 }
 
-/**
- * Aggregate a list of per-envelope phase durations into the
- * `wallTime.byPhase.*` shape: count, total, median, p95. Median/p95 use the
- * same nearest-rank picker as the top-level wallTime stats so the two are
- * comparable.
- */
-export function summarizePhaseDurations(samples: number[]): {
-  count: number;
-  totalMs: number;
-  medianMs: number;
-  p95Ms: number;
-} {
-  if (samples.length === 0) return { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 };
-  const sorted = [...samples].sort((a, b) => a - b);
-  const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
-  const totalMs = sorted.reduce((acc, n) => acc + n, 0);
-  return {
-    count: sorted.length,
-    totalMs,
-    medianMs: pick(0.5),
-    p95Ms: pick(0.95),
-  };
-}
-
-/**
- * Project an improve_runs row + wall-time lookup into a single ImproveRunSummary.
- * Used by `akm health --detail per-run`.
- */
-export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number, taskId: string): ImproveRunSummary {
+/** Project an improve_runs row + wall time + task attribution into one {@link ImproveRunSummary}. */
+export function projectImproveRunSummary(
+  row: ImproveRunSummaryRow,
+  wallTimeMs: number,
+  taskId: string,
+): ImproveRunSummary {
   let result: Record<string, unknown> = {};
   let resultStatus: NonNullable<ImproveRunSummary["resultStatus"]> = "invalid";
   try {
-    const decoded = decodeImproveResult(row.result_json);
-    result = decoded.envelope as unknown as Record<string, unknown>;
+    result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
     resultStatus = "valid";
   } catch {
     // Keep the persisted row visible in per-run output, but do not project its
@@ -815,11 +373,7 @@ export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number,
   }
   const perRow = projectRunMetrics(result);
   finalizeImproveMetrics(perRow);
-
-  const orphansPurged = toFiniteNumber(result.orphansPurged);
   const lintSummary = result.lintSummary as Record<string, unknown> | undefined;
-  const lintFixed = lintSummary ? toFiniteNumber(lintSummary.fixed) : 0;
-  const lintFlagged = lintSummary ? toFiniteNumber(lintSummary.flagged) : 0;
 
   return {
     id: row.id,
@@ -837,41 +391,21 @@ export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number,
     taskId,
     actions: perRow.actions,
     memorySummary: perRow.memorySummary,
-    memoryCleanup: perRow.memoryCleanup,
     consolidation: perRow.consolidation,
     memoryInference: perRow.memoryInference,
     graphExtraction: perRow.graphExtraction,
-    reflectsWithErrorContext: perRow.reflectsWithErrorContext,
-    orphansPurged,
-    lintFixed,
-    lintFlagged,
+    orphansPurged: toFiniteNumber(result.orphansPurged),
+    lintFixed: lintSummary ? toFiniteNumber(lintSummary.fixed) : 0,
+    lintFlagged: lintSummary ? toFiniteNumber(lintSummary.flagged) : 0,
   };
 }
 
-function emptyPhaseStats(): ImproveHealthMetrics["wallTime"]["byPhase"] {
-  return {
-    consolidation: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
-    memoryInference: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
-    graphExtraction: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
-  };
-}
-
-export function computeWallTimeStats(
-  durationsMs: number[],
-  byPhase?: ImproveHealthMetrics["wallTime"]["byPhase"],
-): ImproveHealthMetrics["wallTime"] {
-  const phase = byPhase ?? emptyPhaseStats();
-  if (durationsMs.length === 0) return { count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0, byPhase: phase };
+/** Nearest-rank median and p95 of the window's run wall times. */
+export function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wallTime"] {
+  if (durationsMs.length === 0) return { medianMs: 0, p95Ms: 0 };
   const sorted = [...durationsMs].sort((a, b) => a - b);
   const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
-  return {
-    count: sorted.length,
-    medianMs: pick(0.5),
-    p95Ms: pick(0.95),
-    minMs: sorted[0] ?? 0,
-    maxMs: sorted[sorted.length - 1] ?? 0,
-    byPhase: phase,
-  };
+  return { medianMs: pick(0.5), p95Ms: pick(0.95) };
 }
 
 export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]): {
@@ -885,9 +419,9 @@ export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["e
   //    (`no_new_signal`, `strategy_filtered_all_passes`). Each run re-counts the
   //    same stable set, so summing across the window re-counts it N times (the
   //    2.7M / 3M inflation). For these we keep the MOST RECENT run's count — the
-  //    current snapshot — matching how memorySummary/strategyFilteredRefs are
-  //    handled. Events arrive in chronological (offset) order, so the last
-  //    count-bearing event per reason is the latest run's value.
+  //    current snapshot — matching how memorySummary is handled. Events arrive
+  //    in chronological (offset) order, so the last count-bearing event per
+  //    reason is the latest run's value.
   const summed: Record<string, number> = {};
   const latestSnapshot: Record<string, number> = {};
   for (const event of events) {
@@ -906,4 +440,28 @@ export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["e
   }
   const skipped = Object.values(skipReasons).reduce((a, b) => a + b, 0);
   return { skipped, skipReasons };
+}
+
+/**
+ * Proposals accepted in `[since, until)` (by `updated_at`) and the distinct
+ * refs among them — N accepted rewrites of one asset touch one ref. A single
+ * SQL aggregate; proposal bodies are never loaded. Fails open to zeros when
+ * the table is absent.
+ */
+export function computeWindowProposalCoverage(
+  db: Database,
+  since: string,
+  until?: string,
+): ImproveHealthMetrics["coverage"] {
+  try {
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS accepted, COUNT(DISTINCT ref) AS refs FROM proposals " +
+          "WHERE status = 'accepted' AND updated_at >= ? AND (? IS NULL OR updated_at < ?)",
+      )
+      .get(since, until ?? null, until ?? null) as { accepted: number; refs: number } | undefined;
+    return { acceptedProposals: row?.accepted ?? 0, distinctRefs: row?.refs ?? 0 };
+  } catch {
+    return { acceptedProposals: 0, distinctRefs: 0 };
+  }
 }

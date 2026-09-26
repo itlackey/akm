@@ -32,19 +32,9 @@ export interface RankedEntryInput {
   fragmentId?: string;
   utilityBoosted?: boolean;
   /**
-   * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
-   * ceiling clamped this item: the score BEFORE the clamp. The semantic-only
-   * `minScore` floor in db-search checks this instead of the clamped score,
-   * so a ceiling that sits below the floor (e.g. archived 0.15 < default
-   * minScore 0.2) demotes the hit to last place instead of silently DROPPING
-   * a result that would otherwise have listed.
-   */
-  preCeilingScore?: number;
-  /**
    * Set by the relaxed non-name lexical ceiling before that ceiling reduces a
-   * body-only candidate's raw score. This is ranking evidence only: unlike
-   * `preCeilingScore`, it must survive a later belief-state ceiling so a
-   * compound-demoted relaxed set does not fall back to filename order.
+   * body-only candidate's raw score. Ranking evidence only, so a ceilinged
+   * relaxed set does not fall back to filename order.
    */
   preRelaxedCeilingScore?: number;
 }

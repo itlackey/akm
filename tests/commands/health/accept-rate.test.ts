@@ -16,7 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { computeAcceptRateBySource } from "../../../src/commands/health/accept-rate";
-import { archiveProposal, createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
+import { archiveProposal, createProposal } from "../../../src/commands/proposal/repository";
 
 const VALID_LESSON = (slug: string) =>
   `---\ndescription: Accept-rate fixture lesson for ${slug}\nwhen_to_use: Testing accept-rate aggregation\n---\n\nBody.\n`;
@@ -42,10 +42,8 @@ function seedProposal(stash: string, ref: string, source: string) {
   const created = createProposal(stash, {
     ref,
     source,
-    force: true,
     payload: { content: VALID_LESSON(ref) },
   });
-  if (isProposalSkipped(created)) throw new Error(`unexpected skip seeding ${ref}`);
   return created;
 }
 

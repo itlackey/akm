@@ -31,7 +31,7 @@ import {
 } from "../../../src/workflows/exec/native-executor";
 import { cpuDerivedUnitConcurrency } from "../../../src/workflows/exec/scheduler";
 import type { UnitDispatchResult } from "../../../src/workflows/exec/unit-dispatch";
-import type { IrStepPlanV4, WorkflowPlanGraphV4 } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import {
   execContextLimits,
   WORKFLOW_EXEC_OUTPUT_TRUNCATED_MARKER,
@@ -75,7 +75,7 @@ function seedRun(steps: string[], params: Record<string, unknown> = {}): void {
   }
 }
 
-function storePlan(plan: WorkflowPlanGraphV4): void {
+function storePlan(plan: WorkflowPlan): void {
   const db = openStateDatabase();
   try {
     storeFrozenWorkflowPlan(db, RUN_ID, plan);
@@ -89,8 +89,8 @@ function execPlan(unitLines: string[], opts: { extra?: string[] } = {}) {
   return freezeWorkflow(workflowDoc(unitLines, "## work\n\nRun the command.\n", opts.extra ?? []));
 }
 
-function run(plan: WorkflowPlanGraphV4, ctx: Partial<StepExecutionContext> = {}): Promise<StepExecutionResult> {
-  const step: IrStepPlanV4 = plan.steps[0]!;
+function run(plan: WorkflowPlan, ctx: Partial<StepExecutionContext> = {}): Promise<StepExecutionResult> {
+  const step: WorkflowPlanStep = plan.steps[0]!;
   return executeFrozenStepPlan(step, {
     runId: RUN_ID,
     workflowRef: "workflows/exec-demo",
@@ -627,7 +627,7 @@ describe("exec unit — replay / reuse", () => {
     expect(fs.readFileSync(marker, "utf8")).toBe("x");
   });
 
-  test("a CHANGED argv is a different input hash, so the journaled row is not reused", async () => {
+  test("resume skips a completed unit even when its argv changed since (input_hash is informational)", async () => {
     seedRun(["work"]);
     const marker = path.join(tmpDir, "side-effects.log");
     const mk = (tag: string) =>
@@ -642,12 +642,12 @@ describe("exec unit — replay / reuse", () => {
     expect((await run(first)).evidence.output).toBe("v1");
 
     const second = mk("v2");
-    // Divergence only guards a matching id with a DIFFERENT hash and no matching
-    // sibling; here the id is the same (solo) and the hash differs, which is
-    // exactly the replay-divergence contract.
+    // Same content-derived unit id (solo), different input hash: the completed
+    // row is still the unit's result, so nothing re-runs.
     const result = await run(second);
-    expect(result.ok).toBe(false);
-    expect(result.summary).toContain("replay divergence");
+    expect(result.ok).toBe(true);
+    expect(result.evidence.output).toBe("v1");
+    expect(result.unitsDispatched).toBe(0);
     expect(fs.readFileSync(marker, "utf8")).toBe("x");
   });
 });
@@ -1103,7 +1103,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
    * A two-step plan whose SECOND step declares the first step's artifact as a
    * declared `inputs:` — the surface that becomes `AKM_INPUTS` in the child.
    */
-  function consumerPlan(argv: string[]): WorkflowPlanGraphV4 {
+  function consumerPlan(argv: string[]): WorkflowPlan {
     return freezeWorkflow(
       [
         "---",
@@ -1130,7 +1130,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
   }
 
   /** Execute the CONSUMER step (steps[1]) with `produce` already in evidence. */
-  function runConsumer(plan: WorkflowPlanGraphV4, produced: string): Promise<StepExecutionResult> {
+  function runConsumer(plan: WorkflowPlan, produced: string): Promise<StepExecutionResult> {
     return executeFrozenStepPlan(plan.steps[1]!, {
       runId: RUN_ID,
       workflowRef: "workflows/exec-demo",

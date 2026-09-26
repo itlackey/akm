@@ -2,25 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Shared memory-content hashing primitives, extracted from the deleted
- * `dedup.ts` (#617 dedup pre-pass, removed WI-7.3) so `consolidate.ts` /
- * `consolidate/chunking.ts` / `distill.ts` keep a stable, dependency-free home
- * for the case-preserving stripped-body hash they use for the body-embedding
- * cache and (formerly) the fidelity-check body comparison.
- *
- * @module content-hash
- */
-
 import { createHash } from "node:crypto";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { computeNormalizedContentHash, parseFrontmatter } from "../../core/asset/frontmatter";
 
-/**
- * Strip frontmatter from raw memory content, returning the body text trimmed.
- * Case and whitespace are preserved. Falls back to `raw.trim()` on
- * unparseable frontmatter (consistent with the pre-existing load-time hot
- * guard).
- */
+/** The markdown body with its frontmatter removed, trimmed (the raw text when it does not parse). */
 export function stripFrontmatterBody(raw: string): string {
   try {
     return parseFrontmatter(raw).content.trim();
@@ -30,13 +15,18 @@ export function stripFrontmatterBody(raw: string): string {
 }
 
 /**
- * Hash used for change-detection and the body-embedding cache: case-/
- * whitespace-preserving stripped body. Two memories with the same wording
- * but different casing produce DIFFERENT hashes here, which is intentional —
- * we embed the exact text and cache by its precise content.
- *
- * This is the `content_hash` stored in `body_embeddings`.
+ * The one "is this the same content?" hash for improve and the proposal queue
+ * (sha256, hex):
+ *  - `raw`: the exact bytes — proposal before/after and judged-content hashes,
+ *    session transcripts, cache keys for plain text.
+ *  - `body`: the body without frontmatter, case and wording preserved — memory
+ *    and knowledge dedup and the body-embedding cache.
+ *  - `normalized`: the whole asset minus akm's bookkeeping frontmatter
+ *    (`BOOKKEEPING_FRONTMATTER_KEYS`), keys sorted — proposal freshness, so a
+ *    salience or inference rewrite of the target never stales a proposal.
  */
-export function cacheHash(raw: string): string {
-  return createHash("sha256").update(stripFrontmatterBody(raw), "utf8").digest("hex");
+export function contentHash(content: string | Uint8Array, mode: "raw" | "body" | "normalized" = "raw"): string {
+  if (mode === "raw") return createHash("sha256").update(content).digest("hex");
+  const text = typeof content === "string" ? content : Buffer.from(content).toString("utf8");
+  return mode === "body" ? contentHash(stripFrontmatterBody(text)) : computeNormalizedContentHash(text);
 }

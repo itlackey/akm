@@ -24,6 +24,7 @@ import { describeLlmCredentialAvailability } from "../../integrations/agent/engi
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
 import { resolveImproveExecution, resolveImproveLlmExecution } from "./execution";
+import { stripBundle } from "./ledger";
 
 /** 0.9 public name for the improve preset configuration. */
 export type ImproveStrategyConfig = ImproveProfileConfig;
@@ -48,13 +49,9 @@ export function resolveProcessEnabled(
   return processes?.[processName]?.enabled === true;
 }
 
-/** `bundle//conceptId` -> bare `conceptId`, for an `excludeRefPrefixes` entry. */
+/** An `excludeRefPrefixes` entry as a bare conceptId without a trailing `/` (else `startsWith(".../raw//")` never matches). */
 function stripBundlePrefix(value: string): string {
-  const boundary = value.indexOf("//");
-  const stripped = boundary >= 0 ? value.slice(boundary + 2) : value;
-  // A trailing `/` (e.g. "knowledge/wikis/articles/raw/") would otherwise turn the
-  // segment-boundary check below into `startsWith(".../raw//")`, which never matches.
-  return stripped.replace(/\/+$/, "");
+  return stripBundle(value).replace(/\/+$/, "");
 }
 
 export function shouldSkipRef(
@@ -84,6 +81,19 @@ export function shouldSkipRef(
   }
 
   return { skip: false, reason: "" };
+}
+
+const REF_SCOPED_PROCESSES = new Set(["reflect", "distill", "consolidate"]);
+
+/** How many refs a ref-scoped process would act on (`undefined` for any other process). */
+export function eligibleRefCount(
+  refs: readonly { ref: string }[],
+  process: string,
+  strategy: ImproveProfileConfig,
+): number | undefined {
+  if (!REF_SCOPED_PROCESSES.has(process)) return undefined;
+  const name = process as "reflect" | "distill" | "consolidate";
+  return refs.filter((entry) => !shouldSkipRef(entry.ref, name, strategy).skip).length;
 }
 
 export function isStrategyFilteredForAllPasses(ref: string, strategy: ImproveProfileConfig): boolean {
@@ -270,7 +280,7 @@ export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): Proces
   return rows;
 }
 
-function cloneAndFreeze<T>(value: T): Readonly<T> {
+export function cloneAndFreeze<T>(value: T): Readonly<T> {
   const clone = structuredClone(value);
   const freeze = (item: unknown): void => {
     if (typeof item !== "object" || item === null || Object.isFrozen(item)) return;

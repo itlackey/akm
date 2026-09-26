@@ -15,6 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { slugForRegistryId } from "../../src/core/bundle-id";
 import { deriveBundleId, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 
@@ -41,6 +42,24 @@ describe("slugForPath", () => {
     const s = slugForPath("/");
     expect(s).toMatch(/^bundle-[0-9a-f]{8}$/);
     expect(s).toBe(slugForPath("/"));
+  });
+});
+
+describe("slugForRegistryId", () => {
+  test("slugs the package or repo name every registry install id kind names", () => {
+    expect(slugForRegistryId("npm:akm-upgrade-rehearsal-fixture")).toBe("akm-upgrade-rehearsal-fixture");
+    expect(slugForRegistryId("npm:@scope/pkg")).toBe("pkg");
+    expect(slugForRegistryId("github:owner/repo")).toBe("repo");
+    expect(slugForRegistryId("git:https://gitlab.com/owner/repo")).toBe("repo");
+    expect(slugForRegistryId("git:git@github.com:owner/repo")).toBe("repo");
+  });
+
+  test("sanitizes the name to the ref bundle-slug charset", () => {
+    expect(slugForRegistryId("github:owner/Dotfiles.NVIM")).toBe("dotfiles-nvim");
+  });
+
+  test("is empty when the id names nothing slug-legal, leaving deriveBundleId its path fallback", () => {
+    expect(slugForRegistryId("github:owner/---")).toBe("");
   });
 });
 

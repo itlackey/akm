@@ -2,7 +2,7 @@
 //
 // #624 P3: tests for the lazy-graph-extraction pass drain (AC5), the default
 // byte-identical no-op (AC6), and the show/curate gating contract (AC3/AC4)
-// expressed through the directly drivable seams: `drainExtractionQueue` /
+// expressed through the directly drivable seams: `peekExtractionQueue` /
 // `enqueueGraphExtraction`, the `graph_extraction_queue` table,
 // runGraphExtractionPass draining the queue before its ranked sweep, and the
 // `index.graph.lazyGraphExtraction` config key. Symbols are accessed via the
@@ -46,15 +46,15 @@ const enqueueGraphExtraction = (
   }
 ).enqueueGraphExtraction;
 
-const drainExtractionQueue = (
+const peekExtractionQueue = (
   graphDb as unknown as {
-    drainExtractionQueue: (
+    peekExtractionQueue: (
       db: Database,
       stashRoot: string,
       limit: number,
     ) => Array<{ filePath: string; bodyHash: string; priority: number }>;
   }
-).drainExtractionQueue;
+).peekExtractionQueue;
 
 // ── Local LLM server (mirrors tests/graph-extraction.test.ts) ────────────────
 
@@ -243,7 +243,7 @@ describe("#624 P3 runGraphExtractionPass drains the queue first (AC5)", () => {
       expect(graphFileRowExists(db, tmpStash, queued)).toBe(true);
 
       // The queue is emptied after the pass drains it.
-      const remaining = drainExtractionQueue(db, tmpStash, 100);
+      const remaining = peekExtractionQueue(db, tmpStash, 100);
       expect(remaining).toHaveLength(0);
     });
   });
@@ -272,7 +272,7 @@ describe("#624 P3 default byte-identical (AC6)", () => {
 
       // The queue accessor over an untouched table returns nothing (no throw,
       // no spurious rows) — the drain is a guarded no-op when empty.
-      expect(drainExtractionQueue(db, tmpStash, 100)).toEqual([]);
+      expect(peekExtractionQueue(db, tmpStash, 100)).toEqual([]);
     });
   });
 });
@@ -309,8 +309,8 @@ describe("#624 P3 curate enqueue-not-extract contract (AC3)", () => {
       expect(extractedBodies).toHaveLength(0);
 
       // Intent was recorded for a later pass to drain.
-      const drained = drainExtractionQueue(db, tmpStash, 10);
-      expect(drained.map((r) => r.filePath)).toEqual([asset]);
+      const queued = peekExtractionQueue(db, tmpStash, 10);
+      expect(queued.map((r) => r.filePath)).toEqual([asset]);
     });
   });
 
@@ -319,7 +319,7 @@ describe("#624 P3 curate enqueue-not-extract contract (AC3)", () => {
     await withDb((db) => {
       // No flag, no enqueue → nothing happens. Mirrors `show` with the flag unset.
       expect(graphFileRowExists(db, tmpStash, asset)).toBe(false);
-      expect(drainExtractionQueue(db, tmpStash, 10)).toEqual([]);
+      expect(peekExtractionQueue(db, tmpStash, 10)).toEqual([]);
       expect(extractedBodies).toHaveLength(0);
     });
   });

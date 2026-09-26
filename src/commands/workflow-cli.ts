@@ -18,7 +18,7 @@ import { warn } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
 import { assertWorkflowMarkdownName, createWorkflowAsset, getWorkflowTemplate } from "../workflows/authoring/authoring";
 import type { WorkflowParameterFlag } from "../workflows/ir/params";
-import { WORKFLOW_MAX_TIMEOUT_MS } from "../workflows/ir/schema";
+import { WORKFLOW_MAX_TIMEOUT_MS } from "../workflows/resource-limits";
 import {
   abandonWorkflowRun,
   getWorkflowStatus,
@@ -198,8 +198,8 @@ const workflowCreateCommand = defineJsonCommand({
  * `--skip-if-locked` (#948) eligibility: only these two named, retryable
  * `TransientError` codes (#948 addendum — moved off UsageError, exit 75) turn
  * a `workflow run` failure into a graceful skip — `RUN_LEASE_HELD` (another
- * engine invocation is driving THIS run, `workflow-runs-repository.ts`'s
- * single-driver lease) and `STATE_DB_CONTENDED` (an unrelated akm process is
+ * live akm process holds THIS run's lock file, `exec/run-workflow.ts`) and
+ * `STATE_DB_CONTENDED` (an unrelated akm process is
  * writing state.db right now, `core/state-db.ts`'s BEGIN IMMEDIATE retry
  * exhaustion). Every other error — a bad flag, an unresolvable target —
  * still fails loudly.
@@ -230,7 +230,7 @@ const workflowRunCommand = defineJsonCommand({
     "skip-if-locked": {
       type: "boolean",
       description:
-        "If another akm process already holds this run's engine lease, or state.db is busy with another " +
+        "If another akm process is already driving this run, or state.db is busy with another " +
         "writer, skip gracefully (exit 0) instead of failing (exit 75). Use for high-frequency scheduled runs " +
         "so they don't pile up failures while a longer-running invocation is in progress.",
       default: false,

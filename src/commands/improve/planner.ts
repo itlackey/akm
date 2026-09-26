@@ -75,15 +75,11 @@ export function projectMemoryCleanup(input: MemoryCleanupProjectionInput): Memor
   };
 }
 
-/**
- * Apply the final global cap to an already-ranked candidate snapshot.
- * Replay remains additive to the ordinary cap, matching the live #610 rule.
- */
+/** Apply the final global cap to an already-ranked candidate snapshot. */
 export function selectEffectiveImproveRefs(args: {
   rankedRefs: readonly ImproveEligibleRef[];
   distillOnlyRefs: readonly ImproveEligibleRef[];
   limit?: number;
-  replayBudget: number;
 }): EffectiveRefSelection {
   const distillOnlySet = new Set(args.distillOnlyRefs.map((entry) => entry.ref));
   const reflectAndDistill = args.rankedRefs.filter((entry) => !distillOnlySet.has(entry.ref));
@@ -91,10 +87,7 @@ export function selectEffectiveImproveRefs(args: {
   // Preserve the established live ordering: ordinary reflect-path refs first,
   // then distill-only refs, with the rank order stable inside each partition.
   const allLoopRefs = [...reflectAndDistill, ...distillOnly];
-  const replay = allLoopRefs.filter((entry) => entry.eligibilitySource === "replay");
-  const ordinary = allLoopRefs.filter((entry) => entry.eligibilitySource !== "replay");
-  const selectedOrdinary = args.limit === undefined ? ordinary : ordinary.slice(0, args.limit);
-  const loopRefs = [...selectedOrdinary, ...replay.slice(0, args.replayBudget)];
+  const loopRefs = args.limit === undefined ? allLoopRefs : allLoopRefs.slice(0, args.limit);
   return {
     loopRefs,
     distillOnlyRefs: distillOnly,
@@ -111,7 +104,6 @@ export interface ImprovePlanProjectionInput {
   distillOnlyRefs: ReadonlySet<string>;
   configuredLimits: { cli?: number; profile?: number; reflect?: number };
   effectiveLimit?: number;
-  replayBudget: number;
   gates: readonly ImprovePlanGate[];
   processes: readonly ProcessRoutingRow[];
   proactive?: ImproveExecutionPlan["proactive"];
@@ -143,8 +135,9 @@ export function buildImproveExecutionPlan(input: ImprovePlanProjectionInput): Im
     limits: {
       configured: { ...input.configuredLimits },
       ...(input.effectiveLimit !== undefined ? { effective: input.effectiveLimit } : {}),
-      additiveReplayAllowance: input.replayBudget,
-      ...(input.effectiveLimit !== undefined ? { totalCeiling: input.effectiveLimit + input.replayBudget } : {}),
+      // The replay lane is gone; the published plan keeps a zero allowance.
+      additiveReplayAllowance: 0,
+      ...(input.effectiveLimit !== undefined ? { totalCeiling: input.effectiveLimit } : {}),
     },
     gates: input.gates.map((gate) => ({ ...gate })),
     effectiveRefs,

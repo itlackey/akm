@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parseWorkflow } from "../src/workflows/parser";
-import type { WorkflowParseResult } from "../src/workflows/schema";
+import { workflowStepInstructions } from "../src/workflows/compile";
+import { parseWorkflow, type WorkflowParseResult } from "../src/workflows/parser";
+import type { WorkflowPlanStep } from "../src/workflows/plan";
 
 const VALID_WORKFLOW = `---
 type: workflow
@@ -35,31 +36,35 @@ function parse(markdown: string, path = "workflows/test.md"): WorkflowParseResul
   return parseWorkflow(markdown, { path });
 }
 
-function expectOk(
-  result: WorkflowParseResult,
-): asserts result is { ok: true; document: NonNullable<Extract<WorkflowParseResult, { ok: true }>["document"]> } {
+function step(result: Extract<WorkflowParseResult, { ok: true }>, id: string): WorkflowPlanStep {
+  const found = result.plan.steps.find((candidate) => candidate.stepId === id);
+  if (!found) throw new Error(`no step ${id}`);
+  return found;
+}
+
+function expectOk(result: WorkflowParseResult): asserts result is Extract<WorkflowParseResult, { ok: true }> {
   if (!result.ok) {
     throw new Error(`Expected ok parse, got errors: ${result.errors.map((e) => `${e.line}: ${e.message}`).join("; ")}`);
   }
 }
 
 describe("parseWorkflow", () => {
-  test("parses a valid workflow document into structured steps", () => {
+  test("parses a valid workflow document into a compiled plan", () => {
     const result = parse(VALID_WORKFLOW);
     expectOk(result);
-    const doc = result.document;
+    const plan = result.plan;
 
-    expect(doc.description).toBe("Ship a release with validation checks");
-    expect(doc.tags).toEqual(["release", "deploy"]);
-    expect(doc.params).toEqual({ version: { type: "string", description: "Version being released" } });
-    expect(doc.preamble).toBe("# Ship Release");
-    expect(doc.preamble).not.toContain("type: workflow");
-    expect(doc.steps).toHaveLength(2);
-    expect(doc.steps[0]!.id).toBe("validate");
-    expect(doc.steps[0]!.instructions?.text).toBe("Confirm release notes, tag, and version are present.");
-    expect(doc.steps[0]!.gateRubric?.text).toBe("- Release notes reviewed\n- Version matches tag");
-    expect(doc.steps[0]!.sequenceIndex).toBe(0);
-    expect(doc.steps[1]!.gateRubric).toBeUndefined();
+    expect(plan.description).toBe("Ship a release with validation checks");
+    expect(plan.paramSchemas).toEqual({ version: { type: "string", description: "Version being released" } });
+    expect(plan.params).toEqual(["version"]);
+    expect(plan.preamble).toBe("# Ship Release");
+    expect(plan.preamble).not.toContain("type: workflow");
+    expect(plan.steps).toHaveLength(2);
+    expect(plan.steps[0]!.stepId).toBe("validate");
+    expect(workflowStepInstructions(plan.steps[0]!)).toBe("Confirm release notes, tag, and version are present.");
+    expect(plan.steps[0]!.gate.criteria).toEqual(["- Release notes reviewed\n- Version matches tag"]);
+    expect(plan.steps[0]!.sequenceIndex).toBe(0);
+    expect(plan.steps[1]!.gate.criteria).toEqual([]);
   });
 
   test("bare `- id:` with no map/route/unit is a complete minimal unit step", () => {
@@ -75,11 +80,11 @@ Do the one thing.
 `;
     const result = parse(minimal);
     expectOk(result);
-    expect(result.document.steps).toHaveLength(1);
-    expect(result.document.steps[0]!.id).toBe("only");
-    expect(result.document.steps[0]!.unit).toBeUndefined();
-    expect(result.document.steps[0]!.map).toBeUndefined();
-    expect(result.document.steps[0]!.route).toBeUndefined();
+    expect(result.plan.steps).toHaveLength(1);
+    expect(result.plan.steps[0]!.stepId).toBe("only");
+    expect(result.plan.steps[0]!.spec?.unit).toBeUndefined();
+    expect(result.plan.steps[0]!.spec?.map).toBeUndefined();
+    expect(result.plan.steps[0]!.route).toBeUndefined();
   });
 
   test("accepts canonical opaque xrefs in workflow frontmatter", () => {
@@ -141,15 +146,13 @@ Do the one thing.
     }
   });
 
-  test("attaches accurate SourceRef line spans to steps and instructions", () => {
+  test("attaches accurate SourceRef line spans to steps", () => {
     const result = parse(VALID_WORKFLOW);
     expectOk(result);
-    const [first, second] = result.document.steps;
+    const [first, second] = result.plan.steps;
 
-    expect(first!.instructions?.source.path).toBe("workflows/test.md");
-    expect(first!.instructions!.source.end).toBeLessThan(first!.gateRubric!.source.start);
-    expect(first!.gateRubric!.source.start).toBeGreaterThan(first!.instructions!.source.end);
-    expect(second!.instructions!.source.start).toBeGreaterThan(first!.gateRubric!.source.end);
+    expect(first!.spec?.source).toEqual({ path: "workflows/test.md", start: 10, end: 10 });
+    expect(second!.spec?.source).toEqual({ path: "workflows/test.md", start: 11, end: 11 });
   });
 
   test("preserves instruction indentation and trailing Markdown hard-break spaces", () => {
@@ -169,7 +172,7 @@ And this line.
     const result = parse(markdown);
     expectOk(result);
 
-    expect(result.document.steps[0]!.instructions?.text).toBe(
+    expect(workflowStepInstructions(result.plan.steps[0]!)).toBe(
       `    Keep this first-line indentation.\nKeep this hard break.${hardBreak}\nAnd this line.`,
     );
   });
@@ -182,9 +185,9 @@ And this line.
     const result = parse(markdown);
     expectOk(result);
 
-    expect(result.document.steps[0]!.gateRubric?.text).toBe(
+    expect(result.plan.steps[0]!.gate.criteria).toEqual([
       "- Release notes reviewed  \n### Evidence\nKeep the report.\n#### Details\n  Preserve this indentation.",
-    );
+    ]);
   });
 
   test("rejects duplicate ### gate headings even after another nested H3", () => {
@@ -242,7 +245,7 @@ Post the summary.
 `;
     const result = parse(routeOnly);
     expectOk(result);
-    expect(result.document.steps.find((s) => s.id === "triage")?.instructions).toBeUndefined();
+    expect(step(result, "triage").spec?.instructions).toBeUndefined();
   });
 
   test("every level-2 heading must exactly match a declared step id", () => {
@@ -257,9 +260,9 @@ Post the summary.
     const configured = VALID_WORKFLOW.replace("- id: deploy\n", "- id: deploy\n    gate: { max_loops: 2 }\n");
     const result = parse(configured);
     expectOk(result);
-    const deploy = result.document.steps.find((step) => step.id === "deploy")!;
-    expect(deploy.gate).toEqual({ maxLoops: 2 });
-    expect(deploy.gateRubric).toBeUndefined();
+    const deploy = step(result, "deploy");
+    expect(deploy.gate.maxLoops).toBe(2);
+    expect(deploy.gate.criteria).toEqual([]);
   });
 
   test("gate.required is not part of the workflow format", () => {
@@ -277,9 +280,7 @@ Post the summary.
       );
       const result = parse(markdown);
       expectOk(result);
-      const validate = result.document.steps.find((step) => step.id === "validate")!;
-      expect(validate.gate).toBeUndefined();
-      expect(validate.gateRubric).toBeUndefined();
+      expect(step(result, "validate").gate).toMatchObject({ criteria: [], maxLoops: 1 });
     }
   });
 
@@ -289,11 +290,8 @@ Post the summary.
     // default single attempt.
     const result = parse(VALID_WORKFLOW);
     expectOk(result);
-    const validate = result.document.steps.find((s) => s.id === "validate")!;
-    // The rubric's presence alone declares the gate; the frontmatter control
-    // object defaults to `{}`.
-    expect(validate.gate).toEqual({});
-    expect(validate.gateRubric).toBeDefined();
+    // The rubric's presence alone declares the gate, with the default single attempt.
+    expect(step(result, "validate").gate).toMatchObject({ criteria: [expect.any(String)], maxLoops: 1 });
   });
 
   test("rejects unsupported workflow frontmatter keys", () => {

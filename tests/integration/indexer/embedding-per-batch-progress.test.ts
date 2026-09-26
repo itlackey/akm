@@ -180,7 +180,6 @@ describe("generateEmbeddingsForDb: per-batch progress and final outcome line (#9
         onBatch?.(
           texts.map((_t, i) => i),
           texts.map(() => undefined),
-          undefined,
           {
             batchIndex: 1,
             batchCount: 1,

@@ -26,7 +26,6 @@ import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
 import { searchVec } from "../../src/storage/repositories/index-vec-repository";
-import "../../src/sources/providers/index";
 import {
   type Cleanup,
   sandboxStashDir,

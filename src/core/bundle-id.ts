@@ -5,17 +5,70 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { isBundleSlug } from "./asset/asset-ref";
+import { UsageError } from "./errors";
 
 /** Deterministic, filesystem-safe bundle slug from a source path. */
 export function slugForPath(sourcePath: string): string {
   const resolved = path.resolve(sourcePath);
-  const base = path
-    .basename(resolved)
+  const base = slugify(path.basename(resolved));
+  if (base.length > 0) return base;
+  return `bundle-${shortHash(resolved)}`;
+}
+
+/**
+ * Bundle slug from the package/repo name a registry install id names
+ * (`npm:@scope/pkg` → `pkg`, `github:owner/repo` → `repo`,
+ * `git:https://host/owner/repo` → `repo`); empty when it names none.
+ */
+export function slugForRegistryId(registryId: string): string {
+  const locator = registryId.slice(registryId.indexOf(":") + 1);
+  return slugify(locator.split(/[/:]/).filter(Boolean).pop() ?? "");
+}
+
+function slugify(name: string): string {
+  return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  if (base.length > 0) return base;
-  return `bundle-${shortHash(resolved)}`;
+}
+
+/**
+ * Enforce the `--name` contract on every add path (D6): an explicit name is
+ * not a silent hint that may fall back to a derived id — it is a request
+ * that either succeeds exactly or fails loudly, before anything is written.
+ *
+ * `existingKeyForThisInstall` is the bundle key this exact source (path/URL/
+ * registry id) is already configured under, if any. Re-adding that same
+ * source under a *different* explicit name is rejected in favor of
+ * `akm bundle rename`, which is the one command allowed to change a bundle's
+ * key. A caller with no existing install for this source (the common case)
+ * omits it.
+ */
+export function validateExplicitBundleName(
+  bundles: Readonly<Record<string, unknown>>,
+  name: string,
+  existingKeyForThisInstall?: string,
+): void {
+  if (!isBundleSlug(name)) {
+    throw new UsageError(
+      `"${name}" is not a legal bundle name: it must not contain whitespace or the characters ":" "." "#" "/".`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (existingKeyForThisInstall !== undefined && name !== existingKeyForThisInstall) {
+    throw new UsageError(
+      `This source is already installed as bundle "${existingKeyForThisInstall}". Re-adding it under a ` +
+        `different name is not supported — run \`akm bundle rename ${existingKeyForThisInstall} ${name}\` instead.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (Object.hasOwn(bundles, name) && name !== existingKeyForThisInstall) {
+    throw new UsageError(
+      `Bundle name "${name}" already exists. Choose another name, or run ` +
+        `\`akm bundle rename ${name} <new-name>\` first.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
 }
 
 /** Derive one batch-unique bundle id. */

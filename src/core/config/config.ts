@@ -6,8 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { isBundleSlug } from "../asset/asset-ref";
-import { isRecord } from "../common";
+import { isBundleSlug, parseBundleRef } from "../asset/asset-ref";
+import { deriveBundleId } from "../bundle-id";
+import { isRecord, resolveStashDir } from "../common";
 import { ConfigError } from "../errors";
 import { liftLegacyEngineExtraParams } from "../extra-params";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
@@ -19,8 +20,16 @@ import {
   withConfigLock,
   writeConfigAtomic,
 } from "./config-io";
-import { AkmConfigSchema, CURRENT_CONFIG_VERSION, listTopLevelConfigKeys } from "./config-schema";
-import { bundleComponentConfig, bundleContentRoot, bundleContentRoots, bundlesToSourceEntries } from "./config-sources";
+import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
+import {
+  bundleComponentConfig,
+  bundleContentRoot,
+  bundleContentRoots,
+  bundleSourceId,
+  bundlesToSourceEntries,
+  filesystemBundleSourceId,
+  isBundleEnabled,
+} from "./config-sources";
 import type {
   AkmConfig,
   BundleConfigEntry,
@@ -31,10 +40,9 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
-import { upgradeConfigVersion } from "./config-version-shim";
+import { resolveSchemaAt } from "./config-walker";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { migrateLegacySourceShape } from "./legacy-source-shape-shim";
-import { stripRetiredExperimentalKeys } from "./retired-experimental-keys-shim";
 import { isApiKeyReference, SECRET_STORE_REFERENCE_PATTERN } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
@@ -190,39 +198,40 @@ export function loadUserConfig(): AkmConfig {
 }
 
 /**
- * Acquire the existing config-write sentinel and read a fresh validated
- * generation while keeping the sentinel held. Source update uses this to
- * fence an audited bundle descriptor through publication: a cooperating
- * config writer can commit either before this snapshot or after the update,
- * never between the final generation check and index commit.
+ * Run the per-file config pipeline every raw config object goes through
+ * before it is either validated (the local/top-level file) or merged in as
+ * an `extends` base: JSONC parse already done by the caller, then the
+ * `configVersion` read ({@link readConfigVersion}), then the legacy
+ * `stashDir`/`sources[]`/`installed[]` shim, then the legacy `extraParams`
+ * lift (#852). Unknown keys are not an error: the schema drops them in
+ * memory. Shared by {@link parseAndValidateConfigText} (the local file) and
+ * {@link resolveExtendsChain} (each base in the chain) so a fleet-shared base
+ * config can carry its own `configVersion` / legacy shape independently of
+ * the file that extends it.
  */
-export function acquireConfigReadFence(): { config: AkmConfig; release: () => void } {
-  const release = acquireConfigLock();
-  try {
-    cachedConfig = undefined;
-    return { config: loadUserConfig(), release };
-  } catch (error) {
-    release();
-    throw error;
-  }
+function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
+  const versioned = readConfigVersion(parseConfigText(text, sourcePath), sourcePath);
+  const parsedRaw = migrateLegacySourceShape(versioned, sourcePath);
+  return liftExtraParamsOrThrow(parsedRaw, sourcePath);
 }
 
 /**
- * Run the per-file config pipeline every raw config object goes through
- * before it is either validated (the local/top-level file) or merged in as
- * an `extends` base: JSONC parse already done by the caller, then version
- * shim, then legacy `stashDir`/`sources[]`/`installed[]` shim, then the
- * legacy `extraParams` lift (#852), then the retired `experimental.*` key
- * shim. Shared by {@link parseAndValidateConfigText}
- * (the local file) and {@link resolveExtendsChain} (each base in the chain) so
- * a fleet-shared base config can carry its own old `configVersion` / legacy
- * shape independently of the file that extends it.
+ * `configVersion` is read, never gated on. `"0.9.0"` is the only value akm
+ * has ever shipped, and a document without the field is that same document.
+ * Any other value is named once and the file is read as the current shape
+ * anyway; every ordinary config write and `akm migrate apply`'s `configFile`
+ * step then persist `"0.9.0"`.
  */
-function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  const versioned = upgradeConfigVersion(parseConfigText(text, sourcePath), sourcePath);
-  const parsedRaw = migrateLegacySourceShape(versioned, sourcePath);
-  const liftedRaw = liftExtraParamsOrThrow(parsedRaw, sourcePath);
-  return stripRetiredExperimentalKeys(liftedRaw, sourcePath);
+function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const version = raw.configVersion;
+  if (version === CURRENT_CONFIG_VERSION) return raw;
+  if (version !== undefined) {
+    warnOnce(
+      `config:config-version${sourcePath ? `:${sourcePath}` : ""}`,
+      `${sourcePath ?? "config.json"} declares configVersion ${JSON.stringify(version)}; this release reads it as ${CURRENT_CONFIG_VERSION}.`,
+    );
+  }
+  return { ...raw, configVersion: CURRENT_CONFIG_VERSION };
 }
 
 /**
@@ -270,66 +279,74 @@ function liftExtraParamsOrThrow(parsedRaw: Record<string, unknown>, sourcePath?:
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
-  warnUnknownTopLevelConfigKeys(liftedLocalRaw, sourcePath);
   const withExtends = resolveExtendsChain(liftedLocalRaw, sourcePath);
 
   const where = sourcePath ? ` at ${sourcePath}` : "";
+  warnUnknownConfigKeys(liftedLocalRaw, sourcePath);
   const parsed = AkmConfigSchema.safeParse(withExtends);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    const needsSchedulerMigration = parsed.error.issues.some(
-      (issue) => issue.path[0] === "scheduler" && issue.path.at(-1) === "sourceId",
-    );
-    throw new ConfigError(
-      `Invalid config${where}:\n${lines}`,
-      "INVALID_CONFIG_FILE",
-      needsSchedulerMigration
-        ? "Run `akm migrate apply` to bind existing scheduler grants to their source."
-        : undefined,
-    );
+    throw new ConfigError(`Invalid config${where}:\n${lines}`, "INVALID_CONFIG_FILE");
   }
   const merged = deepMergeConfig(DEFAULT_CONFIG, parsed.data as Partial<AkmConfig>) as AkmConfig;
   const finalResult = AkmConfigSchema.safeParse(merged);
   if (!finalResult.success) {
     const lines = finalResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    const needsSchedulerMigration = finalResult.error.issues.some(
-      (issue) => issue.path[0] === "scheduler" && issue.path.at(-1) === "sourceId",
-    );
     throw new ConfigError(
       `Invalid merged config${sourcePath ? ` at ${sourcePath}` : ""}:\n${lines}`,
       "INVALID_CONFIG_FILE",
-      needsSchedulerMigration
-        ? "Run `akm migrate apply` to bind existing scheduler grants to their source."
-        : undefined,
     );
   }
   assertUniquePhysicalBundleRoots(finalResult.data, sourcePath);
   return finalResult.data;
 }
 
-const RETIRED_TOP_LEVEL_CONFIG_KEYS = new Set([
-  "agent",
-  "bindings",
-  "features",
-  "installed",
-  "llm",
-  "modelAliases",
-  "profiles",
-  "sources",
-  "stashDir",
-  "stashes",
-  "writable",
-]);
+/**
+ * Every dotted key in `raw` the schema does not know, at any depth (arrays
+ * are not descended). Unknown keys are never an error: they are a typo, or a
+ * key another release used. Reads keep them (they round-trip through
+ * ordinary writes, so a newer release's settings survive a downgrade);
+ * `akm migrate apply` drops them.
+ */
+export function unknownConfigKeyPaths(
+  root: Record<string, unknown>,
+  node: Record<string, unknown> = root,
+  prefix: readonly string[] = [],
+): string[][] {
+  const found: string[][] = [];
+  for (const key of Object.keys(node).sort()) {
+    const keyPath = [...prefix, key];
+    if (resolveSchemaAt(keyPath, root) === undefined) {
+      found.push(keyPath);
+      continue;
+    }
+    const value = node[key];
+    if (isPlainConfigObject(value)) found.push(...unknownConfigKeyPaths(root, value, keyPath));
+  }
+  return found;
+}
 
-function warnUnknownTopLevelConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
-  const known = new Set(listTopLevelConfigKeys());
-  for (const key of Object.keys(raw).sort()) {
-    if (known.has(key) || RETIRED_TOP_LEVEL_CONFIG_KEYS.has(key)) continue;
+function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
+  for (const keyPath of unknownConfigKeyPaths(raw)) {
+    const dotted = keyPath.join(".");
     warnOnce(
-      `config:unknown-key:${sourcePath ?? "inline"}:${key}`,
-      `Unknown config key ${JSON.stringify(key)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior. Check the spelling or remove it.`,
+      `config:unknown-key:${sourcePath ?? "inline"}:${dotted}`,
+      `Unknown config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior and is ignored. Check the spelling; a key retired by this release or added by a newer one is dropped by \`akm migrate apply\`.`,
     );
   }
+}
+
+function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly string[]): void {
+  let cursor: unknown = node;
+  for (const segment of keyPath.slice(0, -1)) {
+    if (!isPlainConfigObject(cursor)) return;
+    cursor = cursor[segment];
+  }
+  if (isPlainConfigObject(cursor)) delete cursor[keyPath[keyPath.length - 1] as string];
+}
+
+function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertUniquePhysicalBundleRoots(config: AkmConfig, sourcePath?: string): void {
@@ -351,11 +368,10 @@ function assertUniquePhysicalBundleRoots(config: AkmConfig, sourcePath?: string)
  * Parse raw config text and validate via Zod.
  * ({@link AkmConfigSchema}). Returns the merged-with-defaults AkmConfig.
  *
- * The schema accepts only the current config version. A known older version
- * is auto-upgraded in memory first (see `./config-version-shim`); anything
- * else — including anything newer — is rejected before the canonical shape
- * is validated. When the config sets `extends` (#945), its resolved chain is
- * deep-merged underneath before validation — see {@link resolveExtendsChain}.
+ * `configVersion` is read as the current version whatever it says (see
+ * {@link readConfigVersion}). When the config sets `extends` (#945), its
+ * resolved chain is deep-merged underneath before validation — see
+ * {@link resolveExtendsChain}.
  */
 export function parseAndValidateConfigText(text: string, sourcePath?: string): AkmConfig {
   const liftedConfig = runConfigFilePipeline(text, sourcePath);
@@ -404,7 +420,7 @@ function collectExtendsLayers(localRaw: Record<string, unknown>, configPath: str
     }
     visited.add(resolvedPath);
     const baseRaw = runConfigFilePipeline(text, resolvedPath);
-    warnUnknownTopLevelConfigKeys(baseRaw, resolvedPath);
+    warnUnknownConfigKeys(baseRaw, resolvedPath);
     layers.push({ ref, raw: baseRaw });
     current = baseRaw;
     currentPath = resolvedPath;
@@ -884,6 +900,42 @@ function configWriteBody(
   return ordered as AkmConfig;
 }
 
+export interface ConfigFileNormalization {
+  /** Top-level keys whose stored shape differs from the current one. */
+  readonly keys: readonly string[];
+  readonly changed: boolean;
+  readonly applied: boolean;
+  readonly backupPath?: string;
+}
+
+/**
+ * The migrator's one config step. The reader already tolerates every shape
+ * akm has written (`configVersion` read as current, legacy source layout,
+ * `extraParams` lift, unknown keys dropped); this writes that current shape back to
+ * `config.json` — the same body `mutateConfig` writes — so the tolerance
+ * becomes durable. Reports without writing unless `apply` is set.
+ */
+export function normalizeConfigFile(configPath: string, options: { apply: boolean }): ConfigFileNormalization {
+  return withConfigLock(() => {
+    const text = readConfigText(configPath);
+    if (text === undefined) return { keys: [], changed: false, applied: false };
+    const raw = parseConfigText(text, configPath);
+    const localRaw = runConfigFilePipeline(text, configPath);
+    const current = buildEffectiveConfig(localRaw, configPath);
+    const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
+    const body = withSchedulerOnDisk(configWriteBody(localRaw, current, next) as Record<string, unknown>, next);
+    for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
+    const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
+      .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
+      .sort();
+    if (keys.length === 0 || !options.apply) return { keys, changed: keys.length > 0, applied: false };
+    const backup = backupExistingConfig(configPath);
+    writeConfigAtomic(configPath, body);
+    cachedConfig = undefined;
+    return { keys, changed: true, applied: true, ...(backup ? { backupPath: backup.timestamped } : {}) };
+  });
+}
+
 /**
  * Mutate config under one fail-closed lock spanning read, merge, validation,
  * ordinary backup, and atomic write.
@@ -944,6 +996,60 @@ export async function mutateConfigWithPrecommit<T>(
   } finally {
     release();
   }
+}
+
+const UNBOUND_SCHEDULER_SOURCE_ID = `sha256:${"0".repeat(64)}`;
+
+/**
+ * The source identity 0.9.16 bound a scheduler grant to: the configured
+ * bundle's source id, or the implicit `AKM_BUNDLE_DIR` stash's. `undefined`
+ * when the bundle is not active on this host.
+ */
+export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): string | undefined {
+  if (isBundleEnabled(config, bundleId)) return bundleSourceId(config, bundleId);
+  if (config.bundles?.[bundleId] !== undefined || !process.env.AKM_BUNDLE_DIR?.trim()) return undefined;
+  try {
+    const root = resolveStashDir();
+    const implicitId = deriveBundleId(undefined, root, new Set(Object.keys(config.bundles ?? {})));
+    return implicitId === bundleId ? filesystemBundleSourceId(root) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `scheduler.enabled` is a list of refs in memory but is written in the
+ * `{kind, ref, sourceId}` shape 0.9.16 reads, so that release still runs
+ * against a config this one wrote (the upgrade rehearsal's read-back). This
+ * release reads either shape; the object form can go once no supported
+ * release is strict about it.
+ */
+function schedulerEnabledOnDisk(config: AkmConfig): unknown[] | undefined {
+  const enabled = config.scheduler?.enabled;
+  if (enabled === undefined) return undefined;
+  return enabled.map((ref) => {
+    let bundle: string | undefined;
+    let conceptId = "";
+    try {
+      const parsed = parseBundleRef(ref);
+      bundle = parsed.bundle;
+      conceptId = parsed.conceptId;
+    } catch {
+      return ref;
+    }
+    return {
+      kind: conceptId.startsWith("workflows/") ? "workflow" : "task",
+      ref,
+      sourceId:
+        (bundle !== undefined ? schedulerSourceIdFor(config, bundle) : undefined) ?? UNBOUND_SCHEDULER_SOURCE_ID,
+    };
+  });
+}
+
+function withSchedulerOnDisk(body: Record<string, unknown>, config: AkmConfig): Record<string, unknown> {
+  const onDisk = schedulerEnabledOnDisk(config);
+  if (onDisk === undefined || !isPlainConfigObject(body.scheduler)) return body;
+  return { ...body, scheduler: { ...body.scheduler, enabled: onDisk } };
 }
 
 /**
@@ -1014,7 +1120,7 @@ export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknow
     }
   }
 
-  return sanitized;
+  return withSchedulerOnDisk(sanitized, config);
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {

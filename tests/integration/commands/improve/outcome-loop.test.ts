@@ -12,7 +12,6 @@
  *   - `getAssetOutcome`: round-trip read.
  *   - `getOutcomeScoresByRef`: bulk read.
  *   - `outcomeScoreToSalience`: normalisation + diversity floor.
- *   - `computeProxyAdequacy`: correlation tripwire.
  *   - Migration 010 creates asset_outcome table.
  *
  * `review_pressure` (#613) code/type was deleted in Chunk 7 (WI-7.2, R21) —
@@ -26,7 +25,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  computeProxyAdequacy,
   getAllAssetOutcomes,
   getAssetOutcome,
   getOutcomeScoresByRef,
@@ -569,83 +567,5 @@ describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", (
     } finally {
       db.close();
     }
-  });
-});
-
-// ── computeProxyAdequacy ──────────────────────────────────────────────────────
-
-describe("computeProxyAdequacy — correlation tripwire", () => {
-  test("returns NaN correlation and isInverted=false for fewer than 3 rows", () => {
-    const rows = [
-      {
-        asset_ref: "skills/a",
-        last_retrieved_at: 0,
-        retrieval_count: 5,
-        expected_retrieval_rate: 5,
-        negative_feedback_count: 0,
-        accepted_change_count: 1,
-        outcome_score: 0.5,
-        updated_at: NOW,
-      },
-    ];
-    const result = computeProxyAdequacy(rows);
-    expect(Number.isNaN(result.correlation)).toBe(true);
-    expect(result.isInverted).toBe(false);
-  });
-
-  test("isInverted=false for positive correlation", () => {
-    // High outcome_score → high accepted_change_rate: proxy is coherent.
-    const rows = [0.8, 0.6, 0.4, 0.2].map((score, i) => ({
-      asset_ref: `skill:${i}`,
-      last_retrieved_at: 0,
-      retrieval_count: 10,
-      expected_retrieval_rate: 10,
-      negative_feedback_count: 0,
-      accepted_change_count: Math.round(score * 10), // proportional to score
-      outcome_score: score,
-      updated_at: NOW,
-    }));
-    const result = computeProxyAdequacy(rows);
-    expect(result.isInverted).toBe(false);
-    expect(result.correlation).toBeGreaterThan(0);
-  });
-
-  test("isInverted=true for negative correlation below -0.3", () => {
-    // High outcome_score → LOW accepted_change_rate: proxy is inverted.
-    const refs = ["skills/a", "skills/b", "skills/c", "skills/d", "skills/e"];
-    const rows = refs.map((ref, i) => {
-      // Outcome scores: 0.9, 0.7, 0.5, 0.3, 0.1 (high = popular)
-      const outcomeScore = 0.9 - i * 0.2;
-      // accepted_change_rate: inversely proportional (popular = never improved)
-      const acceptedChangeCount = i * 2; // 0, 2, 4, 6, 8 → rates 0, 0.2, 0.4, 0.6, 0.8
-      return {
-        asset_ref: ref,
-        last_retrieved_at: 0,
-        retrieval_count: 10,
-        expected_retrieval_rate: 10,
-        negative_feedback_count: 0,
-        accepted_change_count: acceptedChangeCount,
-        outcome_score: outcomeScore,
-        updated_at: NOW,
-      };
-    });
-    const result = computeProxyAdequacy(rows);
-    expect(result.isInverted).toBe(true);
-    expect(result.correlation).toBeLessThan(-0.3);
-  });
-
-  test("returns n = number of rows", () => {
-    const rows = Array.from({ length: 7 }, (_, i) => ({
-      asset_ref: `skill:${i}`,
-      last_retrieved_at: 0,
-      retrieval_count: 5,
-      expected_retrieval_rate: 5,
-      negative_feedback_count: 0,
-      accepted_change_count: i,
-      outcome_score: i * 0.1,
-      updated_at: NOW,
-    }));
-    const result = computeProxyAdequacy(rows);
-    expect(result.n).toBe(7);
   });
 });

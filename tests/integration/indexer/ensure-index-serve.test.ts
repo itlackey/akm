@@ -19,7 +19,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { ConfigError } from "../../../src/core/errors";
 import { getDbPath } from "../../../src/core/paths";
 import { ensureIndex, isIndexStale } from "../../../src/indexer/ensure-index";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
@@ -127,15 +126,10 @@ describe("ensureIndex read-path (background mode)", () => {
     spy.mockRestore();
   });
 
-  test("a populated pre-current generation is rejected before a reader can query it", () => {
+  test("a populated pre-layout-21 index opens without refusal but cannot serve the stash", () => {
     replaceWithPopulatedV17Index();
-    expect(() => openExistingDatabase(getDbPath())).toThrow(ConfigError);
-    try {
-      openExistingDatabase(getDbPath());
-    } catch (error) {
-      expect((error as ConfigError).code).toBe("INDEX_SCHEMA_INCOMPATIBLE");
-      expect((error as Error).message).toContain("Run 'akm index'");
-    }
+    closeDatabase(openExistingDatabase(getDbPath()));
+    expect(isIndexStale(stashDir)).toBe(true);
   });
 
   test("a populated pre-current generation rebuilds from materialized sources before serving", async () => {

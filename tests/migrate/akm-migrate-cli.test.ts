@@ -19,7 +19,7 @@ describe("akm-migrate CLI", () => {
     await expect(main([])).rejects.toThrow(/Choose `status` or `apply \[--dry-run\]`/);
     // The per-generation verbs are gone: one tool, one plan.
     await expect(main(["task-v4-apply"])).rejects.toThrow(/Choose `status` or `apply/);
-    await expect(main(["status", "--dry-run"])).rejects.toThrow(/`status` accepts no options/);
+    await expect(main(["status", "--dry-run"])).rejects.toThrow(/`status` does not accept --dry-run/);
     await expect(main(["apply", "--force"])).rejects.toThrow(/`apply` does not accept --force/);
   });
 });

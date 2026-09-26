@@ -3,62 +3,25 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Plan hashing for the frozen-plan contract (redesign addendum, R1).
- *
- * `workflow run` persists `plan_json` + `plan_hash` on the run row
- * (migration 006); every later invocation executes that snapshot. The hash is
- * the sha256 (hex) of the plan's CANONICAL JSON — object keys recursively
- * sorted — so two structurally-equal plans hash identically regardless of key
- * insertion order, and the same program always freezes to the same hash.
- *
- * Pure module: no IO beyond node:crypto, no engine imports.
+ * Plan hashing: sha256 of the plan's canonical JSON (keys recursively sorted),
+ * stored beside `plan_json` as information — a stored plan is never gated on it.
  */
 
 import { createHash } from "node:crypto";
-import { decodeWorkflowPlanV4, WORKFLOW_IR_V5_VERSION, type WorkflowPlanGraphV4 } from "./schema-v4";
 
 /** sha256 hex of the canonical (recursively sorted-keys) JSON of the plan. */
-export function computePlanHash(plan: WorkflowPlanGraphV4 | unknown): string {
+export function computePlanHash(plan: unknown): string {
   return createHash("sha256").update(canonicalPlanJson(plan)).digest("hex");
 }
 
 /** The canonical JSON string the hash is computed over (also what to persist). */
-export function canonicalPlanJson(plan: WorkflowPlanGraphV4 | unknown): string {
+export function canonicalPlanJson(plan: unknown): string {
   return canonicalJson(plan);
 }
 
 /** Canonical JSON used by every plan and input hash. */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value));
-}
-
-/** Decode, require stored canonical bytes, then verify the stored SHA-256. */
-export function decodeCanonicalPlan(
-  runId: string,
-  planJson: string,
-  planHash: string | null,
-  expectedVersion?: number | null,
-): WorkflowPlanGraphV4 {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(planJson);
-  } catch {
-    throw new Error(`Workflow run ${runId} has corrupt frozen plan JSON.`);
-  }
-  const canonicalWire = canonicalJson(parsed);
-  if (planJson !== canonicalWire) throw new Error(`Workflow run ${runId} has noncanonical frozen plan JSON.`);
-  const actual = createHash("sha256").update(planJson).digest("hex");
-  if (!planHash || !/^[0-9a-f]{64}$/.test(planHash) || actual !== planHash)
-    throw new Error(`Workflow run ${runId} frozen plan integrity check failed.`);
-  if (expectedVersion !== undefined && expectedVersion !== null && expectedVersion !== WORKFLOW_IR_V5_VERSION) {
-    throw new Error(
-      `Workflow run ${runId} uses unsupported workflow IR version ${expectedVersion}; this runtime supports only workflow IR version 5.`,
-    );
-  }
-  const plan = decodeWorkflowPlanV4(parsed);
-  const canonical = canonicalPlanJson(plan);
-  if (planJson !== canonical) throw new Error(`Workflow run ${runId} has noncanonical frozen plan JSON.`);
-  return plan;
 }
 
 function sortKeys(value: unknown): unknown {

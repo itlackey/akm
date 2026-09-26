@@ -3,16 +3,14 @@ import { decodeCommandOutput, escapeXml } from "../src/tasks/backends/exec-utils
 import type { SchtasksExec, SchtasksFs } from "../src/tasks/backends/schtasks";
 import { buildSchtasksXml, extractSchtasksTarget, SCHTASKS_BACKEND } from "../src/tasks/backends/schtasks";
 import type { InstalledSchedulerBinding } from "../src/tasks/backends/types";
-import { type SchedulerBinding, schedulerNativeBindingId } from "../src/tasks/scheduler-binding";
+import type { SchedulerBinding } from "../src/tasks/scheduler-binding";
 import {
   type ScheduledTaskContext,
   schedulerContextDescriptor,
   schedulerContextPath,
 } from "../src/tasks/scheduler-invocation";
 import {
-  type SchedulerArtifactDrift,
   type SchedulerBackendContractDriver,
-  type SchedulerNormalizedPeer,
   schedulerBackendConformance,
 } from "./_helpers/scheduler-backend-conformance";
 
@@ -27,7 +25,7 @@ const USER_SID = "S-1-5-21-1000-2000-3000-1001";
 
 const xmlOptions = <T extends Record<string, unknown>>(options?: T) => ({
   ...options,
-  contextPath: schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, process.env.PATH ?? "")),
+  contextPath: schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT)),
   userSid: USER_SID,
 });
 
@@ -405,7 +403,6 @@ describe("schtasks bundle attribution", () => {
 
     expect(extractSchtasksTarget(xml)).toBeUndefined();
     expect(backend.list()).toEqual([]);
-    expect(backend.listNativeArtifacts?.()).toEqual([{ nativeId: "ping" }]);
   });
 });
 
@@ -452,10 +449,12 @@ describe("schtasks backend signatures", () => {
     expect(listSync(backend)).toEqual([
       {
         id: "ping",
+        nativeId: "ping",
         enabled: true,
         signature: backend.expectedSignature?.(task),
         binding: ["C:/akm.exe"],
         contextPath: expect.any(String),
+        invocation: task.invocation,
       },
     ]);
     expect(exec.calls).toEqual([
@@ -487,38 +486,28 @@ describe("schtasks backend signatures", () => {
     expect(installed).not.toBe(backend.expectedSignature?.({ ...disabled, enabled: true }));
   });
 
-  test("installed signatures do not trust a forged Source claim", () => {
+  test("a row is compared by akm's own Source fingerprint: a missing or different one is drift", () => {
     const task = makeTask("*/5 * * * *");
-    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions()).replace(
-      /<Source>[^<]+<\/Source>/,
-      `<Source>akm:v1:${"0".repeat(64)}</Source>`,
+    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions());
+    const backendFor = (xml: string) =>
+      SCHTASKS_BACKEND({
+        exec: queryExec(xml),
+        akmArgv: ["C:/akm.exe"],
+        logDir: "C:/log",
+        scheduledContext: SCHEDULED_CONTEXT,
+        userSid: USER_SID,
+      });
+    const expected = backendFor(installedXml).expectedSignature?.(task);
+
+    expect(listSync(backendFor(installedXml))[0]!.signature).toBe(expected);
+    expect(listSync(backendFor(installedXml.replace(/\s*<Source>[^<]+<\/Source>/, "")))[0]!.signature).not.toBe(
+      expected,
     );
-    const backend = SCHTASKS_BACKEND({
-      exec: queryExec(installedXml),
-      akmArgv: ["C:/akm.exe"],
-      logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
-      userSid: USER_SID,
-    });
-
-    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
-  });
-
-  test("installed signatures are available without a Source claim", () => {
-    const task = makeTask("*/5 * * * *");
-    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions()).replace(
-      /\s*<Source>[^<]+<\/Source>/,
-      "",
-    );
-    const backend = SCHTASKS_BACKEND({
-      exec: queryExec(installedXml),
-      akmArgv: ["C:/akm.exe"],
-      logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
-      userSid: USER_SID,
-    });
-
-    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
+    expect(
+      listSync(
+        backendFor(installedXml.replace(/<Source>[^<]+<\/Source>/, `<Source>akm:v1:${"0".repeat(64)}</Source>`)),
+      )[0]!.signature,
+    ).not.toBe(expected);
   });
 
   test("queried XML namespace prefixes and formatting do not change the signature", () => {
@@ -569,110 +558,6 @@ describe("schtasks backend signatures", () => {
     });
 
     expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
-  });
-
-  test("installed signatures detect principal UserId drift", () => {
-    const task = makeTask("*/5 * * * *");
-    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions()).replace(
-      `<UserId>${USER_SID}</UserId>`,
-      "<UserId>S-1-5-21-9999-8888-7777-1002</UserId>",
-    );
-    const backend = SCHTASKS_BACKEND({
-      exec: queryExec(installedXml),
-      akmArgv: ["C:/akm.exe"],
-      logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
-      userSid: USER_SID,
-    });
-
-    expect(listSync(backend)[0]!.signature).not.toBe(backend.expectedSignature?.(task));
-  });
-
-  test("installed signatures detect action, trigger, settings, and principal drift despite an unchanged Source", () => {
-    const task = makeTask("*/5 * * * *");
-    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions());
-    const backendFor = (xml: string) =>
-      SCHTASKS_BACKEND({
-        exec: queryExec(xml),
-        akmArgv: ["C:/akm.exe"],
-        logDir: "C:/log",
-        scheduledContext: SCHEDULED_CONTEXT,
-        userSid: USER_SID,
-      });
-    const expected = backendFor(installedXml).expectedSignature?.(task);
-
-    expect(listSync(backendFor(installedXml.replace("&apos;ping&apos;", "&apos;other&apos;")))[0]!.signature).not.toBe(
-      expected,
-    );
-    expect(
-      listSync(backendFor(installedXml.replace("<Interval>PT5M</Interval>", "<Interval>PT10M</Interval>")))[0]!
-        .signature,
-    ).not.toBe(expected);
-    expect(
-      listSync(
-        backendFor(
-          installedXml.replace(
-            "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
-            "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>",
-          ),
-        ),
-      )[0]!.signature,
-    ).not.toBe(expected);
-    expect(
-      listSync(
-        backendFor(
-          installedXml.replace("<RunLevel>LeastPrivilege</RunLevel>", "<RunLevel>HighestAvailable</RunLevel>"),
-        ),
-      )[0]!.signature,
-    ).not.toBe(expected);
-  });
-
-  test("changing a materialized settings default remains detectable drift", () => {
-    const task = makeTask("*/5 * * * *");
-    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions()).replace(
-      "  <Settings>",
-      "  <Settings>\n    <AllowStartOnDemand>false</AllowStartOnDemand>",
-    );
-    const backend = SCHTASKS_BACKEND({
-      exec: queryExec(installedXml),
-      akmArgv: ["C:/akm.exe"],
-      logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
-      userSid: USER_SID,
-    });
-
-    expect(listSync(backend)[0]!.signature).not.toBe(backend.expectedSignature?.(task));
-  });
-
-  test("signature canonicalization ignores only the dynamic boundary cycle", () => {
-    const task = makeTask("17 * * * *");
-    const installedXml = buildSchtasksXml(
-      task,
-      ["C:/akm.exe"],
-      "C:/log",
-      xmlOptions({ now: () => localDate(2026, 7, 13, 10, 2, 37) }),
-    )
-      .replace(/\s*<Source>[^<]+<\/Source>/, "")
-      .replace("2026-07-13T10:17:00", "2031-11-04T22:17:00");
-    const backend = SCHTASKS_BACKEND({
-      exec: queryExec(installedXml),
-      akmArgv: ["C:/akm.exe"],
-      logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
-      userSid: USER_SID,
-    });
-
-    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
-
-    const wrongPhase = installedXml.replace("2031-11-04T22:17:00", "2031-11-04T22:18:00");
-    const wrongBackend = SCHTASKS_BACKEND({
-      exec: queryExec(wrongPhase),
-      akmArgv: ["C:/akm.exe"],
-      logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
-      userSid: USER_SID,
-    });
-    expect(listSync(wrongBackend)[0]!.signature).not.toBe(wrongBackend.expectedSignature?.(task));
   });
 
   test("expected signature changes when the schedule changes", () => {
@@ -823,285 +708,136 @@ describe("schtasks backend install validation", () => {
     });
 
     expect(() => backend.install(makeTask("0 9 * * *"))).toThrow("injected log directory failure");
-    expect(execCalls).toEqual([["schtasks", "/Query", "/TN", "\\akm\\ping", "/XML"]]);
+    expect(execCalls).toEqual([]);
     expect(fsCalls).toEqual([]);
   });
 });
 
-describe("schtasks backend transactional install", () => {
-  function transactionBackend(scheduledContext: ScheduledTaskContext = SCHEDULED_CONTEXT) {
-    const files = new Map<string, string>();
-    let fsAccesses = 0;
-    let fsMutations = 0;
-    let installedXml: string | undefined;
-    let installedTaskName: string | undefined;
-    let extraInstalledXml: string | undefined;
-    let extraInstalledTaskName: string | undefined;
-    let queriedXml: string | undefined;
-    let enabled = true;
-    let failNextOperation: "create" | "disable" | undefined;
-    let swapAfterTempWrite: string | undefined;
-    const calls: string[][] = [];
-    const fs: SchtasksFs = {
-      writeFile(file, content) {
-        fsAccesses += 1;
-        fsMutations += 1;
-        files.set(file, content);
-        if (swapAfterTempWrite !== undefined) {
-          installedXml = swapAfterTempWrite;
-          swapAfterTempWrite = undefined;
-        }
-      },
-      removeFile(file) {
-        fsAccesses += 1;
-        fsMutations += 1;
-        files.delete(file);
-      },
-      tmpdir: () => "C:/tmp",
-      ensureDir() {},
-    };
-    const exec: SchtasksExec = {
-      run(args) {
-        calls.push(args);
-        const operation = args[1]?.toLowerCase();
-        if (operation === "/query" && args.includes("/XML")) {
-          const queriedName = args[args.indexOf("/TN") + 1];
-          const selectedXml = queriedName === extraInstalledTaskName ? extraInstalledXml : installedXml;
-          return selectedXml === undefined
-            ? { status: 1, stdout: "", stderr: "ERROR: The system cannot find the file specified." }
-            : {
-                status: 0,
-                stdout: queriedName === extraInstalledTaskName ? selectedXml : (queriedXml ?? selectedXml),
-                stderr: "",
-              };
-        }
-        if (operation === "/query") {
-          return {
-            status: 0,
-            stdout: [installedTaskName, extraInstalledTaskName]
-              .filter((name): name is string => name !== undefined)
-              .map((name) => `"${name}","N/A","Ready"`)
-              .join("\r\n"),
-            stderr: "",
-          };
-        }
-        if (operation === "/create") {
-          const xmlPath = args[args.indexOf("/XML") + 1];
-          installedXml = files.get(xmlPath!);
-          installedTaskName = args[args.indexOf("/TN") + 1];
-          enabled = installedXml?.match(/<Settings>[\s\S]*?<Enabled>(true|false)<\/Enabled>/)?.[1] !== "false";
-          if (failNextOperation === "create") {
-            failNextOperation = undefined;
-            return { status: 1, stdout: "", stderr: "injected create failure" };
-          }
-          return { status: 0, stdout: "", stderr: "" };
-        }
-        if (operation === "/change") {
-          enabled = args.includes("/ENABLE");
-          if (installedXml !== undefined) {
-            installedXml = installedXml.replace(
-              /(<Settings>[\s\S]*?<Enabled>)(?:true|false)(<\/Enabled>)/,
-              `$1${enabled}$2`,
-            );
-          }
-          if (args.includes("/DISABLE") && failNextOperation === "disable") {
-            failNextOperation = undefined;
-            return { status: 1, stdout: "", stderr: "injected disable failure" };
-          }
-          return { status: 0, stdout: "", stderr: "" };
-        }
-        if (operation === "/delete") {
-          installedXml = undefined;
-          installedTaskName = undefined;
-          return { status: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected command: ${JSON.stringify(args)}`);
-      },
-    };
-    return {
-      backend: SCHTASKS_BACKEND({
-        exec,
-        fs,
-        akmArgv: ["C:/akm.exe"],
-        logDir: "C:/log",
-        scheduledContext,
-        userSid: USER_SID,
-      }),
-      calls,
-      installedXml: () => installedXml,
-      replaceInstalledXml(xml: string) {
-        installedXml = xml;
-        queriedXml = undefined;
-      },
-      clearInstalled() {
-        installedXml = undefined;
-        installedTaskName = undefined;
-        queriedXml = undefined;
-      },
-      addEquivalentArtifact(taskName: string, xml: string) {
-        extraInstalledTaskName = taskName;
-        extraInstalledXml = xml;
-      },
-      enabled: () => enabled,
-      setQueriedXml(xml: string) {
-        queriedXml = xml;
-      },
-      swapOwnerAfterNextTempWrite(xml: string) {
-        swapAfterTempWrite = xml;
-      },
-      failNext(operation: "create" | "disable") {
-        failNextOperation = operation;
-      },
-      captureState() {
+/** An in-memory Task Scheduler: task name → XML, plus the temp files `/Create /XML` reads. */
+function fakeTaskScheduler(scheduledContext: ScheduledTaskContext = SCHEDULED_CONTEXT) {
+  const files = new Map<string, string>();
+  const tasks = new Map<string, string>();
+  const calls: string[][] = [];
+  const ok = { status: 0, stdout: "", stderr: "" };
+  const missing = { status: 1, stdout: "", stderr: "ERROR: The system cannot find the file specified." };
+  let failCreate = false;
+  const fs: SchtasksFs = {
+    writeFile: (file, content) => void files.set(file, content),
+    removeFile: (file) => void files.delete(file),
+    tmpdir: () => "C:/tmp",
+    ensureDir() {},
+  };
+  const exec: SchtasksExec = {
+    run(args) {
+      calls.push(args);
+      const operation = args[1]?.toLowerCase();
+      const name = args[args.indexOf("/TN") + 1] ?? "";
+      if (operation === "/query" && args.includes("/XML")) {
+        const xml = tasks.get(name);
+        return xml === undefined ? missing : { status: 0, stdout: xml, stderr: "" };
+      }
+      if (operation === "/query") {
         return {
-          installedXml,
-          installedTaskName,
-          extraInstalledXml,
-          extraInstalledTaskName,
-          enabled,
-          files: [...files.entries()].sort(([left], [right]) => left.localeCompare(right)),
+          status: 0,
+          stdout: [...tasks.keys()].map((task) => `"${task}","N/A","Ready"`).join("\r\n"),
+          stderr: "",
         };
-      },
-      resetActivity() {
-        calls.length = 0;
-        fsAccesses = 0;
-        fsMutations = 0;
-      },
-      accessCount: () => calls.length + fsAccesses,
-      mutationCount: () =>
-        fsMutations +
-        calls.filter((call) => ["/create", "/delete", "/change"].includes(call[1]?.toLowerCase() ?? "")).length,
-    };
-  }
+      }
+      if (operation === "/create") {
+        if (failCreate) {
+          failCreate = false;
+          return { status: 1, stdout: "", stderr: "injected create failure" };
+        }
+        tasks.set(name, files.get(args[args.indexOf("/XML") + 1] ?? "") ?? "");
+        return ok;
+      }
+      if (operation === "/change") {
+        const xml = tasks.get(name);
+        if (xml === undefined) return missing;
+        const enabled = args.includes("/ENABLE");
+        tasks.set(name, xml.replace(/(<Settings>[\s\S]*?<Enabled>)(?:true|false)(<\/Enabled>)/, `$1${enabled}$2`));
+        return ok;
+      }
+      if (operation === "/delete") return tasks.delete(name) ? ok : missing;
+      throw new Error(`unexpected command: ${JSON.stringify(args)}`);
+    },
+  };
+  return {
+    backend: SCHTASKS_BACKEND({
+      exec,
+      fs,
+      akmArgv: ["C:/akm.exe"],
+      logDir: "C:/log",
+      scheduledContext,
+      userSid: USER_SID,
+    }),
+    calls,
+    files,
+    tasks,
+    failNextCreate() {
+      failCreate = true;
+    },
+  };
+}
 
-  function schtasksContractDriver(scheduledContext = SCHEDULED_CONTEXT): SchedulerBackendContractDriver {
-    const transaction = transactionBackend(scheduledContext);
-    const nativeId = (binding: SchedulerBinding) => binding.nativeId ?? schedulerNativeBindingId(binding.id);
+function schtasksContractDriver(scheduledContext = SCHEDULED_CONTEXT): SchedulerBackendContractDriver {
+  const scheduler = fakeTaskScheduler(scheduledContext);
+  const sorted = (map: Map<string, string>) => [...map.entries()].sort(([left], [right]) => left.localeCompare(right));
+  return {
+    backend: scheduler.backend,
+    captureState: () => ({ tasks: sorted(scheduler.tasks), files: sorted(scheduler.files) }),
+    rowText: (nativeId) => scheduler.tasks.get(`\\akm\\${nativeId}`),
+    addForeignRow() {
+      scheduler.tasks.set(
+        "\\Backup\\nightly",
+        "<Task><Actions><Exec><Command>backup.exe</Command></Exec></Actions></Task>",
+      );
+      return () => scheduler.tasks.get("\\Backup\\nightly");
+    },
+  };
+}
 
-    return {
-      backend: transaction.backend,
-      captureState: transaction.captureState,
-      clearArtifact: () => transaction.clearInstalled(),
-      driftArtifact(binding, drift: SchedulerArtifactDrift) {
-        const prior = transaction.installedXml();
-        if (!prior) throw new Error(`missing Task Scheduler XML fixture for ${binding.id}`);
-        const next =
-          drift === "foreign"
-            ? prior.replaceAll("&apos;ping&apos;", "&apos;foreign&apos;")
-            : drift === "malformed"
-              ? prior.replaceAll("&apos;--scheduled&apos;", "&apos;--broken&apos;")
-              : prior.replace("<DaysInterval>1</DaysInterval>", "<DaysInterval>2</DaysInterval>");
-        if (next === prior) throw new Error(`failed to drift Task Scheduler fixture for ${drift}`);
-        transaction.replaceInstalledXml(next);
-      },
-      addNormalizedPeer(binding, peer: SchedulerNormalizedPeer) {
-        const id = nativeId(binding);
-        const xml = transaction.installedXml();
-        if (!xml) throw new Error(`missing Task Scheduler XML fixture for ${binding.id}`);
-        transaction.addEquivalentArtifact(`\\akm\\${peer === "case" ? id.toUpperCase() : `${id}.`}`, xml);
-      },
-      currentFingerprint(binding) {
-        const artifact = (
-          transaction.backend.listNativeArtifacts?.() as Array<{ nativeId: string; fingerprint?: string }>
-        ).find((candidate) => candidate.nativeId === nativeId(binding));
-        if (!artifact?.fingerprint) throw new Error(`missing Task Scheduler fingerprint fixture for ${binding.id}`);
-        return artifact.fingerprint;
-      },
-      resetActivity: transaction.resetActivity,
-      accessCount: transaction.accessCount,
-      mutationCount: transaction.mutationCount,
-    };
-  }
+schedulerBackendConformance({
+  name: "schtasks",
+  scheduledContext: SCHEDULED_CONTEXT,
+  movedContext: { ...SCHEDULED_CONTEXT, AKM_STATE_DIR: "C:\\Users\\Akm User\\moved-state" },
+  create: schtasksContractDriver,
+});
 
-  schedulerBackendConformance({
-    name: "schtasks",
-    scheduledContext: SCHEDULED_CONTEXT,
-    movedContext: { ...SCHEDULED_CONTEXT, AKM_STATE_DIR: "C:\\Users\\Akm User\\moved-state" },
-    create: schtasksContractDriver,
+describe("schtasks backend install", () => {
+  test("registers the XML through /Create /XML <temp> /F and removes the temp file", () => {
+    const scheduler = fakeTaskScheduler();
+
+    scheduler.backend.install(makeTask("0 9 * * *"));
+
+    const create = scheduler.calls.find((call) => call[1] === "/Create");
+    expect(create).toEqual(["schtasks", "/Create", "/TN", "\\akm\\ping", "/XML", expect.any(String), "/F"]);
+    expect(scheduler.tasks.get("\\akm\\ping")).toContain('encoding="UTF-16"');
+    expect(scheduler.files.size).toBe(0);
   });
 
-  test("restores prior queried XML and disabled state when /Create /F fails after replacing it", () => {
-    const transaction = transactionBackend();
-    transaction.backend.install(makeTask("0 9 * * *", "ping", false));
-    const priorXml = transaction.installedXml();
-    transaction.failNext("create");
+  test("a failed /Create is reported and leaves no temp file behind", () => {
+    const scheduler = fakeTaskScheduler();
+    scheduler.failNextCreate();
 
-    expect(() => transaction.backend.install(makeTask("30 10 * * *", "ping", true))).toThrow("injected create failure");
-
-    expect(transaction.installedXml()).toBe(priorXml);
-    expect(transaction.enabled()).toBe(false);
-  });
-
-  test("restores prior queried XML and enabled state when post-create disable fails", () => {
-    const transaction = transactionBackend();
-    transaction.backend.install(makeTask("0 9 * * *", "ping", true));
-    const priorXml = transaction.installedXml();
-    transaction.failNext("disable");
-
-    expect(() => transaction.backend.install(makeTask("30 10 * * *", "ping", false))).toThrow(
-      "injected disable failure",
-    );
-
-    expect(transaction.installedXml()).toBe(priorXml);
-    expect(transaction.enabled()).toBe(true);
-  });
-
-  test("rollback rewrites a queried UTF-8 declaration to match the UTF-16 temp file", () => {
-    const transaction = transactionBackend();
-    transaction.backend.install(makeTask("0 9 * * *", "ping", true));
-    const priorXml = transaction.installedXml();
-    if (!priorXml) throw new Error("missing installed XML");
-    transaction.setQueriedXml(priorXml.replace('encoding="UTF-16"', 'encoding="UTF-8"'));
-    transaction.failNext("create");
-
-    expect(() => transaction.backend.install(makeTask("30 10 * * *", "ping", true))).toThrow("injected create failure");
-
-    expect(transaction.installedXml()).toBe(priorXml);
-    expect(transaction.installedXml()).toContain('encoding="UTF-16"');
-    expect(transaction.installedXml()).not.toContain('encoding="UTF-8"');
+    expect(() => scheduler.backend.install(makeTask("0 9 * * *"))).toThrow("injected create failure");
+    expect(scheduler.tasks.size).toBe(0);
+    expect(scheduler.files.size).toBe(0);
   });
 
   test("uses a portable native name while preserving a nested logical invocation", () => {
-    const transaction = transactionBackend();
+    const scheduler = fakeTaskScheduler();
     const nested = {
       ...makeTask("0 9 * * *", "sub/deep/nightly"),
       logicalSource: { kind: "task" as const, ref: "team//sub/deep/nightly" },
       invocation: ["task", "run", "sub/deep/nightly", "--bundle", "team", "--scheduled"],
     };
 
-    transaction.backend.install(nested);
+    scheduler.backend.install(nested);
 
-    const create = transaction.calls.find((call) => call[1]?.toLowerCase() === "/create");
-    const taskName = create?.[create.indexOf("/TN") + 1] ?? "";
-    expect(taskName.slice("\\akm\\".length)).not.toContain("/");
-    expect(transaction.installedXml()).toContain("&apos;sub/deep/nightly&apos;");
-    expect(transaction.installedXml()).not.toContain("<URI>\\akm\\sub/deep/nightly</URI>");
-
-    const colliding = {
-      ...makeTask("0 9 * * *", "task-b0117b892c35999ceb4d5386f8609932"),
-      logicalSource: { kind: "task" as const, ref: "team//task-b0117b892c35999ceb4d5386f8609932" },
-      invocation: ["task", "run", "task-b0117b892c35999ceb4d5386f8609932", "--bundle", "team", "--scheduled"],
-    };
-    expect(() => transaction.backend.install(colliding)).toThrow(/native scheduler artifact|different logical owner/i);
-    expect(transaction.installedXml()).toContain("&apos;sub/deep/nightly&apos;");
-  });
-
-  test("rechecks the exact task owner after the temp XML write and before /Create /F", () => {
-    const transaction = transactionBackend();
-    const nested = {
-      ...makeTask("0 9 * * *", "sub/deep/nightly"),
-      logicalSource: { kind: "task" as const, ref: "team//sub/deep/nightly" },
-      invocation: ["task", "run", "sub/deep/nightly", "--bundle", "team", "--scheduled"],
-    };
-    transaction.backend.install(nested);
-    const prior = transaction.installedXml();
-    if (!prior) throw new Error("missing installed XML");
-    transaction.swapOwnerAfterNextTempWrite(prior.replaceAll("sub/deep/nightly", "other-owner"));
-    const priorCallCount = transaction.calls.length;
-
-    expect(() => transaction.backend.install({ ...nested, cron: "30 10 * * *" })).toThrow(
-      /native scheduler artifact.*not the exact task owner/i,
-    );
-    expect(transaction.calls.slice(priorCallCount).some((call) => call[1]?.toLowerCase() === "/create")).toBe(false);
+    const [taskName] = [...scheduler.tasks.keys()];
+    expect(taskName?.slice("\\akm\\".length)).not.toContain("/");
+    expect(scheduler.tasks.get(taskName ?? "")).toContain("&apos;sub/deep/nightly&apos;");
+    expect(scheduler.backend.list()).toEqual([expect.objectContaining({ id: "sub/deep/nightly", target: "team" })]);
   });
 });

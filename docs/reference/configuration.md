@@ -10,32 +10,17 @@ automatic project-config discovery.
 
 ## Version 0.9
 
-A present configuration file must set `configVersion` to a version this
-binary knows: the current `"0.9.0"`, or a known older version it can
-auto-upgrade in memory (see "Version read shim" below). Missing, newer,
-numeric, and any other unrecognized version are rejected by ordinary
-commands without rewriting the file — an older binary never guesses at a
-newer, unknown shape. Pre-0.9 config and database layouts are not runtime
-inputs. Historical task sources and scheduler activation are handled by the
-standalone `akm-migrate` executable, also invoked by `akm migrate` / `akm
-upgrade`; ordinary runtime code reads only the current shape.
-
-### Version read shim
-
-For config only, a known older `configVersion`
-is converted to the current shape in memory on load — with a one-line stderr
-deprecation warning — rather than hard-failing every command. Nothing is
-written back to disk by the shim itself; the very next config-mutating
-command (`akm config set`, etc.) persists the upgrade for free, since every
-config write already forces `configVersion` to the current value, which
-silences the warning. A `configVersion` this binary does not recognize at
-all — including anything newer than current — still fails closed with
-`UNSUPPORTED_CONFIG_VERSION`.
-
-As of this writing `"0.9.0"` is the only `configVersion` akm has ever
-shipped, so there is no real older shape for the shim to convert yet; the
-mechanism (`src/core/config/config-version-shim.ts`) is established ahead of
-the first bump that will need it, per #863.
+`configVersion` is `"0.9.0"`, the only value akm has ever shipped. It is
+read, never gated on: a file without the field loads silently, and a file
+declaring any other value is named once on stderr (`config.json declares
+configVersion "X"; this release reads it as 0.9.0.`) and read as the
+current shape anyway — nothing is rewritten on disk. The next config write
+(`akm config set`, etc.) and `akm migrate apply`'s config step both persist
+`"0.9.0"`, which silences the note. When a newer akm wrote the shared
+config, `akm health`'s `binary-config-skew` advisory is what says so. Pre-0.9
+config and database layouts are not runtime inputs. Historical task sources
+are handled by the standalone `akm-migrate` executable, also invoked by `akm
+migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
 
 ```jsonc
 {
@@ -82,15 +67,16 @@ the first bump that will need it, per #863.
 
 ## Scheduler activation
 
-`scheduler.enabled` is this host's explicit scheduling allow-list. Each entry
-has a `kind` (`task` or `workflow`), a canonical fully qualified `ref`, and a
-`sourceId` binding the grant to the configured source installation that was
-approved. Absence means disabled. Replacing a bundle's path or locator under
-the same name invalidates the old grant; ordinary updates from the same origin
-do not. Authored task/workflow files may describe schedules but cannot grant
-themselves authority to create native scheduler entries. Do not edit
-`sourceId` manually: `akm task enable` writes it, and `akm migrate apply`
-upgrades grants written by older releases.
+`scheduler.enabled` is this host's list of scheduled refs, such as
+`stash//tasks/nightly`. A ref that is not listed is disabled. On disk each
+entry is still written as the `{kind, ref, sourceId}` object 0.9.16 reads,
+so that release keeps working against a config this one wrote; in memory it
+is the ref.
+A config without the list (written before 0.9.17) means "keep what is
+installed": the first `akm task sync` fills it from the akm-written native
+scheduler rows. The 0.9.17-alpha `{kind, ref, sourceId}` entries are read as
+their `ref`. Authored task/workflow files may describe schedules but cannot
+put themselves on the list.
 
 This key is deliberately local: if a config uses `extends`, any `scheduler`
 section in the base is ignored with a warning. Only the top-level local config
@@ -734,7 +720,7 @@ one file, and have each host's local config extend it.
   `extends` at it.
 
 Shared layers carry portable policy, not host authority. `bundles`, source and
-write defaults, registries, embedding connections, scheduler grants,
+write defaults, registries, embedding connections, scheduler activation,
 `execution`, `experimental`, and setup state are ignored when inherited.
 Engine definitions may be shared, but credentials and executable authority
 (`apiKey`, `apiKeyFile`, `bin`, `args`, and `workspace`) must be supplied by
@@ -823,11 +809,9 @@ one of the three per engine.
 
 `embedding.apiKey` accepts the same three forms and resolves `secret://` the
 same way, on every path that sends an embedding request: `akm index`
-(including its `bundle update` post-commit embedding pass and the targeted
-re-embed a write command like `akm remember` triggers), `akm improve`'s
-consolidate pass (memory dedup and similarity clustering), and the
-fingerprint-rename canary `akm index` runs when the embedding config
-changes. All of them build the
+(including the reindex `akm bundle update` runs and the targeted re-embed a
+write command like `akm remember` triggers), `akm improve`'s
+consolidate pass (memory dedup and similarity clustering). All of them build the
 provider request through the same `RemoteEmbedder`/`resolveSecret` boundary,
 so a `secret://` reference resolves identically regardless of which command
 triggered the request (#953).

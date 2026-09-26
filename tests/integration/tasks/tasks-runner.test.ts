@@ -1368,7 +1368,7 @@ describe("resolveAkmInvocation", () => {
     return launcher;
   }
 
-  test("binds a package owned by the active npm global root, including paths with spaces", () => {
+  test("binds the package launcher with its Node, including paths with spaces", () => {
     const globalRoot = path.join(tmpRoot, "npm prefix with spaces", "lib", "node_modules");
     const launcher = packageLauncher(path.join(globalRoot, "akm-cli"));
     const r = resolveAkmInvocation({
@@ -1377,97 +1377,34 @@ describe("resolveAkmInvocation", () => {
       execPath: "/usr/bin/node",
       launcherPath: launcher,
       nodePath: "/usr/bin/node",
-      resolveNpmGlobalRoot: () => globalRoot,
     });
-    expect(r).toEqual({ argv: ["/usr/bin/node", launcher], via: "npm", kind: "npm", eligible: true });
+    expect(r).toEqual({ argv: ["/usr/bin/node", launcher], via: "npm" });
   });
 
-  test("classifies a project-local node_modules package as ineligible", () => {
-    const launcher = packageLauncher(path.join(tmpRoot, "project", "node_modules", "akm-cli"));
-    const globalRoot = path.join(tmpRoot, "global", "lib", "node_modules");
-    fs.mkdirSync(globalRoot, { recursive: true });
-
-    expect(
-      resolveAkmInvocation({
-        env: {},
-        runtime: "node",
-        launcherPath: launcher,
-        nodePath: "/usr/bin/node",
-        resolveNpmGlobalRoot: () => globalRoot,
-      }),
-    ).toEqual({
-      argv: ["/usr/bin/node", launcher],
-      via: "package-local",
-      kind: "package-local",
-      eligible: false,
-    });
-  });
-
-  test("classifies an npm exec cache package as ineligible", () => {
-    const launcher = packageLauncher(path.join(tmpRoot, ".npm", "_npx", "abc123", "node_modules", "akm-cli"));
-    const globalRoot = path.join(tmpRoot, "global-cache-case", "lib", "node_modules");
-    fs.mkdirSync(globalRoot, { recursive: true });
-
-    const result = resolveAkmInvocation({
-      env: {},
-      runtime: "node",
-      launcherPath: launcher,
-      nodePath: "/usr/bin/node",
-      resolveNpmGlobalRoot: () => globalRoot,
-    });
-
-    expect(result.kind).toBe("package-local");
-    expect(result.eligible).toBe(false);
-  });
-
-  test("fails closed when npm global-root resolution is unavailable", () => {
-    const launcher = packageLauncher(path.join(tmpRoot, "unresolved-package", "akm-cli"));
+  test.each([
+    ["a project-local node_modules", ["project", "node_modules", "akm-cli"]],
+    ["an npm exec cache", [".npm", "_npx", "abc123", "node_modules", "akm-cli"]],
+    ["an NVM-style prefix", [".nvm", "versions", "node", "v22.14.0", "lib", "node_modules", "akm-cli"]],
+  ])("binds a package launcher installed in %s as is", (_label, segments) => {
+    const launcher = packageLauncher(path.join(tmpRoot, ...segments));
     const nodePath = path.join(tmpRoot, "node-without-npm", "bin", "node");
-    expect(
-      resolveAkmInvocation({
-        env: {},
-        runtime: "node",
-        launcherPath: launcher,
-        nodePath,
-      }),
-    ).toMatchObject({ argv: [nodePath, launcher], via: "package-local", kind: "package-local", eligible: false });
+    expect(resolveAkmInvocation({ env: {}, runtime: "node", launcherPath: launcher, nodePath })).toEqual({
+      argv: [nodePath, launcher],
+      via: "npm",
+    });
   });
 
-  test("accepts a package-local install this process cannot write to (image-baked, read-only mount)", () => {
-    const launcher = packageLauncher(path.join(tmpRoot, "opt", "openpalm", "tools", "akm-cli"));
-    const nodePath = path.join(tmpRoot, "node-without-npm", "bin", "node");
-    expect(
-      resolveAkmInvocation({
-        env: {},
-        runtime: "node",
-        launcherPath: launcher,
-        nodePath,
-        isPathWritable: () => false,
-      }),
-    ).toEqual({ argv: [nodePath, launcher], via: "package-local", kind: "package-local", eligible: true });
-  });
-
-  test("accepts an npm global package under an NVM-style prefix", () => {
-    const prefix = path.join(tmpRoot, ".nvm", "versions", "node", "v22.14.0");
-    const nodePath = path.join(prefix, "bin", "node");
-    const globalRoot = path.join(prefix, "lib", "node_modules");
-    const launcher = packageLauncher(path.join(globalRoot, "akm-cli"));
+  test("a package launcher inside a git work tree is a checkout", () => {
+    const packageRoot = path.join(tmpRoot, "linked-checkout");
+    const launcher = packageLauncher(packageRoot);
+    fs.mkdirSync(path.join(packageRoot, ".git"), { recursive: true });
 
     expect(
-      resolveAkmInvocation({
-        env: {},
-        runtime: "node",
-        launcherPath: launcher,
-        nodePath,
-        resolveNpmGlobalRoot: (bootstrapNode) => {
-          expect(bootstrapNode).toBe(nodePath);
-          return globalRoot;
-        },
-      }),
-    ).toEqual({ argv: [nodePath, launcher], via: "npm", kind: "npm", eligible: true });
+      resolveAkmInvocation({ env: {}, runtime: "node", launcherPath: launcher, nodePath: "/usr/bin/node" }),
+    ).toEqual({ argv: ["/usr/bin/node", launcher], via: "checkout" });
   });
 
-  test("classifies a source CLI invocation as checkout-only", () => {
+  test("classifies a source CLI invocation as a checkout", () => {
     const r = resolveAkmInvocation({
       env: {},
       runtime: "bun",
@@ -1477,8 +1414,6 @@ describe("resolveAkmInvocation", () => {
     expect(r).toEqual({
       argv: ["/usr/bin/bun", path.resolve(import.meta.dir, "../../../src/cli.ts")],
       via: "checkout",
-      kind: "checkout",
-      eligible: false,
     });
   });
 
@@ -1501,12 +1436,7 @@ describe("resolveAkmInvocation", () => {
         mainPath: cliPath,
         cliEntryUrl: pathToFileURL(modulePath).href,
       }),
-    ).toEqual({
-      argv: ["/usr/bin/node", wrapperPath],
-      via: "checkout",
-      kind: "checkout",
-      eligible: false,
-    });
+    ).toEqual({ argv: ["/usr/bin/node", wrapperPath], via: "checkout" });
   });
 
   test("refuses a direct Node checkout when cli-node.mjs is unavailable", () => {
@@ -1537,7 +1467,7 @@ describe("resolveAkmInvocation", () => {
         execPath: "/opt/akm",
         mainPath: "/$bunfs/root/src/cli.ts",
       }),
-    ).toEqual({ argv: ["/opt/akm"], via: "standalone", kind: "standalone", eligible: true });
+    ).toEqual({ argv: ["/opt/akm"], via: "standalone" });
   });
 
   test("uses only the executable for a Bun standalone build", () => {
@@ -1547,7 +1477,7 @@ describe("resolveAkmInvocation", () => {
       execPath: "/opt/akm",
       mainPath: "/$bunfs/root/src/cli.ts",
     });
-    expect(r).toEqual({ argv: ["/opt/akm"], via: "standalone", kind: "standalone", eligible: true });
+    expect(r).toEqual({ argv: ["/opt/akm"], via: "standalone" });
   });
 
   test("uses only the executable for a Windows Bun standalone build", () => {
@@ -1557,53 +1487,30 @@ describe("resolveAkmInvocation", () => {
       execPath: "D:\\akm\\akm.exe",
       mainPath: "B:\\~BUN\\root\\src\\cli.ts",
     });
-    expect(r).toEqual({
-      argv: ["D:\\akm\\akm.exe"],
-      via: "standalone",
-      kind: "standalone",
-      eligible: true,
-    });
+    expect(r).toEqual({ argv: ["D:\\akm\\akm.exe"], via: "standalone" });
   });
 
-  // #901: `akm task sync --rebind` used to spawn `npm root --global` once per
-  // resolveAkmInvocation() call — two per sync cycle — leaving behind an npm
-  // debug log every time even though every spawn succeeded. The probe result
-  // can't change within a process, so it must be memoized. Rather than
-  // stubbing out the probe (which would bypass the memoization under test),
-  // this drives the REAL default `resolveNpmGlobalRoot` path: `nodePath` is a
-  // POSIX shebang script that stands in for `node`, counting how many times
-  // it is actually invoked via a marker file, with a real `npm-cli.js` file
-  // beside it so `resolveAssociatedNpmCli` finds it and the probe proceeds to
-  // spawn.
-  test.skipIf(process.platform === "win32")(
-    "resolveAkmInvocation spawns the npm-global-root probe at most once per process (#901)",
-    () => {
-      const fakeBin = path.join(tmpRoot, "npm-probe-memo", "bin");
-      fs.mkdirSync(path.join(fakeBin, "node_modules", "npm", "bin"), { recursive: true });
-      const spawnCountFile = path.join(tmpRoot, "npm-probe-memo", "spawn-count");
-      fs.writeFileSync(spawnCountFile, "");
+  // #901: resolving the scheduler invocation used to spawn `npm root --global`
+  // to decide eligibility, leaving an npm debug log behind on every sync. The
+  // stand-in `node` below counts its own invocations: it must never run.
+  test.skipIf(process.platform === "win32")("resolveAkmInvocation never spawns npm (#901)", () => {
+    const fakeBin = path.join(tmpRoot, "npm-probe", "bin");
+    fs.mkdirSync(path.join(fakeBin, "node_modules", "npm", "bin"), { recursive: true });
+    const spawnCountFile = path.join(tmpRoot, "npm-probe", "spawn-count");
+    fs.writeFileSync(spawnCountFile, "");
+    const fakeNode = path.join(fakeBin, "node");
+    fs.writeFileSync(
+      fakeNode,
+      ["#!/usr/bin/env bash", `echo x >> ${JSON.stringify(spawnCountFile)}`, "echo /fake/npm/global/root", ""].join(
+        "\n",
+      ),
+    );
+    fs.chmodSync(fakeNode, 0o755);
+    fs.writeFileSync(path.join(fakeBin, "node_modules", "npm", "bin", "npm-cli.js"), "");
+    const launcher = packageLauncher(path.join(tmpRoot, "npm-probe-package", "akm-cli"));
 
-      const fakeNode = path.join(fakeBin, "node");
-      fs.writeFileSync(
-        fakeNode,
-        ["#!/usr/bin/env bash", `echo x >> ${JSON.stringify(spawnCountFile)}`, "echo /fake/npm/global/root", ""].join(
-          "\n",
-        ),
-      );
-      fs.chmodSync(fakeNode, 0o755);
-      fs.writeFileSync(path.join(fakeBin, "node_modules", "npm", "bin", "npm-cli.js"), "");
+    resolveAkmInvocation({ env: {}, runtime: "node", launcherPath: launcher, nodePath: fakeNode });
 
-      const launcher = packageLauncher(path.join(tmpRoot, "npm-probe-memo-package", "akm-cli"));
-
-      for (let i = 0; i < 3; i++) {
-        resolveAkmInvocation({ env: {}, runtime: "node", launcherPath: launcher, nodePath: fakeNode });
-      }
-
-      const spawnCount = fs
-        .readFileSync(spawnCountFile, "utf8")
-        .split("\n")
-        .filter((line) => line.length > 0).length;
-      expect(spawnCount).toBe(1);
-    },
-  );
+    expect(fs.readFileSync(spawnCountFile, "utf8")).toBe("");
+  });
 });

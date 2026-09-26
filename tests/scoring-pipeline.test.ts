@@ -179,7 +179,6 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
       query: "test",
       rankingMode: "fts",
       defaultStashDir: stashDir,
-      allSourceDirs: [stashDir],
       sources: [{ path: stashDir }],
       config: { semanticSearchMode: "off" },
     });
@@ -206,7 +205,6 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
         rankingMode: "fts",
         fragmentId: "akm-fragment-matched-heading",
         defaultStashDir: stashDir,
-        allSourceDirs: [stashDir],
         sources: [{ path: stashDir }],
         config: { semanticSearchMode: "off" },
       });
@@ -239,7 +237,6 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
         rankingMode: "fts" as const,
         lexicalMatch,
         defaultStashDir: stashDir,
-        allSourceDirs: [stashDir],
         sources: [{ path: stashDir }],
         config: { semanticSearchMode: "off" as const },
       };
@@ -672,34 +669,6 @@ describe("Issue #940: relaxed non-name ceilings preserve body relevance", () => 
       expect(order).toEqual(["zzz-id", "mmm-id", "aaa-id"]);
     });
   });
-
-  test("a later belief ceiling does not overwrite relaxed body-relevance ordering", async () => {
-    const stashDir = tmpStash();
-    for (const [name, description] of [
-      ["aaa-archived", "kestrel once"],
-      ["mmm-archived", "kestrel migration across open water"],
-      ["zzz-archived", "kestrel migration kestrel migration kestrel migration"],
-    ]) {
-      writeFile(
-        path.join(stashDir, "knowledge", `${name}.md`),
-        `---\nbeliefState: archived\ndescription: ${description}\n---\n`,
-      );
-    }
-
-    await withTestIndex(stashDir, async () => {
-      const result = await akmSearch({ query: "kestrel migration ecology", source: "local", skipLogging: true });
-      const archived = result.hits.filter(
-        (hit): hit is SourceSearchHit => hit.type !== "registry" && hit.name.endsWith("-archived"),
-      );
-
-      // The archived belief ceiling deliberately gives every candidate the
-      // same public score. Their order must still reflect the relaxed
-      // pre-ceiling body relevance, not alphabetical filenames.
-      expect(archived).toHaveLength(3);
-      expect(new Set(archived.map((hit) => hit.score)).size).toBe(1);
-      expect(archived.map((hit) => hit.name)).toEqual(["zzz-archived", "mmm-archived", "aaa-archived"]);
-    });
-  });
 });
 
 describe("Identity-independent final ranking ties", () => {
@@ -964,7 +933,6 @@ describe("Issue #15: Hybrid ranking mode label", () => {
       query: "hybrid",
       rankingMode: "hybrid",
       defaultStashDir: stashDir,
-      allSourceDirs: [stashDir],
       sources: [{ path: stashDir }],
       config: { semanticSearchMode: "off" },
     });

@@ -77,7 +77,7 @@ describe("raw recovery startup", () => {
       new Response(child.stderr).text(),
     ]);
     expect(exitCode, stderr).toBe(0);
-    expect(JSON.parse(stdout)).toMatchObject({ status: "ready", taskV3Migration: { changed: 1, blocked: 0 } });
+    expect(JSON.parse(stdout)).toMatchObject({ status: "ready", taskFiles: { changed: 1, blocked: 0 } });
     expect(fs.readFileSync(task, "utf8")).toBe(taskV2);
   });
 
@@ -88,7 +88,7 @@ describe("raw recovery startup", () => {
     fs.mkdirSync(path.dirname(goodTask), { recursive: true });
     const taskV2 = "version: 2\nschedule: '@daily'\ncommand: /bin/echo ok\n";
     fs.writeFileSync(goodTask, taskV2);
-    // Array-form `command` is rejected by the v2 -> v3 converter, so this file plans as "blocked".
+    // Array-form `command` is rejected by the v2 -> v3 hop inside the one task-file planner, so this file plans as "blocked".
     fs.writeFileSync(badTask, "version: 2\nschedule: '@daily'\ncommand: [echo, unsafe]\n");
     fs.writeFileSync(
       getConfigPath(),
@@ -100,7 +100,8 @@ describe("raw recovery startup", () => {
     );
 
     // The standalone migrator runs every step in one plan; what this test
-    // pins is the v2 -> v3 skip-and-report rule inside it.
+    // pins is the task-file step's skip-and-report rule: a blocked file
+    // never stops the rest of the batch from migrating.
     const child = Bun.spawn(["bun", "scripts/akm-migrate.ts", "apply"], {
       cwd: path.resolve(import.meta.dir, "../.."),
       env: { ...process.env },
@@ -118,13 +119,13 @@ describe("raw recovery startup", () => {
     expect(exitCode, stderr).toBe(1);
     const result = JSON.parse(stdout);
     // The reported plan is re-inspected AFTER apply: the good file converged
-    // ("skipped"), `applied: 1` confirms generation 1 wrote it this run, and
-    // generation 2 then carried it on to task source v4.
+    // straight to task source v4 in one pass ("skipped", already v4), and
+    // `applied: 1` confirms it was rewritten this run. The bad file is still
+    // "blocked".
     expect(result).toMatchObject({
       status: "blocked",
       applied: 1,
-      taskV3Migration: { changed: 0, skipped: 1, blocked: 1 },
-      taskV4Applied: 1,
+      taskFiles: { changed: 0, skipped: 1, blocked: 1 },
     });
     // The good file was migrated all the way to v4 despite the blocked
     // sibling (matched via regex, not a literal contiguous substring, so this
@@ -134,11 +135,14 @@ describe("raw recovery startup", () => {
     expect(fs.readFileSync(badTask, "utf8")).toContain("command: [echo, unsafe]");
   });
 
-  test("setup rejects legacy config before creating the stash or backup", async () => {
-    fs.writeFileSync(getConfigPath(), '{"configVersion":"0.8.0","profiles":{}}\n');
+  test("setup rejects a config that fails to load before creating the stash or backup", async () => {
+    // configVersion alone no longer blocks anything (any value is read as
+    // current, with a warning) — a schema-invalid field is what still makes
+    // the config fail to load.
+    fs.writeFileSync(getConfigPath(), '{"bundles":{"primary":{"path":42,"writable":true}}}\n');
     const stash = path.join(process.env.HOME as string, "akm");
-    expect(() => assertSetupConfigPreflight()).toThrow(/Unsupported configVersion/);
-    await expect(runSetupWithDefaults({ noInit: false })).rejects.toThrow(/Unsupported configVersion/);
+    expect(() => assertSetupConfigPreflight()).toThrow(/`akm setup` cannot run/);
+    await expect(runSetupWithDefaults({ noInit: false })).rejects.toThrow(/`akm setup` cannot run/);
     expect(fs.existsSync(stash)).toBe(false);
     expect(fs.existsSync(path.join(process.env.XDG_CACHE_HOME as string, "akm", "migration-backups"))).toBe(false);
   });

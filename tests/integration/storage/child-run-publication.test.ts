@@ -165,7 +165,6 @@ function publicationInput(options: {
     updatedAt: createdAt,
     agentHarness: null,
     agentSessionId: null,
-    checkinArmedAt: null,
   };
   const steps: InsertStepInput[] = [
     {
@@ -206,9 +205,9 @@ function rawInsertChildRun(db: Database, input: PublishChildWorkflowRunInputCont
   db.prepare(
     `INSERT INTO workflow_runs (
       id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id,
-      created_at, updated_at, agent_harness, agent_session_id, checkin_armed_at,
+      created_at, updated_at, agent_harness, agent_session_id,
       plan_json, plan_hash, plan_ir_version, parent_run_id, parent_unit_id, invocation_key
-    ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
   ).run(
     input.run.id,
     input.run.workflowRef,
@@ -221,7 +220,6 @@ function rawInsertChildRun(db: Database, input: PublishChildWorkflowRunInputCont
     input.run.updatedAt,
     input.run.agentHarness,
     input.run.agentSessionId,
-    input.run.checkinArmedAt,
     input.planJson,
     input.planHash,
     input.parentRunId,
@@ -265,7 +263,7 @@ describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
       expect(row.status).toBe("active");
       expect(row.plan_json).toBe(input.planJson);
       expect(row.plan_hash).toBe(input.planHash);
-      expect(row.plan_ir_version).toBe(5);
+      expect(row.plan_ir_version).toBe(6);
       expect(row.parent_run_id).toBe(PARENT_RUN_ID);
       // C-15 / A-N12: the input field is spawnedByUnitId; it lands in parent_unit_id.
       expect(row.parent_unit_id).toBe(SPAWNING_UNIT_ID);
@@ -304,7 +302,7 @@ describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
     ],
     [
       "plan attachment",
-      `CREATE TRIGGER child_pub_fail_plan AFTER UPDATE OF plan_json ON workflow_runs WHEN NEW.id = '${ATOMICITY_CHILD_RUN_ID}' AND NEW.plan_ir_version = 5 BEGIN SELECT RAISE(ABORT, 'child-pub-fail-plan'); END`,
+      `CREATE TRIGGER child_pub_fail_plan AFTER UPDATE OF plan_json ON workflow_runs WHEN NEW.id = '${ATOMICITY_CHILD_RUN_ID}' AND NEW.plan_ir_version = 6 BEGIN SELECT RAISE(ABORT, 'child-pub-fail-plan'); END`,
     ],
     [
       "workflow_started event insert",

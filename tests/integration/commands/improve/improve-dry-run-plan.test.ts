@@ -30,6 +30,7 @@ import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { OpenCodeProvider } from "../../../../src/integrations/harnesses/opencode/session-log";
 import type { SessionLogHarness } from "../../../../src/integrations/session-logs/types";
+import { recordImproveLedger } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { CANONICAL_INDEX_DB_VERSION } from "../../../../src/storage/repositories/index-entry-schema";
 import { writeSkill } from "../../../_helpers/assets";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
@@ -258,29 +259,35 @@ describe("#800 effective dry-run planner", () => {
     }
   });
 
-  test("newer index generation keeps its upgrade action in the empty dry-run snapshot", async () => {
+  test("a newer index layout is read as-is by the dry run, with a warning naming the upgrade", async () => {
     const storage = isolatedStorage();
     const config = plannerConfig();
     await indexSkills(storage.stashDir, 1, config);
     const dbPath = getDbPath();
+    const newerVersion = String(CANONICAL_INDEX_DB_VERSION + 1);
     const newerDb = new Database(dbPath);
     try {
-      newerDb
-        .prepare("UPDATE index_meta SET value = ? WHERE key = 'version'")
-        .run(String(CANONICAL_INDEX_DB_VERSION + 1));
+      newerDb.prepare("UPDATE index_meta SET value = ? WHERE key = 'version'").run(newerVersion);
     } finally {
       newerDb.close();
     }
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
 
     const result = await akmImprove({ scope: "skill", stashDir: storage.stashDir, config, dryRun: true });
 
-    expect(result.plan?.snapshot).toEqual({
-      status: "incompatible",
-      reason:
-        "index.db is incompatible; Upgrade akm to a version that understands this index generation. " +
-        "Dry-run uses an empty snapshot and does not migrate it.",
-    });
-    expect(result.plannedRefs).toEqual([]);
+    expect(result.plan?.snapshot?.status).toBe("ready");
+    expect(warnings.some((line) => line.includes("newer akm") && line.includes("upgrade akm"))).toBe(true);
+    const after = new Database(dbPath, { readonly: true });
+    try {
+      expect(after.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({
+        value: newerVersion,
+      });
+    } finally {
+      after.close();
+    }
   });
 
   test("held WAL current index stays byte-identical across every dry planning read", async () => {
@@ -530,7 +537,7 @@ describe("#800 effective dry-run planner", () => {
     const config = plannerConfig();
     config.improve = {
       ...config.improve,
-      salience: { salienceThreshold: 0.1, replayBudget: 0 },
+      salience: { salienceThreshold: 0.1 },
     };
     await indexSkills(stashDir, 1, config);
     seedReplayRank("skills/skill-0", 0.99, "content");
@@ -553,124 +560,15 @@ describe("#800 effective dry-run planner", () => {
     ).toEqual([]);
   });
 
-  test("replay intersects the current skill plan and preserves the matching entry in dry and live envelopes", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig();
-    config.improve = {
-      ...config.improve,
-      // Higher-ranked stale and wrong-type rows must not consume this sole slot.
-      salience: { salienceThreshold: 1, replayBudget: 1 },
-    };
-    const skillRef = "skills/replay-match";
-    const skillPath = path.join(stashDir, "skills", "replay-match", "SKILL.md");
-    writeSkill(stashDir, "replay-match", "The only replay candidate in the current skill plan.");
-    writeMemory(stashDir, "out-of-scope");
-    saveConfig(config);
-    await akmIndex({ stashDir, full: true });
-    seedReplayRank("skills/stale", 0.99);
-    seedReplayRank("memories/out-of-scope", 0.95);
-    seedReplayRank(skillRef, 0.9);
-
-    const commonOptions = {
-      scope: "skill",
-      stashDir,
-      config,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }: { ref?: string }) =>
-        ({
-          schemaVersion: 2,
-          ok: false,
-          reason: "no_change",
-          error: "stable",
-          ref: ref ?? "",
-          engine: "test",
-          exitCode: 0,
-        }) satisfies AkmReflectResult,
-    };
-    const dry = await akmImprove({ ...commonOptions, dryRun: true });
-    const live = await akmImprove(commonOptions);
-    const expected = {
-      ref: skillRef,
-      reason: "scope-type",
-      filePath: skillPath,
-      itemRef: `stash//${skillRef}`,
-      eligibilitySource: "replay",
-    } satisfies ImproveEligibleRef;
-
-    expect(dry.plannedRefs).toEqual([expected]);
-    expect(live.plannedRefs).toEqual([expected]);
-    expect(dry.plan?.effectiveRefs).toEqual([{ ref: skillRef, lane: "replay", reason: "scope-type" }]);
-    expect(live.plan?.effectiveRefs).toEqual(dry.plan?.effectiveRefs);
-    for (const result of [dry, live]) {
-      expect(result.plan?.candidates).toEqual({ rawInScope: 1, selected: 1, effective: 1 });
-      expect(Object.fromEntries(result.plan?.gates.map((gate) => [gate.name, gate.removed]) ?? [])).toEqual({
-        profile: 0,
-        cleanup: 0,
-        validation: 0,
-        signal: 0,
-        disk: 0,
-        limit: 0,
-      });
-      expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual([expected]);
-    }
-  });
-
-  test("live replay bypass never also reports the selected ref as a terminal no-signal skip", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig();
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 1, replayBudget: 1 },
-    };
-    const skillRef = "skills/replay-after-stale-feedback";
-    writeSkill(stashDir, "replay-after-stale-feedback", "A stale-feedback skill selected by bounded replay.");
-    saveConfig(config);
-    await akmIndex({ stashDir, full: true });
-    const now = Date.now();
-    appendEvent(
-      { eventType: "feedback", ref: `stash//${skillRef}`, metadata: { signal: "positive" } },
-      { now: () => now - 1_000 },
-    );
-    appendEvent({ eventType: "reflect_invoked", ref: `stash//${skillRef}` }, { now: () => now });
-    seedReplayRank(skillRef, 0.99);
-    const infoLines: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "info") infoLines.push(args.map(String).join(" "));
-    });
-
-    const result = await akmImprove({
-      scope: "skill",
-      stashDir,
-      config,
-      ensureIndexFn: async () => false,
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-    });
-
-    expect(result.plannedRefs.map((entry) => [entry.ref, entry.eligibilitySource])).toEqual([[skillRef, "replay"]]);
-    expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(0);
-    expect(result.distillSkipped?.byReason["no new signal since last proposal"] ?? 0).toBe(0);
-    expect(
-      result.distillSkipped?.samples.some(
-        (sample) => sample.ref === skillRef && sample.reason === "no new signal since last proposal",
-      ) ?? false,
-    ).toBe(false);
-    expect(
-      readEvents({ type: "improve_skipped" }).events.filter((event) => event.metadata?.reason === "no_new_signal"),
-    ).toEqual([]);
-    expect(infoLines.some((line) => line.includes("blocked by reflect signal-delta"))).toBe(false);
-    expect(readEvents({ type: "improve_replay_selected" }).events.at(-1)?.metadata?.count).toBe(1);
-  });
-
-  test("feedback-only mode suppresses proactive, high-salience, and replay selectors in dry and live plans", async () => {
+  test("feedback-only mode suppresses the proactive and high-salience selectors in dry and live plans", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 1 } });
     config.improve = {
       ...config.improve,
-      salience: { salienceThreshold: 0.1, replayBudget: 1 },
+      salience: { salienceThreshold: 0.1 },
     };
     await indexSkills(stashDir, 1, config);
-    // This one quiet ref qualifies for proactive, high-salience, and replay;
+    // This one quiet ref qualifies for proactive and high-salience;
     // feedback-only must suppress the selector family rather than merely
     // deleting its winners from the final array.
     seedReplayRank("skills/skill-0", 0.99, "content");
@@ -708,7 +606,6 @@ describe("#800 effective dry-run planner", () => {
     }
     expect(reflectFn).not.toHaveBeenCalled();
     expect(readEvents({ type: "proactive_selected" }).events).toEqual([]);
-    expect(readEvents({ type: "improve_replay_selected" }).events).toEqual([]);
     expect(live.distillSkipped?.byReason["no new signal since last proposal"]).toBe(1);
     expect(live.distillSkipped?.samples).toEqual([
       { ref: "skills/skill-0", reason: "no new signal since last proposal" },
@@ -897,95 +794,6 @@ describe("#800 effective dry-run planner", () => {
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual([]);
   });
 
-  test("replay cannot re-admit a ref removed by structural validation", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig();
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 1, replayBudget: 1 },
-    };
-    const lessonPath = path.join(stashDir, "lessons", "broken.md");
-    fs.mkdirSync(path.dirname(lessonPath), { recursive: true });
-    fs.writeFileSync(lessonPath, "---\nwhen_to_use: Testing replay validation\n---\n\nBody.\n", "utf8");
-    saveConfig(config);
-    await akmIndex({ stashDir, full: true });
-    seedReplayRank("lessons/broken", 0.99);
-    const reflectFn = mock(async ({ ref }: { ref?: string }) => okReflect(ref ?? ""));
-    const commonOptions = {
-      scope: "lesson",
-      stashDir,
-      config,
-      ensureIndexFn: async () => false,
-      reflectFn,
-    };
-
-    const dry = await akmImprove({ ...commonOptions, dryRun: true });
-    const live = await akmImprove(commonOptions);
-
-    for (const result of [dry, live]) {
-      expect(result.plannedRefs).toEqual([]);
-      expect(result.plan?.candidates).toEqual({ rawInScope: 1, selected: 0, effective: 0 });
-      expect(result.plan?.gates.find((gate) => gate.name === "validation")).toEqual({
-        name: "validation",
-        removed: 1,
-        reason: "structural validation failures",
-      });
-      expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual([]);
-    }
-    expect(reflectFn).not.toHaveBeenCalled();
-  });
-
-  test("replay cannot re-admit a cleanup-pruned noncanonical derived memory in dry or live plans", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = withImproveAutonomy(plannerConfig());
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 1, replayBudget: 1 },
-    };
-    const memoryPath = path.join(stashDir, "memories", "obsolete-copy.md");
-    fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
-    fs.writeFileSync(
-      memoryPath,
-      [
-        "---",
-        "description: Obsolete noncanonical derived memory",
-        "inferred: true",
-        "source: memories/original",
-        "obsolete: true",
-        "---",
-        "",
-        "Old body.",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    saveConfig(config);
-    await akmIndex({ stashDir, full: true });
-    seedReplayRank("memories/obsolete-copy", 0.99);
-    const reflectFn = mock(async ({ ref }: { ref?: string }) => okReflect(ref ?? ""));
-    const commonOptions = {
-      scope: "memory",
-      stashDir,
-      config,
-      ensureIndexFn: async () => false,
-      reflectFn,
-    };
-
-    const dry = await akmImprove({ ...commonOptions, dryRun: true });
-    const live = await akmImprove(commonOptions);
-
-    for (const result of [dry, live]) {
-      expect(result.plannedRefs).toEqual([]);
-      expect(result.plan?.candidates).toEqual({ rawInScope: 1, selected: 0, effective: 0 });
-      expect(result.plan?.gates.find((gate) => gate.name === "cleanup")?.removed).toBe(1);
-      expect(result.plan?.gates.find((gate) => gate.name === "disk")?.removed).toBe(0);
-      expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual([]);
-    }
-    expect(dry.plan?.gates.find((gate) => gate.name === "cleanup")?.reason).toBe("would be archived by memory cleanup");
-    expect(live.plan?.gates.find((gate) => gate.name === "cleanup")?.reason).toBe("archived by memory cleanup");
-    expect(reflectFn).not.toHaveBeenCalled();
-  });
-
   test("dry and live cleanup prune the same ref-scoped derived memory before the disk gate", async () => {
     const { stashDir } = isolatedStorage();
     const config = withImproveAutonomy(plannerConfig());
@@ -1069,69 +877,69 @@ describe("#800 effective dry-run planner", () => {
     });
   });
 
-  // (tier0-0917 r2-3) R4.3 — the consolidation plan's `gates.delta.reason` must
-  // distinguish bootstrap (no consolidate_completed event ever recorded) from a
-  // real pool delta, rather than reporting "memory pool has work" for both.
+  // The consolidation plan's `gates.delta` is the improve ledger's delta: a
+  // memory judged within its revisit window and unchanged since is skipped.
   describe("consolidation preview gates.delta reason", () => {
-    test("no consolidate_completed event ever recorded → bootstrap reason", async () => {
+    function recordJudged(stashDir: string, name: string, atMs: number): void {
+      const db = openStateDatabase();
+      try {
+        recordImproveLedger(db, {
+          stashDir,
+          ref: `memories/${name}`,
+          source: "consolidate",
+          outcome: "judged_no_action",
+          at: new Date(atMs).toISOString(),
+        });
+      } finally {
+        db.close();
+      }
+    }
+
+    test("nothing judged recently → the pool is open", async () => {
       const { stashDir } = isolatedStorage();
       const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
+
+      const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
+
+      expect(result.plan?.consolidation.gates.delta).toEqual({ passed: true, reason: "no memory was judged recently" });
+    });
+
+    test("some memories judged recently and unchanged → they are skipped, the rest are judged", async () => {
+      const { stashDir } = isolatedStorage();
+      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      writeMemory(stashDir, "memory-0");
+      writeMemory(stashDir, "memory-1");
+      saveConfig(config);
+      await akmIndex({ stashDir, full: true });
+      recordJudged(stashDir, "memory-0", Date.now() + 60_000);
 
       const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
 
       expect(result.plan?.consolidation.gates.delta).toEqual({
         passed: true,
-        reason: "no completed consolidation recorded yet (bootstrap)",
+        reason: "1 recently judged, unchanged memories skipped",
       });
+      expect(result.plan?.consolidation.candidatePoolSize).toBe(1);
     });
 
-    test("memory updated after the last completed consolidation → real-delta reason", async () => {
-      const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
-      appendEvent(
-        {
-          eventType: "consolidate_completed",
-          ref: "memories/_consolidation",
-          metadata: { processed: 1, source: "stash" },
-        },
-        { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
-      );
-      // Written after the consolidate_completed event above, so its natural
-      // mtime is strictly newer.
-      writeMemory(stashDir, "memory-0");
-      saveConfig(config);
-      await akmIndex({ stashDir, full: true });
-
-      const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
-
-      expect(result.plan?.consolidation.gates.delta).toEqual({ passed: true, reason: "memory pool has work" });
-    });
-
-    test("no memory updates since the last completed consolidation → cooldown reason", async () => {
+    test("every memory judged recently and unchanged → the delta gate holds", async () => {
       const { stashDir } = isolatedStorage();
       const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
-      // Far-future completion ts: nothing on disk is newer than this.
-      appendEvent(
-        {
-          eventType: "consolidate_completed",
-          ref: "memories/_consolidation",
-          metadata: { processed: 1, source: "stash" },
-        },
-        { now: () => new Date("2099-01-01T00:00:00.000Z").getTime() },
-      );
+      recordJudged(stashDir, "memory-0", Date.now() + 60_000);
 
       const result = await akmImprove({ scope: "memory", stashDir, config, dryRun: true });
 
       expect(result.plan?.consolidation.gates.delta).toEqual({
         passed: false,
-        reason: "no updates since the last completed consolidation",
+        reason: "every memory was judged recently and is unchanged since",
       });
+      expect(result.plan?.consolidation.wouldRun).toBe(false);
     });
   });
 
@@ -1299,7 +1107,7 @@ describe("#800 effective dry-run planner", () => {
     const { stashDir } = storage;
     const config = plannerConfig({
       proactive: { enabled: true, dueDays: 0, maxPerRun: 2 },
-      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7, maxDiffLines: 20 },
+      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7 },
     });
     await indexSkills(stashDir, 3, config);
     appendEvent({ eventType: "feedback", ref: "skills/skill-0", metadata: { signal: "positive" } });
@@ -1347,7 +1155,6 @@ describe("#800 effective dry-run planner", () => {
         configuredMode: "promote",
         mode: "queue",
         maxAcceptsPerRun: 7,
-        maxDiffLines: 20,
       },
     });
     expect(reflectFn).not.toHaveBeenCalled();

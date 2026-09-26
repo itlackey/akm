@@ -236,7 +236,12 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.hint).toContain("akm migrate apply --dry-run");
+    // Both fixtures are unmigratable shapes (issue #869): the message names
+    // the blocked reason and tells the operator a human decision is needed,
+    // rather than pointing at `akm migrate apply`, which would just report
+    // the same block.
+    expect(parsed.error).toContain("needs a human decision");
+    expect(parsed.hint).toContain("Review the file and resolve the ambiguity by hand");
   });
 
   test("akm workflow run of a step passing with: to a task target emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
@@ -331,7 +336,6 @@ describe("error class hints", () => {
     expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm setup");
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
-    expect(new ConfigError("no embedding", "EMBEDDING_NOT_CONFIGURED").hint()).toContain("akm config set embedding");
     expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("defaults.llmEngine");
   });
 
@@ -361,7 +365,6 @@ describe("error class hints", () => {
   test("UsageError without a code-mapped hint returns undefined", () => {
     // INVALID_FLAG_VALUE is intentionally a generic fallback — points at --help.
     expect(new UsageError("bad flag", "INVALID_FLAG_VALUE").hint()).toContain("akm <command> --help");
-    expect(new UsageError("unknown key", "UNKNOWN_CONFIG_KEY").hint()).toBeUndefined();
     expect(new UsageError("bad json arg", "INVALID_JSON_ARGUMENT").hint()).toBeUndefined();
   });
 

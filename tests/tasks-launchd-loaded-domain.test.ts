@@ -16,8 +16,8 @@
 // gated native-scheduler suite caught it the first time it was ever dispatched.
 //
 // What is pinned now is what the function is actually for: find the labels in
-// our own `com.akm.task.` namespace, ignore everything else, and hold two real
-// resource bounds (output size, label count).
+// our own `com.akm.task.` namespace and ignore everything else, however large
+// the inventory is.
 
 import { describe, expect, test } from "bun:test";
 import { parseLaunchdLoadedLabels } from "../src/tasks/backends/launchd";
@@ -138,25 +138,10 @@ describe("parseLaunchdLoadedLabels", () => {
     expect([...parseLaunchdLoadedLabels(output)!]).toEqual(["com.akm.task.ping"]);
   });
 
-  test("scans up to the size bound instead of discarding the whole read when output exceeds it", () => {
-    const filler = "x".repeat(4 * 1024 * 1024);
-    const output = `PID Status Label\n1 0 com.akm.task.before\n2 0 com.apple.${filler}\n3 0 com.akm.task.after\n`;
-
-    const labels = parseLaunchdLoadedLabels(output);
-    expect(labels.has("com.akm.task.before")).toBe(true);
-    expect(labels.has("com.akm.task.after")).toBe(false);
-  });
-
-  test("accepts up to 4096 distinct labels and stops there instead of failing closed on the 4097th", () => {
-    const maximum = Array.from({ length: 4096 }, (_, index) => `${index + 1} 0 com.akm.task.task-${index}`).join("\n");
-    expect(parseLaunchdLoadedLabels(`PID Status Label\n${maximum}\n`).size).toBe(4096);
-
-    const overflow = `${maximum}\n4097 0 com.akm.task.task-4096`;
-    const overflowLabels = parseLaunchdLoadedLabels(`PID Status Label\n${overflow}\n`);
-    expect(overflowLabels.size).toBe(4096);
-    expect(overflowLabels.has("com.akm.task.task-4096")).toBe(false);
-    for (let index = 0; index < 4096; index++) {
-      expect(overflowLabels.has(`com.akm.task.task-${index}`)).toBe(true);
-    }
+  test("reads every akm label however large the inventory is", () => {
+    const labels = Array.from({ length: 5000 }, (_, index) => `${index + 1} 0 com.akm.task.task-${index}`).join("\n");
+    const parsed = parseLaunchdLoadedLabels(`${"x".repeat(5 * 1024 * 1024)}\nPID Status Label\n${labels}\n`);
+    expect(parsed.size).toBe(5000);
+    expect(parsed.has("com.akm.task.task-4999")).toBe(true);
   });
 });

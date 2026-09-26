@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,14 +14,9 @@ import { warnOnce } from "../../core/warn";
 import { cloneExecutionJsonObject, type ExecutionJsonObject, type ExecutionJsonValue } from "../../execution/json";
 
 /**
- * Installed and operator-owned model intent aliases (#802 / WP2).
- *
- * The common cascade consumes this loader/expansion API for current runtime
- * execution callers. A recognized alias expands once into exact model and
- * inference defaults at its selecting layer; engine lowerers consume that
- * resolved request and never reinterpret the alias. The independent API also
- * remains usable by WP6/WP7 source and freeze adapters without hard-coding
- * provider mappings.
+ * Installed and operator-owned model intent aliases (#802). `resolveExecution`
+ * expands a recognized alias once, into an exact model and inference defaults
+ * at the layer that chose it; harness builders never reinterpret it.
  */
 
 export const MODEL_MAP_VERSION = 1 as const;
@@ -288,9 +282,8 @@ export interface EngineModelAndInference {
 
 /**
  * Derive the `{ model, inference }` a model-map profile borrows from a
- * configured engine (#946). Shared verbatim by
- * `execution-definitions.ts`'s own execution-defaults derivation
- * (`engineDefaults`) so the two paths cannot silently diverge. `model` is
+ * configured engine (#946). `resolveExecution` derives an engine's own
+ * defaults with the same function, so the two cannot diverge. `model` is
  * copied verbatim from the engine's own config value; it must already be
  * meaningful for the model-map column's platform (akm does not translate
  * between an engine's connection and an agent platform's own provider
@@ -486,54 +479,29 @@ function modelMapFileError(label: string, filePath: string, action: string): Con
 }
 
 /**
- * Read through a nonblocking, no-follow descriptor and enforce the config-size
- * ceiling before parsing. `optional` recognizes only a true lstat ENOENT as
- * absence; dangling links and every non-regular type are configuration errors.
+ * Read one models.json. `optional` treats absence (including a dangling
+ * symlink) as "no file"; anything that is not a regular file is refused
+ * rather than read, so a FIFO cannot hang the CLI.
  */
 function readModelMapFile(filePath: string, label: string, optional: boolean): string | undefined {
-  let targetStat: fs.Stats;
+  let stat: fs.Stats;
   try {
-    targetStat = fs.statSync(filePath);
+    stat = fs.statSync(filePath);
   } catch (error) {
     if (optional && (error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
     throw modelMapFileError(label, filePath, optional ? "inspected" : "found");
   }
-  if (!targetStat.isFile()) {
+  if (!stat.isFile()) {
     throw new ConfigError(
       `Unable to read ${label.toLowerCase()} because it is not a readable regular file: ${filePath}.`,
       "INVALID_CONFIG_FILE",
       "Replace it with a readable regular models.json file, or a symlink to one.",
     );
   }
-
-  const nonblock =
-    process.platform !== "win32" && typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
-  let fd: number | undefined;
   try {
-    fd = fs.openSync(filePath, fs.constants.O_RDONLY | nonblock);
-    const openedStat = fs.fstatSync(fd);
-    if (!sameFileIdentity(targetStat, openedStat)) {
-      throw new ConfigError(
-        `${label} changed while it was being opened: ${filePath}.`,
-        "INVALID_CONFIG_FILE",
-        "Retry after ensuring no other process is replacing models.json.",
-      );
-    }
-    const text = fs.readFileSync(fd, "utf8");
-    fs.closeSync(fd);
-    fd = undefined;
-    return text;
-  } catch (error) {
-    if (error instanceof ConfigError) throw error;
+    return fs.readFileSync(filePath, "utf8");
+  } catch {
     throw modelMapFileError(label, filePath, "read");
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // The actionable read error above remains authoritative.
-      }
-    }
   }
 }
 
@@ -609,138 +577,42 @@ function targetExistsError(target: string, detail: string): UsageError {
   return new UsageError(
     `${detail}: ${target}`,
     "RESOURCE_ALREADY_EXISTS",
-    "Move the existing target aside, then retry. Use --overwrite only for a stable regular file you intend to replace.",
+    "Move the existing target aside, then retry. Use --overwrite only for a regular file you intend to replace.",
   );
 }
 
-function copyIoError(target: string, action: string, hint?: string): ConfigError {
+function copyIoError(target: string, action: string): ConfigError {
   return new ConfigError(
     `Unable to ${action} user models.json at ${target}.`,
     "INVALID_CONFIG_FILE",
-    hint ?? "Check the configuration directory ownership and permissions, then retry.",
+    "Check the configuration directory ownership and permissions, then retry.",
   );
 }
 
-function inspectCopyTarget(target: string): fs.Stats | undefined {
-  try {
-    return fs.lstatSync(target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw copyIoError(target, "inspect");
-  }
-}
-
-function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
-  if (!left.isFile() || !right.isFile()) return false;
-  if (left.dev !== 0 || left.ino !== 0 || right.dev !== 0 || right.ino !== 0) {
-    return left.dev === right.dev && left.ino === right.ino;
-  }
-  return left.mode === right.mode && left.size === right.size && left.mtimeMs === right.mtimeMs;
-}
-
-function syncCopyDirectory(directory: string): void {
-  if (process.platform === "win32") return;
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(directory, fs.constants.O_RDONLY);
-    fs.fsyncSync(fd);
-    fs.closeSync(fd);
-    fd = undefined;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code !== "EINVAL" && code !== "ENOTSUP") throw error;
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // A preceding sync/open failure is more useful than a cleanup failure.
-      }
-    }
-  }
-}
-
-function stageDefaultModelMap(target: string, text: string): string {
-  const stage = `${target}.copy.${process.pid}.${randomBytes(8).toString("hex")}`;
-  try {
-    writeFileAtomic(stage, text, 0o600);
-    return stage;
-  } catch {
-    throw copyIoError(target, "write a staged copy of");
-  }
-}
-
-/** Explicitly copy validated installed bytes into the normal config directory. */
+/** `akm models copy-defaults`: copy the validated installed map into the config directory. */
 export function copyDefaultModelMap(options: CopyDefaultModelMapOptions = {}): CopyDefaultModelMapResult {
   const text = readInstalledModelMapText(options);
   mergeModelMapLayers(parseModelMapLayer(text, "installed models.json"));
   const target = userModelMapPath(options.env);
+  let existing: fs.Stats | undefined;
+  try {
+    existing = fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw copyIoError(target, "inspect");
+  }
+  if (existing && !existing.isFile()) {
+    throw targetExistsError(target, "Refusing to replace a non-regular models.json target");
+  }
+  if (existing && options.overwrite !== true) throw targetExistsError(target, "User models.json already exists");
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
   } catch {
     throw copyIoError(target, "create the configuration directory for");
   }
-  const existing = inspectCopyTarget(target);
-  if (existing && !existing.isFile()) {
-    throw targetExistsError(target, "Refusing to replace a non-regular models.json target");
-  }
-  if (existing && options.overwrite !== true) {
-    throw targetExistsError(target, "User models.json already exists");
-  }
-
-  const stage = stageDefaultModelMap(target, text);
-  let stagePresent = true;
   try {
-    if (existing === undefined) {
-      try {
-        // Hard-link publication is an atomic no-replace operation: EEXIST
-        // means a racing creator won, and their bytes remain untouched.
-        fs.linkSync(stage, target);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code === "EEXIST") {
-          throw targetExistsError(target, "User models.json was created while defaults were being prepared");
-        }
-        throw copyIoError(target, "publish");
-      }
-      try {
-        fs.unlinkSync(stage);
-        stagePresent = false;
-      } catch {
-        // The target was already published atomically. Cleanup is best-effort
-        // from this point forward; `finally` retries without turning a
-        // successful copy into a false failure.
-      }
-    } else {
-      const current = inspectCopyTarget(target);
-      if (!current || !sameFileIdentity(existing, current)) {
-        throw targetExistsError(target, "User models.json changed while defaults were being prepared");
-      }
-      try {
-        // rename replaces the directory entry itself; it never follows a
-        // symlink inserted after the final identity check.
-        fs.renameSync(stage, target);
-        stagePresent = false;
-      } catch {
-        throw copyIoError(target, "replace");
-      }
-    }
-  } finally {
-    if (stagePresent) {
-      try {
-        fs.unlinkSync(stage);
-      } catch {
-        // Best-effort cleanup; the target was never published from this path.
-      }
-    }
-  }
-  try {
-    syncCopyDirectory(path.dirname(target));
+    writeFileAtomic(target, text, 0o600);
   } catch {
-    throw copyIoError(
-      target,
-      "durably publish",
-      `The target may already exist at ${target}; inspect it before retrying because directory durability could not be confirmed.`,
-    );
+    throw copyIoError(target, "write");
   }
   return { path: target, copied: true as const, overwritten: existing !== undefined };
 }

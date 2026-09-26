@@ -26,7 +26,7 @@ import {
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
-import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions, RelinkUsageEventsOptions } from "./index-entry-types";
+import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
@@ -474,14 +474,33 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 }
 
 /**
- * Delete the complete regenerable entry generation through the same child-row
- * authority used by targeted deletes. The caller may retain cross-database
- * usage events so the finalize pass can relink them to the new row ids.
+ * The `file_path` of every entry indexed under one bundle — used by
+ * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
+ * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
+ * reports rather than rewrites.
  */
-export function deleteAllEntries(db: Database, options: { cleanupUsageEvents?: boolean } = {}): number[] {
+export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+    file_path: string;
+  }>;
+  return rows.map((row) => row.file_path);
+}
+
+/**
+ * Re-key every entry row's `bundle_id`/`item_ref` from `oldBundleId` to
+ * `newBundleId` in place (`akm bundle rename`, D6). Unlike
+ * {@link rekeyEntryInPlace} (one asset, `akm mv`), this is a bulk identity
+ * change with no content move: `concept_id`/`file_path`/`document_json` are
+ * untouched, so no FTS/vector rebuild is needed (FTS and `entries_vec` key on
+ * the entry's row `id`, which this preserves, not on `item_ref`). Returns the
+ * number of rows renamed.
+ */
+export function renameEntriesBundleId(db: Database, oldBundleId: string, newBundleId: string): number {
   return db.transaction(() => {
-    const rows = db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>;
-    return deleteEntryRows(db, rows, options);
+    const result = db
+      .prepare("UPDATE entries SET bundle_id = ?, item_ref = ? || '//' || concept_id WHERE bundle_id = ?")
+      .run(newBundleId, newBundleId, oldBundleId);
+    return Number(result.changes);
   })();
 }
 
@@ -1018,14 +1037,7 @@ function resolveUsageEventEntryId(db: Database, ref: string): number | undefined
  * distinct linked entry_ids in usage_events is small — and the re-resolution
  * reads `entries` from `indexDb`.
  */
-function qualifiedUsageEventsTable(stateSchema?: string): string {
-  if (stateSchema === undefined) return "usage_events";
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(stateSchema)) throw new Error("Invalid attached state schema name.");
-  return `"${stateSchema}".usage_events`;
-}
-
-export function relinkUsageEvents(indexDb: Database, stateDb: Database, options: RelinkUsageEventsOptions = {}): void {
-  const usageEvents = qualifiedUsageEventsTable(options.stateSchema);
+export function relinkUsageEvents(indexDb: Database, stateDb: Database): void {
   bestEffort(() => {
     // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
     // Leaving them in place would let `recomputeUtilityScores` aggregate by an
@@ -1034,7 +1046,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     // transaction. Nulled rows can be re-resolved by step 2 below; events whose
     // entry is permanently gone simply stay null and age out via retention.
     const linkedRows = stateDb
-      .prepare(`SELECT DISTINCT entry_id AS id, entry_ref AS ref FROM ${usageEvents} WHERE entry_id IS NOT NULL`)
+      .prepare("SELECT DISTINCT entry_id AS id, entry_ref AS ref FROM usage_events WHERE entry_id IS NOT NULL")
       .all() as Array<{ id: number; ref: string | null }>;
     const entryIdentity = indexDb.prepare("SELECT item_ref AS itemRef FROM entries WHERE id = ?");
     const staleLinks = linkedRows.filter(({ id, ref }) => {
@@ -1042,9 +1054,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
       return live == null || (ref !== null && live.itemRef !== ref);
     });
     if (staleLinks.length > 0) {
-      const nullOut = stateDb.prepare(
-        `UPDATE ${usageEvents} SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?`,
-      );
+      const nullOut = stateDb.prepare("UPDATE usage_events SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?");
       const nullTx = stateDb.transaction(() => {
         for (const { id, ref } of staleLinks) nullOut.run(id, ref);
       });
@@ -1054,10 +1064,10 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     // Step 2: re-resolve each fully-qualified ref. Bare rows are not current
     // durable identities and remain detached.
     const refs = stateDb
-      .prepare(`SELECT DISTINCT entry_ref AS ref FROM ${usageEvents} WHERE entry_id IS NULL AND entry_ref IS NOT NULL`)
+      .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_id IS NULL AND entry_ref IS NOT NULL")
       .all() as { ref: string }[];
 
-    const update = stateDb.prepare(`UPDATE ${usageEvents} SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL`);
+    const update = stateDb.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
     const relinkTx = stateDb.transaction(() => {
       for (const { ref } of refs) {
         let id: number | undefined;

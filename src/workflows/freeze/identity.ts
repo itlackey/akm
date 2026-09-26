@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { UsageError } from "../../core/errors";
 import type { TaskV3ScriptInterpreter } from "../../tasks/prepare/prepared-execution";
-import type { ProgramUnit } from "../program/schema";
+import type { BaseUnit } from "./step-values";
 
 export function scriptExecutable(interpreter: TaskV3ScriptInterpreter): string {
   if (interpreter === "bun" || interpreter === "bun-standalone") return process.execPath;
@@ -13,7 +13,7 @@ export function scriptExecutable(interpreter: TaskV3ScriptInterpreter): string {
   return interpreter;
 }
 
-export function gitIdentity(unit: ProgramUnit, root: string): { gitCommitOid?: string } {
+export function gitIdentity(unit: BaseUnit, root: string): { gitCommitOid?: string } {
   if (unit.isolation !== "worktree") return {};
   const result = spawnSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" });
   const oid = result.status === 0 ? result.stdout.trim() : "";

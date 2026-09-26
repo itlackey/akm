@@ -352,6 +352,64 @@ orchestration, checksum, and failure paths. Real managed-source and self-upgrade
 acceptance is manual and lives in section 21 of the
 [manual runbook](./manual-testing-checklist.md).
 
+### Upgrade rehearsal gate
+
+`tests/integration/upgrade-rehearsal/` installs the PREVIOUS published stable
+`akm-cli` release as a real global npm package (real `npm pack` / `npm
+install --global` into a throwaway prefix — see `scripts/package-install.ts`)
+under the label `live`, drives it to build a realistic home — a filesystem
+bundle, a git bundle (with an in-bundle symlink at its root), a website
+bundle, an npm bundle, three scheduled tasks (two granted, one left
+ungranted) plus a manual task, and a synced native (fake) crontab — then
+installs the CANDIDATE build OVER `live`, in the SAME prefix: an in-place
+swap, the same thing a real `npm i -g akm-cli@…`/`bun add -g` upgrade does,
+not a side-by-side install. It then runs the CANDIDATE against that home
+(`migrate status`/`apply`, `bundle list` with every bundle confirmed enabled,
+`search`/`show`, `task sync` dry-run and real — plain, no `--rebind`, as an
+upgrading user actually runs it — executing the generated cron command and
+confirming it ran the candidate, `task run`, `health`, `improve --plan`), and
+finally installs a separate untouched copy of the PREVIOUS release and runs
+it back against the candidate-written home to prove read-back still works.
+It exists because no other suite drives a real prior release against a real
+candidate build: the symlink-abort regression fixed in 0.9.17-alpha.3
+(`d76af0a7b`) went undetected by the full unit/integration suite,
+`tests/release-check.sh`, and the Docker matrix, because no fixture combined
+a git bundle with an in-bundle symlink, a website bundle, an npm bundle, an
+ungranted task, and a real crontab row in one home. Plain `task sync` proves
+clean specifically because the candidate lands inside the SAME prefix the
+previous release's scheduler rows already point at — no launcher path moves,
+so nothing needs rebinding; a side-by-side install (a separate prefix) would
+need `--rebind` instead, which is not what an in-place package-manager
+upgrade does. `tests/integration/previous-release-corpus.test.ts` covers
+persisted-data shapes read in isolation; this gate covers the whole CLI
+surface driven end to end across two real installed releases.
+
+Run it locally with:
+
+```sh
+bun run build
+AKM_UPGRADE_REHEARSAL=1 TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
+```
+
+Unset (the default), the suite logs one line and skips — it never fails
+"inconclusively" (#795): every missing capability (no `npm` on `PATH`, no
+network reachable to resolve/fetch the previous release, no candidate build)
+throws naming the fix instead. Env overrides:
+
+- `AKM_UPGRADE_FROM=<version>` — pin the previous release instead of
+  resolving the highest published stable version below the candidate's
+  `package.json` version.
+- `AKM_CANDIDATE_TARBALL=<path>` — use an already-packed candidate tarball
+  (`tests/release-check.sh` passes `$PACKAGE_CANDIDATE`) instead of running
+  `npm pack` on the working tree (which requires `dist/cli.js` — run
+  `bun run build` first).
+
+Fetched previous-release tarballs are cached under
+`${TMPDIR:-/tmp}/akm-upgrade-rehearsal/previous-release/<version>/` so repeat
+runs do not re-hit the network. It is wired into CI as the `upgrade-rehearsal`
+job (`.github/workflows/ci.yml`) and into `tests/release-check.sh` right
+after packing the release candidate.
+
 ## Coverage Gap Guide
 
 This repo now has broad coverage across the major CLI, indexing, registry, and

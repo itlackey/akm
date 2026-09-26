@@ -60,7 +60,7 @@ Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 | `state.db` | Events, local usage telemetry, proposals, task history, improve run results, and workflow run state/history (the former `workflow.db` was folded in during the 0.9.0 cutover) | **No** — deletes event/usage logs, proposal queue, improve history, and workflow run history |
 | `logs.db` | Structured, high-volume task/run log lines (`{ts, task_id, run_id, stream, level, line}`), joined to `state.db`'s `task_history` rows by `task_id@started_at`. Kept separate from `state.db` because log lines are append-only and freely purgeable, unlike durable state | Yes — log lines are regenerable per run; deleting loses historical run output only |
 | `akm.lock` | Inter-process write lock | Yes — recreated automatically |
-| `backups/task-v3/`, `backups/task-v4/` | Copies of task files taken by `akm migrate apply` before it rewrites them, one timestamped directory per run; the five most recent per generation are kept (#897) | Yes — once the migrated tasks are verified |
+| `backups/tasks/` | Copies of task files taken by `akm migrate apply` before it rewrites them, one timestamped directory per run that rewrote a file | Yes — once the migrated tasks are verified |
 | `akm.lock.lck` | Lock write sentinel | Yes — recreated automatically |
 
 Override: set `AKM_DATA_DIR` or `XDG_DATA_HOME`.
@@ -176,7 +176,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `proposal_expiration_pass` | Summary emitted once per `akm improve` maintenance run after per-proposal `proposal_expired` events | expiry counts |
 | `proposal_orphan_purge` | Stale proposals whose target asset no longer exists on disk, pruned by improve maintenance | `checked`, `rejected` |
 | `proposal_creation_rejected` | `createProposal()` validation failed before write | `ref`, `reason`, `source` |
-| `triage_drained` | `akm proposal drain` run summary | `promoted`, `rejected`, `deferredByReason`, `skippedByCap`, `policy`, `applyMode` |
+| `triage_drained` | `akm proposal drain` run summary | `promoted`, `rejected`, `deferredByReason`, `skippedByCap`, `applyMode` |
 | `triage_deferred` | `akm proposal drain` left items unresolved after the (optional) judgment tier | `deferred`, `deferredByReason`, `reason` |
 
 *`akm improve` pipeline*
@@ -194,20 +194,13 @@ the set of types the code actually emits at HEAD (verified against every
 | `improve_reflect_outcome` | Per-asset reflect result | `ref`, `ok`, `durationMs`, `reason` |
 | `propose_invoked` | `akm proposal new` | `ref` |
 | `distill_invoked` | Distill phase inside the `akm improve`/`akm proposal new` pipeline. **`akm distill` is not a CLI command** — there is no standalone verb by that name | `ref`, outcome |
-| `consolidate_completed` | `akm improve`'s consolidate pass processed at least one memory | `ref` (`memories/_consolidation`) |
 | `extract_invoked` | `akm proposal extract --type <harness>` / `--auto`, or improve-stage session extraction | `outcome`, `sessionId`, `harness` |
 | `extract_triaged` | The pre-LLM extract triage gate evaluated at least one session | `evaluated`, `passed`, `triagedOut`, `sourceRun` (aggregated) |
 | `schema_repair_invoked` | The schema-repair pass inside `akm improve` (`runSchemaRepairPass`) attempts to patch missing frontmatter on an asset that failed schema validation. **There is no `akm lint --repair` flag** — `lint` has `--fix`/`--auto-fix`, unrelated to this event | `ref`, outcome |
 | `proactive_selected` | The proactive-maintenance selector runs (once per `akm improve` run) | `count`, `dueTotal`, `neverReflected` (aggregated) |
-| `improve_replay_selected` | Bounded replay-budget selection ran | `count`, `budget`, `convergedSkipped`, `candidatePool` (aggregated) |
-| `improve_salience_first_run` | First improve run with no pre-existing salience baseline to compare against | `candidateCount`, `note` |
 | `improve_salience_rank_change` | Bundle-wide rank-change report, from the second improve run onward | `stashSize`, `totalChanged`, `forgettingCandidates`, `topDrops` |
-| `outcome_proxy_inverted` | Proxy-adequacy tripwire: `outcome_score` correlates *negatively* with accepted-change rate (corr < −0.3) | `correlation`, `n` |
-| `outcome_proxy_dead` | Proxy-adequacy tripwire: `outcome_score` is statistically unrelated to accepted-change rate (\|corr\| < 0.1, n ≥ 500) | `correlation`, `n` |
-| `collapse_detector_alert` | The collapse/churn detector trips an alert rule during an improve cycle | `kind` (collapse-recall\|collapse-entropy\|collapse-shrink\|churn\|merge-floor), `detail`, `metrics`, `canarySetId`, `runId` |
 | `events_purged` | Old events deleted by improve maintenance (90-day default retention) | `purgedCount`, `retentionDays` |
 | `improve_runs_purged` | Old `improve_runs` rows deleted by improve maintenance (same retention window as events) | `purgedCount`, `retentionDays` |
-| `improve_cycle_metrics_purged` | Old `improve_cycle_metrics` rows (365-day retention) deleted by improve maintenance | `purgedCount`, `retentionDays` |
 | `state_db_vacuumed` | state.db was VACUUMed after the retention purge because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `task_logs_purged` | Old scheduled-task log files purged by improve maintenance | |
 
@@ -298,6 +291,13 @@ Contents:
 - Source (which process generated it — e.g. `reflect`, `distill`)
 - Full proposal content (Markdown text)
 - Created/updated timestamps
+
+Beside it, the `improve_ledger` table records what each improve stage last did
+with each asset — one row per bundle, asset ref and stage: the outcome
+(`proposed`, `accepted`, `rejected`, `quality_rejected`, `review_needed`,
+`expired`, `unchanged`, `failed`, `judged_no_action`), when it was attempted,
+and the earliest time the stage may try that asset again. It holds refs,
+timestamps, a proposal id and a short reason — never asset content.
 
 ### 4. Task History Table
 

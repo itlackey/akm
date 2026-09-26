@@ -26,11 +26,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { emitPromotionProposal, loadExistingKnowledgeBodyHashes } from "../../../src/commands/improve/consolidate";
-import { mergePlans } from "../../../src/commands/improve/consolidate/merge";
-import type { ConsolidateOperation, ConsolidatePromoteOp } from "../../../src/commands/improve/consolidate/types";
-import { cacheHash } from "../../../src/commands/improve/content-hash";
-import { createProposal, isProposalSkipped, listProposals } from "../../../src/commands/proposal/repository";
+import {
+  type ConsolidatePromoteOp,
+  emitPromotionProposal,
+  loadExistingKnowledgeBodyHashes,
+  mergePlans,
+} from "../../../src/commands/improve/consolidate";
+import { contentHash } from "../../../src/commands/improve/content-hash";
+import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { resolveWriteTarget } from "../../../src/core/write-source";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../src/indexer/installations";
@@ -78,15 +81,14 @@ describe("mergePlans — promote op deduplication by source ref", () => {
   it("deduplicates promote ops for the same source ref across two chunks, keeping last", () => {
     // Simulates two LLM chunks both recommending the same source memory for
     // promotion but with different target knowledgeRef values.
-    const chunk1: ConsolidateOperation[] = [
+    const chunk1: ConsolidatePromoteOp[] = [
       makePromoteOp("memories/review-efficiency", "knowledge/paged-review-efficiency"),
     ];
-    const chunk2: ConsolidateOperation[] = [
+    const chunk2: ConsolidatePromoteOp[] = [
       makePromoteOp("memories/review-efficiency", "knowledge/print-review-efficiency"),
     ];
 
-    const { ops } = mergePlans([chunk1, chunk2]);
-    const promoteOps = ops.filter((op): op is ConsolidatePromoteOp => op.op === "promote");
+    const promoteOps = mergePlans([chunk1, chunk2]);
 
     // Only one promote op should survive; the Map key is `op.ref` so the last
     // chunk's value wins.
@@ -97,15 +99,14 @@ describe("mergePlans — promote op deduplication by source ref", () => {
   it("deduplicates 4 promote ops for the same source ref across 4 chunks", () => {
     // Regression test mirroring the exact bug report:
     // 4 copies of a promote op with different knowledgeRef values from separate chunks.
-    const chunks: ConsolidateOperation[][] = [
+    const chunks: ConsolidatePromoteOp[][] = [
       [makePromoteOp("memories/review-efficiency", "knowledge/paged-review-efficiency")],
       [makePromoteOp("memories/review-efficiency", "knowledge/print-review-efficiency")],
       [makePromoteOp("memories/review-efficiency", "knowledge/print-review-efficiency-patterns")],
       [makePromoteOp("memories/review-efficiency", "knowledge/review-agent-efficiency")],
     ];
 
-    const { ops } = mergePlans(chunks);
-    const promoteOps = ops.filter((op): op is ConsolidatePromoteOp => op.op === "promote");
+    const promoteOps = mergePlans(chunks);
 
     expect(promoteOps).toHaveLength(1);
     expect(promoteOps[0]?.ref).toBe("memories/review-efficiency");
@@ -113,13 +114,12 @@ describe("mergePlans — promote op deduplication by source ref", () => {
 
   it("preserves promote ops for different source refs (no over-deduplication)", () => {
     // Two different source memories promoted to different targets — both must survive.
-    const chunk1: ConsolidateOperation[] = [
+    const chunk1: ConsolidatePromoteOp[] = [
       makePromoteOp("memories/review-efficiency", "knowledge/review-efficiency"),
       makePromoteOp("memories/embedding-fix", "knowledge/akm-embedding-fix"),
     ];
 
-    const { ops } = mergePlans([chunk1]);
-    const promoteOps = ops.filter((op): op is ConsolidatePromoteOp => op.op === "promote");
+    const promoteOps = mergePlans([chunk1]);
 
     expect(promoteOps).toHaveLength(2);
     const refs = promoteOps.map((p) => p.ref);
@@ -128,10 +128,9 @@ describe("mergePlans — promote op deduplication by source ref", () => {
   });
 
   it("preserves a single promote op unchanged", () => {
-    const chunk: ConsolidateOperation[] = [makePromoteOp("memories/foo", "knowledge/foo-stable")];
+    const chunk: ConsolidatePromoteOp[] = [makePromoteOp("memories/foo", "knowledge/foo-stable")];
 
-    const { ops } = mergePlans([chunk]);
-    const promoteOps = ops.filter((op): op is ConsolidatePromoteOp => op.op === "promote");
+    const promoteOps = mergePlans([chunk]);
 
     expect(promoteOps).toHaveLength(1);
     expect(promoteOps[0]?.knowledgeRef).toBe("knowledge/foo-stable");
@@ -144,11 +143,11 @@ describe("content-hash dedup — identical content blocked regardless of target 
   /**
    * These tests validate the guard added to Phase B of akmConsolidate:
    *
-   *   const newContentHash = cacheHash(memoryContent);
+   *   const newContentHash = contentHash(memoryContent, "body");
    *   const allPendingConsolidateProposals = listProposals(stashDir, { status: "pending" })
    *     .filter((p) => p.source === "consolidate");
    *   const contentDupProposal = allPendingConsolidateProposals.find(
-   *     (p) => cacheHash(p.payload.content) === newContentHash,
+   *     (p) => contentHash(p.payload.content, "body") === newContentHash,
    *   );
    *   if (contentDupProposal) { ... skip ... }
    *
@@ -165,7 +164,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const stash = makeStashDir();
 
     // Create the first proposal.
-    const result = createProposal(stash, {
+    createProposal(stash, {
       ref: "knowledge/paged-review-efficiency",
       source: "consolidate",
       payload: {
@@ -173,20 +172,19 @@ describe("content-hash dedup — identical content blocked regardless of target 
         frontmatter: { description: "Reusable efficiency knowledge" },
       },
     });
-    expect(isProposalSkipped(result)).toBe(false);
 
     // Load all pending consolidate proposals.
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
     expect(pending).toHaveLength(1);
 
     // Compute hash of the second (duplicate) payload — same content, different ref.
-    const secondContentHash = cacheHash(CONTENT_WITH_DESCRIPTION);
+    const secondContentHash = contentHash(CONTENT_WITH_DESCRIPTION, "body");
     const existingContent = pending[0]?.payload.content ?? "";
-    const existingHash = cacheHash(existingContent);
+    const existingHash = contentHash(existingContent, "body");
 
     // The guard should detect the match.
     expect(existingHash).toBe(secondContentHash);
-    const dup = pending.find((p) => cacheHash(p.payload.content) === secondContentHash);
+    const dup = pending.find((p) => contentHash(p.payload.content, "body") === secondContentHash);
     expect(dup).toBeDefined();
     expect(dup?.ref).toBe(durableRef(stash, "knowledge", "paged-review-efficiency"));
   });
@@ -198,17 +196,16 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const content2 = `---\ndescription: Pattern B\n---\n\nContent for pattern B — completely different.\n`;
 
     // Create a proposal for content1.
-    const result1 = createProposal(stash, {
+    createProposal(stash, {
       ref: "knowledge/pattern-a",
       source: "consolidate",
       payload: { content: content1, frontmatter: { description: "Pattern A" } },
     });
-    expect(isProposalSkipped(result1)).toBe(false);
 
     // content2 should NOT match the hash of content1.
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
-    const hash2 = cacheHash(content2);
-    const dup = pending.find((p) => cacheHash(p.payload.content) === hash2);
+    const hash2 = contentHash(content2, "body");
+    const dup = pending.find((p) => contentHash(p.payload.content, "body") === hash2);
 
     // No match — the second proposal would be allowed through.
     expect(dup).toBeUndefined();
@@ -222,17 +219,16 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const SHARED_CONTENT = `---\ndescription: Shared knowledge\n---\n\nSome reusable content.\n`;
 
     // Create a 'distill' proposal with the same content.
-    const distillResult = createProposal(stash, {
+    createProposal(stash, {
       ref: "knowledge/shared-knowledge",
       source: "distill",
       payload: { content: SHARED_CONTENT, frontmatter: { description: "Shared knowledge" } },
     });
-    expect(isProposalSkipped(distillResult)).toBe(false);
 
     // The consolidate guard should only check consolidate proposals.
     const pendingConsolidate = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
-    const hash = cacheHash(SHARED_CONTENT);
-    const dup = pendingConsolidate.find((p) => cacheHash(p.payload.content) === hash);
+    const hash = contentHash(SHARED_CONTENT, "body");
+    const dup = pendingConsolidate.find((p) => contentHash(p.payload.content, "body") === hash);
 
     // No consolidate proposals exist yet — dup should be undefined.
     expect(dup).toBeUndefined();
@@ -259,8 +255,8 @@ describe("content-hash dedup — identical content blocked regardless of target 
       // Simulate the Phase B content-hash guard: load all pending consolidate
       // proposals and check for hash match before calling createProposal.
       const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "consolidate");
-      const newHash = cacheHash(IDENTICAL_CONTENT);
-      const contentDup = pending.find((p) => cacheHash(p.payload.content) === newHash);
+      const newHash = contentHash(IDENTICAL_CONTENT, "body");
+      const contentDup = pending.find((p) => contentHash(p.payload.content, "body") === newHash);
 
       if (contentDup) {
         skippedRefs.push(ref);
@@ -272,11 +268,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
         source: "consolidate",
         payload: { content: IDENTICAL_CONTENT, frontmatter: { description: "Review efficiency patterns" } },
       });
-      if (isProposalSkipped(result)) {
-        skippedRefs.push(ref);
-      } else {
-        createdIds.push(result.id);
-      }
+      createdIds.push(result.id);
     }
 
     // Only the first ref's proposal should have been created.
@@ -305,12 +297,13 @@ describe("existing knowledge body dedup", () => {
 
     expect(
       hashes.has(
-        cacheHash(
+        contentHash(
           "---\ntype: memory\ndescription: Different title\n---\n\nReusable body text with enough substance.\n",
+          "body",
         ),
       ),
     ).toBe(true);
-    expect(hashes.has(cacheHash("A genuinely different body."))).toBe(false);
+    expect(hashes.has(contentHash("A genuinely different body.", "body"))).toBe(false);
     expect(hashes).toHaveLength(1);
   });
 
@@ -368,7 +361,7 @@ describe("existing knowledge body dedup", () => {
 
   it("detects a duplicate whose body starts with its own --- block (H1)", async () => {
     // Regression for H1: the post-LLM dedup hash used to be computed as
-    // cacheHash(parseFrontmatter(memoryContent).content.trim()) — an already-
+    // contentHash(parseFrontmatter(memoryContent).content.trim(), "body") — an already-
     // stripped body run through cacheHash's own internal strip a second time.
     // A body that begins with its own `---`…`---` divider pair only diverges
     // from the single-strip domain (loadExistingKnowledgeBodyHashes / the

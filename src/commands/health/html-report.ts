@@ -449,50 +449,6 @@ function renderActionItems(vm: HealthReportViewModel): string {
     });
   }
 
-  // WS-5: corpus entrenchment flag.
-  if (vm.degradation?.entrenchmentFlagged) {
-    pushItem({
-      key: "corpus-entrenchment",
-      prio: "P2",
-      cls: "warn",
-      title: "Corpus entrenchment risk: retrieval_salience Gini > 0.35",
-      descHtml:
-        "A small set of assets dominates retrieval — retrieval diversity is low. " +
-        "Review top-ranked assets for stale or over-represented content. " +
-        `Corpus diversity proxy: ${esc(String(vm.degradation.corpusCentroidDistance))}.`,
-      remedy: "akm health --format json | jq '.improve.degradation'",
-    });
-  }
-
-  // Low-tail companion: salience distribution collapsed toward uniform.
-  if (vm.degradation?.salienceUniformityFlagged) {
-    pushItem({
-      key: "salience-uniformity-collapse",
-      prio: "P2",
-      cls: "warn",
-      title: "Salience distribution collapsed: retrieval_salience Gini < 0.08",
-      descHtml:
-        `The ${vm.degradation.retrievalSalienceSampleSize} observed, resolvable salience scores are near-uniform — ` +
-        "ranking carries little discrimination among assets with retrieval evidence. " +
-        `Corpus diversity proxy: ${esc(String(vm.degradation.corpusCentroidDistance))}.`,
-      remedy: "akm health --format json | jq '.improve.degradation'",
-    });
-  }
-
-  // WS-5: over-budget consolidation advisory.
-  if (vm.perf.overBudgetRuns > 0) {
-    pushItem({
-      key: "over-budget-consolidation",
-      prio: "P2",
-      cls: "warn",
-      title: `${vm.perf.overBudgetRuns} consolidation run${vm.perf.overBudgetRuns === 1 ? "" : "s"} exceeded budget`,
-      descHtml:
-        "Consolidation phase wall time exceeded the total run budget on these runs. " +
-        "Consider increasing the timeout or reducing the consolidation pool via strategy config.",
-      remedy: "akm config list",
-    });
-  }
-
   items.sort((a, b) => PRIO_RANK[a.prio] - PRIO_RANK[b.prio]);
   return items.length > 0
     ? items.map(actionItemCard).join("\n")

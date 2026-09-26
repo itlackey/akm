@@ -2,7 +2,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
@@ -147,27 +146,6 @@ describe("Schema", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workflow_documents'")
         .get();
       expect(row).toBeNull();
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("openIndexDatabase with a stale version marker rebuilds the derived index generation", () => {
-    const dbPath = tmpDbPath();
-
-    // Open, insert data, stamp an OLDER version than DB_VERSION.
-    let db = openIndexDatabase(dbPath);
-    insertTestEntry(db, "old-entry");
-    expect(getEntryCount(db)).toBe(1);
-    setMeta(db, "version", "0");
-    closeDatabase(db);
-
-    // Reopen — index.db is regenerable, so an incompatible generation is
-    // discarded instead of carrying live compatibility SQL.
-    db = openIndexDatabase(dbPath);
-    try {
-      expect(getEntryCount(db)).toBe(0);
-      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
     } finally {
       closeDatabase(db);
     }
@@ -999,7 +977,7 @@ describe("Vector / Embedding integration", () => {
     }
   });
 
-  test("embeddingDim change recreates vec table and clears old embeddings", () => {
+  test("embeddingDim change recreates the vec table; an old-width vector never matches a new-width query", () => {
     const dbPath = tmpDbPath();
 
     // Open with dim=4 and insert an embedding
@@ -1010,7 +988,8 @@ describe("Vector / Embedding integration", () => {
     expect(results.length).toBe(1);
     closeDatabase(db);
 
-    // Reopen with dim=8 — vec table should be recreated, old embeddings gone
+    // Reopen with dim=8 — the vec table is recreated at the new width; the
+    // stored 4-dim row is kept until the entry is re-embedded.
     db = openIndexDatabase(dbPath, { embeddingDim: 8 });
     try {
       expect(getMeta(db, "embeddingDim")).toBe("8");
@@ -1040,21 +1019,6 @@ describe("Vector / Embedding integration", () => {
       expect(results[0]!.id).toBe(id);
     } finally {
       closeDatabase(db);
-    }
-  });
-
-  test("openExistingDatabase rejects a non-canonical generation before returning a handle", () => {
-    const dbPath = tmpDbPath();
-    const seed = openIndexDatabase(dbPath);
-    setMeta(seed, "version", "0");
-    closeDatabase(seed);
-
-    expect(() => openExistingDatabase(dbPath)).toThrow(ConfigError);
-    try {
-      openExistingDatabase(dbPath);
-    } catch (error) {
-      expect((error as ConfigError).code).toBe("INDEX_SCHEMA_INCOMPATIBLE");
-      expect((error as Error).message).not.toMatch(/no such table|SQLITE/i);
     }
   });
 });

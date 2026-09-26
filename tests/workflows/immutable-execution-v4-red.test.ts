@@ -6,6 +6,8 @@
  * Tests-first contract for WP7's immutable executable projection.
  *
  * These fixtures pin the single common target shape emitted by every start.
+ * The `executable` identity the fixtures carry is what older releases froze;
+ * the decoder accepts it and drops it (the executable is resolved at dispatch).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -13,7 +15,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
-import { decodeWorkflowPlanV4 } from "../../src/workflows/ir/schema-v4";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 
 const sha256 = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
 
@@ -100,9 +102,9 @@ function commandPlan(options: { isolation?: "none" | "worktree"; target?: Record
   const target = options.target ?? cwdTarget(isolation === "worktree" ? { gitCommitOid: "a".repeat(40) } : {});
   // F-A9 (docs/plans/specs/p3a-plan-v5-child-freeze.md §6): mechanical value
   // bump only, no assertion below this fixture builder changes. This plan is
-  // fed to decodeWorkflowPlanV4 as `unknown`, so the literal here carries no
+  // fed to decodeWorkflowPlan as `unknown`, so the literal here carries no
   // type-level consequence — it is red today only because the decoder still
-  // requires exactly irVersion 4 and goes green once WORKFLOW_IR_V5_VERSION
+  // requires exactly irVersion 4 and goes green once WORKFLOW_PLAN_VERSION
   // lands; every executable/cwd/gitCommitOid assertion in this file is
   // otherwise untouched.
   return {
@@ -143,43 +145,18 @@ function rootUnit(plan: ReturnType<typeof commandPlan>) {
 }
 
 describe("durable workflow v4 immutable executable schema", () => {
-  test("accepts the exact frozen CLI executable, cwd identity, and worktree commit projection", () => {
-    const decoded = decodeWorkflowPlanV4(commandPlan({ isolation: "worktree" }));
+  test("keeps the cwd identity and worktree commit; an older release's executable identity is accepted and dropped", () => {
+    const decoded = decodeWorkflowPlan(commandPlan({ isolation: "worktree" }));
     const root = decoded.steps[0]?.root;
     expect(root?.kind).toBe("unit");
     if (!root || root.kind !== "unit" || root.frozenTarget.kind !== "command") return;
-    expect(root.frozenTarget).toMatchObject({
-      cwdIdentity: CWD_IDENTITY,
-      executable: executableIdentity(),
-      gitCommitOid: "a".repeat(40),
-    });
-  });
+    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY, gitCommitOid: "a".repeat(40) });
+    expect(Object.hasOwn(root.frozenTarget, "executable")).toBe(false);
 
-  test("rejects a bare, relative, or internally inconsistent executable identity", () => {
-    const bare = commandPlan();
-    rootTarget(bare).executable = { ...executableIdentity(), absolutePath: "true" };
-    expect(() => decodeWorkflowPlanV4(bare)).toThrow(/executable|absolute|path/i);
-
-    const escaped = commandPlan();
-    rootTarget(escaped).executable = { ...executableIdentity(), realPath: "../true" };
-    expect(() => decodeWorkflowPlanV4(escaped)).toThrow(/executable|realPath|absolute|path/i);
-
-    const wrongHash = commandPlan();
-    rootTarget(wrongHash).executable = { ...executableIdentity(), sha256: "0".repeat(63) };
-    expect(() => decodeWorkflowPlanV4(wrongHash)).toThrow(/executable|sha256|hash|identity/i);
-  });
-
-  test("requires a canonical Git OID exactly for worktree-isolated targets", () => {
-    const missing = commandPlan({ isolation: "worktree", target: cwdTarget() });
-    expect(() => decodeWorkflowPlanV4(missing)).toThrow(/gitCommitOid|git.*oid|worktree/i);
-
-    for (const oid of ["A".repeat(40), "a".repeat(39), "g".repeat(40)]) {
-      const invalid = commandPlan({ isolation: "worktree", target: cwdTarget({ gitCommitOid: oid }) });
-      expect(() => decodeWorkflowPlanV4(invalid)).toThrow(/gitCommitOid|git.*oid|hex|worktree/i);
-    }
-
-    const unnecessary = commandPlan({ target: cwdTarget({ gitCommitOid: "b".repeat(64) }) });
-    expect(() => decodeWorkflowPlanV4(unnecessary)).toThrow(/gitCommitOid|git.*oid|isolation|worktree/i);
+    // Even an identity that no longer matches the host binary decodes.
+    const stale = commandPlan();
+    rootTarget(stale).executable = { ...executableIdentity(), sha256: "0".repeat(64) };
+    expect(() => decodeWorkflowPlan(stale)).not.toThrow();
   });
 
   test("accepts shell and script executable identities while retaining exact script bytes", () => {
@@ -203,7 +180,7 @@ describe("durable workflow v4 immutable executable schema", () => {
     shellRoot.frozenTarget.contentHash = sha256(
       `akm.workflow.shell.v1\0${canonicalJson({ exec: shellExec, environment: shellEnvironment, cwdIdentity: CWD_IDENTITY })}`,
     );
-    expect(() => decodeWorkflowPlanV4(shell)).not.toThrow();
+    expect(() => decodeWorkflowPlan(shell)).not.toThrow();
 
     const scriptBytes = Buffer.from("#!/bin/sh\nprintf script\n", "utf8");
     const scriptIdentity = {
@@ -231,7 +208,7 @@ describe("durable workflow v4 immutable executable schema", () => {
       materialization: "ephemeral-0700-delete",
       executable: executableIdentity("/bin/sh"),
     };
-    expect(() => decodeWorkflowPlanV4(script)).not.toThrow();
+    expect(() => decodeWorkflowPlan(script)).not.toThrow();
   });
 
   test("keeps an in-process SDK target free of a host executable requirement", () => {
@@ -266,7 +243,7 @@ describe("durable workflow v4 immutable executable schema", () => {
         },
       },
     });
-    expect(() => decodeWorkflowPlanV4(sdk)).not.toThrow();
+    expect(() => decodeWorkflowPlan(sdk)).not.toThrow();
   });
 
   test("keeps a direct LLM target free of a host executable requirement", () => {
@@ -302,6 +279,6 @@ describe("durable workflow v4 immutable executable schema", () => {
         },
       },
     });
-    expect(() => decodeWorkflowPlanV4(llm)).not.toThrow();
+    expect(() => decodeWorkflowPlan(llm)).not.toThrow();
   });
 });

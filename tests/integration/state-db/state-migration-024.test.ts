@@ -32,7 +32,7 @@ import {
 } from "../../../src/core/state/migrations";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 
 const MIGRATION_ID = "024-workflow-run-outputs";
 const PRECEDING_MIGRATION_ID = "023-child-workflow-runs";

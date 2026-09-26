@@ -17,7 +17,7 @@ import {
 import { getStashLocksDir } from "../../../../src/core/paths";
 import { resolveWritable } from "../../../../src/core/write-source";
 import { type Database, openDatabaseFinalizing } from "../../../../src/storage/database";
-import { isCanonicalIndexGeneration } from "../../../../src/storage/repositories/index-entry-schema";
+import { hasCurrentEntriesTable } from "../../../../src/storage/repositories/index-entry-schema";
 import {
   assertSafeRelativePath,
   assertSha256,
@@ -555,8 +555,8 @@ function snapshotDatabase(
     database = openDatabaseFinalizing(sourcePath, { readonly: true, create: false });
     database.exec("PRAGMA busy_timeout = 10000");
     assertQuickCheck(database, sourcePath);
-    if (databaseName === "index.db" && !isCanonicalIndexGeneration(database)) {
-      throw new Error(`incompatible derived index generation: ${sourcePath}`);
+    if (databaseName === "index.db" && !hasCurrentEntriesTable(database)) {
+      throw new Error(`index database has no entries table this akm reads: ${sourcePath}`);
     }
     makePrivateDirectory(path.dirname(destinationPath));
     database.exec(`VACUUM INTO ${sqliteQuote(destinationPath)}`);
@@ -672,8 +672,8 @@ function rewriteDatabasePaths(
     : openDatabaseFinalizing(databasePath, { readonly: true, create: false });
   let inTransaction = false;
   try {
-    if (databaseName === "index.db" && !isCanonicalIndexGeneration(database)) {
-      throw new Error(`incompatible derived index generation: ${databasePath}`);
+    if (databaseName === "index.db" && !hasCurrentEntriesTable(database)) {
+      throw new Error(`index database has no entries table this akm reads: ${databasePath}`);
     }
     if (write) {
       database.exec("PRAGMA foreign_keys = OFF");
@@ -708,6 +708,7 @@ function rewriteStateDatabasePaths(
     ["proposal_fingerprints", "stash_dir"],
     ["improve_runs", "stash_dir"],
     ["proposal_fs_imports", "stash_dir"],
+    ["improve_ledger", "stash_dir"],
   ] as const) {
     rewriteTextColumn(database, table, column, mapValue, write);
   }

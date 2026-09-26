@@ -3,21 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * MULTI-PROCESS run-lease chaos (redesign addendum R2, single-driver invariant)
- * — the cross-process counterpart to the single-process, in-memory contention
- * scenarios in tests/workflows/chaos.test.ts + run-lease.test.ts. Two GENUINE
- * `bun` processes drive the SAME run against ONE shared workflow.db:
+ * MULTI-PROCESS run-lock chaos (single-driver invariant) — the cross-process
+ * counterpart to the in-process scenarios in run-lock.test.ts. Two GENUINE
+ * `bun` processes drive the SAME run against ONE shared state.db:
  *
- *   1. Exactly one process drives. A winner claims the lease and blocks
- *      mid-dispatch (its lease stays live via the real heartbeat); a second
- *      process spawned against the same run is refused UP FRONT, its stderr
- *      naming the live holder, and it dispatches nothing (proven by per-unit
- *      dispatch marker files carrying only the winner's pid).
- *   2. The winner is SIGKILLed mid-run (no `finally` runs — the lease is
- *      orphaned live). Once the lease TTL lapses a fresh process reclaims the
- *      run and drives it to completion, REUSING the units the winner already
- *      completed (their marker files stay at one dispatch) and re-dispatching
- *      only the interrupted + never-started units. No duplicate side effects.
+ *   1. Exactly one process drives. A winner takes the run's lock file and
+ *      blocks mid-dispatch; a second process spawned against the same run is
+ *      refused UP FRONT with exit 75, its stderr naming the winner's pid, and
+ *      it dispatches nothing (proven by per-unit dispatch marker files
+ *      carrying only the winner's pid).
+ *   2. The winner is SIGKILLed mid-run (no `finally` runs — the lock file is
+ *      left behind). Its pid is dead, so a fresh process reclaims the lock at
+ *      once and drives the run to completion, REUSING the units the winner
+ *      already completed (their marker files stay at one dispatch) and
+ *      re-dispatching only the interrupted + never-started units.
  *
  * Synchronization is on marker files + journal polling with generous timeouts,
  * never a bare sleep; dispatch + gate judging are fake env-driven seams, so no
@@ -28,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
+import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import {
@@ -35,7 +35,6 @@ import {
   bunAvailable,
   dispatchCount,
   dispatchPids,
-  expireLease,
   holdStartExists,
   pollUntil,
   spawnRunner,
@@ -79,18 +78,18 @@ const FANOUT_WF = [
   "",
 ].join("\n");
 
-describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)", () => {
-  test("one process drives while a second is refused naming the holder; a SIGKILLed winner's run is reclaimed and its completed units are reused", async () => {
+describe.skipIf(!BUN)("multi-process run lock (single driver + crash reclaim)", () => {
+  test("one process drives while a second exits 75 naming the holder; a SIGKILLed winner's run is reclaimed and its completed units are reused", async () => {
     writeProgram(storage.stashDir, "lease-xproc", FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
     const started = await startWorkflowRun("workflows/lease-xproc", params);
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
     const [ua, ub, uc, ud] = await unitIds(runId, params);
 
     // ── Winner: concurrency 1 makes fan-out order deterministic. It completes
     //    a.ts + b.ts, then BLOCKS forever mid-dispatch of c.ts (no release
-    //    file), holding the lease live via the real heartbeat.
+    //    file), holding the run lock.
     const winner = spawnRunner({
       CHAOS_RUN_ID: runId,
       CHAOS_MARKER_DIR: markerDir,
@@ -103,7 +102,7 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
     });
 
     // Wait until the winner has journaled a.ts + b.ts completed AND is parked
-    // in c.ts's dispatch — the lease is now provably live.
+    // in c.ts's dispatch — the lock is now provably held.
     await pollUntil(
       async () => {
         const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "review"));
@@ -115,34 +114,32 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
     expect(dispatchCount(markerDir, ua!)).toBe(1);
     expect(dispatchCount(markerDir, ub!)).toBe(1);
 
-    const holder = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    expect(holder?.engine_lease_holder).toBeTruthy();
+    expect(fs.existsSync(workflowRunLockPath(runId))).toBe(true);
 
-    // ── Loser: a second process on the same live-leased run. It must refuse up
-    //    front, naming the holder, and dispatch nothing.
+    // ── Loser: a second process on the same locked run. It must refuse up
+    //    front with exit 75, naming the holder pid, and dispatch nothing.
     const loser = spawnRunner({
       CHAOS_RUN_ID: runId,
       CHAOS_MARKER_DIR: markerDir,
       CHAOS_MAX_CONCURRENCY: "1",
     });
     const loserCode = await loser.done();
-    expect(loserCode).toBe(3);
-    expect(loser.stderr()).toContain(holder?.engine_lease_holder ?? "<none>");
-    expect(loser.stderr()).toMatch(/being driven by engine|run lease/);
+    expect(loserCode).toBe(75);
+    expect(loser.stderr()).toContain(`pid ${winner.pid}`);
+    expect(loser.stderr()).toContain("already being driven by another akm process");
     // The loser never reached the dispatcher — no marker line carries its pid.
     expect(allDispatchPids(markerDir).has(loser.pid)).toBe(false);
     // Still exactly one dispatch of a,b (the loser added nothing).
     expect(dispatchCount(markerDir, ua!)).toBe(1);
     expect(dispatchCount(markerDir, ub!)).toBe(1);
 
-    // ── Crash: SIGKILL the winner mid-hold. No finally runs → the lease is
-    //    orphaned live. Simulate the TTL lapsing so the run is reclaimable.
+    // ── Crash: SIGKILL the winner mid-hold. No finally runs → the lock file
+    //    stays on disk, naming a pid that is now dead.
     winner.kill("SIGKILL");
     await winner.done();
-    await expireLease(runId);
 
-    // ── Fresh process: reclaims the expired lease and drives to completion,
-    //    reusing a.ts + b.ts and re-dispatching only c.ts + d.ts.
+    // ── Fresh process: reclaims the dead holder's lock at once and drives to
+    //    completion, reusing a.ts + b.ts and re-dispatching only c.ts + d.ts.
     const fresh = spawnRunner({
       CHAOS_RUN_ID: runId,
       CHAOS_MARKER_DIR: markerDir,
@@ -167,8 +164,7 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
     expect(dispatchPids(markerDir, ud!)).toEqual([fresh.pid]);
     expect(new Set(dispatchPids(markerDir, uc!))).toEqual(new Set([winner.pid, fresh.pid]));
 
-    // The lease is released after the fresh process exits cleanly.
-    const finalRow = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    expect(finalRow?.engine_lease_holder).toBeNull();
+    // The lock is released after the fresh process exits cleanly.
+    expect(fs.existsSync(workflowRunLockPath(runId))).toBe(false);
   }, 30_000);
 });

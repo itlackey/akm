@@ -57,20 +57,60 @@ afterAll(() => {
 });
 
 let storage: IsolatedAkmStorage;
-let testCacheDir = "";
 let stashDir = "";
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  testCacheDir = storage.cacheDir;
   stashDir = storage.stashDir;
 });
 
 afterEach(() => {
   storage.cleanup();
-  testCacheDir = "";
   stashDir = "";
 });
+
+/** Mock `syncMirroredRepo` to mirror a repo into the update's staging cache root, as the git provider does. */
+function mockGitMirror(): ReturnType<typeof spyOn> {
+  return spyOn(gitProvider, "syncMirroredRepo").mockImplementation(async (source, options) => {
+    const url = gitProvider.parseGitRepoUrl(source.url ?? "").canonicalUrl;
+    const paths = gitProvider.getCachePaths(url, options?.cacheRootDir);
+    makeStashDir(paths.repoDir);
+    return {
+      id: url,
+      source: "git",
+      ref: url,
+      artifactUrl: url,
+      contentDir: paths.repoDir,
+      cacheDir: paths.rootDir,
+      extractedDir: paths.repoDir,
+      syncedAt: new Date().toISOString(),
+      writable: false,
+    };
+  });
+}
+
+/** Mock `syncFromRef` to fetch left-pad into the update's staging cache root, as the npm provider does. */
+function mockNpmFetch(): ReturnType<typeof spyOn> {
+  return spyOn(syncFromRefModule, "syncFromRef").mockImplementation(async (_ref, options) => {
+    if (!options?.cacheRootDir) throw new Error("update did not provide a staging cache root");
+    const cacheDir = path.join(options.cacheRootDir, "left-pad-cache");
+    const contentDir = path.join(cacheDir, "content");
+    makeStashDir(contentDir);
+    return {
+      id: "left-pad",
+      source: "npm",
+      ref: "npm:left-pad",
+      artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+      resolvedVersion: "1.3.0",
+      contentDir,
+      cacheDir,
+      extractedDir: contentDir,
+      integrity: "sha512-fake",
+      syncedAt: new Date().toISOString(),
+      writable: false,
+    };
+  });
+}
 
 // ── Issue #9 / #18 / #22: --name persisted for filesystem sources ──────────
 
@@ -381,17 +421,7 @@ describe("issue #19: akm bundle update website sources", () => {
   });
 
   test("git source update refreshes configured git mirrors instead of treating them as local paths", async () => {
-    const syncSpy = spyOn(gitProvider, "syncMirroredRepo").mockResolvedValue({
-      id: "https://github.com/example/repo",
-      source: "git",
-      ref: "https://github.com/example/repo",
-      artifactUrl: "https://github.com/example/repo",
-      contentDir: stashDir,
-      cacheDir: testCacheDir,
-      extractedDir: stashDir,
-      syncedAt: new Date().toISOString(),
-      writable: false,
-    });
+    const syncSpy = mockGitMirror();
 
     saveConfig({
       semanticSearchMode: "off",
@@ -413,6 +443,9 @@ describe("issue #19: akm bundle update website sources", () => {
       expect.objectContaining({ name: "test-git" }),
       expect.objectContaining({ force: true, writable: false, cacheRootDir: expect.any(String) }),
     );
+    // The audited mirror was published to the live cache path.
+    const livePaths = gitProvider.getCachePaths("https://github.com/example/repo");
+    expect(fs.existsSync(path.join(livePaths.repoDir, "knowledge"))).toBe(true);
     syncSpy.mockRestore();
   });
 });
@@ -706,17 +739,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       semanticSearchMode: "off",
       bundles: { plain: { git: "https://github.com/example/plain.git", enabled: false } },
     });
-    const plainSync = spyOn(gitProvider, "syncMirroredRepo").mockResolvedValue({
-      id: "plain",
-      source: "git",
-      ref: "https://github.com/example/plain.git",
-      artifactUrl: "https://github.com/example/plain.git",
-      contentDir: stashDir,
-      cacheDir: testCacheDir,
-      extractedDir: stashDir,
-      syncedAt: new Date().toISOString(),
-      writable: false,
-    });
+    const plainSync = mockGitMirror();
 
     try {
       await akmUpdate({ target: "plain", stashDir });
@@ -726,7 +749,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
     }
   });
 
-  test("accounts for every configured source when remote fixtures leave the final scan incomplete", async () => {
+  test("accounts for every configured source", async () => {
     const fsDir = createTmpDir("akm-r015-fs-");
     makeStashDir(fsDir);
 
@@ -742,30 +765,8 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       },
     });
 
-    const gitSyncSpy = spyOn(gitProvider, "syncMirroredRepo").mockResolvedValue({
-      id: "https://github.com/example/mirror-git",
-      source: "git",
-      ref: "https://github.com/example/mirror-git",
-      artifactUrl: "https://github.com/example/mirror-git",
-      contentDir: stashDir,
-      cacheDir: testCacheDir,
-      extractedDir: stashDir,
-      syncedAt: new Date().toISOString(),
-      writable: false,
-    });
-    const npmSyncSpy = spyOn(syncFromRefModule, "syncFromRef").mockResolvedValue({
-      id: "left-pad",
-      source: "npm",
-      ref: "npm:left-pad",
-      artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
-      resolvedVersion: "1.3.0",
-      contentDir: stashDir,
-      cacheDir: testCacheDir,
-      extractedDir: stashDir,
-      integrity: "sha512-fake",
-      syncedAt: new Date().toISOString(),
-      writable: false,
-    });
+    const gitSyncSpy = mockGitMirror();
+    const npmSyncSpy = mockNpmFetch();
 
     let result: Awaited<ReturnType<typeof akmUpdate>>;
     try {
@@ -798,18 +799,10 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
     expect(result.processed).toHaveLength(1);
     expect(result.processed[0]?.id).toBe("left-pad");
     expect(result.processed[0]?.installed.resolvedVersion).toBe("1.3.0");
-    // These minimal remote fixtures do not materialize a complete final source
-    // generation. The filesystem bundle must still be accounted for, but must
-    // not be described as reconciled while the global scan is incomplete.
-    expect(result.index.scanComplete).toBe(false);
-    expect(result.plainSynced ?? []).not.toContainEqual({ id: "local-fs", kind: "filesystem", ref: fsDir });
-    expect(result.skipped).toContainEqual({
-      id: "local-fs",
-      kind: "filesystem",
-      status: "skipped",
-      code: "SOURCE_SCAN_INCOMPLETE",
-      reason: expect.stringContaining("not scanned completely"),
-    });
+    // filesystem: reflects its files in place, reconciled by the final scan.
+    expect(result.index.scanComplete).toBe(true);
+    expect(result.plainSynced).toContainEqual({ id: "local-fs", kind: "filesystem", ref: fsDir });
+    expect(result.skipped ?? []).toEqual([]);
 
     // The npm source must now be a genuine managed install (lock-backed).
     const npmLock = readLockfile().find((entry) => entry.id === "left-pad");
@@ -827,19 +820,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       bundles: { "left-pad": { npm: "left-pad" } },
     });
 
-    const npmSyncSpy = spyOn(syncFromRefModule, "syncFromRef").mockResolvedValue({
-      id: "left-pad",
-      source: "npm",
-      ref: "npm:left-pad",
-      artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
-      resolvedVersion: "1.3.0",
-      contentDir: stashDir,
-      cacheDir: testCacheDir,
-      extractedDir: stashDir,
-      integrity: "sha512-fake",
-      syncedAt: new Date().toISOString(),
-      writable: false,
-    });
+    const npmSyncSpy = mockNpmFetch();
     try {
       const result = await akmUpdate({ target: "left-pad", stashDir });
       expect(result.processed).toHaveLength(1);

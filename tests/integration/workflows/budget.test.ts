@@ -10,7 +10,7 @@ import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
-import type { WorkflowPlanGraphV4 as WorkflowPlanGraph } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 import { resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import {
   type IsolatedAkmStorage,
@@ -492,11 +492,9 @@ describe("budget interactions", () => {
     expect(result.done).toBe(true);
     expect(result.run.status).toBe("completed");
     expect(signals).toHaveLength(3);
-    // No budget → no budget-chained AbortController, but a leased engine run
-    // ALWAYS threads the lease-heartbeat's signal into dispatch so a lost lease
-    // can abort in-flight units (P1 fix). It stays UNaborted through a healthy
-    // run — the units simply never observe an abort.
-    expect(signals.every((s) => s !== undefined && !s.aborted)).toBe(true);
+    // No budget → no budget-chained AbortController; with no caller signal
+    // either, the units simply never observe an abort.
+    expect(signals.every((s) => s === undefined || !s.aborted)).toBe(true);
   });
 
   test("budget + on_error: continue still fails the step hard, naming the ceiling", async () => {

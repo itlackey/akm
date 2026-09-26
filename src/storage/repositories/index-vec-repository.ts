@@ -80,7 +80,54 @@ export function isVecFastPathReady(db: Database): boolean {
 }
 
 /**
- * Verify that the vec fast-path table mirrors the complete durable BLOB set.
+ * The embedding model whose vectors this index currently serves: the provider
+ * fingerprint the last embedding pass targeted (`index_meta.embeddingFingerprint`).
+ * `undefined` on an index that has never run an embedding pass.
+ */
+function currentEmbeddingModel(db: Database): string | undefined {
+  return getMeta(db, "embeddingFingerprint");
+}
+
+const modelColumnPresent = new WeakMap<Database, boolean>();
+
+/**
+ * Whether `embeddings` carries the per-row `model` column. A read-only open of
+ * an index the writable opener has not migrated yet does not; its rows are
+ * then all served as the current model. Only a positive answer is memoized:
+ * the column can appear on a live connection (`ensureSchema`), never vanish.
+ */
+function hasModelColumn(db: Database): boolean {
+  if (modelColumnPresent.get(db) === true) return true;
+  let present = false;
+  try {
+    present = (db.prepare("PRAGMA table_info(embeddings)").all() as Array<{ name: string }>).some(
+      (column) => column.name === "model",
+    );
+  } catch {
+    present = false;
+  }
+  if (present) modelColumnPresent.set(db, true);
+  return present;
+}
+
+/**
+ * SQL predicate selecting `embeddings` rows usable for `model`. A NULL model
+ * predates per-row model tracking and is trusted as the current model; when
+ * no model is known at all, or the index predates the column, every row
+ * qualifies.
+ */
+function modelPredicate(
+  db: Database,
+  model: string | undefined,
+  alias = "embeddings",
+): { sql: string; params: string[] } {
+  if (model === undefined || !hasModelColumn(db)) return { sql: "1", params: [] };
+  return { sql: `(${alias}.model IS NULL OR ${alias}.model = ?)`, params: [model] };
+}
+
+/**
+ * Verify that the vec fast-path table mirrors the complete durable BLOB set
+ * for the current model.
  *
  * A targeted embedding write preserves the prior readiness decision because
  * its subset cannot prove an older degraded generation is healed. Global
@@ -91,24 +138,25 @@ export function isVecFastPathReady(db: Database): boolean {
 export function isVecFastPathComplete(db: Database): boolean {
   if (!isVecAvailable(db) || !hasVecTable(db)) return false;
   try {
+    const current = modelPredicate(db, currentEmbeddingModel(db));
     const missingVecRows = db
       .prepare(`
-        SELECT id FROM embeddings
+        SELECT id FROM embeddings WHERE ${current.sql}
         EXCEPT
         SELECT id FROM entries_vec
         LIMIT 1
       `)
-      .all();
+      .all(...current.params);
     if (missingVecRows.length > 0) return false;
 
     const orphanVecRows = db
       .prepare(`
         SELECT id FROM entries_vec
         EXCEPT
-        SELECT id FROM embeddings
+        SELECT id FROM embeddings WHERE ${current.sql}
         LIMIT 1
       `)
-      .all();
+      .all(...current.params);
     return orphanVecRows.length === 0;
   } catch {
     return false;
@@ -153,16 +201,17 @@ export function repairVecFastPath(db: Database, embeddingDim: number): VecFastPa
   }
 
   try {
+    const current = modelPredicate(db, currentEmbeddingModel(db));
     while (true) {
       const orphanIds = db
         .prepare(`
           SELECT id FROM entries_vec
           EXCEPT
-          SELECT id FROM embeddings
+          SELECT id FROM embeddings WHERE ${current.sql}
           ORDER BY id
           LIMIT ?
         `)
-        .all(SQLITE_CHUNK_SIZE) as Array<{ id: number }>;
+        .all(...current.params, SQLITE_CHUNK_SIZE) as Array<{ id: number }>;
       if (orphanIds.length === 0) break;
       db.transaction(() => {
         const remove = db.prepare("DELETE FROM entries_vec WHERE id = ?");
@@ -178,7 +227,7 @@ export function repairVecFastPath(db: Database, embeddingDim: number): VecFastPa
       const missingIds = db
         .prepare(`
           SELECT id FROM (
-            SELECT id FROM embeddings
+            SELECT id FROM embeddings WHERE ${current.sql}
             EXCEPT
             SELECT id FROM entries_vec
           ) AS missing
@@ -186,7 +235,7 @@ export function repairVecFastPath(db: Database, embeddingDim: number): VecFastPa
           ORDER BY id
           LIMIT ?
         `)
-        .all(afterId, SQLITE_CHUNK_SIZE) as Array<{ id: number }>;
+        .all(...current.params, afterId, SQLITE_CHUNK_SIZE) as Array<{ id: number }>;
       if (missingIds.length === 0) break;
       afterId = missingIds[missingIds.length - 1]!.id;
       const placeholders = missingIds.map(() => "?").join(",");
@@ -260,6 +309,47 @@ export function deleteEntryVectors(db: Database, id: number): void {
   if (isVecAvailable(db)) db.prepare("DELETE FROM entries_vec WHERE id = ?").run(id);
 }
 
+/** Declared vector width of `entries_vec`, from its DDL; `undefined` when the table is absent. */
+function vecTableWidth(db: Database): number | undefined {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'").get() as
+    | { sql: string | null }
+    | undefined;
+  const width = row?.sql?.match(/FLOAT\[(\d+)\]/i)?.[1];
+  return width === undefined ? undefined : Number(width);
+}
+
+/**
+ * Make sure the sqlite-vec mirror exists at `dim`. A table declared at another
+ * width is dropped and recreated (it is a mirror of the BLOB rows for the
+ * current model, refilled by `repairVecFastPath`; the BLOB rows are untouched)
+ * and the fast path is marked not ready until the refill completes.
+ */
+export function ensureVecTableWidth(db: Database, dim: number): void {
+  if (!isVecAvailable(db)) return;
+  const existing = vecTableWidth(db);
+  if (existing === dim) return;
+  if (existing !== undefined) {
+    db.exec("DROP TABLE IF EXISTS entries_vec");
+    setVecFastPathReady(db, false);
+  }
+  db.exec(`
+    CREATE VIRTUAL TABLE entries_vec USING vec0(
+      id       INTEGER PRIMARY KEY,
+      embedding FLOAT[${dim}]
+    );
+  `);
+}
+
+/**
+ * Empty the sqlite-vec mirror without touching the BLOB rows. Used when the
+ * configured embedding model changes: the mirror serves one model at a time,
+ * and the pass that follows refills it as it re-embeds each entry.
+ */
+export function clearVecMirror(db: Database): void {
+  if (isVecAvailable(db) && hasVecTable(db)) db.exec("DELETE FROM entries_vec");
+  setVecFastPathReady(db, false);
+}
+
 const VEC_DOCS_URL = "https://github.com/itlackey/akm/blob/main/docs/reference/configuration.md#sqlite-vec-extension";
 const VEC_FALLBACK_THRESHOLD = 10_000;
 // Per-database warning state: tracks which databases have already emitted the
@@ -290,16 +380,12 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
 
 /**
  * Purge stored embeddings (BLOB rows in `embeddings`, plus the `entries_vec`
- * virtual table) and mark the index as embedding-free. The single place that
- * invalidates embeddings — used on a dimension change, a model/provider change,
- * and a full rebuild.
+ * virtual table) and mark the index as embedding-free. Only the explicit
+ * `akm index --reembed` override calls this: a model or dimension change keeps
+ * every stored row (each carries its own model) and re-embeds incrementally.
  *
- * No backup: embeddings are a derived cache, fully regenerable from the markdown
- * by the next `akm index`. (Recovery model decided 2026-06-25.)
- *
- * `dropVecTable: true` DROPs `entries_vec` — used on a DIMENSION change, where
- * the vec0 table must be recreated at the new width by the caller. The default
- * clears its rows in place (same dimension, stale vectors).
+ * `dropVecTable: true` DROPs `entries_vec` so the next pass recreates it at
+ * the width it observes; the default clears its rows in place.
  */
 export function purgeEmbeddings(db: Database, opts?: { dropVecTable?: boolean }): void {
   bestEffort(() => db.exec("DELETE FROM embeddings"), "purge embeddings");
@@ -331,7 +417,17 @@ export interface EmbeddingUpsertResult {
   vec: VecInsertOutcome;
 }
 
-export function upsertEmbedding(db: Database, entryId: number, embedding: EmbeddingVector): EmbeddingUpsertResult {
+/**
+ * Store one entry's vector. `model` is the provider fingerprint it was
+ * generated under (`deriveSemanticProviderFingerprint`); a row written without
+ * one is trusted as the current model.
+ */
+export function upsertEmbedding(
+  db: Database,
+  entryId: number,
+  embedding: EmbeddingVector,
+  model?: string,
+): EmbeddingUpsertResult {
   // Pre-flight FK guard: when an entry is deleted between when its id is queued
   // for embedding and when this INSERT runs (e.g. consolidation deletes during
   // a concurrent improve cycle), the INSERT throws "FOREIGN KEY constraint failed"
@@ -344,7 +440,11 @@ export function upsertEmbedding(db: Database, entryId: number, embedding: Embedd
 
   // Always write to BLOB table (works without sqlite-vec; the JS-cosine fallback
   // reads it, so semantic search survives a vec fast-path failure).
-  db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(entryId, buf);
+  db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding, model) VALUES (?, ?, ?)").run(
+    entryId,
+    buf,
+    model ?? null,
+  );
 
   if (!isVecAvailable(db)) return { stored: true, vec: "unavailable" };
 
@@ -445,7 +545,13 @@ function bufferToFloat32(buf: Buffer, expectedDim: number): number[] | null {
 }
 
 function searchBlobVec(db: Database, queryEmbedding: EmbeddingVector, k: number): DbVecResult[] {
-  const rows = db.prepare("SELECT id, embedding FROM embeddings").all() as Array<{ id: number; embedding: Buffer }>;
+  // Only the current model's vectors are comparable with the query vector; rows
+  // left from a previous model wait, hidden, until the pass re-embeds them.
+  const current = modelPredicate(db, currentEmbeddingModel(db));
+  const rows = db.prepare(`SELECT id, embedding FROM embeddings WHERE ${current.sql}`).all(...current.params) as Array<{
+    id: number;
+    embedding: Buffer;
+  }>;
 
   if (rows.length === 0) return [];
 
@@ -469,19 +575,24 @@ function searchBlobVec(db: Database, queryEmbedding: EmbeddingVector, k: number)
 }
 
 /**
- * Return all entries that do not yet have an embedding row.
- * Used by the embedding phase to determine which entries need vectors generated.
+ * Return all entries that do not yet have an embedding row for `model` (any
+ * row when no model is given). This is the embedding pass's cursor: a row
+ * generated under another model counts as missing and is replaced when the
+ * entry is re-embedded, so a model change re-embeds incrementally and an
+ * interrupted pass resumes where it stopped.
  */
 export function getAllEntriesForEmbedding(
   db: Database,
   entryIds?: readonly number[],
+  model?: string,
 ): Array<{ id: number; searchText: string; itemRef: string; filePath: string }> {
   const select = `
       SELECT e.id, e.search_text AS searchText, e.item_ref AS itemRef, e.file_path AS filePath FROM entries e
     `;
-  const missing = "NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)";
+  const current = modelPredicate(db, model, "b");
+  const missing = `NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id AND ${current.sql})`;
   if (entryIds === undefined) {
-    return db.prepare(`${select} WHERE ${missing} ORDER BY e.id`).all() as Array<{
+    return db.prepare(`${select} WHERE ${missing} ORDER BY e.id`).all(...current.params) as Array<{
       id: number;
       searchText: string;
       itemRef: string;
@@ -496,7 +607,9 @@ export function getAllEntriesForEmbedding(
     if (chunk.length === 0) continue;
     const placeholders = chunk.map(() => "?").join(",");
     rows.push(
-      ...(db.prepare(`${select} WHERE e.id IN (${placeholders}) AND ${missing} ORDER BY e.id`).all(...chunk) as Array<{
+      ...(db
+        .prepare(`${select} WHERE e.id IN (${placeholders}) AND ${missing} ORDER BY e.id`)
+        .all(...chunk, ...current.params) as Array<{
         id: number;
         searchText: string;
         itemRef: string;
@@ -507,45 +620,11 @@ export function getAllEntriesForEmbedding(
   return rows;
 }
 
-export function getEmbeddingCount(db: Database): number {
-  const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+/** Stored embedding rows — for `model` when given, otherwise every row. */
+export function getEmbeddingCount(db: Database, model?: string): number {
+  const current = modelPredicate(db, model);
+  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM embeddings WHERE ${current.sql}`).get(...current.params) as {
+    cnt: number;
+  };
   return row.cnt;
-}
-
-/** One already-embedded entry sampled for the embedding-fingerprint canary (#955). */
-export interface EmbeddingCanarySample {
-  id: number;
-  searchText: string;
-  vector: EmbeddingVector;
-}
-
-/**
- * Sample up to `limit` already-embedded entries (id, search text, and the
- * stored vector) for the embedding-fingerprint canary check: re-embedding
- * these texts with the CURRENT config and comparing against `vector` is how
- * a model-string rename is told apart from a genuine model/dimension change
- * (#955), without trusting the config string alone.
- *
- * Ordered by `id` for a deterministic, cheap sample (no `ORDER BY RANDOM()`)
- * — the canary only needs "some" already-verified vectors, not a
- * statistically representative one. A corrupt stored BLOB (see
- * `bufferToFloat32`) is skipped rather than failing the whole sample.
- */
-export function sampleEmbeddedEntriesForCanary(db: Database, limit: number): EmbeddingCanarySample[] {
-  const rows = db
-    .prepare(`
-      SELECT e.id, e.search_text AS searchText, em.embedding AS embedding
-      FROM entries e
-      JOIN embeddings em ON em.id = e.id
-      ORDER BY e.id
-      LIMIT ?
-    `)
-    .all(limit) as Array<{ id: number; searchText: string; embedding: Buffer }>;
-
-  const samples: EmbeddingCanarySample[] = [];
-  for (const row of rows) {
-    const vector = bufferToFloat32(row.embedding, Math.floor(row.embedding.byteLength / 4));
-    if (vector) samples.push({ id: row.id, searchText: row.searchText, vector });
-  }
-  return samples;
 }

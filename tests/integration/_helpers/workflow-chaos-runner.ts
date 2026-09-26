@@ -37,13 +37,14 @@
  *                       window).
  *   CHAOS_MAX_CONCURRENCY  optional integer engine concurrency cap.
  *
- * Exit codes: 0 = drove without throwing; 3 = threw (e.g. lease refusal — the
- * message, which names the holder, is written to stderr for the parent to
- * assert on).
+ * Exit codes: 0 = drove without throwing; 75 = a TransientError (the run lock
+ * is held by another process — the CLI's own exit code for it); 3 = threw
+ * anything else. The message is written to stderr for the parent to assert on.
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import { TransientError } from "../../../src/core/errors";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
@@ -119,7 +120,7 @@ async function main(): Promise<void> {
     process.exit(0);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(3);
+    process.exit(err instanceof TransientError ? 75 : 3);
   }
 }
 

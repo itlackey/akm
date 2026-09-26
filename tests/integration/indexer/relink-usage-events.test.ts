@@ -68,7 +68,7 @@ describe("relinkUsageEvents", () => {
     seedEntry("stash", "skills/deploy", "/home/u/akm");
     insertEvent("skills/deploy", null); // detached (e.g. after a full rebuild)
 
-    relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("skills/deploy")).toBeNull();
   });
@@ -81,7 +81,7 @@ describe("relinkUsageEvents", () => {
     );
     insertEvent("getsentry-skills//knowledge/skills/skill-writer/references/workflow-routing", null);
 
-    relinkUsageEvents(indexDb, stateDb, {});
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("getsentry-skills//knowledge/skills/skill-writer/references/workflow-routing")).toBe(id);
   });
@@ -95,13 +95,7 @@ describe("relinkUsageEvents", () => {
     insertEvent("team//memories/duplicate", null);
     insertEvent("memories/duplicate", null);
 
-    relinkUsageEvents(indexDb, stateDb, {
-      sources: [
-        { path: stashRoot, registryId: "stash" },
-        { path: teamRoot, registryId: "team" },
-      ],
-      defaultStashDir: stashRoot,
-    });
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("stash//memories/duplicate")).toBe(stashId);
     expect(entryIdFor("team//memories/duplicate")).toBe(teamId);
@@ -112,7 +106,7 @@ describe("relinkUsageEvents", () => {
     seedEntry("stash", "skills/deploy", "/home/u/akm");
     insertEvent("scripts/does-not-exist", null);
 
-    relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("scripts/does-not-exist")).toBeNull();
   });
@@ -123,7 +117,7 @@ describe("relinkUsageEvents", () => {
     // resolvable ref.
     insertEvent("stash//skills/deploy", 99);
 
-    relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("stash//skills/deploy")).toBe(id);
   });

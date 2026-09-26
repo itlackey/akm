@@ -5,9 +5,6 @@ import path from "node:path";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
 import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 
-// Trigger self-registration
-import "../../src/sources/providers/filesystem";
-
 const createdTmpDirs: string[] = [];
 
 function createTmpDir(prefix = "akm-fs-"): string {
@@ -35,7 +32,7 @@ afterAll(() => {
 });
 
 describe("FilesystemSourceProvider", () => {
-  test("self-registers as 'filesystem'", () => {
+  test("resolves 'filesystem'", () => {
     expect(resolveSourceProviderFactory("filesystem")).toBeTruthy();
   });
 

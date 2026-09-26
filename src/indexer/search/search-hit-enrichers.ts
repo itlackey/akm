@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { displayRef } from "../../core/asset/resolve-ref";
-import type { RendererRegistry } from "../../core/type-presentation";
+import { presentationFor } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
@@ -14,117 +14,73 @@ export interface SearchHitContext {
   type: string;
   stashDir: string;
   bundleId: string;
-  rendererRegistry: RendererRegistry;
   /**
-   * Optional open DB connection. Required for enrichers that perform DB
-   * lookups (e.g. {@link derivedMemoryEnricher}). When absent those enrichers
-   * are skipped — keeps the default-safe path zero-overhead for unit tests
-   * and renderer-only call sites.
+   * Optional open DB connection for the derived-memory lookup. When absent
+   * that step is skipped — keeps unit tests and renderer-only call sites
+   * zero-overhead.
    */
   db?: Database;
 }
 
-export interface SearchHitEnricher {
-  name: string;
-  appliesTo(ctx: SearchHitContext): boolean;
-  enrich(hit: SourceSearchHit, ctx: SearchHitContext): void | Promise<void>;
-}
-
-const rendererSearchHitEnricher: SearchHitEnricher = {
-  name: "renderer-search-hit-enricher",
-  appliesTo(ctx) {
-    return ctx.rendererRegistry.rendererNameFor(ctx.type) !== undefined;
-  },
-  async enrich(hit, ctx) {
-    const rendererName = ctx.rendererRegistry.rendererNameFor(ctx.type);
-    if (!rendererName) return;
+/**
+ * Let the hit's type renderer enrich it, then — for a memory, when a DB is
+ * open — surface its derived child ({@link surfaceDerivedMemory}).
+ */
+export async function enrichSearchHit(hit: SourceSearchHit, ctx: SearchHitContext): Promise<void> {
+  const rendererName = presentationFor(ctx.type).renderer;
+  if (rendererName) {
     const renderer = await getRenderer(rendererName);
     renderer?.enrichSearchHit?.(hit, ctx.stashDir);
-  },
-};
+  }
+  if (ctx.type === "memory" && ctx.db) surfaceDerivedMemory(hit, ctx.db, ctx.bundleId);
+}
 
 /**
- * Phase 5A / Advantage D5 — derived-memory enricher.
- *
- * When a parent memory has a `.derived` child indexed (the LLM-distilled
- * lesson surface), this enricher rewrites the parent hit to surface the
- * derived child's description / searchHints / tags AND sets `expandTo` to
- * the derived child's ref so callers can fetch it via `akm show <ref>`.
+ * Phase 5A / Advantage D5 — when a parent memory has a `.derived` child
+ * indexed (the LLM-distilled lesson surface), rewrite the parent hit to
+ * surface the derived child's description / tags AND set `expandTo` to the
+ * derived child's ref so callers can fetch it via `akm show <ref>`.
  *
  * The parent ref is preserved on the hit — only the surface text is
  * swapped, so links and provenance still point at the canonical parent.
- *
- * Skipped for:
- *  - non-memory hits
- *  - memory hits that are themselves derived children (name ends with
- *    `.derived`) — we never recurse parent→child→grandchild
- *  - contexts without an open DB connection
  */
-export const derivedMemoryEnricher: SearchHitEnricher = {
-  name: "derived-memory-enricher",
-  appliesTo(ctx) {
-    return ctx.type === "memory" && ctx.db !== undefined;
-  },
-  enrich(hit, ctx) {
-    if (!ctx.db) return;
-    // Never recurse: a `.derived` hit is itself the child surface; leaving
-    // it untouched also avoids `<parent>.derived.derived` chains.
-    if (hit.name.toLowerCase().endsWith(".derived")) return;
+function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, bundleId: string): void {
+  // Never recurse: a `.derived` hit is itself the child surface; leaving
+  // it untouched also avoids `<parent>.derived.derived` chains.
+  if (hit.name.toLowerCase().endsWith(".derived")) return;
 
-    // Parent ref shape: the 0.9.0 `memories/<name>` conceptId. Re-build from the
-    // entry's name so we don't depend on whatever wiki/registry prefix `hit.ref`
-    // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
-    // column now stores this same conceptId grammar (Group-C item 2 flip — the
-    // metadata producer + this consumer move together).
-    const parentRef = `memories/${hit.name}`;
-    const derived = getDerivedForParent(ctx.db, parentRef, ctx.bundleId);
-    if (!derived) return;
+  // Parent ref shape: the 0.9.0 `memories/<name>` conceptId. Re-build from the
+  // entry's name so we don't depend on whatever wiki/registry prefix `hit.ref`
+  // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
+  // column stores this same conceptId grammar.
+  const derived = getDerivedForParent(db, `memories/${hit.name}`, bundleId);
+  if (!derived) return;
 
-    // Swap description / searchHints / tags from the derived child.
-    // The parent ref itself is preserved — only the surface text is swapped.
-    const surfaceFields: Array<"description" | "tags"> = [];
-    let surfaceDescription: string | undefined;
-    if (typeof derived.entry.description === "string" && derived.entry.description.length > 0) {
-      hit.description = derived.entry.description;
-      surfaceDescription = derived.entry.description;
-      surfaceFields.push("description");
-    }
-    if (Array.isArray(derived.entry.searchHints) && derived.entry.searchHints.length > 0) {
-      // We don't have a `searchHints` field on SourceSearchHit today — it's
-      // only used inside ranking. The plan says to swap when present; we
-      // record it onto the hit only if a future renderer surfaces it. For
-      // now, treat as advisory (no-op when SearchHit lacks the field).
-    }
-    if (Array.isArray(derived.entry.tags) && derived.entry.tags.length > 0) {
-      hit.tags = derived.entry.tags;
-      surfaceFields.push("tags");
-    }
-    // F4b output-spelling flip: `expandTo` is a user-facing `akm show <ref>`
-    // target, so emit the 0.9.0 short conceptId grammar (`memories/<name>`).
-    hit.expandTo = displayRef({ type: "memory", name: derived.entry.name });
-    const childRef = getItemRefById(ctx.db, derived.id);
-    if (childRef && surfaceFields.length > 0) {
-      attachSearchHitAttribution(hit, {
-        memoryInference: {
-          exposure: "surface",
-          childRef,
-          surfaceFields,
-          ...(surfaceDescription ? { surfaceDescription } : {}),
-        },
-      });
-    }
-  },
-};
-
-export const defaultSearchHitEnrichers: SearchHitEnricher[] = [rendererSearchHitEnricher, derivedMemoryEnricher];
-
-export async function enrichSearchHit(
-  hit: SourceSearchHit,
-  ctx: SearchHitContext,
-  enrichers: SearchHitEnricher[] = defaultSearchHitEnrichers,
-): Promise<void> {
-  for (const enricher of enrichers) {
-    if (!enricher.appliesTo(ctx)) continue;
-    await enricher.enrich(hit, ctx);
+  // Swap description / tags from the derived child (SourceSearchHit carries no
+  // `searchHints`).
+  const surfaceFields: Array<"description" | "tags"> = [];
+  let surfaceDescription: string | undefined;
+  if (typeof derived.entry.description === "string" && derived.entry.description.length > 0) {
+    hit.description = derived.entry.description;
+    surfaceDescription = derived.entry.description;
+    surfaceFields.push("description");
+  }
+  if (Array.isArray(derived.entry.tags) && derived.entry.tags.length > 0) {
+    hit.tags = derived.entry.tags;
+    surfaceFields.push("tags");
+  }
+  // `expandTo` is a user-facing `akm show <ref>` target, so emit the 0.9.0
+  // short conceptId grammar (`memories/<name>`).
+  hit.expandTo = displayRef({ type: "memory", name: derived.entry.name });
+  const childRef = getItemRefById(db, derived.id);
+  if (childRef && surfaceFields.length > 0) {
+    attachSearchHitAttribution(hit, {
+      memoryInference: {
+        exposure: "surface",
+        childRef,
+        surfaceFields,
+        ...(surfaceDescription ? { surfaceDescription } : {}),
+      },
+    });
   }
 }

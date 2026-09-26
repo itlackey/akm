@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { loadSchedulerContextDescriptor } from "../../src/tasks/scheduler-invocation";
 import { makeSandboxDir } from "../_helpers/sandbox";
 
 function writeDescriptor(dir: string, value: unknown): string {
@@ -58,76 +57,29 @@ function runLauncher(launcher: string, descriptor: string, output: string) {
   });
 }
 
-function expectLauncherConfigFailure(result: ReturnType<typeof runLauncher>, expectedMessage: string): void {
-  expect(result.status).toBe(78);
-  expect(result.stderr).toContain(expectedMessage);
-  expect(result.stderr).toStartWith("akm: ");
-  expect(result.stderr).not.toMatch(/\n\s+at\s/);
-}
-
 describe("package scheduler context launcher", () => {
-  test("loads context before runtime selection and removes the hidden argument", () => {
+  test("passes --scheduler-context through to the CLI, which loads and validates it", () => {
     const sandbox = makeSandboxDir("akm-scheduler-launcher-");
     try {
-      const descriptor = contextFor(sandbox.dir);
-      fs.mkdirSync(descriptor.environment.AKM_BUNDLE_DIR, { recursive: true });
-      const file = writeDescriptor(path.join(sandbox.dir, "context"), descriptor);
+      // A current descriptor carries only the bundle path. The launcher used to
+      // re-validate it against the old five-directory schema and refuse every
+      // descriptor 0.9.17 writes; it now leaves loading to the CLI.
+      const file = writeDescriptor(path.join(sandbox.dir, "context"), {
+        version: 1,
+        environment: { AKM_BUNDLE_DIR: path.join(sandbox.dir, "stash") },
+      });
       const fixture = launcherFixture(sandbox.dir);
 
       const result = runLauncher(fixture.launcher, file, fixture.output);
 
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(fs.readFileSync(fixture.output, "utf8"))).toEqual({
-        argv: ["sentinel"],
-        configDir: descriptor.environment.AKM_CONFIG_DIR,
+        argv: ["--scheduler-context", file, "sentinel"],
+        configDir: "/ambient/wrong-config",
         launcherNode: process.execPath,
         launcherPath: fixture.launcher,
-        path: descriptor.environment.PATH,
+        path: process.env.PATH,
       });
-    } finally {
-      sandbox.cleanup();
-    }
-  });
-
-  test("rejects the same hash, symlink, permission, and schema violations as the CLI loader", () => {
-    const sandbox = makeSandboxDir("akm-scheduler-launcher-reject-");
-    try {
-      const descriptor = contextFor(sandbox.dir);
-      fs.mkdirSync(descriptor.environment.AKM_BUNDLE_DIR, { recursive: true });
-      const fixture = launcherFixture(sandbox.dir);
-
-      const tampered = writeDescriptor(path.join(sandbox.dir, "tampered"), descriptor);
-      fs.writeFileSync(tampered, fs.readFileSync(tampered, "utf8").replace('"PATH":"', '"PATH":"/tampered:'), {
-        mode: 0o600,
-      });
-      expect(() => loadSchedulerContextDescriptor(tampered, {})).toThrow("content SHA-256");
-      expectLauncherConfigFailure(runLauncher(fixture.launcher, tampered, fixture.output), "content SHA-256");
-
-      const valid = writeDescriptor(path.join(sandbox.dir, "valid"), descriptor);
-      if (process.platform !== "win32") {
-        const symlinkDir = path.join(sandbox.dir, "symlink");
-        fs.mkdirSync(symlinkDir);
-        const symlink = path.join(symlinkDir, path.basename(valid));
-        fs.symlinkSync(valid, symlink);
-        expect(() => loadSchedulerContextDescriptor(symlink, {})).toThrow("symbolic links");
-        expectLauncherConfigFailure(runLauncher(fixture.launcher, symlink, fixture.output), "symbolic links");
-      }
-
-      if (process.platform !== "win32") {
-        fs.chmodSync(valid, 0o644);
-        expect(() => loadSchedulerContextDescriptor(valid, {})).toThrow("group or other permissions");
-        expectLauncherConfigFailure(runLauncher(fixture.launcher, valid, fixture.output), "group or other permissions");
-      }
-
-      const invalidSchema = writeDescriptor(path.join(sandbox.dir, "schema"), {
-        ...descriptor,
-        unexpected: true,
-      });
-      expect(() => loadSchedulerContextDescriptor(invalidSchema, {})).toThrow("Invalid scheduler context");
-      expectLauncherConfigFailure(
-        runLauncher(fixture.launcher, invalidSchema, fixture.output),
-        "expected the scheduler context v1 schema",
-      );
     } finally {
       sandbox.cleanup();
     }
@@ -168,6 +120,22 @@ test("standalone/direct CLI bootstrap applies scheduler context before config re
     expect(JSON.parse(result.stdout).warnings).toContain(
       "Native scheduler inspection is skipped inside the bun test harness.",
     );
+
+    // A current descriptor (bundle path only) bootstraps too; directories it
+    // does not carry resolve from the fire-time environment.
+    const minimal = writeDescriptor(path.join(sandbox.dir, "minimal-context"), {
+      version: 1,
+      environment: { AKM_BUNDLE_DIR: descriptor.environment.AKM_BUNDLE_DIR },
+    });
+    const minimalResult = spawnSync(
+      process.execPath,
+      [path.resolve("src/cli.ts"), "--scheduler-context", minimal, "task", "doctor", "--format=json"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: descriptor.environment.AKM_CONFIG_DIR },
+      },
+    );
+    expect(minimalResult.status, minimalResult.stderr).toBe(0);
 
     const tampered = writeDescriptor(path.join(sandbox.dir, "tampered-context"), descriptor);
     fs.writeFileSync(tampered, fs.readFileSync(tampered, "utf8").replace('"PATH":"', '"PATH":"/tampered:'), {

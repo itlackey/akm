@@ -24,16 +24,11 @@ import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
-import { disposeLoweredExecutionDispatchLease } from "../../src/integrations/agent/execution-lowering";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
+import { assertRunnerCredentials } from "../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig, ChatMessage } from "../../src/llm/client";
 import { LlmCallError } from "../../src/llm/client";
-import {
-  callStructured,
-  type LlmErrorClass,
-  preflightStructuredLlmRunner,
-  resolveStructuredCurrent,
-} from "../../src/llm/structured-call";
+import { callStructured, type LlmErrorClass, resolveStructuredCurrent } from "../../src/llm/structured-call";
 import { mutateScopedEnv, withEnv } from "../_helpers/sandbox";
 
 // Minimal LLM profile config. `chatCompletion` is replaced by the injected
@@ -417,7 +412,6 @@ describe("callStructured contract", () => {
           credential: { names: ["AKM_STRUCTURED_DENIED_SECRET"], required: true },
         }),
         current: { tools: ["shell"] },
-        authorizeTools: () => ({ status: "denied", policy: "fixture-denial" }),
         messages: [{ role: "user", content: "must not dispatch" }],
         request: {
           chat: async () => {
@@ -429,7 +423,7 @@ describe("callStructured contract", () => {
         onError: () => "ERR",
         fallback: "FB",
       });
-      await expect(attempt).rejects.toThrow(/fixture-denial|not authorized/i);
+      await expect(attempt).rejects.toThrow(/authorization policy/i);
     });
     expect(chatRan).toBe(false);
   });
@@ -508,8 +502,9 @@ describe("callStructured contract", () => {
     expect(onFallbackCalls).toBe(0);
   });
 
-  test("(16) one lease supports different messages, models, inference, schemas, and timeouts", async () => {
+  test("(16) one preflighted runner serves different messages, models, inference, schemas, and timeouts", async () => {
     const secret = "structured-lease-original-092";
+    const replacement = "structured-lease-replacement-092";
     const selectedRunner = runner(
       { ...PROFILE, supportsJsonSchema: true },
       {
@@ -526,62 +521,58 @@ describe("callStructured contract", () => {
     }> = [];
 
     await withEnv({ AKM_STRUCTURED_LEASE_KEY: secret }, async () => {
-      const lease = await preflightStructuredLlmRunner(selectedRunner);
-      try {
-        mutateScopedEnv("AKM_STRUCTURED_LEASE_KEY", "structured-lease-replacement-092");
-        const dispatch = (model: string, message: string, temperature: number, timeoutMs: number) =>
-          callStructured<string>({
-            feature: "distill",
-            akmConfig: GATED,
-            enabled: true,
-            runner: selectedRunner,
-            lease,
-            current: { model },
-            messages: [{ role: "user", content: message }],
-            request: {
-              temperature,
-              timeoutMs,
-              responseSchema: { type: "object", properties: { [message]: { type: "string" } } },
-              chat: async (connection, messages, options) => {
-                observed.push({
-                  apiKey: connection.apiKey,
-                  model: connection.model,
-                  temperature: connection.temperature,
-                  message: messages.at(-1)?.content,
-                  timeoutMs: options?.timeoutMs,
-                  schemaType: options?.responseSchema?.type,
-                });
-                return message;
-              },
+      assertRunnerCredentials(selectedRunner);
+      // Credentials are read at each dispatch, so a rotated key takes effect.
+      mutateScopedEnv("AKM_STRUCTURED_LEASE_KEY", replacement);
+      const dispatch = (model: string, message: string, temperature: number, timeoutMs: number) =>
+        callStructured<string>({
+          feature: "distill",
+          akmConfig: GATED,
+          enabled: true,
+          runner: selectedRunner,
+          current: { model },
+          messages: [{ role: "user", content: message }],
+          request: {
+            temperature,
+            timeoutMs,
+            responseSchema: { type: "object", properties: { [message]: { type: "string" } } },
+            chat: async (connection, messages, options) => {
+              observed.push({
+                apiKey: connection.apiKey,
+                model: connection.model,
+                temperature: connection.temperature,
+                message: messages.at(-1)?.content,
+                timeoutMs: options?.timeoutMs,
+                schemaType: options?.responseSchema?.type,
+              });
+              return message;
             },
-            parse: (raw) => raw ?? "",
-            onError: () => "error",
-            fallback: "fallback",
-          });
+          },
+          parse: (raw) => raw ?? "",
+          onError: () => "error",
+          fallback: "fallback",
+        });
 
-        expect(await dispatch("provider/model-a", "first", 0.1, 10)).toBe("first");
-        expect(await dispatch("provider/model-b", "second", 0.9, 20)).toBe("second");
-        expect(observed).toEqual([
-          {
-            apiKey: secret,
-            model: "provider/model-a",
-            temperature: 0.1,
-            message: "first",
-            timeoutMs: 10,
-            schemaType: "object",
-          },
-          {
-            apiKey: secret,
-            model: "provider/model-b",
-            temperature: 0.9,
-            message: "second",
-            timeoutMs: 20,
-            schemaType: "object",
-          },
-        ]);
-      } finally {
-        disposeLoweredExecutionDispatchLease(lease);
-      }
+      expect(await dispatch("provider/model-a", "first", 0.1, 10)).toBe("first");
+      expect(await dispatch("provider/model-b", "second", 0.9, 20)).toBe("second");
+      expect(observed).toEqual([
+        {
+          apiKey: replacement,
+          model: "provider/model-a",
+          temperature: 0.1,
+          message: "first",
+          timeoutMs: 10,
+          schemaType: "object",
+        },
+        {
+          apiKey: replacement,
+          model: "provider/model-b",
+          temperature: 0.9,
+          message: "second",
+          timeoutMs: 20,
+          schemaType: "object",
+        },
+      ]);
     });
   });
 });

@@ -55,7 +55,7 @@ export const CurateRerankConfigSchema = z
     /** How many of curate's already-ranked candidates to send to the reranker. Default 8. */
     topN: positiveInt.max(50).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const SearchConfigSchema = z
   .object({

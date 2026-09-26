@@ -86,7 +86,6 @@ function seedParentRun(runId: string, ref = "test//workflows/status-tree-parent"
       scopeKey: key,
       steps: [{ stepId: "spawn", stepTitle: "Spawn child" }],
       currentStepId: "spawn",
-      checkinArmedAt: new Date().toISOString(),
     });
     storeFrozenWorkflowPlan(db, runId, PARENT_PLAN);
   } finally {
@@ -107,10 +106,7 @@ async function reserveParentUnit(runId: string, stepId: string, unitId: string):
       engine: null,
       model: null,
       inputHash: "0".repeat(64),
-      claimHolder: `test:${unitId}`,
-      claimExpiresAt: new Date(Date.now() + 90_000).toISOString(),
       now: new Date().toISOString(),
-      leaseMode: "direct",
     }),
   );
 }
@@ -144,7 +140,6 @@ async function publishChild(opts: PublishChildOptions): Promise<void> {
         updatedAt: now,
         agentHarness: null,
         agentSessionId: null,
-        checkinArmedAt: null,
       },
       steps: [
         {
@@ -174,7 +169,6 @@ async function setRunStatus(
       currentStepId,
       updatedAt: now,
       completedAt: status === "completed" ? now : null,
-      checkinArmedAt: now,
       runId,
     }),
   );

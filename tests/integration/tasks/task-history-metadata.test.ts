@@ -92,6 +92,20 @@ describe("decodeTaskHistoryMetadata", () => {
     ).toEqual({ metadataVersion: 2, durationMs: 1, detail: { reason: "repair" } });
   });
 
+  test("decodes a malformed engine value by dropping it harmlessly, like any other bad additive field", () => {
+    expect(decodeTaskHistoryMetadata({ durationMs: 1, detail: null, engine: 42 })).toEqual({
+      metadataVersion: 2,
+      durationMs: 1,
+      detail: null,
+    });
+    expect(decodeTaskHistoryMetadata({ durationMs: 1, detail: null, engine: null })).toEqual({
+      metadataVersion: 2,
+      durationMs: 1,
+      detail: null,
+      engine: null,
+    });
+  });
+
   test("still rejects genuine corruption: non-number durationMs and a non-object detail", () => {
     expect(() => decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: "oops", detail: null })).toThrow(
       /durationMs must be a number/,

@@ -14,7 +14,6 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { resetBundleIdentityGuardForTests, warnOnBundleRenameDrift } from "../../src/indexer/bundle-identity-guard";
-import { openDatabase } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { type Cleanup, sandboxXdgDataHome } from "../_helpers/sandbox";
@@ -91,23 +90,6 @@ describe("§11.5 bundle-rename startup guard", () => {
   test("stays silent when the configured bundle ids match the indexed prefixes", () => {
     seedIndexBundles(["primary"]);
     warnOnBundleRenameDrift(bundlesConfig("primary"));
-    expect(warnCalls).toHaveLength(0);
-  });
-
-  test("skips the rename-drift comparison for a stamped v22 index with a hidden generated legacy column", () => {
-    seedIndexBundles(["oldname"]);
-    const raw = openDatabase(getDbPath());
-    try {
-      raw.exec("ALTER TABLE entries ADD COLUMN entry_key TEXT GENERATED ALWAYS AS (item_ref) VIRTUAL");
-    } finally {
-      raw.close();
-    }
-
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
-
-    // The read boundary rejects the non-canonical index before the guard can
-    // query it. This best-effort heuristic stays quiet; the command-level
-    // INDEX_SCHEMA_INCOMPATIBLE error is the one actionable diagnostic.
     expect(warnCalls).toHaveLength(0);
   });
 

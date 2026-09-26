@@ -2,27 +2,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Regression suite for the auto-sync staging behaviour (#476 + the auto-sync
-// incident where stray non-akm files in the stash root refused EVERY commit
-// for ~1.5 days). `saveGitStash` no longer refuses when unrelated non-akm
-// files are dirty; instead it SCOPES what it stages:
-//   1. explicit `options.paths` → exactly those
-//   2. fallback → akm-managed pathspecs (TYPE_DIRS + `.akm`) that exist
-//   3. no managed pathspec → no commit (never broad-stage unrelated files)
-// The non-akm files must be left untouched/uncommitted.
+// Git write safety at the source boundary (real repositories, spawnSync git):
+//
+//   - `saveGitStash` SCOPES what it stages instead of refusing (#476 + the
+//     auto-sync incident where stray non-akm files in the stash root refused
+//     EVERY commit for ~1.5 days): explicit `options.paths` → exactly those;
+//     otherwise akm-managed pathspecs that exist; nothing managed → no commit.
+//     Unrelated non-akm files are left untouched/uncommitted.
+//   - `commitWriteTargetBoundary` commits exactly the operation's paths (also
+//     under a content/ layout, also next to pre-staged user WIP), keeps
+//     ignored paths local with a warning, and when the lease-guarded push is
+//     rejected leaves the commit local and names it.
+//   - `prepareWriteTargetForMutation` refuses a detached checkout before
+//     anything is written.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parseRefInput } from "../../../src/core/asset/resolve-ref";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
 import {
-  captureGitPathSnapshot,
-  captureGitPublication,
   commitWriteTargetBoundary,
-  ensureGitTransactionCommit,
   prepareWriteTargetForMutation,
-  publishGitTransactionCommit,
   writeAssetToSource,
 } from "../../../src/core/write-source";
 import { saveGitStash } from "../../../src/sources/providers/git";
@@ -36,10 +38,8 @@ import {
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
 
-function initRepo(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
+function configureRepo(dir: string): void {
   for (const args of [
-    ["init", "--initial-branch=main"],
     ["config", "user.email", "test@akm.local"],
     ["config", "user.name", "akm-test"],
     ["config", "commit.gpgsign", "false"],
@@ -47,6 +47,13 @@ function initRepo(dir: string): void {
     const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
     if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
   }
+}
+
+function initRepo(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const result = spawnSync("git", ["-C", dir, "init", "--initial-branch=main"], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`git init failed: ${result.stderr}`);
+  configureRepo(dir);
 }
 
 function writeFile(filePath: string, content: string): void {
@@ -74,6 +81,14 @@ function status(repoDir: string): string {
   return spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" }).stdout;
 }
 
+function captureWarnings(): string[] {
+  const warnings: string[] = [];
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  return warnings;
+}
+
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
@@ -85,11 +100,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _setWarnSinkForTests(undefined);
   envCleanup();
   envCleanup = () => {};
 });
 
-describe("saveGitStash — scoped staging (auto-sync incident regression)", () => {
+describe("commitWriteTargetBoundary — exact operation paths", () => {
   test("named sync commits the lock-backed managed checkout instead of a URL-derived mirror", () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     const contentDir = path.join(repoDir, "content");
@@ -190,56 +206,74 @@ describe("saveGitStash — scoped staging (auto-sync incident regression)", () =
     expect(status(repoDir)).toContain("A  content/memories/staged-wip.md");
   });
 
-  test("canonical writes reject same-path WIP before overwriting it", async () => {
+  test("an ignored destination is written locally and left out of the boundary commit, with a warning", async () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     const contentDir = path.join(repoDir, "content");
-    const ownedPath = path.join(contentDir, "memories", "owned.md");
-    initRepo(repoDir);
-    writeFile(ownedPath, "committed content\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    writeFile(ownedPath, "user work in progress\n");
-    const source = { kind: "git", name: "team", path: contentDir, repoPath: repoDir, adapterId: "akm" };
-    const config = { type: "git" as const, name: "team", path: contentDir, writable: true };
-
-    await expect(
-      writeAssetToSource(
-        source,
-        config,
-        { type: "memory", name: "owned" },
-        "---\ndescription: Replacement\n---\n\nAKM replacement.\n",
-      ),
-    ).rejects.toThrow(/staged or unstaged work/);
-
-    expect(fs.readFileSync(ownedPath, "utf8")).toBe("user work in progress\n");
-    expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
-  });
-
-  test("canonical writes reject ignored destinations before creating them", async () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    const contentDir = path.join(repoDir, "content");
-    const ignoredPath = path.join(contentDir, "memories", "ignored.md");
     initRepo(repoDir);
     writeFile(path.join(repoDir, ".gitignore"), "content/memories/ignored.md\n");
     git(repoDir, ["add", ".gitignore"]);
     git(repoDir, ["commit", "-m", "seed ignore"]);
-    const source = { kind: "git", name: "team", path: contentDir, repoPath: repoDir, adapterId: "akm" };
-    const config = { type: "git" as const, name: "team", path: contentDir, writable: true };
+    const target = {
+      source: { kind: "git", name: "team", path: contentDir, repoPath: repoDir, adapterId: "akm" },
+      config: { type: "git" as const, name: "team", path: contentDir, writable: true },
+    };
+    const warnings = captureWarnings();
 
-    await expect(
-      writeAssetToSource(
-        source,
-        config,
-        { type: "memory", name: "ignored" },
-        "---\ndescription: Ignored memory\n---\n\nMust not be written.\n",
-      ),
-    ).rejects.toThrow(/is ignored/);
+    const ignored = await writeAssetToSource(
+      target.source,
+      target.config,
+      { type: "memory", name: "ignored" },
+      "---\ndescription: Ignored memory\n---\n\nStays local.\n",
+    );
+    await writeAssetToSource(
+      target.source,
+      target.config,
+      { type: "memory", name: "tracked" },
+      "---\ndescription: Tracked memory\n---\n\nPublished.\n",
+    );
+    commitWriteTargetBoundary(target, "ignored sibling", { push: false });
 
-    expect(fs.existsSync(ignoredPath)).toBe(false);
-    expect(git(repoDir, ["status", "--porcelain"])).toBe("");
+    expect(fs.existsSync(ignored.path)).toBe(true);
+    expect(committedFiles(repoDir)).toEqual(["content/memories/tracked.md"]);
+    expect(warnings.some((w) => w.includes("content/memories/ignored.md"))).toBe(true);
   });
 
-  test("mutation preparation rejects a detached local target before writing", async () => {
+  test("a push rejected by --force-with-lease leaves the commit local and names it", async () => {
+    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const cacheHome = process.env.XDG_CACHE_HOME as string;
+    const remoteDir = path.join(cacheHome, "lease-remote.git");
+    const otherClone = path.join(cacheHome, "lease-other");
+    fs.mkdirSync(remoteDir, { recursive: true });
+    git(remoteDir, ["init", "--bare", "--initial-branch=main"]);
+    initRepo(repoDir);
+    writeFile(path.join(repoDir, "knowledge", "seed.md"), "seed\n");
+    git(repoDir, ["add", "."]);
+    git(repoDir, ["commit", "-m", "seed"]);
+    git(repoDir, ["remote", "add", "origin", remoteDir]);
+    git(repoDir, ["push", "-u", "origin", "main"]);
+    // Advance the remote from a second checkout; repoDir never fetches, so its
+    // lease still names the seed commit.
+    git(cacheHome, ["clone", "--quiet", remoteDir, otherClone]);
+    configureRepo(otherClone);
+    writeFile(path.join(otherClone, "knowledge", "elsewhere.md"), "elsewhere\n");
+    git(otherClone, ["add", "."]);
+    git(otherClone, ["commit", "-m", "remote advance"]);
+    git(otherClone, ["push", "origin", "main"]);
+    const target = {
+      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
+      config: { type: "git" as const, name: "team", path: repoDir, writable: true },
+    };
+
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "local" }, "local\n");
+    expect(() => commitWriteTargetBoundary(target, "local write")).toThrow(
+      /committed as [0-9a-f]{40}, but publication failed/,
+    );
+
+    expect(committedFiles(repoDir)).toEqual(["memories/local.md"]);
+    expect(git(remoteDir, ["log", "-1", "--format=%s", "main"])).toBe("remote advance");
+  });
+
+  test("mutation preparation rejects a detached local target before writing", () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
@@ -256,88 +290,9 @@ describe("saveGitStash — scoped staging (auto-sync incident regression)", () =
     expect(() => prepareWriteTargetForMutation(target)).toThrow(/detached from a branch/i);
     expect(fs.existsSync(path.join(contentDir, "memories"))).toBe(false);
   });
+});
 
-  test("canonical boundaries reject edits made after the recorded write snapshot", async () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    const contentDir = path.join(repoDir, "content");
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, "README.md"), "seed\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    const target = {
-      source: { kind: "git", name: "team", path: contentDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git" as const, name: "team", path: contentDir, writable: true },
-    };
-    const result = await writeAssetToSource(
-      target.source,
-      target.config,
-      { type: "memory", name: "owned" },
-      "---\ndescription: Operation-owned memory\n---\n\nAKM content.\n",
-    );
-    writeFile(result.path, "post-write user edit\n");
-
-    expect(() => commitWriteTargetBoundary(target, "snapshot-bound write", { push: false })).toThrow(
-      /changed while committing/,
-    );
-    expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
-    expect(fs.readFileSync(result.path, "utf8")).toBe("post-write user edit\n");
-  });
-
-  test("durable publication rejects operation-path edits made after its snapshot", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, "README.md"), "seed\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    const target = prepareWriteTargetForMutation({
-      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git", name: "team", path: repoDir, writable: true },
-    });
-    const publication = captureGitPublication(target);
-    if (!publication) throw new Error("expected Git publication");
-    const ownedPath = path.join(repoDir, "memories", "owned.md");
-    writeFile(ownedPath, "AKM snapshot\n");
-    const snapshot = captureGitPathSnapshot(target, ownedPath);
-    writeFile(ownedPath, "post-crash user edit\n");
-
-    expect(() =>
-      ensureGitTransactionCommit(target, publication, {
-        transactionId: "snapshot-divergence",
-        message: "snapshot divergence",
-        paths: [snapshot.path],
-        snapshots: { [snapshot.path]: snapshot.state },
-      }),
-    ).toThrow(/diverged after mutation/);
-    expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
-  });
-
-  test("durable publication cannot treat a newly ignored operation path as a no-op", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, ".gitignore"), "memories/\n");
-    git(repoDir, ["add", ".gitignore"]);
-    git(repoDir, ["commit", "-m", "seed ignore"]);
-    const target = prepareWriteTargetForMutation({
-      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git", name: "team", path: repoDir, writable: true },
-    });
-    const publication = captureGitPublication(target);
-    if (!publication) throw new Error("expected Git publication");
-    const ownedPath = path.join(repoDir, "memories", "ignored.md");
-    writeFile(ownedPath, "must not disappear from publication\n");
-    const snapshot = captureGitPathSnapshot(target, ownedPath);
-
-    expect(() =>
-      ensureGitTransactionCommit(target, publication, {
-        transactionId: "ignored-operation-path",
-        message: "ignored path",
-        paths: [snapshot.path],
-        snapshots: { [snapshot.path]: snapshot.state },
-      }),
-    ).toThrow(/is ignored/);
-    expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
-  });
-
+describe("saveGitStash — scoped staging (auto-sync incident regression)", () => {
   test("an ignored path aborts a mixed exact-path commit without staging its siblings", () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     initRepo(repoDir);
@@ -356,144 +311,6 @@ describe("saveGitStash — scoped staging (auto-sync incident regression)", () =
 
     expect(git(repoDir, ["diff", "--cached", "--name-only"])).toBe("");
     expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
-  });
-
-  test("durable publication rejects a predecessor commit created after preflight", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, "README.md"), "seed\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    const target = prepareWriteTargetForMutation({
-      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git", name: "team", path: repoDir, writable: true },
-    });
-    const publication = captureGitPublication(target);
-    if (!publication) throw new Error("expected Git publication");
-    const ownedPath = path.join(repoDir, "memories", "owned.md");
-    writeFile(ownedPath, "AKM snapshot\n");
-    const snapshot = captureGitPathSnapshot(target, ownedPath);
-    writeFile(path.join(repoDir, "user.txt"), "user commit\n");
-    git(repoDir, ["add", "--", "user.txt"]);
-    git(repoDir, ["commit", "-m", "user predecessor"]);
-
-    expect(() =>
-      ensureGitTransactionCommit(target, publication, {
-        transactionId: "predecessor-race",
-        message: "predecessor race",
-        paths: [snapshot.path],
-        snapshots: { [snapshot.path]: snapshot.state },
-      }),
-    ).toThrow(/advanced before its commit/);
-    expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("2");
-  });
-
-  test("durable publication tolerates a changed effective push URL (git resolves the remote live; force-with-lease guards the actual push)", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    const remoteDir = path.join(process.env.XDG_CACHE_HOME as string, "remote.git");
-    const alternateRemote = path.join(process.env.XDG_CACHE_HOME as string, "alternate.git");
-    fs.mkdirSync(remoteDir, { recursive: true });
-    fs.mkdirSync(alternateRemote, { recursive: true });
-    git(remoteDir, ["init", "--bare"]);
-    git(alternateRemote, ["init", "--bare"]);
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, "README.md"), "seed\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    git(repoDir, ["remote", "add", "origin", remoteDir]);
-    git(repoDir, ["push", "-u", "origin", "main"]);
-    const target = prepareWriteTargetForMutation({
-      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git", name: "team", path: repoDir, writable: true },
-    });
-    const publication = captureGitPublication(target);
-    if (!publication) throw new Error("expected Git publication");
-    const ownedPath = path.join(repoDir, "memories", "owned.md");
-    writeFile(ownedPath, "AKM snapshot\n");
-    const snapshot = captureGitPathSnapshot(target, ownedPath);
-    git(repoDir, ["config", "remote.origin.pushurl", alternateRemote]);
-
-    expect(() =>
-      ensureGitTransactionCommit(target, publication, {
-        transactionId: "push-url-change",
-        message: "push URL change",
-        paths: [snapshot.path],
-        snapshots: { [snapshot.path]: snapshot.state },
-      }),
-    ).not.toThrow();
-    expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("2");
-  });
-
-  test("durable publication validates Unicode paths without quoted-path drift", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, "README.md"), "seed\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    git(repoDir, ["config", "core.quotePath", "true"]);
-    const target = {
-      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git" as const, name: "team", path: repoDir, writable: true },
-    };
-    const publication = captureGitPublication(target);
-    if (!publication) throw new Error("expected Git publication");
-    const ownedPath = path.join(repoDir, "memories", "café.md");
-    writeFile(ownedPath, "Unicode path content\n");
-    const snapshot = captureGitPathSnapshot(target, ownedPath);
-    const options = {
-      transactionId: "unicode-path",
-      message: "Unicode path",
-      paths: [snapshot.path],
-      snapshots: { [snapshot.path]: snapshot.state },
-    };
-
-    const commit = ensureGitTransactionCommit(target, publication, options);
-    expect(commit).toBeTruthy();
-    publication.commit = commit;
-    expect(ensureGitTransactionCommit(target, publication, options)).toBe(commit);
-    expect(git(repoDir, ["show", `HEAD:${snapshot.path}`])).toBe("Unicode path content");
-  });
-
-  test("durable publication refuses to recreate an upstream branch deleted after preflight", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
-    const remoteDir = path.join(process.env.XDG_CACHE_HOME as string, "deleted-upstream.git");
-    fs.mkdirSync(remoteDir, { recursive: true });
-    git(remoteDir, ["init", "--bare"]);
-    initRepo(repoDir);
-    writeFile(path.join(repoDir, "README.md"), "seed\n");
-    git(repoDir, ["add", "."]);
-    git(repoDir, ["commit", "-m", "seed"]);
-    git(repoDir, ["remote", "add", "origin", remoteDir]);
-    git(repoDir, ["push", "-u", "origin", "main"]);
-    const target = {
-      source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git" as const, name: "team", path: repoDir, writable: true },
-    };
-    const publication = captureGitPublication(target);
-    if (!publication) throw new Error("expected Git publication");
-    const ownedPath = path.join(repoDir, "memories", "leased.md");
-    writeFile(ownedPath, "leased publication\n");
-    const snapshot = captureGitPathSnapshot(target, ownedPath);
-    const snapshots = { [snapshot.path]: snapshot.state };
-    publication.commit = ensureGitTransactionCommit(target, publication, {
-      transactionId: "deleted-upstream",
-      message: "Lease remote deletion",
-      paths: [snapshot.path],
-      snapshots,
-    });
-    git(remoteDir, ["update-ref", "-d", "refs/heads/main"]);
-
-    expect(() =>
-      publishGitTransactionCommit(target, publication, "deleted-upstream", [snapshot.path], snapshots),
-    ).toThrow(/git push failed/);
-    const remoteBranch = spawnSync("git", ["-C", remoteDir, "rev-parse", "--verify", "refs/heads/main"], {
-      encoding: "utf8",
-    });
-    // `git rev-parse --verify` on a ref that does not exist is git's own
-    // fatal error path -> exit 128. Ground-truthed by probing the actual git
-    // output before pinning.
-    expect(remoteBranch.status).toBe(128);
-    expect(remoteBranch.stderr).toContain("fatal:");
   });
 
   test("commits akm-managed files and leaves unrelated non-akm files dirty/untouched", () => {

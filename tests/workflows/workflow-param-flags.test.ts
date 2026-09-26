@@ -5,11 +5,11 @@
 import { describe, expect, test } from "bun:test";
 import { parseWorkflowParameterFlags } from "../../src/commands/workflow-cli";
 import { materializeWorkflowParameterFlags } from "../../src/workflows/ir/params";
-import type { WorkflowPlanGraphV4 as WorkflowPlanGraph } from "../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan as WorkflowPlanGraph } from "../../src/workflows/plan";
 
 // F-A11 (docs/plans/specs/p3a-plan-v5-child-freeze.md §6): mechanical value
 // bump only, no assertion in this file changes. `parameterPlan()` is
-// explicitly typed as WorkflowPlanGraphV4, so — unlike the two `unknown`-fed
+// explicitly typed as WorkflowPlan, so — unlike the two `unknown`-fed
 // fixture builders F-A9/F-A10 flip — the literal itself is type-checked
 // against `irVersion`'s still-literal-4 field type today, hence the pin
 // below. materializeWorkflowParameterFlags/contractFromPlan
@@ -32,7 +32,6 @@ function parameterPlan(): WorkflowPlanGraph {
       mode: { type: "string", enum: ["quick", "full"] },
     },
     execution: { maxConcurrency: 1 },
-    sourceReadSet: [],
     steps: [],
   };
 }

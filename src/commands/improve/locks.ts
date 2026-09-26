@@ -6,7 +6,6 @@ import path from "node:path";
 import { TransientError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { type LockOwnership, releaseLock } from "../../core/file-lock";
-import { tryWithMaintenanceStartBarrier, withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { warn } from "../../core/warn";
 
@@ -26,11 +25,7 @@ export function tryAcquireImproveLock(
     tryAcquireImproveLockUnlocked(lockPath, skipIfLocked, (event) => {
       recoveryEvent = event;
     });
-  const result = skipIfLocked ? tryWithMaintenanceStartBarrier(acquire) : withMaintenanceStartBarrier(acquire);
-  if (!result) {
-    warn("[improve] maintenance barrier held; skipping (--skip-if-locked)");
-    return { state: "skipped" };
-  }
+  const result = acquire();
   if (recoveryEvent) {
     try {
       // R25: lock acquisition runs BEFORE akmImprove opens its long-lived
@@ -87,8 +82,7 @@ function tryAcquireImproveLockUnlocked(
   // A `ConfigError` here surfaced as exit 78 (INVALID_CONFIG_FILE) and told
   // a supervisor to stop retrying a normal lock collision. Reclassified to
   // `TransientError`/`IMPROVE_LOCK_HELD` (exit 75), mirroring the
-  // `MAINTENANCE_BARRIER_BUSY`/`INDEX_DB_CONTENDED` treatment #956 already
-  // applied to the index rebuild lock and the maintenance-start barrier.
+  // `INDEX_DB_CONTENDED` treatment #956 applied to the index rebuild lock.
   throw new TransientError(
     `akm improve is already running (PID ${pid}, started ${startedAt}). Delete ${lockPath} to force.`,
     "IMPROVE_LOCK_HELD",

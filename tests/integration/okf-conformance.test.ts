@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
-import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
+import { createProposal } from "../../src/commands/proposal/repository";
 import { resolveSupersedesForWrite, writeMarkdownAsset } from "../../src/commands/read/knowledge";
 import { akmSearch } from "../../src/commands/read/search";
 import { showLocal } from "../../src/commands/read/show";
@@ -210,13 +210,11 @@ describe("OKF first-class conformance", () => {
       ref: "lessons/blocked-proposal",
       target: { source: "adversarial", root: okfRoot },
       source: "propose",
-      force: true,
       payload: {
         content:
           "---\ndescription: Proposal content must not publish\nwhen_to_use: Testing consumer-only OKF writes\n---\n\nBlocked.\n",
       },
     });
-    if (isProposalSkipped(proposal)) throw new Error("unexpected proposal skip");
     await expect(
       akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, target: "adversarial" }),
     ).rejects.toThrow(/adapter "okf".*does not support AKM asset writes/i);
@@ -709,7 +707,7 @@ describe("OKF first-class conformance", () => {
     const loaded = await loadWorkflowAsset("native//deploy");
     expect(loaded.path).toBe(path.join(workflowRoot, "deploy.md"));
     expect(loaded.ref).toBe("native//deploy");
-    expect(loaded.steps.length).toBeGreaterThan(0);
+    expect(loaded.plan.steps.length).toBeGreaterThan(0);
 
     const created = createWorkflowAsset({ name: "authored" });
     expect(created.ref).toBe("authored");

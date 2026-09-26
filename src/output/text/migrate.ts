@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Plain-text rendering of the combined task-v2-to-v3 and task-v3-to-task-
- * source-v4 migration plan (spec docs/plans/specs/p4-deletions-closeout.md
- * §3.2.5, rows B-31/B-32).
+ * Plain-text rendering of the combined migration plan's task-file section
+ * (spec docs/plans/specs/p4-deletions-closeout.md §3.2.5, rows B-31/B-32).
  */
 
 import type { TextFormatterEntry } from "./registry";
@@ -13,12 +12,9 @@ import type { TextFormatterEntry } from "./registry";
 interface MigrationPlanResult {
   status: string;
   blockers?: string[];
-  taskV3Migration?: { changed: number; skipped: number; blocked: number };
-  taskV4Migration?: { changed: number; skipped: number; blocked: number };
+  taskFiles?: { changed: number; skipped: number; blocked: number };
   backupPath?: string;
   applied?: number;
-  taskV4BackupPath?: string;
-  taskV4Applied?: number;
 }
 
 function planGlyph(status: string): string {
@@ -38,13 +34,9 @@ export function formatMigratePlain(result: unknown): string | null {
   if (typeof plan.status !== "string") return null;
 
   const lines: string[] = [`${planGlyph(plan.status)} ${plan.status}`];
-  if (plan.taskV3Migration) {
-    const tasks = plan.taskV3Migration;
-    lines.push(`    task-v2->v3: ${tasks.changed} change, ${tasks.skipped} current, ${tasks.blocked} blocked`);
-  }
-  if (plan.taskV4Migration) {
-    const tasks = plan.taskV4Migration;
-    lines.push(`    task-v3->v4: ${tasks.changed} change, ${tasks.skipped} current, ${tasks.blocked} blocked`);
+  if (plan.taskFiles) {
+    const tasks = plan.taskFiles;
+    lines.push(`    task files: ${tasks.changed} change, ${tasks.skipped} current, ${tasks.blocked} blocked`);
   }
 
   if (plan.blockers?.length) {
@@ -52,13 +44,9 @@ export function formatMigratePlain(result: unknown): string | null {
   }
 
   if (plan.backupPath) {
-    lines.push("", `backup (v2->v3): ${plan.backupPath}`);
+    lines.push("", `backup: ${plan.backupPath}`);
   }
-  if (plan.applied !== undefined) lines.push(`applied (v2->v3): ${plan.applied}`);
-  if (plan.taskV4BackupPath) {
-    lines.push(`backup (v3->v4): ${plan.taskV4BackupPath}`);
-  }
-  if (plan.taskV4Applied !== undefined) lines.push(`applied (v3->v4): ${plan.taskV4Applied}`);
+  if (plan.applied !== undefined) lines.push(`applied: ${plan.applied}`);
 
   return lines.join("\n");
 }

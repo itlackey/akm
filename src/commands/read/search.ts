@@ -16,6 +16,7 @@
 import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { withStateDbTelemetry } from "../../core/state-db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
@@ -24,11 +25,6 @@ import {
   getSearchHitAttribution,
   usageEventAttributionMetadata,
 } from "../../indexer/search/search-attribution";
-import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
-// Eagerly import source providers to trigger self-registration before the
-// indexer or path-resolution code runs.
-import "../../sources/providers/index";
-import { withStateDbTelemetry } from "../../core/state-db";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type {
   AkmSearchType,
@@ -40,6 +36,7 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;

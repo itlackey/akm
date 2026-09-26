@@ -7,7 +7,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parse as parseSemver } from "semver";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -524,57 +523,6 @@ async function configuredGlobalPrefix(): Promise<string> {
   return path.resolve(prefix);
 }
 
-async function verifyPackagedPinnedTransport(packageDir: string, label: string): Promise<void> {
-  const helperFile = path.join(packageDir, "dist", "registry", "pinned-request-helper.js");
-  const transportFile = path.join(packageDir, "dist", "registry", "pinned-transport.js");
-  if (!fs.statSync(helperFile).isFile() || !fs.statSync(transportFile).isFile()) {
-    throw new Error(`${label} package is missing the pinned registry transport`);
-  }
-  const helperModule = (await import(`${pathToFileURL(helperFile).href}?acceptance=${encodeURIComponent(label)}`)) as {
-    nodePinnedRequestHelperSource?: unknown;
-  };
-  if (
-    typeof helperModule.nodePinnedRequestHelperSource !== "function" ||
-    !String(helperModule.nodePinnedRequestHelperSource()).includes('from "node:https"')
-  ) {
-    throw new Error(`${label} package cannot materialize its pinned registry Node helper`);
-  }
-  const transportModule = (await import(
-    `${pathToFileURL(transportFile).href}?acceptance=${encodeURIComponent(label)}`
-  )) as {
-    requestRegistryAddressPinned?: (
-      url: URL,
-      address: string,
-      init: RequestInit | undefined,
-      timeoutMs: number,
-    ) => Promise<Response>;
-  };
-  if (typeof transportModule.requestRegistryAddressPinned !== "function") {
-    throw new Error(`${label} package does not export its internal pinned registry transport`);
-  }
-  const observer = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      return Response.json({ host: request.headers.get("host") });
-    },
-  });
-  try {
-    const response = await transportModule.requestRegistryAddressPinned(
-      new URL(`http://registry.package.test:${observer.port}/acceptance`),
-      "127.0.0.1",
-      { headers: { Host: "evil.invalid" } },
-      2_000,
-    );
-    const result = (await response.json()) as { host?: unknown };
-    if (result.host !== `registry.package.test:${observer.port}`) {
-      throw new Error(`${label} package did not preserve the original Host through its pinned transport`);
-    }
-  } finally {
-    observer.stop(true);
-  }
-}
-
 async function installCurrentCheckoutGlobally(): Promise<void> {
   await buildCurrentCheckout();
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-build-install-"));
@@ -635,10 +583,8 @@ async function testPackageAcceptance(skipBuild = false): Promise<void> {
         "Installed launcher copied model-map bytes that differ from its packaged dist/assets/models.json",
       );
     }
-    await verifyPackagedPinnedTransport(verified.packageDir, "npm-global");
     const copiedPackageDir = path.join(workDir, "copied-package");
     fs.cpSync(verified.packageDir, copiedPackageDir, { recursive: true });
-    await verifyPackagedPinnedTransport(copiedPackageDir, "relocated-copy");
     console.log(`Package acceptance passed for ${metadata.name}@${verified.version} via ${verified.launcher}`);
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });

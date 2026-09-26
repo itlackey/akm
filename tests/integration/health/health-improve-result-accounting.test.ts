@@ -103,7 +103,6 @@ describe("summarizeImproveRuns result-row accounting", () => {
         included: 2,
         skipped: { invalid: 3 },
       });
-      expect(summary.metrics.plannedRefs).toBe(1);
       expect(summary.metrics.memorySummary).toEqual({ eligible: 25, derived: 5 });
     } finally {
       db.close();

@@ -3,24 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Session asset generation for the `extract` pass (#561).
- *
- * After the extractor distills memory proposals from a session, it ALSO writes
- * the session itself to the stash as a first-class `session` asset so any agent
- * — on any harness — can discover prior work via `akm search` / `akm curate`.
- *
- * Design constraints (see #561):
- *   - ADDITIVE + FAIL-OPEN + CONFIG-GATED. Disabled (or no LLM provider) →
- *     extract behaves EXACTLY as before. Nothing is written.
- *   - The LLM summary call routes through the injectable {@link SessionSummaryGenerator}
- *     seam so tests never touch a real provider, and so production wraps the
- *     call in the existing `tryLlmFeature` fail-open pattern.
- *   - The `log_path` + `access` frontmatter fields are the durable correlation
- *     key — they survive index rebuilds (the body is re-derived from disk).
- *
- * The asset is written to `sessions/<harness>/<session-id>.md`; the registered
- * `session` asset type (see `asset-spec.ts`) makes the normal index pass pick it
- * up for FTS + vector search with no special-casing.
+ * Session assets (#561): besides its memory proposals, extract writes each
+ * session to `sessions/<harness>/<session-id>.md` as a searchable `session`
+ * asset. Additive and fail-open — no summary means nothing is written — and
+ * `log_path` + `access` in the frontmatter tell any agent how to read the raw log.
  */
 
 import fs from "node:fs";
@@ -28,14 +14,10 @@ import path from "node:path";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { recordWrittenPath } from "../../core/write-provenance";
 import type { SessionData, SessionEvent } from "../../integrations/session-logs/types";
 
-/**
- * Frontmatter carried by a `session` asset. Mirrors the shape in #561.
- * `log_path` + `access` give any agent concrete instructions for fetching the
- * full session content when the summary alone is not enough.
- */
 export interface SessionAssetFrontmatter {
   name: string;
   type: "session";
@@ -49,30 +31,16 @@ export interface SessionAssetFrontmatter {
   tags: string[];
 }
 
-/** The LLM-derived body for a session asset. */
 export interface SessionSummaryResult {
-  /** 2–4 sentence dense description for semantic search. */
+  /** 2–4 dense sentences for semantic search. */
   summary: string;
-  /** Bullet list of entities, files, issues, and concepts touched. */
   keyTopics: string[];
-  /** Optional extra tags the summarizer surfaced. */
   tags?: string[];
 }
 
-/**
- * Injectable seam that turns a read session into a summary. Production wires
- * this to a bounded in-tree LLM call via `tryLlmFeature`; tests inject a fake.
- * Returning `undefined` means "no summary available" (fail-open: no asset is
- * written) — used for the no-LLM / disabled path.
- */
+/** Summarize a session; `undefined` (disabled, no LLM) writes no asset. */
 export type SessionSummaryGenerator = (data: SessionData) => Promise<SessionSummaryResult | undefined>;
 
-/**
- * JSON Schema for the session-summary LLM call. Strict so providers that
- * support schema enforcement constrain the output upstream; the parser only
- * has to handle the happy path. `additionalProperties: false` drops any
- * hallucinated keys before parsing.
- */
 export const SESSION_SUMMARY_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["summary", "key_topics"],
@@ -84,11 +52,7 @@ export const SESSION_SUMMARY_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
-/**
- * Render a compact transcript snippet from session events for the summary
- * prompt. Mirrors the extract transcript format but caps total length so the
- * summary prompt stays bounded regardless of session size.
- */
+/** The transcript for the summary prompt, capped at `maxChars`. */
 function renderTranscriptForSummary(events: SessionEvent[], maxChars = 12_000): string {
   if (events.length === 0) return "(empty — no events)";
   const lines: string[] = [];
@@ -105,11 +69,6 @@ function renderTranscriptForSummary(events: SessionEvent[], maxChars = 12_000): 
   return lines.join("\n\n") || "(empty — no textual events)";
 }
 
-/**
- * Build the user prompt for the session-summary LLM call. Pure — no IO. The
- * model is asked for a dense 2–4 sentence summary plus key topics, optimised
- * for semantic search recall.
- */
 export function buildSessionSummaryPrompt(data: SessionData): string {
   const ref = data.ref;
   const startedAt = isoOrUndefined(ref.startedAt) ?? "unknown";
@@ -132,28 +91,11 @@ export function buildSessionSummaryPrompt(data: SessionData): string {
   ].join("\n");
 }
 
-/**
- * Parse the session-summary LLM response into a {@link SessionSummaryResult}.
- * Defensive: tolerates prose preamble/postamble around the JSON, and returns
- * `undefined` when nothing usable parses (fail-open: no asset is written).
- */
+/** The summary JSON, tolerating prose around it; `undefined` when nothing usable parses. */
 export function parseSessionSummary(raw: string): SessionSummaryResult | undefined {
   if (!raw || raw.trim().length === 0) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    const start = raw.indexOf("{");
-    const end = raw.lastIndexOf("}");
-    if (start === -1 || end <= start) return undefined;
-    try {
-      parsed = JSON.parse(raw.slice(start, end + 1));
-    } catch {
-      return undefined;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") return undefined;
-  const obj = parsed as Record<string, unknown>;
+  const obj = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return undefined;
   const summary = typeof obj.summary === "string" ? obj.summary.trim() : "";
   if (summary.length === 0) return undefined;
   const keyTopics = Array.isArray(obj.key_topics)
@@ -165,64 +107,42 @@ export function parseSessionSummary(raw: string): SessionSummaryResult | undefin
   return { summary, keyTopics, ...(tags && tags.length > 0 ? { tags } : {}) };
 }
 
-/**
- * Decide whether a session is long enough to index. `minDurationMinutes <= 0`
- * disables the gate. When either timestamp is missing we DON'T gate it out —
- * fail-open toward indexing, since a missing timestamp is not evidence of a
- * trivial session.
- */
+/** Long enough to index (`<= 0` disables; a missing timestamp is no evidence of a trivial session). */
 export function sessionMeetsDurationGate(data: SessionData, minDurationMinutes: number): boolean {
   if (!Number.isFinite(minDurationMinutes) || minDurationMinutes <= 0) return true;
   const { startedAt, endedAt } = data.ref;
   if (typeof startedAt !== "number" || typeof endedAt !== "number") return true;
-  const durationMinutes = (endedAt - startedAt) / 60_000;
-  return durationMinutes >= minDurationMinutes;
+  return (endedAt - startedAt) / 60_000 >= minDurationMinutes;
 }
 
-/**
- * Build per-harness `access` instructions for reading the raw session log.
- *
- * Documented convention (#561, checklist item "Document `access` field
- * convention per harness"): the string tells a downstream agent exactly how to
- * read and parse the source at `log_path`. New harnesses fall back to a generic
- * `cat <log_path>` hint for file-backed logs.
- */
+/** How an agent reads and parses the raw log at `log_path`, per harness (`cat` otherwise). */
 export function buildSessionAccessInstructions(harness: string, logPath: string, sessionId: string): string {
-  const canonical = harness;
-  if (canonical === "claude") {
+  if (harness === "claude") {
     return [
       `Read with: cat ${logPath}`,
       `Parse messages: jq -r 'select(.type=="message") | .message.content[]? | select(.type=="text") | .text' ${logPath}`,
     ].join("\n");
   }
-  if (canonical === "opencode") {
+  if (harness === "opencode") {
     return [
       `Open the SQLite database at ${JSON.stringify(logPath)} in read-only mode.`,
       "Query: SELECT m.data, p.data FROM message AS m JOIN part AS p ON p.message_id = m.id WHERE m.session_id = ? AND p.session_id = ? ORDER BY m.time_created, p.time_created;",
       `Bind both parameters to ${JSON.stringify(sessionId)}.`,
     ].join("\n");
   }
-  // Generic fallback — file-backed logs are always readable with cat.
   return `Read with: cat ${logPath}`;
 }
 
-/** ISO-8601 (UTC) from a ms-epoch, or undefined when absent/non-finite. */
 function isoOrUndefined(ms: number | undefined): string | undefined {
   return typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
 /** Default session-name slug: `<harness>-session-<yyyy-mm-dd>-<shortId>`. */
 export function buildSessionAssetName(harness: string, sessionId: string, startedAtMs?: number): string {
-  const canonical = harness;
-  const datePart = isoOrUndefined(startedAtMs)?.slice(0, 10) ?? "unknown-date";
-  const shortId = sessionId.slice(0, 8);
-  return `${canonical}-session-${datePart}-${shortId}`;
+  return `${harness}-session-${isoOrUndefined(startedAtMs)?.slice(0, 10) ?? "unknown-date"}-${sessionId.slice(0, 8)}`;
 }
 
-/**
- * Assemble the full session asset (frontmatter + `## Summary` / `## Key topics`).
- * Pure — no IO. Returns the serialized markdown string.
- */
+/** The session asset: frontmatter plus `## Summary` and `## Key topics`. */
 export function buildSessionAssetContent(
   data: SessionData,
   summary: SessionSummaryResult,
@@ -257,8 +177,7 @@ export function buildSessionAssetContent(
     .join("\n");
   const body = `## Summary\n\n${summary.summary.trim()}\n\n## Key topics\n\n${topics || "- (none extracted)"}\n`;
 
-  // `description` is duplicated into frontmatter so the metadata pass surfaces
-  // it without re-reading the body — matches how other content types behave.
+  // The summary doubles as the description, as for other types.
   const content = assembleAsset({ ...frontmatter, description: summary.summary.trim() }, body);
   return { name, frontmatter, content };
 }
@@ -271,21 +190,14 @@ export function resolveSessionAssetPath(stashDir: string, harness: string, sessi
 
 export interface WriteSessionAssetResult {
   written: boolean;
-  /** Absolute path of the written asset (when `written`). */
   filePath?: string;
-  /** Canonical asset ref (`sessions/<harness>/<id>`) when written. */
+  /** `sessions/<harness>/<id>`. */
   ref?: string;
-  /** The `log_path` recorded in frontmatter (for state-db correlation). */
+  /** The recorded `log_path` (state.db correlation). */
   logPath?: string;
 }
 
-/**
- * Generate (via the injected summarizer) and write a session asset to the stash.
- *
- * FAIL-OPEN: when the summarizer returns `undefined` (disabled / no LLM /
- * error), NOTHING is written and `{ written: false }` is returned. Any write
- * error is swallowed by the caller — session indexing must NEVER break extract.
- */
+/** Summarize and write a session asset; nothing without a summary. The caller swallows write errors. */
 export async function writeSessionAsset(
   data: SessionData,
   stashDir: string,
@@ -302,16 +214,12 @@ export async function writeSessionAsset(
   const filePath = resolveSessionAssetPath(stashDir, harness, sessionId);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf8");
-  // #652: extract's session asset is written outside the proposal queue —
-  // journal it so the run's auto-sync stages it as one of its own writes.
+  // Written outside the proposal queue: journal it so auto-sync commits it (#652).
   recordWrittenPath(filePath);
 
   return {
     written: true,
     filePath,
-    // Canonical 0.9.0 conceptId (`sessions/<harness>/<id>`, D-R3) — the same
-    // spelling the xrefs / usage-event readers now expect. Historical
-    // `session:<harness>/<id>` rows persist un-migrated and are tolerated.
     ref: conceptIdFromTypeName("session", `${harness}/${sessionId}`),
     logPath: data.ref.filePath,
   };

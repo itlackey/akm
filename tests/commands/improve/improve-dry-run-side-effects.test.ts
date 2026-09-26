@@ -226,14 +226,9 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const original = "---\ndescription: Guide without updated metadata\n---\n\nBody.\n";
     fs.writeFileSync(filePath, original);
-    let contradictionCalls = 0;
     const result = await akmImprove({
       stashDir,
       ensureIndexFn: async () => false,
-      contradictionDetectionFn: async () => {
-        contradictionCalls += 1;
-        return { familiesExamined: 0, pairsChecked: 0, edgesWritten: 0, transitionsWritten: 0, warnings: [] };
-      },
       collectEligibleRefsFn: (async () => ({
         plannedRefs: [],
         memorySummary: { eligible: 1, derived: 0 },
@@ -259,7 +254,6 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     });
     expect(result.lintSummary?.fixed).toBe(0);
     expect(fs.readFileSync(filePath, "utf8")).toBe(original);
-    expect(contradictionCalls).toBe(0);
   });
 
   test(

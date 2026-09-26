@@ -103,6 +103,13 @@ export interface IndexDirState {
    * (those directories depend on their predecessors and keep draining).
    */
   rowCount?: number;
+  /**
+   * Adapter id and version (`akm@1`) the last drain recognized this directory
+   * with. A drain under the same variant may skip re-persisting an entry whose
+   * content hash is unchanged; `undefined` on rows written before it was
+   * recorded, which re-persist every entry once.
+   */
+  indexVariant?: string;
 }
 
 /** Parameters for `rekeyEntryInPlace`. */
@@ -174,19 +181,4 @@ export interface LlmCacheEntry {
   bodyHash: string;
   resultJson: string;
   updatedAt: number;
-}
-
-/** Source mapping used to preserve qualified usage-event identity while relinking. */
-export interface UsageEventRelinkSource {
-  path: string;
-  registryId?: string;
-}
-
-export interface RelinkUsageEventsOptions {
-  /** Ordered sources from the active index run. */
-  sources?: readonly UsageEventRelinkSource[];
-  /** Default root from the active index run. Bare durable refs are not relinked. */
-  defaultStashDir?: string;
-  /** Attached state.db schema used by the source-update unified transaction. */
-  stateSchema?: string;
 }

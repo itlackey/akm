@@ -22,16 +22,21 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
-function mockEmbeddingServer(dim: number): { url: string; server: ReturnType<typeof Bun.serve> } {
+/** `dim` may vary per input position to simulate a provider serving inconsistent widths. */
+function mockEmbeddingServer(dim: number | ((index: number) => number)): {
+  url: string;
+  server: ReturnType<typeof Bun.serve>;
+} {
+  const widthAt = typeof dim === "number" ? () => dim : dim;
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       const body = (await request.json()) as { input?: unknown };
       const count = Array.isArray(body.input) ? body.input.length : 1;
-      const vector = Array.from({ length: dim }, (_, i) => (i + 1) / dim);
+      const vectorAt = (index: number) => Array.from({ length: widthAt(index) }, (_, i) => (i + 1) / widthAt(index));
       return new Response(
         JSON.stringify({
-          data: Array.from({ length: count }, () => ({ embedding: vector })),
+          data: Array.from({ length: count }, (_, index) => ({ embedding: vectorAt(index) })),
           model: "test",
           usage: { prompt_tokens: 5, total_tokens: 5 },
         }),
@@ -71,12 +76,30 @@ describe("index verification truthfulness", () => {
     resetConfigCache();
   }
 
-  test("vec fast-path insert failures demote the status to ready-js (never a false ready-vec)", async () => {
-    // The vec table is created at FLOAT[8] (config dimension), but the
-    // endpoint delivers 4-wide vectors: the BLOB rows store fine (embedding
-    // count satisfied) while every vec0 insert fails — the exact partial
-    // degradation that used to still report "ready-vec".
+  test("a served width other than embedding.dimension re-declares the vec mirror at the served width", async () => {
+    // The vec table is created at FLOAT[8] (config dimension) but the endpoint
+    // serves 4-wide vectors; the first vector of the run re-declares the
+    // mirror, so every row lands in it and the fast path is genuinely ready.
     const mock = mockEmbeddingServer(4);
+    server = mock.server;
+    configureEmbedding(mock.url, 8);
+
+    const result = await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    expect(result.verification.embeddingCount).toBeGreaterThan(0);
+    expect(result.verification.semanticStatus).toBe(result.verification.vecAvailable ? "ready-vec" : "ready-js");
+  });
+
+  test("vec fast-path insert failures demote the status to ready-js (never a false ready-vec)", async () => {
+    // The first vector fixes the mirror's width at 4; the second entry's
+    // 8-wide vector stores fine as a BLOB row (embedding count satisfied)
+    // while its vec0 insert fails — the partial degradation that used to
+    // still report "ready-vec".
+    fs.writeFileSync(
+      path.join(storage.stashDir, "memories", "vec-truth-2.md"),
+      "---\ndescription: second vec truth fixture\n---\n\nAnother memory.\n",
+    );
+    const mock = mockEmbeddingServer((index) => (index === 0 ? 4 : 8));
     server = mock.server;
     configureEmbedding(mock.url, 8);
 

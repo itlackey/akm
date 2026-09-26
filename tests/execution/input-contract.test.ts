@@ -76,14 +76,13 @@ import {
   validateInputs,
 } from "../../src/execution/input-contract";
 import {
-  assertRunParamsSatisfyPlan,
   materializeWorkflowParameterFlags,
   validateWorkflowParams,
   type WorkflowParameterFlag,
   type WorkflowParameterPlan,
 } from "../../src/workflows/ir/params";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
-import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/program/schema";
+import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/parser";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -765,44 +764,6 @@ describe("delegation guarantee — validateWorkflowParams keeps its exact curren
       'params.mode: value is not one of ["quick","full"]',
     ]);
     expect(validateWorkflowParams(plan, { mode: "quick" })).toEqual([]);
-  });
-});
-
-// Test-review remediation (finding recorded against
-// docs/plans/specs/p2a-task-source-v4.md:529): B-35 is HALF-unpinned —
-// `validateWorkflowParams` and `materializeWorkflowParameterFlags` had
-// delegation-guarantee tests above, but `assertRunParamsSatisfyPlan` had NONE
-// anywhere in the repository (grep across tests/ returns zero hits) even
-// though §4.3 states it "is unchanged, including its long message" and it
-// lives in exactly the file (params.ts) this lane rewrites into a thin
-// consumer. NOT a red-phase group, same reasoning as the two groups above:
-// `assertRunParamsSatisfyPlan` already exists and already produces this exact
-// message/code/no-throw behavior today, before params.ts is touched.
-describe("delegation guarantee — assertRunParamsSatisfyPlan keeps its exact current long message and no-throw path (B-35)", () => {
-  test("params satisfying the plan's schemas: no throw", () => {
-    const plan: WorkflowParameterPlan = { paramSchemas: { mode: { type: "string", enum: ["quick", "full"] } } };
-    expect(() => assertRunParamsSatisfyPlan("run-1", plan, { mode: "quick" })).not.toThrow();
-  });
-
-  test("a plan with no declared schemas: no throw regardless of the params content", () => {
-    expect(() => assertRunParamsSatisfyPlan("run-1", {}, { anything: 1 })).not.toThrow();
-    expect(() => assertRunParamsSatisfyPlan("run-1", { paramSchemas: {} }, { anything: 1 })).not.toThrow();
-  });
-
-  test("schema-violating journaled params: the exact current long integrity-check message, default INVALID_FLAG_VALUE code (params.ts:197-209)", () => {
-    const plan: WorkflowParameterPlan = { paramSchemas: { mode: { type: "string", enum: ["quick", "full"] } } };
-    const expectedErrors = validateWorkflowParams(plan, { mode: "slow" });
-    expect(expectedErrors).toEqual(['params.mode: value is not one of ["quick","full"]']);
-
-    const err = thrown(() => assertRunParamsSatisfyPlan("run-42", plan, { mode: "slow" }));
-    expect(err).toBeInstanceOf(UsageError);
-    const usageError = err as UsageError;
-    expect(usageError.code).toBe("INVALID_FLAG_VALUE");
-    expect(usageError.message).toBe(
-      "Workflow run run-42 failed the frozen param-schema integrity check: the journaled params row no longer " +
-        "satisfies the workflow's declared parameter schemas (edited after the run started). Refusing to execute it. " +
-        `Start a new run.\n${expectedErrors.map((e) => `  - ${e}`).join("\n")}`,
-    );
   });
 });
 

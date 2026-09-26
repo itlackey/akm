@@ -11,11 +11,12 @@
  * parsed with the `yaml` package's `parseDocument` + `LineCounter` (best-effort
  * per-key line anchoring), the body's heading list with `parseMarkdownToc`
  * (already fence-aware) — both already in the codebase. The parser
- * accumulates `WorkflowError`s rather than throwing.
+ * accumulates `WorkflowError`s rather than throwing, and emits a compiled
+ * {@link WorkflowPlan} directly (`plan.ts`).
  *
  * Frontmatter carries the orchestration graph (params/defaults/budget/steps);
  * the body carries per-step prose, joined to the graph by step id. Body rules
- * (spec §2.2), exactly three:
+ *, exactly three:
  *
  *   1. Every level-2 heading must be `## <step-id>` for a DECLARED step,
  *      exactly (fenced code blocks are skipped when scanning for headings).
@@ -33,32 +34,30 @@
  */
 
 import { LineCounter, parseDocument } from "yaml";
+import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
-import { isContainedRelativePath, isRecord } from "../core/common";
+import { compareCodePoints, isContainedRelativePath, isRecord } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
-import { parseReference } from "./program/expressions";
+import { INPUT_NAME_PATTERN } from "../execution/input-contract";
 import {
-  PROGRAM_ISOLATION_KINDS,
-  PROGRAM_ON_ERROR,
-  PROGRAM_PARAM_NAME_PATTERN,
-  PROGRAM_REDUCERS,
-  PROGRAM_RETRY_REASONS,
-  PROGRAM_STEP_ID_PATTERN,
-  type ProgramBudget,
-  type ProgramDefaults,
-  type ProgramExec,
-  type ProgramGate,
-  type ProgramIsolation,
-  type ProgramMap,
-  type ProgramOnError,
-  type ProgramReducer,
-  type ProgramRetry,
-  type ProgramRoute,
-  type ProgramStep,
-  type ProgramUnit,
-} from "./program/schema";
+  type SourceRef,
+  WORKFLOW_PLAN_VERSION,
+  type WorkflowBudget,
+  type WorkflowError,
+  type WorkflowExec,
+  type WorkflowIsolation,
+  type WorkflowOnError,
+  type WorkflowOutput,
+  type WorkflowPlan,
+  type WorkflowPlanStep,
+  type WorkflowReducer,
+  type WorkflowRetry,
+  type WorkflowStepSpec,
+  type WorkflowUnitSettings,
+} from "./plan";
+import { parseReference } from "./program/expressions";
 import {
   jsonBytes,
   utf8Bytes,
@@ -67,25 +66,70 @@ import {
   WORKFLOW_MAX_CONCURRENCY,
   WORKFLOW_MAX_ENGINE_NAME_LENGTH,
   WORKFLOW_MAX_EXTRA_PARAMS_BYTES,
+  WORKFLOW_MAX_INSTRUCTION_BYTES,
   WORKFLOW_MAX_SCHEMA_BYTES,
   WORKFLOW_MAX_SOURCE_BYTES,
   WORKFLOW_MAX_TIMEOUT_MS,
 } from "./resource-limits";
-import {
-  type SourceRef,
-  WORKFLOW_SCHEMA_VERSION,
-  type WorkflowDocument,
-  type WorkflowError,
-  type WorkflowInstructionBlock,
-  type WorkflowOutputDeclaration,
-  type WorkflowParseResult,
-  type WorkflowStep,
-} from "./schema";
-import { runSemanticChecks } from "./validator";
 
-// LlmInvocationOverrides referenced via an inline `import("...")` TYPE QUERY,
-// same rationale as program/schema.ts / program/parser.ts's identical query
-// (this file is reached from `output/renderers.ts` via `workflows/renderer.ts`).
+/** A byte-exact slice of the markdown body, plus where it came from. */
+interface WorkflowInstructionBlock {
+  text: string;
+  source: SourceRef;
+}
+
+export type WorkflowParseResult = { ok: true; plan: WorkflowPlan } | { ok: false; errors: WorkflowError[] };
+
+// ── The Markdown grammar's vocabulary (pinned against schemas/akm-workflow.json) ──
+
+export const PROGRAM_REDUCERS = ["collect", "vote"] as const;
+export const PROGRAM_ON_ERROR = ["fail", "continue"] as const;
+export const PROGRAM_ISOLATION_KINDS = ["none", "worktree"] as const;
+
+/** `retry.on`: exactly the persisted `AgentFailureReason` taxonomy (the `satisfies` fails typecheck on drift). */
+const RETRY_REASON_SET = {
+  timeout: true,
+  spawn_failed: true,
+  non_zero_exit: true,
+  parse_error: true,
+  cooldown: true,
+  llm_rate_limit: true,
+  llm_content_filter: true,
+  llm_invalid_json: true,
+  content_policy_reject: true,
+  unsupported_type: true,
+  no_change: true,
+  quality_rejected: true,
+  aborted: true,
+} as const satisfies Record<import("../integrations/agent/spawn").AgentFailureReason, true>;
+export const PROGRAM_RETRY_REASONS = Object.keys(RETRY_REASON_SET) as readonly string[];
+
+/**
+ * Step ids are exactly the `<ident>` grammar `steps.<id>.output` references
+ * accept: no dots, so every step is addressable and `<stepId>.gate` can never
+ * collide with a real step id.
+ */
+export const PROGRAM_STEP_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+/** Param (and output) names: plain `params.<ident>`-addressable identifiers, shared with task inputs. */
+export const PROGRAM_PARAM_NAME_PATTERN = INPUT_NAME_PATTERN;
+
+/** One parsed `unit:` bag: its settings plus an optional argv and its frontmatter span. */
+type ProgramUnit = WorkflowUnitSettings & { exec?: WorkflowExec; source: SourceRef };
+type ProgramDefaults = NonNullable<WorkflowPlan["defaults"]>;
+type ProgramGate = { maxLoops?: number };
+type ProgramMap = { over: string; concurrency?: number; reducer?: WorkflowReducer; unit?: ProgramUnit };
+type ProgramRoute = { input: string; branches: { match: string; stepId: string }[]; defaultStepId?: string };
+interface ProgramStep {
+  id: string;
+  unit?: ProgramUnit;
+  map?: ProgramMap;
+  route?: ProgramRoute;
+  inputs?: string[];
+  output?: Record<string, unknown>;
+  gate?: ProgramGate;
+  source: SourceRef;
+}
+
 type LlmInvocationOverrides = import("../integrations/agent/engine-resolution").LlmInvocationOverrides;
 
 /** Envelope keys every AKM markdown asset carries ($ref'd from schemas/akm-asset-envelope.json). */
@@ -150,7 +194,9 @@ export type WorkflowExecCwdValidationResult =
 
 export interface WorkflowParseOptions {
   path: string;
-  /** Optional adapter-neutral semantic validator used by the source-IR frontend. */
+  /** Plan title; defaults to the file's basename. */
+  title?: string;
+  /** Optional physical-containment check for `exec.cwd` (see `compile.ts`). */
   validateExecCwd?: (value: string) => WorkflowExecCwdValidationResult;
 }
 
@@ -266,7 +312,7 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   checkEnvelopeFields(ctx, root, frontmatterEndLine);
 
   const description = typeof root.description === "string" ? root.description : undefined;
-  const tags = readTags(ctx, root.tags, frontmatterEndLine);
+  readTags(ctx, root.tags, frontmatterEndLine);
   const params = parseParams(ctx, root.params);
   const outputs = parseOutputs(ctx, root.outputs);
   const defaults = parseDefaults(ctx, root.defaults);
@@ -286,7 +332,7 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
     errors,
   );
 
-  const steps: WorkflowStep[] = parsedSteps.map((step, index) => {
+  const steps = parsedSteps.map((step, index): WorkflowPlanStep => {
     const section = sections.get(step.id);
     if (!section) {
       if (step.route === undefined) {
@@ -295,50 +341,113 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
           message: `Step "${step.id}" is a unit/map step and must have a "## ${step.id}" body section with its instructions.`,
         });
       }
-    } else {
-      if (step.route === undefined && !section.instructions) {
-        errors.push({
-          line: section.headingLine,
-          message: `Step "${step.id}" section ("## ${step.id}") is empty. Add the step's instructions below the heading.`,
-        });
+    } else if (step.route === undefined && !section.instructions) {
+      errors.push({
+        line: section.headingLine,
+        message: `Step "${step.id}" section ("## ${step.id}") is empty. Add the step's instructions below the heading.`,
+      });
+    }
+    for (const [block, what] of [
+      [section?.instructions, "instructions exceed"],
+      [section?.gateRubric, "gate rubric exceeds"],
+    ] as const) {
+      if (block && utf8Bytes(block.text) > WORKFLOW_MAX_INSTRUCTION_BYTES) {
+        errors.push({ line: block.source.start, message: `Step "${step.id}" ${what} the 256 KiB resource limit.` });
       }
     }
-
-    const gate: ProgramGate | undefined = step.gate ?? (section?.gateRubric ? {} : undefined);
-
-    const out: WorkflowStep = {
-      id: step.id,
+    const rubric = section?.gateRubric?.text;
+    return {
+      stepId: step.id,
+      title: step.id,
       sequenceIndex: index,
-      ...(step.unit ? { unit: step.unit } : {}),
-      ...(step.map ? { map: step.map } : {}),
-      ...(step.route ? { route: step.route } : {}),
-      ...(step.inputs ? { inputs: step.inputs } : {}),
-      ...(step.output !== undefined ? { output: step.output } : {}),
-      ...(gate ? { gate } : {}),
-      ...(section?.instructions ? { instructions: section.instructions } : {}),
-      ...(section?.gateRubric ? { gateRubric: section.gateRubric } : {}),
-      source: step.source,
+      spec: stepSpec(step, section),
+      ...(step.route
+        ? {
+            route: {
+              input: step.route.input,
+              when: Object.fromEntries(step.route.branches.map((branch) => [branch.match, branch.stepId])),
+              ...(step.route.defaultStepId !== undefined ? { defaultStepId: step.route.defaultStepId } : {}),
+            },
+          }
+        : {}),
+      ...(step.output !== undefined ? { outputSchema: step.output } : {}),
+      gate: {
+        kind: "gate",
+        id: `${step.id}.gate`,
+        stepId: step.id,
+        criteria: rubric?.trim() ? [rubric] : [],
+        maxLoops: step.gate?.maxLoops ?? 1,
+        frozenJudge: null,
+      },
     };
-    return out;
   });
-
-  const draft: WorkflowDocument = {
-    schemaVersion: WORKFLOW_SCHEMA_VERSION,
-    ...(description ? { description } : {}),
-    ...(tags ? { tags } : {}),
-    ...(params ? { params } : {}),
-    ...(outputs ? { outputs } : {}),
-    ...(defaults ? { defaults } : {}),
-    ...(budget ? { budget } : {}),
-    steps,
-    ...(preamble ? { preamble } : {}),
-    source: { path, lineCount: totalLines },
-  };
-
-  runSemanticChecks(draft, root, frontmatterEndLine, errors);
-
+  checkCanonicalXrefs(root.xrefs, frontmatterEndLine, errors);
   if (errors.length > 0) return { ok: false, errors: sortErrors(errors) };
-  return { ok: true, document: draft };
+
+  const paramNames = params ? Object.keys(params) : [];
+  const plan: WorkflowPlan = {
+    irVersion: WORKFLOW_PLAN_VERSION,
+    title: source.title ?? path.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, ""),
+    ...(params && paramNames.length > 0 ? { params: paramNames, paramSchemas: params } : {}),
+    ...(outputs ? { outputs: sortedByName(outputs) } : {}),
+    ...(budget ? { budget } : {}),
+    ...(defaults ? { defaults } : {}),
+    ...(description ? { description } : {}),
+    ...(preamble ? { preamble } : {}),
+    steps,
+  };
+  return { ok: true, plan };
+}
+
+/** The authored step as the plan carries it. A prose step is inline `akm/command` literal content. */
+function stepSpec(step: ProgramStep, section: StepSection | undefined): WorkflowStepSpec {
+  const prose = section?.instructions?.text;
+  if (step.route) return { ...(prose?.trim() ? { instructions: prose } : {}), source: step.source };
+  const dispatchUnit = step.map?.unit ?? step.unit;
+  const { exec, source: _unitSource, ...unit } = dispatchUnit ?? { source: step.source };
+  return {
+    ...(exec
+      ? { exec: { ...exec }, ...(prose?.trim() ? { instructions: prose } : {}) }
+      : { uses: "akm/command", commandMode: "literal" as const, with: { content: prose ?? "" } }),
+    ...(Object.keys(unit).length > 0 ? { unit } : {}),
+    ...(step.map
+      ? {
+          map: {
+            over: step.map.over,
+            ...(step.map.concurrency !== undefined ? { concurrency: step.map.concurrency } : {}),
+            ...(step.map.reducer !== undefined ? { reducer: step.map.reducer } : {}),
+          },
+        }
+      : {}),
+    ...(step.inputs ? { inputs: [...step.inputs] } : {}),
+    source: step.source,
+  };
+}
+
+/** `outputs:` in canonical wire order (code-point ascending by name). */
+function sortedByName<T>(entries: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(
+    Object.keys(entries)
+      .sort(compareCodePoints)
+      .map((name) => [name, entries[name] as T]),
+  );
+}
+
+/** `xrefs` entries must be canonical asset refs. */
+function checkCanonicalXrefs(value: unknown, line: number, errors: WorkflowError[]): void {
+  if (!Array.isArray(value)) return; // shape already flagged by checkXrefs
+  for (const ref of value) {
+    try {
+      if (typeof ref !== "string") throw new Error("non-canonical ref");
+      const parsed = parseBundleRef(ref);
+      if (parsed.conceptId.includes(":") || ref !== bundleRefToString(parsed)) throw new Error("non-canonical ref");
+    } catch {
+      errors.push({
+        line,
+        message: `Workflow frontmatter "xrefs" contains an invalid or non-canonical ref: ${String(ref)}.`,
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -571,9 +680,9 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
 }
 
 /**
- * `outputs:` (P3b, spec §4.2): named, optionally schema-validated projections
+ * `outputs:`: named, optionally schema-validated projections
  * of step artifacts, exported when the run completes. Symmetrical with
- * `parseParams` above (B-N4) — same authoring surface, same name grammar,
+ * `parseParams` above — same authoring surface, same name grammar,
  * same schema-subset validator, same per-schema byte bound — but each entry
  * is a STRUCTURED `{from, schema?}` mapping rather than a bare JSON Schema.
  *
@@ -581,10 +690,10 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
  * `steps.<id>.output(.<seg>)*` reference (never `params.<name>` — an output
  * projects a step artifact, never a param, B-07). Whether the named step is
  * actually DECLARED in this document is a semantic, cross-step check left to
- * `ir/compile.ts`'s reference validation (B-06), mirroring how `inputs[]` /
+ * `compile.ts`'s `checkWorkflowPlan`, mirroring how `inputs[]` /
  * `map.over` / `route.input` already split "syntax here, semantics there".
  */
-function parseOutputs(ctx: Ctx, raw: unknown): Record<string, WorkflowOutputDeclaration> | undefined {
+function parseOutputs(ctx: Ctx, raw: unknown): Record<string, WorkflowOutput> | undefined {
   if (raw === undefined) return undefined;
   if (!isRecord(raw)) {
     ctx.err(
@@ -593,7 +702,7 @@ function parseOutputs(ctx: Ctx, raw: unknown): Record<string, WorkflowOutputDecl
     );
     return undefined;
   }
-  const outputs: Record<string, WorkflowOutputDeclaration> = {};
+  const outputs: Record<string, WorkflowOutput> = {};
   for (const [outputName, value] of Object.entries(raw)) {
     const path: Path = ["outputs", outputName];
     if (!PROGRAM_PARAM_NAME_PATTERN.test(outputName)) {
@@ -626,7 +735,7 @@ function parseOutputs(ctx: Ctx, raw: unknown): Record<string, WorkflowOutputDecl
       );
       continue;
     }
-    const entry: WorkflowOutputDeclaration = { from: value.from };
+    const entry: { from: string; schema?: Record<string, unknown> } = { from: value.from };
     if (value.schema !== undefined) {
       if (!isRecord(value.schema)) {
         ctx.err([...path, "schema"], `Output "${outputName}" "schema" must be a JSON Schema object.`);
@@ -663,13 +772,13 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   const timeoutMs = parseTimeoutField(ctx, raw.timeout, [...path, "timeout"], `"defaults.timeout"`);
   if (timeoutMs !== undefined) defaults.timeoutMs = timeoutMs;
   const onError = parseEnumField(ctx, raw.on_error, [...path, "on_error"], `"defaults.on_error"`, PROGRAM_ON_ERROR);
-  if (onError !== undefined) defaults.onError = onError as ProgramOnError;
+  if (onError !== undefined) defaults.onError = onError as WorkflowOnError;
   const llm = parseLlmOverrides(ctx, raw.llm, [...path, "llm"], `"defaults.llm"`);
   if (llm !== undefined) defaults.llm = llm;
   return Object.keys(defaults).length > 0 ? defaults : undefined;
 }
 
-function parseBudget(ctx: Ctx, raw: unknown): ProgramBudget | undefined {
+function parseBudget(ctx: Ctx, raw: unknown): WorkflowBudget | undefined {
   if (raw === undefined) return undefined;
   const path: Path = ["budget"];
   if (!isRecord(raw)) {
@@ -677,7 +786,7 @@ function parseBudget(ctx: Ctx, raw: unknown): ProgramBudget | undefined {
     return undefined;
   }
   checkUnknownKeys(ctx, raw, path, BUDGET_KEYS, `"budget"`);
-  const budget: ProgramBudget = {};
+  const budget: WorkflowBudget = {};
   if (raw.max_tokens !== undefined) {
     if (typeof raw.max_tokens === "number" && Number.isInteger(raw.max_tokens) && raw.max_tokens >= 1) {
       budget.maxTokens = raw.max_tokens;
@@ -859,7 +968,7 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
   if (retry !== undefined) unit.retry = retry;
 
   const onError = parseEnumField(ctx, raw.on_error, [...path, "on_error"], `${stepLabel} "on_error"`, PROGRAM_ON_ERROR);
-  if (onError !== undefined) unit.onError = onError as ProgramOnError;
+  if (onError !== undefined) unit.onError = onError as WorkflowOnError;
 
   const output = parseSchemaObject(ctx, raw.output, [...path, "output"], `${stepLabel} unit "output"`);
   if (output !== undefined) unit.output = output;
@@ -887,7 +996,7 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
     `${stepLabel} "isolation"`,
     PROGRAM_ISOLATION_KINDS,
   );
-  if (isolation !== undefined) unit.isolation = isolation as ProgramIsolation;
+  if (isolation !== undefined) unit.isolation = isolation as WorkflowIsolation;
 
   return unit;
 }
@@ -901,7 +1010,7 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
  * pipeline writes the interpreter explicitly (`["bash", "-lc", "…"]`), which
  * keeps that decision visible in the frontmatter diff.
  */
-function parseExec(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): ProgramExec | undefined {
+function parseExec(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): WorkflowExec | undefined {
   if (!isRecord(raw)) {
     ctx.err(path, `${stepLabel} "exec" must be a mapping with a "command" argv list.`);
     return undefined;
@@ -911,7 +1020,7 @@ function parseExec(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
   const command = parseExecCommand(ctx, raw.command, [...path, "command"], stepLabel);
   if (command === undefined) return undefined;
 
-  const exec: ProgramExec = { command };
+  const exec: WorkflowExec = { command };
   const cwd = parseExecCwd(ctx, raw.cwd, [...path, "cwd"], stepLabel);
   if (cwd !== undefined) exec.cwd = cwd;
   const passEnv = parseExecPassEnv(ctx, raw.pass_env, [...path, "pass_env"], stepLabel);
@@ -1045,7 +1154,7 @@ function parseMap(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progra
 
   const map: ProgramMap = { over };
   if (concurrency !== undefined) map.concurrency = concurrency;
-  if (reducer !== undefined) map.reducer = reducer as ProgramReducer;
+  if (reducer !== undefined) map.reducer = reducer as WorkflowReducer;
   if (unit !== undefined) map.unit = unit;
   return map;
 }
@@ -1215,7 +1324,7 @@ function parseEngineName(ctx: Ctx, raw: unknown, path: Path, label: string): str
   return name;
 }
 
-function parseRetry(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): ProgramRetry | undefined {
+function parseRetry(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): WorkflowRetry | undefined {
   if (raw === undefined) return undefined;
   if (!isRecord(raw)) {
     ctx.err(path, `${stepLabel} "retry" must be a mapping: { max: <n>, on: [<failure_reason>, …] }.`);
@@ -1228,11 +1337,11 @@ function parseRetry(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Prog
     ctx.err([...path, "max"], `${stepLabel} "retry.max" is required and must be a non-negative integer.`);
     ok = false;
   }
-  const on: ProgramRetry["on"] = [];
+  const on: WorkflowRetry["on"] = [];
   if (Array.isArray(raw.on) && raw.on.length > 0) {
     raw.on.forEach((reason, i) => {
       if (typeof reason === "string" && (PROGRAM_RETRY_REASONS as readonly string[]).includes(reason)) {
-        on.push(reason as ProgramRetry["on"][number]);
+        on.push(reason as WorkflowRetry["on"][number]);
       } else {
         ctx.err(
           [...path, "on", i],

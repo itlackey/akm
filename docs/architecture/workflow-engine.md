@@ -15,22 +15,24 @@ commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 
 ## Frozen plans
 
-The first `akm workflow run <ref>` compiles either peer source format through
-source IR v1. Every new run/start creates and atomically publishes durable
-plan **`irVersion` 5** on the run row (`plan_json` + `plan_hash`); a new start
-never emits an older version.
+The first `akm workflow run <ref>` compiles either peer source format
+(Markdown or GitHub-Actions-style YAML) straight to the one plan type and
+stores it as durable plan **`irVersion` 6** on the run row (`plan_json` +
+`plan_hash`); a new start never emits an older version. `plan_ir_version` and
+`plan_hash` are recorded provenance, not gates: a stored plan is decoded as it
+is — irVersion 4 and 5 plans included — and one frozen by an older or newer
+akm that still decodes simply runs (with one warning). A newer akm's plan that
+does not decode is refused with a message naming "Upgrade akm".
 
-The durable plan includes a guarded, canonical `sourceReadSet` covering the
-workflow and every command/persona/task/script source it owns — and, for a
-step that composes a child workflow, every source the child transitively owns
-too (see [Child workflows](#child-workflows)). Each entry records logical and
-physical identity, content hash, and containment evidence, so aliases,
-replacements, and source races fail before publication.
+The durable plan records `sourceHash`, the sha256 of the workflow source file
+at freeze. It is used only for the resume warning below, never to refuse a
+run.
 
 Dispatch-significant material is immutable. The resolved request is frozen,
 the resolved target is frozen, and runner selection is frozen.
 Working directory (`cwd`) identity is frozen.
-Executable identity is frozen. Git identity and its commit OID are frozen.
+Git identity and its commit OID are frozen. The executable a unit runs is
+resolved at dispatch, so upgrading a CLI (say, `claude`) never strands a run.
 Exact models, inference, tools and authorization,
 execution limits, parameter snapshots, command/script bytes, and verifier
 selection therefore cannot drift under an in-flight run.
@@ -44,8 +46,10 @@ materialize their current values only after owner/topology checks. Durable
 plans never store secret values or enable whole-process `inheritEnv`.
 
 **A run executes the plan compiled at creation; edits to source need a new
-run.** Orchestration decisions are pure functions of the frozen plan, run
-params, and journaled results.
+run.** Resuming a run re-reads its workflow source only to warn, once, when
+the source changed since the freeze — the run continues on the frozen plan.
+Orchestration decisions are pure functions of the frozen plan, run params,
+and journaled results.
 
 ## Child workflows
 
@@ -61,18 +65,10 @@ dispatch time; the embedded plan is authoritative. See
 for the authoring-side view, including the three composition bounds (depth,
 cycle, aggregate embedded bytes) enforced at freeze.
 
-**Decode-time integrity chain.** Every time a plan carrying an embedded child
-is decoded, the child is re-verified recursively, in order: the parent's own
-canonical bytes are hashed and checked against its `plan_hash`; its
-`irVersion` is checked; then, for each embedded child, the same two checks
-run again against the embedded bytes (`sha256(canonicalPlanJson(frozenPlan))
-=== planHash`, `irVersion === 5`), plus a check that the target's own
-`contentHash` (covering `ref`, `planHash`, `via`, and any `taskRef`/
-`inputBindings`) still matches. A single tampered byte anywhere in an
-embedded child — or an embedded child claiming any `irVersion` other than 5
-— fails the parent's decode, not just the child's. This closes the same
-corruption boundary the top-level `plan_hash` check already closes, extended
-recursively through however many levels of composition a plan embeds.
+**Decoding.** An embedded child plan is decoded by the same structural
+decoder as its parent, recursively. Its `planHash` and the target's
+`contentHash` are recorded provenance, carried as data and never re-verified
+against the bytes.
 
 **The dispatch seam.** Dispatching a step whose target is
 `kind: "child-workflow"` is the one branch point in
@@ -88,8 +84,8 @@ leaves a recoverable `running` parent unit and no orphaned child) and
 finishing, the worktree epilogue), which runs unchanged either way — a
 child-workflow unit is journaled exactly like any other.
 
-**The drive contract.** `driveChildWorkflowUnit` re-verifies the embedded
-plan's integrity, resolves the child's params through the same input-binding
+**The drive contract.** `driveChildWorkflowUnit` validates and resolves the
+child's params through the same input-binding
 resolution every frozen target uses, computes the child's identity key from
 `{parentRunId, parentUnitId, unitInputHash}`, and publishes the child run —
 idempotently: the same three inputs always resolve to the same child row,
@@ -107,12 +103,11 @@ Schema: Child execution](../reference/workflow-schema.md#child-execution).
 calls the exact same exported entry point `akm workflow run` calls —
 `runWorkflowSteps(options)`, pointed at the child's run id as `target` —
 with no special-casing for "this target is a child": resolving a run id,
-decoding and integrity-checking the stored plan, acquiring that row's own
-lease, and walking its spine through `completeWorkflowStep` are identical to
-the top-level path. That reuse is what makes child leases arbitrate
-two-parent contention correctly with no new mechanism, and what makes a
-resumed parent replay a completed child step byte-identically with zero
-dispatcher calls. The child drive passes a no-op
+decoding the stored plan, taking that run's own lock, and walking its spine
+through `completeWorkflowStep` are identical to the top-level path. That
+reuse is what makes child run locks arbitrate two-parent contention with no
+new mechanism, and what makes a resumed parent skip a completed child step
+with zero dispatcher calls. The child drive passes a no-op
 `disposeDispatchResources` (the parent's `finally` remains the sole owner of
 the process-lifecycle drain for the whole process) and no `maxSteps` or
 `maxRetries` (the parent's own budgets count only its own spine steps). The
@@ -155,37 +150,27 @@ composing unit's own result on `completed` — the same value, read through
 the same function, whether the caller is `akm workflow status` or a parent
 unit's dispatch.
 
-## Resume is journaled replay
+## Resume skips completed units
 
-Only the current durable plan version is executable — checked structurally,
-without decoding the stored plan bytes. A stored run frozen at an older
-`irVersion` keeps `akm workflow status`, `list`, and `abandon` working (they
-never read the plan itself), but `resume`, `next`, `complete`, and a bare
-`run` against that run id fail closed with `UsageError` code
-`WORKFLOW_IR_VERSION_UNSUPPORTED`, naming the run's frozen version and
-pointing at `akm workflow abandon` — see
-[Migrating from akm 0.9.1 to 0.9.2](../migration/v0.9.1-to-v0.9.2.md#workflow-cutover)
-for the exact message and recovery steps. There is no second executor and no
-compatibility replay layer for an old plan version; abandon it and start a
-new run from current source instead of carrying an old execution
-architecture inside the runtime.
+Resume never re-reads config or the asset index, and reads the workflow
+source only for the drift warning above. It consumes the frozen plan plus
+the journaled attempts and results. A stored plan that this akm cannot
+decode is not an error to fix in place: `akm workflow run` marks such a run
+abandoned (status `failed`) and says to start a new run with
+`akm workflow run <ref>`; `akm workflow status`, `list`, and `abandon` never
+read the plan at all. A plan frozen by a newer akm that this one cannot
+decode is left untouched, and the message names upgrading akm.
 
-Resume never re-reads authored workflow source. Resume never re-reads config
-or configuration. Resume never re-reads the asset index. It validates the
-persisted plan version and consumes only frozen dispatch inputs plus journaled
-attempts and results.
-
-Every dispatched unit is journaled with a content-derived identity — the step
-id plus a hash of the unit's frozen instructions, its item (for a map unit),
-its declared `inputs:` artifacts, and the params snapshot — and its input
-hash. On re-run, a journaled completed unit with the same identity and the
-same inputs is **reused**, never re-dispatched; a failed or missing unit is
-dispatched live. If a journaled completed unit matches by identity but its
-recorded inputs differ, the engine fails the step with a **replay
-divergence** error naming the unit — it never silently re-runs work whose
-inputs changed under it. (Divergence means the program produced different
-data for the "same" unit across invocations — a nondeterminism bug worth
-surfacing, not papering over.)
+Every dispatched unit is journaled under a content-derived identity — the
+node id plus a hash of its item for a map unit (`<node>:solo` otherwise) —
+together with an input hash over everything the unit was asked to do (its
+frozen instructions and target, declared `inputs:` artifacts, the params
+snapshot, gate feedback). On
+re-run, a unit whose journal row is `completed` is **reused**, never
+re-dispatched; a failed or missing unit is dispatched live. The recorded
+input hash is informational: a completed unit stays completed even when the
+params row or an upstream artifact changed since — a fresh run is what
+recomputes it.
 
 ## Durable attempts and at-least-once dispatch
 
@@ -194,22 +179,24 @@ unit id and an append-only sequence of attempts.
 A crash reclaim reuses the same stable dispatchId for the interrupted attempt.
 An explicit retry gets a new dispatchId under one stable unit id and increments the attempt number.
 
-The run lease and attempt claim fence stale completions after ownership changes,
-but they cannot prove whether an external process completed immediately before
-a crash. An ambiguous crash outcome may re-run and can produce a duplicate
-side effect. Workflow actions should be idempotent or use the stable dispatch
-identity as their own deduplication key.
+One driver per run (below) keeps a second engine off a run, and a finished
+attempt accepts no second terminal write, but neither can prove whether an
+external process completed immediately before a crash. An ambiguous crash
+outcome may re-run and can produce a duplicate side effect. Workflow actions
+should be idempotent or use the stable dispatch identity as their own
+deduplication key.
 
-## One engine drives a run (the run lease)
+## One engine drives a run (the run lock)
 
-`akm workflow run` takes a **run lease** before dispatching anything: a
-random holder id with a 90-second expiry recorded on the run row, renewed
-between steps, and released when the invocation exits. A second
-`workflow run` against a live-leased run refuses up front, naming the holder
-and the expiry. An *expired* lease is claimable, so a crashed engine never
-wedges a run — wait out the expiry and re-run. While the lease is live the
-engine owns the step spine. `workflow status` remains read-only; run detail
-surfaces a live lease as `engineLease` (holder + expiry).
+`akm workflow run` takes the run's **lock file** before reading the plan or
+dispatching anything: one `O_EXCL` file per run id under the data directory
+(`workflow-run-locks/<run id>.lock`, next to `state.db`), recording the
+holder's pid, released when the invocation exits. A second `workflow run`
+against a run another live process holds refuses up front with
+`RUN_LEASE_HELD` (exit 75), naming the holder pid. A lock whose holder pid is
+dead is reclaimed at once, so a crashed engine never wedges a run; nothing
+expires by age and nothing renews. `workflow status` and `list` never take
+the lock.
 
 ## Worktree isolation
 
@@ -270,8 +257,8 @@ for what that means for trust.
 
 ## Run scope and persistence
 
-Run state (`plan_json`, `plan_hash`, step statuses, the unit journal, and the
-engine lease) persists in the project's `state.db`. Run state is scoped to
+Run state (`plan_json`, `plan_hash`, step statuses, and the unit journal)
+persists in the project's `state.db`; the per-run lock file sits beside it. Run state is scoped to
 the current project directory — the nearest `.akm/config.json`, git root,
 bundle root, or current directory — so the same workflow can run
 independently in separate projects, and `akm workflow list`/`status` without

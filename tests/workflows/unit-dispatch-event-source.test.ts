@@ -6,13 +6,13 @@
  * Code-review regression, round 2 (spec docs/plans/specs/p1b-model-extraction.md
  * §5.2 point 2). A prior code-review pass fixed a gap where `dispatchWorkflowExecution`
  * (src/workflows/exec/unit-dispatch.ts) never forwarded its resolved provenance
- * `eventSource` into `dispatchLoweredExecutionRequest`'s options at all, so a
+ * `eventSource` into `runExecution`'s options at all, so a
  * "command" (agent/sdk) frozen target's dispatched child never observed
  * `AKM_EVENT_SOURCE`. That fix forwarded the value UNCONDITIONALLY.
  *
- * `dispatchLoweredExecutionRequest` applies a forwarded value as
- * `env: { ...lowered.options.env, AKM_EVENT_SOURCE: eventSource }`
- * (src/integrations/agent/execution-lowering.ts:998-1001) — an unconditional
+ * `runExecution` applies a forwarded value as
+ * `env: { ...execution.options.env, AKM_EVENT_SOURCE: eventSource }`
+ * (src/integrations/agent/runner-dispatch.ts) — an unconditional
  * override of that one key. `lowered.options.env` IS the unit's own
  * authored/resolved `env:` binding (`UnitDispatchRequest.env`, folded in by
  * `prepareWorkflowExecution`), so the unconditional forward let the
@@ -25,12 +25,12 @@
  * authored binding always wins there.
  *
  * `dispatchWorkflowExecution` itself has no injectable
- * `runAgent`/`executeRunner`/`chat` seam — a prior remediation recorded this
+ * `runAgent`/`runSdk`/`chat` seam — a prior remediation recorded this
  * as the reason its real dispatch has no end-to-end test (P1b spec Review
  * log) — so this pins the fix at the exact point the decision is made: the
  * exported `forwardedDispatchEventSource` predicate that
  * `dispatchWorkflowExecution` calls before building
- * `dispatchLoweredExecutionRequest`'s options.
+ * `runExecution`'s options.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -62,7 +62,7 @@ describe("forwardedDispatchEventSource — agent/sdk arm eventSource precedence"
     // absent there; the bindings overlay then applies unconditionally. Mirror
     // that here: an authored binding — of ANY value, including one that
     // happens to already equal the resolved provenance value — must still be
-    // left for the merge in execution-lowering.ts to leave alone, not
+    // left for the merge in runner-dispatch.ts to leave alone, not
     // rewritten by this call as if nothing had been authored.
     expect(forwardedDispatchEventSource({ eventSource: "task", env: { AKM_EVENT_SOURCE: "task" } })).toBeUndefined();
   });

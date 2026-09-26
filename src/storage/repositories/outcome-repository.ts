@@ -110,7 +110,8 @@ export function getAssetOutcome(db: Database, ref: string): AssetOutcomeRow | un
 }
 
 /**
- * Load ALL asset_outcome rows. Used for the proxy-adequacy tripwire computation.
+ * Load ALL asset_outcome rows. Used for the stash-wide outcome-score
+ * normalisation in improve preparation.
  */
 export function getAllAssetOutcomes(db: Database): AssetOutcomeRow[] {
   return db

@@ -29,55 +29,6 @@ export interface MemoryPromotionAssessment {
   modelName?: string;
 }
 
-export interface PromotionBenchmarkCase {
-  name: string;
-  input: PromotionPolicyInput;
-  expectPromote: boolean;
-  split?: "train" | "heldout";
-  promoteValue?: number;
-  falsePromoteCost?: number;
-  missedPromoteCost?: number;
-}
-
-export interface PromotionBenchmarkResult {
-  total: number;
-  correct: number;
-  falsePositives: number;
-  falseNegatives: number;
-  accuracy: number;
-  precision: number;
-  recall: number;
-  f1: number;
-  truePositives: number;
-  trueNegatives: number;
-  netOutcomeScore: number;
-  capturedPromoteValue: number;
-  preventedFalsePromotionCost: number;
-  results: Array<{
-    name: string;
-    expectPromote: boolean;
-    assessment: MemoryPromotionAssessment;
-    passed: boolean;
-  }>;
-}
-
-export interface PromotionPolicySelectionResult {
-  corpusSize: number;
-  trainingSize: number;
-  heldOutSize: number;
-  selectedModel: { name: string; threshold: number };
-  training: PromotionBenchmarkResult;
-  heldOut: PromotionBenchmarkResult;
-  baselines: Array<{
-    name: string;
-    heldOut: PromotionBenchmarkResult;
-    noWorseThanSelected: boolean;
-    strictWin: boolean;
-    strictWinMetrics: string[];
-  }>;
-  strictlyBeatsBaselines: boolean;
-}
-
 interface PromotionFeatures {
   positiveFeedback: number;
   negativeFeedback: number;
@@ -91,7 +42,7 @@ interface PromotionFeatures {
   tentativeLanguage: boolean;
 }
 
-export interface PromotionModelConfig {
+interface PromotionModelConfig {
   name: string;
   positiveWeight: number;
   repeatedPositiveWeight: number;
@@ -106,12 +57,6 @@ export interface PromotionModelConfig {
   tagWeight: number;
   substantiveBodyWeight: number;
   tentativePenalty: number;
-}
-
-interface PromotionEvaluationPolicy {
-  name: string;
-  threshold: number;
-  assess: (input: PromotionPolicyInput) => MemoryPromotionAssessment;
 }
 
 function hasNonEmptyList(value: unknown): boolean {
@@ -354,289 +299,30 @@ function assessWithWeightedModel(
   };
 }
 
-function precision(tp: number, fp: number): number {
-  return tp + fp === 0 ? 1 : tp / (tp + fp);
-}
-
-function recall(tp: number, fn: number): number {
-  return tp + fn === 0 ? 1 : tp / (tp + fn);
-}
-
-function f1Score(p: number, r: number): number {
-  return p + r === 0 ? 0 : (2 * p * r) / (p + r);
-}
-
-function casePromoteValue(testCase: PromotionBenchmarkCase): number {
-  return testCase.promoteValue ?? 3;
-}
-
-function caseFalsePromoteCost(testCase: PromotionBenchmarkCase): number {
-  return testCase.falsePromoteCost ?? 4;
-}
-
-function caseMissedPromoteCost(testCase: PromotionBenchmarkCase): number {
-  return testCase.missedPromoteCost ?? 2;
-}
-
-export function evaluateMemoryPromotionBenchmark(
-  cases: readonly PromotionBenchmarkCase[],
-  policy: PromotionEvaluationPolicy = DEFAULT_PROMOTION_POLICY,
-): PromotionBenchmarkResult {
-  const results = cases.map((fixture) => {
-    const assessment = policy.assess(fixture.input);
-    const passed = assessment.promote === fixture.expectPromote;
-    return {
-      fixture,
-      name: fixture.name,
-      expectPromote: fixture.expectPromote,
-      assessment,
-      passed,
-    };
-  });
-
-  const truePositives = results.filter((result) => result.assessment.promote && result.expectPromote).length;
-  const trueNegatives = results.filter((result) => !result.assessment.promote && !result.expectPromote).length;
-  const falsePositives = results.filter((result) => result.assessment.promote && !result.expectPromote).length;
-  const falseNegatives = results.filter((result) => !result.assessment.promote && result.expectPromote).length;
-  const correct = truePositives + trueNegatives;
-  const p = precision(truePositives, falsePositives);
-  const r = recall(truePositives, falseNegatives);
-  let netOutcomeScore = 0;
-  let capturedPromoteValue = 0;
-  let preventedFalsePromotionCost = 0;
-  for (const result of results) {
-    if (result.expectPromote && result.assessment.promote) {
-      const value = casePromoteValue(result.fixture);
-      netOutcomeScore += value;
-      capturedPromoteValue += value;
-    } else if (result.expectPromote && !result.assessment.promote) {
-      netOutcomeScore -= caseMissedPromoteCost(result.fixture);
-    } else if (!result.expectPromote && result.assessment.promote) {
-      netOutcomeScore -= caseFalsePromoteCost(result.fixture);
-    } else {
-      preventedFalsePromotionCost += caseFalsePromoteCost(result.fixture);
-    }
-  }
-
-  return {
-    total: results.length,
-    correct,
-    falsePositives,
-    falseNegatives,
-    accuracy: results.length === 0 ? 1 : correct / results.length,
-    precision: p,
-    recall: r,
-    f1: f1Score(p, r),
-    truePositives,
-    trueNegatives,
-    netOutcomeScore,
-    capturedPromoteValue,
-    preventedFalsePromotionCost,
-    results: results.map(({ name, expectPromote, assessment, passed }) => ({
-      name,
-      expectPromote,
-      assessment,
-      passed,
-    })),
-  };
-}
-
-function thresholdCandidates(): number[] {
-  const values: number[] = [];
-  for (let value = 2.4; value <= 4.2; value += 0.2) {
-    values.push(Number(value.toFixed(1)));
-  }
-  return values;
-}
-
-const POSITIVE_FEEDBACK_BASELINE: PromotionEvaluationPolicy = {
-  name: "baseline-positive-feedback",
-  threshold: 2,
-  assess(input) {
-    const knowledgeRef = deriveKnowledgeRef(input.inputRef);
-    const featureState = collectPromotionFeatures(input);
-    if (featureState.blockedBy.length > 0) {
-      return {
-        applicable: !featureState.blockedBy.includes("not-memory"),
-        promote: false,
-        score: 0,
-        threshold: 2,
-        knowledgeRef,
-        blockedBy: featureState.blockedBy,
-        positiveSignals: [],
-        negativeSignals: [],
-        modelName: "baseline-positive-feedback",
-      };
-    }
-    const features = featureState.features as PromotionFeatures;
-    const promote = features.positiveFeedback >= 2;
-    return {
-      applicable: true,
-      promote,
-      score: features.positiveFeedback,
-      threshold: 2,
-      knowledgeRef,
-      ...(promote ? { content: buildKnowledgeContent(input) } : {}),
-      blockedBy: [],
-      positiveSignals: promote ? ["baseline positive feedback rule"] : [],
-      negativeSignals: promote ? [] : ["baseline positive feedback rule not met"],
-      modelName: "baseline-positive-feedback",
-    };
-  },
+/**
+ * The memory → knowledge promotion model: a weighted score over feedback
+ * reinforcement and memory metadata, promoted at or above the threshold. The
+ * weights were chosen by a grid search over a labelled corpus; they are a
+ * plain constant now.
+ */
+const PROMOTION_MODEL: PromotionModelConfig = {
+  name: "balanced-evidence",
+  positiveWeight: 0.8,
+  repeatedPositiveWeight: 0.65,
+  noPositivePenalty: 0.9,
+  singlePositivePenalty: 0.7,
+  negativeWeight: 2.0,
+  curatedWeight: 0.55,
+  confidenceWeight: 0.7,
+  sourceWeight: 0.4,
+  observedAtWeight: 0.4,
+  descriptionWeight: 0.2,
+  tagWeight: 0.15,
+  substantiveBodyWeight: 0.15,
+  tentativePenalty: 1.1,
 };
-
-const METADATA_BASELINE: PromotionEvaluationPolicy = {
-  name: "baseline-metadata",
-  threshold: 2,
-  assess(input) {
-    const knowledgeRef = deriveKnowledgeRef(input.inputRef);
-    const featureState = collectPromotionFeatures(input);
-    if (featureState.blockedBy.length > 0) {
-      return {
-        applicable: !featureState.blockedBy.includes("not-memory"),
-        promote: false,
-        score: 0,
-        threshold: 2,
-        knowledgeRef,
-        blockedBy: featureState.blockedBy,
-        positiveSignals: [],
-        negativeSignals: [],
-        modelName: "baseline-metadata",
-      };
-    }
-    const features = featureState.features as PromotionFeatures;
-    const metadataScore = (features.hasSource ? 1 : 0) + (features.hasObservedAt ? 1 : 0);
-    const promote = metadataScore >= 2;
-    return {
-      applicable: true,
-      promote,
-      score: metadataScore,
-      threshold: 3,
-      knowledgeRef,
-      ...(promote ? { content: buildKnowledgeContent(input) } : {}),
-      blockedBy: [],
-      positiveSignals: promote ? ["baseline metadata rule"] : [],
-      negativeSignals: promote ? [] : ["baseline metadata rule not met"],
-      modelName: "baseline-metadata",
-    };
-  },
-};
-
-export function selectPromotionPolicy(
-  corpus: readonly PromotionBenchmarkCase[],
-  candidates: readonly PromotionModelConfig[],
-): PromotionPolicySelectionResult {
-  const trainingCases = corpus.filter((testCase) => (testCase.split ?? "train") === "train");
-  const heldOutCases = corpus.filter((testCase) => (testCase.split ?? "train") === "heldout");
-  let bestPolicy: PromotionEvaluationPolicy | undefined;
-  let bestTraining: PromotionBenchmarkResult | undefined;
-
-  for (const model of candidates) {
-    for (const threshold of thresholdCandidates()) {
-      const policy: PromotionEvaluationPolicy = {
-        name: model.name,
-        threshold,
-        assess: (input) => assessWithWeightedModel(input, model, threshold),
-      };
-      const training = evaluateMemoryPromotionBenchmark(trainingCases, policy);
-      if (!bestTraining) {
-        bestTraining = training;
-        bestPolicy = policy;
-        continue;
-      }
-
-      const trainingWins =
-        training.f1 > bestTraining.f1 ||
-        (training.f1 === bestTraining.f1 && training.netOutcomeScore > bestTraining.netOutcomeScore) ||
-        (training.f1 === bestTraining.f1 &&
-          training.netOutcomeScore === bestTraining.netOutcomeScore &&
-          training.accuracy > bestTraining.accuracy);
-
-      if (trainingWins) {
-        bestTraining = training;
-        bestPolicy = policy;
-      }
-    }
-  }
-
-  const selectedPolicy = bestPolicy as PromotionEvaluationPolicy;
-  const selectedTraining = bestTraining as PromotionBenchmarkResult;
-  const heldOut = evaluateMemoryPromotionBenchmark(heldOutCases, selectedPolicy);
-  const baselines = [POSITIVE_FEEDBACK_BASELINE, METADATA_BASELINE].map((policy) => {
-    const baselineHeldOut = evaluateMemoryPromotionBenchmark(heldOutCases, policy);
-    const noWorseThanSelected =
-      heldOut.f1 >= baselineHeldOut.f1 && heldOut.netOutcomeScore >= baselineHeldOut.netOutcomeScore;
-    const strictWinMetrics: string[] = [];
-    if (heldOut.f1 > baselineHeldOut.f1) strictWinMetrics.push("f1");
-    if (heldOut.netOutcomeScore > baselineHeldOut.netOutcomeScore) strictWinMetrics.push("netOutcomeScore");
-    if (heldOut.accuracy > baselineHeldOut.accuracy) strictWinMetrics.push("accuracy");
-    return {
-      name: policy.name,
-      heldOut: baselineHeldOut,
-      noWorseThanSelected,
-      strictWin: noWorseThanSelected && strictWinMetrics.length > 0,
-      strictWinMetrics,
-    };
-  });
-  const strictlyBeatsBaselines = baselines.every((baseline) => baseline.strictWin);
-
-  return {
-    corpusSize: corpus.length,
-    trainingSize: trainingCases.length,
-    heldOutSize: heldOutCases.length,
-    selectedModel: { name: selectedPolicy.name, threshold: selectedPolicy.threshold },
-    training: selectedTraining,
-    heldOut,
-    baselines,
-    strictlyBeatsBaselines,
-  };
-}
-
-// Frozen grid-search winner. The promotion policy's selected model was
-// historically computed by running `selectPromotionPolicy` over a large
-// hardcoded benchmark corpus at import time (a full grid search on every
-// module load). The corpus AND the candidate-model grid now live test-side
-// (tests/commands/distill/promotion-policy-corpus.ts); the bench test
-// (tests/commands/distill/distill-promotion-policy.bench.test.ts) re-runs
-// `selectPromotionPolicy` over them and asserts the winner still matches this
-// frozen constant, so the freeze stays honest. Production carries only the
-// winning model's FULL weight config — `assessWithWeightedModel` reads all 13
-// weight fields, so a {name,threshold}-only freeze would not be runnable.
-
-/** Narrow frozen-selection shape: the winning model config + its threshold. */
-export interface PromotionPolicySelection {
-  selectedModel: PromotionModelConfig;
-  threshold: number;
-}
-
-export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelection = {
-  selectedModel: {
-    name: "balanced-evidence",
-    positiveWeight: 0.8,
-    repeatedPositiveWeight: 0.65,
-    noPositivePenalty: 0.9,
-    singlePositivePenalty: 0.7,
-    negativeWeight: 2.0,
-    curatedWeight: 0.55,
-    confidenceWeight: 0.7,
-    sourceWeight: 0.4,
-    observedAtWeight: 0.4,
-    descriptionWeight: 0.2,
-    tagWeight: 0.15,
-    substantiveBodyWeight: 0.15,
-    tentativePenalty: 1.1,
-  },
-  threshold: 3.8,
-};
-
-const SELECTED_MODEL = DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel;
-
-export const DEFAULT_PROMOTION_POLICY: PromotionEvaluationPolicy = {
-  name: SELECTED_MODEL.name,
-  threshold: DEFAULT_PROMOTION_POLICY_SELECTION.threshold,
-  assess: (input) => assessWithWeightedModel(input, SELECTED_MODEL, DEFAULT_PROMOTION_POLICY_SELECTION.threshold),
-};
+const PROMOTION_THRESHOLD = 3.8;
 
 export function assessMemoryKnowledgePromotionCandidate(input: PromotionPolicyInput): MemoryPromotionAssessment {
-  return DEFAULT_PROMOTION_POLICY.assess(input);
+  return assessWithWeightedModel(input, PROMOTION_MODEL, PROMOTION_THRESHOLD);
 }

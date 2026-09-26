@@ -9,6 +9,7 @@ import type { AkmConfig } from "../src/core/config/config";
 import {
   bundlesToSourceEntries,
   loadUserConfig,
+  normalizeConfigFile,
   resetConfigCache,
   resolveConfiguredSources,
   saveConfig,
@@ -28,11 +29,56 @@ function writeConfig(value: unknown): void {
   fs.writeFileSync(configPath, JSON.stringify(value));
 }
 
+function captureWarnings(run: () => void): string[] {
+  const warnings: string[] = [];
+  _resetWarnOnceForTests();
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  try {
+    run();
+  } finally {
+    _setWarnSinkForTests(undefined);
+  }
+  return warnings;
+}
+
 describe("0.9 config contract", () => {
-  test("requires an exact persisted config version before defaults are applied", () => {
+  test("a config without configVersion loads silently as 0.9.0 and is not rewritten", () => {
     writeConfig({ engines: {} });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
-    expect(() => loadUserConfig()).toThrow(/UNSUPPORTED_CONFIG_VERSION|configVersion/);
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().configVersion).toBe("0.9.0");
+    });
+    expect(warnings.some((w) => w.includes("configVersion"))).toBe(false);
+    expect(Object.hasOwn(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")), "configVersion")).toBe(false);
+  });
+
+  test("any other configVersion is named once and read as 0.9.0, older or newer, without rewriting the file", () => {
+    for (const version of ["0.8.0", "99.0.0", 1]) {
+      resetConfigCache();
+      writeConfig({ configVersion: version, engines: {} });
+      const warnings = captureWarnings(() => {
+        expect(loadUserConfig().configVersion).toBe("0.9.0");
+        resetConfigCache();
+        loadUserConfig();
+      });
+      const named = warnings.filter((w) => w.includes(`configVersion ${JSON.stringify(version)}`));
+      expect(named).toHaveLength(1);
+      expect(named[0]).toContain("reads it as 0.9.0");
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe(version);
+    }
+  });
+
+  test("akm migrate apply's config step writes configVersion 0.9.0 back", () => {
+    writeConfig({ configVersion: "0.8.0", engines: {} });
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview).toMatchObject({ changed: true, applied: false });
+    expect(preview.keys).toContain("configVersion");
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.8.0");
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.9.0");
+    expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
   });
 
   test("loads a config with retired profile vocabulary and a literal engine apiKey, using both as configured", () => {
@@ -221,12 +267,12 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).toThrow(ConfigError);
   });
 
-  test("rejects retired improve process selectors", () => {
+  test("tolerates retired improve process selectors like any unknown key", () => {
     writeConfig({
       configVersion: "0.9.0",
       improve: { strategies: { default: { processes: { reflect: { profile: "fast", mode: "llm" } } } } },
     });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
+    expect(() => loadUserConfig()).not.toThrow();
   });
 
   test("rejects an improve process that selects a missing or incompatible engine", () => {

@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { buildWorkflowTemplate, createWorkflowAsset } from "../../../src/workflows/authoring/authoring";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -24,33 +22,6 @@ afterEach(() => storage.cleanup());
 // no independent effect. See workflow-cli.ts's `run()` for the create
 // command.
 describe("workflow force publication safety", () => {
-  test("force rejects exact-path user work before replacing the workflow", () => {
-    const url = "https://example.com/akm/workflow-preflight.git";
-    const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
-    const workflows = path.join(repo, "content", "workflows");
-    const workflow = path.join(workflows, "release.md");
-    fs.mkdirSync(workflows, { recursive: true });
-    const git = (args: string[]): void => {
-      const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
-      if (result.status !== 0) throw new Error(result.stderr);
-    };
-    git(["init", "--initial-branch=main"]);
-    git(["config", "user.email", "test@akm.local"]);
-    git(["config", "user.name", "akm test"]);
-    fs.writeFileSync(workflow, buildWorkflowTemplate("release"));
-    git(["add", "content/workflows/release.md"]);
-    git(["commit", "-m", "seed"]);
-    fs.appendFileSync(workflow, "user work\n");
-    writeSandboxConfig({
-      bundles: { stash: { path: storage.stashDir }, team: { git: url, writable: true } },
-      defaultBundle: "stash",
-      defaultWriteTarget: "team",
-    });
-
-    expect(() => createWorkflowAsset({ name: "release", force: true })).toThrow(/staged or unstaged work/i);
-    expect(fs.readFileSync(workflow, "utf8")).toEndWith("user work\n");
-  });
-
   test("force atomically replaces an existing workflow", () => {
     const created = createWorkflowAsset({ name: "replace" });
     const before = fs.statSync(created.path).ino;

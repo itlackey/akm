@@ -25,14 +25,3 @@ export async function ensurePrimaryIndexForRead(primarySource?: SearchSource): P
   if (!primarySource?.path) return false;
   return ensureIndex(primarySource.path);
 }
-
-/**
- * Convenience helper for callers that only need to ensure a read index from a
- * configured stash path and default config.
- */
-export async function ensurePrimaryIndexFromConfig(
-  overrideStashDir?: string,
-  existingConfig?: AkmConfig,
-): Promise<boolean> {
-  return ensurePrimaryIndexForRead(resolveReadSources(overrideStashDir, existingConfig).primarySource);
-}

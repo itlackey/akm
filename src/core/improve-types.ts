@@ -332,10 +332,9 @@ export interface ConsolidateResult {
   /** Number of contradiction edges written (C-3 / #382). */
   contradicted: number;
   /**
-   * R5 §4.2 — merges that failed the ADVISORY merge-information floor this run
-   * (provenance shrank or specificity retention below the configured floor).
-   * The merges still proceeded in v1; the count feeds the collapse detector's
-   * cycle metrics and the health advisory.
+   * R5 §4.2 — merges that failed the ADVISORY merge-information floor. The
+   * floor is retired and nothing sets this any more; it stays optional so
+   * results an older release persisted still read.
    */
   mergeFloorViolations?: number;
   /**
@@ -405,12 +404,7 @@ export interface ConsolidateResult {
    * all. Surfaced so health/report readers see why `processed` dropped.
    */
   prefilteredAlreadyPromoted?: number;
-  /**
-   * Planned consolidate ops. Only the op-kind discriminant is used by core
-   * consumers (e.g. the `op !== "promote"` advisory-op check in
-   * `preparation.ts`); the full `ConsolidateOperation` shape lives in
-   * commands/improve/consolidate/types.ts, which core must not import.
-   */
+  /** Planned consolidate ops; core reads only the op-kind discriminant. */
   planned?: { op: ConsolidateOpKind }[];
   warnings: string[];
   durationMs: number;
@@ -966,12 +960,6 @@ export interface AkmImproveResult {
    * `neverReflected` is the subset of the due pool never previously reflected.
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number; selectedRefs: string[] };
-  /**
-   * R5 — the collapse/churn detector's cycle snapshot (mirrors one
-   * improve_cycle_metrics row), present when this run qualified (consolidate
-   * processed work) and the detector is enabled.
-   */
-  cycleMetrics?: import("../storage/repositories/canaries-repository").CycleMetricsRow;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and

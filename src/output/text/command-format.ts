@@ -555,7 +555,8 @@ export function formatAddPlain(r: Record<string, unknown>): string {
   const index = r.index as Record<string, unknown> | undefined;
   const scanned = index?.directoriesScanned ?? 0;
   const total = index?.totalEntries ?? 0;
-  const lines = [`Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`];
+  const bundleSuffix = typeof r.bundleId === "string" && r.bundleId.length > 0 ? ` as bundle "${r.bundleId}"` : "";
+  const lines = [`Installed ${r.ref}${bundleSuffix} (${scanned} directories scanned, ${total} total assets indexed)`];
   const warnings = index?.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     lines.push(`Warnings (${warnings.length}):`);
@@ -589,6 +590,64 @@ export function formatRemovePlain(r: Record<string, unknown>): string {
   const target = r.target ?? r.ref ?? "";
   const ok = r.ok !== false ? "OK" : "FAILED";
   return `remove: ${target} ${ok}`;
+}
+
+export function formatBundleRenamePlain(r: Record<string, unknown>): string {
+  const oldId = String(r.oldId ?? "?");
+  const newId = String(r.newId ?? "?");
+  const applied = r.applied === true;
+  const config = (r.config as Record<string, unknown> | undefined) ?? {};
+  const state = (r.state as Record<string, unknown> | undefined) ?? {};
+  const index = (r.index as Record<string, unknown> | undefined) ?? {};
+  const schedulerRefs = Array.isArray(config.schedulerRefs) ? config.schedulerRefs.length : 0;
+  const proposalRefs = Number(state.proposalRefs ?? 0);
+  const proposalTargets = Number(state.proposalTargets ?? 0);
+  const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
+  const entries = Number(index.entries ?? 0);
+  const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
+  const nativeSchedulerRows = Array.isArray(r.nativeSchedulerRows) ? r.nativeSchedulerRows : [];
+
+  const verb = applied ? "Renamed" : "Would rename";
+  const lines = [
+    `${verb} bundle "${oldId}" to "${newId}" (${entries} index entries, ${schedulerRefs} scheduler ref(s), ` +
+      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s)).`,
+  ];
+  if (!applied) {
+    lines.push("Re-run without --dry-run to apply. It also re-syncs native scheduler bindings under the new name.");
+    if (nativeSchedulerRows.length > 0) {
+      lines.push(`Native scheduler rows naming "${oldId}//" that the sync would replace:`);
+      for (const row of nativeSchedulerRows) lines.push(`  - ${String(row)}`);
+    }
+  } else {
+    const taskSync = r.taskSync as { ok?: boolean; error?: string; result?: Record<string, unknown> } | undefined;
+    const syncResult = taskSync?.result;
+    if (syncResult) {
+      const installed = Array.isArray(syncResult.installed) ? syncResult.installed.length : 0;
+      const updated = Array.isArray(syncResult.updated) ? syncResult.updated.length : 0;
+      const removed = Array.isArray(syncResult.removed) ? syncResult.removed.length : 0;
+      const failures = Array.isArray(syncResult.failures)
+        ? (syncResult.failures as { path: string; ref?: string; reason: string }[])
+        : [];
+      if (failures.length === 0) {
+        lines.push(
+          `Native scheduler bindings re-synced under the new name (${installed} installed, ${updated} updated, ${removed} removed).`,
+        );
+      } else {
+        lines.push(
+          `Native scheduler sync after rename: ${installed} installed, ${updated} updated, ${removed} removed, ${failures.length} failed.`,
+        );
+        for (const failure of failures) lines.push(`  - ${failure.ref ?? failure.path}: ${failure.reason}`);
+        lines.push("Run `akm task sync` to retry.");
+      }
+    } else if (taskSync?.ok === false && taskSync.error) {
+      lines.push(`Re-syncing native scheduler bindings failed: ${taskSync.error}. Run \`akm task sync\` to retry.`);
+    }
+  }
+  if (contentRefs.length > 0) {
+    lines.push(`Content still spelling "${oldId}//" (not rewritten — edit these by hand):`);
+    for (const file of contentRefs) lines.push(`  - ${String(file)}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatUpdatePlain(r: Record<string, unknown>): string {

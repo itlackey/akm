@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
-import { type AkmConfig, type ImproveProfileConfig, saveConfig } from "../../../src/core/config/config";
+import { saveConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
@@ -308,308 +308,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
   });
 });
 
-// ── M-1 / #367 — contradiction-detection unit tests ──────────────────────────
-
-describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)", () => {
-  const contradictionStrategy: ImproveProfileConfig = {
-    processes: { consolidate: { contradictionDetection: { enabled: true } } },
-  };
-  const contradictionConfig = (stashDir: string): AkmConfig => ({
-    semanticSearchMode: "auto",
-    bundles: { stash: { path: stashDir, writable: true } },
-    defaultBundle: "stash",
-    defaultWriteTarget: "stash",
-    engines: { default: { kind: "llm", endpoint: "http://localhost/v1/chat", model: "test" } },
-    defaults: { llmEngine: "default" },
-  });
-  test("detectAndWriteContradictions is a no-op when no LLM is configured", async () => {
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const stashDir = makeTempDir("akm-m1-no-llm-");
-    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memories/auth-tips" }, "Always use VPN.");
-    writeMemory(stashDir, "auth-tips.derived2", { inferred: true, source: "memories/auth-tips" }, "VPN is optional.");
-
-    const result = await detectAndWriteContradictions(stashDir, {
-      bundles: { stash: { path: stashDir, writable: true } } as AkmConfig["bundles"],
-      defaultBundle: "stash",
-      defaultWriteTarget: "stash",
-      // No llm config — should be a no-op.
-    } as Parameters<typeof detectAndWriteContradictions>[1]);
-
-    // No LLM → no pairs checked → no edges written.
-    expect(result.pairsChecked).toBe(0);
-    expect(result.edgesWritten).toBe(0);
-  });
-
-  test("disabled contradiction detection returns before execution planning", async () => {
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const stashDir = makeTempDir("akm-m1-disabled-before-planning-");
-    const disabledStrategy: ImproveProfileConfig = {
-      processes: { consolidate: { contradictionDetection: { enabled: false } } },
-    };
-    const incompatibleConfig: AkmConfig = {
-      semanticSearchMode: "off",
-      bundles: { stash: { path: stashDir, writable: true } },
-      defaultBundle: "stash",
-      engines: { "claude-agent": { kind: "agent", platform: "claude" } },
-      defaults: { llmEngine: "claude-agent" },
-    };
-
-    const result = await detectAndWriteContradictions(stashDir, incompatibleConfig, undefined, disabledStrategy);
-
-    expect(result).toEqual({ familiesExamined: 0, pairsChecked: 0, edgesWritten: 0, warnings: [] });
-  });
-
-  test("detectAndWriteContradictions writes ONE directed contradictedBy edge when LLM judges true", async () => {
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const stashDir = makeTempDir("akm-m1-detect-");
-    // Direction is lexicographic ref order: the larger ref loses. "…derived2" >
-    // "…derived", so `derived2` is the loser (gets the edge) and `derived` is the
-    // surviving winner.
-    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memories/auth-tips" }, "Always use VPN.");
-    writeMemory(
-      stashDir,
-      "auth-tips.derived2",
-      { inferred: true, source: "memories/auth-tips" },
-      "VPN is never required.",
-    );
-
-    const result = await detectAndWriteContradictions(
-      stashDir,
-      contradictionConfig(stashDir),
-      // Inject a fake chat that always returns "contradicts: true".
-      async () =>
-        JSON.stringify({
-          contradicts: true,
-          confidence: 1,
-          reason: "Direct factual conflict about VPN requirement.",
-        }),
-      contradictionStrategy,
-    );
-
-    expect(result.pairsChecked).toBe(1);
-    // A SINGLE directed edge — mutual A↔B edges form a 2-cycle the SCC resolver
-    // refreshes back to active, erasing the contradiction every run.
-    expect(result.edgesWritten).toBe(1);
-
-    // Only the loser (`derived2`) carries `contradictedBy → derived`; the winner
-    // (`derived`) has no edge.
-    const winner = fs.readFileSync(path.join(stashDir, "memories", "auth-tips.derived.md"), "utf8");
-    const loser = fs.readFileSync(path.join(stashDir, "memories", "auth-tips.derived2.md"), "utf8");
-    expect(loser).toContain("contradictedBy");
-    expect(loser).toContain("auth-tips.derived");
-    expect(winner).not.toContain("contradictedBy");
-  });
-
-  test("a detected contradiction edge PERSISTS across the SCC resolver and a read-only re-run (03)", async () => {
-    // The gate for the one-directed-edge fix: a mutual A↔B pair forms a 2-cycle
-    // the SCC resolver treats as a sink and refreshes BOTH back to active,
-    // erasing the contradiction every run. A single directed edge must survive
-    // both the resolver and a subsequent read-only detection re-run.
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const { analyzeMemoryCleanup, applyMemoryCleanup } = await import(
-      "../../../src/commands/improve/memory/memory-improve"
-    );
-    const stashDir = makeTempDir("akm-m1-persist-");
-    // Direction is lexicographic ref order: `vpn.derived2` (larger ref) loses.
-    writeMemory(stashDir, "vpn.derived", { inferred: true, source: "memories/vpn" }, "Always use VPN.");
-    writeMemory(stashDir, "vpn.derived2", { inferred: true, source: "memories/vpn" }, "VPN is never required.");
-
-    const config = contradictionConfig(stashDir);
-    const judge = async () => JSON.stringify({ contradicts: true, confidence: 1, reason: "Direct factual conflict." });
-
-    const loserPath = path.join(stashDir, "memories", "vpn.derived2.md");
-    const winnerPath = path.join(stashDir, "memories", "vpn.derived.md");
-
-    // 1. Detection writes ONE directed edge.
-    const first = await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
-    expect(first.edgesWritten).toBe(1);
-
-    // 2. The SCC resolver marks the loser `contradicted` and KEEPS the edge (a
-    //    mutual 2-cycle would have been refreshed back to active here).
-    applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
-    expect(fs.readFileSync(loserPath, "utf8")).toContain("beliefState: contradicted");
-    expect(fs.readFileSync(loserPath, "utf8")).toContain("memory:vpn.derived");
-    expect(fs.readFileSync(winnerPath, "utf8")).not.toContain("beliefState: contradicted");
-
-    // 3. A read-only re-run of detection finds the edge already present and does
-    //    NOT rewrite or erase it — the contradiction is stable, not self-erasing.
-    const second = await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
-    expect(second.edgesWritten).toBe(0);
-    const loserAfter = fs.readFileSync(loserPath, "utf8");
-    expect(loserAfter).toContain("beliefState: contradicted");
-    expect(loserAfter).toContain("memory:vpn.derived");
-    expect(fs.readFileSync(winnerPath, "utf8")).not.toContain("beliefState: contradicted");
-  });
-
-  test("a 3-memory family resolves to ONE acyclic winner — no multi-node self-erasure (03)", async () => {
-    // Lexicographic ref order is a TOTAL order (aaa < bbb < ccc), so the induced
-    // pairwise edges form a DAG with `aaa` as the sole sink/winner — never a
-    // cycle the SCC resolver would refresh back to active. This is the structural
-    // guarantee that replaced the earlier (never-populated) createdAt heuristic,
-    // which could produce non-transitive per-pair directions in families of 3+.
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const { analyzeMemoryCleanup, applyMemoryCleanup } = await import(
-      "../../../src/commands/improve/memory/memory-improve"
-    );
-    const stashDir = makeTempDir("akm-m1-triad-");
-    writeMemory(stashDir, "vpn.aaa.derived", { inferred: true, source: "memories/vpn" }, "Always use VPN.");
-    writeMemory(stashDir, "vpn.bbb.derived", { inferred: true, source: "memories/vpn" }, "VPN is optional.");
-    writeMemory(stashDir, "vpn.ccc.derived", { inferred: true, source: "memories/vpn" }, "VPN is never required.");
-
-    const config = contradictionConfig(stashDir);
-    const judge = async () => JSON.stringify({ contradicts: true, confidence: 1, reason: "Direct factual conflict." });
-
-    const first = await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
-    expect(first.pairsChecked).toBe(3); // aaa-bbb, aaa-ccc, bbb-ccc
-    expect(first.edgesWritten).toBe(3); // one directed edge per confirmed pair
-
-    applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
-
-    const readState = (name: string) => fs.readFileSync(path.join(stashDir, "memories", `${name}.md`), "utf8");
-    // The sole sink (smallest ref) survives; the two larger refs are contradicted.
-    expect(readState("vpn.aaa.derived")).not.toContain("beliefState: contradicted");
-    expect(readState("vpn.bbb.derived")).toContain("beliefState: contradicted");
-    expect(readState("vpn.ccc.derived")).toContain("beliefState: contradicted");
-
-    // Re-run: belief STATES are stable — the winner stays current, the two
-    // losers stay contradicted. (The resolver normalizes a loser's contradictedBy
-    // to only its reachable sink, so the intermediate bbb→ccc edge may be
-    // re-written on re-runs, but that never destabilizes the states — the DAG has
-    // no cycle to refresh back to active.)
-    await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
-    applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
-    expect(readState("vpn.aaa.derived")).not.toContain("beliefState: contradicted");
-    expect(readState("vpn.bbb.derived")).toContain("beliefState: contradicted");
-    expect(readState("vpn.ccc.derived")).toContain("beliefState: contradicted");
-  });
-
-  test("a missing operation credential leaves a contradiction triad completely unstamped", async () => {
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const stashDir = makeTempDir("akm-m1-triad-required-credential-");
-    for (const [name, body] of [
-      ["vpn.aaa.derived", "Always use VPN."],
-      ["vpn.bbb.derived", "VPN is optional."],
-      ["vpn.ccc.derived", "VPN is never required."],
-    ] as const) {
-      writeMemory(stashDir, name, { inferred: true, source: "memories/vpn" }, body);
-    }
-    const config = contradictionConfig(stashDir);
-    config.engines = {
-      default: {
-        kind: "llm",
-        endpoint: "http://localhost/v1/chat",
-        model: "test",
-        apiKey: "$AKM_CONTRADICTION_TRIAD_KEY",
-      },
-    };
-    const before = fs
-      .readdirSync(path.join(stashDir, "memories"))
-      .sort()
-      .map((name) => [name, fs.readFileSync(path.join(stashDir, "memories", name), "utf8")] as const);
-
-    await withEnv({ AKM_CONTRADICTION_TRIAD_KEY: undefined }, async () => {
-      await expect(
-        detectAndWriteContradictions(
-          stashDir,
-          config,
-          async () => JSON.stringify({ contradicts: true, confidence: 1, reason: "conflict" }),
-          contradictionStrategy,
-        ),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(
-      fs
-        .readdirSync(path.join(stashDir, "memories"))
-        .sort()
-        .map((name) => [name, fs.readFileSync(path.join(stashDir, "memories", name), "utf8")] as const),
-    ).toEqual(before);
-    expect(before.every(([, content]) => !content.includes("contradictedBy") && !content.includes("beliefState"))).toBe(
-      true,
-    );
-  });
-
-  test.each([
-    { mutation: "deletion", nextCredential: undefined },
-    { mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("all contradiction-pair calls survive ambient credential $mutation", async ({ nextCredential }) => {
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const stashDir = makeTempDir("akm-m1-triad-lease-");
-    for (const [name, body] of [
-      ["vpn.aaa.derived", "Always use VPN."],
-      ["vpn.bbb.derived", "VPN is optional."],
-      ["vpn.ccc.derived", "VPN is never required."],
-    ] as const) {
-      writeMemory(stashDir, name, { inferred: true, source: "memories/vpn" }, body);
-    }
-    const config = contradictionConfig(stashDir);
-    config.engines = {
-      default: {
-        kind: "llm",
-        endpoint: "http://localhost/v1/chat",
-        model: "test",
-        apiKey: "$AKM_CONTRADICTION_LEASE_KEY",
-      },
-    };
-    const observed: Array<string | undefined> = [];
-    const original = "contradiction-original-secret";
-
-    const result = await withEnv({ AKM_CONTRADICTION_LEASE_KEY: original }, () =>
-      detectAndWriteContradictions(
-        stashDir,
-        config,
-        async (connection) => {
-          observed.push(connection.apiKey);
-          if (observed.length === 1) mutateScopedEnv("AKM_CONTRADICTION_LEASE_KEY", nextCredential);
-          return JSON.stringify({ contradicts: true, confidence: 1, reason: "conflict" });
-        },
-        contradictionStrategy,
-      ),
-    );
-
-    expect(result.edgesWritten).toBe(3);
-    expect(observed).toEqual([original, original, original]);
-  });
-
-  test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {
-    const { detectAndWriteContradictions } = await import(
-      "../../../src/commands/improve/memory/memory-contradiction-detect"
-    );
-    const stashDir = makeTempDir("akm-m1-no-contradiction-");
-    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memories/auth-tips" }, "Use VPN for prod.");
-    writeMemory(
-      stashDir,
-      "auth-tips.derived2",
-      { inferred: true, source: "memories/auth-tips" },
-      "Enable 2FA before deploys.",
-    );
-
-    const result = await detectAndWriteContradictions(
-      stashDir,
-      contradictionConfig(stashDir),
-      async () => JSON.stringify({ contradicts: false, reason: "These are complementary security measures." }),
-      contradictionStrategy,
-    );
-
-    expect(result.pairsChecked).toBe(1);
-    expect(result.edgesWritten).toBe(0);
-  });
-});
-
 // ── M-3 / #387 — schema-repair routes through proposal queue ─────────────────
 
 describe("M-3: schema-repair routes through proposal queue (#387)", () => {
@@ -688,6 +386,35 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
   });
 
+  test("a queued schema repair is not re-queued inside the improve ledger's revisit window", async () => {
+    const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
+    const { listProposals } = await import("../../../src/commands/proposal/repository");
+    const stashDir = makeTempDir("akm-m3-schema-cadence-");
+    const memFile = path.join(stashDir, "memories", "cadence.md");
+    fs.mkdirSync(path.dirname(memFile), { recursive: true });
+    fs.writeFileSync(memFile, "---\n---\nCadence content.\n", "utf8");
+    configureStash(stashDir);
+    let chatCalls = 0;
+    const run = () =>
+      runSchemaRepairPass([{ ref: "memories/cadence", reason: "missing description" }], {
+        startMs: Date.now(),
+        budgetMs: 30_000,
+        stashDir,
+        llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
+        findFilePath: async () => memFile,
+        isLessonCandidateFn: () => false,
+        chatFn: async () => {
+          chatCalls += 1;
+          return JSON.stringify({ description: "Cadence guide." });
+        },
+      });
+
+    expect((await run()).repairs.map((repair) => repair.outcome)).toEqual(["queued"]);
+    expect((await run()).repairs.map((repair) => repair.outcome)).toEqual(["skipped"]);
+    expect(chatCalls).toBe(1);
+    expect(listProposals(stashDir)).toHaveLength(1);
+  });
+
   test("two-item schema repair validates a required credential before any proposal or event", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const { listProposals } = await import("../../../src/commands/proposal/repository");
@@ -731,12 +458,10 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(readEvents({ type: "schema_repair_invoked" }).events).toEqual([]);
   });
 
-  test.each([
-    { mutation: "deletion", nextCredential: undefined },
-    { mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("two-item schema repair survives ambient credential $mutation", async ({ nextCredential }) => {
+  test("each schema-repair dispatch reads the credential current at that call", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
-    const stashDir = makeTempDir("akm-m3-schema-batch-lease-");
+    const { listProposals } = await import("../../../src/commands/proposal/repository");
+    const stashDir = makeTempDir("akm-m3-schema-batch-rotation-");
     const files = new Map<string, string>();
     for (const name of ["first", "second"]) {
       const ref = `memories/${name}`;
@@ -747,6 +472,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     }
     configureStash(stashDir);
     const original = "schema-original-secret";
+    const rotated = "schema-rotated-secret";
     const observed: Array<string | undefined> = [];
 
     const result = await withEnv({ AKM_SCHEMA_BATCH_KEY: original }, () =>
@@ -769,7 +495,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
           isLessonCandidateFn: () => false,
           chatFn: async (connection) => {
             observed.push(connection.apiKey);
-            if (observed.length === 1) mutateScopedEnv("AKM_SCHEMA_BATCH_KEY", nextCredential);
+            if (observed.length === 1) mutateScopedEnv("AKM_SCHEMA_BATCH_KEY", rotated);
             return JSON.stringify({ description: `Description ${observed.length}` });
           },
         },
@@ -777,7 +503,10 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     );
 
     expect(result.repairs.map((repair) => repair.outcome)).toEqual(["queued", "queued"]);
-    expect(observed).toEqual([original, original]);
+    expect(observed).toEqual([original, rotated]);
+    const persisted = JSON.stringify(listProposals(stashDir));
+    expect(persisted).not.toContain(original);
+    expect(persisted).not.toContain(rotated);
   });
 
   test("runSchemaRepairPass requires stashDir instead of bypassing the proposal queue", async () => {
@@ -1070,44 +799,6 @@ describe("new 0.8.0 improve metrics", () => {
     expect(result.reflectCooldownActions).toBeGreaterThanOrEqual(0);
   });
 
-  test("reflectCooldownActions increments when reflectFn returns a cooldown signal", async () => {
-    const stashDir = makeTempDir("akm-m8-cooldown-");
-    writeMemory(stashDir, "beta", { description: "Beta memory" }, "Beta content.");
-    writeMemory(stashDir, "gamma", { description: "Gamma memory" }, "Gamma content.");
-    await buildIndex(stashDir);
-
-    // 0.8.0 signal-delta gate requires recent feedback to make a ref eligible
-    // for reflect. Add a feedback event for each ref so the planner queues
-    // them and reflectFn (which returns cooldown) is actually called.
-    appendEvent({ eventType: "feedback", ref: durableRef("memories/beta"), metadata: { signal: "positive" } });
-    appendEvent({ eventType: "feedback", ref: durableRef("memories/gamma"), metadata: { signal: "positive" } });
-
-    // Return a cooldown result for every ref to drive reflectCooldownActions up.
-    const result = await akmImprove({
-      scope: "memory",
-      stashDir,
-      ensureIndexFn: async () => false,
-      reflectFn: async ({ ref }) => ({
-        schemaVersion: 2,
-        ok: false,
-        reason: "cooldown" as const,
-        error: "Dedup signal from test",
-        ref: ref ?? "",
-        exitCode: null,
-      }),
-      distillFn: async ({ ref }) => ({
-        schemaVersion: 1,
-        ok: true,
-        outcome: "queued" as const,
-        inputRef: ref,
-        proposalRef: `lessons/${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-      }),
-    });
-
-    // Both beta and gamma should contribute to reflectCooldownActions.
-    expect(result.reflectCooldownActions).toBeGreaterThanOrEqual(1);
-  });
-
   test("orphansPurged increments for pending proposals targeting refs absent from disk", async () => {
     const { createProposal } = await import("../../../src/commands/proposal/repository");
     const stashDir = makeTempDir("akm-m8-orphan-");
@@ -1154,9 +845,7 @@ describe("new 0.8.0 improve metrics", () => {
   // the replacement behavior for what used to be the strongest accept case.
 
   test("a high-confidence reflect proposal stays pending (no auto-accept path exists)", async () => {
-    const { createProposal, getProposal, isProposalSkipped, listProposals } = await import(
-      "../../../src/commands/proposal/repository"
-    );
+    const { createProposal, getProposal, listProposals } = await import("../../../src/commands/proposal/repository");
     const stashDir = makeTempDir("akm-6a-no-gate-");
     writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);
@@ -1181,14 +870,12 @@ describe("new 0.8.0 improve metrics", () => {
           ref: ref ?? "memories/target-asset",
           source: "reflect",
           sourceRun: "test-confidence-high",
-          force: true,
           payload: {
             content: `---\ndescription: Updated memory\n---\n\nNEW BODY.\n`,
             frontmatter: { description: "Updated memory" },
           },
           confidence: 0.95,
         });
-        if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
         return {
           schemaVersion: 2,
           ok: true,
@@ -1231,7 +918,7 @@ describe("new 0.8.0 improve metrics", () => {
   // ── Phase 6B — proposalsExpired propagates through the improve result ─────
 
   test("proposalsExpired surfaces in the result when stale proposals exist", async () => {
-    const { createProposal, isProposalSkipped } = await import("../../../src/commands/proposal/repository");
+    const { createProposal } = await import("../../../src/commands/proposal/repository");
     const stashDir = makeTempDir("akm-6b-expired-");
     writeMemory(stashDir, "live-asset", { description: "Live memory" }, "Live body.");
     await buildIndex(stashDir);
@@ -1240,18 +927,16 @@ describe("new 0.8.0 improve metrics", () => {
     // exists on disk so the orphan-purge pass does not race the expiration
     // pass and pre-archive it.
     const STALE_AGE_MS = 200 * 86_400_000;
-    const seeded = createProposal(
+    createProposal(
       stashDir,
       {
         ref: "memories/live-asset",
         source: "reflect",
         sourceRun: "test-stale",
-        force: true,
         payload: { content: "# Stale proposal\nOld content." },
       },
       { now: () => Date.now() - STALE_AGE_MS },
     );
-    if (isProposalSkipped(seeded)) throw new Error("seed skipped");
 
     const result = await akmImprove({
       scope: "memories/live-asset",

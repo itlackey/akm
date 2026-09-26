@@ -7,31 +7,27 @@ import { parseBuiltinCommandAction } from "../../../commands/command/builtin-act
 import { type PreparedCommandInvocation, prepareCommandInvocation } from "../../../commands/command/command-execution";
 import { PORTABLE_ARGUMENTS_PLACEHOLDER } from "../../../commands/command/portable-template";
 import { captureFrozenDirectoryIdentity } from "../../../execution/directory-identity";
-import { type FrozenExecutableIdentity, freezeExecutableIdentity } from "../../../execution/executable-identity";
 import {
   canonicalResolvedExecutionRequest,
   type ResolvedExecutionRequestV1,
 } from "../../../execution/resolved-request";
 import { fallbackAnnouncement } from "../../../integrations/agent/engine-fallback";
-import { requireAuthorizedExecutionPlan } from "../../../integrations/agent/execution-cascade";
-import { lowerResolvedExecutionRequest } from "../../../integrations/agent/execution-lowering";
-import { prepareInlineExecution } from "../../../integrations/agent/inline-execution";
+import { buildExecution } from "../../../integrations/agent/execution";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
-import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding } from "../../ir/schema-v4";
-import type { ProgramUnit } from "../../program/schema";
-import type { WorkflowSourceStep } from "../../source-ir/schema";
-import { freezeEnvironment, guardedExecutionSource } from "../environment";
+import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding, WorkflowCommandMode } from "../../plan";
+import { freezeEnvironment, workflowExecutionSource } from "../environment";
 import { gitIdentity } from "../identity";
 import {
+  type BaseUnit,
   durableRequest,
   executionUnitValues,
-  executionValues,
+  type FreezeStep,
   type ResolutionContext,
   type ResolvedDispatch,
   targetConcurrency,
 } from "../step-values";
 
-function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowSourceStep["commandMode"]): unknown {
+function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowCommandMode | undefined): unknown {
   if (commandMode !== "portable-template") return action;
   const parsed = parseBuiltinCommandAction(action);
   if (parsed.kind !== "inline") return action;
@@ -39,62 +35,38 @@ function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowSourc
 }
 
 export async function commandDispatch(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
+  source: FreezeStep,
+  baseUnit: BaseUnit,
   action: unknown,
   context: ResolutionContext,
 ): Promise<ResolvedDispatch> {
   const prepared = await prepareCommandInvocation({
     action: inlineWorkflowCommandAction(action, source.commandMode),
     config: context.config,
-    invocationKind: "workflow",
-    ...(context.sourceIr.defaults
-      ? { invocationDefaults: executionUnitValues(context.sourceIr.defaults, context.asset.sourcePath) }
+    ...(context.plan.defaults
+      ? { invocationDefaults: executionUnitValues(context.plan.defaults, context.asset.sourcePath) }
       : {}),
     ...(source.commandMode === "literal" || source.commandMode === "portable-template"
       ? { inlineContentMode: "literal" as const }
       : {}),
-    current: executionValues(source, context.asset.sourcePath),
-    sourceLoader: (ref, kind) => guardedExecutionSource(ref, kind, context),
-  });
-  return commandResult(source, baseUnit, prepared, context);
-}
-
-export function inlineDispatch(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
-  context: ResolutionContext,
-): ResolvedDispatch {
-  const content = source.instructions ?? `Execute workflow step ${source.id}.`;
-  const prepared = prepareInlineExecution({
-    content,
-    config: context.config,
-    invocationKind: "workflow",
-    ...(context.sourceIr.defaults
-      ? { invocationDefaults: executionUnitValues(context.sourceIr.defaults, context.asset.sourcePath) }
-      : {}),
-    current: executionValues(source, context.asset.sourcePath),
+    current: executionUnitValues(source.unit, context.asset.sourcePath),
+    sourceLoader: (ref, kind) => workflowExecutionSource(ref, kind, context),
   });
   return commandResult(source, baseUnit, prepared, context);
 }
 
 export function commandResult(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
+  source: FreezeStep,
+  baseUnit: BaseUnit,
   prepared: PreparedCommandInvocation,
   context: ResolutionContext,
   literals: readonly FrozenWorkflowEnvironmentBinding[] = [],
 ): ResolvedDispatch {
-  const request = durableRequest(requireAuthorizedExecutionPlan(prepared.plan));
-  const lowered = lowerResolvedExecutionRequest(request, prepared.config);
+  const request = durableRequest(prepared.request);
+  const lowered = buildExecution(request, prepared.runner);
   const cwdIdentity = captureFrozenDirectoryIdentity(context.asset.sourcePath);
-  let runner: RunnerSpec = lowered.runner;
-  let executable: FrozenExecutableIdentity | undefined;
-  if (runner.kind === "agent") {
-    executable = freezeExecutableIdentity(runner.profile.bin, { cwd: cwdIdentity.realCwd });
-    runner = Object.freeze({ ...runner, profile: Object.freeze({ ...runner.profile, bin: executable.absolutePath }) });
-  }
-  const unit: ProgramUnit = {
+  const runner: RunnerSpec = lowered.runner;
+  const unit: BaseUnit = {
     ...baseUnit,
     engine: request.engine.name,
     ...(request.model ? { model: request.model.resolved } : {}),
@@ -111,7 +83,6 @@ export function commandResult(
     runner,
     ...(targetConcurrency(runner, context.config) ? { concurrency: targetConcurrency(runner, context.config) } : {}),
     cwdIdentity,
-    ...(executable ? { executable } : {}),
     ...gitIdentity(baseUnit, cwdIdentity.realRoot),
   });
   const engineAnnouncement = fallbackAnnouncement(prepared.fallbackEngineName, request.engine.name);

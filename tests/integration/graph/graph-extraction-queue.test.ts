@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //
 // #624 P3: tests for the lazy graph-extraction queue accessors
-// (`enqueueGraphExtraction` / `drainExtractionQueue`) and the per-file
+// (`enqueueGraphExtraction` / `peekExtractionQueue` / acknowledgement) and the per-file
 // extractor (`extractGraphForSingleFile`), backed by the
 // `graph_extraction_queue` table. Symbols are accessed via the module namespace
 // for ESM-safety.
@@ -47,15 +47,15 @@ const enqueueGraphExtraction = (
   }
 ).enqueueGraphExtraction;
 
-const drainExtractionQueue = (
+const peekExtractionQueue = (
   graphDb as unknown as {
-    drainExtractionQueue: (
+    peekExtractionQueue: (
       db: Database,
       stashRoot: string,
       limit: number,
     ) => Array<{ filePath: string; bodyHash: string; priority: number }>;
   }
-).drainExtractionQueue;
+).peekExtractionQueue;
 
 const acknowledgeExtractionQueueEntry = (
   graphDb as unknown as {
@@ -75,7 +75,6 @@ const extractGraphForSingleFile = (
       db: Database,
       stashRoot: string,
       filePath: string,
-      bodyHash?: string,
       opts?: { llmOverride?: LlmOverride; signal?: AbortSignal; config?: AkmConfig },
     ) => Promise<boolean>;
   }
@@ -148,10 +147,10 @@ function makeEligibleMemory(slug: string, body: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AC1 — enqueue / drain accessors
+// AC1 — enqueue / peek / acknowledge accessors
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("#624 P3 enqueueGraphExtraction / drainExtractionQueue (AC1)", () => {
+describe("#624 P3 enqueueGraphExtraction / peekExtractionQueue (AC1)", () => {
   test("enqueueGraphExtraction inserts one queue row", () => {
     expect(typeof enqueueGraphExtraction).toBe("function");
     enqueueGraphExtraction(db, stash.dir, "/a.md", "hashA", 0);
@@ -189,35 +188,39 @@ describe("#624 P3 enqueueGraphExtraction / drainExtractionQueue (AC1)", () => {
     expect(row.body_hash).toBe("hashA2");
   });
 
-  test("drainExtractionQueue returns rows highest-priority-first then oldest queued_at", () => {
+  test("peekExtractionQueue returns rows highest-priority-first then oldest queued_at", () => {
     enqueueGraphExtraction(db, stash.dir, "/low.md", "h1", 0);
     enqueueGraphExtraction(db, stash.dir, "/high.md", "h2", 10);
     enqueueGraphExtraction(db, stash.dir, "/mid.md", "h3", 5);
 
-    const drained = drainExtractionQueue(db, stash.dir, 10);
-    expect(drained.map((r) => r.filePath)).toEqual(["/high.md", "/mid.md", "/low.md"]);
+    const peeked = peekExtractionQueue(db, stash.dir, 10);
+    expect(peeked.map((r) => r.filePath)).toEqual(["/high.md", "/mid.md", "/low.md"]);
   });
 
-  test("drainExtractionQueue respects limit and deletes the drained rows", () => {
+  test("peekExtractionQueue respects limit and only acknowledged rows leave the queue", () => {
     enqueueGraphExtraction(db, stash.dir, "/a.md", "h1", 3);
     enqueueGraphExtraction(db, stash.dir, "/b.md", "h2", 2);
     enqueueGraphExtraction(db, stash.dir, "/c.md", "h3", 1);
 
-    const first = drainExtractionQueue(db, stash.dir, 2);
+    const first = peekExtractionQueue(db, stash.dir, 2);
     expect(first.map((r) => r.filePath)).toEqual(["/a.md", "/b.md"]);
+    // Peeking claims nothing.
+    expect(queueRowCount(stash.dir)).toBe(3);
+    for (const row of first) {
+      expect(acknowledgeExtractionQueueEntry(db, stash.dir, row.filePath, row.bodyHash)).toBe(true);
+    }
     // The two highest-priority rows are gone; only the lowest remains.
     expect(queueRowCount(stash.dir)).toBe(1);
 
-    const second = drainExtractionQueue(db, stash.dir, 10);
+    const second = peekExtractionQueue(db, stash.dir, 10);
     expect(second.map((r) => r.filePath)).toEqual(["/c.md"]);
-    expect(queueRowCount(stash.dir)).toBe(0);
   });
 
-  test("drainExtractionQueue is scoped per stash_root", () => {
+  test("peekExtractionQueue is scoped per stash_root", () => {
     enqueueGraphExtraction(db, stash.dir, "/a.md", "h1", 0);
     enqueueGraphExtraction(db, "/other/stash", "/b.md", "h2", 0);
-    const drained = drainExtractionQueue(db, stash.dir, 10);
-    expect(drained.map((r) => r.filePath)).toEqual(["/a.md"]);
+    const peeked = peekExtractionQueue(db, stash.dir, 10);
+    expect(peeked.map((r) => r.filePath)).toEqual(["/a.md"]);
     // The other stash's row is untouched.
     expect(queueRowCount("/other/stash")).toBe(1);
   });
@@ -257,7 +260,7 @@ describe("#624 P3 enqueueGraphExtraction / drainExtractionQueue (AC1)", () => {
   test("a queued path already covered by the stored graph is acknowledged without materializing credentials", async () => {
     const body = "Alice works with Bob on Project X.";
     const absPath = makeEligibleMemory("queued-hit", body);
-    const extracted = await extractGraphForSingleFile(db, stash.dir, absPath, undefined, {
+    const extracted = await extractGraphForSingleFile(db, stash.dir, absPath, {
       llmOverride: async () => ({
         entities: ["Alice", "Bob", "Project X"],
         relations: [{ from: "Alice", to: "Bob", type: "works_with" }],
@@ -315,7 +318,7 @@ describe("#624 P3 extractGraphForSingleFile (AC2)", () => {
     };
 
     const failure = withEnv({ AKM_LAZY_GRAPH_REQUIRED_KEY: undefined }, () =>
-      extractGraphForSingleFile(db, stash.dir, absPath, undefined, { config }),
+      extractGraphForSingleFile(db, stash.dir, absPath, { config }),
     );
     await expect(failure).rejects.toBeInstanceOf(ConfigError);
     expect(graphFileRowExists(stash.dir, absPath)).toBe(false);
@@ -332,7 +335,7 @@ describe("#624 P3 extractGraphForSingleFile (AC2)", () => {
       relations: [{ from: "Alice", to: "Bob", type: "works_with" }],
     });
 
-    const ok = await extractGraphForSingleFile(db, stash.dir, absPath, undefined, { llmOverride });
+    const ok = await extractGraphForSingleFile(db, stash.dir, absPath, { llmOverride });
     expect(ok).toBe(true);
 
     // A graph_files row now exists for this path.
@@ -355,9 +358,8 @@ describe("#624 P3 extractGraphForSingleFile (AC2)", () => {
   test("binds a single-file graph row to the body revision actually read from disk", async () => {
     const currentBody = "Current body about Alice and Bob.";
     const absPath = makeEligibleMemory("revision-bound", currentBody);
-    const staleHash = computeBodyHash("stale queued body");
 
-    const ok = await extractGraphForSingleFile(db, stash.dir, absPath, staleHash, {
+    const ok = await extractGraphForSingleFile(db, stash.dir, absPath, {
       llmOverride: async () => ({ entities: ["Alice", "Bob"], relations: [] }),
     });
 
@@ -366,7 +368,6 @@ describe("#624 P3 extractGraphForSingleFile (AC2)", () => {
       .prepare("SELECT body_hash FROM graph_files WHERE stash_root = ? AND file_path = ?")
       .get(stash.dir, absPath) as { body_hash: string };
     expect(row.body_hash).toBe(computeBodyHash(currentBody));
-    expect(row.body_hash).not.toBe(staleHash);
   });
 
   test("merges — extracting one file does NOT clobber another file's existing graph", async () => {
@@ -399,7 +400,7 @@ describe("#624 P3 extractGraphForSingleFile (AC2)", () => {
       entities: ["Dave", "Widget Z"],
       relations: [{ from: "Dave", to: "Widget Z", type: "ships" }],
     });
-    const ok = await extractGraphForSingleFile(db, stash.dir, targetPath, undefined, { llmOverride });
+    const ok = await extractGraphForSingleFile(db, stash.dir, targetPath, { llmOverride });
     expect(ok).toBe(true);
 
     // Both files now have graph data — the merge preserved `other`.
@@ -422,7 +423,7 @@ describe("#624 P3 extractGraphForSingleFile (AC2)", () => {
       called = true;
       return { entities: ["X"], relations: [] };
     };
-    const ok = await extractGraphForSingleFile(db, stash.dir, absPath, undefined, { llmOverride });
+    const ok = await extractGraphForSingleFile(db, stash.dir, absPath, { llmOverride });
     // Missing file => no extraction, no LLM call, no graph row, no throw.
     expect(ok).toBe(false);
     expect(called).toBe(false);

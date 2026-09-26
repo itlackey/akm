@@ -6,14 +6,11 @@
  * A concurrent plain `akm index` must exit 75, never 78 (field follow-up to
  * #956, G1). Spawns TWO REAL CLI child processes (`bun src/cli.ts index
  * --full --format=json`) launched back to back with no work between the two
- * `Bun.spawn` calls, so whichever internal race actually resolves first — the
- * short maintenance-barrier registration `acquireMaintenanceBarrier` contends
- * on, or the index.db write contention `INDEX_DB_CONTENDED` (F1) reclassifies
- * — is exercised exactly as a real scheduler/hook double-launch would hit it,
+ * `Bun.spawn` calls, so the index.db write contention `INDEX_DB_CONTENDED`
+ * (F1) reclassifies is exercised exactly as a real scheduler/hook double-launch would hit it,
  * unlike index-skip-if-locked.test.ts (plants the rebuild-lock file) or
  * index-db-contention.test.ts (holds a second DB connection open). Neither
- * mechanism collides on every pair on a fast, unloaded machine (the barrier
- * is normally held sub-millisecond), so this repeats many small concurrent
+ * mechanism collides on every pair on a fast, unloaded machine, so this repeats many small concurrent
  * pairs rather than one pair — empirically the reliable way to actually
  * reproduce the reported bug (verified against the unfixed code: repeated
  * small pairs reproduce a real `exit 78` in a handful of trials, where a
@@ -21,7 +18,7 @@
  * the property the field bug broke: no process ever exits 78 (config error —
  * the reported regression) or 70 (internal/unclassified) — only 0 (no
  * collision, or a "contended" warn-and-proceed that still completed) or 75
- * (`TransientError`, code `MAINTENANCE_BARRIER_BUSY` or `INDEX_DB_CONTENDED`).
+ * (`TransientError`, code `INDEX_DB_CONTENDED`).
  *
  * Integration-scoped (ORG-03/06): spawns real child processes, each opening a
  * real index.db.
@@ -114,7 +111,7 @@ describe("akm index — two real concurrent runs never exit 78 or 70 (field foll
           const envelope = parseTrailingJsonEnvelope(result.stderr);
           if (!envelope) throw new Error(`expected a JSON error envelope on stderr, got:\n${result.stderr}`);
           expect(envelope.ok).toBe(false);
-          expect(["MAINTENANCE_BARRIER_BUSY", "INDEX_DB_CONTENDED"]).toContain(envelope.code ?? "");
+          expect(["INDEX_DB_CONTENDED"]).toContain(envelope.code ?? "");
           expect(envelope.hint ?? "").toContain("--skip-if-locked");
         }
       }

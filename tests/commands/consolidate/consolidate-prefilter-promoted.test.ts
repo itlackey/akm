@@ -1,5 +1,5 @@
 /**
- * R5 (b) tier1-0917: consolidate re-judged memories that were already
+ * R5 (b): consolidate re-judged memories that were already
  * promoted verbatim into `knowledge/`. Before this fix, that duplication was
  * discovered only after the LLM (`shouldSkipPromotionBodyDuplicate`), so a
  * pool where ~84% of memories were already-promoted duplicates still paid
@@ -21,7 +21,7 @@ import {
   inspectConsolidationPool,
   loadExistingKnowledgeBodyHashes,
 } from "../../../src/commands/improve/consolidate";
-import { cacheHash } from "../../../src/commands/improve/content-hash";
+import { contentHash } from "../../../src/commands/improve/content-hash";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -58,7 +58,7 @@ const CONFIG = {
   profiles: { improve: { default: { processes: { consolidate: { enabled: true } } } } },
 } as unknown as AkmConfig;
 
-describe("akmConsolidate — pre-filter already-promoted memories before chunking (R5 tier1-0917)", () => {
+describe("akmConsolidate — pre-filter already-promoted memories before chunking (R5)", () => {
   test("a memory whose body already exists in knowledge/ is dropped before chunking; the other memory still reaches it", async () => {
     writeMemory("dup-a", "Duplicate body content that is long enough to matter.");
     writeMemory("new-b", "Brand new body content that is long enough to matter.");
@@ -137,7 +137,7 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     expect(pool.memories.map((memory) => memory.name)).toEqual(["fresh-newest"]);
   });
 
-  test("loadExistingKnowledgeBodyHashes and cacheHash agree on the same body despite frontmatter/whitespace differences", () => {
+  test("loadExistingKnowledgeBodyHashes and the body contentHash agree on the same body despite frontmatter/whitespace differences", () => {
     writeKnowledge(
       "already-promoted",
       "---\ndescription: promoted copy\ntags: [a, b]\n---\n\nShared canonical body text.\n\n",
@@ -147,6 +147,6 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     // Same body, different frontmatter and surrounding whitespace — the
     // shape a source memory takes relative to its promoted knowledge copy.
     const memoryBody = "---\ndescription: source memory\ncaptureMode: hot\n---\n\n  Shared canonical body text.  \n";
-    expect(existingHashes.has(cacheHash(memoryBody))).toBe(true);
+    expect(existingHashes.has(contentHash(memoryBody, "body"))).toBe(true);
   });
 });

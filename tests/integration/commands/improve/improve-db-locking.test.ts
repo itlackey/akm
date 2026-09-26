@@ -19,7 +19,7 @@
  *   fix reuses eventsCtx.db when present; only the dbPath fallback path opens
  *   (and then owns and closes) its own handle.
  *
- * r3-1 — post-consolidation reindex requires an actual mutation:
+ * Post-consolidation reindex requires an actual mutation:
  *   The post-consolidation branch of the same reindex seam used to fire
  *   whenever `consolidation.processed > 0` (memories the LLM judged), not
  *   whenever consolidation actually wrote anything. Merge/delete/contradict
@@ -35,7 +35,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmImprove, runImproveMaintenancePasses } from "../../../../src/commands/improve/improve";
-import type { AkmConfig } from "../../../../src/core/config/config";
 import { loadConfig, saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { getDbPath } from "../../../../src/core/paths";
@@ -43,14 +42,12 @@ import { openStateDatabase } from "../../../../src/core/state-db";
 import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
-import { _setChatCompletionForTests } from "../../../../src/llm/client";
 import type { Database } from "../../../../src/storage/database";
 import { insertEvent } from "../../../../src/storage/repositories/events-repository";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { getEntryByRef } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
-import { overrideSeam } from "../../../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 const extraCleanups: Array<() => void> = [];
@@ -139,7 +136,7 @@ const stubGraphExtractionResult: GraphExtractionResult = {
 };
 
 describe("#584: index.db handle is closed before reindexFn runs", () => {
-  // R78 (tier1-0917): memory inference's writes used to trigger a FULL reindex through
+  // R78: memory inference's writes used to trigger a FULL reindex through
   // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
   // over exactly the paths the pass wrote. `indexWrittenAssets` opens its own
   // write handle on the same index.db WAL file, so the #584 discipline (close
@@ -327,81 +324,5 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
     } finally {
       checkDb.close();
     }
-  });
-});
-
-/** Config with consolidate enabled (default-off gates: minPoolSize 0 set explicitly, no cooldown on a fresh stash). */
-function consolidateEnabledConfig(): AkmConfig {
-  return withImproveAutonomy(
-    withTestImproveLlm({
-      semanticSearchMode: "off",
-      improve: {
-        strategies: { default: { processes: { consolidate: { enabled: true, minPoolSize: 0 } } } },
-      },
-    } as unknown as AkmConfig),
-  );
-}
-
-describe("r2-1 (tier1-0917-r4): consolidationRan gates R5's collapse detector on processed > 0", () => {
-  test("consolidation judges a memory but writes nothing — cycle metrics are still recorded", async () => {
-    const stash = storage.stashDir;
-    writeMemory(stash, "alpha");
-    saveConfig(consolidateEnabledConfig());
-    await akmIndex({ stashDir: stash, full: true });
-
-    overrideSeam(_setChatCompletionForTests, async () => JSON.stringify({ operations: [] }));
-
-    const result = await akmImprove({
-      stashDir: stash,
-      scope: "memory",
-      ensureIndexFn: async () => undefined,
-      memoryInferenceFn: async () => stubMemoryInferenceResult(),
-      graphExtractionFn: async () => stubGraphExtractionResult,
-      reindexFn: async () => undefined,
-    });
-
-    // Fixture shape: `processed > 0`, `merged === 0`, `deleted === 0`,
-    // `promoted.length === 0`, `contradicted === 0` — the LLM judged the pool
-    // and proposed nothing.
-    expect(result.consolidation?.processed).toBeGreaterThan(0);
-    expect(result.consolidation?.merged).toBe(0);
-    expect(result.consolidation?.deleted).toBe(0);
-    expect(result.consolidation?.promoted).toEqual([]);
-    expect(result.consolidation?.contradicted).toBe(0);
-    // R5's collapse detector is the only production consumer of
-    // consolidationRan (loop-stages.ts:859) — a qualifying cycle (consolidate
-    // did work) must produce a snapshot even though nothing was written.
-    expect(result.cycleMetrics).toBeDefined();
-  });
-
-  test("consolidation is skipped (pool below minPoolSize) — no cycle metrics are recorded", async () => {
-    const stash = storage.stashDir;
-    writeMemory(stash, "alpha");
-    saveConfig(
-      withImproveAutonomy(
-        withTestImproveLlm({
-          semanticSearchMode: "off",
-          improve: {
-            strategies: { default: { processes: { consolidate: { enabled: true, minPoolSize: 5 } } } },
-          },
-        } as unknown as AkmConfig),
-      ),
-    );
-    await akmIndex({ stashDir: stash, full: true });
-
-    const result = await akmImprove({
-      stashDir: stash,
-      scope: "memory",
-      ensureIndexFn: async () => undefined,
-      memoryInferenceFn: async () => stubMemoryInferenceResult(),
-      graphExtractionFn: async () => stubGraphExtractionResult,
-      reindexFn: async () => undefined,
-    });
-
-    // The single-memory pool is below minPoolSize 5, so consolidation never
-    // judges anything — the negative case: without it, a do-nothing gate
-    // (e.g. one that fires unconditionally) would still pass the test above.
-    expect(result.consolidation?.processed ?? 0).toBe(0);
-    expect(result.cycleMetrics).toBeUndefined();
   });
 });

@@ -12,8 +12,6 @@ import {
 } from "../../../src/core/adapter/execution-source";
 import type { BundleComponent } from "../../../src/core/adapter/types";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { createResolvedCommand } from "../../../src/execution/resolved-request";
-import { createAdapterRenderedExecutionSource } from "../../../src/execution/source";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
 import {
   assertFixtureBytesUnchanged,
@@ -121,23 +119,7 @@ describe("adapter-rendered execution sources", () => {
     expect(opencodePersona.extensions).toEqual({ opencode: { mode: "subagent" } });
   });
 
-  test("construction rejects an unrendered structural lookalike", () => {
-    const rawLookalike = {
-      kind: "command",
-      content: "---\ndescription: leaked frontmatter\n---\nDo work.",
-      defaults: {},
-      identity: {
-        ref: "fixture//commands/raw",
-        bundle: "fixture",
-        adapter: "akm",
-        file: "commands/raw.md",
-        hash: "0".repeat(64),
-      },
-    };
-    expect(() => createResolvedCommand({ source: rawLookalike as never, content: rawLookalike.content })).toThrow(
-      /adapter-rendered command source/i,
-    );
-
+  test("rendering rejects unterminated frontmatter", () => {
     expect(() =>
       renderMarkdownExecutionSource({
         kind: "command",
@@ -150,115 +132,6 @@ describe("adapter-rendered execution sources", () => {
         },
       }),
     ).toThrow(/frontmatter/i);
-  });
-
-  test("requires an own brand, exact prototype, and frozen source object", () => {
-    const valid = renderCase("akm", "command");
-    const inherited = Object.create(valid) as typeof valid;
-    const overridden = Object.create(valid, {
-      content: { value: "---\nraw: leaked\n---\nDo the wrong work.", enumerable: true },
-      raw: { value: "native bytes", enumerable: true },
-      frontmatter: { value: { model: "attacker/model" }, enumerable: true },
-    }) as typeof valid;
-
-    expect(() => createResolvedCommand({ source: inherited as never, content: inherited.content })).toThrow(
-      /adapter-rendered command source/i,
-    );
-    expect(() => createResolvedCommand({ source: overridden as never, content: overridden.content })).toThrow(
-      /adapter-rendered command source/i,
-    );
-    expect(Object.isFrozen(valid)).toBe(true);
-    expect(Object.getPrototypeOf(valid)).toBe(Object.prototype);
-
-    const strictRaw = "---\nmodel: provider/exact\n---\nDo work.\n";
-    expect(() =>
-      renderMarkdownExecutionSource({
-        kind: "command",
-        raw: strictRaw,
-        identity: {
-          ref: "fixture//commands/strict-keys",
-          bundle: "fixture",
-          adapter: "akm",
-          file: "commands/strict-keys.md",
-          extra: true,
-        },
-      } as never),
-    ).toThrow(/identity.*extra|extra/i);
-    expect(() =>
-      renderMarkdownExecutionSource({
-        kind: "command",
-        raw: strictRaw,
-        identity: {
-          ref: "fixture//commands/strict-keys",
-          bundle: "fixture",
-          adapter: "akm",
-          file: "commands/strict-keys.md",
-        },
-        extra: true,
-      } as never),
-    ).toThrow(/source.*extra|extra/i);
-  });
-
-  test("does not authorize a source by a reflected construction symbol", () => {
-    const valid = renderCase("akm", "command");
-    const [sourceBrand] = Object.getOwnPropertySymbols(valid);
-    if (!sourceBrand) throw new Error("adapter source brand is missing");
-    const forged = {
-      schemaVersion: valid.schemaVersion,
-      kind: valid.kind,
-      content: "---\nraw: leaked\n---\nDo the wrong work.",
-      defaults: valid.defaults,
-      identity: valid.identity,
-    };
-    Object.defineProperty(forged, sourceBrand, { value: true, enumerable: false });
-    Object.freeze(forged);
-
-    expect(() => createResolvedCommand({ source: forged as never, content: forged.content })).toThrow(
-      /adapter-rendered command source/i,
-    );
-  });
-
-  test("rejects accessor-backed raw and rendered content before inconsistent reads", () => {
-    let rawReads = 0;
-    const rawInput = {
-      kind: "command" as const,
-      identity: {
-        ref: "fixture//commands/raw-getter",
-        bundle: "fixture",
-        adapter: "akm",
-        file: "commands/raw-getter.md",
-      },
-    } as Record<string, unknown>;
-    Object.defineProperty(rawInput, "raw", {
-      enumerable: true,
-      get: () => {
-        rawReads += 1;
-        return rawReads === 1 ? "Safe body.\n" : "---\nraw: leaked\n---\nWrong body.\n";
-      },
-    });
-    expect(() => renderMarkdownExecutionSource(rawInput as never)).toThrow(/raw|accessor|data propert/i);
-    expect(rawReads).toBe(0);
-
-    let contentReads = 0;
-    const contentInput = {
-      kind: "command" as const,
-      identity: {
-        ref: "fixture//commands/content-getter",
-        bundle: "fixture",
-        adapter: "akm",
-        file: "commands/content-getter.md",
-        hash: "a".repeat(64),
-      },
-    } as Record<string, unknown>;
-    Object.defineProperty(contentInput, "content", {
-      enumerable: true,
-      get: () => {
-        contentReads += 1;
-        return contentReads === 1 ? "Safe body.\n" : "---\nfrontmatter: leaked\n---\nWrong body.\n";
-      },
-    });
-    expect(() => createAdapterRenderedExecutionSource(contentInput as never)).toThrow(/content|accessor|data propert/i);
-    expect(contentReads).toBe(0);
   });
 
   test("strict execution frontmatter handles BOM/CRLF and hashes the exact original text", () => {

@@ -6,15 +6,9 @@
 // append-only ordered source of truth: new migrations are APPENDED here and an
 // existing fragment is NEVER renumbered or reordered (that would corrupt the
 // schema_migrations ledger on already-deployed databases). The shared runner
-// at src/storage/engines/sqlite-migrations.ts applies them in array order.
+// at src/storage/sqlite-migrations.ts applies them in array order.
 
-import type { Database } from "../../storage/database";
-import {
-  assertMigrationLedger,
-  assertMigrationRegistry,
-  type Migration,
-  runMigrations as runSqliteMigrations,
-} from "../../storage/engines/sqlite-migrations";
+import { assertMigrationRegistry, type Migration } from "../../storage/sqlite-migrations";
 
 export type StateMigrationSafety = "additive" | "data-preserving-rebuild" | "historical-destructive";
 
@@ -25,6 +19,9 @@ export type StateMigrationSafety = "additive" | "data-preserving-rebuild" | "his
  * released IDs, order, and SQL stay byte-for-byte unchanged. A runtime
  * assertion below requires this key order to match {@link STATE_MIGRATIONS}
  * exactly, so appending a migration also requires an explicit safety decision.
+ * The one consumer of the classification is `openStateDatabase`
+ * (src/core/state-db.ts): before a `historical-destructive` migration runs
+ * against an existing database, the file is copied beside itself first.
  */
 export const STATE_MIGRATION_SAFETY_BY_ID: Readonly<Record<string, StateMigrationSafety>> = Object.freeze({
   "001-initial-schema": "additive",
@@ -54,6 +51,7 @@ export const STATE_MIGRATION_SAFETY_BY_ID: Readonly<Record<string, StateMigratio
   "025-task-history-vocabulary-backfill": "data-preserving-rebuild",
   "026-proposals-strip-legacy-fragment-refs": "data-preserving-rebuild",
   "027-extract-sessions-seen-harness-rename": "data-preserving-rebuild",
+  "028-improve-ledger": "historical-destructive",
 });
 
 export const STATE_MIGRATIONS: readonly Migration[] = [
@@ -1212,6 +1210,105 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       UPDATE workflow_runs SET agent_harness = 'claude' WHERE agent_harness = 'claude-code';
     `,
   },
+
+  // ── Migration 028 — the improve ledger ──
+  //
+  // One table records what improve last did with each (stash, ref, source) and
+  // when it may try again (`src/storage/repositories/improve-ledger-repository.ts`
+  // owns the outcome → cadence rule). Backfilled from the latest proposals row
+  // per (stash_dir, ref, source) so the rejection windows and pending state an
+  // upgrade inherits are the ones the previous release was already honouring:
+  //   pending  → proposed (revisit in 7 d)
+  //   accepted → accepted (eligible)
+  //   rejected → expired when the review reason is the expiry pass's
+  //              ("expired: …", 1 d grace), failed when the drain's
+  //              stale-target auto-reject or the orphan purge (eligible now —
+  //              neither was a content judgement), else rejected (reflect
+  //              14 d, distill 30 d, other 7 d)
+  //   reverted → rejected (the operator undid the content)
+  // `strftime` returns NULL for an unparseable timestamp, which reads as
+  // "eligible now" — the safe direction.
+  //
+  // The same migration drops the tables the ledger supersedes or whose code is
+  // gone: `proposal_fingerprints` was a dedup cache derived from proposals
+  // rows, `improve_gate_thresholds` has had no reader since 0.9.0,
+  // `proposal_fs_imports` lost its importer, `canary_queries` /
+  // `improve_cycle_metrics` belonged to the removed collapse detector, and
+  // `consolidation_judged` was already dropped by 018 (a no-op here for any
+  // ledger that ran it). None holds operator state, but dropping tables is
+  // destructive, so it is classified that way: `openStateDatabase` copies an
+  // existing state.db beside itself before it runs.
+  {
+    id: "028-improve-ledger",
+    up: `
+      CREATE TABLE IF NOT EXISTS improve_ledger (
+        stash_dir TEXT NOT NULL,
+        ref TEXT NOT NULL,
+        source TEXT NOT NULL,
+        last_attempt_at TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        next_eligible_at TEXT,
+        proposal_id TEXT,
+        detail TEXT,
+        PRIMARY KEY (stash_dir, ref, source)
+      );
+
+      INSERT OR REPLACE INTO improve_ledger
+        (stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail)
+      SELECT
+        p.stash_dir,
+        p.ref,
+        p.source,
+        p.updated_at,
+        o.outcome,
+        CASE o.outcome
+          WHEN 'rejected' THEN strftime('%Y-%m-%dT%H:%M:%fZ', p.updated_at,
+            CASE p.source WHEN 'reflect' THEN '+14 days' WHEN 'distill' THEN '+30 days' ELSE '+7 days' END)
+          WHEN 'expired' THEN strftime('%Y-%m-%dT%H:%M:%fZ', p.updated_at, '+1 days')
+          WHEN 'proposed' THEN strftime('%Y-%m-%dT%H:%M:%fZ', p.updated_at, '+7 days')
+          ELSE NULL
+        END,
+        p.id,
+        CASE WHEN json_valid(p.metadata_json)
+          THEN json_extract(p.metadata_json, '$.review.reason') ELSE NULL END
+      FROM proposals p
+      JOIN (
+        SELECT stash_dir, ref, source, MAX(updated_at) AS latest_updated_at
+        FROM proposals GROUP BY stash_dir, ref, source
+      ) latest
+        ON latest.stash_dir = p.stash_dir AND latest.ref = p.ref AND latest.source = p.source
+       AND latest.latest_updated_at = p.updated_at
+      JOIN (
+        SELECT rowid AS proposal_rowid,
+          CASE status
+            WHEN 'pending' THEN 'proposed'
+            WHEN 'accepted' THEN 'accepted'
+            WHEN 'reverted' THEN 'rejected'
+            WHEN 'rejected' THEN
+              CASE WHEN json_valid(metadata_json) THEN
+                CASE
+                  WHEN json_extract(metadata_json, '$.review.reason') LIKE 'expired:%' THEN 'expired'
+                  WHEN json_extract(metadata_json, '$.gateDecision.reason') = 'stale-target' THEN 'failed'
+                  WHEN json_extract(metadata_json, '$.review.reason') = 'Asset no longer exists on disk' THEN 'failed'
+                  ELSE 'rejected'
+                END
+              ELSE 'rejected' END
+            ELSE NULL
+          END AS outcome
+        FROM proposals
+      ) o ON o.proposal_rowid = p.rowid
+      WHERE o.outcome IS NOT NULL
+      ORDER BY p.rowid ASC;
+
+      DROP INDEX IF EXISTS idx_proposal_fingerprints_ref;
+      DROP TABLE IF EXISTS proposal_fingerprints;
+      DROP TABLE IF EXISTS improve_gate_thresholds;
+      DROP TABLE IF EXISTS proposal_fs_imports;
+      DROP TABLE IF EXISTS consolidation_judged;
+      DROP TABLE IF EXISTS improve_cycle_metrics;
+      DROP TABLE IF EXISTS canary_queries;
+    `,
+  },
 ];
 
 assertMigrationRegistry(STATE_MIGRATIONS);
@@ -1233,80 +1330,4 @@ export function getStateMigrationSafety(migrationId: string): StateMigrationSafe
   const safety = STATE_MIGRATION_SAFETY_BY_ID[migrationId];
   if (!safety) throw new Error(`State migration ${migrationId} has no safety classification.`);
   return safety;
-}
-
-export interface RunStateMigrationsOptions {
-  /** A file created by this same open; historical cleanup cannot remove operator state. */
-  freshDatabase?: boolean;
-  /** An existing file whose preflight found no applied IDs, with the ledger absent or empty. */
-  existingUnversionedDatabase?: boolean;
-  /** Narrow intent owned by the successful `akm upgrade` post-install step. */
-  allowHistoricalDestructiveStateUpgrade?: boolean;
-  /** Required explicit-upgrade snapshot hook, called before a ledger or migration 001 exists. */
-  beforeExistingUnversionedStateMigration?: (migration: Migration) => void;
-  /** Required safety-copy hook, called under the migration writer lock immediately before destructive SQL. */
-  beforeHistoricalDestructiveMigration?: (migration: Migration) => void;
-}
-
-/**
- * Apply every pending migration in a single transaction per migration.
- *
- * Delegates to the shared SQLite migration engine; state.db has no
- * pre-versioning bootstrap step, so no `bootstrap` hook is passed.
- *
- * Called automatically by `openStateDatabase()`.
- */
-export function runMigrations(db: Database, options?: RunStateMigrationsOptions): void {
-  const initialMigration = STATE_MIGRATIONS[0];
-  if (!initialMigration) throw new Error("State migration registry has no initial migration.");
-  let existingUnversionedSnapshotPrepared = false;
-
-  const prepareExistingUnversionedState = (lockedDb: Database): void => {
-    if (existingUnversionedSnapshotPrepared) return;
-    if (!options?.existingUnversionedDatabase) {
-      throw new Error("Refusing state.db initialization because its migration ledger disappeared after preflight.");
-    }
-    if (!options.allowHistoricalDestructiveStateUpgrade) {
-      throw new Error(
-        "Refusing to migrate an existing unversioned state.db during an ordinary managed open. " +
-          "Run `akm upgrade` (or `akm migrate apply`) to snapshot it before migration 001 and apply it deliberately.",
-      );
-    }
-    const ledger = assertMigrationLedger(lockedDb, STATE_MIGRATIONS);
-    if (ledger.migrationIds.length !== 0) {
-      throw new Error("Refusing an existing unversioned state.db whose migration ledger changed after preflight.");
-    }
-    if (!options.beforeExistingUnversionedStateMigration) {
-      throw new Error("An existing unversioned state.db requires a verified pre-migration safety-copy hook.");
-    }
-    options.beforeExistingUnversionedStateMigration(initialMigration);
-    existingUnversionedSnapshotPrepared = true;
-  };
-
-  runSqliteMigrations(db, STATE_MIGRATIONS, {
-    lockInitialMigrationPrefixThrough: options?.existingUnversionedDatabase ? "002-task-history-per-run" : undefined,
-    beforeLedgerInitializationLocked(lockedDb) {
-      if (options?.freshDatabase) return;
-      prepareExistingUnversionedState(lockedDb);
-    },
-    beforeMigrationLocked(migration, lockedDb) {
-      if (options?.existingUnversionedDatabase && !existingUnversionedSnapshotPrepared) {
-        prepareExistingUnversionedState(lockedDb);
-      }
-      if (getStateMigrationSafety(migration.id) !== "historical-destructive" || options?.freshDatabase) return;
-      // The writer lock closes the window between this exact-prefix decision,
-      // the recovery snapshot, and the destructive migration transaction.
-      assertMigrationLedger(lockedDb, STATE_MIGRATIONS);
-      if (!options?.allowHistoricalDestructiveStateUpgrade) {
-        throw new Error(
-          `Refusing to apply historical destructive state migration ${migration.id} during an ordinary managed open. ` +
-            "Run `akm upgrade` (or `akm migrate apply`) to create a sibling state.db safety copy and apply it deliberately.",
-        );
-      }
-      if (!options.beforeHistoricalDestructiveMigration) {
-        throw new Error(`Historical destructive state migration ${migration.id} requires a verified safety-copy hook.`);
-      }
-      options.beforeHistoricalDestructiveMigration(migration);
-    },
-  });
 }

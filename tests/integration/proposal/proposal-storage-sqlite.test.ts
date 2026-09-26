@@ -27,7 +27,6 @@ import {
   archiveProposal,
   createProposal as createProposalImpl,
   getProposal,
-  isProposalSkipped,
   listProposals,
   type Proposal,
   resolveProposalId,
@@ -81,8 +80,7 @@ afterEach(() => {
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repos.\n`;
 
 function mustCreate(stashDir: string, ref: string, source = "reflect", content = VALID_LESSON): Proposal {
-  const result = createProposal(stashDir, { ref, source, force: true, payload: { content } });
-  if (isProposalSkipped(result)) throw new Error(`unexpected skip: ${result.message}`);
+  const result = createProposal(stashDir, { ref, source, payload: { content } });
   return result;
 }
 
@@ -117,7 +115,6 @@ function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<
       import {
         archiveProposal,
         createProposal,
-        isProposalSkipped,
         recordGateDecision,
       } from ${JSON.stringify(moduleHref)};
 
@@ -132,9 +129,7 @@ function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<
           const result = createProposal(payload.stashDir, payload.input, { dbPath: payload.dbPath });
           parentPort.postMessage({
             type: "result",
-            result: isProposalSkipped(result)
-              ? { kind: "skipped", reason: result.reason, existingProposalId: result.existingProposalId ?? null }
-              : { kind: "created", id: result.id },
+            result: { kind: "created", id: result.id },
           });
           return;
         }
@@ -256,10 +251,9 @@ describe("state.db is the canonical proposal store", () => {
     const dbPath = path.join(makeTempDir("akm-prop-sql-db-"), "alt-state.db");
     const created = createProposal(
       stash,
-      { ref: "lessons/seam", source: "reflect", force: true, payload: { content: VALID_LESSON } },
+      { ref: "lessons/seam", source: "reflect", payload: { content: VALID_LESSON } },
       { dbPath },
     );
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     // Visible through the same seam, invisible through the default path.
     expect(listProposals(stash, {}, { dbPath }).map((p) => p.id)).toEqual([created.id]);
@@ -364,7 +358,7 @@ describe("concurrent create + list safety (WAL)", () => {
   });
 
   test(
-    "concurrent duplicate proposal creation serializes on state.db and yields one pending row",
+    "concurrent proposal creation for one ref serializes on state.db: both mints commit, one ledger row",
     async () => {
       const stash = makeStashDir();
       const dbPath = path.join(makeTempDir("akm-prop-sql-concurrency-db-"), "state.db");
@@ -405,22 +399,18 @@ describe("concurrent create + list safety (WAL)", () => {
       workerB.release();
 
       const parsed = await Promise.all([workerA.result, workerB.result]);
-      expect(parsed.filter((entry) => entry.kind === "created")).toHaveLength(1);
-      // WI-6.4: both workers mint the same INPUTS (same ref/source/absent
-      // target/absent model), so the loser hits the winner's fingerprint row.
-      expect(parsed.filter((entry) => entry.kind === "skipped" && entry.reason === "fingerprint_match")).toHaveLength(
-        1,
-      );
-      expect(listProposals(stash, {}, { dbPath })).toHaveLength(1);
+      // Whether a ref may be proposed again is candidate selection's call
+      // (the improve ledger), not the mint's: both writers commit.
+      expect(parsed.filter((entry) => entry.kind === "created")).toHaveLength(2);
+      expect(listProposals(stash, {}, { dbPath })).toHaveLength(2);
 
       const db = openStateDatabase(dbPath);
       try {
-        const row = db
-          .prepare("SELECT COUNT(*) AS c FROM proposals WHERE stash_dir = ? AND status = 'pending'")
-          .get(stash) as {
-          c: number;
-        };
-        expect(row.c).toBe(1);
+        const rows = db
+          .prepare("SELECT proposal_id FROM improve_ledger WHERE stash_dir = ? AND source = 'reflect'")
+          .all(stash) as Array<{ proposal_id: string }>;
+        expect(rows).toHaveLength(1);
+        expect(parsed.map((entry) => entry.id)).toContain(rows[0]?.proposal_id);
       } finally {
         db.close();
       }
@@ -436,10 +426,9 @@ describe("concurrent create + list safety (WAL)", () => {
       openStateDatabase(dbPath).close();
       const created = createProposal(
         stash,
-        { ref: "lessons/mutation-race", source: "reflect", force: true, payload: { content: VALID_LESSON } },
+        { ref: "lessons/mutation-race", source: "reflect", payload: { content: VALID_LESSON } },
         { dbPath },
       );
-      if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
       const archiveWorker = startProposalWorker<{ kind: string; status: string }>({
         action: "archive",

@@ -16,14 +16,11 @@ import {
 } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { getUnresolvedSourcesDir } from "../../core/paths";
+import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
-// Eager side-effect imports so all built-in source providers self-register
-// before resolveEntryContentDir() runs.
-import "../../sources/providers/index";
-import { warn } from "../../core/warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

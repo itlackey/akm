@@ -7,8 +7,8 @@
  * precise durable window, and a fresh process converges the run exactly once.
  * The single-process, deterministic-state versions live in
  * tests/workflows/chaos.test.ts; these prove the SAME contracts survive a real
- * OS kill (no `finally`, orphaned lease, half-written journal) against shared
- * storage.
+ * OS kill (no `finally`, a lock file left behind by a dead pid, half-written
+ * journal) against shared storage.
  *
  *   Window A — "unit row inserted running, before finish": the dispatcher
  *   writes its marker (the row is journaled `running`) then blocks; the parent
@@ -34,7 +34,6 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } f
 import {
   bunAvailable,
   dispatchCount,
-  expireLease,
   holdStartExists,
   pollUntil,
   spawnRunner,
@@ -105,7 +104,7 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window A: SIGKILL after the unit row is running but before finish → resume re-dispatches it exactly once and completes", async () => {
     writeProgram(storage.stashDir, "crash-solo", SOLO_WF);
     const started = await startWorkflowRun("workflows/crash-solo", {});
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
 
@@ -124,7 +123,6 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
 
     crasher.kill("SIGKILL");
     await crasher.done();
-    await expireLease(runId);
 
     // Resume: a fresh process re-dispatches the interrupted unit — once.
     const resume = spawnRunner({ CHAOS_RUN_ID: runId, CHAOS_MARKER_DIR: markerDir });
@@ -149,7 +147,7 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window B: SIGKILL after the unit completes but before the step does → resume reuses the unit, replaces the dangling gate row, finalizes once", async () => {
     writeProgram(storage.stashDir, "crash-gate", GATE_WF);
     const started = await startWorkflowRun("workflows/crash-gate", {});
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
 
@@ -174,7 +172,6 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
 
     crasher.kill("SIGKILL");
     await crasher.done();
-    await expireLease(runId);
 
     // Resume with an accepting judge: the unit is REUSED (no re-dispatch), the
     // dangling gate row is replaced, and the step finalizes exactly once.

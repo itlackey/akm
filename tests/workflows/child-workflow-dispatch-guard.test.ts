@@ -52,9 +52,9 @@
  * No live agent/LLM/exec dispatch is needed to exercise this: the guard is a
  * synchronous check on `request.frozenTarget.kind` at the very top of
  * `dispatchWorkflowExecution`, before anything touches
- * `lowerResolvedExecutionRequestWithRunner` / `dispatchLoweredExecutionRequest`
+ * `buildExecutionFromWire` / `runExecution`
  * — mirrors `tests/workflows/unit-dispatch-event-source.test.ts`'s existing
- * "no injectable runAgent/executeRunner/chat seam, so pin the fix at the
+ * "no injectable runAgent/runSdk/chat seam, so pin the fix at the
  * exact point the decision is made" approach for this same module.
  */
 
@@ -67,7 +67,7 @@ import { dispatchWorkflowExecution, type UnitDispatchRequest } from "../../src/w
  * A structurally minimal `FrozenChildWorkflowTarget`. Both dispatch entry
  * points under test decide on `.kind` alone before touching any other
  * field, so `frozenPlan` stays an empty object cast through `unknown` rather
- * than a fully valid `WorkflowPlanGraphV4` — mirrors
+ * than a fully valid `WorkflowPlan` — mirrors
  * `tests/workflows/hash-v6.test.ts`'s `asFrozenTarget` fixture, which
  * established the identical "cast through unknown for this one field, never
  * a real `@ts-expect-error`" convention for this exact target shape.

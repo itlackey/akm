@@ -72,9 +72,6 @@ const processLimitField = positiveInt.optional();
  */
 const qualityGateField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
 
-/** Consolidate process: gate for the M-1 (#367) contradiction-detection pass. */
-const contradictionDetectionField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
-
 /**
  * WS-3b: CLS (Complementary Learning System) interleaving (step 9).
  * distill/memoryInference prompts include embedding-retrieved existing adjacent
@@ -122,32 +119,20 @@ const extractTriageGateField = z
   .passthrough()
   .optional();
 
-const triageJudgmentErrorMap: z.ZodErrorMap = (issue, ctx) => {
-  if (issue.code === z.ZodIssueCode.unrecognized_keys) {
-    const retired = issue.keys.find((key) => key === "mode" || key === "profile");
-    if (retired) return { message: `${retired} is retired; use engine` };
-  }
-  return { message: ctx.defaultError };
-};
-
-// Judgment is an explicit opt-in surface, so invocation typos must fail closed.
-// Keep the shared override schema lenient for ordinary cross-version config
-// compatibility, while making this nested surface strict. `extraParams`
-// remains the intentional arbitrary provider-parameter escape hatch.
-const triageJudgmentLlmOverridesField = LlmInvocationOverridesSchema.strict();
+// Unknown keys pass through here like every other nested surface (the loader
+// names them once); `extraParams` remains the arbitrary provider-parameter
+// escape hatch.
+const triageJudgmentLlmOverridesField = LlmInvocationOverridesSchema.passthrough();
 
 const triageJudgmentObjectField = z
-  .object(
-    {
-      enabled: z.boolean().optional(),
-      engine: engineName.optional(),
-      model: nonEmptyString.optional(),
-      timeoutMs: z.union([positiveInt, z.null()]).optional(),
-      llm: triageJudgmentLlmOverridesField.optional(),
-    },
-    { errorMap: triageJudgmentErrorMap },
-  )
-  .strict();
+  .object({
+    enabled: z.boolean().optional(),
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    llm: triageJudgmentLlmOverridesField.optional(),
+  })
+  .passthrough();
 
 /** Triage process: explicit LLM-as-judge enablement and execution overrides. */
 const triageJudgmentField = z
@@ -159,33 +144,18 @@ const triageJudgmentField = z
   .optional();
 
 /**
- * WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
- * from collapsing too aggressively and losing diversity. Consolidate process
- * only. Default ON since R5 (opt out via enabled: false).
- *   - maxGeneration: refuse to merge two assets both above this generation (default 2).
- *   - lexicalDiversityCheck: low n-gram diversity ⇒ raise merge threshold.
- *   - randomClusterFraction: occasional random (non-similar) cluster in pool (default 0.05).
- *   - mergeInformationFloor: LIVE gate (anti-collapse.ts:143) — NOT a
- *     decorative/inert knob. `false` skips the merge-information-floor
- *     measurement entirely (no counting, no warning) for every merge;
- *     true/absent (default) measures it on every merge. The MEASUREMENT's
- *     outcome is advisory in v1: a failing merge is counted
- *     (`merge_floor_violations`) and warned but never refused (promotion path:
- *     docs/architecture/specs/improve-collapse-churn-detector-design.md §7). In short:
- *     this field gates whether the check runs at all (a real code path), not
- *     whether a merge is allowed.
- *   - minSpecificityRetention: distinct-token retention floor for merges (default 0.6).
- * (WS-3b step 0a `homeostaticDemotion` was removed — R4. Continuous decay is
- * now part of the always-applied salience recency term.)
+ * WS-3b: Anti-collapse guard (step 8), consolidate process only: a small
+ * random (non-similarity-driven) fraction of the pool is mixed into the
+ * clustered order so consolidation is not purely rich-get-richer. Default ON
+ * (opt out via `enabled: false`); `randomClusterFraction` defaults to 0.05.
+ * The retired merge guards (`maxGeneration`, `lexicalDiversityCheck`,
+ * `mergeInformationFloor`, `minSpecificityRetention`) never refused a merge
+ * and are tolerated as unknown keys.
  */
 const antiCollapseField = z
   .object({
     enabled: z.boolean().optional(),
-    maxGeneration: z.number().int().min(1).optional(),
-    lexicalDiversityCheck: z.boolean().optional(),
     randomClusterFraction: z.number().min(0).max(1).optional(),
-    mergeInformationFloor: z.boolean().optional(),
-    minSpecificityRetention: z.number().min(0).max(1).optional(),
   })
   .passthrough()
   .optional();
@@ -227,7 +197,6 @@ const CONSOLIDATE_PROCESS_FIELDS = {
   // accumulates; this value is only used on the very first run. Default 30s.
   p90ChunkSecondsDefault: z.number().finite().positive().optional(),
   antiCollapse: antiCollapseField,
-  contradictionDetection: contradictionDetectionField,
 };
 
 const MEMORY_INFERENCE_PROCESS_FIELDS = {
@@ -290,10 +259,7 @@ const EXTRACT_PROCESS_FIELDS = {
 
 const TRIAGE_PROCESS_FIELDS = {
   applyMode: z.enum(["queue", "promote"]).optional(),
-  policy: z.string().min(1).optional(),
   maxAcceptsPerRun: positiveInt.optional(),
-  maxDiffLines: positiveInt.optional(),
-  rejectEmpty: z.boolean().optional(),
   judgment: triageJudgmentField,
 };
 
@@ -306,39 +272,6 @@ const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   maxPerRun: positiveInt.optional(),
   limit: processLimitField,
 };
-
-/**
- * Shared cross-process superRefine: rejects the retired `mode`/`profile`
- * knobs (top-level and inside a `judgment` sub-object) in favour of `engine`.
- * Applied identically to every per-process schema and to the wide
- * ImproveProcessConfigSchema.
- */
-function checkRetiredProcessKeys(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
-  for (const key of ["mode", "profile"]) {
-    if (key in value) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is retired; use engine` });
-    }
-  }
-  if ("judgement" in value) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["judgement"],
-      message: "judgement is not a valid key; use judgment",
-    });
-  }
-  const judgment = value.judgment as Record<string, unknown> | undefined;
-  if (judgment) {
-    for (const key of ["mode", "profile"]) {
-      if (key in judgment) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["judgment", key],
-          message: `${key} is retired; use engine`,
-        });
-      }
-    }
-  }
-}
 
 /** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */
 function rejectExcludeRefPrefixesOutsideReflect(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
@@ -363,64 +296,52 @@ export const ImproveProcessConfigSchema = z
     ...TRIAGE_PROCESS_FIELDS,
     ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS,
   })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.reflect` — narrow per-process schema (WI-9.6). */
 export const ReflectProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...REFLECT_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.distill` — narrow per-process schema (WI-9.6). */
 export const DistillProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...DISTILL_PROCESS_FIELDS })
   .passthrough()
-  .superRefine(checkRetiredProcessKeys)
   .superRefine(rejectExcludeRefPrefixesOutsideReflect);
 
 /** `processes.consolidate` — narrow per-process schema (WI-9.6). */
 export const ConsolidateProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...CONSOLIDATE_PROCESS_FIELDS })
   .passthrough()
-  .superRefine(checkRetiredProcessKeys)
   .superRefine(rejectExcludeRefPrefixesOutsideReflect);
 
 /** `processes.memoryInference` — narrow per-process schema (WI-9.6). */
 export const MemoryInferenceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...MEMORY_INFERENCE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.graphExtraction` — narrow per-process schema (WI-9.6). */
 export const GraphExtractionProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...GRAPH_EXTRACTION_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.extract` — narrow per-process schema (WI-9.6). */
 export const ExtractProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...EXTRACT_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.validation` — narrow per-process schema (WI-9.6); no extra fields beyond the shared base. */
-export const ValidationProcessConfigSchema = z
-  .object({ ...IMPROVE_PROCESS_BASE_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+export const ValidationProcessConfigSchema = z.object({ ...IMPROVE_PROCESS_BASE_FIELDS }).passthrough();
 
 /** `processes.triage` — narrow per-process schema (WI-9.6). */
 export const TriageProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...TRIAGE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 /** `processes.proactiveMaintenance` — narrow per-process schema (WI-9.6). */
 export const ProactiveMaintenanceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(checkRetiredProcessKeys);
+  .passthrough();
 
 const ImproveProfileProcessesSchema = z
   .object({
