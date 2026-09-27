@@ -1183,10 +1183,8 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
     );
 
     // A failed cached result must never be reused — the file is re-extracted,
-    // and the FRESH successful result (not the poisoned one) lands in the
-    // cache. (graph_files itself skips rewriting entities when the body hash
-    // is unchanged — a pre-existing, unrelated optimization — so the cache
-    // table, which always overwrites, is what this asserts on.)
+    // and the FRESH successful result (not the poisoned one) lands in both the
+    // cache and the stored graph rows (the body hash is unchanged).
     expect(extractorCallCount).toBe(2);
     expect(second.extracted).toBe(1);
     await withGraphDb("failed-cache-read", (db) => {
@@ -1197,6 +1195,11 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
       const cached = JSON.parse(row?.result_json ?? "{}");
       expect(cached.status).toBe("extracted");
       expect(cached.entities).toEqual(["ServiceA2"]);
+      const stored = loadStoredGraphSnapshot(tmpStash, db);
+      expect(stored?.files.find((file) => file.path === filePath)).toMatchObject({
+        status: "extracted",
+        entities: ["ServiceA2"],
+      });
     });
   });
 

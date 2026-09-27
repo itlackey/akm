@@ -376,6 +376,15 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Fixed
 
+- **Re-extracting an unchanged note now replaces its stored graph rows.**
+  `replaceStoredGraph` refreshed only a file's status, reason and run id when
+  its body hash was unchanged, so an extraction of the same body — after a
+  model or prompt change, or after a failed first attempt — never reached
+  `graph_file_entities` or `graph_file_relations`. One install had 1,389 files
+  marked `extracted` with no entity rows while `llm_enrichment_cache` held
+  their extractions. A file's rows are now rewritten whenever its entities or
+  relations differ from the stored ones, so the next graph pass refills such
+  files from the cache without a model call. (`src/indexer/db/graph-db.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,

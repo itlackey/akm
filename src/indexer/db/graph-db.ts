@@ -61,16 +61,75 @@ interface ExistingGraphFileRow {
   file_order: number;
 }
 
+/** Child rows joined to their file row, the same join the loaders read through. */
+const STORED_ENTITIES = `graph_file_entities e
+  JOIN graph_files gf ON gf.stash_root = e.stash_root AND gf.file_path = e.file_path AND gf.body_hash = e.body_hash
+  WHERE gf.stash_root = ?`;
+const STORED_RELATIONS = `graph_file_relations r
+  JOIN graph_files gf ON gf.stash_root = r.stash_root AND gf.file_path = r.file_path AND gf.body_hash = r.body_hash
+  WHERE gf.stash_root = ?`;
+
+/** One comparable key for a file's extraction: its entities and relations, in order. */
+function extractionKey(entities: readonly string[], relations: readonly GraphRelation[]): string {
+  return JSON.stringify([entities, relations.map((r) => [r.from, r.to, r.type ?? null, r.confidence ?? null])]);
+}
+
+const EMPTY_EXTRACTION_KEY = extractionKey([], []);
+
+/** The extraction key of every stored file under a root that has child rows. */
+function readStoredExtractionKeys(db: Database, stashRoot: string): Map<string, string> {
+  const entityRows = db
+    .prepare(
+      `SELECT e.file_path AS file_path, e.entity AS entity FROM ${STORED_ENTITIES} ORDER BY e.file_path, e.entity_order`,
+    )
+    .all(stashRoot) as Array<{ file_path: string; entity: string }>;
+  const relationRows = db
+    .prepare(
+      `SELECT r.file_path AS file_path, r.from_entity AS from_entity, r.to_entity AS to_entity,
+              r.relation_type AS relation_type, r.confidence AS confidence
+         FROM ${STORED_RELATIONS} ORDER BY r.file_path, r.relation_order`,
+    )
+    .all(stashRoot) as Array<{
+    file_path: string;
+    from_entity: string;
+    to_entity: string;
+    relation_type: string | null;
+    confidence: number | null;
+  }>;
+  const byPath = new Map<string, { entities: string[]; relations: GraphRelation[] }>();
+  const bucket = (filePath: string) => {
+    let entry = byPath.get(filePath);
+    if (!entry) {
+      entry = { entities: [], relations: [] };
+      byPath.set(filePath, entry);
+    }
+    return entry;
+  };
+  for (const row of entityRows) bucket(row.file_path).entities.push(row.entity);
+  for (const row of relationRows) {
+    bucket(row.file_path).relations.push({
+      from: row.from_entity,
+      to: row.to_entity,
+      ...(row.relation_type !== null ? { type: row.relation_type } : {}),
+      ...(row.confidence !== null ? { confidence: row.confidence } : {}),
+    });
+  }
+  return new Map([...byPath].map(([filePath, stored]) => [filePath, extractionKey(stored.entities, stored.relations)]));
+}
+
 /**
  * Persist (or update) a graph snapshot for a stash root.
  *
  * #624-P1: keyed on (stash_root, file_path, body_hash) — NOT entries.id. Graph
  * rows are self-keyed by path, so they survive an entries delete + reinsert
- * (a reindex) when body_hash is unchanged. Unchanged files (matching body_hash)
- * only have their file-meta refreshed; files whose body_hash changed have their
- * old row + child rows deleted and the new content inserted; files in DB but
- * absent from the new snapshot are deleted. There is no entry_id resolution and
- * no orphan-skip — a graph file no longer needs a matching entries row.
+ * (a reindex) when body_hash is unchanged. A file whose body_hash is unchanged
+ * keeps its row; its entity and relation rows are rewritten only when they
+ * differ from the snapshot's (a re-extraction of the same body, e.g. after a
+ * model or prompt change or a failed first attempt, must land). Files whose
+ * body_hash changed have their old row + child rows deleted and the new content
+ * inserted; files in DB but absent from the new snapshot are deleted. There is
+ * no entry_id resolution and no orphan-skip — a graph file no longer needs a
+ * matching entries row.
  */
 export function replaceStoredGraph(db: Database, graph: GraphFile): void {
   const upsertMeta = db.prepare(
@@ -172,6 +231,7 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
     const existingRows = selectExisting.all(graph.stashRoot) as ExistingGraphFileRow[];
     const existingByPath = new Map<string, ExistingGraphFileRow>();
     for (const row of existingRows) existingByPath.set(row.file_path, row);
+    const storedKeys = readStoredExtractionKeys(db, graph.stashRoot);
 
     const presentPaths = new Set<string>();
 
@@ -182,46 +242,53 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
       // correct behaviour for "unknown" bodies. Distinct files in one stash
       // are still keyed apart by file_path, so the empty sentinel is safe.
       const bodyHash = node.bodyHash && node.bodyHash.length > 0 ? node.bodyHash : "";
+      const status = node.status ?? (node.entities.length > 0 ? "extracted" : "empty");
+      const reason = node.reason ?? (node.entities.length > 0 ? "none" : "no_graph_content");
+      const runId = node.extractionRunId ?? telemetry?.extractionRunId ?? null;
 
       presentPaths.add(node.path);
 
       const existing = existingByPath.get(node.path);
       if (existing && existing.body_hash === bodyHash) {
-        // Body unchanged — only fix up file_order/confidence in case they drifted.
+        // Body unchanged — refresh the file meta, and rewrite the child rows
+        // only when this snapshot's extraction differs from the stored one.
         updateFileMeta.run(
           fileOrder,
           node.type,
           node.confidence ?? null,
-          node.status ?? (node.entities.length > 0 ? "extracted" : "empty"),
-          node.reason ?? (node.entities.length > 0 ? "none" : "no_graph_content"),
-          node.extractionRunId ?? telemetry?.extractionRunId ?? null,
+          status,
+          reason,
+          runId,
           graph.stashRoot,
           node.path,
           bodyHash,
         );
-        continue;
+        const storedKey = storedKeys.get(node.path) ?? EMPTY_EXTRACTION_KEY;
+        if (storedKey === extractionKey(node.entities, node.relations)) continue;
+        deleteEntities.run(graph.stashRoot, node.path, bodyHash);
+        deleteRelations.run(graph.stashRoot, node.path, bodyHash);
+      } else {
+        if (existing) {
+          // Stale row (different body_hash for this path). Delete the old row by
+          // its OLD body_hash; child rows cascade, but explicit DELETE keeps the
+          // order deterministic and is safe regardless of the FK pragma.
+          deleteEntities.run(graph.stashRoot, existing.file_path, existing.body_hash);
+          deleteRelations.run(graph.stashRoot, existing.file_path, existing.body_hash);
+          deleteFile.run(graph.stashRoot, existing.file_path, existing.body_hash);
+        }
+        insertFile.run(
+          graph.stashRoot,
+          node.path,
+          fileOrder,
+          node.type,
+          bodyHash,
+          node.confidence ?? null,
+          status,
+          reason,
+          runId,
+        );
       }
 
-      if (existing) {
-        // Stale row (different body_hash for this path). Delete the old row by
-        // its OLD body_hash; child rows cascade, but explicit DELETE keeps the
-        // order deterministic and is safe regardless of the FK pragma.
-        deleteEntities.run(graph.stashRoot, existing.file_path, existing.body_hash);
-        deleteRelations.run(graph.stashRoot, existing.file_path, existing.body_hash);
-        deleteFile.run(graph.stashRoot, existing.file_path, existing.body_hash);
-      }
-
-      insertFile.run(
-        graph.stashRoot,
-        node.path,
-        fileOrder,
-        node.type,
-        bodyHash,
-        node.confidence ?? null,
-        node.status ?? (node.entities.length > 0 ? "extracted" : "empty"),
-        node.reason ?? (node.entities.length > 0 ? "none" : "no_graph_content"),
-        node.extractionRunId ?? telemetry?.extractionRunId ?? null,
-      );
       for (const [entityOrder, entity] of node.entities.entries()) {
         insertEntity.run(graph.stashRoot, node.path, bodyHash, entityOrder, normalizeEntity(entity), entity);
       }
