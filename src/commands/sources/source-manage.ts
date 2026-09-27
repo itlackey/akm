@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { validateExplicitBundleName } from "../../core/bundle-id";
 import { isRemoteUrl } from "../../core/common";
 import type { BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import { bundleEntryToSourceEntry, bundlesToSourceEntries, getSources, mutateConfig } from "../../core/config/config";
@@ -89,7 +90,9 @@ export function addStash(
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
     let key: string;
     if (useDescriptorPath) {
-      if (bundleKeyForUrl(config, target)) {
+      const existingKey = bundleKeyForUrl(config, target);
+      if (name !== undefined) validateExplicitBundleName(bundles, name, existingKey);
+      if (existingKey) {
         const already = targetIsUrl ? "Source URL already configured" : "Source already configured";
         result = { sources: getSources(config), added: false, message: already };
         return config;
@@ -106,7 +109,9 @@ export function addStash(
       return next;
     } else {
       const resolvedPath = path.resolve(target);
-      if (bundleKeyForPath(config, resolvedPath)) {
+      const existingKey = bundleKeyForPath(config, resolvedPath);
+      if (name !== undefined) validateExplicitBundleName(bundles, name, existingKey);
+      if (existingKey) {
         result = { sources: getSources(config), added: false, message: "Source path already configured" };
         return config;
       }

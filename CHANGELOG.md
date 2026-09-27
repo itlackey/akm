@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--xref` / `--supersedes` validation still accept a ref to `memories/X`
   when only `X.derived.md` remains. Broken since 0.9.7.
   (`src/core/asset/asset-placement.ts`, `src/commands/lint/base-linter.ts`)
+- **`akm bundle add --provider … --name` keeps the `--name` contract too.**
+  Since 0.9.17-alpha.4 an explicit `--name` that is not a legal bundle slug,
+  or is taken by another bundle, fails with exit 2, and re-adding a source
+  under a different name points at `akm bundle rename`. A declarative add
+  (`akm bundle add <target> --provider npm|git|website`) still replaced such
+  a name with a derived one and exited 0. It now fails the same way, before
+  any write. (`src/commands/sources/source-manage.ts`)
 
 ## [0.9.17-alpha.4] - 2026-09-27
 
@@ -657,9 +664,8 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   documented for `registryId`. The key used to come from the basename of the
   cache directory the package was unpacked into, which is always `extracted`,
   so every registry bundle after the first was `extracted-<hash>`. A dotted
-  or mixed-case name is slugged like a directory name (`Foo.js` → `foo-js`),
-  and a `--name` that is not a legal bundle slug now falls back to this name
-  too. Bundles that are already installed keep their current key, including
+  or mixed-case name is slugged like a directory name (`Foo.js` → `foo-js`).
+  Bundles that are already installed keep their current key, including
   `extracted`, because every recorded `extracted//…` ref depends on it.
 - **A one-file change in a large directory no longer costs `akm index` half
   an hour.** Both full-text tables keyed their per-entry deletes on
