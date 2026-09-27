@@ -63,7 +63,6 @@ function insertTestEntry(
     filePath?: string;
     stashDir?: string;
     description?: string;
-    searchText?: string;
     type?: IndexDocument["type"];
   },
 ): number {
@@ -73,7 +72,6 @@ function insertTestEntry(
     db,
     opts?.filePath ?? `/test/dir/${key}.ts`,
     entry,
-    opts?.searchText ?? `${key} ${entry.description}`,
     deriveEntryProvenance({ bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" }, type, key),
   );
 }
@@ -86,11 +84,9 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
     try {
       insertTestEntry(db, "code-review", {
         description: "code-review skill for reviewing pull requests",
-        searchText: "code-review skill for reviewing pull requests",
       });
       insertTestEntry(db, "deploy-prod", {
         description: "deploy-prod deploy to production servers",
-        searchText: "deploy-prod deploy to production servers",
       });
       rebuildFts(db);
 
@@ -108,15 +104,12 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
     try {
       insertTestEntry(db, "deploy-tool", {
         description: "deploy applications to production servers",
-        searchText: "deploy applications to production servers",
       });
       insertTestEntry(db, "code-tool", {
         description: "code linting and formatting tool",
-        searchText: "code linting and formatting tool",
       });
       insertTestEntry(db, "review-tool", {
         description: "review pull requests and merge code",
-        searchText: "review pull requests and merge code",
       });
       rebuildFts(db);
 
@@ -135,11 +128,10 @@ describe("searchFts candidate limit", () => {
       for (const name of ["better-b", "better-a"]) {
         insertTestEntry(db, name, {
           description: "needle needle needle needle",
-          searchText: "needle needle needle needle",
         });
       }
       for (const name of ["boundary-c", "boundary-a", "boundary-b"]) {
-        insertTestEntry(db, name, { description: "needle", searchText: "needle" });
+        insertTestEntry(db, name, { description: "needle" });
       }
       rebuildFts(db);
 
@@ -156,9 +148,9 @@ describe("searchFts candidate limit", () => {
   test("applies typed and exclusion filters before the limit", () => {
     const db = openIndexDatabase(tmpDbPath("fts-filtered-boundary"));
     try {
-      insertTestEntry(db, "skill-a", { type: "skill", description: "needle", searchText: "needle" });
-      insertTestEntry(db, "skill-b", { type: "skill", description: "needle", searchText: "needle" });
-      insertTestEntry(db, "knowledge-a", { type: "knowledge", description: "needle", searchText: "needle" });
+      insertTestEntry(db, "skill-a", { type: "skill", description: "needle" });
+      insertTestEntry(db, "skill-b", { type: "skill", description: "needle" });
+      insertTestEntry(db, "knowledge-a", { type: "knowledge", description: "needle" });
       rebuildFts(db);
 
       expect(searchFts(db, "needle", 1, "skill").map((row) => row.itemRef)).toEqual(["test-bundle//skills/skill-a"]);
@@ -176,7 +168,6 @@ describe("searchFts candidate limit", () => {
       for (let index = 0; index < 3_000; index += 1) {
         insertTestEntry(db, `opaque-${index.toString().padStart(4, "0")}`, {
           description: "needle",
-          searchText: "needle",
         });
       }
       rebuildFts(db);
@@ -203,12 +194,8 @@ describe("single-character lexical queries (Issue #9)", () => {
   test("single character query returns FTS results when content matches", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "r-lang", {
-        searchText: "R programming language for statistics",
-      });
-      insertTestEntry(db, "python-tool", {
-        searchText: "Python scripting language",
-      });
+      insertTestEntry(db, "r-lang");
+      insertTestEntry(db, "python-tool");
       rebuildFts(db);
 
       const results = searchFts(db, "R", 10);

@@ -65,17 +65,11 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
   await akmIndex({ stashDir, full: true });
 }
 
-function seedIndexEntry(
-  db: ReturnType<typeof openIndexDatabase>,
-  name: string,
-  filePath: string,
-  searchText: string,
-): number {
+function seedIndexEntry(db: ReturnType<typeof openIndexDatabase>, name: string, filePath: string): number {
   return upsertEntry(
     db,
     filePath,
     { name, type: "script" },
-    searchText,
     deriveEntryProvenance({ bundleId: "test", componentId: "test", adapterId: "akm" }, "script", name),
   );
 }
@@ -146,7 +140,7 @@ describe("upsertUtilityScore / getUtilityScore", () => {
     const db = openIndexDatabase(dbPath);
     try {
       // Insert a dummy entry first (utility_scores references entries).
-      const entryId = seedIndexEntry(db, "foo", "/tmp/foo.sh", "foo script");
+      const entryId = seedIndexEntry(db, "foo", "/tmp/foo.sh");
 
       upsertUtilityScore(db, entryId, {
         utility: 0.75,
@@ -172,7 +166,7 @@ describe("upsertUtilityScore / getUtilityScore", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);
     try {
-      const entryId = seedIndexEntry(db, "bar", "/tmp/bar.sh", "bar script");
+      const entryId = seedIndexEntry(db, "bar", "/tmp/bar.sh");
 
       upsertUtilityScore(db, entryId, {
         utility: 0.5,
@@ -263,7 +257,7 @@ describe("recomputeUtilityScores", () => {
     // stay in index.db (`db`).
     const stateDb = new Database(":memory:") as unknown as typeof db;
     try {
-      const entryId = seedIndexEntry(db, "recompute-test", "/tmp/recompute.sh", "recompute test script");
+      const entryId = seedIndexEntry(db, "recompute-test", "/tmp/recompute.sh");
 
       // Record usage events: 5 searches that returned this entry, then 3 shows.
       // last_used_at must preserve the latest event time;
@@ -310,7 +304,7 @@ describe("recomputeUtilityScores", () => {
     ensureUsageEventsSchema(stateDb);
     try {
       // Insert a test entry with no usage events.
-      const entryId = seedIndexEntry(db, "no-usage-test", "/tmp/no-usage.sh", "no usage test script");
+      const entryId = seedIndexEntry(db, "no-usage-test", "/tmp/no-usage.sh");
 
       recomputeUtilityScores(db, stateDb);
 
@@ -331,7 +325,7 @@ describe("recomputeUtilityScores", () => {
     const stateDb = new Database(":memory:") as unknown as typeof db;
     ensureUsageEventsSchema(stateDb);
     try {
-      const entryId = seedIndexEntry(db, "stale-last-use", "/tmp/stale-last-use.sh", "stale last use");
+      const entryId = seedIndexEntry(db, "stale-last-use", "/tmp/stale-last-use.sh");
       upsertUtilityScore(db, entryId, {
         utility: 0.8,
         showCount: 10,

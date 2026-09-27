@@ -39,7 +39,6 @@ const hasGraphData = (graphDb as { hasGraphData?: (db: Database, stashRoot: stri
   .hasGraphData as (db: Database, stashRoot: string, filePath: string) => boolean;
 
 import type { GraphFile, GraphFileNode } from "../../../src/indexer/graph/graph-types";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -74,7 +73,7 @@ const STASH = "/tmp/akm-rekey-stash";
 function seedEntry(db: Database, filePath: string, name: string, type = "memory"): number {
   const entry = { name, type, filename: path.basename(filePath) };
   const provenance = deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name);
-  return upsertEntry(db, filePath, entry, buildSearchText(entry), provenance);
+  return upsertEntry(db, filePath, entry, provenance);
 }
 
 function fileNode(

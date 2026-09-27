@@ -35,7 +35,6 @@ describe("relinkUsageEvents", () => {
       indexDb,
       path.join(stashDir, conceptId),
       { name, type },
-      name,
       deriveEntryProvenance({ bundleId: bundle, componentId: bundle, adapterId: "akm" }, type, name, conceptId),
     );
   }

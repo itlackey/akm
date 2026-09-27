@@ -76,8 +76,9 @@ export function buildSearchFields(entry: IndexDocument): {
 }
 
 /**
- * Build a single concatenated search text string for an entry: the
- * `search_text` column, which is the text each entry's vector is embedded from.
+ * Build a single concatenated search text string for an entry: the text its
+ * vector is embedded from, derived from the stored document when the entry is
+ * embedded (`entries.embed_hash` holds its hash).
  */
 export function buildSearchText(entry: IndexDocument): string {
   const fields = buildSearchFields(entry);

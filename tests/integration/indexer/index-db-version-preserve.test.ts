@@ -29,7 +29,6 @@ describe("index.db layout marker", () => {
         db,
         "/s/memories/a.md",
         { name: "a", type: "memory" },
-        "a",
         deriveEntryProvenance({ bundleId: "s", componentId: "s", adapterId: "akm" }, "memory", "a"),
       );
       upsertEmbedding(db, id, [1, 0, 0, 0]);

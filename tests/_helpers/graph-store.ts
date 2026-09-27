@@ -2,7 +2,6 @@ import path from "node:path";
 import { deleteStoredGraph, loadStoredGraphSnapshot, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import type { GraphFile } from "../../src/indexer/graph/graph-types";
 import { deriveEntryProvenance, deriveInstallations } from "../../src/indexer/installations";
-import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
@@ -34,7 +33,7 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
           file.type,
           name,
         );
-        upsertEntry(db, file.path, entry, buildSearchText(entry), provenance);
+        upsertEntry(db, file.path, entry, provenance);
       } catch {
         /* entry may already exist with a different key — fall through */
       }

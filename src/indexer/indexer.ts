@@ -111,7 +111,6 @@ import {
   withFileSize,
 } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
-import { buildSearchText } from "./search/search-fields";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
@@ -1547,9 +1546,7 @@ function persistDirRecords(
             continue;
           }
 
-          const searchText = buildSearchText(entry);
-          const entryWithSize = withFileSize(entry, entryPath);
-          upsertEntry(db, entryPath, entryWithSize, searchText, provenance, contentHash);
+          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash);
           if (entry.quality === "generated") entriesToEnrich.push(entry);
         }
 
@@ -1777,7 +1774,7 @@ async function enhanceDirsWithLlm(
           for (const entry of enhanced) {
             const entryPath = entryPathOf(entry);
             const provenance = indexedProvenanceForFile(db, entryPath);
-            upsertEntry(db, entryPath, withFileSize(entry, entryPath), buildSearchText(entry), provenance);
+            upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance);
           }
         })();
         completedDirs++;

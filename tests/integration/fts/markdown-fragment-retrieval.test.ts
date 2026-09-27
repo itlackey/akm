@@ -12,7 +12,6 @@ import {
   projectMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../../src/indexer/passes/metadata";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -36,7 +35,6 @@ function put(db: Database, name: string, body: string, description = "ordinary m
     db,
     `/fixture/knowledge/${name}.md`,
     entry,
-    buildSearchText(entry),
     deriveEntryProvenance({ bundleId: "fixture", componentId: "fixture", adapterId: "akm" }, "knowledge", name),
   );
 }
@@ -91,7 +89,6 @@ describe("Markdown fragment publication (#937)", () => {
         db,
         "/fixture/knowledge/transition.md",
         cleared,
-        buildSearchText(cleared),
         deriveEntryProvenance(
           { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
           "knowledge",
@@ -107,7 +104,6 @@ describe("Markdown fragment publication (#937)", () => {
         db,
         "/fixture/scripts/plain-script.ts",
         script,
-        buildSearchText(script),
         deriveEntryProvenance(
           { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
           "script",
@@ -139,7 +135,7 @@ describe("Markdown fragment publication (#937)", () => {
       );
       for (let run = 0; run < 2; run++) {
         setMarkdownFragmentContent(entry, projectMarkdownFragmentContent(body));
-        upsertEntry(db, "/fixture/knowledge/structured.md", entry, buildSearchText(entry), provenance);
+        upsertEntry(db, "/fixture/knowledge/structured.md", entry, provenance);
         expect(searchFts(db, "deterministicmarker", 5).map((hit) => hit.itemRef)).toEqual([
           "fixture//knowledge/structured",
         ]);

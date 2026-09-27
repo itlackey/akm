@@ -13,6 +13,8 @@
  * and needed its own repair machinery to stay in step with this table.
  */
 
+import type { IndexDocument } from "../../indexer/passes/metadata";
+import { buildSearchText } from "../../indexer/search/search-fields";
 import type { EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
 import type { DbVecResult } from "./index-entry-types";
@@ -164,50 +166,60 @@ export function getNeighborsByEntryId(db: Database, id: number, k: number): DbVe
   return searchVec(db, new Float32Array(row.embedding.slice().buffer), k);
 }
 
+/** One entry the embedding pass has to (re)embed, with the text its vector is embedded from. */
+export interface EntryForEmbedding {
+  id: number;
+  searchText: string;
+  itemRef: string;
+  filePath: string;
+}
+
 /**
- * Return all entries that do not yet have an embedding row for `model` (any
- * row when no model is given). This is the embedding pass's cursor: a row
- * generated under another model counts as missing and is replaced when the
- * entry is re-embedded, so a model change re-embeds incrementally and an
- * interrupted pass resumes where it stopped.
+ * Every entry that has no embedding row for `model` (any row when no model is
+ * given), with its embedding input derived from the stored document
+ * (`buildSearchText`, whose hash `upsertEntry` keeps in `entries.embed_hash`).
+ * This is the embedding pass's cursor: a row generated under another model
+ * counts as missing and is replaced when the entry is re-embedded, so a model
+ * change re-embeds incrementally and an interrupted pass resumes where it
+ * stopped. A row whose `document_json` does not parse has no text to embed
+ * and is left out.
  */
 export function getAllEntriesForEmbedding(
   db: Database,
   entryIds?: readonly number[],
   model?: string,
-): Array<{ id: number; searchText: string; itemRef: string; filePath: string }> {
-  const select = `
-      SELECT e.id, e.search_text AS searchText, e.item_ref AS itemRef, e.file_path AS filePath FROM entries e
-    `;
+): EntryForEmbedding[] {
+  const select =
+    "SELECT e.id, e.document_json AS documentJson, e.item_ref AS itemRef, e.file_path AS filePath FROM entries e";
   const current = modelPredicate(db, model, "b");
   const missing = `NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id AND ${current.sql})`;
+  type Row = { id: number; documentJson: string; itemRef: string; filePath: string };
+  const rows: Row[] = [];
   if (entryIds === undefined) {
-    return db.prepare(`${select} WHERE ${missing} ORDER BY e.id`).all(...current.params) as Array<{
-      id: number;
-      searchText: string;
-      itemRef: string;
-      filePath: string;
-    }>;
+    rows.push(...(db.prepare(`${select} WHERE ${missing} ORDER BY e.id`).all(...current.params) as Row[]));
+  } else {
+    const targets = [...new Set(entryIds)].sort((left, right) => left - right);
+    for (let offset = 0; offset < targets.length; offset += SQLITE_CHUNK_SIZE) {
+      const chunk = targets.slice(offset, offset + SQLITE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      rows.push(
+        ...(db
+          .prepare(`${select} WHERE e.id IN (${placeholders}) AND ${missing} ORDER BY e.id`)
+          .all(...chunk, ...current.params) as Row[]),
+      );
+    }
   }
-
-  const targets = [...new Set(entryIds)].sort((left, right) => left - right);
-  const rows: Array<{ id: number; searchText: string; itemRef: string; filePath: string }> = [];
-  for (let offset = 0; offset < targets.length; offset += SQLITE_CHUNK_SIZE) {
-    const chunk = targets.slice(offset, offset + SQLITE_CHUNK_SIZE);
-    if (chunk.length === 0) continue;
-    const placeholders = chunk.map(() => "?").join(",");
-    rows.push(
-      ...(db
-        .prepare(`${select} WHERE e.id IN (${placeholders}) AND ${missing} ORDER BY e.id`)
-        .all(...chunk, ...current.params) as Array<{
-        id: number;
-        searchText: string;
-        itemRef: string;
-        filePath: string;
-      }>),
-    );
+  const entries: EntryForEmbedding[] = [];
+  for (const { documentJson, ...row } of rows) {
+    let document: IndexDocument;
+    try {
+      document = JSON.parse(documentJson) as IndexDocument;
+    } catch {
+      continue;
+    }
+    entries.push({ ...row, searchText: buildSearchText(document) });
   }
-  return rows;
+  return entries;
 }
 
 /** Stored embedding rows — for `model` when given, otherwise every row. */

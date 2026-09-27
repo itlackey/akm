@@ -68,7 +68,7 @@ function seedEntryWithUtility(absPath: string, utility: number | null): number {
     entry.type,
     name,
   );
-  const id = upsertEntry(db, absPath, entry, name, provenance);
+  const id = upsertEntry(db, absPath, entry, provenance);
   if (utility != null) {
     db.prepare(
       `INSERT INTO utility_scores (entry_id, utility) VALUES (?, ?)

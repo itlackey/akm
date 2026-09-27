@@ -152,8 +152,8 @@ Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding mod
 | `file_path` | TEXT NOT NULL | Absolute path to the asset file |
 | `content_hash` | TEXT | Content hash for change detection |
 | `document_json` | TEXT NOT NULL | Sole stored `IndexDocument` projection |
-| `search_text` | TEXT NOT NULL | Pre-built BM25 search string |
 | `derived_from` | TEXT | Set on entries derived from another asset (e.g. `.derived` memories) |
+| `embed_hash` | TEXT | SHA-256 of the text the entry's vector is embedded from (`buildSearchText`, derived from `document_json` when embedding); a change deletes the vector. Layout 24 and earlier stored the text itself as `search_text` |
 
 Indexes: the UNIQUE `item_ref` constraint plus `idx_entries_bundle` on
 `bundle_id`, `idx_entries_type` on `type`, `idx_entries_file_path` on
@@ -204,8 +204,8 @@ earlier also indexed each fragment in a second FTS5 table,
 | `model` | TEXT | Embedding model fingerprint the vector was generated under; NULL (rows from before layout 24 that no pass had labelled) is served as the current model |
 
 The embedding pass's cursor: an entry is (re-)embedded when it has no row for
-the configured model. `upsertEntry` deletes the row when an entry's search
-text changes. Readers serve only rows of the current model: `searchVec`
+the configured model. `upsertEntry` deletes the row when an entry's
+`embed_hash` changes. Readers serve only rows of the current model: `searchVec`
 scores every one of them by cosine similarity in JavaScript (about 70 ms for
 24k 1,024-dimension vectors).
 

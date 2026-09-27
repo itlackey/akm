@@ -13,7 +13,6 @@ import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { searchLocal } from "../../src/indexer/search/db-search";
 import { RRF_K } from "../../src/indexer/search/ranking";
-import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -51,7 +50,6 @@ function put(name: string, fields: Partial<IndexDocument>, vector: number[], fil
     db,
     filePath ?? `/fixture/knowledge/${name}.md`,
     entry,
-    buildSearchText(entry),
     deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "knowledge", name),
   );
   upsertEmbedding(db, id, vector);

@@ -20,7 +20,6 @@ import { listRelatedPathsForFile } from "../../../src/indexer/graph/graph-relate
 import type { GraphFile } from "../../../src/indexer/graph/graph-types";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import {
   closeDatabase,
   openExistingDatabase,
@@ -186,7 +185,6 @@ function buildFixture(): void {
       },
     ];
     for (const e of entries) {
-      const searchText = buildSearchText(e.entry);
       // Seed the durable bundle-adapter identity (item_ref/concept_id/bundle_id)
       // that the related-ref reader resolves from. The primary-stash sentinel
       // bundle displays the SHORT conceptId.
@@ -195,7 +193,7 @@ function buildFixture(): void {
         e.entry.type,
         e.entry.name,
       );
-      upsertEntry(db, e.filePath, e.entry, searchText, provenance);
+      upsertEntry(db, e.filePath, e.entry, provenance);
     }
     rebuildFts(db);
     setMeta(db, "stashDir", stashDir);
@@ -369,7 +367,6 @@ describe("listRelatedPathsForFile (SQL-backed)", () => {
         db,
         targetPath,
         target,
-        buildSearchText(target),
         deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, kType, "target"),
       );
       const presentationName = "presentation-neighbor";
@@ -378,7 +375,6 @@ describe("listRelatedPathsForFile (SQL-backed)", () => {
         db,
         neighborPath,
         neighbor,
-        buildSearchText(neighbor),
         // Canonical durable identity diverges from the document name.
         {
           itemRef: "team-kb//knowledge/canonical-neighbor",

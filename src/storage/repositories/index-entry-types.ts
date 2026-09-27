@@ -35,7 +35,6 @@ export interface DbIndexedEntry {
   id: number;
   filePath: string;
   entry: IndexDocument;
-  searchText: string;
   /** Canonical durable ref from `entries.item_ref`. */
   itemRef: string;
   /**

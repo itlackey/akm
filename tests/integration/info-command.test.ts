@@ -136,13 +136,7 @@ describe("assembleInfo", () => {
     const dbPath = path.join(tmpDir("db"), "test.db");
     const db = openIndexDatabase(dbPath);
     const entry = makeEntry("skill", "test-skill");
-    upsertEntry(
-      db,
-      path.join(stashDir, "skills", "test-skill"),
-      entry,
-      "test skill",
-      infoEntryProvenance("skill", "test-skill"),
-    );
+    upsertEntry(db, path.join(stashDir, "skills", "test-skill"), entry, infoEntryProvenance("skill", "test-skill"));
     rebuildFts(db);
     setMeta(db, "builtAt", "2026-03-17T00:00:00Z");
     closeDatabase(db);
@@ -164,21 +158,18 @@ describe("assembleInfo", () => {
       db,
       path.join(stashDir, "skills", "test-skill"),
       makeEntry("skill", "test-skill"),
-      "test skill",
       infoEntryProvenance("skill", "test-skill"),
     );
     upsertEntry(
       db,
       path.join(stashDir, "skills", "test-skill-2"),
       makeEntry("skill", "test-skill-2"),
-      "test skill 2",
       infoEntryProvenance("skill", "test-skill-2"),
     );
     upsertEntry(
       db,
       path.join(stashDir, "knowledge", "test-doc"),
       makeEntry("knowledge", "test-doc"),
-      "test doc",
       infoEntryProvenance("knowledge", "test-doc"),
     );
     rebuildFts(db);
@@ -269,7 +260,6 @@ describe("assembleInfo", () => {
       db,
       path.join(stashDir, "skills", "embed-skill"),
       entry,
-      "embed skill",
       infoEntryProvenance("skill", "embed-skill"),
     );
     upsertEmbedding(db, id, [1, 0, 0, 0]);

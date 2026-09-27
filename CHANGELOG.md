@@ -91,6 +91,18 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   selector from its stored safe Markdown.
   (`src/storage/repositories/index-fts-repository.ts`,
   `src/storage/repositories/index-schema.ts`.)
+- **The embedding input is derived, not stored (index layout 25).**
+  `entries.search_text` held a third copy of every body (74 MB on a
+  24k-entry index) only to feed the embedder and to notice when an entry's
+  vector went stale. The embedding pass now derives the text from
+  `document_json` when it embeds an entry, and `entries.embed_hash` keeps its
+  SHA-256: an upsert whose hash differs deletes the vector, exactly as a
+  changed `search_text` did. The first writable open hashes each stored
+  `search_text` before dropping the column, so every vector stays attached
+  until its entry's text really changes, and nothing is re-embedded by the
+  upgrade. (`src/storage/repositories/index-entries-repository.ts`,
+  `src/storage/repositories/index-vec-repository.ts`,
+  `src/storage/repositories/index-schema.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,

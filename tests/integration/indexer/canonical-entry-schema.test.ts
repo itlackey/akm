@@ -24,8 +24,8 @@ const CURRENT_ENTRY_COLUMNS: string[] = [
   "file_path",
   "content_hash",
   "document_json",
-  "search_text",
   "derived_from",
+  "embed_hash",
 ];
 
 function withTempIndex(run: (dbPath: string) => void): void {
@@ -162,7 +162,7 @@ describe("canonical derived-index entry schema", () => {
         entry.type,
         entry.name,
       );
-      const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, "kept across the upgrade", provenance);
+      const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, provenance);
       // Layout 21: content-bearing FTS (here left stale and empty), a dirty
       // queue, and no fragment tables.
       legacy.exec(`

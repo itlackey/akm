@@ -91,7 +91,6 @@ function insertTestEntry(
     dirPath?: string;
     filePath?: string;
     description?: string;
-    searchText?: string;
     type?: IndexDocument["type"];
   },
 ): number {
@@ -103,13 +102,7 @@ function insertTestEntry(
     key,
   );
   const dirPath = opts?.dirPath ?? "/test/dir";
-  return upsertEntry(
-    db,
-    opts?.filePath ?? path.join(dirPath, `${key}.ts`),
-    entry,
-    opts?.searchText ?? `${key} ${entry.description}`,
-    provenance,
-  );
+  return upsertEntry(db, opts?.filePath ?? path.join(dirPath, `${key}.ts`), entry, provenance);
 }
 
 // ── Section 1.1: Schema ────────────────────────────────────────────────────
@@ -197,10 +190,10 @@ describe("Entry CRUD", () => {
       const name = "my-tool";
       const prov = deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, type, name);
       const entry = makeEntry({ name, type, description: "original" });
-      upsertEntry(db, "/s/dir/my-tool.ts", entry, "my-tool original", prov);
+      upsertEntry(db, "/s/dir/my-tool.ts", entry, prov);
       // Re-upsert the SAME item_ref (same identity) with an updated payload.
       const entry2 = makeEntry({ name, type, description: "updated" });
-      upsertEntry(db, "/s/dir/my-tool.ts", entry2, "my-tool updated", prov);
+      upsertEntry(db, "/s/dir/my-tool.ts", entry2, prov);
       expect(getEntryCount(db)).toBe(1);
       const rows = db.prepare("SELECT item_ref, document_json FROM entries").all() as Array<{
         item_ref: string;
@@ -235,7 +228,6 @@ describe("Entry CRUD", () => {
         db,
         "/p/dir/my-tool.ts",
         makeEntry({ name, type, description: "primary" }),
-        "my-tool primary",
         primaryProv,
       );
       const secondaryProv = deriveEntryProvenance(
@@ -247,7 +239,6 @@ describe("Entry CRUD", () => {
         db,
         "/z/dir/my-tool.ts",
         makeEntry({ name, type, description: "secondary" }),
-        "my-tool secondary",
         secondaryProv,
       );
       expect(getEntryCount(db)).toBe(2);
@@ -429,11 +420,9 @@ describe("FTS search", () => {
     try {
       insertTestEntry(db, "deploy-tool", {
         description: "Deploy applications to production servers",
-        searchText: "deploy deploy deploy applications production servers deployment",
       });
       insertTestEntry(db, "infra-tool", {
         description: "Cloud infrastructure for deploy pipelines",
-        searchText: "cloud infrastructure management scaling networking deploy pipelines automation",
       });
       rebuildFts(db);
 
@@ -454,12 +443,10 @@ describe("FTS search", () => {
       insertTestEntry(db, "build-script", {
         type: "script",
         description: "Build the project",
-        searchText: "build project compilation",
       });
       insertTestEntry(db, "build-skill", {
         type: "skill",
         description: "Build pipeline skill",
-        searchText: "build pipeline skill compilation",
       });
       rebuildFts(db);
 
@@ -479,7 +466,6 @@ describe("FTS search", () => {
     try {
       insertTestEntry(db, "hello-tool", {
         description: "hello world 123 greeting",
-        searchText: "hello world 123 greeting",
       });
       rebuildFts(db);
 
@@ -496,7 +482,7 @@ describe("FTS search", () => {
   test("searchFts returns empty for garbage query", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "some-tool", { searchText: "some useful tool" });
+      insertTestEntry(db, "some-tool");
       rebuildFts(db);
 
       const results = searchFts(db, "!@#$%", 10);
@@ -512,7 +498,7 @@ describe("FTS search", () => {
   test("query that becomes empty after sanitization returns no results", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "target", { searchText: "some useful content" });
+      insertTestEntry(db, "target");
       rebuildFts(db);
 
       // "! @" contains only non-alphanumeric chars; after sanitization all
@@ -527,7 +513,7 @@ describe("FTS search", () => {
   test("query with only 1-character tokens returns no results when content has no matching single-char terms", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
+      insertTestEntry(db, "abc-tool");
       rebuildFts(db);
 
       // "a b c" — "a" is a stopword; "b" and "c" reach FTS5 but don't match
@@ -542,8 +528,8 @@ describe("FTS search", () => {
   test("FTS5 syntax injection is neutralized", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "foo-tool", { description: "foo bar baz", searchText: "foo bar baz" });
-      insertTestEntry(db, "bar-tool", { description: "bar qux quux", searchText: "bar qux quux" });
+      insertTestEntry(db, "foo-tool", { description: "foo bar baz" });
+      insertTestEntry(db, "bar-tool", { description: "bar qux quux" });
       rebuildFts(db);
 
       // "NEAR(foo, bar)" is raw FTS5 syntax. Every token is quoted, so NEAR
@@ -561,11 +547,9 @@ describe("FTS search", () => {
     try {
       insertTestEntry(db, "deploy-prod", {
         description: "deploy application production servers",
-        searchText: "deploy application production servers",
       });
       insertTestEntry(db, "test-runner", {
         description: "test runner unit integration",
-        searchText: "test runner unit integration",
       });
       rebuildFts(db);
 
@@ -579,9 +563,9 @@ describe("FTS search", () => {
   test("rebuildFts synchronizes FTS with entries table", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "alpha", { description: "alpha functionality", searchText: "alpha functionality" });
-      insertTestEntry(db, "beta", { description: "beta functionality", searchText: "beta functionality" });
-      insertTestEntry(db, "gamma", { description: "gamma functionality", searchText: "gamma functionality" });
+      insertTestEntry(db, "alpha", { description: "alpha functionality" });
+      insertTestEntry(db, "beta", { description: "beta functionality" });
+      insertTestEntry(db, "gamma", { description: "gamma functionality" });
 
       rebuildFts(db);
 
@@ -641,8 +625,8 @@ describe("Vector / Embedding integration", () => {
     const db = openIndexDatabase(dbPath);
     try {
       // Insert two entries with distinct embeddings
-      const id1 = insertTestEntry(db, "vec-tool-1", { searchText: "deployment" });
-      const id2 = insertTestEntry(db, "vec-tool-2", { searchText: "testing" });
+      const id1 = insertTestEntry(db, "vec-tool-1");
+      const id2 = insertTestEntry(db, "vec-tool-2");
 
       // Embedding vectors: tool-1 points "north", tool-2 points "east"
       upsertEmbedding(db, id1, [1, 0, 0, 0]);
@@ -663,7 +647,7 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      const id = insertTestEntry(db, "vec-update", { searchText: "update test" });
+      const id = insertTestEntry(db, "vec-update");
 
       upsertEmbedding(db, id, [1, 0, 0, 0]);
       let results = searchVec(db, [1, 0, 0, 0], 10);
@@ -687,13 +671,21 @@ describe("Vector / Embedding integration", () => {
   test("upsertEntry invalidates vectors only when the embedding input changes", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      const id = insertTestEntry(db, "vec-input", { searchText: "same projection" });
+      const id = insertTestEntry(db, "vec-input", { description: "same projection" });
       upsertEmbedding(db, id, [1, 0, 0, 0]);
+      const storedHash = () =>
+        (db.prepare("SELECT embed_hash FROM entries WHERE id = ?").get(id) as { embed_hash: string }).embed_hash;
+      const firstHash = storedHash();
 
-      expect(insertTestEntry(db, "vec-input", { searchText: "same projection" })).toBe(id);
+      // Same text, another file path: the embedding input is unchanged.
+      expect(
+        insertTestEntry(db, "vec-input", { description: "same projection", filePath: "/test/moved/vec-input.ts" }),
+      ).toBe(id);
+      expect(storedHash()).toBe(firstHash);
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings WHERE id = ?").get(id)).toEqual({ count: 1 });
 
-      expect(insertTestEntry(db, "vec-input", { searchText: "changed projection" })).toBe(id);
+      expect(insertTestEntry(db, "vec-input", { description: "changed projection" })).toBe(id);
+      expect(storedHash()).not.toBe(firstHash);
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings WHERE id = ?").get(id)).toEqual({ count: 0 });
     } finally {
       closeDatabase(db);
@@ -706,7 +698,7 @@ describe("Vector / Embedding integration", () => {
     try {
       // Insert 5 entries with embeddings
       for (let i = 0; i < 5; i++) {
-        const id = insertTestEntry(db, `vec-k-${i}`, { searchText: `entry ${i}` });
+        const id = insertTestEntry(db, `vec-k-${i}`);
         const vec = [0, 0, 0, 0];
         vec[i % 4] = 1;
         upsertEmbedding(db, id, vec);
@@ -722,7 +714,7 @@ describe("Vector / Embedding integration", () => {
   test("a stored vector of another width never matches a query", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      const id = insertTestEntry(db, "dim-change", { searchText: "dimension test" });
+      const id = insertTestEntry(db, "dim-change");
       upsertEmbedding(db, id, [1, 0, 0, 0]);
       expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
       expect(searchVec(db, [1, 0, 0, 0, 0, 0, 0, 0], 10)).toEqual([]);
@@ -735,7 +727,7 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath();
 
     let db = openIndexDatabase(dbPath);
-    const id = insertTestEntry(db, "dim-stable", { searchText: "dimension stable" });
+    const id = insertTestEntry(db, "dim-stable");
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     setMeta(db, "hasEmbeddings", "1");
     closeDatabase(db);
@@ -769,24 +761,24 @@ describe("entry-owned FTS projection", () => {
     return row?.cnt ?? 0;
   }
 
-  function upsertFtsEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
+  function upsertFtsEntry(db: Database, key: string, entry: IndexDocument): number {
     const provenance = deriveEntryProvenance(
       { bundleId: "stash", componentId: "stash", adapterId: "akm" },
       entry.type,
       key,
     );
-    return upsertEntry(db, `/d/${key}.md`, entry, searchText, provenance);
+    return upsertEntry(db, `/d/${key}.md`, entry, provenance);
   }
 
   test("upsertEntry immediately inserts and replaces its FTS row", () => {
     const db = openIndexDatabase(tmpDbPath("entry-fts"));
     try {
-      upsertFtsEntry(db, "k1", makeEntry("alpha", "first"), "alpha first");
-      upsertFtsEntry(db, "k2", makeEntry("bravo", "legacyuniquemarker"), "bravo legacyuniquemarker");
-      upsertFtsEntry(db, "k3", makeEntry("charlie", "third"), "charlie third");
+      upsertFtsEntry(db, "k1", makeEntry("alpha", "first"));
+      upsertFtsEntry(db, "k2", makeEntry("bravo", "legacyuniquemarker"));
+      upsertFtsEntry(db, "k3", makeEntry("charlie", "third"));
       expect(ftsCount(db)).toBe(3);
 
-      upsertFtsEntry(db, "k2", makeEntry("bravo", "currentuniquemarker"), "bravo currentuniquemarker");
+      upsertFtsEntry(db, "k2", makeEntry("bravo", "currentuniquemarker"));
       expect(ftsCount(db)).toBe(3);
 
       const updatedHits = db
@@ -805,7 +797,7 @@ describe("entry-owned FTS projection", () => {
   test("rebuildFts remains an explicit full recovery operation", () => {
     const db = openIndexDatabase(tmpDbPath("entry-fts-recovery"));
     try {
-      upsertFtsEntry(db, "k1", makeEntry("alpha"), "alpha");
+      upsertFtsEntry(db, "k1", makeEntry("alpha"));
       db.exec("DELETE FROM entries_fts");
       expect(ftsCount(db)).toBe(0);
       rebuildFts(db);
@@ -828,7 +820,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById)", 
     const entry = { description: `Description for ${key}`, type, name: key } as unknown as IndexDocument;
     const bundleId = path.basename(stashDir) || "root";
     const provenance = deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, key);
-    return upsertEntry(db, filePath, entry, key, provenance);
+    return upsertEntry(db, filePath, entry, provenance);
   }
 
   test("getEntryIdByFilePath resolves the row id by exact file_path, undefined when no match", () => {

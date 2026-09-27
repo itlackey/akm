@@ -18,6 +18,7 @@
 import { createRequire } from "node:module";
 import { ConfigError } from "../../core/errors";
 import { warn, warnOnce } from "../../core/warn";
+import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
@@ -220,6 +221,31 @@ function dropVecMirror(db: Database): void {
 }
 
 /**
+ * Layout 25 keeps a hash of each entry's embedding input (`embed_hash`)
+ * instead of the text (`search_text`, layout 24 and earlier); the text is
+ * derived from `document_json` when the entry is embedded. The hash is taken
+ * from the stored text, so every vector stays valid until its entry's text
+ * changes. One transaction: a crash leaves `search_text` for the next
+ * writable open.
+ */
+function replaceSearchTextWithHash(db: Database): void {
+  if (!tableHasColumn(db, "entries", "search_text")) return;
+  db.transaction(() => {
+    ensureColumn(db, "entries", "embed_hash", "TEXT");
+    const page = db.prepare("SELECT id, search_text FROM entries WHERE id > ? ORDER BY id LIMIT 500");
+    const update = db.prepare("UPDATE entries SET embed_hash = ? WHERE id = ?");
+    let afterId = -1;
+    for (;;) {
+      const rows = page.all(afterId) as Array<{ id: number; search_text: string }>;
+      if (rows.length === 0) break;
+      afterId = rows[rows.length - 1]!.id;
+      for (const row of rows) update.run(sha256Hex(row.search_text), row.id);
+    }
+    db.exec("ALTER TABLE entries DROP COLUMN search_text");
+  })();
+}
+
+/**
  * Bring `entries_fts` to the contentless layout, rebuilding it from `entries`
  * when it is missing or still carries the content-bearing layout older
  * releases wrote (the one-time v23→v24 migration). One transaction: a crash
@@ -278,6 +304,7 @@ export function ensureSchema(db: Database): void {
 
   const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
+  replaceSearchTextWithHash(db);
 
   // Retired derived tables: the workflow IR cache, the pre-v22 FTS dirty
   // queue, the #955 embedding salvage staging table (embeddings now carry

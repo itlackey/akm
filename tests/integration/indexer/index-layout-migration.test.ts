@@ -3,13 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The one-time index.db migration from layout 23 (0.9.14–0.9.17: FTS5 tables
- * carrying their own copy of every indexed field, `embeddings` without a
- * per-row model) to layout 24 (contentless FTS over `entries` /
- * `entry_fragments`, `embeddings.model`).
+ * The in-place index.db migrations to the current layout:
  *
- * The fixture is built with the layout-23 DDL frozen from git history
- * (`index-entry-schema.ts` / `index-schema.ts` before this change), then opened
+ * - from layout 23 (0.9.14–0.9.17: FTS5 tables carrying their own copy of
+ *   every indexed field, `embeddings` without a per-row model);
+ * - from layout 24 (contentless FTS, the sqlite-vec mirror `entries_vec`, the
+ *   fragment FTS table, and the embedding input stored as `search_text`) to
+ *   layout 25 (vectors only in `embeddings`, no fragment FTS, `embed_hash`).
+ *
+ * Each fixture is built with its layout's DDL frozen from git history
+ * (`index-entry-schema.ts` / `index-schema.ts` before the change), then opened
  * with the current code: read-only first (served as-is, no refusal), then
  * writable (migrated in place). Nothing derived from an LLM or an embedding
  * provider may be lost on the way.
@@ -18,7 +21,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import path from "node:path";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
+import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
+import { _setEmbedderForTests } from "../../../src/llm/embedder";
+import { sha256Hex } from "../../../src/runtime";
 import { type Database, openDatabase } from "../../../src/storage/database";
 import {
   closeDatabase,
@@ -26,11 +35,13 @@ import {
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { overrideSeam } from "../../_helpers/seams";
 
 const LAYOUT_23_DDL = `
   CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -235,14 +246,20 @@ describe("index.db layout 23 → 24", () => {
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
       expect(warnings.filter((line) => line.includes("Rebuilding the full-text index for 3 entries"))).toHaveLength(1);
 
-      // Entries intact, ids unchanged.
-      const entries = db.prepare("SELECT id, item_ref FROM entries ORDER BY id").all() as Array<{
+      // Entries intact, ids unchanged; search_text replaced by the hash of the stored text.
+      const entries = db.prepare("SELECT id, item_ref, embed_hash FROM entries ORDER BY id").all() as Array<{
         id: number;
         item_ref: string;
+        embed_hash: string;
       }>;
-      expect(entries.map((row) => [row.id, row.item_ref])).toEqual(
-        ENTRIES.map((fixture, index) => [index + 1, `stash//knowledge/${fixture.name}`]),
+      expect(entries.map((row) => [row.id, row.item_ref, row.embed_hash])).toEqual(
+        ENTRIES.map((fixture, index) => [
+          index + 1,
+          `stash//knowledge/${fixture.name}`,
+          sha256Hex(`${fixture.name.replace(/-/g, " ")} ${fixture.description}`),
+        ]),
       );
+      expect(entryColumns(db)).not.toContain("search_text");
 
       // Embeddings kept byte-for-byte and labelled with the model they were generated under.
       const vectors = db.prepare("SELECT id, embedding, model FROM embeddings ORDER BY id").all() as Array<{
@@ -290,6 +307,96 @@ describe("index.db layout 23 → 24", () => {
   });
 });
 
+const LAYOUT_24_DDL = `
+  CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE entries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_ref      TEXT NOT NULL UNIQUE,
+    bundle_id     TEXT NOT NULL,
+    component_id  TEXT NOT NULL,
+    concept_id    TEXT NOT NULL,
+    adapter_id    TEXT NOT NULL,
+    type          TEXT NOT NULL,
+    file_path     TEXT NOT NULL,
+    content_hash  TEXT,
+    document_json TEXT NOT NULL,
+    search_text   TEXT NOT NULL,
+    derived_from  TEXT
+  );
+  CREATE INDEX idx_entries_bundle ON entries(bundle_id);
+  CREATE INDEX idx_entries_type ON entries(type);
+  CREATE INDEX idx_entries_file_path ON entries(file_path);
+  CREATE INDEX idx_entries_derived_from ON entries(derived_from);
+  CREATE TABLE entry_fragments (
+    entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    safe_markdown TEXT NOT NULL
+  );
+  CREATE VIRTUAL TABLE entries_fts USING fts5(
+    entry_id UNINDEXED, name, description, tags, hints, content,
+    content='', contentless_delete=1, tokenize='porter unicode61'
+  );
+  CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
+    entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content,
+    content='', contentless_delete=1, tokenize='porter unicode61'
+  );
+  CREATE TABLE embeddings (
+    id INTEGER PRIMARY KEY, embedding BLOB NOT NULL, model TEXT, FOREIGN KEY (id) REFERENCES entries(id)
+  );
+  CREATE VIRTUAL TABLE entries_vec USING vec0(id INTEGER PRIMARY KEY, embedding FLOAT[3]);
+`;
+
+function fixtureDocument(fixture: FixtureEntry) {
+  return { name: fixture.name, type: "knowledge" as const, description: fixture.description };
+}
+
+/** Write a layout-24 index the way this branch's parent left it: sqlite-vec mirror, fragment FTS, `search_text`. */
+function buildLayout24Index(dbPath: string, stashRoot: string): void {
+  const db = openDatabase(dbPath);
+  try {
+    createRequire(import.meta.url)("sqlite-vec").load(db);
+    db.exec(LAYOUT_24_DDL);
+    const meta = db.prepare("INSERT INTO index_meta (key, value) VALUES (?, ?)");
+    meta.run("version", "24");
+    meta.run("embeddingFingerprint", FINGERPRINT);
+    meta.run("embeddingDim", "3");
+    meta.run("vecFastPathReady", "1");
+    meta.run("hasEmbeddings", "1");
+    ENTRIES.forEach((fixture, index) => {
+      const id = index + 1;
+      const document = fixtureDocument(fixture);
+      db.prepare(
+        "INSERT INTO entries (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, content_hash, document_json, search_text) " +
+          "VALUES (?, ?, 'stash', 'stash', ?, 'akm', 'knowledge', ?, ?, ?, ?)",
+      ).run(
+        id,
+        `stash//knowledge/${fixture.name}`,
+        `knowledge/${fixture.name}`,
+        path.join(stashRoot, "knowledge", `${fixture.name}.md`),
+        `hash-${id}`,
+        JSON.stringify(document),
+        buildSearchText(document),
+      );
+      db.prepare(
+        "INSERT INTO entries_fts (rowid, name, description, tags, hints, content) VALUES (?, ?, ?, '', '', '')",
+      ).run(id, fixture.name.replace(/-/g, " "), fixture.description);
+      db.prepare("INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?)").run(id, fixture.body);
+      db.prepare("INSERT INTO entry_fragments_fts (rowid, content) VALUES (?, ?)").run(
+        id * FRAGMENT_ROWID_SPAN,
+        fixture.body.toLowerCase(),
+      );
+      const vector = Buffer.from(new Float32Array(fixture.vector).buffer);
+      db.prepare("INSERT INTO embeddings (id, embedding, model) VALUES (?, ?, ?)").run(id, vector, FINGERPRINT);
+      db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(id, vector);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function entryColumns(db: Database): string[] {
+  return (db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((row) => row.name);
+}
+
 describe("index.db layout 24 → 25", () => {
   let storage: IsolatedAkmStorage;
   let dbPath = "";
@@ -297,62 +404,67 @@ describe("index.db layout 24 → 25", () => {
   beforeEach(() => {
     storage = withIsolatedAkmStorage();
     dbPath = path.join(storage.root, "layout-24.db");
-    // A current index, then the sqlite-vec mirror and meta keys layout 24 kept beside it.
-    closeDatabase(openIndexDatabase(dbPath));
-    const db = openDatabase(dbPath);
-    try {
-      createRequire(import.meta.url)("sqlite-vec").load(db);
-      db.exec("CREATE VIRTUAL TABLE entries_vec USING vec0(id INTEGER PRIMARY KEY, embedding FLOAT[3])");
-      db.exec(`CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
-        entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content,
-        content='', contentless_delete=1, tokenize='porter unicode61'
-      )`);
-      const meta = db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)");
-      meta.run("version", "24");
-      meta.run("embeddingFingerprint", FINGERPRINT);
-      meta.run("embeddingDim", "3");
-      meta.run("vecFastPathReady", "1");
-      ENTRIES.forEach((fixture, index) => {
-        const id = index + 1;
-        db.prepare(
-          "INSERT INTO entries (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, document_json, search_text) " +
-            "VALUES (?, ?, 'stash', 'stash', ?, 'akm', 'knowledge', ?, ?, '')",
-        ).run(
-          id,
-          `stash//knowledge/${fixture.name}`,
-          `knowledge/${fixture.name}`,
-          path.join(storage.stashDir, "knowledge", `${fixture.name}.md`),
-          JSON.stringify({ name: fixture.name, type: "knowledge", description: fixture.description }),
-        );
-        const vector = Buffer.from(new Float32Array(fixture.vector).buffer);
-        db.prepare("INSERT INTO embeddings (id, embedding, model) VALUES (?, ?, ?)").run(id, vector, FINGERPRINT);
-        db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(id, vector);
-        db.prepare("INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?)").run(id, fixture.body);
-        db.prepare("INSERT INTO entry_fragments_fts (rowid, content) VALUES (?, ?)").run(
-          id * FRAGMENT_ROWID_SPAN,
-          fixture.body.toLowerCase(),
-        );
-      });
-    } finally {
-      db.close();
-    }
+    buildLayout24Index(dbPath, storage.stashDir);
   });
 
   afterEach(() => {
     storage.cleanup();
   });
 
-  test("the writable open drops the sqlite-vec mirror, its meta keys and the fragment FTS table", () => {
+  test("an older index opens read-only as-is and answers keyword and vector queries", () => {
+    const db = openReadonlyExistingDatabase(dbPath);
+    if (!db) throw new Error("expected a handle");
+    try {
+      expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
+      expect(searchVec(db, [0, 0, 1], 1)[0]?.id).toBe(3);
+      expect(getMeta(db, "version")).toBe("24");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("the writable open migrates in place: mirror, fragment FTS and search_text go; vectors stay valid", async () => {
     const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
       expect(tableNames(db).filter((name) => name.startsWith("entries_vec"))).toEqual([]);
       expect(tableNames(db).filter((name) => name.startsWith("entry_fragments_fts"))).toEqual([]);
-      expect(count(db, "entry_fragments")).toBe(3);
       expect(getMeta(db, "embeddingDim")).toBeUndefined();
       expect(getMeta(db, "vecFastPathReady")).toBeUndefined();
+      expect(count(db, "entry_fragments")).toBe(3);
+
+      // search_text is replaced by the hash of the text each vector was embedded from.
+      expect(entryColumns(db)).not.toContain("search_text");
+      const hashes = db.prepare("SELECT embed_hash FROM entries ORDER BY id").all() as Array<{ embed_hash: string }>;
+      expect(hashes.map((row) => row.embed_hash)).toEqual(
+        ENTRIES.map((fixture) => sha256Hex(buildSearchText(fixtureDocument(fixture)))),
+      );
+
+      // Vectors are kept, served, and still current: no provider call, and
+      // re-persisting an unchanged entry keeps its vector.
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
       expect(searchVec(db, [0, 0, 1], 1)[0]?.id).toBe(3);
+      expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
+      overrideSeam(_setEmbedderForTests, {
+        embedBatch: async () => {
+          throw new Error("the provider must not be called — every stored vector is still current");
+        },
+      });
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        embedding: { endpoint: "http://localhost:1", model: "embed-model", dimension: 3 },
+      };
+      const messages: string[] = [];
+      expect((await generateEmbeddingsForDb(db, config, (event) => messages.push(event.message))).success).toBe(true);
+      expect(messages).toContain("Embeddings already up to date.");
+      const alpha = ENTRIES[0]!;
+      upsertEntry(
+        db,
+        path.join(storage.stashDir, "knowledge", `${alpha.name}.md`),
+        fixtureDocument(alpha),
+        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
+      );
+      expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
     } finally {
       closeDatabase(db);
     }

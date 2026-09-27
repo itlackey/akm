@@ -14,7 +14,9 @@
 
 // 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`
 // is dropped (`dropVecMirror`, index-schema.ts), and so is the fragment FTS
-// table `entry_fragments_fts`, which search no longer reads.
+// table `entry_fragments_fts`, which search no longer reads. `entries` keeps
+// a hash of each entry's embedding input (`embed_hash`) instead of the text
+// (`search_text`); the text is derived from `document_json` when embedding.
 // 24: the FTS5 tables are contentless (`content=''`) — the indexed text lives
 // once, in `entries` / `entry_fragments`, and FTS rows are keyed by rowid only.
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
@@ -34,8 +36,8 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
     file_path     TEXT NOT NULL,
     content_hash  TEXT,
     document_json TEXT NOT NULL,
-    search_text   TEXT NOT NULL,
-    derived_from  TEXT
+    derived_from  TEXT,
+    embed_hash    TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_entries_bundle ON entries(bundle_id);
@@ -102,7 +104,10 @@ export function tableExists(db: EntrySchemaInspectionDatabase, name: string): bo
   return readTableSql(db, name) !== null;
 }
 
-/** Columns every `entries` row carries for this release's readers and writers (layout 21+). */
+/**
+ * Columns this release's readers need in `entries` (layout 21+). The writable
+ * opener adds `embed_hash` to an older table, so it is not required here.
+ */
 const REQUIRED_ENTRY_COLUMNS = [
   "id",
   "item_ref",
@@ -114,7 +119,6 @@ const REQUIRED_ENTRY_COLUMNS = [
   "file_path",
   "content_hash",
   "document_json",
-  "search_text",
   "derived_from",
 ] as const;
 

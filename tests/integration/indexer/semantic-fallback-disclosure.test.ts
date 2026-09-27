@@ -48,7 +48,6 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
         db,
         `${storage.stashDir}/knowledge/deploy-guide.md`,
         { type: "knowledge", name: "deploy-guide", description: "deploy applications safely" } as IndexDocument,
-        "deploy-guide deploy applications safely",
         deriveEntryProvenance(
           { bundleId: "stash", componentId: "stash", adapterId: "akm" },
           "knowledge",

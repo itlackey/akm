@@ -13,7 +13,6 @@ import os from "node:os";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { type IndexDocument, setMarkdownFragmentContent } from "../../../src/indexer/passes/metadata";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -40,7 +39,7 @@ function putEntry(db: Database, name: string, marker: string): number {
     "knowledge",
     name,
   );
-  upsertEntry(db, `/fixture/knowledge/${name}.md`, entry, buildSearchText(entry), provenance);
+  upsertEntry(db, `/fixture/knowledge/${name}.md`, entry, provenance);
   return (db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(`fixture//knowledge/${name}`) as { id: number })
     .id;
 }
@@ -73,7 +72,7 @@ describe("FTS rowid maintenance", () => {
           "knowledge",
           name,
         );
-        upsertEntry(db, `/fixture/knowledge/${name}.md`, entry, buildSearchText(entry), provenance);
+        upsertEntry(db, `/fixture/knowledge/${name}.md`, entry, provenance);
       };
 
       const timeBatch = (start: number, count: number): number => {

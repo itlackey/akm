@@ -140,7 +140,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     // Chunk-8: production resolves entries by their D-R2 item_ref
     // (findEntryIdByRef ← conceptIdFromTypeName), so the seed must carry the
     // provenance a real index write attaches.
-    const id = upsertEntry(db, path.join(memDir, `${name}.md`), entry, `${name} ${entry.description}`, {
+    const id = upsertEntry(db, path.join(memDir, `${name}.md`), entry, {
       bundleId: "stash",
       componentId: "stash",
       adapterId: "akm",

@@ -44,13 +44,18 @@ function seedIndexBundles(bundleIds: string[]): void {
   try {
     for (const [i, bundleId] of bundleIds.entries()) {
       const conceptId = `knowledge/k${i}`;
-      upsertEntry(db, `/s/${bundleId}/k${i}.md`, { name: `k${i}`, type: "knowledge" }, `k${i}`, {
-        itemRef: `${bundleId}//${conceptId}`,
-        bundleId,
-        componentId: bundleId,
-        conceptId,
-        adapterId: "akm",
-      });
+      upsertEntry(
+        db,
+        `/s/${bundleId}/k${i}.md`,
+        { name: `k${i}`, type: "knowledge" },
+        {
+          itemRef: `${bundleId}//${conceptId}`,
+          bundleId,
+          componentId: bundleId,
+          conceptId,
+          adapterId: "akm",
+        },
+      );
     }
   } finally {
     closeDatabase(db);

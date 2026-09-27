@@ -37,7 +37,6 @@ import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
-import { buildSearchText } from "./search/search-fields";
 import { buildFileContext } from "./walk/file-context";
 
 /**
@@ -212,7 +211,7 @@ export async function indexWrittenAssets(
             db,
             supersededIds.map((row) => row.id),
           );
-          targetEntryIds.add(upsertEntry(db, file, entryWithSize, buildSearchText(entry), provenance, contentHash));
+          targetEntryIds.add(upsertEntry(db, file, entryWithSize, provenance, contentHash));
           mutated = true;
         }
       })();

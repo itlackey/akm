@@ -205,7 +205,8 @@ Once entries are upserted, `generateEmbeddingsForDb`
 every entry that does not already have one. **Fragments are never embedded
 or searched** — `entry_fragments` only lets `akm show` select a section — so
 every entry vector comes from that entry's own (capped, see below) search
-text, and the embedding phase issues one embedder input per entry.
+text, which the pass derives from the stored document (`buildSearchText`),
+and the embedding phase issues one embedder input per entry.
 
 **Per-document cap** (`embedding.maxInputTokens`, default 512, #956) —
 before batching, each pending document's search text is truncated to
@@ -370,7 +371,7 @@ entry with per-batch commits — nothing is purged first, an interrupted run
 resumes with only the entries still on the old model, and readers serve
 only the configured model's rows in the meantime. `akm index --reembed` is the one path
 that discards every stored vector. `upsertEntry` deletes an entry's vector
-when its search text changes; `akm index --full` keeps entry ids, so it
+when the hash of its search text (`entries.embed_hash`) changes; `akm index --full` keeps entry ids, so it
 re-embeds only changed text. (Until layout 24 a model-string change ran a
 re-embed "canary" and a full rebuild copied vectors aside into
 `embedding_salvage`, #955; both are gone.)

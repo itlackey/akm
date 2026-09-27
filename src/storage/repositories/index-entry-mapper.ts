@@ -29,7 +29,7 @@ import type { DbIndexedEntry } from "./index-entry-types";
  * current indexed provenance.
  */
 export const ENTRY_COLUMNS =
-  "id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, content_hash, document_json, search_text";
+  "id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, content_hash, document_json";
 
 /** A raw row selected via {@link ENTRY_COLUMNS}. */
 export type EntryRow = {
@@ -46,7 +46,6 @@ export type EntryRow = {
   file_path: string;
   content_hash: string | null;
   document_json: string;
-  search_text: string;
 };
 
 /**
@@ -66,7 +65,6 @@ export function rowToIndexedEntry(row: EntryRow, context: string): DbIndexedEntr
     id: row.id,
     filePath: row.file_path,
     entry,
-    searchText: row.search_text,
     itemRef: row.item_ref,
     conceptId: row.concept_id,
     bundleId: row.bundle_id,
