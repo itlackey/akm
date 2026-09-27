@@ -67,13 +67,13 @@ import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
 import {
   acknowledgeExtractionQueueEntry,
   enqueueGraphExtraction,
+  loadStoredGraphMeta,
   loadStoredGraphSnapshot,
   peekExtractionQueue,
   replaceStoredGraph,
 } from "../db/graph-db";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
-import { deduplicateGraph } from "./graph-dedup";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-types";
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
@@ -91,7 +91,7 @@ export interface GraphExtractionResult {
   totalRelations: number;
   /** Whether graph rows were written this run. False when the pass is a no-op. */
   written: boolean;
-  /** Graph quality telemetry computed from the extracted artifact. */
+  /** The stored graph's counts after this run (`graph_meta`, derived from the stored rows). */
   quality: GraphQualityTelemetry;
   /** Durable latest-run extraction telemetry. */
   telemetry?: GraphExtractionTelemetry;
@@ -184,29 +184,6 @@ const EMPTY_RESULT: GraphExtractionResult = {
   },
   warnings: [],
 };
-
-function roundMetric(value: number): number {
-  return Number(value.toFixed(4));
-}
-
-function computeGraphQualityTelemetry(
-  consideredFiles: number,
-  extractedFiles: number,
-  entityCount: number,
-  relationCount: number,
-): GraphQualityTelemetry {
-  const extractionCoverage = consideredFiles > 0 ? extractedFiles / consideredFiles : 0;
-  const maxEdges = entityCount > 1 ? (entityCount * (entityCount - 1)) / 2 : 0;
-  const density = maxEdges > 0 ? relationCount / maxEdges : 0;
-  return {
-    consideredFiles,
-    extractedFiles,
-    entityCount,
-    relationCount,
-    extractionCoverage: roundMetric(extractionCoverage),
-    density: roundMetric(density),
-  };
-}
 
 export const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
 
@@ -934,16 +911,15 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   telemetry.aborted = abortState.aborted;
 
   const graph = buildGraphFile(primary.path, mergeGraphNodes(previousGraph.files, nodes, keptPaths), telemetry);
-  const { quality } = graph;
+  const written = writeGraphFile(db, graph);
+  const quality = loadStoredGraphMeta(primary.path, db)?.quality ?? EMPTY_RESULT.quality;
   const warnings = buildLowQualityWarnings(quality, telemetry);
   if (abortState.message) warnings.push(abortState.message);
   for (const warning of warnings) warnVerbose(`graph extraction quality: ${warning}`);
-
-  const written = writeGraphFile(db, graph);
   warnVerbose(
     `graph extraction: ${written ? "persisted" : "did not persist"} graph for ${primary.path}; ` +
-      `considered=${considered}, extractedThisRun=${extracted}, storedFiles=${graph.files.length}, ` +
-      `entities=${graph.entities.length}, relations=${graph.relations.length}, coverage=${quality.extractionCoverage}.`,
+      `considered=${considered}, extractedThisRun=${extracted}, storedFiles=${quality.consideredFiles}, ` +
+      `entities=${quality.entityCount}, relations=${quality.relationCount}, coverage=${quality.extractionCoverage}.`,
   );
 
   return {
@@ -982,30 +958,13 @@ function toGraphNode(record: ExtractionRecord, extractionRunId: string): GraphFi
   };
 }
 
-/** The graph artifact for `files`: deduplicated entities/relations plus quality telemetry. */
-function buildGraphFile(
-  stashRoot: string,
-  files: GraphFileNode[],
-  telemetry?: GraphExtractionTelemetry,
-): GraphFile & Required<Pick<GraphFile, "entities" | "relations" | "quality">> {
-  const deduped = deduplicateGraph(
-    files.map((node) => ({ entities: node.entities, relations: node.relations })),
-    files.map((node) => node.path),
-  );
-  const extractedFiles = files.filter((node) => node.status === "extracted" && node.entities.length > 0).length;
+/** The graph snapshot to store for `files`; its counts are derived from the stored rows on write. */
+function buildGraphFile(stashRoot: string, files: GraphFileNode[], telemetry?: GraphExtractionTelemetry): GraphFile {
   return {
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot,
     files,
-    entities: deduped.entities,
-    relations: deduped.relations,
-    quality: computeGraphQualityTelemetry(
-      files.length,
-      extractedFiles,
-      deduped.entities.length,
-      deduped.relations.length,
-    ),
     ...(telemetry ? { telemetry } : {}),
   };
 }

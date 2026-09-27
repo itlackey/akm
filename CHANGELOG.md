@@ -398,6 +398,17 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   from an older extractor, the sweep no longer reuses a stored graph node as a
   cache hit: only `llm_enrichment_cache`, keyed by extractor, answers for the
   current one. (`src/indexer/graph/graph-extraction.ts`)
+- **`graph_meta` counts describe the stored rows.** The extraction pass
+  wrote counts from its in-memory graph (22,304 entities reported against
+  15,833 stored on one install), and deleting entries overwrote them with raw
+  row counts. Each write now derives them from the stored rows, one meaning
+  each: stored files, files with entity rows, distinct case-folded entities and
+  distinct case-folded relations. The pass result, and with it the
+  `akm improve` summary, reports the same counts. The entries-delete recompute
+  and the in-memory graph deduplicator (`src/indexer/graph/graph-dedup.ts`)
+  are gone. (`src/indexer/db/graph-db.ts`,
+  `src/indexer/graph/graph-extraction.ts`,
+  `src/storage/repositories/index-entries-repository.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,

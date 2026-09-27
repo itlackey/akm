@@ -8,7 +8,8 @@
  *   - N1: a re-extraction of an unchanged body replaces its stored rows;
  *   - N2 and review defect 1: an aborted run, or one scoped by `topN`, keeps
  *     the stored rows of every eligible file it did not reach;
- *   - review defect 9: the rows of a file that left the eligible set are dropped.
+ *   - review defect 9: the rows of a file that left the eligible set are dropped;
+ *   - N3 and review defect 10: graph_meta counts are derived from the stored rows.
  *
  * Opens real SQLite databases and serves a localhost LLM stub, so it lives under
  * tests/integration/.
@@ -151,6 +152,15 @@ function relationCount(filePath: string): number {
       .prepare("SELECT COUNT(*) AS n FROM graph_file_relations WHERE stash_root = ? AND file_path = ?")
       .get(storage.stashDir, filePath) as { n: number }
   ).n;
+}
+
+function graphMeta() {
+  return db
+    .prepare(
+      `SELECT considered_files, extracted_files, entity_count, relation_count, extraction_coverage, density
+         FROM graph_meta WHERE stash_root = ?`,
+    )
+    .get(storage.stashDir) as Record<string, number>;
 }
 
 // ── N1 ───────────────────────────────────────────────────────────────────────
@@ -302,5 +312,85 @@ describe("files that left the eligible set", () => {
     }
 
     expect([...storedEntities().keys()].sort()).toEqual([deleted, kept].sort());
+  });
+});
+
+// ── N3 and review defect 10 ──────────────────────────────────────────────────
+
+describe("graph_meta counts are derived from the stored rows", () => {
+  test("files, case-folded entities and relations are counted from the rows, whatever the snapshot claims", () => {
+    const file = (name: string) => path.join(storage.stashDir, "knowledge", `${name}.md`);
+    replaceStoredGraph(db, {
+      schemaVersion: 4,
+      generatedAt: new Date().toISOString(),
+      stashRoot: storage.stashDir,
+      files: [
+        {
+          path: file("a"),
+          type: "knowledge",
+          bodyHash: "a",
+          entities: ["Redis", "Postgres"],
+          relations: [{ from: "Redis", to: "Postgres", type: "feeds" }],
+        },
+        {
+          path: file("b"),
+          type: "knowledge",
+          bodyHash: "b",
+          entities: ["redis", "Kafka"],
+          relations: [{ from: "redis", to: "postgres", type: "Feeds" }],
+        },
+        { path: file("c"), type: "knowledge", bodyHash: "c", entities: [], relations: [], status: "empty" },
+      ],
+      quality: {
+        consideredFiles: 99,
+        extractedFiles: 99,
+        entityCount: 99,
+        relationCount: 99,
+        extractionCoverage: 1,
+        density: 1,
+      },
+    });
+
+    expect(graphMeta()).toEqual({
+      considered_files: 3,
+      extracted_files: 2,
+      entity_count: 3,
+      relation_count: 1,
+      extraction_coverage: 0.6667,
+      density: 0.3333,
+    });
+  });
+
+  test("the pass reports the stored counts after a run that fails every call", async () => {
+    const [emptied] = writeNotes(3) as [string, string, string];
+    await run();
+    // One file's rows are missing (the N1 shape) and a new file can only fail.
+    db.prepare("DELETE FROM graph_file_entities WHERE file_path = ?").run(emptied);
+    db.prepare("DELETE FROM graph_file_relations WHERE file_path = ?").run(emptied);
+    fs.writeFileSync(path.join(storage.stashDir, "memories", "n9.md"), "---\n---\n\nA note about Topic-9-end.\n");
+
+    failRequests = true;
+    const result = await run();
+
+    const count = (sql: string) => (db.prepare(sql).get(storage.stashDir) as { n: number }).n;
+    const rows = {
+      files: count("SELECT COUNT(*) AS n FROM graph_files WHERE stash_root = ?"),
+      filesWithEntities: count("SELECT COUNT(DISTINCT file_path) AS n FROM graph_file_entities WHERE stash_root = ?"),
+      entities: count("SELECT COUNT(DISTINCT entity_norm) AS n FROM graph_file_entities WHERE stash_root = ?"),
+    };
+    expect(rows).toEqual({ files: 4, filesWithEntities: 3, entities: 5 });
+    expect(result.quality).toMatchObject({
+      consideredFiles: rows.files,
+      extractedFiles: rows.filesWithEntities,
+      entityCount: rows.entities,
+      relationCount: 3,
+      extractionCoverage: 0.75,
+    });
+    expect(graphMeta()).toMatchObject({
+      considered_files: rows.files,
+      extracted_files: rows.filesWithEntities,
+      entity_count: rows.entities,
+      relation_count: 3,
+    });
   });
 });

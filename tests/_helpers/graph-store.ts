@@ -73,7 +73,7 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
  * Insert raw `graph_files` + `graph_file_entities` rows linking an already-indexed
  * asset (by its `file_path`) to a set of graph entities (entries ⋈ graph_files ⋈
  * graph_file_entities on stash_root/file_path/body_hash). `entity_norm` is
- * lowercased to mirror real extraction (graph-dedup.ts). Used to drive
+ * lowercased to mirror real extraction (graph-db.ts). Used to drive
  * entity-based graph lookups in tests without running real extraction.
  */
 export function insertGraphEntities(

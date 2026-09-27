@@ -568,48 +568,14 @@ function deleteRelatedRows(
     );
   }
 
-  // Graph rows are independently keyed and intentionally survive entry
-  // deletion. Resolve their owning roots through the canonical physical path
-  // before entries disappear, then refresh the derived summary counts.
-  const affectedGraphRoots = new Set<string>();
-  for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(",");
-    bestEffort(() => {
-      const rows = db
-        .prepare(
-          `SELECT DISTINCT gf.stash_root
-             FROM graph_files gf
-             JOIN entries e ON e.file_path = gf.file_path
-            WHERE e.id IN (${placeholders})`,
-        )
-        .all(...chunk) as Array<{ stash_root: string }>;
-      for (const row of rows) affectedGraphRoots.add(row.stash_root);
-    }, "resolve graph roots for graph_meta recompute");
-  }
-  for (const stashRoot of affectedGraphRoots) {
-    bestEffort(
-      () =>
-        db
-          .prepare(
-            `UPDATE graph_meta
-                SET extracted_files = (SELECT COUNT(*) FROM graph_files WHERE stash_root = ?),
-                    entity_count    = (SELECT COUNT(*) FROM graph_file_entities WHERE stash_root = ?),
-                    relation_count  = (SELECT COUNT(*) FROM graph_file_relations WHERE stash_root = ?)
-              WHERE stash_root = ?`,
-          )
-          .run(stashRoot, stashRoot, stashRoot, stashRoot),
-      "sync graph_meta counts after entries delete",
-    );
-  }
-
   // usage_events lives in state.db, outside this transaction. Index persistence
   // disables this cleanup and runs it only after its index.db transaction
   // commits; standalone delete callers retain the immediate behavior.
   if (options.cleanupUsageEvents !== false) deleteUsageEventsByEntryIds(numericIds);
 
   // graph_files is keyed by its own stash_root/file_path/body_hash identity,
-  // so deleting an entry row intentionally leaves extracted graph data intact.
+  // so deleting an entry row intentionally leaves extracted graph data intact,
+  // and with it the graph_meta counts the graph writer derives from those rows.
 }
 
 export function deleteUsageEventsByEntryIds(entryIds: number[]): void {

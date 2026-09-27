@@ -117,6 +117,37 @@ function readStoredExtractionKeys(db: Database, stashRoot: string): Map<string, 
   return new Map([...byPath].map(([filePath, stored]) => [filePath, extractionKey(stored.entities, stored.relations)]));
 }
 
+function roundMetric(value: number): number {
+  return Number(value.toFixed(4));
+}
+
+/**
+ * The graph_meta counts, derived from the stored rows of one root. Each field
+ * has one meaning (see {@link GraphQualityTelemetry}): files are graph_files
+ * rows, entities are distinct case-folded names, relations are distinct
+ * case-folded (from, to, type) triples.
+ */
+function readStoredGraphQuality(db: Database, stashRoot: string): GraphQualityTelemetry {
+  const count = (sql: string): number => (db.prepare(sql).get(stashRoot) as { n: number }).n;
+  const storedFiles = count("SELECT COUNT(*) AS n FROM graph_files WHERE stash_root = ?");
+  const filesWithEntities = count(`SELECT COUNT(DISTINCT gf.file_path) AS n FROM ${STORED_ENTITIES}`);
+  const entityCount = count(`SELECT COUNT(DISTINCT e.entity_norm) AS n FROM ${STORED_ENTITIES}`);
+  const relationCount = count(
+    `SELECT COUNT(*) AS n FROM (
+       SELECT DISTINCT r.from_entity_norm, r.to_entity_norm, lower(coalesce(r.relation_type, '')) FROM ${STORED_RELATIONS}
+     )`,
+  );
+  const maxEdges = entityCount > 1 ? (entityCount * (entityCount - 1)) / 2 : 0;
+  return {
+    consideredFiles: storedFiles,
+    extractedFiles: filesWithEntities,
+    entityCount,
+    relationCount,
+    extractionCoverage: storedFiles > 0 ? roundMetric(filesWithEntities / storedFiles) : 0,
+    density: maxEdges > 0 ? roundMetric(relationCount / maxEdges) : 0,
+  };
+}
+
 /**
  * Persist (or update) a graph snapshot for a stash root.
  *
@@ -130,6 +161,10 @@ function readStoredExtractionKeys(db: Database, stashRoot: string): Map<string, 
  * inserted; files in DB but absent from the new snapshot are deleted. There is
  * no entry_id resolution and no orphan-skip — a graph file no longer needs a
  * matching entries row.
+ *
+ * graph_meta records the snapshot's schema version, time and run telemetry;
+ * its counts are derived from the rows as stored after the write, never from
+ * the caller's in-memory graph.
  */
 export function replaceStoredGraph(db: Database, graph: GraphFile): void {
   const upsertMeta = db.prepare(
@@ -201,31 +236,9 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  const quality = graph.quality;
   const telemetry = graph.telemetry;
 
   db.transaction(() => {
-    upsertMeta.run(
-      graph.stashRoot,
-      graph.schemaVersion,
-      graph.generatedAt,
-      quality?.consideredFiles ?? graph.files.length,
-      quality?.extractedFiles ?? graph.files.length,
-      quality?.entityCount ?? graph.entities?.length ?? 0,
-      quality?.relationCount ?? graph.relations?.length ?? 0,
-      quality?.extractionCoverage ?? 0,
-      quality?.density ?? 0,
-      telemetry?.extractorId ?? null,
-      telemetry?.extractionRunId ?? null,
-      telemetry?.model ?? null,
-      telemetry?.promptVersion ?? null,
-      telemetry?.batchSize ?? null,
-      telemetry?.cacheHits ?? 0,
-      telemetry?.cacheMisses ?? 0,
-      telemetry?.truncationCount ?? 0,
-      telemetry?.failureCount ?? 0,
-    );
-
     // Build a snapshot of existing rows for incremental compare. The unique
     // index idx_graph_files_path guarantees at most one row per file_path.
     const existingRows = selectExisting.all(graph.stashRoot) as ExistingGraphFileRow[];
@@ -317,6 +330,28 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
         deleteFile.run(graph.stashRoot, row.file_path, row.body_hash);
       }
     }
+
+    const quality = readStoredGraphQuality(db, graph.stashRoot);
+    upsertMeta.run(
+      graph.stashRoot,
+      graph.schemaVersion,
+      graph.generatedAt,
+      quality.consideredFiles,
+      quality.extractedFiles,
+      quality.entityCount,
+      quality.relationCount,
+      quality.extractionCoverage,
+      quality.density,
+      telemetry?.extractorId ?? null,
+      telemetry?.extractionRunId ?? null,
+      telemetry?.model ?? null,
+      telemetry?.promptVersion ?? null,
+      telemetry?.batchSize ?? null,
+      telemetry?.cacheHits ?? 0,
+      telemetry?.cacheMisses ?? 0,
+      telemetry?.truncationCount ?? 0,
+      telemetry?.failureCount ?? 0,
+    );
   })();
 }
 
