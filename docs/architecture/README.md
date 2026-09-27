@@ -58,6 +58,7 @@ Point-in-time architecture reviews of a specific subsystem question.
 ## Comparisons (`comparisons/`)
 
 - [Workflow architecture: Claude Code workflows vs. akm workflows](comparisons/claude-code-vs-akm-workflows-full.md) -- Full technical comparison of the Claude Code `Workflow` tool and akm workflows; see [the short vendor-neutral guide](../guides/claude-code-vs-akm-workflows.md) for the decision-level version
+- [Build akm's graph from declared links](comparisons/graph-generation-for-akm-bundles.md) -- Research comparison (2023–2026) of document-to-graph research and tools against akm's LLM entity graph, deterministic and AI-based ways to graph registered bundles and their assets, the #935 storage decision, verified defects, and a prioritized refactoring plan
 
 ## Testing (`testing/`)
 
