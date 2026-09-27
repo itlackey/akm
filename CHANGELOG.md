@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.5] - 2026-09-27
+
+`akm show` works again for a memory that has a `.derived.md` child (835 of them
+in one real bundle), and `akm bundle add --provider … --name` holds to the same
+`--name` contract as every other add.
+
 ### Fixed
 
 - **`akm show` works for a memory that has a `.derived.md` child.** When
