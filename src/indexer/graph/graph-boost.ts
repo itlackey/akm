@@ -425,7 +425,8 @@ export function listRelatedPathsForFile(
   const candidatePaths = candidateRows.map((r) => r.file_path);
   const placeholders = candidatePaths.map(() => "?").join(",");
 
-  // Pull the shared entity names (joined by normalized casing) for display.
+  // Pull the shared entity names (joined by normalized casing) for display, in
+  // a fixed order so identical calls return identical results.
   const sharedRows = db
     .prepare(
       `SELECT e.file_path AS file_path, e.entity AS entity
@@ -436,7 +437,8 @@ export function listRelatedPathsForFile(
          WHERE e.file_path IN (${placeholders})
            AND e.stash_root = ?
            AND target.file_path = ?
-           AND target.stash_root = ?`,
+           AND target.stash_root = ?
+         ORDER BY e.file_path, e.entity`,
     )
     .all(...candidatePaths, stashRoot, filePath, stashRoot) as Array<{ file_path: string; entity: string }>;
 
@@ -476,14 +478,16 @@ export function listRelatedPathsForFile(
     const entryRows = db
       .prepare(
         `SELECT file_path, concept_id FROM entries
-          WHERE file_path IN (${placeholders})`,
+          WHERE file_path IN (${placeholders})
+          ORDER BY file_path, concept_id`,
       )
       .all(...candidatePaths) as Array<{
       file_path: string;
       concept_id: string;
     }>;
+    // Several entries can index one file; the first concept id wins.
     for (const row of entryRows) {
-      refByPath.set(row.file_path, row.concept_id);
+      if (!refByPath.has(row.file_path)) refByPath.set(row.file_path, row.concept_id);
     }
   } catch {
     /* ignore — refs are best-effort */

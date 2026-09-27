@@ -414,6 +414,11 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   once per improve run in the window; it now adds the files each run
   extracted, as `entities` and `relations` already did.
   (`src/commands/health/improve-metrics.ts`)
+- **`akm show`'s `related` refs no longer depend on index row order.** When
+  two entries index the same file, the ref shown for it was whichever row
+  SQLite returned last; the lowest concept id now wins, and shared entity
+  names are read in a fixed order. The ranking itself (most shared entities,
+  then path) was already deterministic. (`src/indexer/graph/graph-boost.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,
