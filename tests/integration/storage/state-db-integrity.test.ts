@@ -20,9 +20,11 @@ import {
   runStateDbQuickCheck,
   STATE_DB_FREELIST_WARN_RATIO,
   STATE_DB_VACUUMED_EVENT,
-  vacuumStateDbIfReclaimable,
+  vacuumIfReclaimable,
 } from "../../../src/storage/state-db-integrity";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+
+const STATE_DB = { eventType: STATE_DB_VACUUMED_EVENT };
 
 let storage: IsolatedAkmStorage;
 
@@ -136,12 +138,12 @@ describe("getStateDbFreelistInfo (R0)", () => {
   });
 });
 
-describe("vacuumStateDbIfReclaimable (R0)", () => {
+describe("vacuumIfReclaimable on state.db (R0)", () => {
   test("does not VACUUM and reports below-threshold when the freelist ratio is low", () => {
     const dbPath = getStateDbPath();
     const db = openStateDatabase(dbPath);
     try {
-      const outcome = vacuumStateDbIfReclaimable(db, { freelistCount: 1, pageCount: 1000, ratio: 0.001 });
+      const outcome = vacuumIfReclaimable(db, { freelistCount: 1, pageCount: 1000, ratio: 0.001 }, STATE_DB);
       expect(outcome.ran).toBe(false);
       expect(outcome.reason).toBe("below-threshold");
     } finally {
@@ -169,7 +171,7 @@ describe("vacuumStateDbIfReclaimable (R0)", () => {
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
-      const outcome = vacuumStateDbIfReclaimable(db, before);
+      const outcome = vacuumIfReclaimable(db, before, STATE_DB);
       expect(outcome.ran).toBe(true);
       expect(outcome.pagesBefore).toBe(before.pageCount);
       expect(outcome.pagesAfter).toBeDefined();
@@ -209,7 +211,7 @@ describe("vacuumStateDbIfReclaimable (R0)", () => {
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
-      const outcome = vacuumStateDbIfReclaimable(db, before, { readOnly: true, db });
+      const outcome = vacuumIfReclaimable(db, before, STATE_DB, { readOnly: true, db });
       expect(outcome.ran).toBe(true);
 
       const event = db
@@ -240,7 +242,7 @@ describe("vacuumStateDbIfReclaimable (R0)", () => {
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
       const injectedMs = new Date("2020-01-02T03:04:05.000Z").getTime();
-      const outcome = vacuumStateDbIfReclaimable(db, before, { db, now: () => injectedMs });
+      const outcome = vacuumIfReclaimable(db, before, STATE_DB, { db, now: () => injectedMs });
       expect(outcome.ran).toBe(true);
 
       const event = db
@@ -264,7 +266,7 @@ describe("vacuumStateDbIfReclaimable (R0)", () => {
       blocker.exec("BEGIN IMMEDIATE");
       db.exec("PRAGMA busy_timeout = 0");
 
-      const outcome = vacuumStateDbIfReclaimable(db, { freelistCount: 900, pageCount: 1000, ratio: 0.9 });
+      const outcome = vacuumIfReclaimable(db, { freelistCount: 900, pageCount: 1000, ratio: 0.9 }, STATE_DB);
       expect(outcome.ran).toBe(false);
       expect(outcome.reason).toBe("busy");
       expect(outcome.error).toBeDefined();

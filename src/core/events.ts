@@ -123,12 +123,18 @@ export type EventType =
    */
   | "extract_triaged"
   /**
-   * R0 — emitted by `vacuumStateDbIfReclaimable`
+   * R0 — emitted by `vacuumIfReclaimable`
    * (src/storage/state-db-integrity.ts) after a `VACUUM` triggered by a
    * post-purge freelist-ratio check. Metadata carries
    * `{pagesBefore, pagesAfter, freelistRatioBefore}`.
    */
   | "state_db_vacuumed"
+  /**
+   * Emitted by `vacuumIfReclaimable` when `akm index` compacts index.db: after
+   * an index layout migration, or when more than half its pages are free.
+   * Metadata carries `{pagesBefore, pagesAfter, freelistRatioBefore}`.
+   */
+  | "index_db_vacuumed"
   /**
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /

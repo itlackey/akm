@@ -127,7 +127,11 @@ from-scratch rebuild is on-disk corruption (`SQLITE_CORRUPT`, #865): the file
 is deleted and rebuilt. An `entries` table older than layout 21 (no
 `item_ref`) has its entries-keyed tables recreated; graph data and the LLM
 enrichment cache are kept. This path never modifies `state.db`.
-`clearStaleCacheEntries()` removes orphaned LLM cache rows.
+`clearStaleCacheEntries()` removes orphaned LLM cache rows. `akm index`
+VACUUMs the file at the end of a run after a layout migration (the writable
+opener sets `index_meta.vacuumPending`) and whenever more than half its pages
+are free, the threshold improve applies to `state.db`; each VACUUM appends an
+`index_db_vacuumed` event.
 
 #### Table: `index_meta`
 
@@ -136,7 +140,7 @@ enrichment cache are kept. This path never modifies `state.db`.
 | `key` | TEXT PRIMARY KEY | Metadata key |
 | `value` | TEXT NOT NULL | String-encoded value |
 
-Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `hasEmbeddings` (`"0"` or `"1"`).
+Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `hasEmbeddings` (`"0"` or `"1"`), `vacuumPending` (`"1"` after a layout migration, until `akm index` VACUUMs).
 
 #### Table: `entries`
 

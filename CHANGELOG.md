@@ -103,6 +103,18 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   upgrade. (`src/storage/repositories/index-entries-repository.ts`,
   `src/storage/repositories/index-vec-repository.ts`,
   `src/storage/repositories/index-schema.ts`.)
+- **`akm index` reclaims index.db's free pages.** Nothing ever VACUUMed
+  `index.db`, so every table an upgrade rebuilt or dropped stayed on disk as
+  free pages: a 24k-entry index measured 979 MB, 427 MB of it free, against
+  560 MB for a fresh build of the same content. The run now ends with a
+  VACUUM when the writable open migrated the layout (it leaves
+  `index_meta.vacuumPending` for the next `akm index`, since the open may sit
+  inside a caller's transaction) and whenever more than half the pages are
+  free, the threshold and pass improve already apply to `state.db`
+  (`vacuumIfReclaimable`, formerly `vacuumStateDbIfReclaimable`). A busy
+  database skips the VACUUM instead of failing the run; each VACUUM prints
+  its page counts and appends an `index_db_vacuumed` event.
+  (`src/indexer/indexer.ts`, `src/storage/state-db-integrity.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,

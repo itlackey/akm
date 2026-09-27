@@ -265,7 +265,7 @@ describe("runRetentionPurgePass", () => {
     expect(fs.existsSync(newFile)).toBe(true);
   });
 
-  // R0 step 3 wires vacuumStateDbIfReclaimable into the
+  // R0 step 3 wires vacuumIfReclaimable into the
   // purge callback, reading the freelist off the same connection the purge
   // just used. Recipe (bulk-insert-then-delete) reused from
   // tests/integration/storage/state-db-integrity.test.ts:140-160, except the

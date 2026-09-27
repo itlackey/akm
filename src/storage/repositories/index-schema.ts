@@ -36,6 +36,8 @@ import { getMeta, setMeta } from "./index-meta-repository";
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
+/** `index_meta` key set when the writable opener migrated the layout; cleared once `akm index` VACUUMs. */
+export const VACUUM_PENDING_META = "vacuumPending";
 // #624-P1: graph_files is keyed to (stash_root, file_path, body_hash).
 export const GRAPH_SCHEMA_VERSION = 4;
 
@@ -418,5 +420,9 @@ export function ensureSchema(db: Database): void {
     db.exec("DELETE FROM index_dir_state");
   }
 
+  // Migrating an existing layout drops tables and columns; the next `akm index`
+  // VACUUMs the pages they leave free (`vacuumIndexDb`, indexer.ts), since a
+  // writable open may run inside a caller's transaction, where VACUUM cannot.
+  if (storedVersion > 0 && storedVersion < DB_VERSION) setMeta(db, VACUUM_PENDING_META, "1");
   setMeta(db, "version", String(DB_VERSION));
 }

@@ -39,6 +39,7 @@ import { upsertEntry } from "../../../src/storage/repositories/index-entries-rep
 import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { VACUUM_PENDING_META } from "../../../src/storage/repositories/index-schema";
 import { getEmbeddingCount, searchVec } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
@@ -244,6 +245,7 @@ describe("index.db layout 23 → 24", () => {
     const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+      expect(getMeta(db, VACUUM_PENDING_META)).toBe("1");
       expect(warnings.filter((line) => line.includes("Rebuilding the full-text index for 3 entries"))).toHaveLength(1);
 
       // Entries intact, ids unchanged; search_text replaced by the hash of the stored text.
@@ -431,6 +433,8 @@ describe("index.db layout 24 → 25", () => {
       expect(tableNames(db).filter((name) => name.startsWith("entry_fragments_fts"))).toEqual([]);
       expect(getMeta(db, "embeddingDim")).toBeUndefined();
       expect(getMeta(db, "vecFastPathReady")).toBeUndefined();
+      // The next `akm index` VACUUMs the pages the dropped tables and column left free.
+      expect(getMeta(db, VACUUM_PENDING_META)).toBe("1");
       expect(count(db, "entry_fragments")).toBe(3);
 
       // search_text is replaced by the hash of the text each vector was embedded from.

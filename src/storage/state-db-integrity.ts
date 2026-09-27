@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * state.db integrity + reclaimable-space probes (R0).
+ * state.db integrity + reclaimable-space probes (R0), and the VACUUM pass
+ * state.db and index.db share.
  *
  * `akm health`'s `state-db-integrity` check (src/commands/health/checks.ts)
  * is a pure projection like every other check, so the actual IO lives here:
@@ -14,11 +15,13 @@
  * migration-ledger read, let alone a migration, just to report itself as
  * corrupt.
  *
- * {@link vacuumStateDbIfReclaimable} is the post-purge VACUUM step: given an
- * already-open read-write connection (VACUUM cannot run inside a transaction,
- * and a read-only handle cannot run it at all) and a freelist reading, it
- * VACUUMs only when the freelist ratio crosses {@link STATE_DB_FREELIST_WARN_RATIO}
- * and never throws — a locked/busy database is reported, not raised.
+ * {@link vacuumIfReclaimable} is the VACUUM step: given an already-open
+ * read-write connection (VACUUM cannot run inside a transaction, and a
+ * read-only handle cannot run it at all) and a freelist reading, it VACUUMs
+ * when asked to or when the freelist ratio crosses
+ * {@link STATE_DB_FREELIST_WARN_RATIO}, and never throws — a locked/busy
+ * database is reported, not raised. improve's post-purge pass runs it on
+ * state.db, and `akm index` on index.db.
  *
  * @module storage/state-db-integrity
  */
@@ -30,11 +33,18 @@ import { applyReadonlyPragmas } from "./sqlite-pragmas";
 /** How many corruption errors `PRAGMA quick_check` collects before it stops scanning and returns. */
 const QUICK_CHECK_ERROR_LIMIT = 10;
 
-/** Above this fraction of free pages, `state-db-integrity` warns and a post-purge pass VACUUMs. */
+/**
+ * Above this fraction of free pages, `state-db-integrity` warns, and
+ * {@link vacuumIfReclaimable} compacts state.db (after improve's retention
+ * purge) or index.db (at the end of `akm index`).
+ */
 export const STATE_DB_FREELIST_WARN_RATIO = 0.5;
 
-/** Event appended by {@link vacuumStateDbIfReclaimable} after a successful VACUUM. */
+/** Event appended by {@link vacuumIfReclaimable} after a successful VACUUM of state.db. */
 export const STATE_DB_VACUUMED_EVENT = "state_db_vacuumed";
+
+/** Event appended by {@link vacuumIfReclaimable} after a successful VACUUM of index.db. */
+export const INDEX_DB_VACUUMED_EVENT = "index_db_vacuumed";
 
 export interface StateDbQuickCheckResult {
   ok: boolean;
@@ -53,7 +63,7 @@ export interface StateDbFreelistInfo {
   error?: string;
 }
 
-export interface StateDbVacuumOutcome {
+export interface VacuumOutcome {
   ran: boolean;
   /** Present when `ran` is `false`. */
   reason?: "below-threshold" | "busy" | "error";
@@ -122,25 +132,26 @@ export function getStateDbFreelistInfo(dbPath: string): StateDbFreelistInfo {
 }
 
 /**
- * VACUUM `db` when `freelist.ratio` exceeds {@link STATE_DB_FREELIST_WARN_RATIO},
- * appending a {@link STATE_DB_VACUUMED_EVENT} recording pages before/after.
- * Intended to run immediately after the retention purge, on the same
- * read-write connection the purge just used. Never throws: a locked/busy
- * database (another writer holds the file right now) is reported via
- * `reason: "busy"` rather than raised, since this is opportunistic
- * maintenance and must not fail the purge pass it follows.
+ * VACUUM `db` when `vacuum.force` is set or `freelist.ratio` exceeds
+ * {@link STATE_DB_FREELIST_WARN_RATIO}, appending `vacuum.eventType` with
+ * the pages before/after. Runs on the caller's read-write connection — for
+ * state.db right after the retention purge, for index.db at the end of an
+ * index run. Never throws: a locked/busy database (another writer holds the
+ * file right now) is reported via `reason: "busy"` rather than raised, since
+ * this is opportunistic maintenance and must not fail the pass it follows.
  *
  * The event is appended via `appendEvent` (not a direct `insertEvent` on
  * `db`) so it honors the caller's `EventsContext` — `readOnly` suppresses
  * the write and an injected `now` is used for `ts` — the same as every
  * other event `runRetentionPurgePass` appends in this callback.
  */
-export function vacuumStateDbIfReclaimable(
+export function vacuumIfReclaimable(
   db: Database,
   freelist: StateDbFreelistInfo,
+  vacuum: { eventType: string; force?: boolean },
   eventsCtx?: EventsContext,
-): StateDbVacuumOutcome {
-  if (freelist.ratio <= STATE_DB_FREELIST_WARN_RATIO) {
+): VacuumOutcome {
+  if (!vacuum.force && freelist.ratio <= STATE_DB_FREELIST_WARN_RATIO) {
     return { ran: false, reason: "below-threshold", pagesBefore: freelist.pageCount };
   }
   try {
@@ -153,7 +164,7 @@ export function vacuumStateDbIfReclaimable(
   const pagesAfter = Number(firstColumn(db.prepare("PRAGMA page_count").get() as Record<string, unknown>) ?? 0);
   appendEvent(
     {
-      eventType: STATE_DB_VACUUMED_EVENT,
+      eventType: vacuum.eventType,
       metadata: { pagesBefore: freelist.pageCount, pagesAfter, freelistRatioBefore: freelist.ratio },
     },
     eventsCtx,
