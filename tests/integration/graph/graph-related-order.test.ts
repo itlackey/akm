@@ -16,7 +16,6 @@ import { replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../../src/indexer/graph/graph-related";
 import type { GraphFileNode } from "../../../src/indexer/graph/graph-types";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -62,7 +61,7 @@ function buildIndex(dbName: string, fileOrder: string[], conceptOrder: string[])
       "knowledge",
       conceptName,
     );
-    upsertEntry(db, knowledge(fileName), entry, buildSearchText(entry), provenance);
+    upsertEntry(db, knowledge(fileName), entry, provenance);
   }
   replaceStoredGraph(db, {
     schemaVersion: 4,
