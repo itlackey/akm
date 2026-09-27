@@ -392,7 +392,7 @@ function redactNamedCredentialValues(input: string): string {
   while (match !== null) {
     const [full, name, sep] = match as unknown as [string, string, string];
     if (isCredentialLikeKeyName(name)) {
-      result += input.slice(cursor, match.index) + name + sep + "[REDACTED]";
+      result += `${input.slice(cursor, match.index)}${name}${sep}[REDACTED]`;
       cursor = match.index + full.length;
       re.lastIndex = cursor;
     } else {
