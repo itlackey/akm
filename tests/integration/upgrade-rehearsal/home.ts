@@ -13,6 +13,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { gte as semverGte } from "semver";
 import type { RunResult } from "./install";
 import { runLauncher } from "./install";
 import { serveFakeNpmRegistry } from "./npm-fixture-registry";
@@ -23,14 +24,22 @@ export const HOME_DEVIATIONS: readonly string[] = [
     "wiring a durable workflow run into the rehearsal fixture is out of proportion to what this gate needs to " +
     "prove about task/bundle/scheduler upgrade compatibility, and workflow IR compatibility already has its own " +
     "versioning story (irVersion) tracked separately.",
-  "The npm bundle's assigned name is read back from `bundle list` rather than asserted to be the requested " +
-    "'npm-bundle': `akm bundle add npm:<pkg> --name <x>` silently ignores `--name` for every registry-backed " +
-    "install (npm/github/git-via-registry) — `addRegistryStash` never forwards it to " +
-    "`upsertInstalledRegistryEntry`, whose `deriveBundleId` falls back to a slug of the extracted cache " +
-    "directory's basename when the registry id itself is not a bare slug (an `npm:` id always fails " +
-    "`isBundleSlug` on the colon). This is a real CLI defect independent of the upgrade-rehearsal gate; out of " +
-    "this item's `src/`-free scope, so it is flagged rather than fixed here.",
+  "The npm bundle is asserted to be keyed 'npm-bundle' only when the origin release is 0.9.17-alpha.4 or " +
+    "later. Releases from 0.9.0 through 0.9.17-alpha.3, including 0.9.15 and 0.9.16 (the `previous` origin of " +
+    "every 0.9.17 candidate), ignore `--name` on a registry add (npm, `github:`, git) and key the bundle " +
+    "`extracted`, a slug of its extracted cache directory's basename. For those origins the key is read back " +
+    "from `bundle list`: an upgraded home really carries it, and the candidate keeps an installed bundle's key.",
 ];
+
+/**
+ * The first release whose `akm bundle add <registry ref> --name <x>` keys the
+ * bundle `<x>` (0391fd580). From 0.9.0 through 0.9.17-alpha.3,
+ * `addRegistryStash` took no bundle name, so the key came from
+ * `deriveBundleId(<registry id>, <stash root>)`, which falls back to the stash
+ * root's basename (`extracted`) because a registry id (`npm:…`, `github:…`,
+ * `git:…`) is never a legal bundle slug.
+ */
+const REGISTRY_ADD_HONORS_NAME_SINCE = "0.9.17-alpha.4";
 
 export interface UpgradeHomeTaskIds {
   readonly a: string;
@@ -116,7 +125,7 @@ async function runStep(
   return result;
 }
 
-export async function buildHome(oldLauncher: string, root: string): Promise<UpgradeHome> {
+export async function buildHome(oldLauncher: string, oldVersion: string, root: string): Promise<UpgradeHome> {
   const fakeBin = path.join(root, "fake-bin");
   const fakeCrontab = path.join(root, "crontab");
   const home = path.join(root, "home");
@@ -303,14 +312,11 @@ export async function buildHome(oldLauncher: string, root: string): Promise<Upgr
   }
 
   // ── 6. An npm bundle served from a second local Bun.serve ─────────────────
-  // `--name` has no effect here: `akmAdd`'s registry-install path
-  // (`addRegistryStash`/`upsertInstalledRegistryEntry`) never forwards
-  // `input.name` — the bundle key is `deriveBundleId(registryId, stashRoot,
-  // …)`, and `registryId` here is `npm:<pkg>`, which fails `isBundleSlug`
-  // (the colon), so it falls back to a slug of the extracted CACHE
-  // directory's basename ("extracted"), not the package name. Read back the
-  // name `bundle add` actually assigned instead of asserting the one we
-  // asked for — flagged as a follow-up (see deviations).
+  // An origin older than REGISTRY_ADD_HONORS_NAME_SINCE ignores `--name` here
+  // and keys the bundle `extracted` (see that constant). Read back the key the
+  // old release actually wrote rather than the one requested: an upgraded
+  // home carries exactly that key, and the candidate-side checks must use it.
+  // An origin at or after that release must honor `--name`, so assert it.
   const npmRegistry = await serveFakeNpmRegistry(root);
   let npmBundleName: string;
   try {
@@ -325,6 +331,9 @@ export async function buildHome(oldLauncher: string, root: string): Promise<Upgr
     const knownNames = new Set(["stash", "second-fs", "git-bundle", "site"]);
     const discovered = sources.map((source) => source.name).find((name) => name && !knownNames.has(name));
     if (!discovered) throw new Error(`Could not identify the npm bundle's assigned name in: ${listed.stdout}`);
+    if (semverGte(oldVersion, REGISTRY_ADD_HONORS_NAME_SINCE) && discovered !== "npm-bundle") {
+      throw new Error(`akm-cli ${oldVersion} ignored --name npm-bundle and keyed the npm bundle "${discovered}"`);
+    }
     npmBundleName = discovered;
   } finally {
     npmRegistry.close();
