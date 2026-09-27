@@ -6,18 +6,21 @@
  * index.db schema, kept in the storage layer so schema evolution stays apart
  * from the CRUD/FTS/vector queries.
  *
- * `ensureSchema` runs on every writable open. It is additive: `CREATE ... IF
- * NOT EXISTS`, `ALTER TABLE ... ADD COLUMN` for columns added after a table
- * first shipped, and one in-place rebuild of the (derived, cheap) FTS tables
- * when their layout is older than this release's. It never drops `entries`,
- * `embeddings`, `utility_scores*`, `graph_*`, or `llm_enrichment_cache` to
- * cross a version boundary; the only from-scratch rebuild is the
- * SQLITE_CORRUPT path in `index-connection.ts`.
+ * `ensureSchema` runs on every writable open and brings an older layout up
+ * to date in place: `CREATE ... IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN`
+ * for columns added after a table first shipped, drops of retired derived
+ * tables and columns, and one in-place rebuild of the (derived, cheap) FTS
+ * table when its layout is older than this release's. It never drops
+ * `entries`, `embeddings`, `utility_scores*`, `graph_*`, or
+ * `llm_enrichment_cache` to cross a version boundary; the only from-scratch
+ * rebuild is the SQLITE_CORRUPT path in `index-connection.ts`. A layout newer
+ * than this release's is refused, naming the upgrade
+ * ({@link newerIndexLayoutError}).
  */
 
 import { createRequire } from "node:module";
 import { ConfigError } from "../../core/errors";
-import { warn, warnOnce } from "../../core/warn";
+import { warn } from "../../core/warn";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
 import {
@@ -40,6 +43,21 @@ export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
 export const VACUUM_PENDING_META = "vacuumPending";
 // #624-P1: graph_files is keyed to (stash_root, file_path, body_hash).
 export const GRAPH_SCHEMA_VERSION = 4;
+
+/**
+ * The refusal for an index a newer akm wrote. Readers and the writable opener
+ * both raise it: a newer layout may lack tables or columns this release reads
+ * (layout 25 dropped `entries.search_text`), and writing it back at this
+ * layout would undo the newer release's migration.
+ */
+export function newerIndexLayoutError(storedVersion: number, dbPath?: string): ConfigError {
+  return new ConfigError(
+    `Index database${dbPath ? ` at ${dbPath}` : ""} was written by a newer akm (layout ${storedVersion}; this akm ` +
+      `understands ${DB_VERSION}). Upgrade akm to use this index.`,
+    "INDEX_SCHEMA_INCOMPATIBLE",
+    "Upgrade akm to a version that understands this index layout.",
+  );
+}
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -170,21 +188,12 @@ function ensureGraphTables(db: Database): void {
  * key). Recreate only the tables keyed by `entries.id` — their ids are about
  * to be re-minted, so the rows would dangle anyway. Graph rows (keyed by
  * path) and the LLM enrichment cache (keyed by ref) are kept. The next index
- * run re-walks every source. A newer release's table is never recreated:
- * writing to it is refused, naming the upgrade.
+ * run re-walks every source.
  */
-function ensureEntriesLayout(db: Database, storedVersion: number): void {
+function ensureEntriesLayout(db: Database): void {
   if (!tableExists(db, "entries")) return;
   const missing = missingEntryColumns(db);
   if (missing.length === 0) return;
-  if (storedVersion > DB_VERSION) {
-    throw new ConfigError(
-      `Index database was written by a newer akm (layout ${storedVersion}) whose entries table this akm cannot write. ` +
-        "Upgrade akm to use this index.",
-      "INDEX_SCHEMA_INCOMPATIBLE",
-      "Upgrade akm to a version that understands this index layout.",
-    );
-  }
   warn(
     `Index database entries table predates the ${missing.join(", ")} column${missing.length === 1 ? "" : "s"} — ` +
       "recreating the entries-keyed tables (entries, full-text, embeddings, utility scores); graph data and the " +
@@ -294,15 +303,9 @@ export function ensureSchema(db: Database): void {
   `);
 
   const storedVersion = Number(getMeta(db, "version") ?? 0);
-  if (storedVersion > DB_VERSION) {
-    warnOnce(
-      "index-db-newer-generation",
-      `Index database was last written by a newer akm (layout ${storedVersion}; this binary writes ${DB_VERSION}). ` +
-        "Continuing with the layout this binary knows — upgrade akm to stop the two from alternating.",
-    );
-  }
+  if (storedVersion > DB_VERSION) throw newerIndexLayoutError(storedVersion);
 
-  ensureEntriesLayout(db, storedVersion);
+  ensureEntriesLayout(db);
 
   const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);

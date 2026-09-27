@@ -114,13 +114,14 @@ foreign keys ON. Vector search is an exact scan of the `embeddings` table.
 Opened by:
 - `openIndexDatabase()` — managed schema initialization, called by `akm index`
   and other index writers. Schema changes are applied in place: `CREATE ... IF
-  NOT EXISTS`, `ALTER TABLE ... ADD COLUMN`, and a one-time rebuild of the FTS
-  tables from `entries` when they still carry the layout-23 content copies.
-  `embeddings`, `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are
-  never dropped to cross a layout change.
+  NOT EXISTS`, `ALTER TABLE ... ADD COLUMN` / `DROP COLUMN`, drops of retired
+  derived tables, and a one-time rebuild of the FTS table from `entries` when
+  it still carries the layout-23 content copies. `embeddings`,
+  `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are never dropped
+  to cross a layout change. A newer layout is refused, naming the upgrade.
 - `openExistingDatabase()` / `openReadonlyExistingDatabase()` — no schema
-  mutation; serve whatever layout is on disk (an older or newer marker is
-  named once on stderr, never refused).
+  mutation; serve an older layout as-is (named once on stderr) and refuse a
+  newer one (`INDEX_SCHEMA_INCOMPATIBLE`, "Upgrade akm to use this index.").
 
 **Retention:** `index.db` is a regenerable derived cache. The one
 from-scratch rebuild is on-disk corruption (`SQLITE_CORRUPT`, #865): the file

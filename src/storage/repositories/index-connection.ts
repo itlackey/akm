@@ -23,7 +23,7 @@ import { openManagedDatabase } from "../managed-db";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../sqlite-pragmas";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../sqlite-read-snapshot";
 import { CANONICAL_INDEX_DB_VERSION } from "./index-entry-schema";
-import { ensureSchema } from "./index-schema";
+import { ensureSchema, newerIndexLayoutError } from "./index-schema";
 
 /**
  * Whether `error` is SQLite reporting on-disk corruption (`SQLITE_CORRUPT`,
@@ -76,7 +76,7 @@ export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (d
 
 export function openExistingDatabase(dbPath?: string): Database {
   // Existing-DB callers do not mutate schema or embedding metadata on open;
-  // they serve whatever layout is on disk (see noteIndexLayout).
+  // they serve an older layout as-is and refuse a newer one (see checkIndexLayout).
   //
   // "Existing" is load-bearing: a missing file throws instead of being
   // created. Create-on-open used to leave a schema-less index.db behind (a
@@ -91,18 +91,23 @@ export function openExistingDatabase(dbPath?: string): Database {
     throw new Error(`Index database not found at ${resolvedPath}. Run 'akm index' to build it.`);
   }
   const db = openManagedDatabase({ path: resolvedPath, create: false });
-  noteIndexLayout(db, resolvedPath);
-  return db;
+  try {
+    checkIndexLayout(db, resolvedPath);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 /**
- * A reader never refuses an index over its layout marker. An older layout is
- * served as-is (the FTS readers understand both layouts, and a missing table
- * degrades at the caller — keyword-only search, an inline rebuild, or a "run
- * akm index" notice); the next writable open migrates it in place. A newer
- * layout is served the same way. One line names the situation per process.
+ * A reader serves an older layout as-is (the FTS readers understand both
+ * layouts, and a missing table degrades at the caller — keyword-only search,
+ * an inline rebuild, or a "run akm index" notice) and names it once per
+ * process; the next writable open migrates it in place. A newer layout is
+ * refused, naming the upgrade ({@link newerIndexLayoutError}).
  */
-function noteIndexLayout(db: Database, resolvedPath: string): void {
+function checkIndexLayout(db: Database, resolvedPath: string): void {
   let stored: number;
   try {
     const row = db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string } | undefined;
@@ -112,13 +117,11 @@ function noteIndexLayout(db: Database, resolvedPath: string): void {
     return;
   }
   if (!Number.isFinite(stored) || stored === CANONICAL_INDEX_DB_VERSION) return;
+  if (stored > CANONICAL_INDEX_DB_VERSION) throw newerIndexLayoutError(stored, resolvedPath);
   warnOnce(
     `index-db-layout:${resolvedPath}`,
-    stored < CANONICAL_INDEX_DB_VERSION
-      ? `Index database at ${resolvedPath} uses an older layout (${stored}; this akm writes ${CANONICAL_INDEX_DB_VERSION}). ` +
-          "Serving it as-is; the next 'akm index' migrates it in place."
-      : `Index database at ${resolvedPath} was written by a newer akm (layout ${stored}; this binary understands ` +
-          `${CANONICAL_INDEX_DB_VERSION}). Serving what it can — upgrade akm to use the full index.`,
+    `Index database at ${resolvedPath} uses an older layout (${stored}; this akm writes ${CANONICAL_INDEX_DB_VERSION}). ` +
+      "Serving it as-is; the next 'akm index' migrates it in place.",
   );
 }
 
@@ -189,7 +192,7 @@ export function openReadonlyExistingDatabase(
   // connection, so apply just that one.
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    noteIndexLayout(db, resolvedPath);
+    checkIndexLayout(db, resolvedPath);
     return db;
   } catch (error) {
     db.close();

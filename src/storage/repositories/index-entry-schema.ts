@@ -5,11 +5,12 @@
 /**
  * The derived `entries` layout: DDL plus the layout marker.
  *
- * `index_meta.version` is a layout marker, not a compatibility gate. Nothing
- * refuses an index over it: readers serve what is there, and the writable
- * opener (`ensureSchema`, `index-schema.ts`) brings an older layout up to date
- * in place — additive columns and a one-time full-text rebuild — without
- * touching embeddings, utility scores, graph rows, or the LLM enrichment cache.
+ * `index_meta.version` is a layout marker. An older layout is never refused:
+ * readers serve what is there, and the writable opener (`ensureSchema`,
+ * `index-schema.ts`) brings it up to date in place — added and dropped
+ * columns, retired tables dropped, a one-time full-text rebuild — without
+ * touching embeddings, utility scores, graph rows, or the LLM enrichment
+ * cache. A newer layout is refused, naming the upgrade.
  */
 
 // 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`

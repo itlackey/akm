@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { hashContent } from "../core/adapter/adapters/shared";
 import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
+import { ConfigError } from "../core/errors";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { warnVerbose } from "../core/warn";
@@ -197,7 +198,9 @@ function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean 
     } catch {
       return false;
     }
-  } catch {
+  } catch (error) {
+    // A newer layout's refusal names the remedy; a rebuild would refuse too.
+    if (error instanceof ConfigError) throw error;
     // No `entries` table (or otherwise unreadable) — cannot serve.
     return false;
   } finally {

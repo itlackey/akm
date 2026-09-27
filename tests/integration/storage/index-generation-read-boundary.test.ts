@@ -1,8 +1,10 @@
-// This integration suite opens real index.db files to pin that no opener refuses an index over its layout marker.
+// This integration suite opens real index.db files to pin what each opener does with the layout marker: an
+// older layout is served, a newer one is refused, naming the upgrade.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { openDatabase } from "../../../src/storage/database";
 import {
   closeDatabase,
   openExistingDatabase,
@@ -33,7 +35,7 @@ function expectServed(open: () => ReturnType<typeof openExistingDatabase> | unde
   }
 }
 
-describe("index readers never refuse over the layout marker", () => {
+describe("index openers and the layout marker", () => {
   let storage: IsolatedAkmStorage;
   let warnings: string[] = [];
   afterEach(() => {
@@ -63,13 +65,30 @@ describe("index readers never refuse over the layout marker", () => {
     expect(warnings[0]).toContain("akm index");
   });
 
-  test("a newer layout is served by every opener, naming the upgrade", () => {
-    const dbPath = setup(String(CANONICAL_INDEX_DB_VERSION + 1));
-    expectServed(() => openExistingDatabase(dbPath));
-    expectServed(() => openReadonlyExistingDatabase(dbPath));
-    expectServed(() => openIndexDatabase(dbPath));
-    expect(warnings.length).toBeGreaterThan(0);
-    expect(warnings.every((line) => /upgrade akm/i.test(line))).toBe(true);
+  test("a newer layout is refused by every opener, naming the upgrade, and left as it is", () => {
+    const newer = CANONICAL_INDEX_DB_VERSION + 1;
+    const dbPath = setup(String(newer));
+    for (const open of [
+      () => openExistingDatabase(dbPath),
+      () => openReadonlyExistingDatabase(dbPath),
+      () => openIndexDatabase(dbPath),
+    ]) {
+      let refusal: unknown;
+      try {
+        closeDatabase(open() as NonNullable<ReturnType<typeof open>>);
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal).toMatchObject({ code: "INDEX_SCHEMA_INCOMPATIBLE" });
+      expect(String((refusal as Error).message)).toContain(`newer akm (layout ${newer}`);
+      expect(String((refusal as Error).message)).toContain("Upgrade akm to use this index.");
+    }
+    const raw = openDatabase(dbPath, { readonly: true, create: false });
+    try {
+      expect(raw.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({ value: String(newer) });
+    } finally {
+      raw.close();
+    }
   });
 
   test("a missing layout marker is served, and the writable open stamps it", () => {

@@ -259,7 +259,7 @@ describe("#800 effective dry-run planner", () => {
     }
   });
 
-  test("a newer index layout is read as-is by the dry run, with a warning naming the upgrade", async () => {
+  test("a newer index layout is refused by the dry run, naming the upgrade, and left as it is", async () => {
     const storage = isolatedStorage();
     const config = plannerConfig();
     await indexSkills(storage.stashDir, 1, config);
@@ -271,15 +271,10 @@ describe("#800 effective dry-run planner", () => {
     } finally {
       newerDb.close();
     }
-    const warnings: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-
     const result = await akmImprove({ scope: "skill", stashDir: storage.stashDir, config, dryRun: true });
 
-    expect(result.plan?.snapshot?.status).toBe("ready");
-    expect(warnings.some((line) => line.includes("newer akm") && line.includes("upgrade akm"))).toBe(true);
+    expect(result.plan?.snapshot?.status).toBe("incompatible");
+    expect(result.plan?.snapshot?.reason).toContain("Upgrade akm");
     const after = new Database(dbPath, { readonly: true });
     try {
       expect(after.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({

@@ -115,6 +115,16 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   database skips the VACUUM instead of failing the run; each VACUUM prints
   its page counts and appends an `index_db_vacuumed` event.
   (`src/indexer/indexer.ts`, `src/storage/state-db-integrity.ts`.)
+- **An index a newer akm wrote is refused, naming the upgrade.** Readers
+  used to serve a newer layout "as far as they could" and the writable open
+  continued at its own layout, setting the marker back so the two releases
+  alternated. A newer layout can lack a column an older reader selects —
+  layout 25 drops `entries.search_text` — so every opener now refuses it with
+  `INDEX_SCHEMA_INCOMPATIBLE` ("Upgrade akm to use this index.") and leaves
+  the file untouched; an older layout is still served as-is and migrated by
+  the next writable open, and `akm improve --dry-run` reports the refusal as
+  an incompatible snapshot. (`src/storage/repositories/index-connection.ts`,
+  `src/storage/repositories/index-schema.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,
@@ -307,9 +317,8 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   resumably, replacing the purge, the #955 re-embed canary and
   `embedding_salvage`. `akm index --full` keeps unchanged entries' vectors,
   and a one-file change in a large directory re-persists only that file.
-  Readers serve an older or newer layout as-is and say so once on stderr. An
-  akm older than this release refuses a layout-24 index and asks to be
-  upgraded.
+  Readers serve an older layout as-is and say so once on stderr. An akm
+  older than this release refuses a layout-24 index and asks to be upgraded.
 - **`--verbose` embedding output lists each document's size without a
   predicted batch number.** The per-batch lines already report every
   provider request's document and token counts, and skipped documents are
