@@ -234,7 +234,7 @@ queryable per-run or aggregated with `akm improve report`; see
 
 ### 2. Usage Events Table
 
-`usage_events` is the local analytical record behind utility ranking,
+`usage_events` is the local analytical record behind utility scores,
 retrieval-demand counts, GRR, and real-query eval generation (0.9.0: its CLI
 read surface, `akm history`, was removed — the table itself and everything
 below still applies). It stores
@@ -245,7 +245,7 @@ configured endpoint.
 
 Successful `search`, `curate`, and `show` commands record usage by default.
 Pass `--no-track-usage` to any of those commands to leave local usage events
-and ranking signals unchanged.
+unchanged.
 
 Every runtime writer stamps provenance as `user`, `improve`, `task`, `audit`, or
 `unknown`. Direct interactive CLI traffic defaults to `user`; internal improve,
@@ -257,20 +257,18 @@ real-query labels.
 
 Per-entry `search`, `curate`, and `show` rows carry a local-only
 `metadata.downstreamAttribution` object. Version 1 uses `control: true` for
-current traffic where neither memory inference nor graph extraction applies;
-rows without the version marker are historical/unattributed. Attributed rows
-use `control: false` and may contain:
+current traffic where memory inference does not apply; rows without the
+version marker are historical/unattributed. Attributed rows use
+`control: false` and may contain:
 
 - `memoryInference`: `direct` when the emitted ref is an inferred child, or
   `surface` when derived description/tags were actually present in the emitted
   search or selected curate output. Brief output and internally replaced
   descriptions are controls, not surface attribution.
-- `graphExtraction`: the positive graph-ranking contribution that was actually
-  applied after the shared contributor cap, plus `bodyHash` and
-  `extractionRunId` when available. It is absent when `graph-ranking` is
-  ablated. The number is a ranking-input contribution, not proof that graph
-  changed final rank, selection, or outcome; score saturation and competing
-  contributors can leave ordering unchanged.
+- `graphExtraction`: written only by releases that boosted search with the
+  graph — the graph contribution applied to the hit, plus `bodyHash` and
+  `extractionRunId` when available. Current releases do not rank by the graph
+  and never write it.
 
 Attribution metadata contains fully-qualified refs and graph identifiers, never
 asset bodies or provenance content. It is not added to `search`, `curate`, or

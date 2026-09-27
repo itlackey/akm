@@ -2,7 +2,7 @@
 
 AKM learns from outcomes, but changes remain reviewable. Every time an agent
 uses a capability and reports back whether it helped, AKM folds that signal
-into the asset's ranking and — over time — proposes concrete edits. Nothing
+into the asset's utility score and — over time — proposes concrete edits. Nothing
 lands in your bundle automatically: every generated change queues as a
 proposal you (or an explicit policy) accept, reject, or revert.
 
@@ -192,9 +192,9 @@ autonomy gate that governs the few lanes that can act without one.
 
 ## See also
 
-- [Discover & Load](discover-and-load.md) — feedback improves ranking over time
+- [Discover & Load](discover-and-load.md) — finding and loading assets
 - [Knowledge Management](knowledge-management.md) — capturing memories and docs
 - [Agent Integration](use-with-any-agent.md) — wiring feedback into agent workflows
 - [CLI Reference](../reference/cli.md) — full flag documentation for `feedback`, `log`, `improve`, `proposal`
 - [Architecture: The Improvement Loop](../architecture/improvement.md) — utility scoring, strategies, autonomy gates, auto-sync, and session extraction
-- [Concepts](../guides/concepts.md) — how utility scores affect search ranking
+- [Concepts](../guides/concepts.md) — bundles, refs and the index

@@ -36,18 +36,17 @@ curate when you know what you're trying to do.
 
 ## 2. Discover a shortlist
 
-`akm search` queries the unified index and ranks hits by relevance and
-utility score:
+`akm search` queries the unified index and ranks hits by relevance — keyword
+(BM25) and semantic (vector) matches fused into one list:
 
 ```sh
 akm search "deploy" --type script --shape agent
-# → [{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh","score":0.87,...}]
+# → [{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh","score":0.0328,...}]
 ```
 
-`akm curate` goes further: it keeps search ranking as the backbone, applies
-small type-aware nudges for close calls, falls back to token search when
-phrase hits are weak, and can attach related support refs — all while
-including a direct `akm show <ref>` follow-up on every result:
+`akm curate` goes further: it takes the top search hits in order and attaches
+a preview, run details and related support refs — all while including a
+direct `akm show <ref>` follow-up on every result:
 
 ```sh
 akm curate "review an architecture proposal" --type skill
@@ -102,8 +101,8 @@ guess that misses still tells you what to try next.
 
 ## 5. Record the outcome
 
-After acting on a loaded asset, close the loop with `akm feedback` so ranking
-and the improvement pipeline learn from the outcome:
+After acting on a loaded asset, close the loop with `akm feedback` so the
+improvement pipeline learns from the outcome:
 
 ```sh
 akm feedback scripts/deploy.sh --positive

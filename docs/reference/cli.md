@@ -436,10 +436,8 @@ for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 The indexed entity graph (entities/relations extracted from bundle assets) has
 no dedicated inspection command; its summary counts surface as an info-level
 metric in `akm health`. Graph data is automatically re-extracted on the first
-`akm improve` cycle after a `DB_VERSION` upgrade, and search ranking can
-optionally use graph-derived confidence-weighted boosts — tune
-`search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight` in
-[`docs/reference/configuration.md#search-tuning`](configuration.md#search-tuning).
+`akm improve` cycle after a `DB_VERSION` upgrade. The graph backs `akm show`'s
+`related` list and curate's support refs; it does not affect search ranking.
 
 ### search
 
@@ -496,6 +494,18 @@ query. The last case also adds one sanitized, endpoint-naming entry to
 preserved by `--shape agent` so machine consumers can lower their confidence
 instead of treating keyword fallback as healthy semantic ranking.
 
+Ranking fuses two candidate lists by reciprocal rank (k = 60, equal weights):
+BM25 over whole documents matching any non-stopword query word, and the
+document vectors nearest to the query embedding, 100 candidates each. A hit's
+`score` is its fused score, and equal scores are ordered by ref. The query is
+embedded with the model's query template (see `embedding.queryTemplate` in
+[`configuration.md`](configuration.md)); when the embedding takes longer than
+`embedding.queryTimeoutMs` (default 3000) or fails, the search is served by
+keyword ranking alone with `fts-fallback` and a warning. Filters (`--type`,
+`--from`, `--filter`, `--belief`, the default session exclusion, proposed
+quality) and one-hit-per-file deduplication narrow the fused list without
+reordering it.
+
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
@@ -505,8 +515,7 @@ instead of treating keyword fallback as healthy semantic ranking.
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `all` | Memory belief filter. `current` keeps active memory beliefs; `historical` keeps contradicted/superseded/archived ones. |
-| `--no-project-context` | flag | `false` | Disable the automatic project-context ranking boost for this search only |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage-event and ranking updates for this successful read |
+| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level |
@@ -526,21 +535,12 @@ availability:
 - **`ref`** -- The asset handle to pass to `akm show` (for example
   `team//scripts/deploy.sh`); present at `brief`, `full`, and `agent` for local
   hits
-- **fragment provenance** -- when `ref` selects an indexed Markdown fragment,
-  `selectedRef` and `parentRef` distinguish the ranked evidence from its parent;
-  one-based `fragmentOrdinal`, `fragmentCount`, source-line bounds, neighbor
-  refs, and separate fragment/parent size estimates are available without
-  changing ranking. `estimatedTokens` describes the fragment for a
-  fragment-qualified hit; `parentEstimatedTokens` describes the whole asset.
 - **`name`** -- The asset's filename or identifier; present at all levels
 - **`origin`** -- The source bundle (e.g. `npm:@scope/pkg`), present only for
   managed source assets; surfaced at `full` only
 - **`id`** -- Registry-level identifier (registry hits only)
-- **`matchStage`** -- Which stage of the progressive AND->OR lexical search
-  ladder produced the hit: `exact` (strict AND), `prefix` (prefix AND), or
-  `relaxed` (OR/prefix-OR recovery). Omitted for hits with no FTS component
-  (e.g. a pure-semantic hybrid match) and for registry hits; surfaced at
-  `normal`, `full`, and `--shape agent`
+- **`whyMatched`** -- The hit's rank in each candidate list that returned
+  it (`lexical rank 3`, `vector rank 12`); surfaced at `full`
 
 The default brief shape is intentionally small. The exact field set per
 detail level (and per `--shape`) is authoritative in
@@ -550,9 +550,9 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | Level | Local bundle hits | Registry hits |
 | --- | --- | --- |
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
-| `normal` | `type`, `name`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`keys`/`matchStage` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
-| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `matchStage`, timings, bundle metadata) | full hit object |
-| `--shape agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys`/`matchStage` | no local access fields |
+| `normal` | `type`, `name`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, bundle metadata) | full hit object |
+| `--shape agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys` | no local access fields |
 
 `--shape summary` is **not valid on `search`** — see
 [`--shape summary`](#--shape-summary) above; it is a usage error (exit 2)
@@ -591,18 +591,18 @@ akm curate "learn the release workflow" --from all --format text
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search before curating |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage-event and ranking updates for this successful read |
+| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 
-`akm curate` selects a small relevance-first shortlist. It preserves the
-strongest search hits first, uses only small type-aware nudges for close-score
-ties, can collapse obvious root/reference families into one top-level result,
-and falls back to token searches when the phrase result set is weak. Curate
-includes direct follow-up commands such as `akm show <ref>` or `akm bundle add <ref>`
-so you can immediately inspect or install what it found.
+`akm curate` takes the top `--limit` hits of one search, in search order, and
+enriches each with a preview, run details and up to two graph-related support
+refs. With `search.curateRerank.enabled`, a cross-encoder first reorders the
+top 30 fused candidates (`search.curateRerank.topN`) by name, description and
+the start of each asset's indexed content. Curate includes direct follow-up
+commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
+immediately inspect or install what it found.
 `--detail` and `--shape agent` both work on curate output; `--shape summary`
 does not.
-Curate preserves the underlying `searchMode` and deduplicates semantic fallback
-warnings across its full-query and token-fallback searches.
+Curate preserves the underlying search's `searchMode` and warnings.
 Agent-shaped local items include `ref`, `path`, and `editable`, plus `editHint`
 only for read-only items. Their `followUp` remains `akm show <ref>` rather than
 being replaced by clone guidance.
@@ -612,8 +612,7 @@ individual scripts, skills, or docs.
 every prompt: it only ever reads the index as it currently stands (the same
 non-blocking `ensureIndex()` path `search` uses) and never waits on or
 contends with a full `akm index` rebuild in progress.
-Use `--no-track-usage` when this inspection must not update local usage or
-ranking signals.
+Use `--no-track-usage` when this inspection must not record usage events.
 
 ### show
 
@@ -621,8 +620,8 @@ Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
 unmatched fragment lists the available slugs.
 
-Successful reads record local usage and ranking signals by default; pass
-`--no-track-usage` to suppress those updates.
+Successful reads record local usage events by default; pass
+`--no-track-usage` to suppress them.
 
 ```sh
 akm show scripts/deploy.sh
@@ -652,7 +651,7 @@ akm show memories/retro --filter user=alice --filter agent=claude
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable scope filter (`user`, `agent`, `run`, `channel`). |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage-event and ranking updates for this successful read. |
+| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read. |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -1465,7 +1464,7 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
 | `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
-| `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so ranking prefers the correction and `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
+| `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
@@ -1598,9 +1597,9 @@ akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
 
-The `--applied-to` flag drives the lesson-strength ranking signal: lessons that
-have demonstrably helped resolve tasks receive a small additive ranking boost
-(capped at +0.3) so they float to the top of search.
+The `--applied-to` flag records the lesson-strength signal: each credit is
+kept in the lesson's `lessonStrength[]` frontmatter. Search ranking does not
+use it.
 
 ### log
 
@@ -2543,9 +2542,7 @@ verbatim) and that the response contract tells the model never to emit the
 truncation marker or any content from outside the shown asset.
 
 When reinforced facts need promotion, `knowledge` is the higher-authority
-destination than `memory`. The deterministic search ranking also prefers
-`knowledge` over `memory` hits, including inferred `.derived` memories, when
-the evidence is otherwise comparable.
+destination than `memory`.
 
 #### improve report
 

@@ -14,6 +14,53 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Changed
 
+- **Search ranks by reciprocal rank fusion of BM25 and document vectors.**
+  Two candidate lists, 100 each, are fused with equal weights (k = 60): BM25
+  over whole documents (`entries_fts`) matching any of the query's
+  non-stopword words (every word when the query has nothing else), and the
+  document vectors nearest to the query embedding. Equal scores are ordered by
+  ref, so the ranking depends only on the index and the query's embedding
+  (keyword-only runs of the suite reproduce exactly). Filters (`--type`,
+  `--from`, `--filter`, `--belief`, the default session exclusion, proposed
+  quality) and one-hit-per-file deduplication narrow the fused list without
+  reordering it. A hit's `score` is its fused score (at most 2/61 ≈ 0.033),
+  and `--detail full`'s `whyMatched` lists its rank in each list
+  (`lexical rank 3`, `vector rank 12`). On the retrieval suite (221 real
+  queries over a 23k-document snapshot, LLM-judged) nDCG@10 rises from 0.347
+  to 0.566 and P@5 from 0.347 to 0.558, level with the lab reference design;
+  every query class improves, questions (0.20 → 0.44) and long prompts
+  (0.24 → 0.52) most. End to end, process start included, search p50/p95
+  fell from 787/4130 ms to 341/830 ms. BM25 weighs the five columns
+  equally: the previous 10/5/3/2/1 weights measured 0.011 lower P@5.
+  (`src/indexer/search/db-search.ts`,
+  `src/indexer/search/ranking.ts`, `src/indexer/search/fts-query.ts`,
+  `src/storage/repositories/index-fts-repository.ts`.)
+- **Queries are embedded the way the embedding model expects.** An embedding
+  profile picks query and document templates by model name: Qwen3-Embedding
+  gets its retrieval instruction on queries, nomic-embed `search_query: ` /
+  `search_document: `, the BGE English, mxbai and arctic models the
+  "Represent this sentence for searching relevant passages: " query prefix,
+  E5 `query: ` / `passage: `, and other models none; `embedding.queryTemplate`
+  and `embedding.documentTemplate` override the preset (`""` turns it off).
+  The document template is part of the embedding fingerprint, so a nomic or
+  E5 index re-embeds on the next `akm index`; Qwen3, BGE and the default local
+  model keep their vectors. Text reaches the embedder with its case: the query
+  is no longer lowercased, and an entry's embedded text keeps its case once
+  the entry is next re-indexed (`akm index --reembed` refreshes every vector
+  at once). The query embedding is requested before the keyword query runs,
+  and a search waits for it at most `embedding.queryTimeoutMs` (default 3000)
+  before serving keyword ranking alone with one warning — a hung endpoint
+  used to hold a search for up to 120 s. (`src/llm/embedders/profile.ts`,
+  `src/indexer/materialize-embeddings.ts`.)
+- **Curate is one search.** `akm curate` takes the top `--limit` hits of the
+  fused search in order and enriches each with its preview, run details and
+  up to two graph-related support refs, so curate's items are search's top
+  hits (P@5 0.350 → 0.556 on the retrieval suite; p50/p95 1082/4148 ms →
+  433/888 ms). The optional reranker (`search.curateRerank`, still off by
+  default) now reorders the top 30 fused candidates (`topN`, previously 8 but
+  applied only to the final `limit` items) and sends each as its name,
+  description and the start of its indexed content (2,000 characters in all)
+  instead of name and description. (`src/commands/read/curate.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,
@@ -347,6 +394,36 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Removed
 
+- **Every ranking signal besides the two fused lists.** Search no longer
+  applies exact-name tiers, type, belief-state, tag, search-hint, alias,
+  description, metadata, graph, capture-mode, lesson-strength, pinned-fact or
+  project-context boosts, the utility multiplier, the relaxed-query score
+  ceiling, or the cosine floor on vector-only hits, and it no longer loads
+  the graph snapshot. On the retrieval suite plain whole-document BM25 alone
+  beat the boosted pipeline by 0.156 nDCG@10, and applying the belief-state
+  weights to the fused score lowered nDCG@10 by 0.010 [−0.020, −0.001], so
+  `--belief current` is the way to leave out contradicted or superseded
+  entries. Usage events and utility scores are still recorded (improve's
+  salience and graph extraction read them), and the graph still backs
+  `akm show`'s `related` list and curate's support refs.
+- **The require-every-word keyword ladder and prefix matching.** The strict
+  AND query, its prefix-AND retry and the OR recovery behind them are gone
+  (OR matching measured 0.108 nDCG@10 better), so a word fragment such as
+  `dock` no longer matches `docker`.
+- **Fragment hits in search.** Markdown fragments no longer compete as search
+  candidates (whole documents measured 0.059 nDCG@10 better), so search
+  returns whole-document refs and its hits drop `selectedRef`, `parentRef`,
+  `fragmentOrdinal`, `fragmentCount`, the fragment line and size fields and
+  `matchStage`; `akm show <ref>#<fragment>` still selects a section.
+- **Curate's second-guessing of search:** the per-keyword fallback searches
+  and their max-score merge, the intent and type nudges, skill-family
+  collapse (and the family support refs it produced), and the close-score
+  comparator.
+- **Retired options.** `akm search --no-project-context` now fails as an
+  unknown flag (exit 2). The config keys `search.minScore`,
+  `search.graphBoost.*` and `improve.utilityDecay.*` have no effect and are
+  kept as unknown keys. Search hits no longer carry the `graph` field, and
+  usage events no longer record `graphExtraction` attribution.
 - **Guarded source reads around workflow runs.** `akm workflow run` no
   longer records a read set of every source it touched or re-checks those
   sources before publishing the run, so editing a command, task, script or

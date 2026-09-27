@@ -118,7 +118,7 @@ service events, and runners; none of those capabilities is implied by 0.9.2.
 - [Capture Knowledge](https://github.com/itlackey/akm/blob/main/docs/guides/capture-knowledge.md) — turn a workflow run's
   outputs into searchable memories
 - [Improve the Library](https://github.com/itlackey/akm/blob/main/docs/guides/improve-the-library.md) — feed run outcomes
-  back into a workflow asset's ranking and proposed edits
+  back into a workflow asset's utility score and proposed edits
 - [Concepts](https://github.com/itlackey/akm/blob/main/docs/guides/concepts.md) — the workflow asset type and run-state
   storage in the broader AKM model
 - [CLI Reference](cli.md) — full flag documentation for all `workflow`

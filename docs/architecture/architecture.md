@@ -126,26 +126,32 @@ locators like `github:owner/repo`, `git+https://...`, `npm:@scope/pkg`,
 
 ## Search Pipeline
 
-There is **one** scoring pipeline for all indexed content:
+There is **one** ranking for all indexed content: reciprocal rank fusion
+(k = 60, equal weights) of two candidate lists, 100 each.
 
-1. multi-column FTS5 search
-2. BM25 normalization
-3. optional semantic / vector scoring
-4. metadata, type, and utility boosts
+1. lexical: BM25 over the whole-document FTS5 table (`entries_fts`, columns
+   `name`, `description`, `tags`, `hints`, `content`, equal weights),
+   matching any of the query's non-stopword tokens
+2. vector: the document vectors nearest to the query embedding, embedded
+   through the model's embedding profile (`src/llm/embedders/profile.ts`)
 
-Indexed field weighting:
-
-- `name` ×10
-- `description` ×5
-- `tags` ×3
-- `hints` ×2
-- `content` ×1
+Filters (type, source, scope, belief, proposed quality, default-excluded
+types) and one-hit-per-file deduplication narrow the fused list without
+reordering it, and a hit's `score` is its fused score. Nothing else — name,
+type, tag, graph, usage or belief-state signals — changes the order. The
+design and its measured alternatives are in the retrieval evaluation
+(`akm/eval/retrieval/reports/baseline-2026-09-27.md`).
 
 Notes:
 
-- lexical queries are tokenized once with Unicode letter/number semantics and
-  execute strict AND, then prefix-AND, then one OR/prefix-OR recovery only when
-  both strict forms return no candidates; there are no caller stopword lists
+- lexical queries are tokenized once with Unicode letter/number semantics,
+  lowercased, and stripped of English stopwords unless the query is nothing
+  else; the tokens are quoted and OR-ed
+- the query embedding is requested before the FTS query runs and is bounded
+  by `embedding.queryTimeoutMs` (default 3000); on timeout or failure the
+  search is served by the lexical list alone
+- Markdown fragments (`entry_fragments_fts`) are not searched; `akm show`
+  reads the fragment projection for `#fragment` refs
 - `hints` includes `searchHints`, `examples`, `usage`, intent fields, wiki
   cross-references, and page-kind hints
 - `content` is bounded low-weight body prose plus TOC headings and parameter metadata; secret/env/session material is excluded at the adapter boundary
@@ -343,7 +349,8 @@ state, while `logs.db` stores task/run log lines.
 
 ## Utility Scoring
 
-Utility is feedback-driven and rebuilt from `usage_events`.
+Utility is feedback-driven and rebuilt from `usage_events`. It orders
+improve's salience and graph-extraction work; search ranking does not read it.
 
 - usage history is preserved across schema resets and full rebuilds
 - detached events are re-linked to fresh entry ids by ref
@@ -529,9 +536,9 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
-| `src/indexer/walk/` | walker, matchers, path/file/index/project context — the walk phase |
+| `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
 | `src/indexer/db/` | `db`, `db-backup`, `graph-db`, `llm-cache` — the persistence phase |
-| `src/indexer/graph/` | graph boost/dedup/extraction — the graph phase |
+| `src/indexer/graph/` | graph related-files/dedup/extraction — the graph phase |
 | `src/indexer/search/` | `db-search`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, staleness-detect, metadata — LLM/metadata passes |
 | `src/indexer/usage/` | usage-events |

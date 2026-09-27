@@ -21,7 +21,7 @@ access to recalled context from previous sessions.
 ## Schema
 
 Memories captured with `akm remember` can carry optional YAML frontmatter
-that the indexer uses for ranking:
+that the indexer records:
 
 | Field | Purpose |
 | --- | --- |
@@ -42,18 +42,18 @@ configured LLM propose them with `--enrich`. See
 
 ### Belief states
 
-Memories carry a `beliefState` field that signals how the indexer should
-weigh them in search. The supported values, from strongest to weakest
-authority:
+Memories carry a `beliefState` field that records how current they are.
+Search ranking does not read it; the `--belief` filter below does. The
+supported values, from strongest to weakest authority:
 
-| State | When it's set | Ranking effect |
+| State | When it's set | `--belief` |
 | --- | --- | --- |
-| `asserted` | Written directly by `akm remember` (user-explicit) | strongest active boost |
-| `active` | Default for memories with no explicit state | active boost |
-| `deprecated` | Marked as no-longer-current but not yet superseded | small penalty; frozen (never auto-refreshed) |
-| `superseded` | Replaced by another memory via the `supersededBy` field | larger penalty |
-| `contradicted` | Marked as contradicted by other evidence | strong penalty |
-| `archived` | Soft-deleted; retained for audit | strongest penalty |
+| `asserted` | Written directly by `akm remember` (user-explicit) | current |
+| `active` | Default for memories with no explicit state | current |
+| `deprecated` | Marked as no-longer-current but not yet superseded; frozen (never auto-refreshed) | historical |
+| `superseded` | Replaced by another memory via the `supersededBy` field | historical |
+| `contradicted` | Marked as contradicted by other evidence | historical |
+| `archived` | Soft-deleted; retained for audit | historical |
 
 `akm search` filters via `--belief current|historical|all`:
 
@@ -85,9 +85,6 @@ automation keeps working — agents that want the deeper summary follow
   automatically.
 - Background-derived memories (those inferred from other assets by `akm
   improve`) receive `captureMode: background`.
-- The indexer applies a small ranking boost to hot-captured memories so
-  explicit user-recorded context ranks above passive inference when both
-  match a query.
 - A memory with no explicit `beliefState` defaults to `active`.
 - `akm search --belief` defaults to `all` — no filter is applied unless you
   pass `current` or `historical` explicitly.

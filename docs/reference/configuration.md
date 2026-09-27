@@ -410,7 +410,22 @@ unless a remote `embedding` config is provided.
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
 reference, same rules as engine `apiKey`), `dimension`, `localModel`,
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
-`concurrency`, and `ollamaOptions.num_ctx`.
+`queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`, and
+`ollamaOptions.num_ctx`.
+
+Retrieval models expect a prompt around queries and documents. akm picks it by
+model name (`src/llm/embedders/profile.ts`): Qwen3-Embedding gets
+`Instruct: Given a question or task, retrieve the knowledge asset that helps with it\nQuery:{text}`
+on queries; nomic-embed `search_query: ` / `search_document: `; the BGE
+English, mxbai and arctic models `Represent this sentence for searching
+relevant passages: ` on queries; E5 `query: ` / `passage: `; any other model
+none. `embedding.queryTemplate` and `embedding.documentTemplate` override the
+preset (`{text}` marks where the text goes, a template without it is a prefix,
+and `""` means none). The document template is part of the embedding
+fingerprint, so changing it re-embeds the index; the query template applies
+at search time only. `embedding.queryTimeoutMs` (default `3000`) bounds how
+long a search waits for its query embedding before falling back to keyword
+ranking with a warning.
 
 The knobs that bound request/document size and rate, all optional (defaults
 apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
@@ -514,26 +529,20 @@ taking about the same wall time as a single one against a healthy endpoint.
 
 ## Search tuning
 
-`search` tunes ranking, not behavior an ordinary user needs to touch:
+`search` sets which types search leaves out by default, and the optional curate reranker:
 
 | Key | Purpose |
 | --- | --- |
-| `search.minScore` | Drop results below this score |
 | `search.defaultExcludeTypes` | Asset types excluded from results by default |
-
-### Graph boost search tuning
-
-| Key | Purpose |
-| --- | --- |
-| `search.graphBoost.*` | Entity-graph relevance boost: `directBoostPerEntity`/`directBoostCap` (directly related entities), `hopBoostPerEntity`/`hopBoostCap` (multi-hop, capped at `maxHops` ≤ 3), `confidenceMode` (`blend`, the only supported value), `confidenceWeight` (0–1, default `0.2`) |
 
 ### Curate rerank (#951)
 
-An optional cross-encoder rerank pass over `akm curate`'s already-selected
-candidates, via a standalone `/rerank`-style HTTP endpoint (NOT one of the
-`engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a misconfigured
-endpoint, network failure, timeout, or malformed response falls back to
-curate's own ranking unchanged.
+An optional cross-encoder rerank pass over the top fused search candidates
+`akm curate` fetches, via a standalone `/rerank`-style HTTP endpoint (NOT one
+of the `engines.*` `"llm"`/`"agent"` kinds). Each candidate is sent as its
+name, description and the start of its indexed content (2,000 characters in
+all). Disabled by default; a misconfigured endpoint, network failure, timeout,
+or malformed response keeps the fused order.
 
 | Key | Purpose |
 | --- | --- |
@@ -542,7 +551,7 @@ curate's own ranking unchanged.
 | `search.curateRerank.model` | Model name sent to the endpoint (optional) |
 | `search.curateRerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
 | `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
-| `search.curateRerank.topN` | How many of curate's ranked candidates to send (default `8`, max `50`) |
+| `search.curateRerank.topN` | How many of the top fused candidates to rerank (default `30`, max `50`) |
 
 ## Feedback
 
