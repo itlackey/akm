@@ -113,7 +113,13 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   free, the threshold and pass improve already apply to `state.db`
   (`vacuumIfReclaimable`, formerly `vacuumStateDbIfReclaimable`). A busy
   database skips the VACUUM instead of failing the run; each VACUUM prints
-  its page counts and appends an `index_db_vacuumed` event.
+  its page counts and appends an `index_db_vacuumed` event. With the three
+  layout-25 removals above, a fresh build of the 24k-entry retrieval snapshot
+  is 340 MB instead of 560 MB, and a copy of the 601 MB layout-24 build
+  migrates in 0.8 s with all 23,979 vectors kept byte for byte, then VACUUMs
+  to 377 MB. Retrieval is unchanged on the suite (search nDCG@10 0.5562 →
+  0.5560, Δ −0.0002 [−0.0014, +0.0009]; P@5 0.5507 → 0.5517; curate P@5
+  identical), and search p50/p95 moved from 374/912 ms to 401/870 ms.
   (`src/indexer/indexer.ts`, `src/storage/state-db-integrity.ts`.)
 - **An index a newer akm wrote is refused, naming the upgrade.** Readers
   used to serve a newer layout "as far as they could" and the writable open
