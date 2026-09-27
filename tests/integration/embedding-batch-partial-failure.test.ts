@@ -55,7 +55,8 @@ describe("embedding batches: a failing batch or an oversized document does not d
       port: 0,
       async fetch(request) {
         const body = (await request.json()) as { input: string[] };
-        if (body.input.some((t) => t.includes("trigger_500"))) {
+        // The embedded text keeps the document's case.
+        if (body.input.some((t) => t.includes("TRIGGER_500"))) {
           return new Response("synthetic upstream failure", { status: 500 });
         }
         const data = body.input.map(() => ({ embedding: [1, 0, 0, 0] }));

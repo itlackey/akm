@@ -72,6 +72,19 @@ export const EmbeddingConnectionConfigSchema = z
      */
     timeoutMs: positiveInt.optional(),
     /**
+     * Text sent to the model around a search query, `{text}` marking the
+     * query (a template without it is a prefix). Overrides the preset matched
+     * on the model name (`src/llm/embedders/profile.ts`); `""` sends the query
+     * as is.
+     */
+    queryTemplate: z.string().optional(),
+    /**
+     * Text sent to the model around each document at index time, as
+     * `queryTemplate`. Part of the embedding fingerprint: changing it
+     * re-embeds the index.
+     */
+    documentTemplate: z.string().optional(),
+    /**
      * Overrides the fixed in-flight request window (#954, added after field
      * evidence from multi-slot local servers). Bounded 1-16. Unset keeps
      * today's default: 1 for a loopback endpoint, 2 for a remote one

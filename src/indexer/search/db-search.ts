@@ -24,6 +24,7 @@ import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
 import { systemErrorCode } from "../../core/system-error";
 import { allowsFragmentRef, presentationFor } from "../../core/type-presentation";
+import { applyEmbeddingTemplate, resolveEmbeddingProfile } from "../../llm/embedders/profile";
 import { normalizeEmbeddingEndpoint } from "../../llm/embedders/remote";
 import type {
   AkmSearchType,
@@ -870,7 +871,8 @@ async function tryVecScores(
 
   try {
     const { embed } = await import("../../llm/embedder.js");
-    const queryEmbedding = await embed(query, config.embedding);
+    const queryText = applyEmbeddingTemplate(resolveEmbeddingProfile(config.embedding).queryTemplate, query);
+    const queryEmbedding = await embed(queryText, config.embedding);
     const vecResults = searchVec(db, queryEmbedding, k);
 
     const scores = new Map<number, number>();

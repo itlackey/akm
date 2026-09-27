@@ -236,9 +236,9 @@ describe("parameter search text inclusion", () => {
 
     const text = buildSearchText(entry);
     expect(text).toContain("image_name");
-    expect(text).toContain("docker image name to deploy");
+    expect(text).toContain("Docker image name to deploy");
     expect(text).toContain("environment");
-    expect(text).toContain("target environment");
+    expect(text).toContain("Target environment");
   });
 });
 

@@ -282,13 +282,14 @@ describe("buildSearchFields", () => {
     const fields = buildSearchFields(entry);
     expect(fields.name).toContain("deploy");
     expect(fields.name).toContain("tool");
-    expect(fields.description).toContain("deploy applications to production");
+    expect(fields.description).toBe("Deploy applications to production");
     expect(fields.tags).toContain("deploy");
     expect(fields.tags).toContain("production");
     expect(fields.hints).toContain("release management");
     expect(fields.hints).toContain("rollout");
-    expect(fields.content).toContain("getting started");
-    expect(fields.content).toContain("configuration");
+    // Fields keep their case; FTS5 folds it and the embedder reads it.
+    expect(fields.content).toContain("Getting Started");
+    expect(fields.content).toContain("Configuration");
   });
 
   test("handles entry with minimal fields", () => {
@@ -299,7 +300,7 @@ describe("buildSearchFields", () => {
 
     const fields = buildSearchFields(entry);
     expect(fields.name).toBe("simple");
-    expect(fields.description).toBe("a test entry");
+    expect(fields.description).toBe("A test entry");
     expect(fields.tags).toBe("");
     expect(fields.hints).toBe("");
     expect(fields.content).toBe("");

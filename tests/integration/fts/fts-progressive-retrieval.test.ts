@@ -334,20 +334,21 @@ The spectral quokka calibration nonce rotates every Thursday.
       throw new Error("expected all fixture entries");
     }
     expect(knowledgeEntry?.content).toContain("spectral quokka calibration nonce");
-    expect(buildSearchText(knowledgeEntry)).toContain("violetcrane47");
+    expect(buildSearchText(knowledgeEntry)).toContain("VioletCrane47");
     expect(knowledgeEntry.content).toContain("operator alt");
     expect(knowledgeEntry.content).toContain("the guide");
-    expect(buildSearchText(knowledgeEntry)).not.toContain("image_private_sentinel");
-    expect(buildSearchText(knowledgeEntry)).not.toContain("title_private");
-    expect(buildSearchText(knowledgeEntry)).not.toContain("secret_private");
+    // Search text keeps its case, so the leak checks use the fixtures' own spelling.
+    expect(buildSearchText(knowledgeEntry)).not.toContain("IMAGE_PRIVATE_SENTINEL");
+    expect(buildSearchText(knowledgeEntry)).not.toContain("TITLE_PRIVATE");
+    expect(buildSearchText(knowledgeEntry)).not.toContain("SECRET_PRIVATE");
     expect(sessionEntry?.content).toBeUndefined();
-    expect(buildSearchText(sessionEntry)).not.toContain("session_private_sentinel");
+    expect(buildSearchText(sessionEntry)).not.toContain("SESSION_PRIVATE_SENTINEL");
     expect(checkpointEntry?.content).toBeUndefined();
-    expect(buildSearchText(checkpointEntry)).not.toContain("memory_private_sentinel");
+    expect(buildSearchText(checkpointEntry)).not.toContain("MEMORY_PRIVATE_SENTINEL");
     expect(secretEntry?.content).toBeUndefined();
-    expect(buildSearchText(secretEntry)).not.toContain("secret_private_sentinel");
+    expect(buildSearchText(secretEntry)).not.toContain("SECRET_PRIVATE_SENTINEL");
     expect(envEntry?.content).toBeUndefined();
-    expect(buildSearchText(envEntry)).not.toContain("env_private_sentinel");
+    expect(buildSearchText(envEntry)).not.toContain("ENV_PRIVATE_SENTINEL");
   });
 
   test("marks entry.contentTruncated when the indexed body is cut, and leaves it unset otherwise (#866)", () => {

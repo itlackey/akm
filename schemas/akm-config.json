@@ -244,6 +244,12 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "queryTemplate": {
+          "type": "string"
+        },
+        "documentTemplate": {
+          "type": "string"
+        },
         "concurrency": {
           "type": "integer",
           "exclusiveMinimum": 0,
@@ -1957,6 +1963,12 @@
               "type": "integer",
               "exclusiveMinimum": 0
             },
+            "queryTemplate": {
+              "type": "string"
+            },
+            "documentTemplate": {
+              "type": "string"
+            },
             "concurrency": {
               "type": "integer",
               "exclusiveMinimum": 0,
@@ -3544,6 +3556,12 @@
         "timeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0
+        },
+        "queryTemplate": {
+          "type": "string"
+        },
+        "documentTemplate": {
+          "type": "string"
         },
         "concurrency": {
           "type": "integer",

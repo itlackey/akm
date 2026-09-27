@@ -868,6 +868,15 @@ describe("search config", () => {
   });
 });
 
+describe("embedding profile config", () => {
+  test("loads embedding.queryTemplate and documentTemplate", () => {
+    writeCurrentConfig({
+      embedding: { localModel: "Xenova/bge-small-en-v1.5", queryTemplate: "", documentTemplate: "doc: {text}" },
+    });
+    expect(loadConfig().embedding).toMatchObject({ queryTemplate: "", documentTemplate: "doc: {text}" });
+  });
+});
+
 describe("0.9 config shape parsing", () => {
   test("parses configVersion", () => {
     writeCurrentConfig({});

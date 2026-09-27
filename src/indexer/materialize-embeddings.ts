@@ -24,6 +24,7 @@ import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { embedBatch } from "../llm/embedder";
 import { DETERMINISTIC_EMBED_MODEL_ID, isDeterministicEmbedEnabled } from "../llm/embedders/deterministic";
 import { DEFAULT_LOCAL_MODEL } from "../llm/embedders/local";
+import { applyEmbeddingTemplate, documentTemplateFingerprint, resolveEmbeddingProfile } from "../llm/embedders/profile";
 import {
   capEmbeddingText,
   DEFAULT_MAX_INPUT_TOKENS,
@@ -53,18 +54,23 @@ import {
 } from "../storage/repositories/index-vec-repository";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 
-/** Identifies the embedding provider+model+dimension a stored vector was generated with. */
+/**
+ * Identifies what a stored vector was generated with: provider, model and
+ * dimension, plus the document template when the embedding profile has one
+ * (so changing it re-embeds the index).
+ */
 export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectionConfig): string {
   if (isDeterministicEmbedEnabled()) {
     return `deterministic:${DETERMINISTIC_EMBED_MODEL_ID}`;
   }
+  const template = documentTemplateFingerprint(embedding);
   if (embedding?.endpoint) {
     // Fingerprint keys on vector identity only (model + dimension). The endpoint
     // is transport/routing and has no bearing on vector compatibility, so moving
     // the same model+dimension to a different host must not force a re-embed.
-    return `remote:${embedding.model}|${embedding.dimension ?? "default"}`;
+    return `remote:${embedding.model}|${embedding.dimension ?? "default"}${template}`;
   }
-  return `local:${embedding?.localModel ?? DEFAULT_LOCAL_MODEL}`;
+  return `local:${embedding?.localModel ?? DEFAULT_LOCAL_MODEL}${template}`;
 }
 
 export interface EmbeddingProgressEvent {
@@ -248,12 +254,13 @@ export async function generateEmbeddingsForDb(
     let truncatedCount = 0;
     const texts: string[] = [];
     const pendingEntries: typeof candidateEntries = [];
+    const { documentTemplate } = resolveEmbeddingProfile(config.embedding);
     for (const entry of candidateEntries) {
       const capped = capEmbeddingText(entry.searchText, maxInputTokens);
       if (capped.text.length === 0) continue;
       if (capped.truncated) truncatedCount++;
       pendingEntries.push(entry);
-      texts.push(capped.text);
+      texts.push(applyEmbeddingTemplate(documentTemplate, capped.text));
     }
     if (truncatedCount > 0) {
       // Through onProgress ONLY, not warn() too — onProgress already reaches

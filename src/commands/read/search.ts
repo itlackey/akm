@@ -130,7 +130,6 @@ export async function akmSearch(input: {
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
-  const normalizedQuery = query.toLowerCase();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);
   const parsedSource = parseSearchSource(input.source ?? "local");
@@ -198,7 +197,7 @@ export async function akmSearch(input: {
     source === "registry"
       ? undefined
       : await searchLocal({
-          query: normalizedQuery,
+          query,
           searchType,
           limit,
           stashDir,

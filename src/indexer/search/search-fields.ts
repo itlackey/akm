@@ -17,6 +17,9 @@ import type { IndexDocument } from "../passes/metadata";
 /**
  * Return per-field search text for multi-column FTS5 indexing.
  *
+ * Text keeps its case: FTS5's `unicode61` tokenizer folds case itself, and
+ * `buildSearchText` feeds the embedder, where case carries meaning.
+ *
  * Fields:
  *  - name: entry name with hyphens/underscores replaced by spaces
  *  - description: entry description
@@ -32,14 +35,14 @@ export function buildSearchFields(entry: IndexDocument): {
   hints: string;
   content: string;
 } {
-  const name = entry.name.replace(/[-_]/g, " ").toLowerCase();
+  const name = entry.name.replace(/[-_]/g, " ");
 
-  const description = (entry.description ?? "").toLowerCase();
+  const description = entry.description ?? "";
 
   const tagParts: string[] = [];
   if (entry.tags) tagParts.push(entry.tags.join(" "));
   if (entry.aliases) tagParts.push(entry.aliases.join(" "));
-  const tags = tagParts.join(" ").toLowerCase();
+  const tags = tagParts.join(" ");
 
   const hintParts: string[] = [];
   if (entry.hints) hintParts.push(entry.hints.join(" "));
@@ -54,7 +57,7 @@ export function buildSearchFields(entry: IndexDocument): {
   if (entry.xrefs) hintParts.push(entry.xrefs.join(" "));
   if (entry.pageKind) hintParts.push(entry.pageKind);
   if (entry.whenToUse) hintParts.push(entry.whenToUse);
-  const hints = hintParts.join(" ").toLowerCase();
+  const hints = hintParts.join(" ");
 
   const contentParts: string[] = [];
   if (entry.toc) {
@@ -67,15 +70,14 @@ export function buildSearchFields(entry: IndexDocument): {
     }
   }
   if (entry.content) contentParts.push(entry.content);
-  const content = contentParts.join(" ").toLowerCase();
+  const content = contentParts.join(" ");
 
   return { name, description, tags, hints, content };
 }
 
 /**
- * Build a single concatenated search text string for an entry.
- * Used for the `search_text` column in the entries table.
- * and for generating embedding text.
+ * Build a single concatenated search text string for an entry: the
+ * `search_text` column, which is the text each entry's vector is embedded from.
  */
 export function buildSearchText(entry: IndexDocument): string {
   const fields = buildSearchFields(entry);
