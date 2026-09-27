@@ -38,18 +38,11 @@ import {
 } from "../llm/embedders/remote";
 import type { Database } from "../storage/database";
 import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
-import { deleteMeta, getMeta, setMeta } from "../storage/repositories/index-meta-repository";
-import { EMBEDDING_DIM } from "../storage/repositories/index-schema";
+import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
 import {
-  clearVecMirror,
-  ensureVecTableWidth,
   getAllEntriesForEmbedding,
   getEmbeddingCount,
-  isVecFastPathComplete,
-  isVecFastPathReady,
   purgeEmbeddings,
-  repairVecFastPath,
-  setVecFastPathReady,
   upsertEmbedding,
 } from "../storage/repositories/index-vec-repository";
 import { reclassifyIndexDbContention } from "./index-db-contention";
@@ -81,8 +74,6 @@ export interface EmbeddingProgressEvent {
 export interface EmbeddingGenerationResult {
   success: boolean;
   message?: string;
-  /** Number of sqlite-vec writes that degraded to the complete BLOB fallback. */
-  vecInsertFailures?: number;
 }
 
 export interface GenerateEmbeddingsOptions {
@@ -174,11 +165,6 @@ export async function generateEmbeddingsForDb(
     });
   }
 
-  // A targeted call starts from an already-published generation. Preserve its
-  // trust decision in O(1): successful writes for the changed IDs keep a
-  // healthy fast path healthy, but can never promote a generation already
-  // marked degraded. Global runs can afford to verify the entire derived set.
-  const vecFastPathWasReady = isVecFastPathReady(db);
   const model = deriveSemanticProviderFingerprint(config.embedding);
   const storedModel = getMeta(db, "embeddingFingerprint");
   let targetEntryIds = entryIds;
@@ -192,8 +178,7 @@ export async function generateEmbeddingsForDb(
     // request, so a restart heals only what is still missing instead of
     // purging again from zero (#955/#956).
     db.transaction(() => {
-      purgeEmbeddings(db, { dropVecTable: true });
-      deleteMeta(db, "embeddingDim");
+      purgeEmbeddings(db);
       setMeta(db, "embeddingFingerprint", model);
     })();
     targetEntryIds = undefined;
@@ -202,13 +187,9 @@ export async function generateEmbeddingsForDb(
     // The configured model changed. Nothing is purged: each stored row keeps
     // the model that produced it until the pass below replaces it, so an
     // interrupted pass resumes with only the rows still on the old model.
-    // The sqlite-vec mirror serves one model at a time and is refilled as
-    // entries are re-embedded. Readers serve the current model's rows only,
-    // so nothing mixes vectors from two models.
-    db.transaction(() => {
-      clearVecMirror(db);
-      setMeta(db, "embeddingFingerprint", model);
-    })();
+    // Readers serve the current model's rows only, so nothing mixes vectors
+    // from two models.
+    setMeta(db, "embeddingFingerprint", model);
     targetEntryIds = undefined;
     rebuildReason = `the embedding model changed (${storedModel} → ${model}); stored vectors are kept until each entry is re-embedded`;
   } else {
@@ -220,26 +201,7 @@ export async function generateEmbeddingsForDb(
 
   try {
     throwIfAborted(signal);
-    if (entryIds === undefined && (!vecFastPathWasReady || !isVecFastPathComplete(db))) {
-      const storedDim = Number(getMeta(db, "embeddingDim"));
-      const expectedDim =
-        Number.isInteger(storedDim) && storedDim > 0 ? storedDim : (config.embedding?.dimension ?? EMBEDDING_DIM);
-      const repair = repairVecFastPath(db, expectedDim);
-      if (
-        repair.available &&
-        (repair.repaired > 0 || repair.removedOrphans > 0 || repair.rejected > 0 || repair.error !== undefined)
-      ) {
-        const detail = repair.error ? `; repair stopped: ${repair.error}` : "";
-        onProgress({
-          phase: "embeddings",
-          message: `[embed] Repaired ${repair.repaired} missing sqlite-vec row${repair.repaired === 1 ? "" : "s"}; removed ${repair.removedOrphans} orphan${repair.removedOrphans === 1 ? "" : "s"}; ${repair.rejected} rejected${detail}.`,
-        });
-      }
-    }
     const candidateEntries = getAllEntriesForEmbedding(db, targetEntryIds, model);
-
-    let vecFailedCount = 0;
-    let vecUnavailableCount = 0;
 
     if (candidateEntries.length === 0) {
       onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
@@ -352,11 +314,6 @@ export async function generateEmbeddingsForDb(
       // the very end (#954) — a competing-process lock error or any other
       // interruption partway through now keeps whatever already committed
       // instead of losing the entire pass.
-      // The first real vector of the run also fixes the sqlite-vec mirror's
-      // width: a model that returns a different width than the mirror was
-      // declared with (a local model swap with no `embedding.dimension` set)
-      // gets the mirror recreated instead of every insert failing.
-      let vecWidthChecked = false;
       // Whether the remote provider's endpoint/model/token language is
       // meaningful for this run — the per-batch diagnostic line below is
       // remote-only, same gate the credential diagnostic (#953) above uses.
@@ -411,13 +368,7 @@ export async function generateEmbeddingsForDb(
               embedFailedCount++;
               continue;
             }
-            if (!vecWidthChecked) {
-              vecWidthChecked = true;
-              ensureVecTableWidth(db, embedding.length);
-              setMeta(db, "embeddingDim", String(embedding.length));
-            }
-            const result = upsertEmbedding(db, entry.id, embedding, model);
-            if (result.stored) {
+            if (upsertEmbedding(db, entry.id, embedding, model)) {
               storedCount++;
               // #954: sum the estimate of the text actually sent —
               // `texts[index]` is the capped string `embedBatch` was handed,
@@ -429,8 +380,6 @@ export async function generateEmbeddingsForDb(
             } else {
               skippedCount++;
             }
-            if (result.vec === "failed") vecFailedCount++;
-            if (result.vec === "unavailable") vecUnavailableCount++;
           }
         })();
         // Default level, one line per provider batch (#954, field-report
@@ -464,15 +413,6 @@ export async function generateEmbeddingsForDb(
       if (skippedCount > 0) {
         warn(
           `[embed] ${skippedCount} embedding${skippedCount === 1 ? "" : "s"} skipped (entry deleted between queue and write)`,
-        );
-      }
-      const vecGenerationComplete = targetEntryIds === undefined ? isVecFastPathComplete(db) : vecFastPathWasReady;
-      setVecFastPathReady(db, vecFailedCount === 0 && vecUnavailableCount === 0 && vecGenerationComplete);
-      if (vecFailedCount > 0) {
-        warn(
-          `[embed] ${vecFailedCount} sqlite-vec fast-path insert${vecFailedCount === 1 ? "" : "s"} failed — ` +
-            "semantic search will use the slower JS-cosine fallback over stored embeddings. " +
-            "Rebuild with 'akm index --full' after resolving the vec table (often a vector-dimension mismatch).",
         );
       }
       const entriesPerSec = storedCount / elapsedSeconds;
@@ -530,7 +470,7 @@ export async function generateEmbeddingsForDb(
           "were stored — rerun akm index when the endpoint is healthy";
         warn(`[embed] ${message}`);
         onProgress({ phase: "embeddings", message });
-        return { success: false, message, vecInsertFailures: vecFailedCount };
+        return { success: false, message };
       }
       // Only a total failure (nothing at all embedded, despite having entries
       // to embed) turns into a phase failure. Any partial success — the vast
@@ -545,7 +485,7 @@ export async function generateEmbeddingsForDb(
           message: `All ${embedFailedCount} embedding batch(es) failed: ${firstMessage}`,
         };
       }
-      return { success: true, vecInsertFailures: vecFailedCount };
+      return { success: true };
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
     }

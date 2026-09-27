@@ -18,6 +18,7 @@ import { akmUpdate } from "../../src/commands/sources/installed-stashes";
 import { saveConfig } from "../../src/core/config/config";
 import { getConfigPath, getDbPath, getLockfilePath, getRegistryCacheDir } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { readLockfile } from "../../src/integrations/lockfile";
 import * as gitProvider from "../../src/sources/providers/git";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
@@ -73,7 +74,7 @@ function indexedSearchText(): string {
   if (!db) return "";
   try {
     return getAllEntries(db)
-      .map((row) => row.searchText)
+      .map((row) => buildSearchText(row.entry))
       .sort()
       .join("\n");
   } finally {

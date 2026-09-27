@@ -24,7 +24,8 @@
  * This file is intentionally NOT an adapter/DI/ports-and-adapters layer. It is
  * a plain module: a structural type plus a factory function. The handle it
  * returns is the real underlying driver instance (so e.g. `sqlite-vec`'s
- * `load(db)` receives the genuine driver handle and works unchanged).
+ * `load(db)`, used to drop the retired `entries_vec` table, receives the
+ * genuine driver handle and works unchanged).
  *
  * @module storage/database
  */
@@ -327,9 +328,8 @@ function openNodeDatabase(path: string, opts?: OpenDatabaseOptions): Database {
     // bun:sqlite also provides db.run(). Normalize the latter at the provider
     // boundary so callers and maintenance wrappers can rely on one contract.
     run: (sql, ...params) => db.prepare(sql).run(...params),
-    // sqlite-vec's load(db) calls db.loadExtension(). Without forwarding it the
-    // extension could never load on Node, so the vector fast path was dead
-    // across the entire npm distribution even when sqlite-vec was installed.
+    // sqlite-vec's load(db) calls db.loadExtension(); without forwarding it the
+    // extension could never load on Node.
     loadExtension: db.loadExtension.bind(db),
     transaction: db.transaction.bind(db),
     get inTransaction() {

@@ -33,9 +33,8 @@ import type { EmbeddingVector } from "./types";
 export const DETERMINISTIC_EMBED_ENV = "AKM_EMBED_DETERMINISTIC";
 
 /**
- * Vector width. Matches the default local model (`bge-small`, 384 dims) so the
- * index DB's embedding column and sqlite-vec table dimensions line up without
- * any extra config.
+ * Vector width. Matches the default local model (`bge-small`, 384 dims), so a
+ * deterministic index is the same shape as a default local one.
  */
 export const DETERMINISTIC_EMBED_DIM = 384;
 

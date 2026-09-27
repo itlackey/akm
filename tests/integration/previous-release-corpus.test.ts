@@ -148,7 +148,7 @@ function migrateLegacyTask(filePath: string, yaml: string) {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("v22 parent-only index is migrated in place: its entries stay searchable and fragment tables are added", () => {
+  test("v22 parent-only index is migrated in place: its entries stay searchable and the fragment source table is added", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -158,9 +158,9 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(
-          upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get(),
-        ).toBeDefined();
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments'").get()).toEqual({
+          name: "entry_fragments",
+        });
         expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 1 });
         expect(searchFts(upgraded, "evidence", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/v22-note"]);
       } finally {

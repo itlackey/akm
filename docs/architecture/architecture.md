@@ -150,8 +150,8 @@ Notes:
 - the query embedding is requested before the FTS query runs and is bounded
   by `embedding.queryTimeoutMs` (default 3000); on timeout or failure the
   search is served by the lexical list alone
-- Markdown fragments (`entry_fragments_fts`) are not searched; `akm show`
-  reads the fragment projection for `#fragment` refs
+- Markdown fragments are not searched; `akm show` reads the stored safe
+  Markdown (`entry_fragments`) for `#fragment` refs
 - `hints` includes `searchHints`, `examples`, `usage`, intent fields, wiki
   cross-references, and page-kind hints
 - `content` is bounded low-weight body prose plus TOC headings and parameter metadata; secret/env/session material is excluded at the adapter boundary
@@ -575,6 +575,6 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 
 - Runtime: Bun
 - Language: TypeScript (ESM, strict)
-- Database: `bun:sqlite` with FTS5 and optional `sqlite-vec`
+- Database: `bun:sqlite` with FTS5; vectors are float32 BLOBs scanned in JavaScript
 - Testing: `bun:test`
 - Formatting/linting: Biome

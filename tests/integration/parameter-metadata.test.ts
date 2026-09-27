@@ -377,8 +377,8 @@ describe("indexing pipeline with parameters", () => {
     const entries = getAllEntries(db, "command");
     expect(entries.length).toBe(1);
 
-    // The search text stored in the DB should include parameter names
-    const searchText = entries[0]!.searchText;
+    // The text the stored entry is embedded from should include parameter names
+    const searchText = buildSearchText(entries[0]!.entry);
     expect(searchText).toContain("registry_url");
     closeDatabase(db);
   });

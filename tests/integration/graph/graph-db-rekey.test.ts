@@ -39,7 +39,6 @@ const hasGraphData = (graphDb as { hasGraphData?: (db: Database, stashRoot: stri
   .hasGraphData as (db: Database, stashRoot: string, filePath: string) => boolean;
 
 import type { GraphFile, GraphFileNode } from "../../../src/indexer/graph/graph-types";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -74,7 +73,7 @@ const STASH = "/tmp/akm-rekey-stash";
 function seedEntry(db: Database, filePath: string, name: string, type = "memory"): number {
   const entry = { name, type, filename: path.basename(filePath) };
   const provenance = deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name);
-  return upsertEntry(db, filePath, entry, buildSearchText(entry), provenance);
+  return upsertEntry(db, filePath, entry, provenance);
 }
 
 function fileNode(
@@ -317,10 +316,10 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   });
 
   // AC#5 — version + graph-schema lock --------------------------------------
-  // DB_VERSION 24 makes the FTS tables contentless; graph schema version 4
+  // DB_VERSION 25 keeps vectors in `embeddings` alone; graph schema version 4
   // remains the current independently keyed graph shape.
-  test("AC#5: DB_VERSION is 24, GRAPH_SCHEMA_VERSION is 4, graph DDL is the current shape", () => {
-    expect(DB_VERSION).toBe(24);
+  test("AC#5: DB_VERSION is 25, GRAPH_SCHEMA_VERSION is 4, graph DDL is the current shape", () => {
+    expect(DB_VERSION).toBe(25);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
 
     const db = openIndexDatabase(tmpDbPath());

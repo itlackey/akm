@@ -94,13 +94,18 @@ function insertLiveEntry(indexDb: Database, itemRef: string): void {
   const storedRef = itemRef.includes("//") ? itemRef : `${FIXTURE_BUNDLE}//${itemRef}`;
   const [bundleId, conceptId] = storedRef.split("//", 2) as [string, string];
   const name = conceptId.split("/").at(-1) ?? conceptId;
-  upsertEntry(indexDb, `/fixture/dir/${name}.md`, { name, type: "memory" }, storedRef, {
-    itemRef: storedRef,
-    bundleId,
-    componentId: bundleId,
-    conceptId,
-    adapterId: "akm",
-  });
+  upsertEntry(
+    indexDb,
+    `/fixture/dir/${name}.md`,
+    { name, type: "memory" },
+    {
+      itemRef: storedRef,
+      bundleId,
+      componentId: bundleId,
+      conceptId,
+      adapterId: "akm",
+    },
+  );
 }
 
 function openIndex(): Database {

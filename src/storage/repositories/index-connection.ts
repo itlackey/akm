@@ -5,15 +5,14 @@
 /**
  * `index.db` connection lifecycle for the storage layer.
  *
- * Opens/closes the index database, arming the sqlite-vec extension and (for the
- * managed open path) running `ensureSchema`. This module lives BELOW the
+ * Opens/closes the index database, running `ensureSchema` on the managed
+ * (writable) open path. This module lives BELOW the
  * indexer, so the storage loan helpers (`index-db.ts`, `registry-index-cache-repository.ts`)
  * import their opener from a sibling here instead of reaching up into the
  * indexer — inverting the old storage→indexer arrow.
  */
 
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import { ConfigError } from "../../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
@@ -24,8 +23,7 @@ import { openManagedDatabase } from "../managed-db";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../sqlite-pragmas";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../sqlite-read-snapshot";
 import { CANONICAL_INDEX_DB_VERSION } from "./index-entry-schema";
-import { ensureSchema } from "./index-schema";
-import { loadVecExtension, warnIfVecMissing } from "./index-vec-repository";
+import { ensureSchema, newerIndexLayoutError } from "./index-schema";
 
 /**
  * Whether `error` is SQLite reporting on-disk corruption (`SQLITE_CORRUPT`,
@@ -40,32 +38,16 @@ function isCorruptionError(error: unknown): boolean {
   return message.includes("database disk image is malformed") || message.includes("SQLITE_CORRUPT");
 }
 
-export function openIndexDatabase(
-  dbPath?: string,
-  options?: { embeddingDim?: number; beforeSchema?: (db: Database) => void },
-): Database {
+export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (db: Database) => void }): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const spec = {
     path: resolvedPath,
     init: (db: Database) => {
-      // Try to load sqlite-vec extension
-      loadVecExtension(db);
-
       // Source update uses this narrow lifecycle seam to ATTACH state.db and
       // open its coordinator-owned outer transaction before ensureSchema or
       // any indexer write can mutate the live generation.
       options?.beforeSchema?.(db);
-
-      // Dim resolution: explicit option wins; otherwise consult the on-disk
-      // config so unparameterised opens (registry providers, graph helpers,
-      // ad-hoc CLI subcommands) honour the operator-declared dimension. Only if
-      // both are absent do we fall through to the no-clobber path, which keeps
-      // ensureSchema from touching `index_meta.embeddingDim` at all.
-      const resolvedDim = options?.embeddingDim ?? resolveConfiguredEmbeddingDim();
-      ensureSchema(db, resolvedDim);
-
-      // Warn once at init if using JS fallback with many entries
-      warnIfVecMissing(db, { once: true });
+      ensureSchema(db);
     },
   };
   try {
@@ -92,32 +74,9 @@ export function openIndexDatabase(
   }
 }
 
-/**
- * Read the operator-configured embedding dimension from the on-disk config.
- * Returns `undefined` when no config file is present, when the config has
- * no `embedding.dimension` set, or when reading the config throws (e.g.
- * inside isolated test fixtures with no XDG home). Failure is silent on
- * purpose — every openDatabase() call would otherwise have to handle a
- * config-not-found error path, and the fallback (no-clobber semantics) is
- * already correct.
- */
-function resolveConfiguredEmbeddingDim(): number | undefined {
-  try {
-    const esmRequire = createRequire(import.meta.url);
-    const { loadConfig } = esmRequire("../../core/config/config") as typeof import("../../core/config/config");
-    const dim = loadConfig().embedding?.dimension;
-    if (typeof dim === "number" && Number.isInteger(dim) && dim > 0 && dim <= 4096) {
-      return dim;
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export function openExistingDatabase(dbPath?: string): Database {
   // Existing-DB callers do not mutate schema or embedding metadata on open;
-  // they serve whatever layout is on disk (see noteIndexLayout).
+  // they serve an older layout as-is and refuse a newer one (see checkIndexLayout).
   //
   // "Existing" is load-bearing: a missing file throws instead of being
   // created. Create-on-open used to leave a schema-less index.db behind (a
@@ -131,25 +90,24 @@ export function openExistingDatabase(dbPath?: string): Database {
   if (classifyPathAccess(resolvedPath).access === "absent") {
     throw new Error(`Index database not found at ${resolvedPath}. Run 'akm index' to build it.`);
   }
-  const db = openManagedDatabase({
-    path: resolvedPath,
-    init: (db) => {
-      loadVecExtension(db);
-    },
-    create: false,
-  });
-  noteIndexLayout(db, resolvedPath);
-  return db;
+  const db = openManagedDatabase({ path: resolvedPath, create: false });
+  try {
+    checkIndexLayout(db, resolvedPath);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 /**
- * A reader never refuses an index over its layout marker. An older layout is
- * served as-is (the FTS readers understand both layouts, and a missing table
- * degrades at the caller — keyword-only search, an inline rebuild, or a "run
- * akm index" notice); the next writable open migrates it in place. A newer
- * layout is served the same way. One line names the situation per process.
+ * A reader serves an older layout as-is (the FTS readers understand both
+ * layouts, and a missing table degrades at the caller — keyword-only search,
+ * an inline rebuild, or a "run akm index" notice) and names it once per
+ * process; the next writable open migrates it in place. A newer layout is
+ * refused, naming the upgrade ({@link newerIndexLayoutError}).
  */
-function noteIndexLayout(db: Database, resolvedPath: string): void {
+function checkIndexLayout(db: Database, resolvedPath: string): void {
   let stored: number;
   try {
     const row = db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string } | undefined;
@@ -159,13 +117,11 @@ function noteIndexLayout(db: Database, resolvedPath: string): void {
     return;
   }
   if (!Number.isFinite(stored) || stored === CANONICAL_INDEX_DB_VERSION) return;
+  if (stored > CANONICAL_INDEX_DB_VERSION) throw newerIndexLayoutError(stored, resolvedPath);
   warnOnce(
     `index-db-layout:${resolvedPath}`,
-    stored < CANONICAL_INDEX_DB_VERSION
-      ? `Index database at ${resolvedPath} uses an older layout (${stored}; this akm writes ${CANONICAL_INDEX_DB_VERSION}). ` +
-          "Serving it as-is; the next 'akm index' migrates it in place."
-      : `Index database at ${resolvedPath} was written by a newer akm (layout ${stored}; this binary understands ` +
-          `${CANONICAL_INDEX_DB_VERSION}). Serving what it can — upgrade akm to use the full index.`,
+    `Index database at ${resolvedPath} uses an older layout (${stored}; this akm writes ${CANONICAL_INDEX_DB_VERSION}). ` +
+      "Serving it as-is; the next 'akm index' migrates it in place.",
   );
 }
 
@@ -236,7 +192,7 @@ export function openReadonlyExistingDatabase(
   // connection, so apply just that one.
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    noteIndexLayout(db, resolvedPath);
+    checkIndexLayout(db, resolvedPath);
     return db;
   } catch (error) {
     db.close();

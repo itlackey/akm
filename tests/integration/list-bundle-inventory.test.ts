@@ -39,7 +39,7 @@ function indexItem(bundleId: string, type: string, conceptId: string): void {
   const entry: IndexDocument = { type, name: conceptId.split("/").slice(1).join("/"), tags: [] };
   const db = openIndexDatabase(getDbPath());
   try {
-    upsertEntry(db, `${storage.stashDir}/${conceptId}`, entry, entry.name, provenance);
+    upsertEntry(db, `${storage.stashDir}/${conceptId}`, entry, provenance);
   } finally {
     closeDatabase(db);
   }

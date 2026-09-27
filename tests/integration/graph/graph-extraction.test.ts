@@ -21,7 +21,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { enqueueGraphExtraction, loadStoredGraphSnapshot, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { SearchSource } from "../../../src/indexer/search/search-source";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -173,7 +172,6 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
       db,
       filePath,
       entry,
-      buildSearchText(entry as Parameters<typeof buildSearchText>[0]),
       deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name),
     );
   } finally {

@@ -142,7 +142,7 @@ function makeEligibleMemory(slug: string, body: string): string {
     entry.type,
     slug,
   );
-  upsertEntry(db, absPath, entry, slug, provenance);
+  upsertEntry(db, absPath, entry, provenance);
   return absPath;
 }
 

@@ -24,14 +24,24 @@ import {
   type IndexDocument,
 } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
+import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
-import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
+import { deleteEntryVectors } from "./index-vec-repository";
 
 // ── Entry operations ────────────────────────────────────────────────────────
+
+/**
+ * Hash of the text an entry's vector is embedded from (`buildSearchText`),
+ * stored as `entries.embed_hash`: a change deletes the entry's vector, and the
+ * next embedding pass re-embeds it.
+ */
+function embedHash(entry: IndexDocument): string {
+  return sha256Hex(buildSearchText(entry));
+}
 
 /**
  * Insert or update one canonical entry and all synchronously derived search
@@ -45,7 +55,6 @@ export function upsertEntry(
   db: Database,
   filePath: string,
   entry: IndexDocument,
-  searchText: string,
   provenance: EntryProvenance,
   contentHash?: string,
 ): number {
@@ -57,6 +66,7 @@ export function upsertEntry(
   // does not have to scan + JSON-decode every memory row.
   const derivedFrom =
     typeof entry.derivedFrom === "string" && entry.derivedFrom.trim() ? entry.derivedFrom.trim() : null;
+  const hash = embedHash(entry);
   // `content_hash` is optional on the LLM-enrichment re-upsert; a missing hash
   // preserves the scan writer's current value.
   const apply = (): number => {
@@ -71,12 +81,12 @@ export function upsertEntry(
       filePath,
       contentHash ?? null,
       JSON.stringify(entry),
-      searchText,
       derivedFrom,
+      hash,
     ) as { id: number } | undefined;
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
-    if (previous?.id === result.id && previous.search_text !== searchText) deleteEntryVectors(db, result.id);
+    if (previous?.id === result.id && previous.embed_hash !== hash) deleteEntryVectors(db, result.id);
     replaceFtsEntry(
       db,
       result.id,
@@ -99,7 +109,7 @@ interface UpsertStmts {
 
 interface ExistingUpsertRow {
   id: number;
-  search_text: string;
+  embed_hash: string | null;
 }
 
 const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
@@ -114,8 +124,8 @@ const UPSERT_SET_CLAUSE = `SET
         type = excluded.type,
         file_path = excluded.file_path,
         document_json = excluded.document_json,
-        search_text = excluded.search_text,
         derived_from = excluded.derived_from,
+        embed_hash = excluded.embed_hash,
         content_hash = COALESCE(excluded.content_hash, content_hash)`;
 
 function getUpsertStmts(db: Database): UpsertStmts {
@@ -128,13 +138,13 @@ function getUpsertStmts(db: Database): UpsertStmts {
     upsert: db.prepare(`
       INSERT INTO entries (
         item_ref, bundle_id, component_id, concept_id, adapter_id, type,
-        file_path, content_hash, document_json, search_text, derived_from
+        file_path, content_hash, document_json, derived_from, embed_hash
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
     `),
-    findByItemRef: db.prepare("SELECT id, search_text FROM entries WHERE item_ref = ?"),
+    findByItemRef: db.prepare("SELECT id, embed_hash FROM entries WHERE item_ref = ?"),
   };
   upsertStmtsByDb.set(db, stmts);
   return stmts;
@@ -220,7 +230,7 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * rename. (`asset_salience` / `asset_outcome` live in state.db keyed by
  * `asset_ref` TEXT and are re-keyed separately by `akm mv` — see
  * the state rekey helper.) `document_json.name` (and `filename`, when
- * present) is patched and `search_text` rebuilt so search reflects the new
+ * present) is patched and `embed_hash` recomputed so search reflects the new
  * name. Its FTS projection and stale vector are updated in the same
  * transaction as the canonical identity.
  *
@@ -236,7 +246,7 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * A stale row already occupying the new item ref (the caller has verified no
  * FILE exists at the target, so such a row can only be a leftover for a
  * deleted file) is evicted first — through {@link deleteRelatedRows}, so its
- * child rows (embeddings, entries_vec, utility scores, usage events) go with
+ * child rows (embeddings, utility scores, usage events) go with
  * it. A bare `DELETE FROM entries` would trip the non-CASCADE `embeddings`
  * FK under `PRAGMA foreign_keys = ON` and roll back the whole re-key.
  * The moved row keeps its id.
@@ -248,13 +258,13 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
 export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number | null {
   const oldItemRef = `${opts.sourceName}//${opts.oldRef}`;
   const row = db
-    .prepare("SELECT id, file_path, document_json, search_text, type FROM entries WHERE item_ref = ?")
+    .prepare("SELECT id, file_path, document_json, embed_hash, type FROM entries WHERE item_ref = ?")
     .get(oldItemRef) as
     | {
         id: number;
         file_path: string;
         document_json: string;
-        search_text: string;
+        embed_hash: string | null;
         type: string;
       }
     | undefined
@@ -269,7 +279,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
   // Patch the JSON payload. On corrupt document_json still re-key identity/path so
   // the utility history survives; the next full index heals the JSON.
   let documentJson = row.document_json;
-  let searchText = row.search_text;
+  let hash = row.embed_hash;
   let document: IndexDocument | undefined;
   try {
     const entry = JSON.parse(row.document_json) as IndexDocument;
@@ -277,7 +287,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     if (typeof entry.filename === "string") entry.filename = path.basename(opts.newFilePath);
     if (opts.newDerivedFrom !== undefined) entry.derivedFrom = opts.newDerivedFrom;
     documentJson = JSON.stringify(entry);
-    searchText = buildSearchText(entry);
+    hash = embedHash(entry);
     document = entry;
   } catch {
     /* corrupt document_json — identity/path-only re-key */
@@ -295,7 +305,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       | undefined
       | null;
     if (stale && stale.id !== row.id) {
-      // Full child-row cleanup (embeddings, entries_vec, utility scores,
+      // Full child-row cleanup (embeddings, utility scores,
       // usage events, FTS + dirty marks) BEFORE the entries delete: the
       // `embeddings` FK is non-CASCADE and `foreign_keys = ON`, so a bare
       // entries delete would throw and roll back the entire re-key; and
@@ -304,12 +314,12 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       db.prepare("DELETE FROM entries WHERE id = ?").run(stale.id);
     }
     db.prepare(
-      "UPDATE entries SET file_path = ?, document_json = ?, search_text = ?, item_ref = ?, concept_id = ? WHERE id = ?",
-    ).run(opts.newFilePath, documentJson, searchText, newItemRef, opts.newRef, row.id);
+      "UPDATE entries SET file_path = ?, document_json = ?, embed_hash = ?, item_ref = ?, concept_id = ? WHERE id = ?",
+    ).run(opts.newFilePath, documentJson, hash, newItemRef, opts.newRef, row.id);
     if (opts.newDerivedFrom !== undefined) {
       db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
     }
-    if (row.search_text !== searchText) deleteEntryVectors(db, row.id);
+    if (row.embed_hash !== hash) deleteEntryVectors(db, row.id);
     if (document)
       replaceFtsEntry(
         db,
@@ -445,7 +455,7 @@ export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
  * `newBundleId` in place (`akm bundle rename`, D6). Unlike
  * {@link rekeyEntryInPlace} (one asset, `akm mv`), this is a bulk identity
  * change with no content move: `concept_id`/`file_path`/`document_json` are
- * untouched, so no FTS/vector rebuild is needed (FTS and `entries_vec` key on
+ * untouched, so no FTS/vector rebuild is needed (FTS and `embeddings` key on
  * the entry's row `id`, which this preserves, not on `item_ref`). Returns the
  * number of rows renamed.
  */
@@ -491,7 +501,6 @@ function deleteRelatedRows(
 ): void {
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
-  const vecAvail = isVecAvailable(db);
 
   // FTS is part of the canonical mutation boundary, not a caller-maintained
   // dirty queue. Delete it before the parent row inside this transaction.
@@ -505,12 +514,6 @@ function deleteRelatedRows(
       () => db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk),
       "delete embeddings for entries",
     );
-    if (vecAvail) {
-      bestEffort(
-        () => db.prepare(`DELETE FROM entries_vec WHERE id IN (${placeholders})`).run(...chunk),
-        "delete entries_vec for entries",
-      );
-    }
     // Clean up utility scores before deleting entries
     bestEffort(
       () => db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk),
@@ -547,7 +550,7 @@ export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
 
 /**
  * Delete entries by their primary key IDs, along with all related rows
- * (embeddings, entries_vec, entries_fts, utility scores, usage_events).
+ * (embeddings, entries_fts, utility scores, usage_events).
  *
  * Used by explicit `--clean` reconciliation before embeddings and final
  * verification to remove stale entries whose source files no longer exist.

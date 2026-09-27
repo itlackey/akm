@@ -107,28 +107,32 @@ journal mode. Foreign-key policy is called out per database below.
 ### `$DATA/index.db` — Main Search Index
 
 Schema managed by `ensureSchema()` (`src/storage/repositories/index-schema.ts`).
-The current layout is 24 (`index_meta.version`, a layout marker, not a
+The current layout is 25 (`index_meta.version`, a layout marker, not a
 compatibility gate). It uses the shared opening pragma policy above with
-foreign keys ON and optionally loads the `sqlite-vec` extension for fast ANN
-(approximate nearest-neighbour) vector search.
+foreign keys ON. Vector search is an exact scan of the `embeddings` table.
 
 Opened by:
 - `openIndexDatabase()` — managed schema initialization, called by `akm index`
   and other index writers. Schema changes are applied in place: `CREATE ... IF
-  NOT EXISTS`, `ALTER TABLE ... ADD COLUMN`, and a one-time rebuild of the FTS
-  tables from `entries` when they still carry the layout-23 content copies.
-  `embeddings`, `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are
-  never dropped to cross a layout change.
+  NOT EXISTS`, `ALTER TABLE ... ADD COLUMN` / `DROP COLUMN`, drops of retired
+  derived tables, and a one-time rebuild of the FTS table from `entries` when
+  it still carries the layout-23 content copies. `embeddings`,
+  `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are never dropped
+  to cross a layout change. A newer layout is refused, naming the upgrade.
 - `openExistingDatabase()` / `openReadonlyExistingDatabase()` — no schema
-  mutation; serve whatever layout is on disk (an older or newer marker is
-  named once on stderr, never refused).
+  mutation; serve an older layout as-is (named once on stderr) and refuse a
+  newer one (`INDEX_SCHEMA_INCOMPATIBLE`, "Upgrade akm to use this index.").
 
 **Retention:** `index.db` is a regenerable derived cache. The one
 from-scratch rebuild is on-disk corruption (`SQLITE_CORRUPT`, #865): the file
 is deleted and rebuilt. An `entries` table older than layout 21 (no
 `item_ref`) has its entries-keyed tables recreated; graph data and the LLM
 enrichment cache are kept. This path never modifies `state.db`.
-`clearStaleCacheEntries()` removes orphaned LLM cache rows.
+`clearStaleCacheEntries()` removes orphaned LLM cache rows. `akm index`
+VACUUMs the file at the end of a run after a layout migration (the writable
+opener sets `index_meta.vacuumPending`) and whenever more than half its pages
+are free, the threshold improve applies to `state.db`; each VACUUM appends an
+`index_db_vacuumed` event.
 
 #### Table: `index_meta`
 
@@ -137,7 +141,7 @@ enrichment cache are kept. This path never modifies `state.db`.
 | `key` | TEXT PRIMARY KEY | Metadata key |
 | `value` | TEXT NOT NULL | String-encoded value |
 
-Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `embeddingDim` (e.g. `"384"`), `hasEmbeddings` (`"0"` or `"1"`).
+Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `hasEmbeddings` (`"0"` or `"1"`), `vacuumPending` (`"1"` after a layout migration, until `akm index` VACUUMs).
 
 #### Table: `entries`
 
@@ -153,8 +157,8 @@ Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding mod
 | `file_path` | TEXT NOT NULL | Absolute path to the asset file |
 | `content_hash` | TEXT | Content hash for change detection |
 | `document_json` | TEXT NOT NULL | Sole stored `IndexDocument` projection |
-| `search_text` | TEXT NOT NULL | Pre-built BM25 search string |
 | `derived_from` | TEXT | Set on entries derived from another asset (e.g. `.derived` memories) |
+| `embed_hash` | TEXT | SHA-256 of the text the entry's vector is embedded from (`buildSearchText`, derived from `document_json` when embedding); a change deletes the vector. Layout 24 and earlier stored the text itself as `search_text` |
 
 Indexes: the UNIQUE `item_ref` constraint plus `idx_entries_bundle` on
 `bundle_id`, `idx_entries_type` on `type`, `idx_entries_file_path` on
@@ -190,25 +194,11 @@ Rows carry `rowid = entry_id`, so a per-entry delete is a rowid lookup.
 | `entry_id` | INTEGER PRIMARY KEY | FK → `entries(id)` ON DELETE CASCADE; one safe source projection per parent entry |
 | `safe_markdown` | TEXT NOT NULL | Line-preserving, retrieval-safe Markdown projection used to resolve a returned fragment selector |
 
-This table keeps the parent-owned source for lexical fragment retrieval. It is
-derived state and is replaced or removed in the same transaction as the
-parent's FTS projections.
-
-#### Virtual Table: `entry_fragments_fts` (FTS5)
-
-Separate lexical body-fragment population. Tokenizer: `porter unicode61`.
-Contentless like `entries_fts`: only `content` is indexed, and the owning
-entry and fragment ordinal are decoded from the rowid (the declared
-`entry_id`/`fragment_id`/`fragment_ordinal` UNINDEXED columns read back NULL;
-the fragment id is resolved from `entry_fragments.safe_markdown`). Parent metadata is not
-copied onto fragment rows, preserving the parent FTS conjunction semantics and
-keeping the two BM25 populations independently calibrated. Search selects one
-fragment per matching parent and merges it with parent results; `fragment_id`
-is the selector returned in the hit ref.
-
-Rows carry an explicit `rowid = entry_id * 2^20 + fragment_ordinal`, so
-a per-entry delete is a rowid RANGE (`>= start < end`) instead of a full-table
-scan of the `entry_id UNINDEXED` column.
+`akm show <ref>#<fragment>` splits this text at read time to resolve the
+selector (#937); nothing searches it. It is derived state and is replaced or
+removed in the same transaction as the parent's FTS row. Layout 24 and
+earlier also indexed each fragment in a second FTS5 table,
+`entry_fragments_fts`; the writable opener drops it.
 
 #### Table: `embeddings`
 
@@ -219,13 +209,14 @@ scan of the `entry_id UNINDEXED` column.
 | `model` | TEXT | Embedding model fingerprint the vector was generated under; NULL (rows from before layout 24 that no pass had labelled) is served as the current model |
 
 The embedding pass's cursor: an entry is (re-)embedded when it has no row for
-the configured model. `upsertEntry` deletes the row when an entry's search
-text changes. Readers serve only rows of the current model. Used directly by
-the JS cosine-similarity fallback when `sqlite-vec` is absent.
+the configured model. `upsertEntry` deletes the row when an entry's
+`embed_hash` changes. Readers serve only rows of the current model: `searchVec`
+scores every one of them by cosine similarity in JavaScript (about 70 ms for
+24k 1,024-dimension vectors).
 
-#### Virtual Table: `entries_vec` (conditional)
-
-Created only when `sqlite-vec` is loadable. Columns: `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`. A mirror of the current model's `embeddings` rows: recreated at the new width when the dimension changes, emptied when the model changes, and refilled by the embedding pass.
+Layout 24 and earlier also kept a `sqlite-vec` mirror of these rows,
+`entries_vec`. The writable opener drops it; dropping a vec0 table needs the
+extension, so an install without `sqlite-vec` leaves the unread table in place.
 
 #### Workflow source indexing
 

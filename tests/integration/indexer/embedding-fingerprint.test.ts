@@ -18,7 +18,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit, EmbeddingBatchSkip } from "../../../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../../../src/llm/embedders/types";
@@ -94,7 +93,7 @@ describe("generateEmbeddingsForDb: per-row embedding model", () => {
         "memories",
         name,
       );
-      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, buildSearchText(entry), provenance);
+      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     }
   }
 

@@ -143,8 +143,7 @@ Actual semantic readiness is tracked separately from config intent. Runtime stat
 can be:
 
 - `pending` when semantic search is enabled but not yet verified
-- `ready-js` when embeddings work and JS vector fallback is available
-- `ready-vec` when embeddings work and `sqlite-vec` is available
+- `ready-js` when every entry has a vector (the name is historical; there is no other vector path)
 - `blocked` when semantic search cannot run with the current provider/setup
 
 These cases are covered by `tests/integration/setup-run.test.ts` and the focused
@@ -168,7 +167,7 @@ copied semantic runtime to audit.
 - config stays `off` only when the user disables semantic search intentionally
 - config stays `auto` when preparation is skipped intentionally
 - config stays `auto` when preparation fails but runtime status becomes `blocked`
-- runtime status becomes `pending`, `ready-js`, `ready-vec`, or `blocked` as appropriate
+- runtime status becomes `pending`, `ready-js`, or `blocked` as appropriate
 - index and info output report readiness state instead of only config intent
 
 ### 3. Docker deployment validation

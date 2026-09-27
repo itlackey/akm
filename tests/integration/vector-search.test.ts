@@ -1,8 +1,7 @@
 /**
  * Tests for the vector search path (`searchVec`):
  *
- *  - results from the BLOB table, closest first
- *  - JS fallback path (BLOB-based cosine similarity, no sqlite-vec)
+ *  - results from the BLOB table, closest first, ranked by cosine similarity
  *  - Dimension mismatch produces zero similarity
  *  - targeted embedding selection and the L2-to-cosine conversion
  */
@@ -63,7 +62,6 @@ function insertTestEntry(
     filePath?: string;
     stashDir?: string;
     description?: string;
-    searchText?: string;
     type?: string;
     tags?: string[];
     content?: string;
@@ -81,7 +79,6 @@ function insertTestEntry(
     db,
     opts?.filePath ?? path.join(opts?.stashDir ?? "/test/stash", `${key}.ts`),
     entry,
-    opts?.searchText ?? `${key} ${entry.description}`,
     deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, key),
   );
 }
@@ -115,12 +112,11 @@ afterEach(() => {
 
 describe("searchVec over stored embeddings", () => {
   test("searchVec returns results when embeddings exist in BLOB table", () => {
-    // Verify the low-level searchVec (which delegates to searchBlobVec
-    // when sqlite-vec is unavailable) returns results from the embeddings
-    // BLOB table. This is the data path that tryVecScores consumes.
+    // Verify the low-level searchVec returns results from the embeddings
+    // BLOB table. This is the data path the vector channel consumes.
     const dbPath = tmpDbPath("vec-activation");
     const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       const id = insertTestEntry(db, "vec-ready-tool", {
         description: "A tool with embeddings ready for vector search",
@@ -147,7 +143,7 @@ describe("searchVec over stored embeddings", () => {
   test("searchVec returns results sorted by similarity (closest first)", () => {
     const dbPath = tmpDbPath("vec-sorted");
     const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert two entries with different embeddings
       const id1 = insertTestEntry(db, "close-match", {
@@ -187,13 +183,12 @@ describe("searchVec over stored embeddings", () => {
   });
 });
 
-// ── Test f: JS fallback path (BLOB-based cosine similarity) ────────────────
+// ── Test f: cosine ranking over the BLOB table ─────────────────────────────
 
-describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
+describe("cosine ranking over the BLOB table", () => {
   test("searchVec with BLOB embeddings returns correct similarity ranking", () => {
     const dbPath = tmpDbPath("blob-fallback");
-    const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert three entries with different embeddings
       const id1 = insertTestEntry(db, "exact-match", {
@@ -226,7 +221,7 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
       expect(results.length).toBe(3);
 
       // Results should be sorted by similarity descending (distance ascending)
-      // The JS fallback converts cosine similarity to L2 distance:
+      // searchVec converts cosine similarity to L2 distance:
       // For normalized vectors: L2 = sqrt(2 * (1 - cos_sim))
       const exactResult = results.find((r) => r.id === id1);
       const partialResult = results.find((r) => r.id === id2);
@@ -251,8 +246,7 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
 
   test("searchVec returns empty array when no embeddings exist", () => {
     const dbPath = tmpDbPath("blob-empty");
-    const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       insertTestEntry(db, "no-embed-entry", {
         description: "Entry without embedding",
@@ -270,7 +264,7 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
   test("searchVec with k smaller than total results returns top-k", () => {
     const dbPath = tmpDbPath("blob-topk");
     const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert 5 entries with embeddings
       const ids: number[] = [];
@@ -342,13 +336,10 @@ describe("Dimension mismatch produces zero similarity", () => {
     expect(cosineSimilarity(zero, zero)).toBe(0);
   });
 
-  test("searchBlobVec handles dimension mismatch gracefully via cosineSimilarity", () => {
-    // When stored embeddings have 4 dims but query has 8 dims,
-    // the JS fallback calls cosineSimilarity which returns 0.
-    // Verify this end-to-end via searchVec.
+  test("searchVec skips a stored embedding whose width differs from the query's", () => {
+    // Stored embeddings have 4 dims, the query 8: the row never matches.
     const dbPath = tmpDbPath("dim-mismatch");
-    const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       const id = insertTestEntry(db, "small-emb", {
         description: "Entry with small embedding",
@@ -364,14 +355,7 @@ describe("Dimension mismatch produces zero similarity", () => {
       const queryVec8 = [1, 0, 0, 0, 0, 0, 0, 0];
       const results = searchVec(db, queryVec8, 10);
 
-      // Results should still come back (no crash) but with max distance
-      // since cosineSimilarity returns 0 for mismatched dims.
-      // The JS fallback converts cosine=0 to L2 = sqrt(2*(1-0)) = sqrt(2).
-      if (results.length > 0) {
-        expect(results[0]!.distance).toBeCloseTo(Math.sqrt(2), 1);
-      }
-      // Either we get the result with max distance or empty (both acceptable)
-      expect(results.length).toBeLessThanOrEqual(1);
+      expect(results).toEqual([]);
     } finally {
       closeDatabase(db);
     }
@@ -400,14 +384,13 @@ describe("targeted embedding selection", () => {
 
 describe("L2-to-cosine conversion round-trip", () => {
   test("searchVec distance converts correctly back to cosine similarity", () => {
-    // The scoring pipeline in tryVecScores does:
+    // A consumer recovers the cosine as:
     //   raw = 1 - (distance * distance) / 2
-    // And searchBlobVec does:
+    // And searchVec does:
     //   distance = sqrt(2 * max(0, 1 - cosineSim))
     // These should be inverse operations for normalized vectors.
     const dbPath = tmpDbPath("roundtrip");
-    const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath);
     try {
       const id = insertTestEntry(db, "roundtrip-entry", {
         description: "Round-trip test entry",

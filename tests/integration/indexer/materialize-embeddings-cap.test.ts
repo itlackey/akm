@@ -17,6 +17,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit } from "../../../src/llm/embedders/remote";
 import { DEFAULT_MAX_INPUT_TOKENS, estimateTokenCount } from "../../../src/llm/embedders/remote";
@@ -46,24 +47,25 @@ describe("generateEmbeddingsForDb: per-document embedding cap (#956)", () => {
     _setWarnSinkForTests(undefined);
   });
 
-  function seedOneEntry(db: Database, searchText: string): void {
+  /** Seed one entry whose body is `content`; returns the text it is embedded from. */
+  function seedOneEntry(db: Database, content: string): string {
     const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
     const component = installation?.components[0];
     if (!installation || !component) throw new Error("failed to derive a test bundle installation");
-    const entry = { name: "big-note", type: "memories", filename: "big-note.md" };
+    const entry = { name: "big-note", type: "memories", filename: "big-note.md", content };
     const provenance = deriveEntryProvenance(
       { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
       "memories",
       "big-note",
     );
-    upsertEntry(db, `${storage.stashDir}/memories/big-note.md`, entry, searchText, provenance);
+    upsertEntry(db, `${storage.stashDir}/memories/big-note.md`, entry, provenance);
+    return buildSearchText(entry);
   }
 
   test("a 2,000-token entry is embedded as its truncated head, not skipped", async () => {
     const db = openIndexDatabase();
     try {
-      const bigText = "x".repeat(8000); // estimateTokenCount = 2000
-      seedOneEntry(db, bigText);
+      const bigText = seedOneEntry(db, "x".repeat(8000)); // estimateTokenCount ≈ 2000
 
       const receivedTexts: string[] = [];
       overrideSeam(_setEmbedderForTests, {
@@ -134,8 +136,7 @@ describe("generateEmbeddingsForDb: per-document embedding cap (#956)", () => {
   test("a document already under the cap is embedded unchanged", async () => {
     const db = openIndexDatabase();
     try {
-      const smallText = "a short note";
-      seedOneEntry(db, smallText);
+      const smallText = seedOneEntry(db, "a short note");
 
       const receivedTexts: string[] = [];
       overrideSeam(_setEmbedderForTests, {
@@ -162,8 +163,7 @@ describe("generateEmbeddingsForDb: per-document embedding cap (#956)", () => {
   test("embedding.maxInputTokens overrides the default cap", async () => {
     const db = openIndexDatabase();
     try {
-      const text = "y".repeat(400); // estimateTokenCount = 100
-      seedOneEntry(db, text);
+      seedOneEntry(db, "y".repeat(400)); // estimateTokenCount ≈ 100
 
       const receivedTexts: string[] = [];
       overrideSeam(_setEmbedderForTests, {

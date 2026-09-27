@@ -5,19 +5,25 @@
 /**
  * The derived `entries` layout: DDL plus the layout marker.
  *
- * `index_meta.version` is a layout marker, not a compatibility gate. Nothing
- * refuses an index over it: readers serve what is there, and the writable
- * opener (`ensureSchema`, `index-schema.ts`) brings an older layout up to date
- * in place — additive columns and a one-time full-text rebuild — without
- * touching embeddings, utility scores, graph rows, or the LLM enrichment cache.
+ * `index_meta.version` is a layout marker. An older layout is never refused:
+ * readers serve what is there, and the writable opener (`ensureSchema`,
+ * `index-schema.ts`) brings it up to date in place — added and dropped
+ * columns, retired tables dropped, a one-time full-text rebuild — without
+ * touching embeddings, utility scores, graph rows, or the LLM enrichment
+ * cache. A newer layout is refused, naming the upgrade.
  */
 
+// 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`
+// is dropped (`dropVecMirror`, index-schema.ts), and so is the fragment FTS
+// table `entry_fragments_fts`, which search no longer reads. `entries` keeps
+// a hash of each entry's embedding input (`embed_hash`) instead of the text
+// (`search_text`); the text is derived from `document_json` when embedding.
 // 24: the FTS5 tables are contentless (`content=''`) — the indexed text lives
 // once, in `entries` / `entry_fragments`, and FTS rows are keyed by rowid only.
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
 // content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
 // tables from the stored entries when it finds the older layout.
-export const CANONICAL_INDEX_DB_VERSION = 24;
+export const CANONICAL_INDEX_DB_VERSION = 25;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
@@ -31,8 +37,8 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
     file_path     TEXT NOT NULL,
     content_hash  TEXT,
     document_json TEXT NOT NULL,
-    search_text   TEXT NOT NULL,
-    derived_from  TEXT
+    derived_from  TEXT,
+    embed_hash    TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_entries_bundle ON entries(bundle_id);
@@ -46,9 +52,8 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
   );
 `;
 
-// Both FTS tables are contentless: FTS5 keeps only the inverted index, and a
-// row is addressed by its rowid (`entries_fts.rowid = entries.id`;
-// `entry_fragments_fts.rowid = entries.id * 2^20 + fragment ordinal`, see
+// The FTS table is contentless: FTS5 keeps only the inverted index, and a row
+// is addressed by its rowid (`entries_fts.rowid = entries.id`, see
 // index-fts-repository.ts). `contentless_delete=1` lets a row be deleted by
 // rowid alone — an external-content table would instead need the exact text
 // originally indexed, which is derived in JS from `document_json`
@@ -59,23 +64,12 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
 // and the content-bearing one older releases wrote — which is also the
 // layout written when the linked SQLite predates `contentless_delete` (3.43,
 // e.g. the macOS 13 system library Bun links there).
-//
-// Parent metadata and body fragments are separate FTS populations on purpose:
-// combining them changes parent-document IDF and conjunction semantics.
 const CONTENTLESS_OPTIONS = "content='', contentless_delete=1,";
 
 export function entriesFtsDdl(contentless: boolean): string {
   return `
   CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     entry_id UNINDEXED, name, description, tags, hints, content,
-    ${contentless ? CONTENTLESS_OPTIONS : ""} tokenize='porter unicode61'
-  );`;
-}
-
-export function fragmentsFtsDdl(contentless: boolean): string {
-  return `
-  CREATE VIRTUAL TABLE IF NOT EXISTS entry_fragments_fts USING fts5(
-    entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content,
     ${contentless ? CONTENTLESS_OPTIONS : ""} tokenize='porter unicode61'
   );`;
 }
@@ -111,7 +105,10 @@ export function tableExists(db: EntrySchemaInspectionDatabase, name: string): bo
   return readTableSql(db, name) !== null;
 }
 
-/** Columns every `entries` row carries for this release's readers and writers (layout 21+). */
+/**
+ * Columns this release's readers need in `entries` (layout 21+). The writable
+ * opener adds `embed_hash` to an older table, so it is not required here.
+ */
 const REQUIRED_ENTRY_COLUMNS = [
   "id",
   "item_ref",
@@ -123,7 +120,6 @@ const REQUIRED_ENTRY_COLUMNS = [
   "file_path",
   "content_hash",
   "document_json",
-  "search_text",
   "derived_from",
 ] as const;
 

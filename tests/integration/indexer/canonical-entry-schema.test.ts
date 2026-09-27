@@ -24,8 +24,8 @@ const CURRENT_ENTRY_COLUMNS: string[] = [
   "file_path",
   "content_hash",
   "document_json",
-  "search_text",
   "derived_from",
+  "embed_hash",
 ];
 
 function withTempIndex(run: (dbPath: string) => void): void {
@@ -63,7 +63,7 @@ describe("canonical derived-index entry schema", () => {
         // This fails at a later required DDL surface. Before the v23 ordering
         // fix, the version was already stamped just after entries creation.
         partial.exec("CREATE VIEW index_dir_state AS SELECT 1 AS placeholder");
-        expect(() => ensureSchema(partial, undefined)).toThrow(/Cannot add a column to a view/);
+        expect(() => ensureSchema(partial)).toThrow(/Cannot add a column to a view/);
       } finally {
         partial.close();
       }
@@ -162,12 +162,11 @@ describe("canonical derived-index entry schema", () => {
         entry.type,
         entry.name,
       );
-      const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, "kept across the upgrade", provenance);
+      const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, provenance);
       // Layout 21: content-bearing FTS (here left stale and empty), a dirty
       // queue, and no fragment tables.
       legacy.exec(`
         DROP TABLE entries_fts;
-        DROP TABLE entry_fragments_fts;
         DROP TABLE entry_fragments;
         CREATE VIRTUAL TABLE entries_fts USING fts5(
           entry_id UNINDEXED, name, description, tags, hints, content, tokenize='porter unicode61'

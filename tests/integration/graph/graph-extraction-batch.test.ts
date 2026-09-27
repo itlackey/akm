@@ -18,7 +18,6 @@ import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/co
 import { loadStoredGraphSnapshot } from "../../../src/indexer/db/graph-db";
 import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { GraphExtraction } from "../../../src/llm/graph-extract";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -156,7 +155,7 @@ function writeMemory(name: string, body: string): void {
         entry.type,
         name,
       );
-      upsertEntry(db, filePath, entry, buildSearchText(entry), provenance);
+      upsertEntry(db, filePath, entry, provenance);
     } finally {
       closeDatabase(db);
     }

@@ -5,16 +5,16 @@
 /**
  * `index.db` FTS5 search + materialization repository.
  *
- * Owns the `entries_fts` full-text query path, per-entry projections, and the
- * explicit full recovery rebuild.
+ * Owns the `entries_fts` full-text query path, per-entry projections (the FTS
+ * row and the `entry_fragments` safe Markdown `akm show` resolves fragment
+ * selectors from), and the explicit full recovery rebuild.
  *
- * Both FTS5 tables are contentless (`content=''`, see index-entry-schema.ts):
- * the text lives once in `entries` / `entry_fragments`, and an FTS row is
- * addressed only by its rowid. Readers therefore derive the owning entry from
- * the rowid; the `COALESCE(f.entry_id, f.rowid)` joins below also read the
- * content-bearing tables older releases wrote (where the UNINDEXED columns are
- * populated), so a read-only open of a not-yet-migrated index still answers
- * correctly.
+ * `entries_fts` is contentless (`content=''`, see index-entry-schema.ts): the
+ * text lives once in `entries`, and an FTS row is addressed only by its rowid
+ * (`entries.id`). The `COALESCE(f.entry_id, f.rowid)` join below also reads
+ * the content-bearing table older releases wrote (where the UNINDEXED column
+ * is populated), so a read-only open of a not-yet-migrated index still
+ * answers correctly.
  */
 
 import { splitMarkdownFragments } from "../../core/asset/markdown-fragments";
@@ -25,39 +25,15 @@ import { buildSearchFields } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
+// `entries_fts.rowid = entries.id`, so a per-entry delete is a rowid lookup.
 const INSERT_FTS_SQL =
   "INSERT INTO entries_fts (rowid, entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?, ?)";
-const INSERT_FRAGMENT_SQL =
-  "INSERT INTO entry_fragments_fts (rowid, entry_id, fragment_id, fragment_ordinal, content) VALUES (?, ?, ?, ?, ?)";
-
-// `entries_fts.rowid = entries.id`. `entry_fragments_fts` carries many rows
-// per entry, so its rowid encodes both the owning entry and the fragment's
-// ordinal: `entryId * 2^20 + ordinal`. A per-entry delete is then a rowid
-// lookup or a rowid RANGE (`>= start < end`), never a scan.
-const FRAGMENT_ROWID_ORDINAL_BITS = 20;
-const FRAGMENT_ROWID_ORDINAL_SPAN = 2 ** FRAGMENT_ROWID_ORDINAL_BITS; // 1,048,576
-
-/** No file is expected to reach a million fragments; one that does must not silently collide with the next entry's rowid range. */
-function fragmentFtsRowid(entryId: number, ordinal: number): number {
-  if (ordinal < 0 || ordinal >= FRAGMENT_ROWID_ORDINAL_SPAN) {
-    throw new Error(
-      `Fragment ordinal ${ordinal} for entry ${entryId} exceeds the encoded FTS rowid span (${FRAGMENT_ROWID_ORDINAL_SPAN}).`,
-    );
-  }
-  return entryId * FRAGMENT_ROWID_ORDINAL_SPAN + ordinal;
-}
-
-function fragmentFtsRowidRangeStart(entryId: number): number {
-  return entryId * FRAGMENT_ROWID_ORDINAL_SPAN;
-}
 
 interface FtsMutationStatements {
   deleteOne: ReturnType<Database["prepare"]>;
   insert: ReturnType<Database["prepare"]>;
-  deleteFragments: ReturnType<Database["prepare"]>;
   upsertFragmentSource: ReturnType<Database["prepare"]>;
   deleteFragmentSource: ReturnType<Database["prepare"]>;
-  insertFragment: ReturnType<Database["prepare"]>;
 }
 
 const ftsMutationStatementsByDb = new WeakMap<Database, FtsMutationStatements>();
@@ -68,18 +44,19 @@ function getFtsMutationStatements(db: Database): FtsMutationStatements {
   const statements = {
     deleteOne: db.prepare("DELETE FROM entries_fts WHERE rowid = ?"),
     insert: db.prepare(INSERT_FTS_SQL),
-    deleteFragments: db.prepare("DELETE FROM entry_fragments_fts WHERE rowid >= ? AND rowid < ?"),
     upsertFragmentSource: db.prepare(
       "INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET safe_markdown = excluded.safe_markdown",
     ),
     deleteFragmentSource: db.prepare("DELETE FROM entry_fragments WHERE entry_id = ?"),
-    insertFragment: db.prepare(INSERT_FRAGMENT_SQL),
   };
   ftsMutationStatementsByDb.set(db, statements);
   return statements;
 }
 
-/** Replace one entry's derived FTS projection inside the caller's transaction. */
+/**
+ * Replace one entry's derived FTS row, and its fragment source when the scan
+ * read Markdown, inside the caller's transaction.
+ */
 export function replaceFtsEntry(
   db: Database,
   entryId: number,
@@ -96,33 +73,16 @@ export function replaceFtsEntry(
     // A scan that did read Markdown always supplies a value below.
     return;
   }
-  const rangeStart = fragmentFtsRowidRangeStart(entryId);
-  statements.deleteFragments.run(rangeStart, rangeStart + FRAGMENT_ROWID_ORDINAL_SPAN);
-  statements.deleteFragmentSource.run(entryId);
-  if (!fragmentContent) return;
-  statements.upsertFragmentSource.run(entryId, fragmentContent);
-  for (const fragment of splitMarkdownFragments(fragmentContent)) {
-    statements.insertFragment.run(
-      fragmentFtsRowid(entryId, fragment.ordinal),
-      entryId,
-      fragment.fragmentId,
-      fragment.ordinal,
-      fragment.text.toLowerCase(),
-    );
-  }
+  if (fragmentContent) statements.upsertFragmentSource.run(entryId, fragmentContent);
+  else statements.deleteFragmentSource.run(entryId);
 }
 
-/** Delete derived FTS projections for canonical entries that are being removed. */
+/** Delete the FTS rows and fragment sources of canonical entries that are being removed. */
 export function deleteFtsEntries(db: Database, entryIds: readonly number[]): void {
-  const statements = getFtsMutationStatements(db);
   for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
     db.prepare(`DELETE FROM entries_fts WHERE rowid IN (${placeholders})`).run(...chunk);
-    for (const entryId of chunk) {
-      const rangeStart = fragmentFtsRowidRangeStart(entryId);
-      statements.deleteFragments.run(rangeStart, rangeStart + FRAGMENT_ROWID_ORDINAL_SPAN);
-    }
     db.prepare(`DELETE FROM entry_fragments WHERE entry_id IN (${placeholders})`).run(...chunk);
   }
 }
@@ -236,7 +196,7 @@ export interface IndexedMarkdownFragment {
 }
 
 /**
- * Explicitly rebuild the complete FTS5 projection from canonical entries.
+ * Explicitly rebuild `entries_fts` from canonical entries.
  * Ordinary entry mutations do not call this: `upsertEntry` and the delete
  * operations publish their FTS state in the same transaction as `entries`.
  * This remains a recovery/schema-verification primitive for regenerable
@@ -248,19 +208,14 @@ export interface IndexedMarkdownFragment {
 export function rebuildFts(db: Database): void {
   db.transaction(() => {
     db.exec("DELETE FROM entries_fts");
-    db.exec("DELETE FROM entry_fragments_fts");
     // Keyset pages, so a large index is never held in memory at once.
-    const page = db.prepare(
-      "SELECT e.id, e.document_json, f.safe_markdown FROM entries e LEFT JOIN entry_fragments f ON f.entry_id = e.id " +
-        "WHERE e.id > ? ORDER BY e.id LIMIT 500",
-    );
+    const page = db.prepare("SELECT id, document_json FROM entries WHERE id > ? ORDER BY id LIMIT 500");
     const insertStmt = db.prepare(INSERT_FTS_SQL);
-    const fragmentStmt = db.prepare(INSERT_FRAGMENT_SQL);
 
     let skipped = 0;
     let afterId = -1;
     for (;;) {
-      const rows = page.all(afterId) as Array<{ id: number; document_json: string; safe_markdown: string | null }>;
+      const rows = page.all(afterId) as Array<{ id: number; document_json: string }>;
       if (rows.length === 0) break;
       afterId = rows[rows.length - 1]!.id;
       for (const row of rows) {
@@ -272,16 +227,6 @@ export function rebuildFts(db: Database): void {
           continue;
         }
         insertStmt.run(row.id, row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
-        if (!row.safe_markdown) continue;
-        for (const fragment of splitMarkdownFragments(row.safe_markdown)) {
-          fragmentStmt.run(
-            fragmentFtsRowid(row.id, fragment.ordinal),
-            row.id,
-            fragment.fragmentId,
-            fragment.ordinal,
-            fragment.text.toLowerCase(),
-          );
-        }
       }
     }
 

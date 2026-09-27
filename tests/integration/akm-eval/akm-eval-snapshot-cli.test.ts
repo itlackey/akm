@@ -58,7 +58,7 @@ function createIndexDatabase(filePath: string): void {
   privateDirectory(path.dirname(filePath));
   const database = openDatabase(filePath);
   try {
-    ensureSchema(database, undefined);
+    ensureSchema(database);
     database.exec("CREATE TABLE snapshot_probe (value TEXT NOT NULL)");
     database.prepare("INSERT INTO snapshot_probe (value) VALUES (?)").run(path.basename(filePath));
   } finally {

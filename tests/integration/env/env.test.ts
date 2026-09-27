@@ -6,6 +6,7 @@ import { buildShellExportScript, createEnv, listKeys, loadEnv } from "../../../s
 import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../../src/storage/repositories/index-entries-repository";
@@ -247,7 +248,7 @@ afterEach(() => {
 const SECRET_VALUE = "correct-horse-battery-staple-do-not-leak";
 
 describe("env indexer safety", () => {
-  test("env values never appear in the FTS index, search_text, or document_json", async () => {
+  test("env values never appear in the FTS index, the embedding input, or document_json", async () => {
     const stashDir = currentStashDir;
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
 
@@ -294,11 +295,12 @@ describe("env indexer safety", () => {
       expect(json).not.toContain("zqxcommentleak");
       expect(json).not.toContain("Production secrets");
 
-      // 5. CRITICAL: neither values nor comment text are in entries.search_text
-      type Row = { search_text: string | null; document_json: string };
-      const rows = db.prepare("SELECT search_text, document_json FROM entries WHERE type = ?").all("env") as Row[];
+      // 5. CRITICAL: neither values nor comment text are in the stored document
+      // or the text its vector is embedded from
+      type Row = { document_json: string };
+      const rows = db.prepare("SELECT document_json FROM entries WHERE type = ?").all("env") as Row[];
       expect(rows.length).toBe(1);
-      const searchText = rows[0]!.search_text ?? "";
+      const searchText = buildSearchText(JSON.parse(rows[0]!.document_json));
       expect(searchText).not.toContain(SECRET_VALUE);
       expect(searchText).not.toContain("zqxoldcredleak");
       expect(searchText).not.toContain("zqxcommentleak");

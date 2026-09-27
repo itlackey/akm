@@ -58,7 +58,7 @@ import {
   listAssetSalienceMissingState,
   stampAssetSalienceMissing,
 } from "../../storage/repositories/salience-repository";
-import { readFreelistInfo, vacuumStateDbIfReclaimable } from "../../storage/state-db-integrity";
+import { readFreelistInfo, STATE_DB_VACUUMED_EVENT, vacuumIfReclaimable } from "../../storage/state-db-integrity";
 import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
@@ -505,11 +505,7 @@ export async function runImproveMaintenancePasses(args: {
     memoryInferenceFn: options.memoryInferenceFn ?? runMemoryInferencePass,
     graphExtractionFn: options.graphExtractionFn ?? runGraphExtractionPass,
   };
-  const openIndexDb = () =>
-    openIndexDatabase(
-      getDbPath(),
-      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-    );
+  const openIndexDb = () => openIndexDatabase(getDbPath());
   const dbCell: IndexDbCell = {};
   const actions: ImproveActionResult[] = [];
   try {
@@ -815,7 +811,12 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
       (stateDb) => {
         report("events_purged", "events/_purge", purgeOldEvents(stateDb, retentionDays), "event(s)");
         report("improve_runs_purged", "improve_runs/_purge", purgeOldImproveRuns(stateDb, retentionDays), "run(s)");
-        const vacuum = vacuumStateDbIfReclaimable(stateDb, readFreelistInfo(stateDb), eventsCtx);
+        const vacuum = vacuumIfReclaimable(
+          stateDb,
+          readFreelistInfo(stateDb),
+          { eventType: STATE_DB_VACUUMED_EVENT },
+          eventsCtx,
+        );
         if (vacuum.ran) info(`[improve] state.db vacuum: ${vacuum.pagesBefore} -> ${vacuum.pagesAfter} pages`);
       },
       { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },

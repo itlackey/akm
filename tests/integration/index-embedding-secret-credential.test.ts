@@ -303,7 +303,7 @@ describe("akm bundle update: the update's embedding phase carries the secret:// 
       const result = await akmUpdate({ target: id, stashDir: storage.stashDir });
 
       expect(result.index.semanticStatus).toBeDefined();
-      expect(["ready-vec", "ready-js"]).toContain(result.index.semanticStatus as string);
+      expect(result.index.semanticStatus).toBe("ready-js");
       expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer bundle-update-store-secret-value");
     } finally {
       syncSpy.mockRestore();

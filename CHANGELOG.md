@@ -61,6 +61,76 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   applied only to the final `limit` items) and sends each as its name,
   description and the start of its indexed content (2,000 characters in all)
   instead of name and description. (`src/commands/read/curate.ts`.)
+- **Vectors are stored once (index layout 25).** Each entry's vector lives
+  only in `embeddings`, and search scores every current-model row by cosine
+  similarity in JavaScript. The sqlite-vec mirror `entries_vec` is gone with
+  its repair pass, readiness flag and width bookkeeping: sqlite-vec cannot
+  load in the standalone binaries (`bun build --compile` does not bundle the
+  optional package), under Bun on macOS (the system SQLite refuses
+  extensions) or wherever the optional dependency is missing, so those
+  installs always searched the BLOB rows anyway, and a mirror that fell out
+  of step returned wrong neighbours without an error. The scan now reads
+  float32 views of the rows instead of copying each into an array: 85 ms per
+  query for 24k 1,024-dimension vectors in a fresh process, against 460 ms for
+  the old fallback and 41 ms for sqlite-vec. The first writable open drops
+  `entries_vec` (100 MB on that index) and the `embeddingDim` and
+  `vecFastPathReady` meta keys; dropping a vec0 table needs the extension, so
+  sqlite-vec stays an optional dependency for that alone, and an install
+  without it leaves the unread table in place. `semanticStatus` is `ready-js`
+  whenever every entry has a vector (`ready-vec` is gone), the `vecAvailable`
+  field leaves `akm index` and `akm info` output, setup no longer probes for
+  sqlite-vec, and `embedding.dimension` loses its 4,096 cap, which only the
+  vec0 column needed. (`src/storage/repositories/index-vec-repository.ts`,
+  `src/storage/repositories/index-schema.ts`,
+  `src/indexer/materialize-embeddings.ts`.)
+- **The fragment full-text table is gone (index layout 25).** Nothing has
+  read `entry_fragments_fts` since fragments stopped competing as search
+  candidates, so an upsert no longer splits the body into fragment rows and
+  the first writable open drops the table (39 MB on a 24k-entry index).
+  `entry_fragments` stays: `akm show <ref>#akm-fragment-…` (#937) resolves the
+  selector from its stored safe Markdown.
+  (`src/storage/repositories/index-fts-repository.ts`,
+  `src/storage/repositories/index-schema.ts`.)
+- **The embedding input is derived, not stored (index layout 25).**
+  `entries.search_text` held a third copy of every body (74 MB on a
+  24k-entry index) only to feed the embedder and to notice when an entry's
+  vector went stale. The embedding pass now derives the text from
+  `document_json` when it embeds an entry, and `entries.embed_hash` keeps its
+  SHA-256: an upsert whose hash differs deletes the vector, exactly as a
+  changed `search_text` did. The first writable open hashes each stored
+  `search_text` before dropping the column, so every vector stays attached
+  until its entry's text really changes, and nothing is re-embedded by the
+  upgrade. (`src/storage/repositories/index-entries-repository.ts`,
+  `src/storage/repositories/index-vec-repository.ts`,
+  `src/storage/repositories/index-schema.ts`.)
+- **`akm index` reclaims index.db's free pages.** Nothing ever VACUUMed
+  `index.db`, so every table an upgrade rebuilt or dropped stayed on disk as
+  free pages: a 24k-entry index measured 979 MB, 427 MB of it free, against
+  560 MB for a fresh build of the same content. The run now ends with a
+  VACUUM when the writable open migrated the layout (it leaves
+  `index_meta.vacuumPending` for the next `akm index`, since the open may sit
+  inside a caller's transaction) and whenever more than half the pages are
+  free, the threshold and pass improve already apply to `state.db`
+  (`vacuumIfReclaimable`, formerly `vacuumStateDbIfReclaimable`). A busy
+  database skips the VACUUM instead of failing the run; each VACUUM prints
+  its page counts and appends an `index_db_vacuumed` event. With the three
+  layout-25 removals above, a fresh build of the 24k-entry retrieval snapshot
+  is 340 MB instead of 560 MB, and a copy of the 601 MB layout-24 build
+  migrates in 0.8 s with all 23,979 vectors kept byte for byte, then VACUUMs
+  to 377 MB. Retrieval is unchanged on the suite (search nDCG@10 0.5562 →
+  0.5560, Δ −0.0002 [−0.0014, +0.0009]; P@5 0.5507 → 0.5517; curate P@5
+  identical), and search p50/p95 moved from 374/912 ms to 401/870 ms.
+  (`src/indexer/indexer.ts`, `src/storage/state-db-integrity.ts`.)
+- **An index a newer akm wrote is refused, naming the upgrade.** Readers
+  used to serve a newer layout "as far as they could" and the writable open
+  continued at its own layout, setting the marker back so the two releases
+  alternated. A newer layout can lack a column an older reader selects —
+  layout 25 drops `entries.search_text` — so every opener now refuses it with
+  `INDEX_SCHEMA_INCOMPATIBLE` ("Upgrade akm to use this index.") and leaves
+  the file untouched; an older layout is still served as-is and migrated by
+  the next writable open, and `akm improve --dry-run` reports the refusal as
+  an incompatible snapshot. (`src/storage/repositories/index-connection.ts`,
+  `src/storage/repositories/index-schema.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,
@@ -253,9 +323,8 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   resumably, replacing the purge, the #955 re-embed canary and
   `embedding_salvage`. `akm index --full` keeps unchanged entries' vectors,
   and a one-file change in a large directory re-persists only that file.
-  Readers serve an older or newer layout as-is and say so once on stderr. An
-  akm older than this release refuses a layout-24 index and asks to be
-  upgraded.
+  Readers serve an older layout as-is and say so once on stderr. An akm
+  older than this release refuses a layout-24 index and asks to be upgraded.
 - **`--verbose` embedding output lists each document's size without a
   predicted batch number.** The per-batch lines already report every
   provider request's document and token counts, and skipped documents are

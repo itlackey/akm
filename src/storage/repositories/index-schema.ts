@@ -6,23 +6,27 @@
  * index.db schema, kept in the storage layer so schema evolution stays apart
  * from the CRUD/FTS/vector queries.
  *
- * `ensureSchema` runs on every writable open. It is additive: `CREATE ... IF
- * NOT EXISTS`, `ALTER TABLE ... ADD COLUMN` for columns added after a table
- * first shipped, and one in-place rebuild of the (derived, cheap) FTS tables
- * when their layout is older than this release's. It never drops `entries`,
- * `embeddings`, `utility_scores*`, `graph_*`, or `llm_enrichment_cache` to
- * cross a version boundary; the only from-scratch rebuild is the
- * SQLITE_CORRUPT path in `index-connection.ts`.
+ * `ensureSchema` runs on every writable open and brings an older layout up
+ * to date in place: `CREATE ... IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN`
+ * for columns added after a table first shipped, drops of retired derived
+ * tables and columns, and one in-place rebuild of the (derived, cheap) FTS
+ * table when its layout is older than this release's. It never drops
+ * `entries`, `embeddings`, `utility_scores*`, `graph_*`, or
+ * `llm_enrichment_cache` to cross a version boundary; the only from-scratch
+ * rebuild is the SQLITE_CORRUPT path in `index-connection.ts`. A layout newer
+ * than this release's is refused, naming the upgrade
+ * ({@link newerIndexLayoutError}).
  */
 
+import { createRequire } from "node:module";
 import { ConfigError } from "../../core/errors";
-import { warn, warnOnce } from "../../core/warn";
+import { warn } from "../../core/warn";
+import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
   entriesFtsDdl,
-  fragmentsFtsDdl,
   isContentlessFtsDdl,
   missingEntryColumns,
   readTableSql,
@@ -31,14 +35,29 @@ import {
 } from "./index-entry-schema";
 import { rebuildFts } from "./index-fts-repository";
 import { getMeta, setMeta } from "./index-meta-repository";
-import { ensureVecTableWidth, isVecAvailable } from "./index-vec-repository";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
-export const EMBEDDING_DIM = 384;
+/** `index_meta` key set when the writable opener migrated the layout; cleared once `akm index` VACUUMs. */
+export const VACUUM_PENDING_META = "vacuumPending";
 // #624-P1: graph_files is keyed to (stash_root, file_path, body_hash).
 export const GRAPH_SCHEMA_VERSION = 4;
+
+/**
+ * The refusal for an index a newer akm wrote. Readers and the writable opener
+ * both raise it: a newer layout may lack tables or columns this release reads
+ * (layout 25 dropped `entries.search_text`), and writing it back at this
+ * layout would undo the newer release's migration.
+ */
+export function newerIndexLayoutError(storedVersion: number, dbPath?: string): ConfigError {
+  return new ConfigError(
+    `Index database${dbPath ? ` at ${dbPath}` : ""} was written by a newer akm (layout ${storedVersion}; this akm ` +
+      `understands ${DB_VERSION}). Upgrade akm to use this index.`,
+    "INDEX_SCHEMA_INCOMPATIBLE",
+    "Upgrade akm to a version that understands this index layout.",
+  );
+}
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -169,21 +188,12 @@ function ensureGraphTables(db: Database): void {
  * key). Recreate only the tables keyed by `entries.id` — their ids are about
  * to be re-minted, so the rows would dangle anyway. Graph rows (keyed by
  * path) and the LLM enrichment cache (keyed by ref) are kept. The next index
- * run re-walks every source. A newer release's table is never recreated:
- * writing to it is refused, naming the upgrade.
+ * run re-walks every source.
  */
-function ensureEntriesLayout(db: Database, storedVersion: number): void {
+function ensureEntriesLayout(db: Database): void {
   if (!tableExists(db, "entries")) return;
   const missing = missingEntryColumns(db);
   if (missing.length === 0) return;
-  if (storedVersion > DB_VERSION) {
-    throw new ConfigError(
-      `Index database was written by a newer akm (layout ${storedVersion}) whose entries table this akm cannot write. ` +
-        "Upgrade akm to use this index.",
-      "INDEX_SCHEMA_INCOMPATIBLE",
-      "Upgrade akm to a version that understands this index layout.",
-    );
-  }
   warn(
     `Index database entries table predates the ${missing.join(", ")} column${missing.length === 1 ? "" : "s"} — ` +
       "recreating the entries-keyed tables (entries, full-text, embeddings, utility scores); graph data and the " +
@@ -192,7 +202,6 @@ function ensureEntriesLayout(db: Database, storedVersion: number): void {
   db.transaction(() => {
     for (const table of [
       "entries_fts",
-      "entry_fragments_fts",
       "entry_fragments",
       "embeddings",
       "utility_scores_scoped",
@@ -202,34 +211,63 @@ function ensureEntriesLayout(db: Database, storedVersion: number): void {
     ]) {
       db.exec(`DROP TABLE IF EXISTS ${table}`);
     }
-    db.exec("DELETE FROM index_meta WHERE key IN ('builtAt', 'hasEmbeddings', 'vecFastPathReady')");
+    db.exec("DELETE FROM index_meta WHERE key IN ('builtAt', 'hasEmbeddings')");
   })();
-  // A vec0 table cannot be dropped while sqlite-vec is unavailable; its rows
-  // are orphans the next embedding pass's mirror repair removes.
+}
+
+/**
+ * Drop the sqlite-vec mirror of `embeddings` (`entries_vec`, layout 24 and
+ * earlier); vectors are searched from `embeddings` alone. Dropping a vec0
+ * table needs its module, so an install without sqlite-vec leaves the table
+ * in place, unread, and the next writable open that can load it drops it.
+ */
+function dropVecMirror(db: Database): void {
+  if (!tableExists(db, "entries_vec")) return;
   try {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
+    createRequire(import.meta.url)("sqlite-vec").load(db);
+    db.exec("DROP TABLE entries_vec");
   } catch {
-    // Left for repairVecFastPath.
+    // sqlite-vec is not loadable here.
   }
 }
 
 /**
- * Bring both FTS5 tables to the contentless layout, rebuilding them from
- * `entries` / `entry_fragments` when either is missing or still carries the
- * content-bearing layout older releases wrote (the one-time v23→v24
- * migration). One transaction: a crash mid-rebuild leaves the old tables in
- * place and the next writable open retries. A SQLite without
- * `contentless_delete` keeps (or gets) the content-bearing layout instead.
+ * Layout 25 keeps a hash of each entry's embedding input (`embed_hash`)
+ * instead of the text (`search_text`, layout 24 and earlier); the text is
+ * derived from `document_json` when the entry is embedded. The hash is taken
+ * from the stored text, so every vector stays valid until its entry's text
+ * changes. One transaction: a crash leaves `search_text` for the next
+ * writable open.
+ */
+function replaceSearchTextWithHash(db: Database): void {
+  if (!tableHasColumn(db, "entries", "search_text")) return;
+  db.transaction(() => {
+    ensureColumn(db, "entries", "embed_hash", "TEXT");
+    const page = db.prepare("SELECT id, search_text FROM entries WHERE id > ? ORDER BY id LIMIT 500");
+    const update = db.prepare("UPDATE entries SET embed_hash = ? WHERE id = ?");
+    let afterId = -1;
+    for (;;) {
+      const rows = page.all(afterId) as Array<{ id: number; search_text: string }>;
+      if (rows.length === 0) break;
+      afterId = rows[rows.length - 1]!.id;
+      for (const row of rows) update.run(sha256Hex(row.search_text), row.id);
+    }
+    db.exec("ALTER TABLE entries DROP COLUMN search_text");
+  })();
+}
+
+/**
+ * Bring `entries_fts` to the contentless layout, rebuilding it from `entries`
+ * when it is missing or still carries the content-bearing layout older
+ * releases wrote (the one-time v23→v24 migration). One transaction: a crash
+ * mid-rebuild leaves the old table in place and the next writable open
+ * retries. A SQLite without `contentless_delete` keeps (or gets) the
+ * content-bearing layout instead.
  */
 function ensureFtsLayout(db: Database): void {
   const contentless = supportsContentlessDelete(db);
-  const isCurrent = (table: string) => {
-    const sql = readTableSql(db, table);
-    return sql !== null && isContentlessFtsDdl(sql) === contentless;
-  };
-  const parentCurrent = isCurrent("entries_fts");
-  const fragmentsCurrent = isCurrent("entry_fragments_fts");
-  if (parentCurrent && fragmentsCurrent) return;
+  const sql = readTableSql(db, "entries_fts");
+  if (sql !== null && isContentlessFtsDdl(sql) === contentless) return;
   const entryCount = Number((db.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number }).n);
   if (entryCount > 0) {
     warn(
@@ -238,10 +276,8 @@ function ensureFtsLayout(db: Database): void {
     );
   }
   db.transaction(() => {
-    if (!parentCurrent) db.exec("DROP TABLE IF EXISTS entries_fts");
-    if (!fragmentsCurrent) db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
+    db.exec("DROP TABLE IF EXISTS entries_fts");
     db.exec(entriesFtsDdl(contentless));
-    db.exec(fragmentsFtsDdl(contentless));
     rebuildFts(db);
   })();
 }
@@ -258,7 +294,7 @@ function ensureColumn(db: Database, table: string, column: string, type: string)
   return true;
 }
 
-export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
+export function ensureSchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,
@@ -267,28 +303,25 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   `);
 
   const storedVersion = Number(getMeta(db, "version") ?? 0);
-  if (storedVersion > DB_VERSION) {
-    warnOnce(
-      "index-db-newer-generation",
-      `Index database was last written by a newer akm (layout ${storedVersion}; this binary writes ${DB_VERSION}). ` +
-        "Continuing with the layout this binary knows — upgrade akm to stop the two from alternating.",
-    );
-  }
+  if (storedVersion > DB_VERSION) throw newerIndexLayoutError(storedVersion);
 
-  ensureEntriesLayout(db, storedVersion);
+  ensureEntriesLayout(db);
 
   const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
+  replaceSearchTextWithHash(db);
 
   // Retired derived tables: the workflow IR cache, the pre-v22 FTS dirty
-  // queue, and the #955 embedding salvage staging table (embeddings now carry
-  // their model per row, so nothing is copied aside and reused).
+  // queue, the #955 embedding salvage staging table (embeddings now carry
+  // their model per row, so nothing is copied aside and reused), and the
+  // fragment FTS table search stopped reading (layout 24 and earlier).
   db.exec("DROP TABLE IF EXISTS workflow_documents");
   db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
   db.exec("DROP TABLE IF EXISTS embedding_salvage");
+  db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
 
-  // BLOB-based embedding storage (always available, no sqlite-vec needed).
-  // `model` is the provider fingerprint the vector was generated under
+  // One float32 BLOB per entry, searched by an exact scan
+  // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
   // (`deriveSemanticProviderFingerprint`); the embedding pass re-embeds only
   // rows whose model differs from the configured one. NULL means the row
   // predates model tracking and is trusted as the current model.
@@ -373,36 +406,26 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
 
   ensureGraphTables(db);
 
-  // sqlite-vec mirror of `embeddings` for the current model.
-  //
-  // Dimension contract:
-  //   - `embeddingDim === undefined`: the caller did not request a specific
-  //     dim (registry providers, graph helpers, ad-hoc subcommands). Do not
-  //     touch `index_meta.embeddingDim`; fall back to the stored dim (or the
-  //     default) only to create the table for the first time.
-  //   - a number: the caller explicitly asked for that dim. The vec table is
-  //     recreated at that width when its declared width differs; the BLOB
-  //     rows are untouched (each carries its own model and byte length).
-  const dimExplicit = embeddingDim !== undefined;
-  const requestedDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
-  const effectiveDim = Number.isInteger(requestedDim) && requestedDim > 0 ? requestedDim : EMBEDDING_DIM;
-  if (effectiveDim !== requestedDim) {
-    warn(`Invalid embedding dimension ${requestedDim} — falling back to the default (${EMBEDDING_DIM}).`);
-  }
-  if (isVecAvailable(db)) ensureVecTableWidth(db, effectiveDim);
-  if (dimExplicit) setMeta(db, "embeddingDim", String(effectiveDim));
+  dropVecMirror(db);
+  // Meta keys only the sqlite-vec mirror read.
+  db.exec("DELETE FROM index_meta WHERE key IN ('embeddingDim', 'vecFastPathReady')");
 
   db.exec(REGISTRY_INDEX_CACHE_DDL);
 
   ensureFtsLayout(db);
 
-  // An index that had no fragment source table (v22 and earlier) has parent
-  // FTS rebuilt above but no body fragments to index until each directory is
-  // drained again. Clearing the per-directory cursor makes the next run
-  // re-read every source; entry ids, embeddings and utility rows stay put.
+  // An index that had no fragment source table (v22 and earlier) has no safe
+  // Markdown for `akm show` to resolve fragment selectors from until each
+  // directory is drained again. Clearing the per-directory cursor makes the
+  // next run re-read every source; entry ids, embeddings and utility rows
+  // stay put.
   if (!hadFragmentSource && tableExists(db, "entries")) {
     db.exec("DELETE FROM index_dir_state");
   }
 
+  // Migrating an existing layout drops tables and columns; the next `akm index`
+  // VACUUMs the pages they leave free (`vacuumIndexDb`, indexer.ts), since a
+  // writable open may run inside a caller's transaction, where VACUUM cannot.
+  if (storedVersion > 0 && storedVersion < DB_VERSION) setMeta(db, VACUUM_PENDING_META, "1");
   setMeta(db, "version", String(DB_VERSION));
 }

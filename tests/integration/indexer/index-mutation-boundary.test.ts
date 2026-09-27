@@ -81,7 +81,7 @@ describe("canonical entry mutation", () => {
         entry.name,
       );
 
-      upsertEntry(db, "/primary/knowledge/atomic-publish.md", entry, "uniquefoundationmarker", provenance);
+      upsertEntry(db, "/primary/knowledge/atomic-publish.md", entry, provenance);
 
       expect(searchFts(db, "uniquefoundationmarker", 10).map((hit) => hit.itemRef)).toEqual([
         "primary//knowledge/atomic-publish",
@@ -108,9 +108,7 @@ describe("canonical entry mutation", () => {
       );
       db.exec("DROP TABLE entries_fts");
 
-      expect(() =>
-        upsertEntry(db, "/primary/knowledge/atomic-rollback.md", entry, "rollbackfoundationmarker", provenance),
-      ).toThrow();
+      expect(() => upsertEntry(db, "/primary/knowledge/atomic-rollback.md", entry, provenance)).toThrow();
       expect(rowCount(db, "entries")).toBe(0);
     } finally {
       closeDatabase(db);
@@ -135,7 +133,7 @@ describe("canonical entry mutation", () => {
 
       db.transaction(() => {
         try {
-          upsertEntry(db, "/primary/knowledge/nested-atomic-rollback.md", entry, "nestedrollbackmarker", provenance);
+          upsertEntry(db, "/primary/knowledge/nested-atomic-rollback.md", entry, provenance);
         } catch {
           // The caller deliberately continues its outer transaction. The
           // canonical mutation must still have rolled back to its savepoint.
@@ -193,10 +191,6 @@ test("a full run keeps an entry's id; changed content drops only its stale vecto
     expect(rowCount(currentDb, "entries_fts", "WHERE rowid = ?", [oldId])).toBe(1);
     expect(searchFts(currentDb, "zeppelin", 10).map((hit) => hit.id)).toEqual([oldId]);
     expect(rowCount(currentDb, "embeddings", "WHERE id = ?", [oldId])).toBe(0);
-    const hasVec = currentDb
-      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'")
-      .get() as { present: number } | undefined;
-    if (hasVec) expect(rowCount(currentDb, "entries_vec", "WHERE id = ?", [oldId])).toBe(0);
   } finally {
     closeDatabase(currentDb);
   }

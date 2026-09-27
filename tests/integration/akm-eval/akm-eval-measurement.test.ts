@@ -44,8 +44,8 @@ function seedIndexRef(db: Database, itemRef: string): void {
   db.prepare(
     `INSERT INTO entries
        (item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-        content_hash, document_json, search_text, derived_from)
-     VALUES (?, ?, ?, ?, 'akm', 'knowledge', ?, NULL, ?, '', NULL)`,
+        content_hash, document_json, derived_from)
+     VALUES (?, ?, ?, ?, 'akm', 'knowledge', ?, NULL, ?, NULL)`,
   ).run(
     itemRef,
     bundleId,

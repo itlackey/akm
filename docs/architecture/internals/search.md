@@ -13,8 +13,8 @@ Query
   │   field weighting              │   Normalize + combine
   │                                ├──────────────────────── Score + Boost ── Sort ── Return
   └─ Vector (semantic) ───────────┘        0.7 FTS          │
-      Cosine similarity via                0.3 Vec          │
-      sqlite-vec or JS fallback                             │
+      Cosine similarity, exact             0.3 Vec          │
+      scan of stored vectors                                │
                                                             │
                                               Boosts applied:
                                               • exact name match

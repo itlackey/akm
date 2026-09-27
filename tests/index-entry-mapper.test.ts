@@ -14,7 +14,6 @@ function row(overrides: Partial<EntryRow> = {}): EntryRow {
     file_path: "/stash/knowledge/guide.md",
     content_hash: null,
     document_json: JSON.stringify({ type: "knowledge", name: "guide" }),
-    search_text: "guide",
     ...overrides,
   };
 }

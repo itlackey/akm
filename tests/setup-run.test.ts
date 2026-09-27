@@ -139,7 +139,6 @@ function makeIndexResult(): IndexResponse {
       embeddingProvider: "local",
       entryCount: 3,
       embeddingCount: 3,
-      vecAvailable: false,
     },
   };
 }
@@ -220,12 +219,6 @@ function installSetupSeams(): void {
     }
     return setupState.indexResult;
   });
-  // The wizard's vec probe (setup.ts) uses the REAL src/indexer/db/db module:
-  // it mkdtempSync's a probe dir under os.tmpdir() and opens a real index DB
-  // there (sqlite-vec loads fine in the sandbox). Tests that need the probe
-  // to FAIL point TMPDIR at a nonexistent directory instead — os.tmpdir()
-  // re-reads TMPDIR per call, so mkdtempSync throws ENOENT and the real
-  // catch path runs.
   overrideSeam(_setAgentDetectForTests, {
     detectAgentCliProfiles: () => [],
     pickDefaultAgentProfile: () => undefined,
@@ -472,29 +465,6 @@ describe("runSetupWizard", () => {
 
     expect(promptState.logs.some((entry) => entry.includes("Reinstall akm-cli"))).toBe(true);
     expect(readSavedConfig().semanticSearchMode).toBe("auto");
-  });
-
-  test("keeps semantic search enabled and warns when sqlite-vec/db check fails", async () => {
-    installSetupSeams();
-    // Break the REAL vec probe: point TMPDIR at a nonexistent directory so
-    // its mkdtempSync(os.tmpdir(), ...) throws ENOENT and the catch path
-    // (warn + JS fallback) runs — no db-module mock needed.
-    const priorTmpdir = process.env.TMPDIR;
-    process.env.TMPDIR = path.join(storage.stashDir, "no-such-tmpdir");
-
-    promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, true, true, true, false);
-    promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
-
-    try {
-      await runSetupWizard();
-    } finally {
-      if (priorTmpdir === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = priorTmpdir;
-    }
-
-    expect(readSavedConfig().semanticSearchMode).toBe("auto");
-    expect(promptState.logs.some((entry) => entry.includes("Semantic search will use the JS fallback"))).toBe(true);
   });
 
   test("keeps semantic search enabled when asset preparation is skipped", async () => {
