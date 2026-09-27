@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.4] - 2026-09-27
+
+Search and curate are rebuilt on measured evidence. On a 221-query suite of real
+akm queries judged for relevance, search nDCG@10 goes from 0.346 to 0.556 and
+curate precision@5 from 0.350 to 0.551, with search p50 falling from 787 ms to
+about 400 ms and a fresh index shrinking from 560 MB to 340 MB.
+
 Upgrades stop breaking because the machinery that broke them is gone, not
 because more was added: this release removes the scheduler-grant layer, the
 filesystem transaction journals, the maintenance barrier and lock mutex, the
@@ -131,6 +138,9 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   the next writable open, and `akm improve --dry-run` reports the refusal as
   an incompatible snapshot. (`src/storage/repositories/index-connection.ts`,
   `src/storage/repositories/index-schema.ts`.)
+  Downgrading to 0.9.17-alpha.3 or earlier is not supported for the index:
+  those releases select columns layout 25 dropped, so rebuild it with
+  `akm index --full` under the older release.
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,
