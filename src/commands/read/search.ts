@@ -16,6 +16,7 @@
 import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
@@ -347,12 +348,18 @@ function resolveEntryIds(
  * have no local entry_id to reference.
  */
 function logSearchEvent(
-  query: string,
+  rawQuery: string,
   response: SearchResponse,
   mode: "semantic" | "keyword" = "keyword",
   eventSource: UsageEventSource = "user",
   attributionProjection: AttributionProjection = "full",
 ): void {
+  // Credentials pasted into a query (e.g. by the Claude Code hook that
+  // curates every user prompt) must never reach state.db verbatim — see
+  // `redactCredentialPatterns`. Redacted once here so every persistence call
+  // below (events.metadata_json via appendEvent, usage_events.query via
+  // insertUsageEvent) gets the same scrubbed text.
+  const query = redactCredentialPatterns(rawQuery);
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");

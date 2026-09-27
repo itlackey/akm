@@ -50,6 +50,112 @@ describe("redactCredentialPatterns", () => {
   });
 });
 
+// akm-usage-redaction (#privacy): the Claude Code hook curates every user
+// prompt, so a credential pasted into a query reaches akm's own query
+// persistence path before any provider ever sees it. These patterns are the
+// ones a scan of mined queries actually found (PASSWORD=…, TOKEN=…, SECRET=…)
+// plus the other credential shapes listed in that scan's remediation plan.
+describe("redactCredentialPatterns — named KEY=value / KEY: value", () => {
+  test.each([
+    ["PASSWORD", "PASSWORD=hunter2", "PASSWORD=[REDACTED]"],
+    ["passwd", "passwd=hunter2", "passwd=[REDACTED]"],
+    ["TOKEN", "TOKEN=abc123", "TOKEN=[REDACTED]"],
+    ["token (colon form)", "token: abc123", "token: [REDACTED]"],
+    ["SECRET", "SECRET=xyz789", "SECRET=[REDACTED]"],
+    ["snake_case api_key", "api_key: sk-abcdefghijklmnop", "api_key: [REDACTED]"],
+    ["camelCase apiKey", "apiKey=abcdef123456", "apiKey=[REDACTED]"],
+    ["kebab-case API-KEY", "API-KEY=abcdef123456", "API-KEY=[REDACTED]"],
+    ["glued apikey", "apikey=abcdef123456", "apikey=[REDACTED]"],
+    ["snake_case private_key", "private_key=abcdef123456", "private_key=[REDACTED]"],
+    ["camelCase privateKey", "privateKey: abcdef123456", "privateKey: [REDACTED]"],
+    ["AUTH", "AUTH=abcdef123456", "AUTH=[REDACTED]"],
+    ["CREDENTIALS (plural)", "CREDENTIALS=abcdef123456", "CREDENTIALS=[REDACTED]"],
+    ["credential (singular)", "credential=abcdef123456", "credential=[REDACTED]"],
+    ["quoted value", 'SECRET="my secret value"', "SECRET=[REDACTED]"],
+  ])("redacts %s", (_label, input, expected) => {
+    expect(redactCredentialPatterns(input)).toBe(expected);
+  });
+
+  test("redacts multiple KEY=value pairs on one line independently", () => {
+    expect(redactCredentialPatterns("PASSWORD=hunter2 TOKEN=abc123 API_KEY=xyz789 done")).toBe(
+      "PASSWORD=[REDACTED] TOKEN=[REDACTED] API_KEY=[REDACTED] done",
+    );
+  });
+
+  test("finds a credential nested after a non-credential prefix with no separating space", () => {
+    // Regression: a naive single-pass regex lets the leading non-credential
+    // "config:" candidate greedily consume "DB_PASSWORD=…" as ITS value (one
+    // whitespace-free run), which discards the match (name not
+    // credential-like) without ever re-trying the nested assignment on its
+    // own — silently leaking the credential.
+    expect(redactCredentialPatterns("my db config: DB_PASSWORD=Sup3r!Secret#2024 ready")).toBe(
+      "my db config: DB_PASSWORD=[REDACTED] ready",
+    );
+  });
+
+  test("does not redact ordinary prose that merely contains a credential-shaped word", () => {
+    for (const query of [
+      "rotate the api key procedure",
+      "token budget",
+      "author: John Doe wrote this",
+      "authorization flow docs",
+      "explain how oauth works",
+      "the password reset flow needs review",
+      "update the secret santa spreadsheet",
+    ]) {
+      expect(redactCredentialPatterns(query)).toBe(query);
+    }
+  });
+});
+
+describe("redactCredentialPatterns — additional credential shapes", () => {
+  test("redacts a PEM private-key block, keeping the BEGIN/END markers", () => {
+    const pem =
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1234\nmore base64 lines\n-----END RSA PRIVATE KEY-----";
+    expect(redactCredentialPatterns(pem)).toBe(
+      "-----BEGIN RSA PRIVATE KEY-----[REDACTED]-----END RSA PRIVATE KEY-----",
+    );
+  });
+
+  test("redacts a JWT", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    expect(redactCredentialPatterns(`session cookie was ${jwt} in the log`)).toBe(
+      "session cookie was [REDACTED] in the log",
+    );
+  });
+
+  test("redacts GitHub tokens for every ghp_/gho_/ghs_/ghu_/ghr_ prefix", () => {
+    for (const prefix of ["ghp", "gho", "ghs", "ghu", "ghr"]) {
+      const token = `${prefix}_abcdefghijklmnopqrstuvwxyz012345`;
+      expect(redactCredentialPatterns(`token: ${token}`)).toBe("token: [REDACTED]");
+    }
+  });
+
+  test("redacts Slack tokens for every xoxa-/xoxb-/xoxp-/xoxr- prefix", () => {
+    for (const prefix of ["xoxa", "xoxb", "xoxp", "xoxr"]) {
+      const token = `${prefix}-1234567890-abcdefghij`;
+      expect(redactCredentialPatterns(`slack token ${token} leaked`)).toBe("slack token [REDACTED] leaked");
+    }
+  });
+
+  test("redacts an AWS access key id", () => {
+    expect(redactCredentialPatterns("key id AKIAIOSFODNN7EXAMPLE in the config")).toBe(
+      "key id [REDACTED] in the config",
+    );
+  });
+
+  test("redacts user:pass@ URL userinfo, keeping the scheme and host", () => {
+    expect(redactCredentialPatterns("connect to postgres://admin:hunter2@db.example.com/mydb now")).toBe(
+      "connect to postgres://[REDACTED]@db.example.com/mydb now",
+    );
+  });
+
+  test("does not redact an ordinary URL with no userinfo", () => {
+    const url = "connect to postgres://db.example.com/mydb now";
+    expect(redactCredentialPatterns(url)).toBe(url);
+  });
+});
+
 describe("redactSensitiveText", () => {
   test("redacts exact values longest-first without treating them as patterns", () => {
     expect(
