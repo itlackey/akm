@@ -409,6 +409,11 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   are gone. (`src/indexer/db/graph-db.ts`,
   `src/indexer/graph/graph-extraction.ts`,
   `src/storage/repositories/index-entries-repository.ts`)
+- **`akm health` counts graph-extracted files per run.** Its
+  `graphExtraction.extractedFiles` added the whole stored graph's file count
+  once per improve run in the window; it now adds the files each run
+  extracted, as `entities` and `relations` already did.
+  (`src/commands/health/improve-metrics.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,
