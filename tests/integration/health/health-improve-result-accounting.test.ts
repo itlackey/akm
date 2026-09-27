@@ -151,4 +151,60 @@ describe("summarizeImproveRuns result-row accounting", () => {
       db.close();
     }
   });
+
+  test("sums each run's graph extraction counts, not the stored graph each run reports", () => {
+    const now = Date.now();
+    const db = openStateDatabase();
+
+    try {
+      for (const [id, ageMs] of [
+        ["graph-1", 120_000],
+        ["graph-2", 60_000],
+      ] as const) {
+        const startedAt = new Date(now - ageMs).toISOString();
+        recordImproveRun(db, {
+          id,
+          startedAt,
+          completedAt: startedAt,
+          stashDir: "/tmp/stash",
+          dryRun: false,
+          strategy: "graph-refresh",
+          scopeMode: "all",
+          scopeValue: null,
+          guidance: null,
+          ok: true,
+          result: {
+            schemaVersion: 2,
+            ok: true,
+            strategy: "graph-refresh",
+            scope: { mode: "all" },
+            dryRun: false,
+            memorySummary: { eligible: 1, derived: 0 },
+            plannedRefs: [],
+            actions: [],
+            graphExtraction: {
+              considered: 40,
+              extracted: 3,
+              totalEntities: 12,
+              totalRelations: 5,
+              written: true,
+              // The stored graph after the run: 3,000 files hold entities.
+              quality: { consideredFiles: 3_100, extractedFiles: 3_000, entityCount: 20_000, relationCount: 25_000 },
+              telemetry: { cacheHits: 37, cacheMisses: 3, truncationCount: 0, failureCount: 1, retryAttempts: 0 },
+            },
+          } as unknown as ImproveResultEnvelope,
+        });
+      }
+
+      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      expect(summary.metrics.graphExtraction).toMatchObject({
+        extractedFiles: 6,
+        entities: 24,
+        relations: 10,
+        failures: 2,
+      });
+    } finally {
+      db.close();
+    }
+  });
 });

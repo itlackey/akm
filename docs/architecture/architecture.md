@@ -538,7 +538,7 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
 | `src/indexer/db/` | `db`, `db-backup`, `graph-db`, `llm-cache` — the persistence phase |
-| `src/indexer/graph/` | graph related-files/dedup/extraction — the graph phase |
+| `src/indexer/graph/` | graph related-files/extraction — the graph phase |
 | `src/indexer/search/` | `db-search`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, staleness-detect, metadata — LLM/metadata passes |
 | `src/indexer/usage/` | usage-events |

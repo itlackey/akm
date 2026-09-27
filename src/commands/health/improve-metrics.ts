@@ -238,8 +238,10 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
   if (graphExtraction) {
     const ge = metrics.graphExtraction;
-    const quality = graphExtraction.quality as Record<string, unknown> | undefined;
-    ge.extractedFiles += toFiniteNumber(quality?.extractedFiles);
+    // This run's counts, like entities and relations. `quality` describes the
+    // whole stored graph after the run; summing it would count each stored file
+    // once per run in the window.
+    ge.extractedFiles += toFiniteNumber(graphExtraction.extracted);
     ge.entities += toFiniteNumber(graphExtraction.totalEntities);
     ge.relations += toFiniteNumber(graphExtraction.totalRelations);
     const telemetry = graphExtraction.telemetry as Record<string, unknown> | undefined;

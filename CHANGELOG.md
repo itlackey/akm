@@ -453,6 +453,49 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Fixed
 
+- **Re-extracting an unchanged note now replaces its stored graph rows.**
+  `replaceStoredGraph` refreshed only a file's status, reason and run id when
+  its body hash was unchanged, so an extraction of the same body — after a
+  model or prompt change, or after a failed first attempt — never reached
+  `graph_file_entities` or `graph_file_relations`. One install had 1,389 files
+  marked `extracted` with no entity rows while `llm_enrichment_cache` held
+  their extractions. A file's rows are now rewritten whenever its entities or
+  relations differ from the stored ones, so the next graph pass refills such
+  files from the cache without a model call. (`src/indexer/db/graph-db.ts`)
+- **A graph pass that stops early no longer shrinks the stored graph.** A
+  full scan wrote back only the files it reached, so a budget abort, a
+  failure-rate abort or `processes.graphExtraction.topN` deleted the stored
+  rows of every other file: the 2026-09-26 backfill hit its 4 h budget after
+  3,358 of 15,165 eligible files, and that prefix became the whole graph. The
+  pass now keeps the rows of every eligible file it did not reach, and of a
+  file whose extraction attempt failed. It drops rows only for a file that
+  left the eligible set — deleted, emptied, now `inferred: true`, or of a type
+  no longer included — which candidate-scoped runs never did; a scan that
+  could not read part of the stash drops nothing. Because kept rows can come
+  from an older extractor, the sweep no longer reuses a stored graph node as a
+  cache hit: only `llm_enrichment_cache`, keyed by extractor, answers for the
+  current one. (`src/indexer/graph/graph-extraction.ts`)
+- **`graph_meta` counts describe the stored rows.** The extraction pass
+  wrote counts from its in-memory graph (22,304 entities reported against
+  15,833 stored on one install), and deleting entries overwrote them with raw
+  row counts. Each write now derives them from the stored rows, one meaning
+  each: stored files, files with entity rows, distinct case-folded entities and
+  distinct case-folded relations. The pass result, and with it the
+  `akm improve` summary, reports the same counts. The entries-delete recompute
+  and the in-memory graph deduplicator (`src/indexer/graph/graph-dedup.ts`)
+  are gone. (`src/indexer/db/graph-db.ts`,
+  `src/indexer/graph/graph-extraction.ts`,
+  `src/storage/repositories/index-entries-repository.ts`)
+- **`akm health` counts graph-extracted files per run.** Its
+  `graphExtraction.extractedFiles` added the whole stored graph's file count
+  once per improve run in the window; it now adds the files each run
+  extracted, as `entities` and `relations` already did.
+  (`src/commands/health/improve-metrics.ts`)
+- **`akm show`'s `related` refs no longer depend on index row order.** When
+  two entries index the same file, the ref shown for it was whichever row
+  SQLite returned last; the lowest concept id now wins, and shared entity
+  names are read in a fixed order. The ranking itself (most shared entities,
+  then path) was already deterministic. (`src/indexer/graph/graph-boost.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,

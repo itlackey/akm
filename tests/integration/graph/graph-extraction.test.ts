@@ -235,7 +235,7 @@ describe("collectEligibleFiles", () => {
   test("returns empty when neither memories/ nor knowledge/ exists", () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-empty-"));
     try {
-      expect(collectEligibleFiles(fresh)).toEqual([]);
+      expect(collectEligibleFiles(fresh)).toEqual({ files: [], complete: true });
     } finally {
       fs.rmSync(fresh, { recursive: true, force: true });
     }
@@ -246,7 +246,7 @@ describe("collectEligibleFiles", () => {
     writeFile("knowledge/k1.md", {}, "Knowledge body about ServiceB.");
     writeFile("memories/sub/m2.md", {}, "Nested memory body.");
 
-    const eligible = collectEligibleFiles(tmpStash);
+    const eligible = collectEligibleFiles(tmpStash).files;
     const names = eligible.map((e) => path.relative(tmpStash, e.absPath)).sort();
     expect(names).toEqual([
       path.join("knowledge", "k1.md"),
@@ -260,11 +260,11 @@ describe("collectEligibleFiles", () => {
     writeFile("knowledge/k1.md", {}, "Knowledge body.");
     writeFile("commands/c1.md", {}, "Command body.");
 
-    const defaults = collectEligibleFiles(tmpStash);
+    const defaults = collectEligibleFiles(tmpStash).files;
     const defaultNames = defaults.map((e) => path.relative(tmpStash, e.absPath)).sort();
     expect(defaultNames).toEqual([path.join("knowledge", "k1.md"), path.join("memories", "m1.md")]);
 
-    const expanded = collectEligibleFiles(tmpStash, ["memory", "command"]);
+    const expanded = collectEligibleFiles(tmpStash, ["memory", "command"]).files;
     const expandedNames = expanded.map((e) => path.relative(tmpStash, e.absPath)).sort();
     expect(expandedNames).toEqual([path.join("commands", "c1.md"), path.join("memories", "m1.md")]);
   });
@@ -283,7 +283,7 @@ describe("collectEligibleFiles", () => {
     writeFile("memories/parent.md", {}, "Parent body.");
     writeFile("memories/parent.derived.md", { inferred: true, source: "memories/parent" }, "# Derived\n\nCompressed.");
 
-    const eligible = collectEligibleFiles(tmpStash);
+    const eligible = collectEligibleFiles(tmpStash).files;
     const names = eligible.map((e) => path.relative(tmpStash, e.absPath));
     expect(names).toContain(path.join("memories", "parent.md"));
     expect(names).not.toContain(path.join("memories", "parent.derived.md"));
@@ -295,7 +295,7 @@ describe("collectEligibleFiles", () => {
     // contents between them), so we use a single key to force a real
     // frontmatter block.
     writeFile("memories/empty.md", { type: "memory" }, "   \n\n   ");
-    expect(collectEligibleFiles(tmpStash)).toEqual([]);
+    expect(collectEligibleFiles(tmpStash).files).toEqual([]);
   });
 });
 
@@ -1183,10 +1183,8 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
     );
 
     // A failed cached result must never be reused — the file is re-extracted,
-    // and the FRESH successful result (not the poisoned one) lands in the
-    // cache. (graph_files itself skips rewriting entities when the body hash
-    // is unchanged — a pre-existing, unrelated optimization — so the cache
-    // table, which always overwrites, is what this asserts on.)
+    // and the FRESH successful result (not the poisoned one) lands in both the
+    // cache and the stored graph rows (the body hash is unchanged).
     expect(extractorCallCount).toBe(2);
     expect(second.extracted).toBe(1);
     await withGraphDb("failed-cache-read", (db) => {
@@ -1197,6 +1195,11 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
       const cached = JSON.parse(row?.result_json ?? "{}");
       expect(cached.status).toBe("extracted");
       expect(cached.entities).toEqual(["ServiceA2"]);
+      const stored = loadStoredGraphSnapshot(tmpStash, db);
+      expect(stored?.files.find((file) => file.path === filePath)).toMatchObject({
+        status: "extracted",
+        entities: ["ServiceA2"],
+      });
     });
   });
 

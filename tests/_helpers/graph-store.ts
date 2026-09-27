@@ -27,7 +27,7 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
       const entry = { name, type: file.type, filename: path.basename(file.path) };
       try {
         // Seed the durable bundle-adapter identity (item_ref/concept_id/bundle_id)
-        // that the graph-boost related-ref reader now resolves from — mirroring
+        // that the graph-related ref reader now resolves from — mirroring
         // the real indexer so seeded rows are not NULL-provenance stragglers.
         const provenance = deriveEntryProvenance(
           { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
@@ -73,7 +73,7 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
  * Insert raw `graph_files` + `graph_file_entities` rows linking an already-indexed
  * asset (by its `file_path`) to a set of graph entities (entries ⋈ graph_files ⋈
  * graph_file_entities on stash_root/file_path/body_hash). `entity_norm` is
- * lowercased to mirror real extraction (graph-dedup.ts). Used to drive
+ * lowercased to mirror real extraction (graph-db.ts). Used to drive
  * entity-based graph lookups in tests without running real extraction.
  */
 export function insertGraphEntities(
