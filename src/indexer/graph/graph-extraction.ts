@@ -237,14 +237,7 @@ type GraphCacheShape = {
 };
 
 type EligibleGraphPlan =
-  | {
-      kind: "cache-hit";
-      candidate: EligibleFile;
-      bodyHash: string;
-      cached: GraphCacheShape;
-      /** A previous graph node supplied the hit and should seed the DB cache. */
-      persistCache: boolean;
-    }
+  | { kind: "cache-hit"; candidate: EligibleFile; bodyHash: string; cached: GraphCacheShape }
   | { kind: "model"; candidate: EligibleFile; bodyHash: string };
 
 type ExtractionRecord = GraphCacheShape & { absPath: string; type: string; bodyHash: string };
@@ -407,19 +400,30 @@ function loadGraphFile(stashRoot: string, db: Database): LoadedGraphFile {
   };
 }
 
+/**
+ * The stored graph after a run: each refreshed node replaces the stored node
+ * for its path, and every other stored node is kept as it was — files a
+ * scoped run (`candidatePaths`, `topN`) did not select, and files an aborted
+ * run never reached. With `keptPaths`, stored nodes outside it are dropped
+ * (the file left the eligible set); without it, nothing is dropped.
+ */
 function mergeGraphNodes(
   previousNodes: GraphFileNode[],
   refreshedNodes: GraphFileNode[],
-  candidatePaths?: ReadonlySet<string>,
+  keptPaths?: ReadonlySet<string>,
 ): GraphFileNode[] {
-  if (!candidatePaths) return refreshedNodes;
   const refreshedByPath = new Map(refreshedNodes.map((node) => [node.path, node]));
   const merged: GraphFileNode[] = [];
   for (const node of previousNodes) {
-    if (candidatePaths.has(node.path)) continue;
-    merged.push(node);
+    const refreshed = refreshedByPath.get(node.path);
+    if (refreshed) {
+      merged.push(refreshed);
+      refreshedByPath.delete(node.path);
+    } else if (!keptPaths || keptPaths.has(node.path)) {
+      merged.push(node);
+    }
   }
-  for (const node of refreshedNodes) merged.push(refreshedByPath.get(node.path) ?? node);
+  merged.push(...refreshedByPath.values());
   return merged;
 }
 
@@ -441,15 +445,19 @@ function reuseGraphNode(
   };
 }
 
+/**
+ * A file is a cache hit only through `llm_enrichment_cache`, whose variant is
+ * the extractor id. A stored graph node is never reused here: the graph keeps
+ * nodes that older extractors wrote (files a run did not reach), and reusing
+ * one would record another extractor's output as this one's.
+ */
 function planEligibleGraphExtractions(args: {
   eligible: EligibleFile[];
   db: Database;
   reEnrich: boolean | undefined;
   cacheVariant: string;
-  previousNodes: Map<string, GraphFileNode>;
-  canReusePreviousGraph: boolean;
 }): EligibleGraphPlan[] {
-  const { eligible, db, reEnrich, cacheVariant, previousNodes, canReusePreviousGraph } = args;
+  const { eligible, db, reEnrich, cacheVariant } = args;
   const cacheEntries = reEnrich
     ? new Map<string, LlmCacheEntry>()
     : getLlmCacheEntriesByRefs(
@@ -466,16 +474,13 @@ function planEligibleGraphExtractions(args: {
       try {
         const cached = validateGraphCacheShape(JSON.parse(entry.resultJson));
         if (cached && !isFailedExtractionStatus(cached.status)) {
-          return { kind: "cache-hit", candidate, bodyHash, cached, persistCache: false };
+          return { kind: "cache-hit", candidate, bodyHash, cached };
         }
       } catch {
         // A corrupt cache row is a miss.
       }
     }
-    const reused = canReusePreviousGraph ? reuseGraphNode(previousNodes, candidate, bodyHash) : undefined;
-    return reused
-      ? { kind: "cache-hit", candidate, bodyHash, cached: reused, persistCache: true }
-      : { kind: "model", candidate, bodyHash };
+    return { kind: "model", candidate, bodyHash };
   });
 }
 
@@ -553,10 +558,6 @@ async function extractGraphBatches(args: {
         }
         telemetry.cacheHits += 1;
         results[start + offset] = extractionRecord(plan.candidate, plan.bodyHash, plan.cached);
-        // A reused previous node (never a failed one) seeds the cache.
-        if (plan.persistCache) {
-          upsertLlmCacheEntry(db, plan.candidate.absPath, plan.bodyHash, JSON.stringify(plan.cached), cacheVariant);
-        }
       }
       if (modelPlans.length === 0 || abortState.aborted) {
         reportChunkProgress();
@@ -776,7 +777,6 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     llmRunner.connection.contextLength,
   );
   const extractorId = getGraphExtractorId({ model: llmRunner.connection.model, batchSize, includeTypes });
-  const canReusePreviousGraph = previousGraph.telemetry?.extractorId === extractorId;
   const queuePlans = planQueuedGraphExtractions({
     db,
     stashRoot: primary.path,
@@ -785,7 +785,19 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     reEnrich,
   });
   const queuedPaths = new Set(queuePlans.map((plan) => plan.filePath));
-  let eligible = collectEligibleFiles(primary.path, includeTypes).filter(
+  const scan = collectEligibleFiles(primary.path, includeTypes);
+  // The stored nodes this run keeps without touching them: every eligible file
+  // (outside candidatePaths or topN, or never reached before an abort) and every
+  // file the queue handled. Only a node whose file left the eligible set — gone,
+  // emptied, inferred, or of a type no longer included — is dropped, and an
+  // incomplete scan drops nothing.
+  const keptPaths = scan.complete
+    ? new Set([
+        ...scan.files.map((file) => file.absPath),
+        ...queuePlans.filter((plan) => plan.kind !== "discard").map((plan) => plan.filePath),
+      ])
+    : undefined;
+  let eligible = scan.files.filter(
     (candidate) =>
       (!options.candidatePaths || options.candidatePaths.has(candidate.absPath)) && !queuedPaths.has(candidate.absPath),
   );
@@ -797,14 +809,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     eligible = rankCandidatesByUtility(db, eligible).slice(0, options.topN);
   }
   const considered = eligible.length;
-  const eligiblePlans = planEligibleGraphExtractions({
-    eligible,
-    db,
-    reEnrich,
-    cacheVariant: extractorId,
-    previousNodes,
-    canReusePreviousGraph,
-  });
+  const eligiblePlans = planEligibleGraphExtractions({ eligible, db, reEnrich, cacheVariant: extractorId });
 
   if (signal?.aborted) return emptyResult();
 
@@ -912,14 +917,14 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   if (configFailure) throw configFailure;
   acknowledgeQueuedGraphPlans(db, primary.path, queueExecution);
 
-  const nodes = results.flatMap((result) => (result ? [toGraphNode(result, extractionRunId)] : []));
-  const queuedNodes = options.candidatePaths
-    ? []
-    : previousGraph.files.filter(
-        (node) =>
-          queuePlans.some((plan) => plan.filePath === node.path && plan.kind !== "discard") &&
-          !nodes.some((candidate) => candidate.path === node.path),
-      );
+  // A failed attempt says nothing about the file, so a stored node for it stays
+  // as it was; only a file with no stored node records the failure.
+  const storedPaths = new Set(previousGraph.files.map((node) => node.path));
+  const nodes = results.flatMap((result) =>
+    !result || (isFailedExtractionStatus(result.status) && storedPaths.has(result.absPath))
+      ? []
+      : [toGraphNode(result, extractionRunId)],
+  );
   telemetry.truncationCount = runtimeTelemetry.truncationCount ?? 0;
   telemetry.truncatedChunks = runtimeTelemetry.truncatedChunks ?? 0;
   telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
@@ -928,11 +933,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
   telemetry.aborted = abortState.aborted;
 
-  const graph = buildGraphFile(
-    primary.path,
-    mergeGraphNodes(previousGraph.files, [...queuedNodes, ...nodes], options.candidatePaths),
-    telemetry,
-  );
+  const graph = buildGraphFile(primary.path, mergeGraphNodes(previousGraph.files, nodes, keptPaths), telemetry);
   const { quality } = graph;
   const warnings = buildLowQualityWarnings(quality, telemetry);
   if (abortState.message) warnings.push(abortState.message);
@@ -1116,14 +1117,10 @@ async function extractGraphForSingleFileRevision(
       crypto.randomUUID(),
     );
 
-    // Merge with the previously-stored nodes, scoping the refresh to JUST this
-    // path so other files' rows are preserved (and graph_meta counts refresh).
+    // Merge with the previously-stored nodes, replacing JUST this path so other
+    // files' rows are preserved (and graph_meta counts refresh).
     const previousGraph = loadGraphFile(stashRoot, db);
-    const graph = buildGraphFile(
-      stashRoot,
-      mergeGraphNodes(previousGraph.files, [node], new Set([filePath])),
-      previousGraph.telemetry,
-    );
+    const graph = buildGraphFile(stashRoot, mergeGraphNodes(previousGraph.files, [node]), previousGraph.telemetry);
     return writeGraphFile(db, graph) ? { written: true, bodyHash: effectiveHash } : { written: false };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
@@ -1216,13 +1213,17 @@ interface EligibleFile {
  * are already derived summaries, with no additional internal graph structure worth
  * extracting.
  *
+ * `complete` is false when a directory or a candidate file could not be read,
+ * so the result may be missing eligible files.
+ *
  * Exported for direct unit testing.
  */
 export function collectEligibleFiles(
   stashRoot: string,
   includeTypes: string[] = [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES],
-): EligibleFile[] {
+): { files: EligibleFile[]; complete: boolean } {
   const out: EligibleFile[] = [];
+  let complete = true;
   for (const rawType of includeTypes) {
     const type = rawType.trim().toLowerCase();
     if (!SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES.has(type)) continue;
@@ -1232,6 +1233,7 @@ export function collectEligibleFiles(
     if (!fs.existsSync(dir)) continue;
     const walked = walkMarkdownFiles(dir);
     if (!walked.complete) {
+      complete = false;
       warn(`graph extraction: directory scan under ${dir} is incomplete — some files may be missing`);
     }
     for (const filePath of walked.files) {
@@ -1239,6 +1241,7 @@ export function collectEligibleFiles(
       try {
         raw = fs.readFileSync(filePath, "utf8");
       } catch (err) {
+        complete = false;
         warn(
           `graph extraction: failed to read candidate file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1253,7 +1256,7 @@ export function collectEligibleFiles(
       out.push({ absPath: filePath, type, body });
     }
   }
-  return out;
+  return { files: out, complete };
 }
 
 // ── Persistence ─────────────────────────────────────────────────────────────

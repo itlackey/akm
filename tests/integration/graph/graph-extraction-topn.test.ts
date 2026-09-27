@@ -149,7 +149,7 @@ describe("#624 P2 default-preserving (AC3)", () => {
     // Build a real eligible set on disk.
     const a = makeEligibleMemory("alpha", 3);
     const b = makeEligibleMemory("beta", 99);
-    const eligible = collectEligibleFiles(stash.dir, ["memory"]);
+    const eligible = collectEligibleFiles(stash.dir, ["memory"]).files;
     const eligiblePaths = eligible.map((e) => e.absPath).sort();
     expect(eligiblePaths).toEqual([a, b].sort());
 

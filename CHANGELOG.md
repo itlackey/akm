@@ -385,6 +385,19 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   their extractions. A file's rows are now rewritten whenever its entities or
   relations differ from the stored ones, so the next graph pass refills such
   files from the cache without a model call. (`src/indexer/db/graph-db.ts`)
+- **A graph pass that stops early no longer shrinks the stored graph.** A
+  full scan wrote back only the files it reached, so a budget abort, a
+  failure-rate abort or `processes.graphExtraction.topN` deleted the stored
+  rows of every other file: the 2026-09-26 backfill hit its 4 h budget after
+  3,358 of 15,165 eligible files, and that prefix became the whole graph. The
+  pass now keeps the rows of every eligible file it did not reach, and of a
+  file whose extraction attempt failed. It drops rows only for a file that
+  left the eligible set — deleted, emptied, now `inferred: true`, or of a type
+  no longer included — which candidate-scoped runs never did; a scan that
+  could not read part of the stash drops nothing. Because kept rows can come
+  from an older extractor, the sweep no longer reuses a stored graph node as a
+  cache hit: only `llm_enrichment_cache`, keyed by extractor, answers for the
+  current one. (`src/indexer/graph/graph-extraction.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,

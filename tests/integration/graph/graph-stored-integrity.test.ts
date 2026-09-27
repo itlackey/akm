@@ -5,7 +5,10 @@
 /**
  * Stored-graph integrity (graph evaluation and refactor plan 2026-09-27, §2 and
  * refactor step 1):
- *   - N1: a re-extraction of an unchanged body replaces its stored rows.
+ *   - N1: a re-extraction of an unchanged body replaces its stored rows;
+ *   - N2 and review defect 1: an aborted run, or one scoped by `topN`, keeps
+ *     the stored rows of every eligible file it did not reach;
+ *   - review defect 9: the rows of a file that left the eligible set are dropped.
  *
  * Opens real SQLite databases and serves a localhost LLM stub, so it lives under
  * tests/integration/.
@@ -192,5 +195,112 @@ describe("N1: an unchanged body's stored rows follow its latest extraction", () 
 
     expect(storedEntities().get(filePath)).toEqual(["New A", "New B"]);
     expect(relationCount(filePath)).toBe(1);
+  });
+});
+
+// ── N2 and review defect 1 ───────────────────────────────────────────────────
+
+describe("N2: a partial run never shrinks the stored graph", () => {
+  test("two budget-aborted runs keep the rows of every file they did not finish", async () => {
+    const paths = writeNotes(6);
+    await run();
+
+    for (const model of ["model-b", "model-c"]) {
+      // A new model misses the cache for every file; the budget fires during
+      // the second request, as the 2026-09-26 backfill's 4 h budget did.
+      const budget = new AbortController();
+      requestCount = 0;
+      onRequest = () => {
+        if (requestCount === 2) budget.abort();
+      };
+      await run({ model, signal: budget.signal });
+
+      const stored = storedEntities();
+      expect([...stored.keys()].sort()).toEqual([...paths].sort());
+      for (const entities of stored.values()) expect(entities).toHaveLength(3);
+      // Only the one request that completed before the abort replaced a file's rows.
+      expect([...stored.values()].filter((entities) => entities.includes(`By ${model}`))).toHaveLength(1);
+    }
+  });
+
+  test("a failure-rate abort keeps the rows of the files it attempted and the files it skipped", async () => {
+    const paths = writeNotes(6);
+    await run();
+    const primed = storedEntities();
+    expect([...primed.keys()].sort()).toEqual([...paths].sort());
+
+    // Every file needs a call; four failed dispatches trip the abort, two files are never tried.
+    failRequests = true;
+    const result = await run({ reEnrich: true });
+
+    expect(result.telemetry?.aborted).toBe(true);
+    expect(storedEntities()).toEqual(primed);
+    const statuses = db.prepare("SELECT DISTINCT status FROM graph_files WHERE stash_root = ?").all(storage.stashDir);
+    expect(statuses).toEqual([{ status: "extracted" }]);
+  });
+
+  test("topN refreshes its selection and keeps every other stored file, with no LLM call on a warm cache", async () => {
+    const paths = writeNotes(6);
+    await run();
+    const primed = storedEntities();
+
+    requestCount = 0;
+    const result = await run({ topN: 1 });
+
+    expect(result.considered).toBe(1);
+    expect(requestCount).toBe(0);
+    expect([...storedEntities().keys()].sort()).toEqual([...paths].sort());
+    expect(storedEntities()).toEqual(primed);
+  });
+
+  test("a stored node an older extractor wrote is re-extracted, never reused as the current extractor's output", async () => {
+    const [kept, refreshed] = writeNotes(2) as [string, string];
+    await run({ model: "model-a" });
+    // model-b refreshes one file, so graph_meta names model-b's extractor while
+    // the other file still holds the rows model-a wrote.
+    await run({ model: "model-b", candidatePaths: new Set([refreshed]) });
+    expect(storedEntities().get(kept)).toContain("By model-a");
+
+    requestCount = 0;
+    await run({ model: "model-b" });
+
+    expect(requestCount).toBe(1);
+    expect(storedEntities().get(kept)).toContain("By model-b");
+    const cached = db
+      .prepare("SELECT result_json FROM llm_enrichment_cache WHERE asset_ref = ? AND cache_variant LIKE ?")
+      .get(kept, "%:model-b:%") as { result_json: string };
+    expect(JSON.parse(cached.result_json).entities).toContain("By model-b");
+  });
+});
+
+// ── Review defect 9 ──────────────────────────────────────────────────────────
+
+describe("files that left the eligible set", () => {
+  test("a scoped run drops the rows of a deleted file and a now-inferred memory, and keeps the rest", async () => {
+    const [deleted, inferred, kept, touched] = writeNotes(4) as [string, string, string, string];
+    await run();
+
+    fs.rmSync(deleted);
+    fs.writeFileSync(inferred, "---\ninferred: true\n---\n\nA derived note about Topic-2-end.\n");
+    await run({ candidatePaths: new Set([touched]) });
+
+    expect([...storedEntities().keys()].sort()).toEqual([kept, touched].sort());
+  });
+
+  test.skipIf(process.getuid?.() === 0)("an incomplete scan drops no stored rows", async () => {
+    const [deleted, kept] = writeNotes(2) as [string, string];
+    const unreadableDir = path.join(storage.stashDir, "memories", "locked");
+    fs.mkdirSync(unreadableDir);
+    await run();
+
+    fs.rmSync(deleted);
+    fs.chmodSync(unreadableDir, 0o000);
+    try {
+      await run();
+    } finally {
+      fs.chmodSync(unreadableDir, 0o755);
+    }
+
+    expect([...storedEntities().keys()].sort()).toEqual([deleted, kept].sort());
   });
 });
