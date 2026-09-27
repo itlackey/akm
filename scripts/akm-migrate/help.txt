@@ -1,28 +1,27 @@
 Usage: akm-migrate <command> [options]
 
-The one migration tool for an akm installation. Every historical shape akm
-has ever written lives here; the CLI proper reads only current schemas.
-`status` and `apply` run every step, in order, and print one combined JSON
-plan (exit 1 when any step is blocked):
+The one migration tool for an akm installation. The CLI proper reads every
+shape akm has ever written (in memory, with a warning); `apply` makes the
+current shape durable on disk. `status` and `apply` run every step, in
+order, and print one combined JSON plan (exit 1 when any step is blocked):
 
-  1. legacy config `extraParams` keys lifted onto first-class engine fields
-  2. retired `experimental.*` config keys removed (today `workflowEngine`)
-  3. scheduler grants bound to the configured source installation that was
-     approved (stale grants whose bundle no longer exists are removed)
-  4. pending state.db migrations, historical-destructive ones included,
+  1. config.json rewritten in its current shape (unknown keys dropped,
+     legacy `extraParams` lifted onto engine fields, the legacy source
+     layout converted, `configVersion` set to the current value) -- backed
+     up first
+  2. pending state.db migrations, historical-destructive ones included,
      with a verified sibling safety copy (the only path that admits them)
-  5. source-owned schedule enablement converted to host-local scheduler
-     grants
-  6. task-v2 files to task v3, then task-v3 files to task source v4
-  7. superseded pre-0.9.0 `.akm` residue and stale filesystem transactions
-  8. live `.akm` writers relocated to `$STATE`/`$CACHE`, for every local
-     bundle (distill-rejected, eval-cases, measurement verdicts, and stale
-     improve-pipeline locks — a lock a live run still holds is left alone)
+  3. task files at version 2 or 3, and version 4 files still carrying the
+     retired `schedule[].enabled` key, rewritten as task source v4 under
+     one backup directory per run
+  4. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
+     and the transaction-journal, maintenance-barrier, lock-mutex and
+     version-stamp files older releases kept under $DATA, $STATE and $CONFIG
 
 `akm migrate status|apply` wraps this executable; `akm upgrade` runs
 `apply` after its install step, so an image that ships akm can put either
 in its entrypoint (a current installation is a no-op).
 
 Commands:
-  status              Inspect every pending migration without changing anything.
-  apply [--dry-run]   Back up and apply every pending migration.
+  status               Inspect every pending migration without changing anything.
+  apply [--dry-run]    Back up and apply every pending migration.

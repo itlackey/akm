@@ -5,24 +5,16 @@
 /**
  * Semantic-search asset preparation for the setup wizard. Transformers.js is
  * a normal external package dependency; setup never mutates the installed CLI.
- * This module only prepares the model and probes sqlite-vec.
+ * This module only prepares the model.
  */
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import * as p from "../cli/clack";
 import { isHttpUrl } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
-import { closeDatabase, openIndexDatabase } from "../storage/repositories/index-connection";
-import { isVecAvailable } from "../storage/repositories/index-vec-repository";
 
-// Approximate first-download sizes used in the setup note.
-// LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
+// Approximate first-download size of the default local model (DEFAULT_LOCAL_MODEL), used in the setup note.
 const LOCAL_MODEL_APPROX_SIZE_MB = 130;
-// SQLITE_VEC_APPROX_SIZE_MB reflects the optional sqlite-vec install footprint.
-const SQLITE_VEC_APPROX_SIZE_MB = 5;
 
 export function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(embedding?.endpoint);
@@ -33,15 +25,11 @@ export function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): 
  */
 export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConfig): string[] {
   if (isRemoteEmbeddingConfig(embedding)) {
-    return [
-      `• Embedding endpoint: ${embedding?.provider ?? "custom"} / ${embedding?.model} (no local model download)`,
-      `• sqlite-vec acceleration: optional native extension (~${SQLITE_VEC_APPROX_SIZE_MB} MB when installed separately)`,
-    ];
+    return [`• Embedding endpoint: ${embedding?.provider ?? "custom"} / ${embedding?.model} (no local model download)`];
   }
 
   return [
     `• Local embedding model: ${embedding?.localModel ?? DEFAULT_LOCAL_MODEL} (~${LOCAL_MODEL_APPROX_SIZE_MB} MB download on first use)`,
-    `• sqlite-vec acceleration: optional native extension (~${SQLITE_VEC_APPROX_SIZE_MB} MB when installed separately)`,
   ];
 }
 
@@ -90,38 +78,6 @@ export async function prepareSemanticSearchAssets(
   }
 
   spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
-
-  let db: ReturnType<typeof openIndexDatabase> | undefined;
-  let probeDir: string | undefined;
-  try {
-    probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-vec-probe-"));
-    db = openIndexDatabase(
-      path.join(probeDir, "probe.db"),
-      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-    );
-    if (isVecAvailable(db)) {
-      p.log.info("sqlite-vec is available for fast vector search.");
-    } else {
-      p.log.info(
-        "sqlite-vec is not available. Semantic search will use the JS fallback until the optional extension is installed.",
-      );
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    p.log.warn(
-      `Could not open the local database or check for sqlite-vec. Semantic search will use the JS fallback. (${message})\n` +
-        "Check file permissions and available disk space in the cache directory, or run `akm index --full --verbose` to diagnose.",
-    );
-  } finally {
-    if (db) closeDatabase(db);
-    if (probeDir) {
-      try {
-        fs.rmSync(probeDir, { recursive: true, force: true });
-      } catch {
-        /* ignore cleanup failure */
-      }
-    }
-  }
 
   return { ok: true };
 }

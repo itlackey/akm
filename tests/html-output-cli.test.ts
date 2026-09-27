@@ -17,7 +17,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { createProposal, isProposalSkipped } from "../src/commands/proposal/repository";
+import { createProposal } from "../src/commands/proposal/repository";
 import { runCliCapture } from "./_helpers/cli";
 import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
@@ -38,13 +38,11 @@ const VALID_LESSON =
   "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n";
 
 function seedProposal(ref = "lessons/rg-over-grep"): void {
-  const result = createProposal(storage.stashDir, {
+  createProposal(storage.stashDir, {
     ref,
     source: "reflect",
-    force: true,
     payload: { content: VALID_LESSON },
   });
-  if (isProposalSkipped(result)) throw new Error("unexpected skip in seedProposal");
 }
 
 describe("--format html on non-health commands", () => {

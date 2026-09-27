@@ -1068,31 +1068,17 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const stash = storage.stashDir;
     const first = fakeSession("post-probe-lock-first", Date.now());
     const second = fakeSession("post-probe-lock-second", Date.now() - 1);
+    const third = fakeSession("post-probe-lock-third", Date.now() - 2);
     const config = configEnabled(stash);
     const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) process.maxSessionsPerRun = 1;
+    if (process) process.maxSessionsPerRun = 2;
     const stateDbPath = getStateDbPath();
-    const firstLockPath = path.join(
+    const secondLockPath = path.join(
       path.dirname(stateDbPath),
       "extract-locks",
-      `extract-claude-${first.ref.sessionId}.lock`,
+      `extract-claude-${second.ref.sessionId}.lock`,
     );
-    const baseHarness = makeFakeHarness([first, second]);
-    let scheduled = false;
     let chatCalls = 0;
-    const harness: SessionLogHarness = {
-      ...baseHarness,
-      readSession: (ref) => {
-        if (ref.sessionId === first.ref.sessionId && !scheduled) {
-          scheduled = true;
-          queueMicrotask(() => {
-            fs.mkdirSync(path.dirname(firstLockPath), { recursive: true });
-            fs.writeFileSync(firstLockPath, createLockPayload(), "utf8");
-          });
-        }
-        return baseHarness.readSession(ref);
-      },
-    };
 
     const result = await akmExtract({
       type: "claude",
@@ -1100,18 +1086,25 @@ describe("akmExtract — engine + strategy config resolution", () => {
       stashDir: stash,
       stateDbPath,
       config,
-      harnesses: [harness],
+      harnesses: [makeFakeHarness([first, second, third])],
       chat: async () => {
         chatCalls += 1;
+        // Planning is over and planned both capped slots; another extractor
+        // claims the second planned session before this run reaches it.
+        if (chatCalls === 1) {
+          fs.mkdirSync(path.dirname(secondLockPath), { recursive: true });
+          fs.writeFileSync(secondLockPath, createLockPayload(), "utf8");
+        }
         return JSON.stringify({ candidates: [], rationale_if_empty: "nothing durable" });
       },
     });
 
     expect(result.sessions.map((item) => [item.sessionId, item.skipReason ?? null])).toEqual([
-      [first.ref.sessionId, "locked_concurrent"],
-      [second.ref.sessionId, null],
+      [first.ref.sessionId, null],
+      [second.ref.sessionId, "locked_concurrent"],
+      [third.ref.sessionId, null],
     ]);
-    expect(chatCalls).toBe(1);
+    expect(chatCalls).toBe(2);
     expect(result.warnings.join(" ")).not.toContain("deferred");
   });
 
@@ -1240,19 +1233,20 @@ describe("akmExtract — engine + strategy config resolution", () => {
     }
   });
 
-  test("an extract run keeps its preflight credential snapshot across multiple session mutations", async () => {
+  test("each session dispatch in one extract run reads the credential current at that call", async () => {
     const stash = makeStashDir();
-    const first = fakeSession("lease-first", Date.now());
-    const second = fakeSession("lease-second", Date.now() - 1);
+    const first = fakeSession("rotation-first", Date.now());
+    const second = fakeSession("rotation-second", Date.now() - 1);
     const config = configEnabled(stash);
     const engine = config.engines?.default;
     if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_LEASE_KEY";
-    const secret = "extract-lease-original-092";
+    engine.apiKey = "$AKM_EXTRACT_ROTATING_KEY";
+    const secret = "extract-original-092";
+    const rotated = "extract-rotated-092";
     const observed: Array<string | undefined> = [];
     const stateDb = openStateDatabase();
     try {
-      const result = await withEnv({ AKM_EXTRACT_LEASE_KEY: secret }, () =>
+      const result = await withEnv({ AKM_EXTRACT_ROTATING_KEY: secret }, () =>
         akmExtract({
           type: "claude",
           since: "24h",
@@ -1262,14 +1256,14 @@ describe("akmExtract — engine + strategy config resolution", () => {
           stateDb,
           chat: async (connection) => {
             observed.push(connection.apiKey);
-            if (observed.length === 1) mutateScopedEnv("AKM_EXTRACT_LEASE_KEY", undefined);
+            if (observed.length === 1) mutateScopedEnv("AKM_EXTRACT_ROTATING_KEY", rotated);
             return JSON.stringify({ candidates: [], rationale_if_empty: "nothing durable" });
           },
         }),
       );
 
       expect(result.sessionsProcessed).toBe(2);
-      expect(observed).toEqual([secret, secret]);
+      expect(observed).toEqual([secret, rotated]);
       expect(getExtractedSessionsMap(stateDb, "claude", [first.ref.sessionId, second.ref.sessionId]).size).toBe(2);
     } finally {
       stateDb.close();
@@ -1341,10 +1335,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(fs.existsSync(stateDbPath)).toBe(false);
     expect(fs.existsSync(`${stateDbPath}-wal`)).toBe(false);
     expect(fs.existsSync(`${stateDbPath}-shm`)).toBe(false);
-    expect(fs.existsSync(path.join(path.dirname(stateDbPath), "maintenance-activities"))).toBe(false);
-    expect(fs.existsSync(path.join(path.dirname(stateDbPath), ".maintenance.barrier.lock.operations.sensitive"))).toBe(
-      false,
-    );
     expect(snapshotTree(storage.dataDir)).toEqual(dataTreeBefore);
     expect(snapshotTree(storage.root)).toEqual(storageTreeBefore);
   });

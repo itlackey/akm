@@ -13,7 +13,7 @@ import {
   buildReflectJudgePrompt,
   runLessonQualityJudge,
   runReflectQualityJudge,
-} from "../../../src/commands/improve/distill/quality-gate";
+} from "../../../src/commands/improve/stage";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { withEnv } from "../../_helpers/sandbox";

@@ -21,7 +21,6 @@ import { getConfigPath } from "../../../src/core/paths";
 import { resetVerbose, setVerbose } from "../../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit } from "../../../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../../../src/llm/embedders/types";
@@ -59,7 +58,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       "memories",
       "note",
     );
-    upsertEntry(db, `${storage.stashDir}/memories/note.md`, entry, buildSearchText(entry), provenance);
+    upsertEntry(db, `${storage.stashDir}/memories/note.md`, entry, provenance);
   }
 
   function mockEmbedder(): void {

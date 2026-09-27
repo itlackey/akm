@@ -126,7 +126,6 @@ const ENVELOPE_ROOT_KEYS = new Set([
   "params",
   "outputs",
   "steps",
-  "sourceReadSet",
   "notices",
   "warnings",
   // Passthrough envelope stamping (#484), applied uniformly to every
@@ -253,7 +252,6 @@ describe("akm workflow plan <ref> --format json (B-47, B-N9)", () => {
     expect(typeof envelope.irVersion).toBe("number");
     expect(typeof envelope.planHash).toBe("string");
     expect(Array.isArray(envelope.steps)).toBe(true);
-    expect(Array.isArray(envelope.sourceReadSet)).toBe(true);
     expect(Array.isArray(envelope.notices)).toBe(true);
     expect(Array.isArray(envelope.warnings)).toBe(true);
     expect(envelope.execution).toMatchObject({ maxConcurrency: expect.any(Number) });
@@ -392,7 +390,7 @@ describe("akm workflow plan <ref> writes NOTHING durable (B-48)", () => {
 
 describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-56)", () => {
   test("a compile advisory is returned in warnings[], not written to stderr", async () => {
-    // The document below trips a collectWorkflowWarnings advisory (ir/compile.ts).
+    // The document below trips a checkWorkflowPlan advisory (compile.ts).
     // The behavior under test is that `workflow plan` returns it in the
     // envelope's warnings[] instead of calling warn() — which would show up on
     // stderr at `akm workflow run`, breaking this verb's B-48 guarantee.
@@ -408,12 +406,11 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-
 
 describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
   // `test-llm` (writeWorkflowTestConfig) declares no `supportsJsonSchema`, so
-  // the existing, unmodified-by-P3b direct-LLM lowerer
-  // (src/integrations/agent/execution-lowering.ts's lowerLlm) rejects this
-  // step's declared unit output: schema with a real "untranslated-field"
-  // notice. That notice is computed TODAY at freeze time
-  // (freeze/targets/command.ts's commandResult calls
-  // lowerResolvedExecutionRequest) and silently discarded — it is exactly the
+  // the direct-LLM builder (src/integrations/agent/execution.ts's buildLlm)
+  // rejects this step's declared unit output: schema with a real
+  // "untranslated-field" notice. That notice is computed at freeze time
+  // (freeze/targets/command.ts's commandResult builds the execution) and was
+  // once silently discarded — it is exactly the
   // freeze-time notice row B-57 requires `akm workflow plan` to surface,
   // through the same {code, severity, adapter, field, message} projection
   // `akm workflow run` already renders (tests/output-workflow-lowering-notices.test.ts).
@@ -463,22 +460,6 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
     expect(text.stdout).toContain("untranslated-field");
     expect(text.stdout).toContain("llm");
     expect(text.stdout).toContain("does not translate resolved field outputSchema");
-  });
-});
-
-describe("akm workflow plan <ref> — sourceReadSet is relative paths only (B-54)", () => {
-  test("every sourceReadSet entry is a relative path", async () => {
-    writeBasicWorkflow();
-    await index();
-    const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan", "--format", "json"]);
-    expect(result.code).toBe(0);
-    const envelope = JSON.parse(result.stdout) as { sourceReadSet: unknown[] };
-    expect(envelope.sourceReadSet.length).toBeGreaterThan(0);
-    for (const entry of envelope.sourceReadSet) {
-      const text = JSON.stringify(entry);
-      expect(text).not.toContain(storage.stashDir);
-      expect(path.isAbsolute(String((entry as { path?: string }).path ?? entry))).toBe(false);
-    }
   });
 });
 

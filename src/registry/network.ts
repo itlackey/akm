@@ -2,146 +2,109 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { isIP } from "node:net";
-import { backoffDelay, computeRetryDelay, abortableDelay as sharedAbortableDelay, shouldRetry } from "../core/common";
 import {
-  bareHostname,
-  classifyNetworkAddress,
-  classifyNetworkHostname,
-  type HostnameResolver,
-  resolveHostnameAddresses,
-} from "../core/network-policy";
-import {
-  assertRegistryPinnedTransportAvailable,
-  type RegistryPinnedRequest,
-  requestRegistryAddressPinned,
-} from "./pinned-transport";
-
-export { requestRegistryAddressPinned } from "./pinned-transport";
-
-export type RegistryHostnameResolver = HostnameResolver;
-
-export type RegistryNetworkPolicy =
-  | { kind: "public-registry" }
-  | { kind: "github-api" }
-  | {
-      kind: "npm-api";
-      registryOrigin: string;
-      /** Explicit operator compatibility for an AKM_NPM_REGISTRY private mirror. */
-      allowPrivateRegistryOrigin: boolean;
-    };
-
-export interface RegistryRequestOptions {
-  policy: RegistryNetworkPolicy;
-  timeoutMs: number;
-  retries?: number;
-  resolveHostname?: RegistryHostnameResolver;
-  /** Test harness only: local HTTP fixtures are not a production compatibility path. */
-  allowPrivateHostsForTesting?: boolean;
-  /** Test-only transport injection; production callers never set this. */
-  requestPinnedForTesting?: RegistryPinnedRequest;
-}
-
-export class RegistryNetworkError extends Error {
-  readonly code = "REGISTRY_NETWORK_POLICY" as const;
-  constructor(message: string) {
-    super(message);
-    this.name = "RegistryNetworkError";
-  }
-}
-
-const GITHUB_API_ORIGIN = "https://api.github.com";
-const MAX_REGISTRY_REDIRECTS = 8;
-const MAX_REGISTRY_RETRY_DELAY_MS = 30_000;
-let allowRegistryFixturesForTests = false;
-let registryHostnameResolverForTests: RegistryHostnameResolver | undefined;
-let registryPinnedRequestForTests: RegistryPinnedRequest | undefined;
+  abortableDelay,
+  backoffDelay,
+  computeRetryDelay,
+  jsonWithByteCap,
+  ResponseTooLargeError,
+  shouldRetry,
+  toErrorMessage,
+} from "../core/common";
+import { ConfigError, NotFoundError, TransientError } from "../core/errors";
+import { formatRegistryUrl } from "../core/registry-url";
 
 /**
- * Single outbound HTTP boundary for registry metadata requests.
+ * The one HTTP boundary for registry traffic: static indexes, the skills.sh
+ * API, npm and GitHub metadata, and npm tarballs all go through here.
  *
- * Every retry and redirect returns through this function's resolve, validate,
- * and pinned-connect sequence before another request can start.
+ * It is plain `fetch()` plus the four things every caller needs and nothing
+ * else: a total request timeout, bounded retries on transient failures, the
+ * caller's headers (credentials are resolved by the caller — see
+ * `githubHeaders`), and classified errors. Every failure leaves as an
+ * `AkmError`, so the CLI exits 1 (not found / unusable response), 75
+ * (transient) or 78 (bad URL) — never 70.
+ *
+ * Redirects are followed by the runtime. Plain HTTP is accepted here: the
+ * HTTPS-unless-`--allow-insecure-transport` rule is enforced where URLs enter
+ * configuration (`akm registry add`, `akm bundle add`), and every URL that
+ * reaches this function is either one the operator configured or one derived
+ * from an operator-configured origin.
  */
-export async function fetchRegistryResponse(
-  rawUrl: string,
-  init: RequestInit | undefined,
-  options: RegistryRequestOptions,
-  redirectCount = 0,
-): Promise<Response> {
-  const url = parseRegistryUrl(rawUrl);
-  const response = await requestRegistryHop(url, init, options);
-  if (!isRedirect(response.status)) return response;
-
-  if (options.policy.kind === "github-api") {
-    await cancelRegistryResponse(response);
-    throw new RegistryNetworkError("GitHub API registry metadata policy does not permit redirects");
-  }
-  if (redirectCount >= MAX_REGISTRY_REDIRECTS) {
-    await cancelRegistryResponse(response);
-    throw new RegistryNetworkError(`Too many redirects while fetching registry metadata from ${url.origin}`);
-  }
-  const location = response.headers.get("location");
-  if (!location) {
-    await cancelRegistryResponse(response);
-    throw new RegistryNetworkError(`Redirect from registry host ${url.hostname} did not include Location`);
-  }
-
-  await cancelRegistryResponse(response);
-  let nextUrl: URL;
-  try {
-    nextUrl = new URL(location, url);
-  } catch {
-    throw new RegistryNetworkError(`Redirect from registry host ${url.hostname} included an invalid Location`);
-  }
-  const nextInit = redirectInit(init, url, nextUrl, response.status);
-  return fetchRegistryResponse(nextUrl.toString(), nextInit, options, redirectCount + 1);
+export interface FetchRegistryOptions {
+  headers?: HeadersInit;
+  /** One budget, in milliseconds, for the connection, the headers and the body. */
+  timeoutMs?: number;
+  /** Extra attempts after a network failure, a timeout, a 429 or a 5xx. */
+  retries?: number;
+  /** Caller cancellation. A caller abort is rethrown as-is and never retried. */
+  signal?: AbortSignal;
 }
 
-async function requestRegistryHop(
-  url: URL,
-  init: RequestInit | undefined,
-  options: RegistryRequestOptions,
-): Promise<Response> {
-  const maxRetries = options.retries ?? 3;
-  const injectedTransport = options.requestPinnedForTesting ?? registryPinnedRequestForTests;
-  if (!injectedTransport) assertRegistryPinnedTransportAvailable();
-  const transport = injectedTransport ?? requestRegistryAddressPinned;
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const attemptDeadline = Date.now() + options.timeoutMs;
-    const allowPrivate = privateNetworkAllowed(url, options);
-    const addresses = await validatedRegistryAddresses(url, options, allowPrivate, options.timeoutMs, init?.signal);
-    if (Date.now() >= attemptDeadline) {
-      throw new RegistryNetworkError(
-        `Registry request to ${url.hostname} attempt deadline expired before transport could start`,
-      );
-    }
-    const address = addresses[attempt % addresses.length];
-    if (!address) {
-      throw new RegistryNetworkError(`Refusing registry request to ${url.hostname}: no validated address available`);
-    }
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_RETRIES = 2;
+const DEFAULT_JSON_BYTE_CAP = 10 * 1024 * 1024;
+const MAX_RETRY_DELAY_MS = 30_000;
 
+/** Fetch a registry URL. Resolves only to a 2xx response; every other outcome throws an `AkmError`. */
+export async function fetchRegistry(rawUrl: string, options: FetchRegistryOptions = {}): Promise<Response> {
+  const url = parseRegistryUrl(rawUrl);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retries = options.retries ?? DEFAULT_RETRIES;
+
+  for (let attempt = 0; ; attempt += 1) {
+    // AbortSignal.timeout() does not keep the event loop alive, and it keeps
+    // covering the body after this function returns.
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    let response: Response;
     try {
-      const remainingMs = attemptDeadline - Date.now();
-      if (remainingMs <= 0) {
-        throw new RegistryNetworkError(
-          `Registry request to ${url.hostname} attempt deadline expired before transport could start`,
-        );
-      }
-      const response = await transport(url, address, init, remainingMs);
-      if (attempt < maxRetries && shouldRetry(response.status)) {
-        const delay = computeRetryDelay(response, attempt, { maxDelayMs: MAX_REGISTRY_RETRY_DELAY_MS });
-        await cancelRegistryResponse(response);
-        await abortableDelay(delay, init?.signal);
+      response = await fetch(rawUrl, { headers: options.headers, signal, redirect: "follow" });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (attempt < retries) {
+        await abortableDelay(backoffDelay(attempt, undefined, MAX_RETRY_DELAY_MS), options.signal);
         continue;
       }
-      return response;
-    } catch (error) {
-      if (attempt >= maxRetries || init?.signal?.aborted) throw error;
-      await abortableDelay(backoffDelay(attempt, undefined, MAX_REGISTRY_RETRY_DELAY_MS), init?.signal);
+      const reason = timeout.aborted ? `timed out after ${timeoutMs}ms` : `failed: ${toErrorMessage(error)}`;
+      throw new TransientError(`Registry request to ${url.host} ${reason} (${rawUrl})`, "REGISTRY_UNREACHABLE");
     }
+
+    if (attempt < retries && shouldRetry(response.status)) {
+      await cancelBody(response);
+      await abortableDelay(computeRetryDelay(response, attempt, { maxDelayMs: MAX_RETRY_DELAY_MS }), options.signal);
+      continue;
+    }
+    if (response.ok) return response;
+    await cancelBody(response);
+    throw statusError(response.status, rawUrl);
   }
-  throw new Error("Registry retry loop is unreachable");
+}
+
+/** `fetchRegistry` plus a JSON body read under a byte cap. */
+export async function fetchRegistryJson<T = unknown>(
+  rawUrl: string,
+  options: FetchRegistryOptions & { maxBytes?: number } = {},
+): Promise<T> {
+  const response = await fetchRegistry(rawUrl, options);
+  try {
+    return await jsonWithByteCap<T>(response, options.maxBytes ?? DEFAULT_JSON_BYTE_CAP, {
+      bodyTimeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    if (error instanceof ResponseTooLargeError || error instanceof SyntaxError) {
+      throw new NotFoundError(
+        `Registry response from ${rawUrl} is not usable: ${toErrorMessage(error)}`,
+        "REGISTRY_RESPONSE_INVALID",
+      );
+    }
+    throw new TransientError(
+      `Registry response from ${rawUrl} could not be read: ${toErrorMessage(error)}`,
+      "REGISTRY_UNREACHABLE",
+    );
+  }
 }
 
 function parseRegistryUrl(rawUrl: string): URL {
@@ -149,197 +112,31 @@ function parseRegistryUrl(rawUrl: string): URL {
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new RegistryNetworkError("Registry request URL is invalid");
+    throw new ConfigError(`Registry URL is not a valid URL: ${formatRegistryUrl(rawUrl)}`, "REGISTRY_URL_INVALID");
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new RegistryNetworkError(`Registry requests require HTTP(S), not ${url.protocol || "an empty scheme"}`);
+    throw new ConfigError(
+      `Registry URL must use http(s), not ${url.protocol || "an empty scheme"}: ${formatRegistryUrl(rawUrl)}`,
+      "REGISTRY_URL_INVALID",
+    );
   }
   if (url.username || url.password) {
-    throw new RegistryNetworkError(`Registry request URL must not contain embedded credentials: ${url.hostname}`);
+    throw new ConfigError(`Registry URL must not embed credentials: ${url.origin}`, "REGISTRY_URL_INVALID");
   }
   return url;
 }
 
-function privateNetworkAllowed(url: URL, options: RegistryRequestOptions): boolean {
-  if (options.allowPrivateHostsForTesting === true) return true;
-  if (options.policy.kind !== "npm-api" || !options.policy.allowPrivateRegistryOrigin) return false;
-  const expectedOrigin = normalizedOrigin(options.policy.registryOrigin, "npm registry");
-  return url.origin === expectedOrigin;
+function statusError(status: number, rawUrl: string): NotFoundError | TransientError {
+  const message = `Registry request failed (HTTP ${status}) for ${rawUrl}`;
+  if (shouldRetry(status)) return new TransientError(message, "REGISTRY_UNREACHABLE");
+  if (status === 404 || status === 410) return new NotFoundError(message, "REGISTRY_NOT_FOUND");
+  const hint =
+    status === 401 || status === 403
+      ? "The registry refused the request. For GitHub, set GITHUB_TOKEN or sign in with `gh auth login`; akm's registry providers send no other credentials."
+      : undefined;
+  return new NotFoundError(message, "REGISTRY_RESPONSE_INVALID", hint);
 }
 
-async function validatedRegistryAddresses(
-  url: URL,
-  options: RegistryRequestOptions,
-  allowPrivate: boolean,
-  timeoutMs: number,
-  signal?: AbortSignal | null,
-): Promise<string[]> {
-  assertPolicyOrigin(url, options.policy);
-
-  const hostname = bareHostname(url.hostname);
-  const literal = isIP(hostname) !== 0;
-  const hostClass = classifyNetworkHostname(hostname);
-  assertAllowedClass(hostClass, hostname, allowPrivate);
-  if (literal) return [hostname];
-
-  let addresses: string[];
-  try {
-    addresses = await resolveAddressesWithDeadline(
-      hostname,
-      options.resolveHostname ?? registryHostnameResolverForTests,
-      timeoutMs,
-      signal,
-    );
-  } catch (error) {
-    if (error instanceof RegistryNetworkError || signal?.aborted) throw error;
-    throw new RegistryNetworkError(`Refusing registry request to ${hostname}: DNS resolution failed`);
-  }
-  if (addresses.length === 0) {
-    throw new RegistryNetworkError(`Refusing registry request to ${hostname}: hostname resolved to no addresses`);
-  }
-  for (const address of addresses) {
-    const addressClass = classifyNetworkAddress(address);
-    assertAllowedClass(addressClass, `${hostname} (${address})`, allowPrivate, true);
-  }
-  return addresses;
-}
-
-async function resolveAddressesWithDeadline(
-  hostname: string,
-  resolver: RegistryHostnameResolver | undefined,
-  timeoutMs: number,
-  signal?: AbortSignal | null,
-): Promise<string[]> {
-  if (signal?.aborted) throw signal.reason ?? new Error("Registry request aborted");
-  return new Promise<string[]>((resolve, reject) => {
-    let settled = false;
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-    };
-    const finish = (action: () => void): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      action();
-    };
-    const onAbort = (): void => finish(() => reject(signal?.reason ?? new Error("Registry request aborted")));
-    const timer = setTimeout(
-      () =>
-        finish(() =>
-          reject(
-            new RegistryNetworkError(
-              `Refusing registry request to ${hostname}: DNS resolution timed out after ${timeoutMs}ms`,
-            ),
-          ),
-        ),
-      Math.max(1, timeoutMs),
-    );
-    signal?.addEventListener("abort", onAbort, { once: true });
-    void resolveHostnameAddresses(hostname, resolver).then(
-      (addresses) => finish(() => resolve(addresses)),
-      (error) => finish(() => reject(error)),
-    );
-  });
-}
-
-function assertPolicyOrigin(url: URL, policy: RegistryNetworkPolicy): void {
-  if (policy.kind === "github-api" && url.origin !== GITHUB_API_ORIGIN) {
-    throw new RegistryNetworkError(`GitHub API origin policy rejected registry request to ${url.origin}`);
-  }
-  if (policy.kind === "npm-api") {
-    const expected = normalizedOrigin(policy.registryOrigin, "npm registry");
-    if (url.origin !== expected && classifyNetworkHostname(url.hostname) !== "public") {
-      throw new RegistryNetworkError(`npm registry redirect policy rejected non-public origin ${url.origin}`);
-    }
-  }
-}
-
-function normalizedOrigin(rawUrl: string, label: string): string {
-  try {
-    return new URL(rawUrl).origin;
-  } catch {
-    throw new RegistryNetworkError(`Configured ${label} origin is invalid`);
-  }
-}
-
-function assertAllowedClass(
-  addressClass: ReturnType<typeof classifyNetworkAddress>,
-  destination: string,
-  allowPrivate: boolean,
-  resolved = false,
-): void {
-  if (addressClass === "public") return;
-  if (allowPrivate && (addressClass === "private" || addressClass === "loopback")) return;
-  const qualifier = resolved ? "resolves to " : "is ";
-  throw new RegistryNetworkError(
-    `Refusing registry request: ${destination} ${qualifier}non-public ${addressClass} destination`,
-  );
-}
-
-function redirectInit(
-  init: RequestInit | undefined,
-  currentUrl: URL,
-  nextUrl: URL,
-  status: number,
-): RequestInit | undefined {
-  if (!init) return init;
-  const headers = new Headers(init.headers);
-  if (currentUrl.origin !== nextUrl.origin) {
-    headers.delete("authorization");
-    headers.delete("cookie");
-    headers.delete("proxy-authorization");
-  }
-
-  const method = (init.method ?? "GET").toUpperCase();
-  const switchToGet =
-    ((status === 301 || status === 302) && method === "POST") ||
-    (status === 303 && method !== "GET" && method !== "HEAD");
-  if (!switchToGet) return { ...init, headers };
-  for (const name of ["content-encoding", "content-language", "content-length", "content-location", "content-type"]) {
-    headers.delete(name);
-  }
-  return { ...init, method: "GET", body: undefined, headers };
-}
-
-function isRedirect(status: number): boolean {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
-}
-
-/** Release a terminal response body so pinned helper/socket resources cannot linger. */
-export async function cancelRegistryResponse(response: Response): Promise<void> {
+async function cancelBody(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
-}
-
-/** Test-only visibility for the server-controlled Retry-After clamp. */
-export function _registryRetryDelayForTests(response: Response, attempt: number): number {
-  return computeRetryDelay(response, attempt, { maxDelayMs: MAX_REGISTRY_RETRY_DELAY_MS });
-}
-
-function abortableDelay(ms: number, signal?: AbortSignal | null): Promise<void> {
-  return sharedAbortableDelay(ms, signal, "Registry request aborted");
-}
-
-/** Existing local HTTP fixtures remain available only inside the test process. */
-export function allowPrivateRegistryFixtureForTests(rawUrl: string): boolean {
-  if (!allowRegistryFixturesForTests) return false;
-  try {
-    const url = new URL(rawUrl);
-    const hostClass = classifyNetworkHostname(url.hostname);
-    const port = Number.parseInt(url.port, 10);
-    return hostClass === "loopback" && Number.isInteger(port) && port >= 1024 && port <= 65_535;
-  } catch {
-    return false;
-  }
-}
-
-/** Test-harness seam; production composition never enables these overrides. */
-export function _setRegistryNetworkOverridesForTests(overrides?: {
-  allowLoopbackFixtures?: boolean;
-  resolveHostname?: RegistryHostnameResolver;
-  requestPinned?: RegistryPinnedRequest;
-}): void {
-  allowRegistryFixturesForTests = overrides?.allowLoopbackFixtures === true;
-  registryHostnameResolverForTests = overrides?.resolveHostname;
-  registryPinnedRequestForTests = overrides?.requestPinned;
 }

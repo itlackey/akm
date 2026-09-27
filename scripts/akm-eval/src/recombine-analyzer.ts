@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isCanonicalIndexGeneration } from "../../../src/storage/repositories/index-entry-schema";
+import { hasCurrentEntriesTable } from "../../../src/storage/repositories/index-entry-schema";
 import { resolveIndexDbPath, resolveStateDbPath } from "./sources/paths";
 
 export type RecombineRelatedness = "tags" | "graph" | "both";
@@ -1054,9 +1054,9 @@ export function readCurrentRecombineEntries(
     db = new Database(snapshot.databasePath, { readonly: true, create: false });
     db.exec("BEGIN");
     transactionOpen = true;
-    if (!isCanonicalIndexGeneration(db)) {
+    if (!hasCurrentEntriesTable(db)) {
       throw new Error(
-        "index database lacks the current canonical entries schema; rebuild it with `akm index --full`",
+        "index database has no entries table this akm reads; build it with `akm index`",
       );
     }
     const rows = db

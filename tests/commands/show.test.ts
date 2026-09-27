@@ -7,8 +7,6 @@ import { saveConfig } from "../../src/core/config/config";
 import { NotFoundError } from "../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 
-// Trigger source-provider self-registration
-import "../../src/sources/providers/index";
 import { seedLockEntries } from "../_helpers/lockfile";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 

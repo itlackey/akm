@@ -29,7 +29,7 @@ import path from "node:path";
 import { akmImprove, resolveSyncPathSet } from "../../../../src/commands/improve/improve";
 import { parseRefInput } from "../../../../src/core/asset/resolve-ref";
 import type { AkmConfig, SourceConfigEntry } from "../../../../src/core/config/config";
-import { getDistillRejectedDir } from "../../../../src/core/paths";
+import { getStateDir } from "../../../../src/core/paths";
 import { recordWrittenPath } from "../../../../src/core/write-provenance";
 import { deleteAssetFromSource, type WriteTargetSource, writeAssetToSource } from "../../../../src/core/write-source";
 import { saveGitStash } from "../../../../src/sources/providers/git";
@@ -268,28 +268,24 @@ test("auto-sync stages a deletion the run performed", async () => {
   expect(result.writtenPaths).toEqual(["memories/human.md"]);
 });
 
-test("a quality-rejected lesson lands under $STATE, not the stash, is still reported as written, and is never auto-synced (itlackey/akm#890)", async () => {
+test("a journaled write under $STATE, outside the stash, is still reported as written and is never auto-synced (itlackey/akm#890)", async () => {
   initRepo();
   const before = headCount();
 
-  // Same out-of-stash write shape `writeQualityRejection` (quality-gate.ts)
-  // uses in production: mkdir + writeFileSync under $STATE, then journal it.
-  const rejectDir = getDistillRejectedDir(stashDir);
-  const rejectPath = path.join(rejectDir, "human-rejected.md");
+  // An out-of-stash write: mkdir + writeFileSync under $STATE, then journal it.
+  const stateDir = path.join(getStateDir(), "improve");
+  const statePath = path.join(stateDir, "run-note.md");
   const result = await runImprove(() => {
-    fs.mkdirSync(rejectDir, { recursive: true });
-    fs.writeFileSync(rejectPath, "---\nscore: 2\nreason: rejected\n---\n\nRejected.\n", "utf8");
-    recordWrittenPath(rejectPath);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(statePath, "---\nnote: outside the stash\n---\n\nNote.\n", "utf8");
+    recordWrittenPath(statePath);
   });
 
-  // Written under $STATE/improve/distill-rejected/<stash>/, never under
-  // $STASH/.akm/.
-  expect(fs.existsSync(rejectPath)).toBe(true);
-  expect(fs.existsSync(path.join(stashDir, ".akm", "distill-rejected"))).toBe(false);
+  expect(fs.existsSync(statePath)).toBe(true);
   // Still journaled and reported on the result — but as an absolute path,
   // since describeRunWrittenPaths only reports a stash-relative path for a
   // write that landed INSIDE the stash.
-  expect(result.writtenPaths).toEqual([rejectPath]);
+  expect(result.writtenPaths).toEqual([statePath]);
   // It lives outside the stash's git repo entirely, so auto-sync's own
   // containment check drops it and there is nothing to commit.
   expect(result.sync?.committed).toBe(false);

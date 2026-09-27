@@ -14,9 +14,8 @@ import { defaultBundleForTarget } from "../../core/mutation-target";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import { prepareWriteTargetForMutation, resolveWriteTarget, withWriteTargetMutation } from "../../core/write-source";
-import { compileWorkflowPlan } from "../ir/compile";
-import type { WorkflowError } from "../schema";
-import { compileWorkflowSource } from "../source-ir/compile";
+import { checkWorkflowPlan, compileWorkflowSource } from "../compile";
+import type { WorkflowError } from "../plan";
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate("New Workflow");
 
@@ -43,7 +42,7 @@ function validateWorkflowContent(content: string, sourcePath: string): void {
   if (!result.ok) {
     throw new UsageError(formatWorkflowErrors(sourcePath, result.errors));
   }
-  const compiled = compileWorkflowPlan(result.ir, slugifyWorkflowStepId(sourcePath));
+  const compiled = checkWorkflowPlan(result.plan);
   if (!compiled.ok) {
     throw new UsageError(formatWorkflowErrors(sourcePath, compiled.errors));
   }
@@ -126,15 +125,10 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   const defaultBundle = defaultBundleForTarget(config);
   const ref = makeBundleRef(target.source.name === defaultBundle ? undefined : target.source.name, conceptId);
-  withWriteTargetMutation(
-    target,
-    [assetPath],
-    { ignored: "reject", purpose: "workflow-authoring", message: `Create ${ref}` },
-    () => {
-      fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-      writeFileAtomic(assetPath, authoredContent.endsWith("\n") ? authoredContent : `${authoredContent}\n`, mode);
-    },
-  );
+  withWriteTargetMutation(target, [assetPath], { purpose: "workflow-authoring", message: `Create ${ref}` }, () => {
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    writeFileAtomic(assetPath, authoredContent.endsWith("\n") ? authoredContent : `${authoredContent}\n`, mode);
+  });
 
   return {
     ref,
@@ -194,17 +188,6 @@ function humanizeWorkflowName(name: string): string {
       ?.replace(/[-_]+/g, " ")
       .replace(/\b\w/g, (match) => match.toUpperCase())
       .trim() || "New Workflow"
-  );
-}
-
-function slugifyWorkflowStepId(name: string): string {
-  return (
-    name
-      .split("/")
-      .pop()
-      ?.toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "workflow"
   );
 }
 

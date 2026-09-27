@@ -25,7 +25,7 @@ import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
 import { openDatabaseFinalizing } from "../../src/storage/database";
-import { runMigrations as runSqliteMigrations } from "../../src/storage/engines/sqlite-migrations";
+import { runMigrations as runSqliteMigrations } from "../../src/storage/sqlite-migrations";
 import {
   type IsolatedAkmStorage,
   makeStashDir,

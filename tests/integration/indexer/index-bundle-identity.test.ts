@@ -11,7 +11,7 @@ import { akmShowUnified } from "../../../src/commands/read/show";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getUnresolvedSourcesDir } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { registerSourceProvider, resolveSourceProviderFactory } from "../../../src/sources/provider-factory";
+import * as websiteProvider from "../../../src/sources/providers/website";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../../src/storage/repositories/index-entries-repository";
 import {
@@ -24,6 +24,17 @@ import {
 
 let storage: IsolatedAkmStorage;
 let secondary: SandboxedDir;
+
+/** A website provider whose content path cannot be resolved. */
+function unresolvableWebsite(entry: { name?: string }): ReturnType<typeof websiteProvider.createWebsiteProvider> {
+  return {
+    kind: "website",
+    name: entry.name ?? "website",
+    path: () => {
+      throw new Error("fixture path resolution failure");
+    },
+  } as unknown as ReturnType<typeof websiteProvider.createWebsiteProvider>;
+}
 
 function writeSharedConcept(root: string, bundleLabel: string): string {
   const filePath = path.join(root, "knowledge", "shared.md");
@@ -118,15 +129,7 @@ describe("full-index bundle identity", () => {
     writeSharedConcept(secondary.dir, "team");
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    const originalWebsite = resolveSourceProviderFactory("website");
-    if (!originalWebsite) throw new Error("website provider is not registered");
-    registerSourceProvider("website", (entry) => ({
-      kind: "website",
-      name: entry.name ?? "website",
-      path: () => {
-        throw new Error("fixture path resolution failure");
-      },
-    }));
+    const websiteSpy = spyOn(websiteProvider, "createWebsiteProvider").mockImplementation(unresolvableWebsite);
     try {
       writeSandboxConfig({
         semanticSearchMode: "off",
@@ -144,7 +147,7 @@ describe("full-index bundle identity", () => {
       const refs = result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
       expect(refs).toEqual(["knowledge/shared", "team//knowledge/shared"]);
     } finally {
-      registerSourceProvider("website", originalWebsite);
+      websiteSpy.mockRestore();
     }
   });
 
@@ -214,15 +217,7 @@ describe("full-index bundle identity", () => {
       const fresh = makeStashDir();
       writeConcept(fresh.dir, "new-source", "newhealthysourcemarker");
 
-      const originalWebsite = resolveSourceProviderFactory("website");
-      if (!originalWebsite) throw new Error("website provider is not registered");
-      registerSourceProvider("website", (entry) => ({
-        kind: "website",
-        name: entry.name ?? "website",
-        path: () => {
-          throw new Error("fixture path resolution failure");
-        },
-      }));
+      const websiteSpy = spyOn(websiteProvider, "createWebsiteProvider").mockImplementation(unresolvableWebsite);
       try {
         writeSandboxConfig({
           semanticSearchMode: "off",
@@ -254,7 +249,7 @@ describe("full-index bundle identity", () => {
           removed.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
         ).not.toContain("knowledge/removed");
       } finally {
-        registerSourceProvider("website", originalWebsite);
+        websiteSpy.mockRestore();
         fresh.cleanup();
       }
     });

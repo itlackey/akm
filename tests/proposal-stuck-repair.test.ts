@@ -18,16 +18,10 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stageJudgedProposal } from "../src/commands/improve/stage";
 import { type DrainOptions, drainProposals } from "../src/commands/proposal/drain";
-import { PERSONAL_STASH } from "../src/commands/proposal/drain-policies";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal/proposal";
-import {
-  createProposal,
-  getProposal,
-  isProposalSkipped,
-  type Proposal,
-  recordGateDecision,
-} from "../src/commands/proposal/repository";
+import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";
 import { repairProposalContent } from "../src/commands/proposal/validators/proposals";
 import type { EventsContext } from "../src/core/events";
 
@@ -63,12 +57,10 @@ function seedProposal(stash: string, ref: string, content: string): Proposal {
   const result = createProposal(stash, {
     ref,
     source: "extract",
-    force: true,
     sourceRun: "run-test",
     target: { source: "stash", root: stash },
     payload: { content, frontmatter: { description: "test fixture" } },
   });
-  if (isProposalSkipped(result)) throw new Error(`unexpected skip: ${result.message}`);
   return result;
 }
 
@@ -101,7 +93,6 @@ function fakeReject() {
 function baseOpts(stash: string, overrides: Partial<DrainOptions> = {}): DrainOptions {
   return {
     stashDir: stash,
-    policy: PERSONAL_STASH,
     applyMode: "promote",
     maxAccepts: 25,
     dryRun: false,
@@ -110,7 +101,7 @@ function baseOpts(stash: string, overrides: Partial<DrainOptions> = {}): DrainOp
   };
 }
 
-// A valid extract proposal that PERSONAL_STASH would auto-accept.
+// A valid extract proposal; the drain accepts it once a quality judge passed it.
 const VALID_EXTRACT = `---\ndescription: Use ripgrep before grep for speed\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repositories.\n`;
 
 // ── Bug 1: Drain masking ──────────────────────────────────────────────────────
@@ -146,11 +137,11 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
     expect(acceptFn).not.toHaveBeenCalledWith(expect.objectContaining({ id: proposal.id }));
   });
 
-  test("drain accepts normal pending extract proposal (no auto-rejected stamp)", async () => {
+  test("drain accepts a judge-passed pending extract proposal (no auto-rejected stamp)", async () => {
     const stash = makeStashDir();
-    const proposal = seedProposal(stash, "lessons/normal-drain-test", VALID_EXTRACT);
+    const proposal = stageJudgedProposal(stash, seedProposal(stash, "lessons/normal-drain-test", VALID_EXTRACT));
 
-    // No gateDecision stamp — drain should accept it normally.
+    // No auto-rejected stamp — drain should accept it normally.
     const acceptFn = fakeAccept();
     const rejectFn = fakeReject();
 
@@ -171,7 +162,7 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
       gate: "improve:reflect",
     });
 
-    const clean = seedProposal(stash, "lessons/accept-me", VALID_EXTRACT);
+    const clean = stageJudgedProposal(stash, seedProposal(stash, "lessons/accept-me", VALID_EXTRACT));
 
     const acceptFn = fakeAccept();
     const rejectFn = fakeReject();

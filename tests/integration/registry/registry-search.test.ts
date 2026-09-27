@@ -877,7 +877,7 @@ describe("provider routing", () => {
 // ── Issue #159: incomplete hits must never appear in JSON output ────────────
 
 describe("incomplete hits filter (#159)", () => {
-  // ISOLATION-04: createProviderRegistry (src/registry/create-provider-registry.ts)
+  // ISOLATION-04: the registry provider map (src/registry/factory.ts)
   // is a module-level singleton Map, so a registration made here would
   // otherwise outlive the test for the rest of the process. Each test below
   // unregisters its synthetic key in a try/finally using the real unregister

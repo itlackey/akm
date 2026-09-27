@@ -3,23 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pure `with:` -> `TaskInputBinding[]` normalizer, plus the pure
- * re-binder a recursive composition needs on top of it.
- * {@link freezeTaskInputBindings} classifies a genuinely AUTHORED `with:`
- * record against a contract (called by `freeze/targets/task.ts`'s
- * `taskDispatch`, this step's own `with:` against the composed task's own
- * contract only — no merge across a composition chain).
- * {@link rebindTaskInputBindings} instead re-binds an ALREADY-classified
- * `TaskInputBinding[]` by name against a DIFFERENT contract, trusting each
- * entry's existing `kind` rather than re-deriving it from the value's shape
- * (`freeze/targets/child-workflow.ts`'s only caller). Everything decidable
- * at FREEZE time is decided here; a reference's *resolved* value is
- * validated PRE-ATTEMPT instead (`exec/step-work.ts`). Pure function: no IO,
- * no config reads.
- *
- * See docs/architecture/decisions/0008-task-binding-normalization.md for the
- * full design history, including why re-binding cannot reuse the
- * shape-driven normalizer (a code-review finding).
+ * Pure freeze-time binding of a composing step's inputs.
+ * {@link freezeTaskInputBindings} classifies an authored `with:` against a
+ * contract; {@link rebindTaskInputBindings} re-binds already-classified
+ * bindings by name against another contract (a task's effective inputs
+ * against a child workflow's `params:`) without re-deriving their kind. A
+ * reference's resolved value is validated before each attempt (`exec/step-work.ts`).
+ * See docs/architecture/decisions/0008-task-binding-normalization.md.
  */
 
 import { isRecord } from "../../core/common";
@@ -32,13 +22,13 @@ export interface FreezeTaskInputBindingsInput {
   readonly stepId: string;
   /** The task's authored ref (e.g. "tasks/nightly-v4") — for diagnostics only. */
   readonly targetRef: string;
-  /** The step's authored `with:` record, already decoded to arbitrary JSON values (A-N3). */
+  /** The step's authored `with:` record, already decoded to arbitrary JSON values. */
   readonly with: Readonly<Record<string, unknown>> | undefined;
-  /** The composed task's OWN declared `inputs:` contract — never a caller's (§3.5, B-29). */
+  /** The composed task's OWN declared `inputs:` contract — never a caller's. */
   readonly contract: InputContract;
-  /** Step ids that appear BEFORE this step in the frozen step order (A-N4). */
+  /** Step ids that appear BEFORE this step in the frozen step order. */
   readonly earlierStepIds: ReadonlySet<string>;
-  /** THIS workflow's own declared param names (A-N4) — never an outer composing task's. */
+  /** THIS workflow's own declared param names — never an outer composing task's. */
   readonly declaredParamNames: ReadonlySet<string>;
 }
 
@@ -49,7 +39,7 @@ export interface RebindTaskInputBindingsInput {
   readonly targetRef: string;
   /** An ALREADY-NORMALIZED binding set — a v4 task's own effective inputs, classified once against the TASK's own `inputs:` contract. */
   readonly bindings: readonly TaskInputBinding[] | undefined;
-  /** The NEW contract to re-bind `bindings` against by name — the child workflow's declared `params:` (A-N8), never the task's own. */
+  /** The NEW contract to re-bind `bindings` against by name — the child workflow's declared `params:`, never the task's own. */
   readonly contract: InputContract;
 }
 
@@ -70,14 +60,9 @@ function unknownBindingNameError(
 }
 
 /**
- * Normalize the workflow source front end's authored `with:` record into the
- * `TaskInputBinding[]` a task-composing step's frozen target carries (spec
- * §3.3). Throws `UsageError`/`INPUT_BINDING_INVALID` for the first violation
- * found — per authored entry first (B-11, B-15, B-16, B-17, B-18), then over
- * the whole contract (B-12, B-13). The result is sorted by name; an entry
- * exists only for a declared input with an effective value (authored
- * literal, authored reference, or an applied default) — never for an
- * unsupplied optional input with no default (B-20).
+ * Normalize an authored `with:` into the sorted `TaskInputBinding[]` a frozen
+ * target carries: one entry per declared input with an effective value
+ * (literal, reference, or default). Throws `INPUT_BINDING_INVALID` on the first violation.
  */
 export function freezeTaskInputBindings(input: FreezeTaskInputBindingsInput): readonly TaskInputBinding[] {
   const { stepId, targetRef, contract, earlierStepIds, declaredParamNames } = input;
@@ -100,28 +85,11 @@ export function freezeTaskInputBindings(input: FreezeTaskInputBindingsInput): re
 }
 
 /**
- * Re-bind an ALREADY-NORMALIZED `TaskInputBinding[]` — a v4 task's own
- * effective inputs, classified once against the TASK's own declared
- * `inputs:` contract by {@link freezeTaskInputBindings} — against a
- * DIFFERENT contract (the child workflow's declared `params:`) by NAME,
- * without re-deriving each entry's literal/reference classification from
- * its value's shape (a code-review finding — see
- * docs/architecture/decisions/0008-task-binding-normalization.md for why a
- * shape-shifting round-trip through {@link normalizeOneEntry} would
- * silently misclassify a literal value shaped like a reference).
- *
- * Per-entry rules, otherwise identical to {@link freezeTaskInputBindings}:
- * an entry naming a key the new `contract` does not declare is
- * `INPUT_BINDING_INVALID` (same message shape); a `kind: "literal"` entry
- * keeps its value verbatim and is validated against the NEW contract's
- * declared schema for that name; a `kind: "reference"` entry keeps its
- * `from` verbatim (the reference target — an earlier step or declared param
- * of the composing workflow — does not change with which contract it is
- * bound against) and its `schema` is re-derived from the NEW contract,
- * matching {@link normalizeOneEntry}'s existing rule that a reference
- * binding's schema always comes from the contract it is bound against; a
- * contract key absent from `bindings` is defaulted or required exactly as
- * {@link freezeTaskInputBindings} does.
+ * Re-bind already-normalized bindings by name against a different contract,
+ * keeping each entry's kind (a literal shaped like `{from}` stays a literal).
+ * A literal is validated against the new contract; a reference keeps its
+ * `from` and takes the new contract's schema; undeclared names are
+ * `INPUT_BINDING_INVALID`; missing keys are defaulted or required as usual.
  */
 export function rebindTaskInputBindings(input: RebindTaskInputBindingsInput): readonly TaskInputBinding[] {
   const { stepId, targetRef, contract } = input;
@@ -146,14 +114,7 @@ export function rebindTaskInputBindings(input: RebindTaskInputBindingsInput): re
   return finalizeBindings(stepId, targetRef, contract, byName);
 }
 
-/**
- * The tail shared by {@link freezeTaskInputBindings} and
- * {@link rebindTaskInputBindings} once `byName` holds one classified entry
- * per AUTHORED/bound name: apply declared defaults for every remaining
- * contract key (or throw for a required one with none), schema-validate
- * every literal (authored, re-bound, or defaulted) against the contract, and
- * return the result sorted by name.
- */
+/** Shared tail: apply defaults (or require), schema-validate every literal, and sort by name. */
 function finalizeBindings(
   stepId: string,
   targetRef: string,
@@ -174,11 +135,7 @@ function finalizeBindings(
     }
   }
 
-  // Every LITERAL value (authored, re-bound, or defaulted) is validated
-  // against its own declared schema — a contract NARROWED to just the
-  // literal-bound names, so a required input bound via REFERENCE (whose
-  // value is not known until pre-attempt, §3.6) is never wrongly flagged
-  // "missing" here.
+  // Validate literals only: a reference's value is not known until the attempt.
   const literalContract: Record<string, InputContract[string]> = {};
   const literalValues: Record<string, unknown> = {};
   for (const binding of byName.values()) {
@@ -197,13 +154,9 @@ function finalizeBindings(
 }
 
 /**
- * Classify and validate ONE authored `with:` entry whose key is already
- * known to be a declared input name. §3.3 point 2/3: a value is a
- * `{kind:"reference"}` binding IFF it is a non-null, non-array plain object
- * whose OWN key set is exactly `["from"]` and whose `from` is a string
- * `parseReference` accepts — the hard-fail band (B-15, B-16) means any OTHER
- * shape carrying an own `from` key is `INPUT_BINDING_INVALID`, never
- * reinterpreted as a literal.
+ * Classify one authored `with:` entry: exactly `{ from: <valid reference> }`
+ * is a reference; any other object with an own `from` key is
+ * `INPUT_BINDING_INVALID`, never a literal.
  */
 function normalizeOneEntry(
   stepId: string,

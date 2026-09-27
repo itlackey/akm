@@ -2,18 +2,14 @@
  * Phase 1A / Rec 2 — Extended MemoryBeliefState.
  *
  * Verifies the two new first-class belief states `asserted` and `deprecated`
- * across three subsystems:
+ * across two subsystems:
  *
  * 1. `resolveFamilyContradictions` / belief-refresh logic
  *    (`src/core/memory-improve.ts`) — `asserted` is treated like `active`
  *    (no spurious refresh, preserves `asserted` authority); `deprecated` is
  *    treated like `superseded` (frozen historical, never refreshed to active).
  *
- * 2. `beliefStateBoost` (`src/indexer/search/ranking-contributors.ts`):
- *    `asserted` (+0.08) > `active` (+0.06) > unset (0) > `deprecated` (-0.15)
- *    > `superseded` (-0.25) > `contradicted` (-0.45) > `archived` (-0.6).
- *
- * 3. `matchBeliefFilter` (`src/indexer/search/db-search.ts`) — `asserted` is
+ * 2. `matchBeliefFilter` (`src/indexer/search/db-search.ts`) — `asserted` is
  *    surfaced under `belief=current`; `deprecated` is surfaced under
  *    `belief=historical`.
  */
@@ -25,10 +21,6 @@ import { akmImprove } from "../src/commands/improve/improve";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
-import type { IndexDocument } from "../src/indexer/passes/metadata";
-import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
-import type { RankedEntryInput } from "../src/indexer/search/ranking-types";
-import type { Database } from "../src/storage/database";
 import { writeMemory } from "./_helpers/assets";
 import { withImproveAutonomy, withTestImproveLlm } from "./_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, mutateScopedEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
@@ -154,78 +146,7 @@ describe("Phase 1A: belief-state transitions for asserted/deprecated", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. beliefStateBoost ranking ordering
-// ─────────────────────────────────────────────────────────────────────────────
-
-function makeRanked(name: string, overrides: Partial<IndexDocument>): RankedEntryInput {
-  const entry: IndexDocument = { name, type: "memory", ...overrides };
-  return {
-    id: 1,
-    entry,
-    filePath: `/stash/memories/${name}.md`,
-    score: 1,
-    rankingMode: "fts",
-  };
-}
-
-function rank(item: RankedEntryInput, query: string) {
-  applyScoreContributors(item, {
-    db: null as unknown as Database,
-    query,
-    queryLower: query.toLowerCase(),
-    queryTokens: query.toLowerCase().split(/\s+/).filter(Boolean),
-    graphContext: null,
-  });
-}
-
-describe("Phase 1A: beliefStateBoost ordering", () => {
-  test("asserted > active > unset > deprecated > superseded > contradicted > archived", () => {
-    const asserted = makeRanked("m-asserted", { beliefState: "asserted" });
-    const active = makeRanked("m-active", { beliefState: "active" });
-    const unset = makeRanked("m-unset", {});
-    const deprecated = makeRanked("m-deprecated", { beliefState: "deprecated" });
-    const superseded = makeRanked("m-superseded", { beliefState: "superseded" });
-    const contradicted = makeRanked("m-contradicted", { beliefState: "contradicted" });
-    const archived = makeRanked("m-archived", { beliefState: "archived" });
-
-    for (const item of [asserted, active, unset, deprecated, superseded, contradicted, archived]) {
-      rank(item, "irrelevant");
-    }
-
-    expect(asserted.score).toBeGreaterThan(active.score);
-    expect(active.score).toBeGreaterThan(unset.score);
-    expect(unset.score).toBeGreaterThan(deprecated.score);
-    expect(deprecated.score).toBeGreaterThan(superseded.score);
-    expect(superseded.score).toBeGreaterThan(contradicted.score);
-    expect(contradicted.score).toBeGreaterThan(archived.score);
-  });
-
-  test("03: belief state now applies to NON-memory entries (contradicted knowledge demoted, asserted boosted)", () => {
-    // Pre-03 this contributor was memory-gated so flagged knowledge ranked as if
-    // unflagged. After deleting the `type === "memory"` guard + broadening the
-    // contributor to any belief-state-carrying entry, contradicted/superseded
-    // KNOWLEDGE is demoted and asserted knowledge is boosted, same as memories.
-    const mk = (name: string, overrides: Partial<IndexDocument>) => ({
-      id: 1,
-      entry: { name, type: "knowledge", ...overrides } as IndexDocument,
-      filePath: `/stash/knowledge/${name}.md`,
-      score: 1,
-      rankingMode: "fts" as const,
-    });
-    const contradicted = mk("k-contradicted", { beliefState: "contradicted" });
-    const plain = mk("k-plain", {});
-    const asserted = mk("k-asserted", { beliefState: "asserted" });
-    for (const item of [contradicted, plain, asserted]) rank(item, "irrelevant");
-
-    // `plain` (no belief state) is the neutral baseline between the two — proving
-    // unflagged entries of any type receive no belief-state adjustment.
-    expect(contradicted.score).toBeLessThan(plain.score);
-    expect(asserted.score).toBeGreaterThan(plain.score);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. matchBeliefFilter via akmSearch
+// 2. matchBeliefFilter via akmSearch
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Phase 1A: matchBeliefFilter classification", () => {

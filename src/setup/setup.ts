@@ -159,7 +159,7 @@ export function assertSetupConfigPreflight(): void {
     parseAndValidateConfigText(text, configPath);
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
-    if (error.code !== "UNSUPPORTED_CONFIG_VERSION" && error.code !== "INVALID_CONFIG_FILE") throw error;
+    if (error.code !== "INVALID_CONFIG_FILE") throw error;
     throw new ConfigError(
       `\`akm setup\` cannot run: the config at ${configPath} did not load (${error.message}). ` +
         "It was left untouched — setup never writes over a config it cannot first read cleanly.",

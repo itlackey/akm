@@ -398,8 +398,8 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
       // `uses: workflows/` it was equally inert there — nothing ever consumed
       // it. Hoisting it unconditionally would therefore emit bytes the real
       // parseTaskSourceV4 below rejects, blocking a valid, previously-runnable
-      // v3 file — and one blocked file aborts the whole plan
-      // (`applyTaskToV4MigrationPlan`, ./task-files-to-v4.ts). Dropping an
+      // v3 file from both the in-memory read shim and `akm migrate apply`
+      // (scripts/akm-migrate/migrate/task-files.ts). Dropping an
       // already-inert field and SAYING SO is the faithful translation, and
       // keeps spec row B-66 / §5.3's `changed` guarantee intact.
       if (usesTarget !== undefined && (usesTarget.kind === "command" || usesTarget.kind === "builtin-command")) {

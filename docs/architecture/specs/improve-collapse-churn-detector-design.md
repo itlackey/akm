@@ -1,6 +1,15 @@
 # R5 — Longitudinal Collapse/Churn Detector for `akm improve`
 
-> **Status:** Partially implemented. The COLLAPSE alert class (§1, three
+> **Status (0.9.17): removed.** The detector, its `collapse_detector_alert`
+> event, the `improve_cycle_metrics` / `canary_queries` tables and
+> `scripts/refresh-canary-set.ts` were deleted with the improve ledger change
+> (migration 028 drops the tables); recorded telemetry shows no alert ever fired. The
+> generation and lexical-diversity merge checks, which never refused a merge,
+> went with it; only the random-cluster injection in
+> `src/commands/improve/anti-collapse.ts` remains. The history below is kept
+> for reference.
+>
+> **Earlier status:** Partially implemented. The COLLAPSE alert class (§1, three
 > sub-conditions) and the MERGE-FLOOR advisory are live. **The CHURN alert
 > class described throughout this document (§1, §5.2 `accepted_actions`
 > column, §6.1 `churnMinAcceptedActions` config key, §8 item 2) was removed

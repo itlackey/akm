@@ -216,7 +216,6 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "cwd",
   "wikiRole",
   "sources",
-  "generation",
   "evidenceSources",
   // D2 (#730): the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native
   // writes (generated/verified/sources, namespaced — see `types.ts`'s

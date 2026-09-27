@@ -117,14 +117,6 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
       const attempts = typeof unit.attempts === "number" ? unit.attempts : undefined;
       const suffix = attempts !== undefined && attempts > 1 ? `, attempt ${attempts}` : "";
       lines.push(`  - ${id} [${node}] (${status}${suffix})`);
-      // Codex round-3 finding B: a `running` claim gone silent past the check-in
-      // window — the process holding it likely died. Surface it (with the claim
-      // holder) so a human can reclaim/re-run the unit.
-      if (unit.stale === true) {
-        const holder =
-          typeof unit.claimHolder === "string" && unit.claimHolder.trim() ? ` claimed by ${unit.claimHolder}` : "";
-        lines.push(`    stale: claim went silent past the check-in window${holder} — its driver may have died`);
-      }
       if (typeof unit.failureReason === "string" && unit.failureReason.trim()) {
         lines.push(`    failure_reason: ${unit.failureReason}`);
       }
@@ -135,28 +127,7 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
       }
     }
   }
-
-  // Review C2: the check-in `continue` directive must survive plain-text
-  // rendering — JSON consumers saw `checkin` but the text path dropped it.
-  const checkinLine = formatWorkflowCheckinLine(result);
-  if (checkinLine) {
-    lines.push("");
-    lines.push(checkinLine);
-  }
   return lines.join("\n");
-}
-
-/**
- * Render the stalled-run check-in directive (#506) when present on a
- * workflow-status result. Returns null when the run is healthy.
- */
-function formatWorkflowCheckinLine(result: Record<string, unknown>): string | null {
-  const checkin =
-    typeof result.checkin === "object" && result.checkin !== null
-      ? (result.checkin as Record<string, unknown>)
-      : undefined;
-  if (!checkin || typeof checkin.directive !== "string" || !checkin.directive.trim()) return null;
-  return checkin.directive.trim();
 }
 
 /**
@@ -374,12 +345,6 @@ export function formatWorkflowPlanPlain(result: Record<string, unknown>): string
   lines.push("steps:");
   for (const [index, step] of steps.entries()) {
     renderPlanStepLines(step, index + 1, lines);
-  }
-
-  const sourceReadSet = Array.isArray(result.sourceReadSet) ? result.sourceReadSet : [];
-  if (sourceReadSet.length > 0) {
-    lines.push("read set:");
-    for (const entry of sourceReadSet) lines.push(`  ${String(entry)}`);
   }
 
   const notices = Array.isArray(result.notices) ? result.notices : [];

@@ -29,7 +29,6 @@ import { ConfigError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn, warnVerbose } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
-import type { LoweredExecutionDispatchLease } from "../integrations/agent/execution-lowering";
 import { type ChatMessage, isContextSizeError, isTransportFailure, LlmCallError } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 import { type CallStructuredRequest, callStructured, type StructuredLlmRunner } from "./structured-call";
@@ -188,7 +187,6 @@ export interface GraphExtractionRuntimeOptions {
   batchState?: GraphBatchState;
   telemetry?: GraphRuntimeTelemetry;
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
-  lease?: LoweredExecutionDispatchLease;
   /**
    * Cap on chunks processed per asset (R12b + R20). Bodies chunked beyond
    * this are truncated to the first N chunks; the rest are recorded as
@@ -606,13 +604,11 @@ async function callGraphLlm(
   runner: StructuredLlmRunner,
   messages: ChatMessage[],
   request: CallStructuredRequest,
-  lease: LoweredExecutionDispatchLease | undefined,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
 ): Promise<string> {
   return callStructured<string>({
     feature: "graph_extraction",
     runner,
-    ...(lease ? { lease } : {}),
     messages,
     request,
     onNotices,
@@ -782,7 +778,6 @@ export async function extractGraphFromBodies(
             responseSchema: batchResponseSchema as unknown as Record<string, unknown>,
             onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
           },
-          options.lease,
           options.onNotices,
         );
         if (!raw) return { kind: "value", value: null };
@@ -807,7 +802,6 @@ export async function extractGraphFromBodies(
               signal,
               responseSchema: batchResponseSchema as unknown as Record<string, unknown>,
             },
-            options.lease,
             options.onNotices,
           );
           parsed = retryRaw ? parseEmbeddedJsonResponse<unknown[]>(retryRaw, { expect: "array" }) : undefined;
@@ -1014,7 +1008,6 @@ export async function extractGraphFromBody(
     feature: "graph_extraction",
     akmConfig,
     runner: llmRunner,
-    ...(options.lease ? { lease: options.lease } : {}),
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt },
@@ -1076,11 +1069,3 @@ export async function extractGraphFromBody(
   if (truncatedChunkCount > 0) result.truncatedChunks = (result.truncatedChunks ?? 0) + truncatedChunkCount;
   return result;
 }
-
-// deduplicateGraph lives in src/indexer/graph/graph-dedup.ts (pure utility, no
-// LLM calls) — import it from there directly. The re-export that used to live
-// here created a value edge back to graph-dedup.ts, which (via its type-only
-// import of GraphExtraction/GraphRelation below) formed a 2-file import cycle
-// (chunk 9 WI-9.8 KILL 4 sever). No src or test consumer used this re-export
-// (graph-extraction.ts and the test suite already import graph-dedup.ts
-// directly), so it is deleted outright rather than repointed.

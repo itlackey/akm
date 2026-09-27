@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
-import { compileResolveFreezeWorkflowV4 } from "../../../src/workflows/ir/freeze-v4";
+import { freezeWorkflow } from "../../../src/workflows/freeze/freeze";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -77,7 +77,7 @@ describe("resolveJudge falls back to the default engine when workflow.judgeEngin
     write("workflows/gated.md", GATED_WORKFLOW);
 
     const asset = await loadWorkflowAsset("workflows/gated");
-    const frozen = await compileResolveFreezeWorkflowV4(asset, loadConfig());
+    const frozen = await freezeWorkflow(asset, loadConfig());
     const step = frozen.plan.steps.find((s) => s.stepId === "work");
     expect(step?.gate.criteria.length).toBeGreaterThan(0);
     expect(step?.gate.frozenJudge).not.toBeNull();
@@ -100,7 +100,7 @@ describe("resolveJudge freezes frozenJudge: null (never refuses) when no engine 
           if (level !== "warn") return;
           warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
         },
-        () => compileResolveFreezeWorkflowV4(asset, loadConfig()),
+        () => freezeWorkflow(asset, loadConfig()),
       ),
     );
 

@@ -62,7 +62,6 @@ function noopStageSeams(config: AkmConfig, stashDir: string) {
         warnings: [],
         durationMs: 0,
       },
-      consolidationRan: false,
     })) as never,
     runImproveLoopStageFn: (async () => ({
       reflectsWithErrorContext: 0,

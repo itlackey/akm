@@ -165,7 +165,6 @@ describe("#942 — active runs are visible across scopes", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
         agentHarness: null,
         agentSessionId: null,
-        checkinArmedAt: null,
       });
       repo.insertRun({
         id: "run-scope-a",
@@ -179,7 +178,6 @@ describe("#942 — active runs are visible across scopes", () => {
         updatedAt: "2026-01-02T00:00:00.000Z",
         agentHarness: null,
         agentSessionId: null,
-        checkinArmedAt: null,
       });
 
       // The scope-local guard still finds the caller's own run.

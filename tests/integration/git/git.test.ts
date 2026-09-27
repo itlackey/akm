@@ -8,9 +8,6 @@ import { resolveSourceProviderFactory } from "../../../src/sources/provider-fact
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl, saveGitStash } from "../../../src/sources/providers/git";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
-// Trigger self-registration
-import "../../../src/sources/providers/git";
-
 const createdTmpDirs: string[] = [];
 
 function createTmpDir(prefix = "akm-git-"): string {
@@ -151,7 +148,7 @@ afterAll(() => {
 });
 
 describe("GitSourceProvider", () => {
-  test("self-registers as 'git' only (legacy aliases removed)", () => {
+  test("resolves 'git' only (legacy aliases removed)", () => {
     expect(resolveSourceProviderFactory("git")).toBeTruthy();
     expect(resolveSourceProviderFactory("context-hub")).toBeNull();
     expect(resolveSourceProviderFactory("github")).toBeNull();

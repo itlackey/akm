@@ -60,8 +60,7 @@ import { scanEnvKeyNames } from "../../../commands/env/env";
 import type { IndexDocument } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
-import { compileWorkflowSource } from "../../../workflows/source-ir/compile";
-import { sourceStepInstructions } from "../../../workflows/source-ir/program";
+import { compileWorkflowSource, workflowStepInstructions } from "../../../workflows/compile";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
@@ -318,17 +317,17 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
       try {
         const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot: file.stashRoot });
         if (!result.ok) return out;
-        const sourceIr = result.ir;
+        const plan = result.plan;
         const hints = new Set<string>();
-        if (sourceIr.preamble) hints.add(sourceIr.preamble);
-        for (const step of sourceIr.jobs.flatMap((job) => job.steps)) {
-          hints.add(step.id);
-          hints.add(sourceStepInstructions(step));
-          if (step.gate?.rubric) hints.add(step.gate.rubric);
+        if (plan.preamble) hints.add(plan.preamble);
+        for (const step of plan.steps) {
+          hints.add(step.stepId);
+          hints.add(workflowStepInstructions(step));
+          if (step.gate.criteria[0]) hints.add(step.gate.criteria[0]);
         }
         out.searchHints = Array.from(hints).filter(Boolean);
-        if (sourceIr.params) {
-          const parameters = Object.entries(sourceIr.params).map(([name, schema]) => {
+        if (plan.paramSchemas) {
+          const parameters = Object.entries(plan.paramSchemas).map(([name, schema]) => {
             const description = schema.description;
             return { name, ...(typeof description === "string" && description ? { description } : {}) };
           });

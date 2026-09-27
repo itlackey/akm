@@ -3,63 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared content-quality validators consumed by the improve pipeline
- * (`distill`, `consolidate`, `reflect`) and by the `proposal accept` gate.
+ * Content-quality validators for the improve stages and `proposal accept`.
  *
- * ## Reflect size gate — calibrated blended formula (2026-05-22)
- *
- * ### Distribution baseline (n=844 reflect-eligible stash assets)
- *
- *   min=1  p10=371  p25=778  p50=1508  p75=5456  p90=11721  p99=43463  max=298010 bytes
- *   Buckets: <500=135 (16%), 500–2000=340 (40%), 2000–8000=222 (26%), >8000=147 (17%)
- *
- * ### Problem with the original fixed-ratio gate
- *
- *   - Small sources (~420 bytes, 16th pct): the 200% expansion ceiling fires at
- *     only 840 bytes proposed — one good paragraph.  Hair-trigger for a terse
- *     reference note.
- *   - Large sources (~7KB, 75th pct): 200% ceiling = 14KB; reasonable, but a hard
- *     cap prevents runaway expansion from LLM hallucinations.
- *
- * ### Blended-bound formula
- *
- *   Shrinkage floor (accept if proposed >= lower):
- *     lower = max(REFLECT_SHRINK_RATIO_MIN * sourceLen, REFLECT_ABSOLUTE_FLOOR_BYTES)
- *     → For tiny sources (sourceLen < 300), the absolute floor dominates so a
- *       genuinely tightened note still passes.
- *     → For large sources (>1KB), the ratio floor dominates (50% of 7KB = 3.5KB).
- *
- *   Expansion ceiling (accept if proposed <= upper):
- *     upper = max(REFLECT_EXPAND_RATIO_MAX * sourceLen, REFLECT_ABSOLUTE_CEILING_BYTES)
- *     …but always capped at REFLECT_ABSOLUTE_MAX_BYTES.
- *     → For small sources (≤778 bytes, p25), the absolute ceiling (2000 bytes)
- *       dominates — one substantive paragraph is always acceptable.
- *     → For medium/large sources (>1KB), the ratio ceiling dominates.
- *     → Any proposal exceeding 25000 bytes is always rejected regardless of ratio.
- *
- * ### Constant calibration rationale
- *
- *   REFLECT_ABSOLUTE_FLOOR_BYTES = 150
- *     Half of p10 (371) ≈ 185; we set 150 so even very aggressive condensation
- *     of a seed note is allowed down to roughly a two-sentence summary.
- *
- *   REFLECT_ABSOLUTE_CEILING_BYTES = 2500
- *     Raised from 2000 (2026-05-22): small-source rejections at 248–281% on
- *     900–953 byte assets were borderline false positives. 2500 gives a short
- *     lesson or command ~1.5KB of room to grow before the absolute kicks in.
- *
- *   REFLECT_ABSOLUTE_MAX_BYTES = 25000
- *     Below p99 (43463). Catches genuine LLM runaway (whole-chapter insertions)
- *     without blocking legitimate large rewrites of large sources.
- *
- *   REFLECT_EXPAND_RATIO_MAX = 2.5
- *     Raised from 2.0 (2026-05-22): 2× was too tight for dense short assets
- *     (lessons, commands) that have legitimate room to grow. 2.5× resolves
- *     248% expansion on a 900-byte lesson while still catching 281%+ on ~1KB
- *     assets where the absolute ceiling takes over.
+ * The reflect size gate bounds a rewrite's body against its source's:
+ * shrinking below max(50% of the source, 150 bytes) suggests deleted content,
+ * growing past min(max(250% of the source, 2500 bytes), 25000 bytes) suggests
+ * speculation. The absolute bounds keep small assets (a p25 source is ~780
+ * bytes) from tripping on one good paragraph, and 25000 (below p99) still
+ * catches runaway expansion. Sources under 200 bytes are too noisy to judge.
  */
-
-// ── Reflect-size guard ───────────────────────────────────────────────────────
 
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { parseRefInput } from "../../../core/asset/resolve-ref";
@@ -76,19 +28,15 @@ import {
   REFLECT_AVOID_PATTERNS_HEADING,
 } from "../../../core/content-safety";
 import { proposalContent } from "../../../core/file-change";
+import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
+import { REFLECT_TRUNCATION_MARKER } from "../../../integrations/agent/prompts";
+import { splitFrontmatter } from "../../improve/reflect-noise";
+import type { ProposalValidator } from "../proposal-types";
 
-/**
- * The canonical asset NAME an inputRef names, lower-cased — the tail the
- * "just restates the ref" heuristics compare against. WI-8.5c: the ref is the
- * conceptId (`<subdir>/<name>`), so the name is parsed off the conceptId.
- */
+/** The asset name a ref names, lower-cased — what the "just restates the ref" checks compare. */
 function refNameTail(inputRef: string): string {
   return parseRefInput(inputRef).name.toLowerCase();
 }
-
-import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
-import { REFLECT_TRUNCATION_MARKER } from "../../../integrations/agent/prompts";
-import type { ProposalValidator } from "../proposal-types";
 
 // ── Description / when_to_use shape ─────────────────────────────────────────
 
@@ -107,13 +55,7 @@ export const HEADING_FRAGMENT_PATTERNS: readonly RegExp[] = [
 ];
 
 export interface DescriptionValidationOptions {
-  /**
-   * Skip the heuristic that flags descriptions which "appear to just name the
-   * input ref" (e.g. a lesson `lesson:deploy-tips` with description "deploy
-   * tips"). Useful for asset types like `knowledge` where a description that
-   * mentions the topic name is perfectly normal — only the placeholder and
-   * shape checks should apply.
-   */
+  /** Allow a description that just names the ref (normal for knowledge). */
   skipRefTailCheck?: boolean;
 }
 
@@ -198,9 +140,8 @@ export function detectDoubleFrontmatter(content: string): { kind: string; messag
       kind: "double-frontmatter-fence",
       message: `Content contains ${fenceLines.length} \`---\` fence lines; assets with frontmatter must have exactly 2 (one open, one close).`,
     };
-  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-  const pseudoLine = body
-    .split(/\r?\n/)
+  const pseudoLine = splitFrontmatter(content)
+    .body.split(/\r?\n/)
     .find((l) => /^\s*(\*\*|__)?\s*(description|when_to_use)\s*(\*\*|__)?\s*:/i.test(l));
   if (pseudoLine)
     return {
@@ -228,88 +169,34 @@ export function hasHotCaptureMode(frontmatter: Record<string, unknown> | undefin
   return frontmatter?.captureMode === "hot";
 }
 
-// ── Consolidate merge size gate ──────────────────────────────────────────────
-
-// ── Reflect size gate ────────────────────────────────────────────────────────
-
-/** Ratio lower-bound: proposed body must be at least this fraction of source. */
 export const REFLECT_SHRINK_RATIO_MIN = 0.5;
-/** Ratio upper-bound: proposed body must not exceed this fraction of source. */
 export const REFLECT_EXPAND_RATIO_MAX = 2.5;
-
-/**
- * Below this byte count, ratio checks are too noisy — skip them entirely.
- * Unchanged from the original gate.
- */
 export const REFLECT_SIZE_GUARD_MIN_BYTES = 200;
-
-/**
- * Absolute shrinkage floor (bytes).  Even if `ratio * sourceLen` is lower, a
- * proposed body of at least this many bytes is always accepted on the shrinkage
- * side.  Protects against false positives when the source is small (<300 bytes).
- */
 export const REFLECT_ABSOLUTE_FLOOR_BYTES = 150;
-
-/**
- * Absolute expansion ceiling (bytes).  Even if `ratio * sourceLen` is lower, a
- * proposed body up to this many bytes is always accepted on the expansion side.
- * Protects against false positives when the source is small (≤778 bytes, p25).
- */
 export const REFLECT_ABSOLUTE_CEILING_BYTES = 2500;
-
-/**
- * Hard expansion cap (bytes).  Regardless of ratio, a proposed body exceeding
- * this limit is always rejected.  Guards against runaway LLM hallucinations on
- * large sources.
- */
 export const REFLECT_ABSOLUTE_MAX_BYTES = 25000;
 
-/** Outcome of {@link checkReflectSize}: ok, or a rejection envelope. */
 export type ReflectSizeOutcome =
   | { ok: true }
   | { ok: false; code: "EXCESSIVE_SHRINKAGE" | "EXCESSIVE_EXPANSION"; ratio: number };
 
-/**
- * Calibrated size check: compare proposed body length against source body
- * length using a blended-bound formula.
- *
- * **Shrinkage** — accept if:
- *   `proposedLen >= max(REFLECT_SHRINK_RATIO_MIN * sourceLen, REFLECT_ABSOLUTE_FLOOR_BYTES)`
- *
- * **Expansion** — accept if:
- *   `proposedLen <= min(max(REFLECT_EXPAND_RATIO_MAX * sourceLen, REFLECT_ABSOLUTE_CEILING_BYTES), REFLECT_ABSOLUTE_MAX_BYTES)`
- *
- * Returns `{ ok: true }` when:
- *   - `sourceBody` is absent or `undefined`
- *   - source body is shorter than {@link REFLECT_SIZE_GUARD_MIN_BYTES}
- *   - the proposed length is within the blended bounds
- */
+/** The reflect size gate (see the module note); no source or a tiny one passes. */
 export function checkReflectSize(sourceBody: string | undefined, proposedBody: string): ReflectSizeOutcome {
   if (typeof sourceBody !== "string") return { ok: true };
   const sourceLen = sourceBody.trim().length;
   if (sourceLen < REFLECT_SIZE_GUARD_MIN_BYTES) return { ok: true };
   const proposedLen = proposedBody.trim().length;
   const ratio = proposedLen / sourceLen;
-
-  // Shrinkage check: lower bound = max(ratio floor, absolute floor)
-  const shrinkFloor = Math.max(REFLECT_SHRINK_RATIO_MIN * sourceLen, REFLECT_ABSOLUTE_FLOOR_BYTES);
-  if (proposedLen < shrinkFloor) {
+  if (proposedLen < Math.max(REFLECT_SHRINK_RATIO_MIN * sourceLen, REFLECT_ABSOLUTE_FLOOR_BYTES)) {
     return { ok: false, code: "EXCESSIVE_SHRINKAGE", ratio };
   }
-
-  // Expansion check: upper bound = min(max(ratio ceiling, absolute ceiling), hard cap)
   const expandCeiling = Math.min(
     Math.max(REFLECT_EXPAND_RATIO_MAX * sourceLen, REFLECT_ABSOLUTE_CEILING_BYTES),
     REFLECT_ABSOLUTE_MAX_BYTES,
   );
-  if (proposedLen > expandCeiling) {
-    return { ok: false, code: "EXCESSIVE_EXPANSION", ratio };
-  }
-
+  if (proposedLen > expandCeiling) return { ok: false, code: "EXCESSIVE_EXPANSION", ratio };
   return { ok: true };
 }
-
-// ── ProposalValidator entries (registered with proposal-validators.ts) ──────
 
 const descriptionQualityValidator: ProposalValidator = {
   name: "description-quality",
@@ -335,6 +222,52 @@ const descriptionQualityValidator: ProposalValidator = {
   },
 };
 
+/**
+ * The lesson checks distill and accept share: a valid description and
+ * when_to_use that differ, and no pseudo-frontmatter in the body. `text`
+ * continues a caller-specific subject.
+ */
+export function lessonQualityIssues(
+  fm: Record<string, unknown>,
+  content: string,
+  inputRef: string,
+): Array<{ kind: string; field: string; text: string; severity?: "warn" }> {
+  const issues: Array<{ kind: string; field: string; text: string; severity?: "warn" }> = [];
+  const descCheck = isValidDescription(fm.description, inputRef);
+  if (!descCheck.ok) {
+    issues.push({
+      kind: "invalid-description",
+      field: "description",
+      text: ` has an invalid description: ${descCheck.reason}.`,
+      ...(descCheck.severity ? { severity: descCheck.severity } : {}),
+    });
+  }
+  const wtuCheck = isValidWhenToUse(fm.when_to_use, inputRef);
+  if (!wtuCheck.ok) {
+    issues.push({
+      kind: "invalid-when_to_use",
+      field: "when_to_use",
+      text: ` has an invalid when_to_use: ${wtuCheck.reason}.`,
+    });
+  }
+  if (
+    descCheck.ok &&
+    wtuCheck.ok &&
+    typeof fm.description === "string" &&
+    typeof fm.when_to_use === "string" &&
+    fm.description.trim().toLowerCase() === fm.when_to_use.trim().toLowerCase()
+  ) {
+    issues.push({
+      kind: "description-equals-when_to_use",
+      field: "description",
+      text: " has identical description and when_to_use.",
+    });
+  }
+  const dfm = detectDoubleFrontmatter(content);
+  if (dfm) issues.push({ kind: dfm.kind, field: "body", text: `: ${dfm.message}` });
+  return issues;
+}
+
 const lessonContentQualityValidator: ProposalValidator = {
   name: "lesson-content-quality",
   appliesTo(_proposal, ctx) {
@@ -348,36 +281,11 @@ const lessonContentQualityValidator: ProposalValidator = {
     } catch {
       return [];
     }
-    const findings = [] as { kind: string; message: string; severity?: "warn" }[];
-    const descCheck = isValidDescription(fm.description, proposal.ref);
-    if (!descCheck.ok)
-      findings.push({
-        kind: "invalid-description",
-        message: `Lesson proposal ${proposal.id} (${proposal.ref}) has an invalid description: ${descCheck.reason}.`,
-        ...(descCheck.severity ? { severity: descCheck.severity } : {}),
-      });
-    const wtuCheck = isValidWhenToUse(fm.when_to_use, proposal.ref);
-    if (!wtuCheck.ok)
-      findings.push({
-        kind: "invalid-when_to_use",
-        message: `Lesson proposal ${proposal.id} (${proposal.ref}) has an invalid when_to_use: ${wtuCheck.reason}.`,
-      });
-    if (
-      descCheck.ok &&
-      wtuCheck.ok &&
-      typeof fm.description === "string" &&
-      typeof fm.when_to_use === "string" &&
-      fm.description.trim().toLowerCase() === fm.when_to_use.trim().toLowerCase()
-    ) {
-      findings.push({
-        kind: "description-equals-when_to_use",
-        message: `Lesson proposal ${proposal.id} (${proposal.ref}) has identical description and when_to_use.`,
-      });
-    }
-    const dfm = detectDoubleFrontmatter(proposalContent(proposal));
-    if (dfm)
-      findings.push({ kind: dfm.kind, message: `Lesson proposal ${proposal.id} (${proposal.ref}): ${dfm.message}` });
-    return findings;
+    return lessonQualityIssues(fm, proposalContent(proposal), proposal.ref).map((issue) => ({
+      kind: issue.kind,
+      message: `Lesson proposal ${proposal.id} (${proposal.ref})${issue.text}`,
+      ...(issue.severity ? { severity: issue.severity } : {}),
+    }));
   },
 };
 
@@ -399,20 +307,15 @@ const sourceNotSupersededValidator: ProposalValidator = {
   },
 };
 
-/** Strip an opening frontmatter block (`---\n…\n---`) from `content`, returning the body. */
-function stripFrontmatterBody(content: string): string {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-}
-
 const reflectSizeGuardValidator: ProposalValidator = {
   name: "reflect-size-guard",
   appliesTo(proposal, ctx) {
     return proposal.source === "reflect" && typeof ctx.source?.content === "string";
   },
   validate(proposal, ctx) {
-    const sourceBody = stripFrontmatterBody(ctx.source?.content ?? "");
+    const sourceBody = splitFrontmatter(ctx.source?.content ?? "").body;
     const proposedBody =
-      typeof proposal.payload?.content === "string" ? stripFrontmatterBody(proposalContent(proposal)) : "";
+      typeof proposal.payload?.content === "string" ? splitFrontmatter(proposalContent(proposal)).body : "";
     const outcome = checkReflectSize(sourceBody, proposedBody);
     if (outcome.ok) return [];
     const pct = (outcome.ratio * 100).toFixed(0);
@@ -431,16 +334,10 @@ const reflectSizeGuardValidator: ProposalValidator = {
 };
 
 /**
- * Accept-time data-loss guard (#952 Addendum). `sanitizeReflectPayload`
- * already defers a proposal whose body echoes {@link REFLECT_TRUNCATION_MARKER}
- * (the notice appended when the source asset was too large to send in full)
- * with `reflect-truncation-leak` — but that is a creation-time check, and a
- * proposal can reach `proposal accept` / drain promotion without ever going
- * through it (e.g. a defer that a human then accepts anyway, or a future
- * reflect code path that mints proposals directly). A leaked marker replacing
- * real asset content on disk is data loss, not a quality nit, so unlike the
- * rest of this file's validators this one is NOT wrapped by {@link advisory}
- * — it blocks acceptance the same way the generic/canonical validators do.
+ * A body still carrying {@link REFLECT_TRUNCATION_MARKER} (its source was too
+ * large to send in full) would overwrite the asset with an incomplete rewrite:
+ * data loss, so this blocks at accept even for a proposal that never passed
+ * reflect's own creation-time check (#952).
  */
 const reflectTruncationMarkerValidator: ProposalValidator = {
   name: "reflect-truncation-marker",
@@ -493,19 +390,9 @@ const reflectPromptScaffoldingValidator: ProposalValidator = {
 };
 
 /**
- * Report a validator's findings as advisory.
- *
- * These validators judge prose quality — a description that reads like a
- * heading, an odd backtick count, a body that grew more than the reflect
- * ratio allows. They used to BLOCK `proposal accept`, which a human types
- * after reading the diff, and the error told that human to "fix the proposal
- * payload and try again" — but there is no `akm proposal edit` and `accept`
- * takes no `--force`, so the only way out was hand-editing the proposals
- * database. A blocking check whose remedy does not exist is not a check.
- *
- * Structural findings stay blocking: an empty body, an unparseable ref,
- * malformed frontmatter and a broken workflow shape genuinely cannot be
- * written, and they live in {@link defaultProposalValidators}.
+ * Prose-quality findings only advise: a human accepting after reading the diff
+ * has no way to edit the proposal, so blocking on them left no remedy.
+ * Structural findings (in the default validators) still block.
  */
 function advisory(validator: ProposalValidator): ProposalValidator {
   return {
@@ -515,14 +402,7 @@ function advisory(validator: ProposalValidator): ProposalValidator {
   };
 }
 
-/**
- * Full set of quality validators in registration order. Appended onto
- * {@link defaultProposalValidators} so they run inside `validateProposal` on
- * `proposal accept` automatically. All prose-quality checks report without
- * blocking (see {@link advisory}). The truncation-marker, redacted-content,
- * and reflected-prompt-scaffolding validators block because they protect
- * durable content rather than judging prose quality.
- */
+/** The quality validators `validateProposal` runs; the last three protect durable content and block. */
 export const defaultProposalQualityValidators: ProposalValidator[] = [
   ...[
     descriptionQualityValidator,

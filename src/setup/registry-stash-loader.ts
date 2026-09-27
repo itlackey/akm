@@ -14,13 +14,8 @@
  * merely by reusing a trusted display ID.
  */
 
-import { jsonWithByteCap } from "../core/common";
 import { hasRegistryUrlCredentials } from "../core/registry-url";
-import {
-  allowPrivateRegistryFixtureForTests,
-  cancelRegistryResponse,
-  fetchRegistryResponse,
-} from "../registry/network";
+import { fetchRegistryJson } from "../registry/network";
 import { parseRegistryRef } from "../registry/resolve";
 
 // ── Default selections ──────────────────────────────────────────────────────
@@ -107,25 +102,12 @@ export async function loadSetupStashes(registryUrl: string, timeoutMs = 4000): P
 
 async function loadSetupStashesReal(registryUrl: string, timeoutMs = 4000): Promise<SetupBundleEntry[]> {
   try {
-    const response = await fetchRegistryResponse(
-      registryUrl,
-      { headers: { Accept: "application/json" } },
-      {
-        policy: { kind: "public-registry" },
-        timeoutMs,
-        retries: 0,
-        allowPrivateHostsForTesting: allowPrivateRegistryFixtureForTests(registryUrl),
-      },
-    );
-    if (!response.ok) {
-      await cancelRegistryResponse(response);
-      return FALLBACK_STASHES;
-    }
-
-    const raw = await jsonWithByteCap<{ stashes?: unknown[] }>(response, 10 * 1024 * 1024, {
-      bodyTimeoutMs: timeoutMs,
+    const raw = await fetchRegistryJson<{ stashes?: unknown[] }>(registryUrl, {
+      headers: { Accept: "application/json" },
+      timeoutMs,
+      retries: 0,
     });
-    if (!Array.isArray(raw.stashes) || raw.stashes.length === 0) return FALLBACK_STASHES;
+    if (!Array.isArray(raw?.stashes) || raw.stashes.length === 0) return FALLBACK_STASHES;
 
     const entries: SetupBundleEntry[] = raw.stashes.flatMap((item): SetupBundleEntry[] => {
       if (!item || typeof item !== "object") return [];

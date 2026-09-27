@@ -674,15 +674,15 @@ test -s "$AKM_SANDBOX/index-verbose.stderr"
 
 ```sh
 akm search k8s-deploy \
-  --detail full --no-track-usage --no-project-context --format json |
+  --detail full --no-track-usage --format json |
   jq -e '
     .hits[0].ref == "skills/k8s-deploy" and
     .hits[0].type == "skill" and
     .hits[0].score >= 0 and .hits[0].score <= 1
   '
 
-json_count="$(akm search docker --no-track-usage --no-project-context | jq '.hits | length')"
-jsonl_count="$(akm search docker --no-track-usage --no-project-context --format jsonl | jq -s 'length')"
+json_count="$(akm search docker --no-track-usage | jq '.hits | length')"
+jsonl_count="$(akm search docker --no-track-usage --format jsonl | jq -s 'length')"
 test "$json_count" -gt 0
 test "$json_count" -eq "$jsonl_count"
 ```
@@ -704,9 +704,8 @@ test "$json_count" -eq "$jsonl_count"
 - [ ] **[LOCAL]** Belief current/historical/all partitions state correctly.
 - [ ] **[LOCAL]** Proposed quality and sessions are excluded by default and
       included only through explicit flags.
-- [ ] **[LOCAL]** `--no-track-usage` leaves event/ranking state unchanged;
+- [ ] **[LOCAL]** `--no-track-usage` leaves usage-event state unchanged;
       default successful read advances it.
-- [ ] **[LOCAL]** `--no-project-context` removes cwd/repository boost.
 - [ ] **[LOCAL]** Zero/negative/fractional/prefix numeric limits (`2x`), overflow,
       and conflicting repeats are rejected. `parseInt` prefix acceptance fails.
 
@@ -2025,20 +2024,20 @@ akm proposal reject --generator distill \
 - [ ] **LOCAL** Max-diff-lines and older-than strictly validate integers/ranges and select exact rows.
 - [ ] **LOCAL** Dry-run does not create backups, commits, or asset/index mutations.
 
-### 16.4 Drain policy and observability
+### 16.4 Drain and observability
 
 ```sh
 before_event_id="$(akm log --format json | jq -r '.events[-1].id // 0')"
-akm proposal drain --policy manual --dry-run --format json \
+akm proposal drain --dry-run --format json \
   > "$AKM_SANDBOX/drain-dry-run.json"
 after_event_id="$(akm log --format json | jq -r '.events[-1].id // 0')"
 ```
 
-- [ ] **LOCAL** Manual policy deterministically rejects empty diff and defers nonempty proposals; it never accepts by itself.
+- [ ] **LOCAL** Without a judgment tier, drain accepts only proposals a quality judge passed (a `staged` gate decision whose content hash still matches), rejects empty diffs, and defers everything else; it never accepts an unjudged proposal by itself.
 - [ ] **LOCAL** Dry-run leaves assets/statuses unchanged but appends the documented `triage_drained` observability event. It is not globally side-effect-free.
-- [ ] **LOCAL** Max accepts, max diff lines, older-than, queue mode versus `--promote`, and hard cap buckets are exact.
-- [ ] **AI** Judgment-enabled policy uses selected frozen engine and fails closed on malformed/failed judgment.
-- [ ] **LOCAL** Invalid policy/path and noninteractive promotion without `--yes` fail before writes.
+- [ ] **LOCAL** Max accepts, older-than, queue mode versus `--promote`, and hard cap buckets are exact.
+- [ ] **AI** Judgment-enabled drain uses selected frozen engine and fails closed on malformed/failed judgment.
+- [ ] **LOCAL** Noninteractive promotion without `--yes` fails before writes.
 
 ### 16.5 Proposal generation and crash recovery
 
@@ -2237,8 +2236,7 @@ restore_semantic_dirs() {
 | --- | --- | --- |
 | `disabled` | Mode is `off` | FTS only, no embedding request |
 | `pending` | Enabled but not verified/current fingerprint changed | FTS fallback with advisory |
-| `ready-js` | Complete vectors, JavaScript cosine path | Hybrid/vector search |
-| `ready-vec` | Complete vectors, sqlite-vec fast path ready | Hybrid/vector search |
+| `ready-js` | Complete vectors (scanned by cosine similarity in JavaScript) | Hybrid/vector search |
 | `blocked` | Recent embedding failure | FTS fallback until retry/expiry |
 
 - [ ] **[CORE]** With mode off, full index reports disabled, stores zero
@@ -2264,13 +2262,12 @@ akm index --full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-index.json"
 jq -e '
   .verification.ok == true and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec") and
+  .verification.semanticStatus == "ready-js" and
   .verification.embeddingCount == .verification.entryCount
 ' "$AKM_SANDBOX/semantic-deterministic-index.json"
 
 akm search "deploy docker compose in a homelab" \
-  --detail full --no-project-context --format json \
+  --detail full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-search.json"
 akm log --type search --limit 1 --detail full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-log.json"
@@ -2307,11 +2304,10 @@ jq -e '
   .verification.ok == true and
   .verification.embeddingProvider == "remote" and
   .verification.embeddingCount == .verification.entryCount and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec")
+  .verification.semanticStatus == "ready-js"
 ' "$AKM_SANDBOX/semantic-remote-index.json"
 
-akm search deploy --detail full --no-project-context --format json \
+akm search deploy --detail full --format json \
   >"$AKM_SANDBOX/semantic-remote-search.json"
 jq -s -e '
   [.[] | select(.pathname == "/v1/embeddings")] as $requests |
@@ -2365,7 +2361,7 @@ jq -e '
   .verification.semanticStatus == "blocked"
 ' "$AKM_SANDBOX/semantic-blocked-index.json"
 
-akm search deploy --detail full --no-project-context --format json \
+akm search deploy --detail full --format json \
   >"$AKM_SANDBOX/semantic-blocked-search.json"
 jq -e '(.hits | length) > 0 and (.warnings | length) > 0' \
   "$AKM_SANDBOX/semantic-blocked-search.json"

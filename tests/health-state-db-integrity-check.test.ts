@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R0 (tier0-0917): `akm health` never looked at state.db's own SQLite-level
+ * R0: `akm health` never looked at state.db's own SQLite-level
  * integrity — the pre-existing `state-db-round-trip` check only proves one
  * row can be appended and read back, which stays true on a database that
  * fails `PRAGMA quick_check` elsewhere (out-of-order rowids, bad index entry
@@ -51,7 +51,8 @@ describe("state-db-integrity check (R0)", () => {
     expect(r.status).toBe("fail");
     expect(r.message).toContain("rowid 42 out of order in table events");
     expect(r.message).toContain("wrong # of entries in index idx_events_ts");
-    expect(r.message).toContain('sqlite3 state.db ".dump" | sqlite3 state.new.db');
+    expect(r.message).toContain('sqlite3 state.db ".recover" | sqlite3 state.new.db');
+    expect(r.message).toContain("delete state.db-wal and state.db-shm");
     expect(r.evidence?.lines).toEqual([
       "rowid 42 out of order in table events",
       "wrong # of entries in index idx_events_ts",

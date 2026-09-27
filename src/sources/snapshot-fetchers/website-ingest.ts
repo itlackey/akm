@@ -174,13 +174,11 @@ export async function ensureWebsiteMirror(
     wallClockCapMs?: number;
     /** See {@link FetchSnapshotOptions.resolveSecret}. */
     resolveSecret?: SecretResolveFn;
-    /** Internal update staging root. Omitted by ordinary provider hydration. */
-    cacheRootDir?: string;
   },
 ): Promise<ReturnType<typeof getWebsiteCachePaths>> {
   const rawUrl = config.url ?? "";
   const normalizedUrl = validateWebsiteUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
-  const cachePaths = getWebsiteCachePaths(normalizedUrl, options?.cacheRootDir);
+  const cachePaths = getWebsiteCachePaths(normalizedUrl);
   const requireStashDir = options?.requireStashDir === true;
 
   await withFreshnessCache({

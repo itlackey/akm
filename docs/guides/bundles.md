@@ -66,6 +66,20 @@ success. A declarative `--provider git` add does the same, including writable
 checkouts. Other declarative provider entries are materialized by
 `akm bundle update`.
 
+**Bundle naming.** `--name` sets the bundle's key — akm's config, index, and
+every persisted ref hang off it. It is a contract, not a hint: it must be a
+legal bundle slug (no `:` `.` `#` `/` or whitespace), and it must not already
+be taken by a different bundle, or the add fails before writing anything.
+Re-adding a source that is already installed under a different `--name` than
+it already carries also fails, naming the existing key — use
+[`akm bundle rename`](#akm-bundle-rename) instead of trying to relabel it
+through `add`. Every `akm bundle add` result carries `bundleId` (its
+resolved key), so scripting against the JSON output never has to guess it
+back out of `sourceAdded`/`installed`. Without `--name`, akm derives one
+(the directory name, the package/repo name, or the hostname), falling back to
+a `-<hash>` suffix only on a collision — that forgiving fallback applies
+solely to a derived name, never to an explicit `--name`.
+
 Git credentials must be symbolic references: `$VAR`, `${VAR}`, or
 `secret://name`. AKM resolves the reference only at the Git subprocess boundary
 and sends it as an HTTPS bearer header; it does not put the token in the remote
@@ -166,6 +180,37 @@ durable usage links; it cannot detect every theoretical cross-file split.
 ```sh
 akm bundle update --all && akm index
 ```
+
+## akm bundle rename
+
+`akm bundle rename <old> <new>` is the one command allowed to change a
+configured bundle's key. A bundle id is a mass identity prefix: every ref this
+tool minted (`entries.item_ref`, `proposals.ref`, a pending proposal's write
+target, a workflow's `task_history.target_ref`, `scheduler.enabled[].ref`)
+carries it, so hand-editing the `bundles` key in `config.json` strands all of
+it — the rest of akm keeps reading the old prefix out of the index and state
+databases while config names the new one.
+
+```sh
+akm bundle rename old-name new-name --dry-run   # See the plan first
+akm bundle rename old-name new-name
+```
+
+`<new>` must be a legal, unused bundle slug — the same `--name` contract
+`akm bundle add` enforces. Rewritten: the config key,
+`defaultBundle`/`defaultWriteTarget` when they name the old id, every
+scheduler ref, the lockfile entry, every indexed entry's `bundle_id`,
+the metadata-enrichment LLM cache keyed by the same `item_ref`, and this
+tool's own state rows that name the old bundle. Reported, never rewritten:
+refs inside the bundle's own content (cross-references, a task's `uses:`,
+`supersededBy`) — the command lists the files that still spell the old
+`<old>//` prefix so you can fix them by hand. A real run also re-syncs native
+scheduler bindings under the new name on its own, so scheduled tasks pick it
+up immediately — but the result's `taskSync.ok` is `false` when a binding
+fails to re-sync too, not only when the sync call itself fails, so a partial
+re-sync is never reported as clean; `--dry-run` lists the installed native
+rows that still name the old bundle, so you can see what that sync will
+replace.
 
 ## akm clone
 

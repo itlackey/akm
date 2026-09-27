@@ -3,83 +3,47 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The ONE recursive child-workflow resolver (spec docs/plans/specs/
- * p3a-plan-v5-child-freeze.md §4). BOTH composition forms lower here:
- *
- *  - a direct step `uses: workflows/<ref>` (`resolve-steps.ts`'s
- *    `resolveStep`, `via: "direct"`);
- *  - a task-wrapped workflow target — a `uses: tasks/<ref>` step whose task's
- *    OWN target is a workflow (`targets/task.ts`'s `taskDispatch`,
- *    `via: "task"`).
- *
- * `childWorkflowDispatch` resolves and qualifies the child ref, enforces the
- * three composition bounds (depth, cycle, aggregate embedded bytes — all
- * FREEZE-time, before publication, `COMPOSITION_INVALID`), recursively
- * freezes the child COMPLETELY through the injected `ResolutionContext.freezeChild`
- * (never a direct import of `compileResolveFreezeWorkflowV4` —
- * `freeze/step-values.ts`'s `ChildCompositionContext` doc explains why: this
- * module is downstream of `ir/freeze-v4.ts`, so importing back from it would
- * close a static cycle), absorbs the child's own fresh source collector into
- * the parent's (A-N7), binds the composing step's effective inputs against
- * the child's declared `params:` (A-N8 — see `AuthoredChildInputs` below for
- * the two ways that mapping arrives), and returns the standard
- * `ResolvedDispatch` envelope carrying a `FrozenChildWorkflowTarget`
- * (`ir/schema-v4.ts`).
+ * The one child-workflow resolver. Both composition forms lower here: a direct
+ * `uses: workflows/<ref>` step (`via: "direct"`) and a `uses: tasks/<ref>`
+ * step whose task targets a workflow (`via: "task"`). It resolves the child,
+ * refuses a composition cycle, freezes the child completely through the
+ * injected `ResolutionContext.freezeChild`, binds the step's inputs against
+ * the child's `params:`, and embeds the frozen child plan in the target.
  */
 
 import { createHash } from "node:crypto";
 import { parseBundleRef } from "../../../core/asset/asset-ref";
 import { UsageError } from "../../../core/errors";
 import { warn } from "../../../core/warn";
-import { GuardedExecutionSourceCollector } from "../../../execution/guarded-source";
 import type { TaskInputBinding } from "../../../execution/input-contract";
 import { workflowParamContract } from "../../ir/params";
 import { canonicalJson, canonicalPlanJson } from "../../ir/plan-hash";
-import type { FrozenChildWorkflowTarget, WorkflowPlanGraphV4 } from "../../ir/schema-v4";
-import type { ProgramUnit } from "../../program/schema";
-import { utf8Bytes } from "../../resource-limits";
+import type { FrozenChildWorkflowTarget, WorkflowPlan } from "../../plan";
 import { loadWorkflowAsset } from "../../runtime/workflow-asset-loader";
-import type { WorkflowSourceStep } from "../../source-ir/schema";
 import { resolveOwnedAsset } from "../environment";
-import { declaredParamNames, earlierStepIds, type ResolutionContext, type ResolvedDispatch } from "../step-values";
+import {
+  type BaseUnit,
+  declaredParamNames,
+  earlierStepIds,
+  type FreezeStep,
+  type ResolutionContext,
+  type ResolvedDispatch,
+} from "../step-values";
 import { freezeTaskInputBindings, rebindTaskInputBindings } from "../task-bindings";
 
 /**
- * The authored mapping bound against the child's declared `params:` (§4.2
- * step 7's routing table, A-N8). Two shapes, matching whether the composing
- * site has a genuinely AUTHORED `with:` record or an already-classified
- * binding set:
- *
- *  - `{kind: "with"}` — the step's own `with:` for a direct composition, or
- *    the v3 task's own `with:` (`PreparedTaskV3Workflow.params`) for a v3
- *    task-wrapped composition. Neither has been normalized against anything
- *    yet, so it goes through the ONE `freezeTaskInputBindings` normalizer
- *    exactly as any other binding surface does.
- *  - `{kind: "bindings"}` — the composing task's EFFECTIVE inputs for a v4
- *    declared-inputs task-wrapped composition: its declared defaults,
- *    overridden by any authored `with:`, already classified once (literal vs
- *    reference) against the task's OWN `inputs:` contract by `taskDispatch`.
- *    Re-bound against the child's contract via `rebindTaskInputBindings`,
- *    which trusts each entry's already-computed `kind` instead of
- *    re-deriving it from the value's shape — round-tripping through the
- *    `with:` grammar here would silently reinterpret a LITERAL value shaped
- *    like `{from: "<ref>"}` (e.g. an object-typed input's declared default)
- *    as a live reference binding (code-review finding, docs/plans/specs/
- *    p3a-plan-v5-child-freeze.md).
+ * What is bound against the child's `params:`: a direct step's authored `with:`
+ * (normalized), or a composing task's already-classified effective inputs
+ * (re-bound, never round-tripped through the `with:` grammar).
  */
 export type AuthoredChildInputs =
   | Readonly<{ kind: "with"; value: Readonly<Record<string, unknown>> | undefined }>
   | Readonly<{ kind: "bindings"; value: readonly TaskInputBinding[] }>;
 
 export interface ChildWorkflowDispatchInput {
-  readonly source: WorkflowSourceStep;
-  readonly baseUnit: ProgramUnit;
-  /**
-   * The RAW child workflow ref as the composing site names it: the direct
-   * step's own `uses:` value, or the composing task's own resolved workflow-
-   * target ref (`PreparedTaskV3Workflow.ref`) for the task-wrapped form.
-   * Re-resolved and canonicalized here regardless of form (§4.2 step 1).
-   */
+  readonly source: FreezeStep;
+  readonly baseUnit: BaseUnit;
+  /** The child ref as the composing site names it; resolved and canonicalized here. */
   readonly childRefInput: string;
   readonly context: ResolutionContext;
   readonly via: "direct" | "task";
@@ -89,7 +53,7 @@ export interface ChildWorkflowDispatchInput {
   readonly authoredInputs: AuthoredChildInputs;
 }
 
-/** §3.5's exact `contentHash` formula — mirrors `ir/schema-v4.ts`'s private decode-side `childWorkflowContentHash` byte-for-byte (the decoder re-verifies what this produces); duplicated rather than imported so this freeze-side module needs no edit to Lane A's already-landed decoder file. */
+/** The child target's own content identity: its ref, embedded plan hash, route, and bindings. */
 function childWorkflowContentHash(fields: {
   readonly ref: string;
   readonly planHash: string;
@@ -111,20 +75,8 @@ function childWorkflowContentHash(fields: {
     .digest("hex");
 }
 
-/**
- * Code-review finding (see this file's `environment: []` return field): a
- * step composing a child workflow has no path to honor its own authored
- * `env:` — the child run carries its own frozen environment inside its own
- * plan, so `freezeEnvironment` (the ONE mechanism a step's `env:` reaches a
- * frozen unit through, `../environment.ts`) is never called for this
- * target. Leaving that silent would repeat exactly the defect A-N5 already
- * closed for `with:` on a non-binding surface — an authored construct that
- * cannot be honored on this composing target now rejects instead of
- * vanishing. Checks BOTH shapes a step's `env:` can take (`../environment.ts`'s
- * `freezeEnvironment`): literal `env:` values and `unit: {env: [...]}` refs.
- * An absent/empty `env:` is not authored and stays valid.
- */
-function warnIfStepEnvironment(stepId: string, childRef: string, source: WorkflowSourceStep): void {
+/** A composing step's own `env:` (literal or `unit.env`) cannot reach the child run, so say so. */
+function warnIfStepEnvironment(stepId: string, childRef: string, source: FreezeStep): void {
   const hasLiteralEnv = Object.keys(source.env ?? {}).length > 0;
   const hasEnvRefs = (source.unit?.env ?? []).length > 0;
   if (!hasLiteralEnv && !hasEnvRefs) return;
@@ -135,7 +87,7 @@ function warnIfStepEnvironment(stepId: string, childRef: string, source: Workflo
   );
 }
 
-/** A workflow entry of a composition `refPath` — the only entries a cycle can close through (§4.5: a task target can never itself be a task, so no task->task chain exists to close one). */
+/** A workflow entry of a composition `refPath` — the only entries a cycle can close through. */
 function isWorkflowRef(ref: string): boolean {
   try {
     return parseBundleRef(ref).conceptId.startsWith("workflows/");
@@ -159,27 +111,11 @@ function assertNoCompositionCycle(stepId: string, childRef: string, refPath: rea
   );
 }
 
-/**
- * Add the child's embedded plan bytes to the shared, tree-wide budget
- * (A-N6) and fail before publication if the AGGREGATE crosses the cap.
- * Mutates `budget` only on success — a rejected step leaves the running
- * total exactly as it was, matching every other freeze-time failure's
- * no-partial-effect shape.
- */
-function chargeEmbeddedBudget(
-  _stepId: string,
-  _childRef: string,
-  childPlanBytes: number,
-  budget: { embeddedBytes: number },
-): void {
-  budget.embeddedBytes += childPlanBytes;
-}
-
 export async function childWorkflowDispatch(input: ChildWorkflowDispatchInput): Promise<ResolvedDispatch> {
   const { source, baseUnit, childRefInput, context, via, taskRef, authoredInputs } = input;
 
-  // §4.2 step 1: resolve + qualify. Resolution failures propagate unchanged,
-  // in code and shape (row B-11) — the same authority every other
+  // resolve + qualify. Resolution failures propagate unchanged,
+  // in code and shape — the same authority every other
   // composition target (command/script/task) already resolves through.
   const owned = await resolveOwnedAsset(childRefInput, "workflow", context);
   const childAsset = await loadWorkflowAsset(owned.ref);
@@ -190,50 +126,19 @@ export async function childWorkflowDispatch(input: ChildWorkflowDispatchInput): 
   // warnIfStepEnvironment's doc comment).
   warnIfStepEnvironment(source.id, childRef, source);
 
-  // §4.2 step 2: the composition cycle check, before any child compilation.
-  assertNoCompositionCycle(source.id, childRef, context.composition.refPath);
-  const childDepth = context.composition.depth + 1;
+  // the composition cycle check, before any child compilation.
+  assertNoCompositionCycle(source.id, childRef, context.refPath);
 
-  // §4.2 step 4: freeze the child COMPLETELY (compile -> validate -> freeze),
-  // with its OWN fresh collector (A-N7) so its plan is a pure function of its
-  // own source, and the SAME mutable budget object so the aggregate bound
-  // sees every descendant across the whole tree.
+  // Freeze the child completely; its plan is a pure function of its own source.
   const childRefPath =
-    via === "task" && taskRef !== undefined
-      ? [...context.composition.refPath, taskRef, childRef]
-      : [...context.composition.refPath, childRef];
-  const child = await context.freezeChild({
-    asset: childAsset,
-    sourceCollector: new GuardedExecutionSourceCollector(),
-    composition: { depth: childDepth, refPath: childRefPath, budget: context.composition.budget },
-  });
+    via === "task" && taskRef !== undefined ? [...context.refPath, taskRef, childRef] : [...context.refPath, childRef];
+  const child = await context.freezeChild(childAsset, childRefPath);
 
-  // The embedded `frozenPlan` must be a PLAIN, symbol-free JSON structure —
-  // exactly the shape `decodeWorkflowPlanV4` will (recursively) re-verify it
-  // as, both right now (the PARENT's own top-level `decodeWorkflowPlanV4`
-  // call in `ir/freeze-v4.ts` walks straight into this target) and later,
-  // read back from a stored run's `plan_json`. `child.plan` — the in-memory
-  // result of the child's OWN already-decoded freeze — carries internal
-  // resolved-request construction brands (`execution/resolved-request.ts`)
-  // that `decodeResolvedExecutionRequest` deliberately rejects on ANY
-  // "fresh rehydrate" input; round-tripping through canonical JSON strips
-  // them, the same way persisting and re-reading `plan_json` naturally would.
+  // Embed the child plan as plain canonical JSON, exactly as `plan_json` stores it.
   const embeddedPlanJson = canonicalPlanJson(child.plan);
-  const frozenPlan = JSON.parse(embeddedPlanJson) as WorkflowPlanGraphV4;
+  const frozenPlan = JSON.parse(embeddedPlanJson) as WorkflowPlan;
 
-  // §4.2 step 5.
-  chargeEmbeddedBudget(source.id, childRef, utf8Bytes(embeddedPlanJson), context.composition.budget);
-
-  // §4.2 step 6 (A-N7): absorb the child's captured sources so the parent's
-  // final pre-publication CAS (`revalidate()`) covers every child file too.
-  context.collector.absorb(child.sourceCollector);
-
-  // §4.2 step 7 (A-N8): bind the composing step's effective inputs against
-  // the child's declared params:. A genuinely authored `with:` goes through
-  // the SAME normalizer every other binding surface uses; an
-  // already-classified binding set (a v4 task's effective inputs) is
-  // RE-bound instead, never round-tripped back through the `with:` grammar
-  // (code-review finding — see AuthoredChildInputs above).
+  // Bind the step's effective inputs against the child's declared params.
   const inputBindings =
     authoredInputs.kind === "bindings"
       ? rebindTaskInputBindings({
@@ -247,11 +152,11 @@ export async function childWorkflowDispatch(input: ChildWorkflowDispatchInput): 
           targetRef: childRef,
           with: authoredInputs.value,
           contract: workflowParamContract(frozenPlan),
-          earlierStepIds: earlierStepIds(context.sourceIr, source.id),
-          declaredParamNames: declaredParamNames(context.sourceIr),
+          earlierStepIds: earlierStepIds(context.plan, source.id),
+          declaredParamNames: declaredParamNames(context.plan),
         });
 
-  // §4.2 step 8: build the frozen target.
+  // build the frozen target.
   const planHash = createHash("sha256").update(embeddedPlanJson).digest("hex");
   const contentHash = childWorkflowContentHash({ ref: childRef, planHash, via, taskRef, inputBindings });
   const target: FrozenChildWorkflowTarget = Object.freeze({
@@ -269,7 +174,7 @@ export async function childWorkflowDispatch(input: ChildWorkflowDispatchInput): 
     target,
     // A child run carries its own frozen environment inside its own plan.
     // A composing step's own env: cannot reach it, so assertNoStepEnvironment
-    // above rejects one instead of it silently vanishing here (§4.2 step 8).
+    // above rejects one instead of it silently vanishing here.
     environment: [],
     unit: baseUnit,
     instructions:

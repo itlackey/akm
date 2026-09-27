@@ -40,7 +40,7 @@ active run rejects parameter flags.
 `--max-retries <n>` retries a failed step on the same run up to `n` additional
 times (0 through 100). `--timeout <duration>` bounds the whole invocation and
 accepts `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. A timeout or
-signal abort releases the run lease without advancing the active step, so the
+signal abort releases the run's lock without advancing the active step, so the
 run remains resumable. Failed, gate-rejected, timed-out, and interrupted runs
 exit nonzero.
 
@@ -183,14 +183,15 @@ akm workflow resume <run-id>
 
 Flips a `blocked` or `failed` run back to `active`. Completed runs cannot be
 resumed. Use `akm workflow list` to find runs by status. Once resumed,
-`akm workflow run <run-id>` continues it — already-journaled units are reused
-rather than replayed (see
-[Architecture: Resume is journaled replay](../architecture/workflow-engine.md#resume-is-journaled-replay)).
+`akm workflow run <run-id>` continues it — units already journaled as
+completed are skipped, not re-run (see
+[Architecture: Resume skips completed units](../architecture/workflow-engine.md#resume-skips-completed-units)).
 
-Only plan `irVersion: 5` resumes. Pre-`irVersion`-5 stored plans are rejected;
-start a new run from current source. A resume consumes the journaled plan and
-attempts; it does not re-read the authored workflow, configuration, or current
-index.
+A resume consumes the frozen plan and journaled attempts; it does not re-read
+configuration or the index, and reads the authored workflow only to warn once
+when it changed since the run was frozen (the run continues on the frozen
+plan; `akm workflow run <ref> --new` picks up the edit). A stored plan this akm
+cannot decode is abandoned with a message naming how to start a new run.
 
 ## Abandon a run
 
@@ -248,9 +249,8 @@ treat package dependencies**:
 - **Audit before run** for any workflow that touches secrets, deploys to
   production, or writes outside the project tree. Read the `env:` bindings a
   workflow declares, and read its `exec.pass_env` lines.
-  The durable v4 family (`irVersion: 5`) rejects `inherit_env`, and
-  pre-`irVersion`-5 stored plans do not execute. Authors must use exact named
-  bindings and `pass_env` names.
+  The durable v4 family (`irVersion: 5`) rejects `inherit_env`. Authors must
+  use exact named bindings and `pass_env` names.
 - **Pin known-good versions** when adding workflow sources from a registry
   or git remote (`akm bundle add github:owner/repo#v1.2.3`), and update
   deliberately rather than via `akm bundle update --all`. A trusted workflow

@@ -14,14 +14,12 @@
  *
  * This module must stay IMPORT-CYCLE-FREE with `./runs.ts` (which imports
  * it): `WORKFLOW_EVIDENCE_TRUNCATED_MARKER`'s value is therefore reproduced
- * locally rather than imported — the same "reproduce across a boundary
- * rather than import" idiom `ir/schema-v4.ts` already uses for
- * `CHILD_WORKFLOW_DECODE_MAX_DEPTH`.
+ * locally rather than imported.
  */
 
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import type { WorkflowRunRow, WorkflowRunStepRow } from "../../storage/repositories/workflow-runs-repository";
-import type { WorkflowPlanGraphV4 } from "../ir/schema-v4";
+import type { WorkflowPlan } from "../plan";
 import { type ExpressionScope, parseReference, resolveReferenceString } from "../program/expressions";
 
 export interface ResolveRunOutputsResult {
@@ -36,13 +34,12 @@ function projectStepOutput(evidence: Record<string, unknown>): unknown {
 
 /**
  * Resolve a plan's declared `outputs:` from a run's PERSISTED step rows, in
- * declaration order (the frozen plan's `outputs` keys are already
- * sorted-unique, `ir/schema-v4.ts`'s `decodeWorkflowOutputs`). Every failure
+ * declaration order (compile sorts `outputs` keys by name). Every failure
  * mode is collected (not stopped-at-first) so a completion failure names
  * every offending output at once.
  */
 export function resolveWorkflowRunOutputs(
-  plan: WorkflowPlanGraphV4,
+  plan: WorkflowPlan,
   steps: readonly WorkflowRunStepRow[],
 ): ResolveRunOutputsResult {
   const stepOutputs: Record<string, unknown> = {};
@@ -87,7 +84,7 @@ export function resolveWorkflowRunOutputs(
 /**
  * What a completed run EXPORTS: the resolved declared outputs, or
  * `{runId, status}` metadata when the plan declared none. The `{runId,
- * status}` form is synthesized on read and never stored (row B-25).
+ * status}` form is synthesized on read and never stored.
  */
 export function workflowRunExportedResult(row: WorkflowRunRow): Record<string, unknown> {
   if (row.outputs_json) {

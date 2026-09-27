@@ -94,13 +94,18 @@ function insertLiveEntry(indexDb: Database, itemRef: string): void {
   const storedRef = itemRef.includes("//") ? itemRef : `${FIXTURE_BUNDLE}//${itemRef}`;
   const [bundleId, conceptId] = storedRef.split("//", 2) as [string, string];
   const name = conceptId.split("/").at(-1) ?? conceptId;
-  upsertEntry(indexDb, `/fixture/dir/${name}.md`, { name, type: "memory" }, storedRef, {
-    itemRef: storedRef,
-    bundleId,
-    componentId: bundleId,
-    conceptId,
-    adapterId: "akm",
-  });
+  upsertEntry(
+    indexDb,
+    `/fixture/dir/${name}.md`,
+    { name, type: "memory" },
+    {
+      itemRef: storedRef,
+      bundleId,
+      componentId: bundleId,
+      conceptId,
+      adapterId: "akm",
+    },
+  );
 }
 
 function openIndex(): Database {
@@ -148,7 +153,7 @@ describe("runOrphanStateGcPass", () => {
     }
   });
 
-  // r3-1: getLiveRefSnapshot's `SELECT item_ref FROM entries` used to run
+  // getLiveRefSnapshot's `SELECT item_ref FROM entries` used to run
   // OUTSIDE this pass's try/catch, so a schema mismatch (e.g. a DB version
   // upgrade that dropped `entries` — the case improve.ts's #339 comment
   // names) escaped as a throw instead of degrading to the same
@@ -367,7 +372,7 @@ describe("runOrphanStateGcPass", () => {
     expect(out.collected).toBe(0);
   });
 
-  // R78 (tier1-0917): the pass used to call `getEntryByRef` (two indexDb statements, with
+  // R78: the pass used to call `getEntryByRef` (two indexDb statements, with
   // the bare-ref fallback) once per pending row — O(N) round trips against
   // index.db for N pending rows. It now builds one live-ref snapshot up front
   // and matches every row against it in memory.

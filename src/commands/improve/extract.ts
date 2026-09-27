@@ -3,32 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm extract` — session-insight extractor.
+ * `akm extract` — read native session logs (claude, opencode) through the
+ * session-log harnesses, pre-filter the noise, and ask the model for
+ * memory/lesson/knowledge candidates the agent did not already save. Each
+ * candidate is queued as a proposal (`source: "extract"`), never written.
  *
- * Replaces the akm-plugin session-checkpoint hook with an on-demand extractor
- * that reads native session files (claude JSONL, opencode storage tree)
- * through the {@link SessionLogHarness} registry, pre-filters noise, and asks
- * a bounded in-tree LLM to produce candidate memory/lesson/knowledge proposals
- * for content the agent did NOT preserve via inline `akm remember`/`akm feedback`.
- *
- * Architectural notes:
- *   - Stateless. All file/LLM access goes through injectable seams so tests
- *     never touch a real platform.
- *   - Bounded LLM call routed through `callStructured`. Improve-stage
- *     enablement comes from the active strategy; explicit `akm extract` always
- *     runs regardless of that stage toggle.
- *   - Proposals routed via `createProposal({ source: "extract", ... })` — the
- *     same review queue as reflect / distill / consolidate. Never direct-write.
- *   - Per-candidate body assembly merges description (+ when_to_use for lessons)
- *     into the body's YAML frontmatter so the accept-time
- *     descriptionQualityValidator passes — same pattern as the
- *     consolidate-writer fix.
+ * A session is skipped with zero LLM calls when its content hash is unchanged
+ * since the last extraction, when it is nearly empty, or when the optional
+ * heuristic triage scores it below threshold.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { timestampForFilename } from "../../core/common";
+import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -43,7 +31,6 @@ import {
 } from "../../core/file-lock";
 import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
-import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
@@ -54,17 +41,11 @@ import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import {
-  disposeLoweredExecutionDispatchLease,
-  type LoweredExecutionDispatchLease,
-} from "../../integrations/agent/execution-lowering";
-import type { RunnerSpec } from "../../integrations/agent/runner";
+import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, isJsonSchemaKnownUnsupported } from "../../llm/client";
-import { callStructured, preflightStructuredLlmRunner } from "../../llm/structured-call";
-import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import {
   type ExtractedSessionRow,
@@ -74,7 +55,8 @@ import {
   upsertExtractedSession,
 } from "../../storage/repositories/extract-sessions-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
-import { isProposalSkipped, type ProposalsContext } from "../proposal/repository";
+import type { ProposalsContext } from "../proposal/repository";
+import { contentHash } from "./content-hash";
 import { resolveImproveLlmExecution } from "./execution";
 import {
   buildExtractPrompt,
@@ -83,9 +65,8 @@ import {
   type ExtractPayload,
   parseExtractPayload,
 } from "./extract-prompt";
-import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { emitProposal } from "./proposal-envelope";
-import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
+import { cloneAndFreeze, resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot } from "./ledger";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -94,54 +75,25 @@ import {
   sessionMeetsDurationGate,
   writeSessionAsset,
 } from "./session-asset";
-import { resolveTriageConfig, scoreSessionTriage } from "./triage";
+import { callStage, type LlmRunner, mintProposal, noticeSet } from "./stage";
 
-/** Default minimum session duration (minutes) for session indexing (#561). */
+export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
+
+/** Minimum session duration (minutes) for writing a session asset. */
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
-
-/**
- * Default minimum raw session size (chars) below which the extract LLM call is
- * skipped (#595/#596). Deliberately tiny: analysis of 218 candidate-producing
- * sessions showed sessions of 22–368 raw chars regularly yield 1–5 candidates,
- * so size is not a reliable proxy for value — only truly empty sessions
- * (0 chars, journal files) are safe to skip.
- */
+/** Raw session size (chars) below which the LLM call is skipped; only truly empty sessions are safe to skip. */
 const DEFAULT_MIN_CONTENT_CHARS = 10;
-
-/**
- * Default cap on NEW sessions the extract pass will LLM-process in a single run
- * (`processes.extract.maxSessionsPerRun` overrides; `0` disables). Bounds per-run
- * wall time + token spend so a backlog of accumulated sessions can't run a single
- * pass past its scheduled-task timeout. Overflow sessions stay unseen and are
- * processed by subsequent runs, so coverage is preserved — just spread out.
- */
+/** New sessions LLM-processed per run (`processes.extract.maxSessionsPerRun`, 0 disables); the rest wait for later runs. */
 const DEFAULT_MAX_SESSIONS_PER_RUN = 25;
-
 /**
- * Floor for the default discovery window (48h). When no explicit `--since` /
- * `defaultSince` is configured, discovery looks back to the LAST recorded
- * extract run for the harness (so an intermittently-online host that was off for
- * days still rediscovers sessions that ended during the gap), but never LESS
- * than this — looking back less than the prior window could drop a session that
- * a previous run deferred via `maxSessionsPerRun`. Widening is free of redundant
- * LLM cost: the content-hash ledger skips unchanged sessions with zero LLM calls.
+ * Without an explicit window, discovery looks back to the last extract run for
+ * the harness (a host that was off still finds sessions that ended meanwhile),
+ * but never less than 48h. The content-hash ledger makes the overlap free.
  */
 const DEFAULT_SINCE_FLOOR_MS = 48 * 60 * 60 * 1000;
-
-/**
- * Staleness window for the per-session extract lock. A single session's
- * processing is bounded by the per-session LLM timeout (default 60s) plus the
- * session-summary call, so a lock older than this must belong to a crashed
- * holder and is safe to reclaim.
- */
+/** A per-session lock older than this belongs to a crashed holder. */
 const EXTRACT_SESSION_LOCK_STALE_MS = 5 * 60 * 1000;
 
-/**
- * Resolve the discovery `sinceMs` cutoff when no explicit `since`/`defaultSince`
- * is set: the later of (last recorded extract run for this harness) and
- * (now − 48h). See {@link DEFAULT_SINCE_FLOOR_MS}. Best-effort — any state.db
- * error falls back to the 48h floor.
- */
 function resolveDefaultSinceMs(
   harnessName: string,
   now: number,
@@ -166,136 +118,81 @@ function resolveDefaultSinceMs(
   }
 }
 
-/** Filesystem-safe per-session lock path, co-located with the state.db. */
-function getExtractSessionLockPath(harness: string, sessionId: string, stateDbPath: string): string {
+function extractSessionLockPath(harness: string, sessionId: string, stateDbPath: string): string {
   const safe = `${harness}-${sessionId}`.replace(/[^A-Za-z0-9._-]/g, "_");
   return path.join(path.dirname(stateDbPath), "extract-locks", `extract-${safe}.lock`);
 }
 
 function extractSessionLockIsUnavailable(harness: string, sessionId: string, stateDbPath: string): boolean {
-  const lockPath = getExtractSessionLockPath(harness, sessionId, stateDbPath);
-  const probe = probeLock(lockPath, { staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS });
+  const probe = probeLock(extractSessionLockPath(harness, sessionId, stateDbPath), {
+    staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS,
+  });
   return probe.state === "held" || probe.state === "inaccessible";
 }
 
 /**
- * Try to claim the per-session extract lock so a concurrent extract (e.g. a
- * session-end hook firing `--session-id` while the hourly improve pass runs
- * discovery) cannot double-process the SAME session — duplicate LLM spend and
- * near-duplicate proposals. Reclaims a stale lock (dead holder PID or age past
- * {@link EXTRACT_SESSION_LOCK_STALE_MS}). Returns false when another LIVE run
- * holds it — the caller then skips the session without any LLM call. Best-effort:
- * any filesystem error resolves to `true` (proceed) so locking never blocks
- * extraction outright.
+ * Claim a session so a concurrent extract (a session-end hook racing the
+ * hourly improve run) cannot process it twice. A stale lock is reclaimed; a
+ * filesystem error proceeds, so locking never blocks extraction outright.
  */
 function acquireExtractSessionLock(lockPath: string): { proceed: boolean; ownership?: LockOwnership } {
-  const releaseBarrier = tryAcquireMaintenanceBarrier();
-  if (!releaseBarrier) return { proceed: false };
   try {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let ownership = tryAcquireLockSync(lockPath, createLockPayload());
     if (ownership) return { proceed: true, ownership };
     const probe = probeLock(lockPath, { staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS });
     if (probe.state === "held") return { proceed: false };
-    // Absent (released between attempt + probe) or successfully reclaimed stale lock → retry once.
     if (probe.state === "stale" && !reclaimStaleLock(lockPath, probe)) return { proceed: false };
     ownership = tryAcquireLockSync(lockPath, createLockPayload());
     return ownership ? { proceed: true, ownership } : { proceed: false };
   } catch {
     return { proceed: true };
-  } finally {
-    releaseBarrier();
   }
 }
 
-// ── Options + Result envelopes ──────────────────────────────────────────────
-
 export interface AkmExtractOptions {
-  /** Harness name (e.g. "claude", "opencode"). Required. */
+  /** Harness name (e.g. "claude", "opencode"). */
   type: string;
-  /** Override the harness's default session-discovery location. */
+  /** Override the harness's session-discovery location. */
   location?: string;
-  /** Process exactly this session by ID. When absent, discover via {@link since}. */
+  /** Process exactly this session. */
   sessionId?: string;
-  /**
-   * Discovery cutoff. Sessions with `endedAt` older than this are skipped.
-   * Accepts ISO timestamps (`2026-05-26T00:00:00Z`) or duration strings
-   * (`24h`, `7d`, `30m`). Defaults to `24h`.
-   */
+  /** Discovery cutoff: an ISO timestamp or a duration (`24h`, `7d`, `30m`). */
   since?: string;
-  /** Skip all writes; just report what would be created. */
   dryRun?: boolean;
-  /** Override stash root (test seam). */
   stashDir?: string;
-  /** Override config (test seam). */
   config?: AkmConfig;
-  /** Current symbolic runner when no complete standalone plan is supplied. */
+  /** Runner to use when no complete standalone plan is supplied. */
   llmRunner?: ExtractLlmRunner;
-  /** Complete standalone invocation plan, resolved once at the CLI boundary. */
+  /** Complete standalone plan, resolved once at the CLI boundary. */
   resolvedPlan?: ResolvedExtractPlan;
-  /** Override the harness registry (test seam). */
+  /** Test seam: harness registry. */
   harnesses?: SessionLogHarness[];
-  /**
-   * Override the LLM chat function (test seam). When absent, `callStructured`
-   * dispatches through the shared lowered-execution transport.
-   */
+  /** Test seam: transport override. */
   chat?: (
     config: LlmProfileConfig,
     messages: ChatMessage[],
     options?: { timeoutMs?: number | null; responseSchema?: Record<string, unknown>; signal?: AbortSignal },
   ) => Promise<string>;
-  /** Override proposal clock/id (test seam). */
+  /** Test seam: proposal clock / id. */
   ctx?: ProposalsContext;
-  /**
-   * Events context carrying the improve run's long-lived state.db handle (or
-   * the C2 boundary-pinned path) so extract's event emits take appendEvent's
-   * fast path (R25). Proposal WRITES keep their own per-call open via
-   * withProposalsDb — no db handle is threaded into ProposalsContext (D14).
-   */
+  /** The improve run's events context. */
   eventsCtx?: EventsContext;
-  /** sourceRun for PROV-DM traceability. Generated when absent. */
   sourceRun?: string;
-  /**
-   * The resolved ACTIVE improve profile, threaded by `akmImprove` so the
-   * feature gate and per-process extract config are read from the profile that
-   * is actually running. Standalone `akm extract` runs explicitly and does not
-   * inherit an improve strategy's enablement gate.
-   */
+  /** The active improve profile (its extract toggle gates extract as an improve stage only). */
   improveProfile?: ImproveProfileConfig;
-  /** Hard timeout for each LLM call (ms); null disables it. */
+  /** Per-call LLM timeout (ms); null disables it. */
   timeoutMs?: number | null;
-  /** Optional caller-driven cancellation signal. */
   signal?: AbortSignal;
-  /**
-   * Re-process sessions even if state.db says they were already extracted
-   * (and no new events have arrived since). Default `false` — the discovery
-   * pass skips already-seen sessions to avoid duplicate LLM calls.
-   */
+  /** Re-process sessions state.db says were already extracted. */
   force?: boolean;
-  /**
-   * Disable state.db tracking entirely for this run. Test seam — production
-   * paths always track. Also useful for one-shot debugging when you want a
-   * fresh LLM call without touching the seen-table.
-   */
+  /** Test seam: no state.db tracking at all. */
   skipTracking?: boolean;
-  /**
-   * Override the state.db connection (test seam). When absent the production
-   * code opens the real state.db via {@link openStateDatabase}.
-   */
+  /** Test seam: state.db connection. */
   stateDb?: Database;
-  /**
-   * C2 (#554): explicit state.db path. When set (and `stateDb` is absent), the
-   * skip-tracking open uses this path instead of the live `XDG_DATA_HOME`-derived
-   * default. `akmImprove` threads its boundary-resolved path here so a parallel
-   * test file mutating `XDG_DATA_HOME` mid-run cannot redirect this open.
-   */
+  /** Explicit state.db path (improve pins its boundary-resolved path). */
   stateDbPath?: string;
-  /**
-   * #561 — override the session-summary generator (test seam). When absent the
-   * production code builds one that routes through the in-tree LLM via
-   * `callStructured` (fail-open). Tests inject a fake to avoid any real
-   * LLM/network call. When session indexing is disabled this is never invoked.
-   */
+  /** Test seam: session-summary generator. */
   generateSessionSummary?: SessionSummaryGenerator;
 }
 
@@ -310,24 +207,9 @@ export interface ResolvedExtractPlan {
   notices?: readonly Readonly<LoweringNotice>[];
 }
 
-type ExtractLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
-type ExtractSessionSummaryGenerator = (
-  data: SessionData,
-  lease?: LoweredExecutionDispatchLease,
-) => ReturnType<SessionSummaryGenerator>;
+type ExtractLlmRunner = LlmRunner;
 
-function cloneAndFreeze<T>(value: T): Readonly<T> {
-  const clone = structuredClone(value);
-  const freeze = (item: unknown): void => {
-    if (typeof item !== "object" || item === null || Object.isFrozen(item)) return;
-    for (const child of Object.values(item)) freeze(child);
-    Object.freeze(item);
-  };
-  freeze(clone);
-  return clone;
-}
-
-/** Resolve standalone extract selection once before discovery, auto iteration, or watch startup. */
+/** Resolve standalone extract selection once, before discovery, auto iteration or watch startup. */
 export function resolveStandaloneExtractPlan(
   config: AkmConfig,
   selection: { engine?: string; strategy?: string; timeoutMs?: number | null },
@@ -337,15 +219,14 @@ export function resolveStandaloneExtractPlan(
   }
   const selected = resolveImproveStrategy(selection.strategy, config);
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
-  const invocation = {
-    ...(selection.engine ? { engine: selection.engine } : {}),
-    ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
-  };
   const resolved = resolveImproveLlmExecution({
     config,
     profile: selected.config,
     process,
-    current: invocation,
+    current: {
+      ...(selection.engine ? { engine: selection.engine } : {}),
+      ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
+    },
     processName: "extract",
   });
   if (!resolved) {
@@ -358,8 +239,7 @@ export function resolveStandaloneExtractPlan(
   return Object.freeze({
     strategy: selected.name,
     engine: runner.engine as string,
-    // `akm extract` is an explicit operation. The strategy supplies behavior,
-    // but its improve-stage enablement gate does not disable this command.
+    // An explicit `akm extract` runs regardless of the strategy's improve-stage toggle.
     enabled: true,
     process,
     runner: cloneAndFreeze(runner),
@@ -369,18 +249,26 @@ export function resolveStandaloneExtractPlan(
   });
 }
 
-// ExtractedSessionResult / AkmExtractResult moved DOWN to core/improve-types.ts
-// (WI-9.8 KILL 2 — the §10.7 layering inversion: core/improve-types.ts
-// imported AkmExtractResult UP from this module). Re-exported here verbatim
-// so existing import sites (`from "./extract"`) are unchanged.
-export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
-
-/** A session result before the run's engine is stamped on it (see {@link accountExtractSessionResult}). */
+/** A session result before the run's engine is stamped on it. */
 type ExtractSessionOutcome = Omit<ExtractedSessionResult, "engine">;
+type PreFilterStats = ExtractedSessionResult["preFilter"];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const NO_PREFILTER: PreFilterStats = { inputCount: 0, outputCount: 0, truncatedCount: 0 };
 
-/** An extract envelope for a run that processed no sessions; `engine`/`engineKind` only once a runner is resolved. */
+function sessionOutcome(
+  sessionId: string,
+  harness: string,
+  fields: Partial<ExtractSessionOutcome>,
+): ExtractSessionOutcome {
+  return { sessionId, harness, candidateCount: 0, proposalIds: [], preFilter: NO_PREFILTER, warnings: [], ...fields };
+}
+
+function preFilterStats(filtered: ReturnType<typeof preFilterSession>): PreFilterStats {
+  const { inputCount, outputCount, truncatedCount } = filtered.stats;
+  return { inputCount, outputCount, truncatedCount };
+}
+
+/** An extract envelope for a run that processed no sessions. */
 function emptyExtractResult(args: {
   ok: boolean;
   dryRun: boolean;
@@ -407,23 +295,12 @@ function emptyExtractResult(args: {
 }
 
 /**
- * Parse a since-string into an absolute ms-epoch cutoff. Accepts:
- *   - ISO timestamps (parsed via Date.parse)
- *   - Relative durations: `<n>m`, `<n>h`, `<n>d` (minutes / hours / days)
- *
- * Throws UsageError on unparseable input so the CLI surfaces a clear error
- * rather than silently defaulting.
- *
- * The recognizer is deliberately CASE-INSENSITIVE and whitespace-tolerant —
- * `5M` means 5 MINUTES here, diverging from the core grammar's case-sensitive
- * `M`=months (pinned by tests/commands/goldens-duration-flags.test.ts); only
- * the unit arithmetic is delegated to the canonical {@link DURATION_UNITS}
- * table via {@link parseDuration}.
+ * A since-string as an epoch-ms cutoff: an ISO timestamp or `<n>m|h|d`
+ * (case-insensitive here — `5M` is five minutes). Default 24h; anything else
+ * is a usage error.
  */
 export function parseSinceArg(value: string | undefined, now: number = Date.now()): number {
-  if (!value || value.trim() === "") {
-    return now - 24 * 60 * 60 * 1000; // default: 24h
-  }
+  if (!value || value.trim() === "") return now - 24 * 60 * 60 * 1000;
   const trimmed = value.trim();
   const relMatch = trimmed.match(/^(\d+)\s*([mhd])$/i);
   if (relMatch) {
@@ -439,20 +316,8 @@ export function parseSinceArg(value: string | undefined, now: number = Date.now(
 }
 
 /**
- * Resolve a harness instance for the given type, either from the explicit
- * `harnesses` seam or the {@link getAvailableHarnesses} registry. Returns
- * `undefined` when no harness matches (the caller surfaces that as a warning).
- */
-function resolveHarness(type: string, harnesses?: SessionLogHarness[]): SessionLogHarness | undefined {
-  const pool = harnesses ?? getAvailableHarnesses();
-  return pool.find((h) => h.name === type);
-}
-
-/**
- * Build the ref + content for a candidate. The body must contain a
- * frontmatter block carrying `description` (and `when_to_use` for lessons)
- * so the accept-time descriptionQualityValidator passes — same pattern as
- * the consolidate-writer fix at consolidate.ts.
+ * A candidate's ref and content. `description` (and a lesson's `when_to_use`)
+ * go into the body's frontmatter so accept-time validation sees them.
  */
 function buildCandidateProposal(
   candidate: ExtractCandidate,
@@ -460,19 +325,11 @@ function buildCandidateProposal(
   sessionAssetRef?: string,
 ): { ref: string; content: string; description: string } {
   const ref = deriveExtractCandidateRef(candidate, sourceRef);
-  // Post-generation repair pass (#556): deterministically complete a
-  // description the LLM sliced mid-sentence before it reaches the
-  // auto-accept validators. No-op (byte-identical) for valid descriptions.
+  // Complete a description the model cut mid-sentence (no-op for valid ones).
   const description = repairTruncatedDescription(candidate.description, candidate.body);
-  const fm: Record<string, unknown> = {
-    description,
-    ...(sessionAssetRef ? { xrefs: [sessionAssetRef] } : {}),
-  };
-  if (candidate.type === "lesson" && candidate.when_to_use) {
-    fm.when_to_use = candidate.when_to_use;
-  }
-  const content = assembleAsset(fm, candidate.body);
-  return { ref, content, description };
+  const fm: Record<string, unknown> = { description, ...(sessionAssetRef ? { xrefs: [sessionAssetRef] } : {}) };
+  if (candidate.type === "lesson" && candidate.when_to_use) fm.when_to_use = candidate.when_to_use;
+  return { ref, content: assembleAsset(fm, candidate.body), description };
 }
 
 function canonicalSegment(value: string): string {
@@ -485,13 +342,11 @@ function canonicalSegment(value: string): string {
 }
 
 export function deriveExtractCandidateRef(candidate: ExtractCandidate, sourceRef: SessionSummary): string {
-  const candidateParts = candidate.name.split("/").map(canonicalSegment).filter(Boolean);
-  const leaf = candidateParts.at(-1) ?? "extracted-insight";
+  const leaf = candidate.name.split("/").map(canonicalSegment).filter(Boolean).at(-1) ?? "extracted-insight";
   if (candidate.type === "memory" || candidate.type === "lesson") {
     const projectName = sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
     const scope = projectName ? canonicalSegment(projectName) : "";
-    const subdir = candidate.type === "memory" ? "memories" : "lessons";
-    return `${subdir}/${scope ? `${scope}/` : ""}${leaf}`;
+    return `${candidate.type === "memory" ? "memories" : "lessons"}/${scope ? `${scope}/` : ""}${leaf}`;
   }
   return `knowledge/${leaf}`;
 }
@@ -509,177 +364,112 @@ function resolveExtractStandards(stashDir: string): string {
 }
 
 /**
- * Canonicalize a session's content into a single deterministic string for
- * hashing (#602). Each event is rendered `<role>\n<text>` and events are joined
- * with a NUL-delimited separator (`\n\0\n`) so event boundaries cannot be forged
- * by text that itself contains newlines.
- *
- * The input is the RAW `data.events` stream — NOT the pre-filtered / truncated
- * set — so the hash is stable across `maxTotalChars` (and any other pre-filter)
- * config changes: changing config must NEVER change the hash (idempotency AC).
- * `inlineRefs` and ref metadata (title, startedAt/endedAt timestamps) are
- * deliberately EXCLUDED so clock/title churn (and an agent adding an inline
- * `akm remember` mid-session) does not change the hash.
- */
-function canonicalizeSessionContent(data: SessionData): string {
-  return data.events.map((e) => `${e.role ?? "unknown"}\n${e.text}`).join("\n\0\n");
-}
-
-/**
- * sha256 (hex) of the normalized session content (#602). This is the byte-exact,
- * clock-independent skip authority that replaced the old `session_ended_at`
- * timestamp comparison. See {@link canonicalizeSessionContent} for exactly what
- * is (and is not) hashed.
+ * The skip authority for "already extracted": a hash of the raw event stream
+ * (`role\ntext` per event, NUL-separated so boundaries cannot be forged). It
+ * excludes titles, timestamps and inline refs, and ignores pre-filter config.
  */
 export function hashSessionContent(data: SessionData): string {
-  return sha256Hex(canonicalizeSessionContent(data));
+  return contentHash(data.events.map((e) => `${e.role ?? "unknown"}\n${e.text}`).join("\n\0\n"));
+}
+
+// ── Session triage (heuristic, zero LLM cost, default off) ───────────────────
+
+const DEFAULT_TRIAGE_MIN_SCORE = 2;
+const TRIAGE_MARKER_RE =
+  /\b(error|failed|fix(?:ed)?|root cause|turns out|because|decided|instead|gotcha|workaround|regress(?:ed)?|broke|TIL)\b/i;
+const TRIAGE_EDIT_COMMIT_RE = /\b(Edit|Write|MultiEdit|git commit|diff)\b/i;
+
+/**
+ * Score a session for extraction worth: learning markers (capped 2), tool
+ * density, edits/commits, and the substantive assistant/tool share.
+ */
+function sessionTriagePasses(data: SessionData, minScore: number): boolean {
+  const events = data.events;
+  const count = (predicate: (e: SessionData["events"][number]) => boolean) => events.filter(predicate).length;
+  const markers = Math.min(
+    count((e) => TRIAGE_MARKER_RE.test(e.text)),
+    2,
+  );
+  const toolDensity = Math.min(count((e) => e.role === "tool") * 0.25, 1.5);
+  const editCommit = Math.min(count((e) => Boolean(e.filePath) || TRIAGE_EDIT_COMMIT_RE.test(e.text)) * 0.25, 1.5);
+  const substantive = count((e) => (e.role === "assistant" || e.role === "tool") && e.text.length >= 40);
+  const substantiveRatio = Math.min(events.length > 0 ? substantive / events.length : 0, 1);
+  return markers + toolDensity + editCommit + substantiveRatio >= minScore;
+}
+
+type Triage = { enabled: boolean; minScore: number };
+
+// ── Planning ─────────────────────────────────────────────────────────────────
+
+interface SessionGateOptions {
+  maxTotalChars: number | undefined;
+  minContentChars: number;
+  triage: Triage;
 }
 
 /**
- * Process one session through the full pipeline: read → pre-filter → LLM →
- * parse → createProposal-per-candidate. Returns the per-session result.
- *
- * On any non-fatal failure (LLM error, unparseable response, individual
- * proposal validation failure) the session result records a warning and
- * keeps going — one session's bad luck never aborts a multi-session run.
+ * The zero-LLM gates for one session: read, the content-hash skip (only
+ * `--force` overrides it, even for `--session-id`), the raw-size floor and the
+ * triage score. Returns a skip, or what the prompt needs.
  */
-/**
- * The zero-LLM pre-flight gates for one session: read, the #602 content-hash
- * already-extracted skip, the #595/#596 minContentChars floor, and the #626
- * heuristic triage gate. Returns a terminal skip result, or the read `data` +
- * pre-filtered events + content hash to carry into the extraction prompt.
- * Extracted verbatim from `processSession` — every skip shape/reason is
- * byte-identical.
- */
-function runPreLlmSessionGates(args: {
-  harness: SessionLogHarness;
-  sessionRef: SessionRef;
-  prior: ExtractedSessionRow | undefined;
-  force: boolean;
-  maxTotalChars: number | undefined;
-  minContentChars: number;
-  triage: { enabled: boolean; minScore: number };
-}):
+function runPreLlmSessionGates(
+  harness: SessionLogHarness,
+  sessionRef: SessionRef,
+  prior: ExtractedSessionRow | undefined,
+  force: boolean,
+  gates: SessionGateOptions,
+):
   | { skip: ExtractSessionOutcome }
-  | {
-      data: ReturnType<SessionLogHarness["readSession"]>;
-      filtered: ReturnType<typeof preFilterSession>;
-      contentHash: string;
-    } {
-  const { harness, sessionRef, prior, force, maxTotalChars, minContentChars, triage } = args;
-  let data: ReturnType<SessionLogHarness["readSession"]>;
+  | { data: SessionData; filtered: ReturnType<typeof preFilterSession>; contentHash: string } {
+  const { sessionId } = sessionRef;
+  let data: SessionData;
   try {
     data = harness.readSession(sessionRef);
   } catch (err) {
     return {
-      skip: {
-        sessionId: sessionRef.sessionId,
-        harness: harness.name,
-        candidateCount: 0,
-        proposalIds: [],
-        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+      skip: sessionOutcome(sessionId, harness.name, {
         warnings: [`readSession failed: ${err instanceof Error ? err.message : String(err)}`],
         skipped: true,
         skipReason: "read_failed",
-      },
+      }),
     };
   }
-
-  // #602 — content-hash skip. Computed on the RAW event stream immediately after
-  // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
-  // an unchanged session never reaches the LLM. Hash-based ⇒ clock-independent
-  // (immune to the Jun 11-12 timestamp double-extract/over-throttle bug). The skip
-  // applies UNIFORMLY — including explicit `--session-id` targeting (so a
-  // session-end hook firing `extract --session-id <id>` is idempotent). ONLY
-  // `--force` overrides it to re-extract a previously-extracted session.
-  const contentHash = hashSessionContent(data);
-  if (!force && shouldSkipAlreadyExtractedSession(prior, contentHash)) {
-    return { skip: alreadyExtractedResult(harness.name, sessionRef.sessionId, prior, contentHash) };
-  }
-
-  // #840 — harvest-without-prompting hybrid: the LLM prompt is built only from
-  // parent-origin events (folding stays as infrastructure for hashing above
-  // and inline-ref harvesting on `data.inlineRefs`, both of which still see
-  // the FULL folded stream). Subagent-origin events never reach
-  // `preFilterSession`, so #839's `dedupeTaskNotifications` naturally becomes
-  // a no-op on this path — a subagent's own event can no longer be in the
-  // kept set for a notification to be deduped against, leaving the parent's
-  // `<task-notification>` (the only surviving trace of that delegated work)
-  // untouched. See docs/plans/subagent-extraction-design.md §6.
-  const parentOriginData: typeof data = {
-    ...data,
-    events: data.events.filter((e) => e.filePath === data.ref.filePath),
-  };
-  const filtered = preFilterSession(parentOriginData, {
-    ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
-  });
-
-  // #595/#596 — minContentChars gate: skip the LLM call for sessions whose RAW
-  // size is below threshold. Measured on the raw event text BEFORE the noise
-  // pre-filter, NOT on post-filter output — the pre-filter strips boilerplate
-  // so aggressively that even signal-bearing sessions can have tiny output
-  // (#596: gating post-filter filtered out 100% of sessions). Note: the 0.8.x
-  // fix gated on `filtered.stats.inputCount`, which is an EVENT count, not a
-  // char count — this port measures actual raw chars so the threshold matches
-  // the config key's documented unit.
-  // #840 — deliberately measured on the FULL folded `data.events` (parent +
-  // subagents), not the parent-origin view above: narrowing this to
-  // parent-origin chars would newly skip delegation-heavy sessions with a
-  // thin parent transcript before extraction runs at all, even though their
-  // subagent work is still fully harvested via `data.inlineRefs` above. The
-  // full-stream measurement is today's unchanged behavior, so the worst case
-  // this preserves is an LLM call over a small parent-only prompt, not a
-  // missed extraction.
-  const rawContentChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
-  if (minContentChars > 0 && rawContentChars < minContentChars) {
+  const hash = hashSessionContent(data);
+  if (!force && shouldSkipAlreadyExtractedSession(prior, hash)) {
     return {
-      skip: {
-        sessionId: sessionRef.sessionId,
-        harness: harness.name,
-        candidateCount: 0,
-        proposalIds: [],
-        preFilter: {
-          inputCount: filtered.stats.inputCount,
-          outputCount: filtered.stats.outputCount,
-          truncatedCount: filtered.stats.truncatedCount,
-        },
-        warnings: [],
+      skip: sessionOutcome(sessionId, harness.name, {
+        warnings: [`already extracted (content unchanged) at ${prior?.processed_at}; pass --force to re-process`],
         skipped: true,
-        skipReason: "too_short",
-        contentHash,
-      },
+        skipReason: "already_extracted",
+        contentHash: hash,
+      }),
     };
   }
-
-  // #626 — pre-LLM heuristic triage gate. Runs AFTER minContentChars + the
-  // already-extracted skip check (both in the caller / above), BEFORE the
-  // extraction prompt and the session-asset write. When the session scores below
-  // the configured threshold we triage it out: no chat() call, no session asset,
-  // no proposals. Pure-heuristic — zero added LLM cost. Default-off → skipped.
-  if (triage.enabled) {
-    const t = scoreSessionTriage(data, triage.minScore);
-    if (!t.pass) {
-      return {
-        skip: {
-          sessionId: sessionRef.sessionId,
-          harness: harness.name,
-          candidateCount: 0,
-          proposalIds: [],
-          preFilter: {
-            inputCount: filtered.stats.inputCount,
-            outputCount: filtered.stats.outputCount,
-            truncatedCount: filtered.stats.truncatedCount,
-          },
-          warnings: [],
-          skipped: true,
-          skipReason: "triaged_out",
-          contentHash,
-        },
-      };
-    }
+  // The prompt sees only parent-origin events; subagent work still reaches
+  // the hash above and the inline-ref harvest.
+  const filtered = preFilterSession(
+    { ...data, events: data.events.filter((e) => e.filePath === data.ref.filePath) },
+    typeof gates.maxTotalChars === "number" ? { maxTotalChars: gates.maxTotalChars } : {},
+  );
+  // Measured on the full raw stream: pre-filtered size says little about value.
+  const rawChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
+  const skipReason =
+    gates.minContentChars > 0 && rawChars < gates.minContentChars
+      ? "too_short"
+      : gates.triage.enabled && !sessionTriagePasses(data, gates.triage.minScore)
+        ? "triaged_out"
+        : undefined;
+  if (skipReason) {
+    return {
+      skip: sessionOutcome(sessionId, harness.name, {
+        preFilter: preFilterStats(filtered),
+        skipped: true,
+        skipReason,
+        contentHash: hash,
+      }),
+    };
   }
-
-  return { data, filtered, contentHash };
+  return { data, filtered, contentHash: hash };
 }
 
 type ExtractEligibleGate = Exclude<ReturnType<typeof runPreLlmSessionGates>, { skip: ExtractSessionOutcome }>;
@@ -688,88 +478,50 @@ type ExtractSessionPlan =
   | { kind: "skip"; summary: SessionSummary; result: ExtractSessionOutcome }
   | { kind: "model"; summary: SessionSummary; gate: ExtractEligibleGate };
 
-function alreadyExtractedResult(
-  harness: string,
-  sessionId: string,
-  prior: ExtractedSessionRow | undefined,
-  contentHash: string,
-): ExtractSessionOutcome {
-  return {
-    sessionId,
-    harness,
-    candidateCount: 0,
-    proposalIds: [],
-    preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
-    warnings: [`already extracted (content unchanged) at ${prior?.processed_at}; pass --force to re-process`],
-    skipped: true,
-    skipReason: "already_extracted",
-    contentHash,
-  };
-}
-
 function lockedConcurrentResult(harness: string, summary: SessionSummary): ExtractSessionOutcome {
-  return {
-    sessionId: summary.sessionId,
-    harness,
-    candidateCount: 0,
-    proposalIds: [],
-    preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+  return sessionOutcome(summary.sessionId, harness, {
     warnings: ["concurrent extract holds this session's lock — skipped (handled by the other run)"],
     skipped: true,
     skipReason: "locked_concurrent",
-  };
+  });
 }
 
+/**
+ * Classify candidates read-only, up to `maxSessionsPerRun` model sessions
+ * (explicit `--session-id` and `--force` are uncapped); the rest are deferred.
+ */
 function planExtractSessions(args: {
   candidates: SessionSummary[];
   options: AkmExtractOptions;
   harness: SessionLogHarness;
   seenMap: Map<string, ExtractedSessionRow>;
-  maxTotalChars: number | undefined;
-  minContentChars: number;
+  gates: SessionGateOptions;
   maxSessionsPerRun: number;
-  triage: { enabled: boolean; minScore: number };
-  trackingEnabled: boolean;
-  dryRun: boolean;
+  locking: boolean;
 }): { plans: ExtractSessionPlan[]; deferredCandidates: SessionSummary[] } {
-  const { candidates, options, harness, seenMap, maxSessionsPerRun, trackingEnabled, dryRun } = args;
+  const { candidates, options, harness, maxSessionsPerRun, locking } = args;
+  const lockUnavailable = (summary: SessionSummary) =>
+    locking &&
+    extractSessionLockIsUnavailable(harness.name, summary.sessionId, options.stateDbPath ?? getStateDbPath());
   const plans: ExtractSessionPlan[] = [];
   let modelCount = 0;
   for (let index = 0; index < candidates.length; index++) {
-    if (options.signal?.aborted) return { plans, deferredCandidates: candidates.slice(index) };
-    if (!options.sessionId && !options.force && maxSessionsPerRun > 0 && modelCount >= maxSessionsPerRun) {
-      return { plans, deferredCandidates: candidates.slice(index) };
-    }
+    const capped = !options.sessionId && !options.force && maxSessionsPerRun > 0 && modelCount >= maxSessionsPerRun;
+    if (options.signal?.aborted || capped) return { plans, deferredCandidates: candidates.slice(index) };
     const summary = candidates[index];
     if (!summary) continue;
-    if (trackingEnabled && !dryRun && !options.stateDb) {
-      if (extractSessionLockIsUnavailable(harness.name, summary.sessionId, options.stateDbPath ?? getStateDbPath())) {
-        plans.push({ kind: "skip", summary, result: lockedConcurrentResult(harness.name, summary) });
-        continue;
-      }
+    if (lockUnavailable(summary)) {
+      plans.push({ kind: "skip", summary, result: lockedConcurrentResult(harness.name, summary) });
+      continue;
     }
-    const gate = runPreLlmSessionGates({
-      harness,
-      sessionRef: summary,
-      prior: seenMap.get(summary.sessionId),
-      force: options.force === true,
-      maxTotalChars: args.maxTotalChars,
-      minContentChars: args.minContentChars,
-      triage: args.triage,
-    });
+    const prior = args.seenMap.get(summary.sessionId);
+    const gate = runPreLlmSessionGates(harness, summary, prior, options.force === true, args.gates);
     if ("skip" in gate) {
       plans.push({ kind: "skip", summary, result: gate.skip });
       continue;
     }
-    // Reading and classifying a session can take long enough for a concurrent
-    // session-end hook to claim its lock. Re-probe the fully classified model
-    // plan before it consumes a cap slot or forces credential materialization.
-    if (
-      trackingEnabled &&
-      !dryRun &&
-      !options.stateDb &&
-      extractSessionLockIsUnavailable(harness.name, summary.sessionId, options.stateDbPath ?? getStateDbPath())
-    ) {
+    // Classifying can take long enough for a session-end hook to claim the lock.
+    if (lockUnavailable(summary)) {
       plans.push({ kind: "skip", summary, result: lockedConcurrentResult(harness.name, summary) });
       continue;
     }
@@ -779,117 +531,63 @@ function planExtractSessions(args: {
   return { plans, deferredCandidates: [] };
 }
 
-/**
- * Run-scoped inputs shared by every {@link processSession} call — resolved once
- * per extract run by {@link runExtractSessionLoop}. WI-7.7 §2: the former
- * 18-positional-argument signature collapsed to `(runCtx, session)`.
- */
-interface ExtractSessionRunCtx {
+// ── Extraction ───────────────────────────────────────────────────────────────
+
+interface ExtractRun {
+  options: AkmExtractOptions;
   harness: SessionLogHarness;
   stashDir: string;
   config: AkmConfig;
   llmRunner: ExtractLlmRunner;
-  lease: LoweredExecutionDispatchLease | undefined;
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
-  getNotices: () => readonly Readonly<LoweringNotice>[];
-  chat: AkmExtractOptions["chat"];
-  ctx: ProposalsContext | undefined;
-  /** R25: events carrier — event emits only; proposals keep `ctx`. */
-  eventsCtx: EventsContext | undefined;
+  notices: ReturnType<typeof noticeSet>;
   sourceRun: string;
   dryRun: boolean;
   timeoutMs: number | null;
-  sessionIndexing: {
-    enabled: boolean;
-    minDurationMinutes: number;
-    generate: ExtractSessionSummaryGenerator;
-  };
-  signal: AbortSignal | undefined;
-  /**
-   * Stash authoring standards (convention/meta fact bodies) for non-wiki
-   * output. Resolved ONCE per run and threaded in so facts are not re-read per
-   * session. Empty string when none exist.
-   */
+  gates: SessionGateOptions;
+  maxSessionsPerRun: number;
+  effectiveSince: string | undefined;
+  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: SessionSummaryGenerator };
+  /** Stash authoring standards, resolved once per run. */
   standardsContext: string;
 }
 
-/**
- * Per-session inputs for one {@link processSession} invocation.
- *
- * #602 — the already-extracted skip lives INSIDE processSession: the content
- * hash can only be computed after readSession, so the skip decision happens
- * there. The prior row + bypass flag are threaded in from the caller. Skipping
- * there still costs ZERO LLM calls (the expensive resource #602 protects);
- * only the cheap file read is incurred.
- */
-interface ExtractSessionInput {
-  sessionRef: SessionRef;
-  gate: ExtractEligibleGate;
-}
-
-/**
- * The bounded per-session extraction LLM call. Routes the already-resolved
- * symbolic runner through `callStructured` under the `session_extraction`
- * gate. Invalid configuration escapes before session/proposal state is
- * persisted. Engines without JSON Schema support get one corrective retry;
- * exhausted structure failures retain typed, non-payload diagnostics.
- */
-type SessionExtractionLlmCallResult =
+type SessionExtraction =
   | { kind: "success"; payload: ExtractPayload; attempts: number }
   | { kind: "unavailable" }
-  | {
-      kind: "malformed";
-      raw: string;
-      attempts: number;
-      failure: NonNullable<ExtractPayload["parseFailure"]>;
-    };
+  | { kind: "malformed"; raw: string; attempts: number; failure: NonNullable<ExtractPayload["parseFailure"]> };
 
 const EXTRACT_LLM_UNAVAILABLE = Symbol("extract-llm-unavailable");
 
-async function runSessionExtractionLlmCall(args: {
-  config: AkmConfig;
-  llmRunner: ExtractLlmRunner;
-  lease: LoweredExecutionDispatchLease;
-  chat: AkmExtractOptions["chat"];
-  prompt: string;
-  timeoutMs: number | null;
-  signal: AbortSignal | undefined;
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
-}): Promise<SessionExtractionLlmCallResult> {
-  const { config, llmRunner, lease, chat, prompt, timeoutMs, signal, onNotices } = args;
+/**
+ * One session's extraction call. A connection without structured output gets
+ * one corrective retry; configuration errors escape before any state is written.
+ */
+async function extractFromSession(run: ExtractRun, prompt: string): Promise<SessionExtraction> {
+  const { llmRunner } = run;
   try {
     const result = await runStructured<ExtractPayload>({
       dispatch: async (feedback) => {
-        const content = feedback ? `${prompt}\n\n## Corrective output instruction\n\n${feedback}` : prompt;
-        const dispatched = await callStructured<{ kind: "response"; raw: string } | { kind: "unavailable" }>({
+        const outcome = await callStage({
           feature: "session_extraction",
-          akmConfig: config,
           runner: llmRunner,
-          lease,
-          messages: [{ role: "user", content }],
+          prompt: feedback ? `${prompt}\n\n## Corrective output instruction\n\n${feedback}` : prompt,
+          gate: { config: run.config },
           request: {
-            timeoutMs,
+            timeoutMs: run.timeoutMs,
             responseSchema: EXTRACT_JSON_SCHEMA,
-            ...(signal ? { signal } : {}),
-            ...(chat ? { chat } : {}),
+            ...(run.options.signal ? { signal: run.options.signal } : {}),
+            ...(run.options.chat ? { chat: run.options.chat } : {}),
           },
-          onNotices,
-          parse: (raw) => ({ kind: "response", raw: raw ?? "" }),
-          onError: () => ({ kind: "unavailable" }),
-          fallback: { kind: "unavailable" },
+          onNotices: run.notices.add,
         });
-        if (dispatched.kind === "unavailable") throw EXTRACT_LLM_UNAVAILABLE;
-        return dispatched.raw;
+        if (!outcome.ok) throw EXTRACT_LLM_UNAVAILABLE;
+        return outcome.raw;
       },
       parse: (raw) => {
         const payload = parseExtractPayload(raw);
         return payload.parseFailure ? undefined : payload;
       },
       validate: (payload) => ({ ok: true, value: payload as ExtractPayload }),
-      // One attempt when structured output is expected to work (not explicitly
-      // disabled, and this connection hasn't already proven otherwise this
-      // process — see `isJsonSchemaKnownUnsupported`); two when it's known
-      // unsupported and extraction is relying on looser prompt-contract JSON.
       maxAttempts:
         llmRunner.connection.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(llmRunner.connection)
           ? 1
@@ -898,16 +596,14 @@ async function runSessionExtractionLlmCall(args: {
         "Your previous response did not contain a valid extraction payload. Respond with ONLY a JSON object matching the requested schema, with a candidates array and no prose or code fences.",
     });
     if (result.ok) return { kind: "success", payload: result.value, attempts: result.attempts };
-    const payload = parseExtractPayload(result.raw);
     return {
       kind: "malformed",
       raw: result.raw,
       attempts: result.attempts,
-      failure:
-        payload.parseFailure ??
-        ({ code: "invalid_payload", message: result.errors.join("; ") } satisfies NonNullable<
-          ExtractPayload["parseFailure"]
-        >),
+      failure: parseExtractPayload(result.raw).parseFailure ?? {
+        code: "invalid_payload",
+        message: result.errors.join("; "),
+      },
     };
   } catch (err) {
     if (err === EXTRACT_LLM_UNAVAILABLE) return { kind: "unavailable" };
@@ -915,322 +611,157 @@ async function runSessionExtractionLlmCall(args: {
   }
 }
 
-function extractNoticeFields(
-  getNotices: () => readonly Readonly<LoweringNotice>[],
-): Pick<ExtractedSessionResult, "notices"> {
-  const notices = getNotices();
-  return notices.length > 0 ? { notices } : {};
-}
-
-function extractPreFilterStats(filtered: ReturnType<typeof preFilterSession>): ExtractedSessionResult["preFilter"] {
-  return {
-    inputCount: filtered.stats.inputCount,
-    outputCount: filtered.stats.outputCount,
-    truncatedCount: filtered.stats.truncatedCount,
-  };
-}
-
-function malformedExtractionResult(args: {
-  extraction: Extract<SessionExtractionLlmCallResult, { kind: "malformed" }>;
-  sessionRef: SessionRef;
-  harness: string;
-  preFilter: ExtractedSessionResult["preFilter"];
-  contentHash: string;
-  notices: Pick<ExtractedSessionResult, "notices">;
-}): ExtractSessionOutcome {
-  const { extraction, sessionRef, harness, preFilter, contentHash, notices } = args;
-  const diagnostic = `malformed_model_output: ${extraction.failure.message}; attempts=${extraction.attempts}; responseLength=${extraction.raw.length}; responseSha256=${sha256Hex(extraction.raw)}`;
-  warnVerbose(
-    `[extract] malformed model output for session ${sessionRef.sessionId}: ${redactErrorBody(extraction.raw)}`,
-  );
-  return {
-    sessionId: sessionRef.sessionId,
-    harness,
-    candidateCount: 0,
-    proposalIds: [],
-    preFilter,
-    warnings: [diagnostic],
-    skipped: true,
-    skipReason: "malformed_model_output",
-    contentHash,
-    ...notices,
-  };
-}
-
-function unavailableExtractionResult(args: {
-  sessionRef: SessionRef;
-  harness: string;
-  preFilter: ExtractedSessionResult["preFilter"];
-  contentHash: string;
-  notices: Pick<ExtractedSessionResult, "notices">;
-}): ExtractSessionOutcome {
-  return {
-    sessionId: args.sessionRef.sessionId,
-    harness: args.harness,
-    candidateCount: 0,
-    proposalIds: [],
-    preFilter: args.preFilter,
-    warnings: ["session_extraction feature returned empty (disabled / timeout / error)"],
-    skipped: true,
-    skipReason: "llm_unavailable",
-    contentHash: args.contentHash,
-    ...args.notices,
-  };
-}
-
-// #561 — ADDITIVE session indexing. Generate + write the session asset
-// (`sessions/<harness>/<id>.md`). FAIL-OPEN: any failure only returns a
-// warning; it NEVER changes the proposal/skip outcome of extract. Returns the
-// frontmatter fields to merge into the per-session result for state-db
-// correlation. When disabled this makes NO LLM call and writes NOTHING.
+/**
+ * Write the session's searchable asset (`sessions/<harness>/<id>.md`). Fails
+ * open: a failure is only a warning and never changes the extract outcome.
+ */
 async function maybeWriteSessionAsset(
-  runCtx: ExtractSessionRunCtx,
-  session: ExtractSessionInput,
+  run: ExtractRun,
+  data: SessionData,
 ): Promise<{ sessionAssetRef?: string; sessionLogPath?: string; warning?: string }> {
-  const { stashDir, lease, sessionIndexing, dryRun } = runCtx;
-  const { data } = session.gate;
-  if (!sessionIndexing.enabled || dryRun) return {};
+  const { sessionIndexing } = run;
+  if (!sessionIndexing.enabled || run.dryRun) return {};
   if (!sessionMeetsDurationGate(data, sessionIndexing.minDurationMinutes)) return {};
   try {
-    const result = await writeSessionAsset(data, stashDir, (summaryData) =>
-      sessionIndexing.generate(summaryData, lease),
-    );
-    if (result.written) {
-      // Write-path indexing (itself fail-open): standalone `akm extract`
-      // (session-end hook) has no post-loop reindex to pick this file up.
-      if (result.filePath) await indexWrittenAssets(stashDir, [result.filePath]);
-      return {
-        ...(result.ref ? { sessionAssetRef: result.ref } : {}),
-        ...(result.logPath ? { sessionLogPath: result.logPath } : {}),
-      };
-    }
+    const result = await writeSessionAsset(data, run.stashDir, (summaryData) => sessionIndexing.generate(summaryData));
+    if (!result.written) return {};
+    // A standalone extract has no post-loop reindex to pick the file up.
+    if (result.filePath) await indexWrittenAssets(run.stashDir, [result.filePath]);
+    return {
+      ...(result.ref ? { sessionAssetRef: result.ref } : {}),
+      ...(result.logPath ? { sessionLogPath: result.logPath } : {}),
+    };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     return { warning: `session asset write failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-  return {};
 }
 
 async function processSession(
-  runCtx: ExtractSessionRunCtx,
-  session: ExtractSessionInput,
+  run: ExtractRun,
+  sessionRef: SessionRef,
+  gate: ExtractEligibleGate,
 ): Promise<ExtractSessionOutcome> {
-  const {
-    harness,
-    stashDir,
-    config,
-    llmRunner,
-    lease,
-    onNotices,
-    getNotices,
-    chat,
-    ctx,
-    eventsCtx,
-    sourceRun,
-    dryRun,
-    timeoutMs,
-    signal,
-    standardsContext,
-  } = runCtx;
-  const { sessionRef, gate } = session;
-  const warnings: string[] = [];
-  const { data, filtered, contentHash } = gate;
-  if (!lease) throw new TypeError("extract model work requires an operation dispatch lease");
-
-  const prompt = buildExtractPrompt({
-    data,
-    events: filtered.events,
-    inlineRefs: data.inlineRefs,
-    ...(standardsContext.trim() ? { standardsContext } : {}),
-  });
-
-  const extraction = await runSessionExtractionLlmCall({
-    config,
-    llmRunner,
-    lease,
-    chat,
-    prompt,
-    timeoutMs,
-    signal,
-    onNotices,
-  });
-
+  const { harness, stashDir, sourceRun, dryRun, options } = run;
+  const { data, filtered, contentHash: hash } = gate;
+  const base = { preFilter: preFilterStats(filtered), contentHash: hash };
+  const extraction = await extractFromSession(
+    run,
+    buildExtractPrompt({
+      data,
+      events: filtered.events,
+      inlineRefs: data.inlineRefs,
+      ...(run.standardsContext.trim() ? { standardsContext: run.standardsContext } : {}),
+    }),
+  );
   if (extraction.kind === "unavailable") {
-    // The seam took the fallback path (disabled / timeout / error). Return skipped.
-    return unavailableExtractionResult({
-      sessionRef,
-      harness: harness.name,
-      preFilter: extractPreFilterStats(filtered),
-      contentHash,
-      notices: extractNoticeFields(getNotices),
+    return sessionOutcome(sessionRef.sessionId, harness.name, {
+      ...base,
+      warnings: ["session_extraction feature returned empty (disabled / timeout / error)"],
+      skipped: true,
+      skipReason: "llm_unavailable",
+      ...run.notices.fields(),
     });
   }
-
   if (extraction.kind === "malformed") {
-    return malformedExtractionResult({
-      extraction,
-      sessionRef,
-      harness: harness.name,
-      preFilter: extractPreFilterStats(filtered),
-      contentHash,
-      notices: extractNoticeFields(getNotices),
+    warnVerbose(
+      `[extract] malformed model output for session ${sessionRef.sessionId}: ${redactErrorBody(extraction.raw)}`,
+    );
+    return sessionOutcome(sessionRef.sessionId, harness.name, {
+      ...base,
+      warnings: [
+        `malformed_model_output: ${extraction.failure.message}; attempts=${extraction.attempts}; responseLength=${extraction.raw.length}; responseSha256=${contentHash(extraction.raw)}`,
+      ],
+      skipped: true,
+      skipReason: "malformed_model_output",
+      ...run.notices.fields(),
     });
   }
 
   const { payload } = extraction;
+  const warnings: string[] = [];
+  // Provenance xrefs are added only after the cited session asset exists.
+  const { warning, ...sessionAsset } = await maybeWriteSessionAsset(run, data);
+  if (warning) warnings.push(warning);
   const proposalIds: string[] = [];
-  // Provenance refs are added only after the cited session asset exists.
-  const sessionAsset = await maybeWriteSessionAsset(runCtx, session);
-  if (sessionAsset.warning) warnings.push(sessionAsset.warning);
-
-  if (payload.candidates.length === 0) {
-    appendEvent(
-      {
-        eventType: "extract_invoked",
-        ...(sessionAsset.sessionAssetRef ? { ref: sessionAsset.sessionAssetRef } : {}),
-        metadata: {
-          outcome: "no_candidates" as const,
-          sessionId: sessionRef.sessionId,
-          harness: harness.name,
-          sourceRun,
-          rationale: payload.rationale_if_empty,
-          repairAttempts: extraction.attempts - 1,
-          preFilterInput: filtered.stats.inputCount,
-          preFilterOutput: filtered.stats.outputCount,
-        },
-      },
-      eventsCtx,
+  if (payload.candidates.length > 0) {
+    // A candidate the ledger holds a live window for (pending, or recently rejected) is not queued again.
+    const ledger = loadLedgerSnapshot(
+      { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx, ...(dryRun ? { readOnly: true } : {}) },
+      stashDir,
+      ["extract"],
     );
-    return {
-      sessionId: sessionRef.sessionId,
-      harness: harness.name,
-      candidateCount: 0,
-      proposalIds: [],
-      ...(payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
-      preFilter: {
-        inputCount: filtered.stats.inputCount,
-        outputCount: filtered.stats.outputCount,
-        truncatedCount: filtered.stats.truncatedCount,
-      },
-      warnings,
-      contentHash,
-      ...sessionAsset,
-      ...extractNoticeFields(getNotices),
-    };
-  }
-
-  // §23.6 fingerprint model-id term: the profile resolved for this session's
-  // LLM call (best-effort — an unconfigured profile leaves the term empty).
-  const extractModelId = llmRunner.connection.model;
-  for (const candidate of payload.candidates) {
-    const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
-    if (dryRun) {
-      proposalIds.push(`dry-run:${built.ref}`);
-      continue;
-    }
-    try {
-      const { ref, content, description } = built;
-      const result = emitProposal(
-        { stashDir, proposalsCtx: ctx },
-        {
-          ref,
+    const nowIso = new Date().toISOString();
+    for (const candidate of payload.candidates) {
+      const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
+      const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
+      if (isLedgerBlocked(ledgerRow, nowIso)) {
+        warnings.push(
+          `candidate ${candidate.type}:${candidate.name} skipped: ${ledgerRow?.outcome} until ${ledgerRow?.nextEligibleAt}`,
+        );
+        continue;
+      }
+      if (dryRun) {
+        proposalIds.push(`dry-run:${built.ref}`);
+        continue;
+      }
+      try {
+        const proposal = mintProposal(stashDir, options.ctx, {
+          ref: built.ref,
           source: "extract",
           sourceRun,
-          // §23.6 fingerprint model-id term (WI-6.4). The LLM already ran for
-          // this session, so the profile is resolvable; guard anyway.
-          ...(extractModelId ? { modelId: extractModelId } : {}),
+          attemptedRefs: [built.ref],
           payload: {
-            content,
+            content: built.content,
             frontmatter: {
-              description,
+              description: built.description,
               ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
               confidence: candidate.confidence,
               ...(sessionAsset.sessionAssetRef ? { xrefs: [sessionAsset.sessionAssetRef] } : {}),
               evidence: candidate.evidence,
             },
           },
-        },
-      );
-      if (isProposalSkipped(result)) {
-        warnings.push(`candidate ${candidate.type}:${candidate.name} skipped: ${result.reason}: ${result.message}`);
-      } else {
-        proposalIds.push(result.id);
+        });
+        proposalIds.push(proposal.id);
+      } catch (err) {
+        warnings.push(
+          `candidate ${candidate.type}:${candidate.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-    } catch (err) {
-      warnings.push(
-        `candidate ${candidate.type}:${candidate.name} failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
     }
   }
-
+  const empty = payload.candidates.length === 0;
   appendEvent(
     {
       eventType: "extract_invoked",
       ...(sessionAsset.sessionAssetRef ? { ref: sessionAsset.sessionAssetRef } : {}),
       metadata: {
-        outcome: "candidates_queued" as const,
+        outcome: empty ? ("no_candidates" as const) : ("candidates_queued" as const),
         sessionId: sessionRef.sessionId,
         harness: harness.name,
         sourceRun,
-        candidateCount: payload.candidates.length,
-        proposalCount: proposalIds.length,
+        ...(empty
+          ? { rationale: payload.rationale_if_empty }
+          : { candidateCount: payload.candidates.length, proposalCount: proposalIds.length }),
         preFilterInput: filtered.stats.inputCount,
         preFilterOutput: filtered.stats.outputCount,
         repairAttempts: extraction.attempts - 1,
       },
     },
-    eventsCtx,
+    options.eventsCtx,
   );
-
-  return {
-    sessionId: sessionRef.sessionId,
-    harness: harness.name,
+  return sessionOutcome(sessionRef.sessionId, harness.name, {
+    ...base,
     candidateCount: payload.candidates.length,
     proposalIds,
-    preFilter: {
-      inputCount: filtered.stats.inputCount,
-      outputCount: filtered.stats.outputCount,
-      truncatedCount: filtered.stats.truncatedCount,
-    },
+    ...(empty && payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
     warnings,
-    contentHash,
     ...sessionAsset,
-    ...extractNoticeFields(getNotices),
-  };
+    ...run.notices.fields(),
+  });
 }
 
-/** Run-scoped inputs for {@link runExtractSessionLoop}. */
-interface ExtractSessionLoopArgs {
-  plans: ExtractSessionPlan[];
-  deferredCandidates: SessionSummary[];
-  seenMap: Map<string, ExtractedSessionRow>;
-  options: AkmExtractOptions;
-  harness: SessionLogHarness;
-  stateDb: Database | undefined;
-  trackingEnabled: boolean;
-  dryRun: boolean;
-  stashDir: string;
-  config: AkmConfig;
-  llmRunner: ExtractLlmRunner;
-  lease: LoweredExecutionDispatchLease | undefined;
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
-  getNotices: () => readonly Readonly<LoweringNotice>[];
-  chat: AkmExtractOptions["chat"];
-  sourceRun: string;
-  timeoutMs: number | null;
-  maxTotalChars: number | undefined;
-  minContentChars: number;
-  triage: { enabled: boolean; minScore: number };
-  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: ExtractSessionSummaryGenerator };
-  extractStandardsContext: string;
-  /** Mutated in place with run-level (non-session) warnings. */
-  topLevelWarnings: string[];
-}
-
-/** Accumulated per-run tallies + results produced by {@link runExtractSessionLoop}. */
-interface ExtractSessionLoopResult {
-  /** The run's resolved engine name, stamped onto every session result and ledger row. */
-  engine: string;
+interface ExtractLoopTally {
   sessions: ExtractedSessionResult[];
   processedCount: number;
   skippedCount: number;
@@ -1241,50 +772,160 @@ interface ExtractSessionLoopResult {
   deferred: number;
 }
 
-function recordExtractSessionOutcome(args: {
-  stateDb: Database | undefined;
-  trackingEnabled: boolean;
-  dryRun: boolean;
-  harness: string;
-  summary: SessionSummary;
-  result: ExtractedSessionResult;
-  sourceRun: string;
-}): void {
-  const { stateDb, trackingEnabled, dryRun, harness, summary, result, sourceRun } = args;
-  if (
-    !trackingEnabled ||
-    !stateDb ||
-    dryRun ||
-    result.skipReason === "already_extracted" ||
-    result.skipReason === "locked_concurrent"
-  )
-    return;
+/**
+ * Work the plans: claim each model session's lock, re-read and re-gate it
+ * under the lock (the log may have changed since planning), extract, and
+ * record the outcome in the seen-session table. A skipped or locked session
+ * refills its model slot from the deferred candidates.
+ */
+async function runExtractSessionLoop(
+  run: ExtractRun,
+  planned: { plans: ExtractSessionPlan[]; deferredCandidates: SessionSummary[] },
+  seenMap: Map<string, ExtractedSessionRow>,
+  stateDb: Database | undefined,
+  tracking: boolean,
+  topLevelWarnings: string[],
+): Promise<ExtractLoopTally> {
+  const { options, harness, gates, dryRun } = run;
+  const locking = tracking && !dryRun && !options.stateDb;
+  const tally: ExtractLoopTally = {
+    sessions: [],
+    processedCount: 0,
+    skippedCount: 0,
+    triageEvaluated: 0,
+    triagePassed: 0,
+    triagedOut: 0,
+    allProposalIds: [],
+    deferred: 0,
+  };
+  const account = (result: ExtractSessionOutcome): ExtractedSessionResult => {
+    const stamped: ExtractedSessionResult = { ...result, engine: run.llmRunner.engine };
+    tally.sessions.push(stamped);
+    const preempted = ["read_failed", "too_short", "already_extracted", "locked_concurrent"].includes(
+      result.skipReason ?? "",
+    );
+    if (gates.triage.enabled && !preempted) {
+      tally.triageEvaluated += 1;
+      if (result.skipReason === "triaged_out") tally.triagedOut += 1;
+      else tally.triagePassed += 1;
+    }
+    if (result.skipped) tally.skippedCount += 1;
+    else tally.processedCount += 1;
+    tally.allProposalIds.push(...result.proposalIds);
+    return stamped;
+  };
+  const accountAndRecord = (summary: SessionSummary, result: ExtractSessionOutcome): void => {
+    recordSessionOutcome(stateDb, tracking && !dryRun, harness.name, summary, account(result), run.sourceRun);
+  };
+
+  const workPlans = [...planned.plans];
+  let remaining = planned.deferredCandidates;
+  const refillModelSlot = (): void => {
+    if (remaining.length === 0 || options.signal?.aborted) return;
+    const refill = planExtractSessions({
+      candidates: remaining,
+      options,
+      harness,
+      seenMap,
+      gates,
+      maxSessionsPerRun: 1,
+      locking,
+    });
+    workPlans.push(...refill.plans);
+    remaining = refill.deferredCandidates;
+  };
+
+  for (const plan of workPlans) {
+    if (options.signal?.aborted) break;
+    const { summary } = plan;
+    if (plan.kind === "skip") {
+      accountAndRecord(summary, plan.result);
+      continue;
+    }
+    let lockOwnership: LockOwnership | undefined;
+    if (locking) {
+      const lock = acquireExtractSessionLock(
+        extractSessionLockPath(harness.name, summary.sessionId, options.stateDbPath ?? getStateDbPath()),
+      );
+      if (!lock.proceed) {
+        account(lockedConcurrentResult(harness.name, summary));
+        refillModelSlot();
+        continue;
+      }
+      lockOwnership = lock.ownership;
+    }
+    try {
+      const prior = stateDb
+        ? getExtractedSessionsMap(stateDb, harness.name, [summary.sessionId]).get(summary.sessionId)
+        : seenMap.get(summary.sessionId);
+      const gate = runPreLlmSessionGates(harness, summary, prior, options.force === true, gates);
+      if ("skip" in gate) {
+        accountAndRecord(summary, gate.skip);
+        refillModelSlot();
+        continue;
+      }
+      const result = await processSession(run, summary, gate);
+      if (result.skipReason === "malformed_model_output") {
+        for (const warning of result.warnings) topLevelWarnings.push(`session ${summary.sessionId}: ${warning}`);
+      }
+      accountAndRecord(summary, result);
+    } catch (err) {
+      if (err instanceof ConfigError) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      warn(`[extract] session ${summary.sessionId} threw: ${msg}`);
+      topLevelWarnings.push(`session ${summary.sessionId} threw: ${msg}`);
+      account(
+        sessionOutcome(summary.sessionId, harness.name, {
+          warnings: [msg],
+          skipped: true,
+          skipReason: "exception",
+          ...run.notices.fields(),
+        }),
+      );
+    } finally {
+      if (lockOwnership) releaseLock(lockOwnership);
+    }
+  }
+  tally.deferred = remaining.length;
+  return tally;
+}
+
+/**
+ * Persist a session's outcome in the seen-session table. A session skipped as
+ * already extracted or locked is not rewritten; one that failed for a
+ * transient reason keeps a null hash so it is retried.
+ */
+function recordSessionOutcome(
+  stateDb: Database | undefined,
+  enabled: boolean,
+  harness: string,
+  summary: SessionSummary,
+  result: ExtractedSessionResult,
+  sourceRun: string,
+): void {
+  if (!enabled || !stateDb) return;
+  if (result.skipReason === "already_extracted" || result.skipReason === "locked_concurrent") return;
+  const reason = result.skipReason ?? "";
   try {
-    const outcome: ExtractedSessionRow["outcome"] = result.skipped
-      ? result.skipReason === "read_failed" ||
-        result.skipReason === "exception" ||
-        result.skipReason === "malformed_model_output"
-        ? "failed"
-        : "skipped"
-      : result.candidateCount === 0
-        ? "no_candidates"
-        : "candidates_queued";
     upsertExtractedSession(stateDb, {
       harness,
       sessionId: summary.sessionId,
       processedAt: new Date().toISOString(),
       sessionEndedAt: summary.endedAt ?? null,
-      outcome,
+      outcome: result.skipped
+        ? ["read_failed", "exception", "malformed_model_output"].includes(reason)
+          ? "failed"
+          : "skipped"
+        : result.candidateCount === 0
+          ? "no_candidates"
+          : "candidates_queued",
       candidateCount: result.candidateCount,
       proposalCount: result.proposalIds.length,
       rationale: result.rationaleIfEmpty ?? null,
       sourceRun,
-      contentHash:
-        result.skipReason === "llm_unavailable" ||
-        result.skipReason === "triaged_out" ||
-        result.skipReason === "malformed_model_output"
-          ? null
-          : (result.contentHash ?? null),
+      contentHash: ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason)
+        ? null
+        : (result.contentHash ?? null),
       metadata: {
         preFilterInputCount: result.preFilter.inputCount,
         preFilterOutputCount: result.preFilter.outputCount,
@@ -1302,272 +943,24 @@ function recordExtractSessionOutcome(args: {
   }
 }
 
-function accountExtractSessionResult(
-  result: ExtractSessionOutcome,
-  triageEnabled: boolean,
-  output: ExtractSessionLoopResult,
-): ExtractedSessionResult {
-  const stamped: ExtractedSessionResult = { ...result, engine: output.engine };
-  output.sessions.push(stamped);
-  if (triageEnabled) {
-    const preempted =
-      result.skipReason === "read_failed" ||
-      result.skipReason === "too_short" ||
-      result.skipReason === "already_extracted" ||
-      result.skipReason === "locked_concurrent";
-    if (!preempted) {
-      output.triageEvaluated += 1;
-      if (result.skipReason === "triaged_out") output.triagedOut += 1;
-      else output.triagePassed += 1;
-    }
-  }
-  if (result.skipped) output.skippedCount += 1;
-  else output.processedCount += 1;
-  output.allProposalIds.push(...result.proposalIds);
-  return stamped;
-}
-
-/**
- * Iterate the discovered candidate sessions: enforce the per-run cap, take the
- * per-session cross-process lock, dispatch to {@link processSession}, aggregate
- * the #626 triage counters, and persist each seen-row outcome. Extracted verbatim
- * from `akmExtract` — the maxSessionsPerRun break, lock/skip accounting, triage
- * aggregation, and seen-row upsert are byte-identical.
- */
-async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<ExtractSessionLoopResult> {
-  const {
-    plans,
-    deferredCandidates,
-    seenMap,
-    options,
-    harness,
-    stateDb,
-    trackingEnabled,
-    dryRun,
-    stashDir,
-    config,
-    llmRunner,
-    lease,
-    onNotices,
-    getNotices,
-    chat,
-    sourceRun,
-    timeoutMs,
-    triage,
-    sessionIndexing,
-    extractStandardsContext,
-    topLevelWarnings,
-  } = args;
-  // WI-7.7 §2: run-scoped processSession inputs, resolved once per run.
-  const sessionRunCtx: ExtractSessionRunCtx = {
-    harness,
-    stashDir,
-    config,
-    llmRunner,
-    lease,
-    onNotices,
-    getNotices,
-    chat,
-    ctx: options.ctx,
-    eventsCtx: options.eventsCtx,
-    sourceRun,
-    dryRun,
-    timeoutMs,
-    sessionIndexing,
-    signal: options.signal,
-    standardsContext: extractStandardsContext,
-  };
-  const output: ExtractSessionLoopResult = {
-    engine: llmRunner.engine,
-    sessions: [],
-    processedCount: 0,
-    skippedCount: 0,
-    triageEvaluated: 0,
-    triagePassed: 0,
-    triagedOut: 0,
-    allProposalIds: [],
-    deferred: 0,
-  };
-
-  const workPlans = [...plans];
-  let remainingCandidates = deferredCandidates;
-  const refillModelSlot = (): void => {
-    if (remainingCandidates.length === 0 || options.signal?.aborted) return;
-    const refill = planExtractSessions({
-      candidates: remainingCandidates,
-      options,
-      harness,
-      seenMap,
-      maxTotalChars: args.maxTotalChars,
-      minContentChars: args.minContentChars,
-      maxSessionsPerRun: 1,
-      triage,
-      trackingEnabled,
-      dryRun,
-    });
-    workPlans.push(...refill.plans);
-    remainingCandidates = refill.deferredCandidates;
-  };
-
-  for (const plan of workPlans) {
-    if (options.signal?.aborted) break;
-    const { summary } = plan;
-    if (plan.kind === "skip") {
-      const accounted = accountExtractSessionResult(plan.result, triage.enabled, output);
-      recordExtractSessionOutcome({
-        stateDb,
-        trackingEnabled,
-        dryRun,
-        harness: harness.name,
-        summary,
-        result: accounted,
-        sourceRun,
-      });
-      continue;
-    }
-
-    let sessionLockOwnership: LockOwnership | undefined;
-    if (trackingEnabled && !dryRun && !options.stateDb) {
-      const sessionLockPath = getExtractSessionLockPath(
-        harness.name,
-        summary.sessionId,
-        options.stateDbPath ?? getStateDbPath(),
-      );
-      const sessionLock = acquireExtractSessionLock(sessionLockPath);
-      if (!sessionLock.proceed) {
-        accountExtractSessionResult(lockedConcurrentResult(harness.name, summary), triage.enabled, output);
-        refillModelSlot();
-        continue;
-      }
-      sessionLockOwnership = sessionLock.ownership;
-    }
-
-    try {
-      // Planning stays read-only so a credential failure creates no state. Once
-      // this run owns the session lock, read and gate the session again: the log
-      // may have grown, become too short after replacement, or been completed by
-      // another extractor between the planning snapshot and acquisition.
-      const currentPrior = stateDb
-        ? getExtractedSessionsMap(stateDb, harness.name, [summary.sessionId]).get(summary.sessionId)
-        : seenMap.get(summary.sessionId);
-      const executionGate = runPreLlmSessionGates({
-        harness,
-        sessionRef: summary,
-        prior: currentPrior,
-        force: options.force === true,
-        maxTotalChars: args.maxTotalChars,
-        minContentChars: args.minContentChars,
-        triage,
-      });
-      if ("skip" in executionGate) {
-        const accounted = accountExtractSessionResult(executionGate.skip, triage.enabled, output);
-        recordExtractSessionOutcome({
-          stateDb,
-          trackingEnabled,
-          dryRun,
-          harness: harness.name,
-          summary,
-          result: accounted,
-          sourceRun,
-        });
-        refillModelSlot();
-        continue;
-      }
-      const result = await processSession(sessionRunCtx, {
-        sessionRef: summary,
-        gate: executionGate,
-      });
-      if (result.skipReason === "malformed_model_output") {
-        for (const warning of result.warnings) topLevelWarnings.push(`session ${summary.sessionId}: ${warning}`);
-      }
-      const accounted = accountExtractSessionResult(result, triage.enabled, output);
-      recordExtractSessionOutcome({
-        stateDb,
-        trackingEnabled,
-        dryRun,
-        harness: harness.name,
-        summary,
-        result: accounted,
-        sourceRun,
-      });
-    } catch (err) {
-      if (err instanceof ConfigError) throw err;
-      const msg = err instanceof Error ? err.message : String(err);
-      warn(`[extract] session ${summary.sessionId} threw: ${msg}`);
-      topLevelWarnings.push(`session ${summary.sessionId} threw: ${msg}`);
-      accountExtractSessionResult(
-        {
-          sessionId: summary.sessionId,
-          harness: harness.name,
-          candidateCount: 0,
-          proposalIds: [],
-          preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
-          warnings: [msg],
-          skipped: true,
-          skipReason: "exception",
-          ...extractNoticeFields(getNotices),
-        },
-        triage.enabled,
-        output,
-      );
-    } finally {
-      if (sessionLockOwnership) releaseLock(sessionLockOwnership);
-    }
-  }
-
-  output.deferred = remainingCandidates.length;
-  return output;
-}
-
-/** Resolved run-scoped config for one `akmExtract` invocation. */
-interface ExtractRunConfig {
-  timeoutMs: number | null;
-  llmRunner: ExtractLlmRunner;
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
-  getNotices: () => readonly Readonly<LoweringNotice>[];
-  maxTotalChars: number | undefined;
-  minContentChars: number;
-  maxSessionsPerRun: number;
-  effectiveSince: string | undefined;
-  triage: { enabled: boolean; minScore: number };
-  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: ExtractSessionSummaryGenerator };
-}
-
-/**
- * Resolve the run-scoped LLM/engine, budget, triage, and session-indexing
- * settings for one extract invocation (throwing when no engine is configured).
- * Extracted verbatim from `akmExtract` — the timeout precedence chain, the
- * session-summary generator seam, and the default resolutions are byte-identical.
- */
-function resolveExtractRunConfig(
+/** The run's runner, budgets, gates and session-indexing settings (throws without an engine). */
+function resolveExtractRun(
   options: AkmExtractOptions,
   config: AkmConfig,
-  extractProcess: Readonly<ImproveProcessConfig> | undefined,
+  process: Readonly<ImproveProcessConfig> | undefined,
   activeProfile: ImproveProfileConfig | undefined,
-): ExtractRunConfig {
-  const executionNotices = new Map<string, Readonly<LoweringNotice>>();
-  const onNotices = (notices: readonly Readonly<LoweringNotice>[]): void => {
-    for (const notice of notices) executionNotices.set(JSON.stringify(notice), notice);
-  };
-  const getNotices = (): readonly Readonly<LoweringNotice>[] => Object.freeze([...executionNotices.values()]);
-
-  // Improve supplies its invocation-owned symbolic runner. Standalone extract
-  // resolves the selected process engine through the shared execution planner.
+): Omit<ExtractRun, "options" | "harness" | "stashDir" | "config" | "sourceRun" | "dryRun" | "standardsContext"> {
+  const notices = noticeSet();
   let llmRunner: ExtractLlmRunner | null | undefined;
   if (options.resolvedPlan) {
     llmRunner = options.resolvedPlan.runner;
-    onNotices(options.resolvedPlan.notices ?? []);
+    notices.add(options.resolvedPlan.notices ?? []);
   } else if (options.llmRunner) {
     llmRunner = options.llmRunner;
   } else {
-    const resolved = resolveImproveLlmExecution({
-      config,
-      profile: activeProfile,
-      process: extractProcess,
-      processName: "extract",
-    });
+    const resolved = resolveImproveLlmExecution({ config, profile: activeProfile, process, processName: "extract" });
     llmRunner = resolved?.runner;
-    if (resolved) onNotices(resolved.notices);
+    if (resolved) notices.add(resolved.notices);
   }
   if (!llmRunner) {
     throw new ConfigError(
@@ -1575,98 +968,63 @@ function resolveExtractRunConfig(
       "LLM_NOT_CONFIGURED",
     );
   }
-
+  const runner = llmRunner;
   const timeoutMs = options.resolvedPlan
     ? options.resolvedPlan.timeoutMs
     : Object.hasOwn(options, "timeoutMs")
       ? (options.timeoutMs ?? null)
-      : Object.hasOwn(llmRunner, "timeoutMs")
-        ? (llmRunner.timeoutMs ?? null)
+      : Object.hasOwn(runner, "timeoutMs")
+        ? (runner.timeoutMs ?? null)
         : 600_000;
-  // Pre-filter budget — process config can raise it for large-context models.
-  const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
-  // #595/#596 — minimum raw session size; sessions below it skip the LLM call
-  // entirely. Set `processes.extract.minContentChars: 0` to disable the gate.
-  const minContentChars =
-    typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : DEFAULT_MIN_CONTENT_CHARS;
-  // Cap on NEW sessions LLM-processed per run; 0 disables. Absent = default.
-  // Bounds per-run wall time / LLM cost so a backlog can't push a run past its
-  // task timeout — the overflow stays unseen and is picked up by later runs.
-  const maxSessionsPerRun = options.since
-    ? 0
-    : typeof extractProcess?.maxSessionsPerRun === "number"
-      ? extractProcess.maxSessionsPerRun
-      : DEFAULT_MAX_SESSIONS_PER_RUN;
-  // Default discovery window — process config can override the built-in 24h.
-  const effectiveSince = options.since ?? extractProcess?.defaultSince;
-
-  // #626 — resolve the triage gate config once per run. Default-off → the
-  // per-session path never calls the scorer and emits no telemetry.
-  const triage = resolveTriageConfig(extractProcess);
-
-  // #561 — resolve session-indexing config. Default ON: we only reach this code
-  // when `session_extraction` is enabled AND an LLM is configured (both checked
-  // above), so defaulting on costs nothing offline (the summary call fails open)
-  // while making sessions searchable in the common LLM-configured case. Set
-  // `processes.extract.indexSessions: false` for byte-identical legacy behaviour.
-  const sessionIndexingEnabled = extractProcess?.indexSessions ?? true;
-  const minSessionDuration =
-    typeof extractProcess?.minSessionDuration === "number"
-      ? extractProcess.minSessionDuration
-      : DEFAULT_MIN_SESSION_DURATION_MINUTES;
-  // Production summary generator: a bounded in-tree LLM call wrapped in the
-  // same fail-open `callStructured` seam as the rest of extract. Returns
-  // `undefined` on disablement / timeout / error so no asset is written.
-  // Tests inject a fake.
-  const defaultSessionSummaryGenerator: ExtractSessionSummaryGenerator = async (data, lease) => {
-    let raw = "";
-    await callStructured<string>({
+  const triage = (process as { triage?: { enabled?: boolean; minScore?: number } } | undefined)?.triage;
+  // The default summary generator fails open: no summary, no session asset.
+  const generate: SessionSummaryGenerator = async (data) => {
+    const outcome = await callStage({
       feature: "session_extraction",
-      akmConfig: config,
-      runner: llmRunner,
-      ...(lease ? { lease } : {}),
-      messages: [{ role: "user", content: buildSessionSummaryPrompt(data) }],
+      runner,
+      prompt: buildSessionSummaryPrompt(data),
+      gate: { config },
       request: {
         timeoutMs,
         responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.chat ? { chat: options.chat } : {}),
       },
-      onNotices,
-      parse: (r) => {
-        raw = r ?? "";
-        return raw;
-      },
-      onError: () => "",
-      fallback: "",
+      onNotices: notices.add,
     });
-    return parseSessionSummary(raw);
+    return parseSessionSummary(outcome.ok ? outcome.raw : "");
   };
-  const sessionIndexing = {
-    enabled: sessionIndexingEnabled,
-    minDurationMinutes: minSessionDuration,
-    generate: options.generateSessionSummary ?? defaultSessionSummaryGenerator,
-  };
-
   return {
+    llmRunner: runner,
+    notices,
     timeoutMs,
-    llmRunner,
-    onNotices,
-    getNotices,
-    maxTotalChars,
-    minContentChars,
-    maxSessionsPerRun,
-    effectiveSince,
-    triage,
-    sessionIndexing,
+    gates: {
+      maxTotalChars: typeof process?.maxTotalChars === "number" ? process.maxTotalChars : undefined,
+      minContentChars:
+        typeof process?.minContentChars === "number" ? process.minContentChars : DEFAULT_MIN_CONTENT_CHARS,
+      triage: {
+        enabled: triage?.enabled === true,
+        minScore: typeof triage?.minScore === "number" ? triage.minScore : DEFAULT_TRIAGE_MIN_SCORE,
+      },
+    },
+    maxSessionsPerRun: options.since
+      ? 0
+      : typeof process?.maxSessionsPerRun === "number"
+        ? process.maxSessionsPerRun
+        : DEFAULT_MAX_SESSIONS_PER_RUN,
+    effectiveSince: options.since ?? process?.defaultSince,
+    sessionIndexing: {
+      enabled: process?.indexSessions ?? true,
+      minDurationMinutes:
+        typeof process?.minSessionDuration === "number"
+          ? process.minSessionDuration
+          : DEFAULT_MIN_SESSION_DURATION_MINUTES,
+      generate: options.generateSessionSummary ?? generate,
+    },
   };
 }
 
-/**
- * Resolve the session set to process: the single `--session-id` target (or a
- * not-found envelope) or the discovery-window listing. Extracted verbatim from
- * `akmExtract`; the 48h default-since floor and location filter are unchanged.
- */
+/** The sessions to process: the `--session-id` target (or a not-found envelope) or the discovery window. */
 function discoverExtractCandidates(
   options: AkmExtractOptions,
   harness: SessionLogHarness,
@@ -1675,28 +1033,21 @@ function discoverExtractCandidates(
   dryRun: boolean,
   llmRunner: ExtractLlmRunner,
 ): { candidates: SessionSummary[] } | { notFound: AkmExtractResult } {
+  const location = options.location ? { location: options.location } : {};
   if (options.sessionId) {
-    const all = harness.listSessions({
-      ...(options.location ? { location: options.location } : {}),
-    });
-    const target = all.find((s) => s.sessionId === options.sessionId);
-    if (!target) {
-      return {
-        notFound: emptyExtractResult({
-          ok: false,
-          dryRun,
-          type: options.type,
-          warning: `session ${options.sessionId} not found for harness ${options.type}`,
-          startMs,
-          llmRunner,
-        }),
-      };
-    }
-    return { candidates: [target] };
+    const target = harness.listSessions(location).find((s) => s.sessionId === options.sessionId);
+    if (target) return { candidates: [target] };
+    return {
+      notFound: emptyExtractResult({
+        ok: false,
+        dryRun,
+        type: options.type,
+        warning: `session ${options.sessionId} not found for harness ${options.type}`,
+        startMs,
+        llmRunner,
+      }),
+    };
   }
-  // No explicit `--since`/`defaultSince` → default to "since the last run"
-  // (floored at 48h) so an intermittently-online host doesn't lose sessions
-  // that ended while it was off. See {@link resolveDefaultSinceMs}.
   const sinceMs = effectiveSince
     ? parseSinceArg(effectiveSince)
     : resolveDefaultSinceMs(harness.name, startMs, {
@@ -1704,54 +1055,16 @@ function discoverExtractCandidates(
         ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
         ...(options.skipTracking ? { skipTracking: options.skipTracking } : {}),
       });
-  return {
-    candidates: harness.listSessions({
-      sinceMs,
-      ...(options.location ? { location: options.location } : {}),
-    }),
-  };
+  return { candidates: harness.listSessions({ sinceMs, ...location }) };
 }
 
-// ── Public entrypoint ────────────────────────────────────────────────────────
-
-/**
- * WI-9.10: build one `akm extract` run's {@link RunContext} from values
- * `akmExtract` has already resolved by the time it calls this (config,
- * stashDir, dryRun, sourceRun, and `resolveExtractRunConfig`'s symbolic runner)
- * — no second config load, credential materialization, or new db handle.
- */
-function buildExtractRunContext(args: {
-  options: AkmExtractOptions;
-  config: AkmConfig;
-  stashDir: string;
-  dryRun: boolean;
-  sourceRun: string;
-  llmRunner: ExtractLlmRunner;
-}): RunContext {
-  const { options, config, stashDir, dryRun, sourceRun, llmRunner } = args;
-  return createRunContext({
-    stashDir,
-    config,
-    eventsCtx: options.eventsCtx ?? {},
-    // Not yet wired into any proposal call site this stage (mirrors
-    // buildImproveRunContext's proposalsCtx comment in improve.ts).
-    proposalsCtx: options.ctx ?? {},
-    getLlmRunner: () => llmRunner,
-    sourceRun,
-    dryRun,
-    signal: options.signal,
-  });
-}
-
-function loadExtractSeenMapReadOnly(args: {
-  options: AkmExtractOptions;
-  harness: string;
-  candidates: SessionSummary[];
-  trackingEnabled: boolean;
-  warnings: string[];
-}): Map<string, ExtractedSessionRow> {
-  const { options, harness, candidates, trackingEnabled, warnings } = args;
-  if (!trackingEnabled || candidates.length === 0) return new Map();
+function loadSeenMapReadOnly(
+  options: AkmExtractOptions,
+  harness: string,
+  candidates: SessionSummary[],
+  warnings: string[],
+): Map<string, ExtractedSessionRow> {
+  if (options.skipTracking === true || candidates.length === 0) return new Map();
   let snapshot: Database | undefined;
   try {
     if (!options.stateDb) snapshot = openSqliteReadSnapshot(options.stateDbPath ?? getStateDbPath());
@@ -1773,103 +1086,24 @@ function loadExtractSeenMapReadOnly(args: {
   }
 }
 
-function openExtractLiveStateDb(args: {
-  options: AkmExtractOptions;
-  trackingEnabled: boolean;
-  hasModelWork: boolean;
-  dryRun: boolean;
-  warnings: string[];
-}): Database | undefined {
-  const { options, trackingEnabled, hasModelWork, dryRun, warnings } = args;
-  if (!trackingEnabled) return undefined;
-  if (options.stateDb) return options.stateDb;
-  if (!hasModelWork || dryRun) return undefined;
-  try {
-    return openStateDatabase(options.stateDbPath);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    warn(`[extract] state.db unavailable, processing without skip-tracking: ${msg}`);
-    warnings.push(`state.db unavailable: ${msg}`);
-    return undefined;
-  }
-}
-
-function emitExtractTriageEvent(args: {
-  modelPlanCount: number;
-  triageEnabled: boolean;
-  result: ExtractSessionLoopResult;
-  sourceRun: string;
-  eventsCtx: EventsContext | undefined;
-}): void {
-  const { modelPlanCount, triageEnabled, result, sourceRun, eventsCtx } = args;
-  if (modelPlanCount === 0 || !triageEnabled || result.triageEvaluated === 0) return;
-  appendEvent(
-    {
-      eventType: "extract_triaged",
-      metadata: {
-        evaluated: result.triageEvaluated,
-        passed: result.triagePassed,
-        triagedOut: result.triagedOut,
-        sourceRun,
-      },
-    },
-    eventsCtx,
-  );
-}
-
-/**
- * Count every session's `skipReason` (#912) and push one warning line per
- * infrastructure reason in {@link EXTRACT_INFRASTRUCTURE_SKIP_REASONS}.
- * `undefined` when nothing was skipped, so the envelope carries no key.
- */
-function buildExtractSkipAggregate(
-  sessions: readonly ExtractedSessionResult[],
-  engine: string,
-  warnings: string[],
-): AkmExtractResult["skipReasons"] {
-  const counts: NonNullable<AkmExtractResult["skipReasons"]> = {};
-  for (const session of sessions) {
-    if (!session.skipReason) continue;
-    counts[session.skipReason] = (counts[session.skipReason] ?? 0) + 1;
-  }
-  if (Object.keys(counts).length === 0) return undefined;
-  const total = sessions.length;
-  for (const reason of EXTRACT_INFRASTRUCTURE_SKIP_REASONS) {
-    const n = counts[reason];
-    if (n) warnings.push(`${n} of ${total} sessions skipped: ${reason} (engine "${engine}")`);
-  }
-  return counts;
-}
-
 export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtractResult> {
   const startMs = Date.now();
   if (!options.type || options.type.trim() === "") {
     throw new UsageError("--type is required. Pass a harness name (e.g. --type claude).", "MISSING_REQUIRED_ARGUMENT");
   }
-
   const config = options.config ?? loadConfig();
-  const stashDir = resolveRunStashDir(options.stashDir);
+  const stashDir = options.stashDir ?? resolveStashDir();
   const dryRun = options.dryRun ?? false;
   const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
-
-  // Read process behavior from the frozen standalone plan or the active improve
-  // strategy. This prevents config changes during watch mode from changing later
-  // triggers and prevents one improve strategy from overriding another.
+  // Behavior comes from the frozen standalone plan or the active improve strategy.
   const activeProfile =
     options.improveProfile ?? (options.resolvedPlan ? undefined : resolveImproveStrategy(undefined, config).config);
-  const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig("extract", activeProfile);
-  // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
-  // (the activeProfile path) — consistent with #593/#594 where the active profile,
-  // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
-  // (no activeProfile) is a direct user/cron action and always runs; gating it on
-  // the default improve profile's stage toggle was a footgun — dropping extract
-  // from the daily improve profile would silently disable the standalone command.
-  const extractEnabled =
+  const process = options.resolvedPlan?.process ?? getImproveProcessConfig("extract", activeProfile);
+  // The extract toggle gates extract as an improve STAGE; an explicit `akm extract` always runs.
+  const enabled =
     options.resolvedPlan?.enabled ??
     (options.improveProfile ? resolveProcessEnabled("extract", options.improveProfile) : true);
-
-  // Feature-gate early so we get a clean "skipped because disabled" envelope.
-  if (!extractEnabled) {
+  if (!enabled) {
     return emptyExtractResult({
       ok: true,
       dryRun,
@@ -1878,219 +1112,153 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       startMs,
     });
   }
-
-  const {
-    timeoutMs,
-    llmRunner,
-    onNotices,
-    getNotices,
-    maxTotalChars,
-    minContentChars,
-    maxSessionsPerRun,
-    effectiveSince,
-    triage,
-    sessionIndexing,
-  } = resolveExtractRunConfig(options, config, extractProcess, activeProfile);
-
-  // WI-9.10: construct this run's RunContext (extracted to
-  // buildExtractRunContext to keep akmExtract under the fn-size bar — R31).
-  const ctx = buildExtractRunContext({ options, config, stashDir, dryRun, sourceRun, llmRunner });
-
-  const harness = resolveHarness(options.type, options.harnesses);
-  if (!harness) {
+  const resolved = resolveExtractRun(options, config, process, activeProfile);
+  const { llmRunner, notices } = resolved;
+  const harness = (options.harnesses ?? getAvailableHarnesses()).find((h) => h.name === options.type);
+  const unavailable = !harness
+    ? `no available harness matches type "${options.type}" (check that the platform is installed)`
+    : !harness.isAvailable()
+      ? `harness ${options.type} is registered but reports not-available (no session data on this machine)`
+      : undefined;
+  if (!harness || unavailable) {
     return emptyExtractResult({
       ok: false,
       dryRun,
       type: options.type,
-      warning: `no available harness matches type "${options.type}" (check that the platform is installed)`,
+      warning: unavailable ?? "",
       startMs,
       llmRunner,
     });
   }
-  if (!harness.isAvailable()) {
-    return emptyExtractResult({
-      ok: false,
-      dryRun,
-      type: options.type,
-      warning: `harness ${options.type} is registered but reports not-available (no session data on this machine)`,
-      startMs,
-      llmRunner,
-    });
-  }
-
-  // Decide which sessions to process: explicit sessionId OR discovery via since.
-  const discovery = discoverExtractCandidates(options, harness, effectiveSince, startMs, dryRun, llmRunner);
+  const discovery = discoverExtractCandidates(options, harness, resolved.effectiveSince, startMs, dryRun, llmRunner);
   if ("notFound" in discovery) return discovery.notFound;
-  const candidates = discovery.candidates;
 
   const topLevelWarnings: string[] = [];
-  const trackingEnabled = options.skipTracking !== true;
-  const seenMap = loadExtractSeenMapReadOnly({
-    options,
-    harness: harness.name,
-    candidates,
-    trackingEnabled,
-    warnings: topLevelWarnings,
-  });
+  const tracking = options.skipTracking !== true;
+  const seenMap = loadSeenMapReadOnly(options, harness.name, discovery.candidates, topLevelWarnings);
   const planned = planExtractSessions({
-    candidates,
+    candidates: discovery.candidates,
     options,
     harness,
     seenMap,
-    maxTotalChars,
-    minContentChars,
-    maxSessionsPerRun,
-    triage,
-    trackingEnabled,
-    dryRun,
+    gates: resolved.gates,
+    maxSessionsPerRun: resolved.maxSessionsPerRun,
+    locking: tracking && !dryRun && !options.stateDb,
   });
   const modelPlanCount = planned.plans.filter((plan) => plan.kind === "model").length;
+  // Credentials are materialized once, after every read-only gate and before live state or a lock.
+  if (modelPlanCount > 0) assertRunnerCredentials(llmRunner);
 
-  // Eligible dry-runs still dispatch to produce their candidate preview. Only
-  // deterministic no-work plans are credential-free. Materialize once after
-  // every read-only gate and before opening live state or acquiring a lock.
-  const dispatchLease = modelPlanCount > 0 ? await preflightStructuredLlmRunner(llmRunner) : undefined;
   let stateDb: Database | undefined;
-  let loopResult: ExtractSessionLoopResult;
+  let tally: ExtractLoopTally;
   try {
-    stateDb = openExtractLiveStateDb({
-      options,
-      trackingEnabled,
-      hasModelWork: modelPlanCount > 0,
-      dryRun,
-      warnings: topLevelWarnings,
-    });
-
-    // Stash authoring standards (convention/meta fact bodies) for non-wiki
-    // extract output. Resolved ONCE per run and threaded into each session's
-    // prompt so facts are not re-read per session.
-    const extractStandardsContext = modelPlanCount > 0 ? resolveExtractStandards(stashDir) : "";
-
-    loopResult = await runExtractSessionLoop({
-      plans: planned.plans,
-      deferredCandidates: planned.deferredCandidates,
-      seenMap,
+    if (tracking) {
+      if (options.stateDb) {
+        stateDb = options.stateDb;
+      } else if (modelPlanCount > 0 && !dryRun) {
+        try {
+          stateDb = openStateDatabase(options.stateDbPath);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          warn(`[extract] state.db unavailable, processing without skip-tracking: ${msg}`);
+          topLevelWarnings.push(`state.db unavailable: ${msg}`);
+        }
+      }
+    }
+    const run: ExtractRun = {
+      ...resolved,
       options,
       harness,
-      stateDb,
-      trackingEnabled,
-      dryRun,
       stashDir,
       config,
-      llmRunner,
-      lease: dispatchLease,
-      onNotices,
-      getNotices,
-      chat: options.chat,
       sourceRun,
-      timeoutMs,
-      maxTotalChars,
-      minContentChars,
-      triage,
-      sessionIndexing,
-      extractStandardsContext,
-      topLevelWarnings,
-    });
+      dryRun,
+      standardsContext: modelPlanCount > 0 ? resolveExtractStandards(stashDir) : "",
+    };
+    tally = await runExtractSessionLoop(run, planned, seenMap, stateDb, tracking, topLevelWarnings);
   } finally {
     if (stateDb && !options.stateDb) {
       try {
         stateDb.close();
       } catch {
-        // best-effort close
+        // best-effort
       }
     }
-    if (dispatchLease) disposeLoweredExecutionDispatchLease(dispatchLease);
   }
-  const { sessions, processedCount, skippedCount, allProposalIds } = loopResult;
-  if (loopResult.deferred > 0) {
+  if (tally.deferred > 0) {
     topLevelWarnings.push(
-      `Reached maxSessionsPerRun=${maxSessionsPerRun}; ${loopResult.deferred} session(s) deferred to a later run.`,
+      `Reached maxSessionsPerRun=${resolved.maxSessionsPerRun}; ${tally.deferred} session(s) deferred to a later run.`,
     );
   }
-  const skipReasons = buildExtractSkipAggregate(sessions, llmRunner.engine, topLevelWarnings);
-
-  emitExtractTriageEvent({
-    modelPlanCount,
-    triageEnabled: triage.enabled,
-    result: loopResult,
-    sourceRun,
-    eventsCtx: options.eventsCtx,
-  });
-
+  // Every skip reason is counted; infrastructure failures also get a warning line.
+  const counts: NonNullable<AkmExtractResult["skipReasons"]> = {};
+  for (const session of tally.sessions) {
+    if (session.skipReason) counts[session.skipReason] = (counts[session.skipReason] ?? 0) + 1;
+  }
+  for (const reason of EXTRACT_INFRASTRUCTURE_SKIP_REASONS) {
+    const n = counts[reason];
+    if (n)
+      topLevelWarnings.push(
+        `${n} of ${tally.sessions.length} sessions skipped: ${reason} (engine "${llmRunner.engine}")`,
+      );
+  }
+  if (modelPlanCount > 0 && resolved.gates.triage.enabled && tally.triageEvaluated > 0) {
+    appendEvent(
+      {
+        eventType: "extract_triaged",
+        metadata: {
+          evaluated: tally.triageEvaluated,
+          passed: tally.triagePassed,
+          triagedOut: tally.triagedOut,
+          sourceRun,
+        },
+      },
+      options.eventsCtx,
+    );
+  }
   return {
     schemaVersion: 1,
     ok: true,
     shape: "extract-result",
-    // Sourced from ctx (identical value to the local `dryRun` — see the
-    // RunContext construction above) so the constructed RunContext has a
-    // genuine downstream reference in this verb, which currently has no
-    // content-read site to route through ctx.readAsset (see the WI-9.10c
-    // report).
-    dryRun: ctx.dryRun,
+    dryRun,
     type: options.type,
-    sessionsProcessed: processedCount,
-    sessionsSkipped: skippedCount,
-    candidatesCreated: allProposalIds.length,
-    proposals: allProposalIds,
-    sessions,
+    sessionsProcessed: tally.processedCount,
+    sessionsSkipped: tally.skippedCount,
+    candidatesCreated: tally.allProposalIds.length,
+    proposals: tally.allProposalIds,
+    sessions: tally.sessions,
     warnings: topLevelWarnings,
     durationMs: Date.now() - startMs,
-    ...(getNotices().length > 0 ? { notices: getNotices() } : {}),
-    ...(skipReasons ? { skipReasons } : {}),
+    ...notices.fields(),
+    ...(Object.keys(counts).length > 0 ? { skipReasons: counts } : {}),
     engine: llmRunner.engine,
     engineKind: llmRunner.kind,
   };
 }
 
-/** Options for {@link countNewExtractCandidates}. */
 export interface CountNewExtractCandidatesOptions {
-  /** Discovery cutoff (ISO timestamp or duration like `24h`). Defaults to harness/process default. */
+  /** Discovery cutoff (ISO timestamp or duration); defaults to the harness/process default. */
   since?: string;
-  /** Override the harness registry (test seam). */
   harnesses?: SessionLogHarness[];
-  /** Override state.db handle (test seam). */
   stateDb?: Database;
-  /**
-   * C2 (#554): explicit state.db path (used only when `stateDb` is absent).
-   * `akmImprove` threads its boundary-resolved path so the candidate-count
-   * gate never re-reads `XDG_DATA_HOME` live mid-run.
-   */
+  /** Explicit state.db path (used only without `stateDb`). */
   stateDbPath?: string;
   /** Active improve profile, so the discovery window honors `--profile`. */
   improveProfile?: ImproveProfileConfig;
-  /**
-   * Planning-only mode. Never creates state.db; when no borrowed handle is
-   * available, every in-window session is conservatively treated as new.
-   */
+  /** Planning only: never creates state.db; without a borrowed handle every session counts as new. */
   readOnly?: boolean;
 }
 
 /**
- * Count NEW (unseen, in-window) extract candidate sessions across all available
- * harnesses WITHOUT making any LLM calls. Mirrors the discovery + seen-filter
- * logic in {@link akmExtract} so the `#554 minNewSessions` gate in `improve`
- * can decide whether the extract pass is worth running before any work begins.
- *
- * #602 — this gate is intentionally CHEAP: it does NOT read session bodies, so
- * it cannot compute the content hash that {@link shouldSkipAlreadyExtractedSession}
- * now uses. It therefore uses a CONSERVATIVE row-presence approximation: a
- * session counts as "new" when there is NO prior row OR the prior row's
- * `content_hash` is null (never-seen or backfill-eligible). A prior row WITH a
- * non-null content_hash counts as NOT new — it MIGHT have changed, but the
- * precise per-session hash check happens downstream in processSession, so an
- * over-/under-count here only affects whether the pass RUNS, never whether a
- * changed session is actually re-processed.
+ * Count new in-window sessions across the available harnesses, with no LLM
+ * call, for improve's `minNewSessions` gate. It does not read session bodies,
+ * so a session counts as new when it has no seen row or a row without a
+ * content hash; the exact hash check happens at extraction.
  */
 export function countNewExtractCandidates(_config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
-  const extractProcess = getImproveProcessConfig("extract", options.improveProfile);
-  const effectiveSince = options.since ?? extractProcess?.defaultSince;
-  // Mirror akmExtract: when no explicit window is set, default per-harness to
-  // "since the last run" (floored at 48h) instead of a fixed 24h. Keeps this
-  // gate's discovery window identical to what akmExtract will actually scan.
+  const effectiveSince = options.since ?? getImproveProcessConfig("extract", options.improveProfile)?.defaultSince;
   const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
-
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
-
   let stateDb: Database | undefined = options.stateDb;
   let openedStateDb = false;
   let total = 0;
@@ -2103,21 +1271,14 @@ export function countNewExtractCandidates(_config: AkmConfig, options: CountNewE
           ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
           ...(options.readOnly && !options.stateDb ? { skipTracking: true } : {}),
         });
-      const candidates = harness.listSessions({
-        sinceMs,
-        ...(options.readOnly ? { isolatedSnapshot: true } : {}),
-      });
+      const candidates = harness.listSessions({ sinceMs, ...(options.readOnly ? { isolatedSnapshot: true } : {}) });
       if (candidates.length === 0) continue;
-
-      // A dry planner with no pre-existing state database has no seen-session
-      // ledger by definition. Count the discovered sessions directly instead
-      // of creating state.db merely to prove that it is empty.
+      // A dry planner without state.db has no seen-session ledger by definition.
       if (options.readOnly && !stateDb) {
         total += candidates.length;
         continue;
       }
-
-      let seenMap = new Map<string, ExtractedSessionRow>();
+      let seenMap: Map<string, ExtractedSessionRow>;
       try {
         if (!stateDb) {
           stateDb = openStateDatabase(options.stateDbPath);
@@ -2129,22 +1290,15 @@ export function countNewExtractCandidates(_config: AkmConfig, options: CountNewE
           candidates.map((c) => c.sessionId),
         );
       } catch (err) {
-        // state.db unavailable — treat every in-window session as a new
-        // candidate (fail-open: never let a transient sqlite error wrongly
-        // trip the gate and skip a pass that should have run).
+        // Fail open: a transient sqlite error must not skip a pass that should run.
         const msg = err instanceof Error ? err.message : String(err);
         warn(`[extract] state.db unavailable while counting candidates, treating all as new: ${msg}`);
         total += candidates.length;
         continue;
       }
-
       for (const summary of candidates) {
         const prior = seenMap.get(summary.sessionId);
-        // #602 row-presence approximation (see fn doc): a prior row WITH a
-        // non-null content_hash is treated as not-new here; everything else
-        // (never-seen, or null-hash backfill-eligible) counts as new.
-        if (prior && prior.content_hash != null) continue;
-        total += 1;
+        if (!(prior && prior.content_hash != null)) total += 1;
       }
     }
   } finally {
@@ -2152,7 +1306,7 @@ export function countNewExtractCandidates(_config: AkmConfig, options: CountNewE
       try {
         stateDb.close();
       } catch {
-        // best-effort close
+        // best-effort
       }
     }
   }

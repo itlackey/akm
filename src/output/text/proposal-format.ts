@@ -181,7 +181,6 @@ export function formatProposalRejectPlain(r: Record<string, unknown>): string {
 }
 
 export function formatProposalDrainPlain(r: Record<string, unknown>): string {
-  const policy = String(r.policy ?? "?");
   const applyMode = String(r.applyMode ?? "queue");
   const promoted = Array.isArray(r.promoted) ? (r.promoted as unknown[]) : [];
   const rejected = Array.isArray(r.rejected) ? (r.rejected as unknown[]) : [];
@@ -191,7 +190,7 @@ export function formatProposalDrainPlain(r: Record<string, unknown>): string {
   const failed = Array.isArray(r.failed) ? (r.failed as Array<Record<string, unknown>>) : [];
   const prefix = r.dryRun === true ? "[dry-run] " : "";
   const lines = [
-    `${prefix}Drained proposal queue (strategy=${String(r.strategy ?? "?")}, policy=${policy}, applyMode=${applyMode})`,
+    `${prefix}Drained proposal queue (strategy=${String(r.strategy ?? "?")}, applyMode=${applyMode})`,
     `  promoted: ${promoted.length}`,
     `  rejected: ${rejected.length}`,
     `  deferred: ${deferred.length}`,

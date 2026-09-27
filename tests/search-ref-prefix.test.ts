@@ -64,8 +64,6 @@ async function reindex(): Promise<void> {
 async function search(input: Parameters<typeof akmSearch>[0]): Promise<SourceSearchHit[]> {
   const result = await akmSearch({
     skipLogging: true,
-    disableProjectContext: true,
-    disableScopedUtility: true,
     ...input,
   });
   return result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
@@ -198,13 +196,14 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
 
   test("an explicit --type wins over a conceptId-prefix query", async () => {
     // Discriminating fixtures: if the branch fired with the PARSED type the
-    // three projecta memories would come back; if it fired with the EXPLICIT
-    // type, knowledge:projecta/setup-guide would come back (score 1). The
-    // specified behavior — branch fires only on the untyped path — leaves an
-    // ordinary FTS query ("memory projecta") against knowledge entries, none
-    // of which carries a "memory" token: zero hits.
+    // three projecta memories would come back. The specified behavior — the
+    // branch fires only on the untyped path — leaves an ordinary keyword
+    // query ("memories projecta") against knowledge entries, which ranks the
+    // one knowledge entry carrying "projecta" with a fused score, not the
+    // browse score 1.
     const hits = await search({ query: "memories/projecta/", type: "knowledge", source: "local" });
-    expect(hits).toHaveLength(0);
+    expect(hits.map((h) => h.name)).toEqual(["projecta/setup-guide"]);
+    expect(hits[0]?.score).toBeLessThan(1);
   });
 
   test("ordinary keyword queries are unaffected", async () => {
@@ -215,19 +214,19 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
   });
 
   test("a bare ref without the trailing slash does NOT enumerate the subtree", async () => {
-    // `memory:projecta/auth-tip` is `akm show` territory — it must stay an
-    // ordinary keyword search and never fan out into the subtree listing.
+    // `memories/projecta/auth-tip` is `akm show` territory — it stays an
+    // ordinary keyword search, ranked by relevance rather than listed: the
+    // named asset leads and every hit carries a fused score, not the browse
+    // score 1.
     const hits = await search({ query: "memories/projecta/auth-tip", source: "local" });
-    const names = hits.map((h) => h.name);
-    expect(names).not.toContain("projecta/deploy-note");
-    expect(names).not.toContain("projecta/nested/db-tip");
+    expect(hits[0]?.name).toBe("projecta/auth-tip");
+    expect(hits.every((h) => (h.score ?? 1) < 1)).toBe(true);
   });
 
   test("mixed-case scope dirs enumerate through the command layer", async () => {
-    // akmSearch lowercases the query before it reaches the database layer, so
-    // the subtree match must not be defeated by on-disk mixed case — this is
-    // the exact spelling an agent copies out of a ref like
-    // `memory:ProjCase/case-note`.
+    // The subtree match compares case-insensitively, so it is not defeated by
+    // on-disk mixed case — this is the exact spelling an agent copies out of
+    // a ref like `memories/ProjCase/case-note`.
     const hits = await search({ query: "memories/ProjCase/", source: "local" });
     expect(hits.map((h) => h.name)).toEqual(["ProjCase/case-note"]);
   });
@@ -357,8 +356,6 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
       query: "memories/doesnotexist/",
       source: "local",
       skipLogging: true,
-      disableProjectContext: true,
-      disableScopedUtility: true,
     });
     const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits).toHaveLength(0);
@@ -395,8 +392,6 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
       query: "memory:projecta/",
       source: "local",
       skipLogging: true,
-      disableProjectContext: true,
-      disableScopedUtility: true,
     });
     const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 

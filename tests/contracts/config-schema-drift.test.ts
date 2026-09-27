@@ -18,16 +18,16 @@ describe("config schema drift pins", () => {
     expect(properties.configVersion).toEqual({ type: "string", const: "0.9.0" });
     expect(root.required).toContain("configVersion");
   });
-  test("ImproveProcessConfig schema includes qualityGate + contradictionDetection sub-objects", () => {
+  test("ImproveProcessConfig schema includes the qualityGate sub-object and no longer declares contradictionDetection", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
     const ipc = defs.ImproveProcessConfig as { properties?: Record<string, unknown> };
     const keys = Object.keys(ipc.properties ?? {});
     expect(keys).toContain("qualityGate");
-    expect(keys).toContain("contradictionDetection");
+    expect(keys).not.toContain("contradictionDetection");
   });
 
-  test("triage judgment JSON schema accepts boolean shorthand and only known object keys", () => {
+  test("triage judgment JSON schema accepts boolean shorthand and passes unknown object keys through", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
     const ipc = defs.ImproveProcessConfig as { properties?: Record<string, unknown> };
@@ -44,7 +44,7 @@ describe("config schema drift pins", () => {
 
     expect(booleanArm).toBeDefined();
     expect(Object.keys(objectArm?.properties ?? {}).sort()).toEqual(["enabled", "engine", "llm", "model", "timeoutMs"]);
-    expect(objectArm?.additionalProperties).toBe(false);
+    expect(objectArm?.additionalProperties).toBe(true);
     expect(Object.keys(llmOverrides.properties ?? {}).sort()).toEqual([
       "contextLength",
       "enableThinking",
@@ -54,11 +54,11 @@ describe("config schema drift pins", () => {
       "supportsJsonSchema",
       "temperature",
     ]);
-    expect(llmOverrides.additionalProperties).toBe(false);
+    expect(llmOverrides.additionalProperties).toBe(true);
     expect(extraParams.additionalProperties).toEqual({});
   });
 
-  test("generated schema rejects unknown judgment LLM keys but accepts arbitrary extraParams", () => {
+  test("generated schema tolerates unknown judgment LLM keys and accepts arbitrary extraParams", () => {
     const validate = new Ajv2020({ allErrors: true, strict: false }).compile(readSchema());
     const withLlm = (llm: Record<string, unknown>) => ({
       configVersion: "0.9.0",
@@ -69,9 +69,9 @@ describe("config schema drift pins", () => {
       },
     });
 
+    // An unknown key is never a schema error; the loader names it once at runtime.
     for (const llm of [{ tempertaure: 0.2 }, { futureTopLevelKnob: true }]) {
-      expect(validate(withLlm(llm))).toBe(false);
-      expect(validate.errors?.some((error) => error.instancePath.endsWith("/judgment/llm"))).toBe(true);
+      expect(validate(withLlm(llm))).toBe(true);
     }
 
     expect(
@@ -102,7 +102,11 @@ describe("config schema drift pins", () => {
     expect(Object.keys(index.properties ?? {})).not.toContain("stalenessDetection");
     expect(Object.keys(index.properties ?? {})).not.toContain("indexBodyOpening");
     const search = props.search as { properties?: Record<string, unknown> };
-    expect(Object.keys(search.properties ?? {})).toContain("graphBoost");
+    expect(Object.keys(search.properties ?? {})).toEqual(["defaultExcludeTypes", "curateRerank"]);
+    const embedding = props.embedding as { properties?: Record<string, unknown> };
+    for (const key of ["queryTemplate", "documentTemplate", "queryTimeoutMs"]) {
+      expect(Object.keys(embedding.properties ?? {})).toContain(key);
+    }
   });
 
   test("0.9.0 bundles/defaultBundle config-shape keys are present (spec §10.1 / D-R5)", () => {
@@ -142,25 +146,6 @@ describe("config schema drift pins", () => {
     const pattern = new RegExp(engineNames.pattern ?? "");
     for (const name of ["default", "fast-2", "a"]) expect(pattern.test(name)).toBe(true);
     for (const name of ["Fast", "two--dashes", "akm-internal", "-leading"]) expect(pattern.test(name)).toBe(false);
-  });
-
-  test("search.graphBoost confidence knobs match runtime", () => {
-    const schema = readSchema();
-    const props = schema.properties as Record<string, unknown>;
-    const search = props.search as { properties?: Record<string, unknown> };
-    const graphBoost = search.properties?.graphBoost as { properties?: Record<string, unknown> };
-    const confidenceMode = graphBoost.properties?.confidenceMode as { enum?: string[]; default?: string };
-    const confidenceWeight = graphBoost.properties?.confidenceWeight as {
-      minimum?: number;
-      maximum?: number;
-      default?: number;
-    };
-
-    expect(confidenceMode.enum).toEqual(["blend"]);
-    expect(confidenceMode.default).toBe("blend");
-    expect(confidenceWeight.minimum).toBe(0);
-    expect(confidenceWeight.maximum).toBe(1);
-    expect(confidenceWeight.default).toBe(0.2);
   });
 
   test("registry provider docs in schema no longer advertise openviking", () => {

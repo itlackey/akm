@@ -6,8 +6,7 @@ import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../.
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
-import { lowerResolvedExecutionRequest } from "../../integrations/agent/execution-lowering";
-import { prepareInlineExecution } from "../../integrations/agent/inline-execution";
+import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
 type ImproveExecutionLayer = Pick<ImproveProfileConfig, "engine" | "model" | "timeoutMs" | "llm">;
@@ -65,14 +64,13 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
 
   const invocationDefaults = mergeDefaults(defaultEngine ? { engine: defaultEngine } : {}, profileDefaults);
   const current = mergeDefaults(processDefaults, currentDefaults);
-  const prepared = prepareInlineExecution({
+  const prepared = resolveExecution({
     content: `improve ${options.processName} execution selection`,
     config: options.config,
-    invocationKind: "direct",
     invocationDefaults,
     current,
   });
-  const lowered = lowerResolvedExecutionRequest(prepared.request, prepared.config);
+  const lowered = buildExecution(prepared.request, prepared.runner);
   return Object.freeze({ runner: lowered.runner, notices: lowered.notices });
 }
 

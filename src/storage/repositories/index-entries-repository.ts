@@ -24,14 +24,24 @@ import {
   type IndexDocument,
 } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
+import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
-import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions, RelinkUsageEventsOptions } from "./index-entry-types";
+import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
-import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
+import { deleteEntryVectors } from "./index-vec-repository";
 
 // ── Entry operations ────────────────────────────────────────────────────────
+
+/**
+ * Hash of the text an entry's vector is embedded from (`buildSearchText`),
+ * stored as `entries.embed_hash`: a change deletes the entry's vector, and the
+ * next embedding pass re-embeds it.
+ */
+function embedHash(entry: IndexDocument): string {
+  return sha256Hex(buildSearchText(entry));
+}
 
 /**
  * Insert or update one canonical entry and all synchronously derived search
@@ -45,7 +55,6 @@ export function upsertEntry(
   db: Database,
   filePath: string,
   entry: IndexDocument,
-  searchText: string,
   provenance: EntryProvenance,
   contentHash?: string,
 ): number {
@@ -57,6 +66,7 @@ export function upsertEntry(
   // does not have to scan + JSON-decode every memory row.
   const derivedFrom =
     typeof entry.derivedFrom === "string" && entry.derivedFrom.trim() ? entry.derivedFrom.trim() : null;
+  const hash = embedHash(entry);
   // `content_hash` is optional on the LLM-enrichment re-upsert; a missing hash
   // preserves the scan writer's current value.
   const apply = (): number => {
@@ -71,12 +81,12 @@ export function upsertEntry(
       filePath,
       contentHash ?? null,
       JSON.stringify(entry),
-      searchText,
       derivedFrom,
+      hash,
     ) as { id: number } | undefined;
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
-    if (previous?.id === result.id && previous.search_text !== searchText) deleteEntryVectors(db, result.id);
+    if (previous?.id === result.id && previous.embed_hash !== hash) deleteEntryVectors(db, result.id);
     replaceFtsEntry(
       db,
       result.id,
@@ -99,7 +109,7 @@ interface UpsertStmts {
 
 interface ExistingUpsertRow {
   id: number;
-  search_text: string;
+  embed_hash: string | null;
 }
 
 const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
@@ -114,8 +124,8 @@ const UPSERT_SET_CLAUSE = `SET
         type = excluded.type,
         file_path = excluded.file_path,
         document_json = excluded.document_json,
-        search_text = excluded.search_text,
         derived_from = excluded.derived_from,
+        embed_hash = excluded.embed_hash,
         content_hash = COALESCE(excluded.content_hash, content_hash)`;
 
 function getUpsertStmts(db: Database): UpsertStmts {
@@ -128,13 +138,13 @@ function getUpsertStmts(db: Database): UpsertStmts {
     upsert: db.prepare(`
       INSERT INTO entries (
         item_ref, bundle_id, component_id, concept_id, adapter_id, type,
-        file_path, content_hash, document_json, search_text, derived_from
+        file_path, content_hash, document_json, derived_from, embed_hash
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
     `),
-    findByItemRef: db.prepare("SELECT id, search_text FROM entries WHERE item_ref = ?"),
+    findByItemRef: db.prepare("SELECT id, embed_hash FROM entries WHERE item_ref = ?"),
   };
   upsertStmtsByDb.set(db, stmts);
   return stmts;
@@ -220,7 +230,7 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * rename. (`asset_salience` / `asset_outcome` live in state.db keyed by
  * `asset_ref` TEXT and are re-keyed separately by `akm mv` — see
  * the state rekey helper.) `document_json.name` (and `filename`, when
- * present) is patched and `search_text` rebuilt so search reflects the new
+ * present) is patched and `embed_hash` recomputed so search reflects the new
  * name. Its FTS projection and stale vector are updated in the same
  * transaction as the canonical identity.
  *
@@ -236,7 +246,7 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * A stale row already occupying the new item ref (the caller has verified no
  * FILE exists at the target, so such a row can only be a leftover for a
  * deleted file) is evicted first — through {@link deleteRelatedRows}, so its
- * child rows (embeddings, entries_vec, utility scores, usage events) go with
+ * child rows (embeddings, utility scores, usage events) go with
  * it. A bare `DELETE FROM entries` would trip the non-CASCADE `embeddings`
  * FK under `PRAGMA foreign_keys = ON` and roll back the whole re-key.
  * The moved row keeps its id.
@@ -248,13 +258,13 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
 export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number | null {
   const oldItemRef = `${opts.sourceName}//${opts.oldRef}`;
   const row = db
-    .prepare("SELECT id, file_path, document_json, search_text, type FROM entries WHERE item_ref = ?")
+    .prepare("SELECT id, file_path, document_json, embed_hash, type FROM entries WHERE item_ref = ?")
     .get(oldItemRef) as
     | {
         id: number;
         file_path: string;
         document_json: string;
-        search_text: string;
+        embed_hash: string | null;
         type: string;
       }
     | undefined
@@ -269,7 +279,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
   // Patch the JSON payload. On corrupt document_json still re-key identity/path so
   // the utility history survives; the next full index heals the JSON.
   let documentJson = row.document_json;
-  let searchText = row.search_text;
+  let hash = row.embed_hash;
   let document: IndexDocument | undefined;
   try {
     const entry = JSON.parse(row.document_json) as IndexDocument;
@@ -277,7 +287,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     if (typeof entry.filename === "string") entry.filename = path.basename(opts.newFilePath);
     if (opts.newDerivedFrom !== undefined) entry.derivedFrom = opts.newDerivedFrom;
     documentJson = JSON.stringify(entry);
-    searchText = buildSearchText(entry);
+    hash = embedHash(entry);
     document = entry;
   } catch {
     /* corrupt document_json — identity/path-only re-key */
@@ -295,7 +305,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       | undefined
       | null;
     if (stale && stale.id !== row.id) {
-      // Full child-row cleanup (embeddings, entries_vec, utility scores,
+      // Full child-row cleanup (embeddings, utility scores,
       // usage events, FTS + dirty marks) BEFORE the entries delete: the
       // `embeddings` FK is non-CASCADE and `foreign_keys = ON`, so a bare
       // entries delete would throw and roll back the entire re-key; and
@@ -304,12 +314,12 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       db.prepare("DELETE FROM entries WHERE id = ?").run(stale.id);
     }
     db.prepare(
-      "UPDATE entries SET file_path = ?, document_json = ?, search_text = ?, item_ref = ?, concept_id = ? WHERE id = ?",
-    ).run(opts.newFilePath, documentJson, searchText, newItemRef, opts.newRef, row.id);
+      "UPDATE entries SET file_path = ?, document_json = ?, embed_hash = ?, item_ref = ?, concept_id = ? WHERE id = ?",
+    ).run(opts.newFilePath, documentJson, hash, newItemRef, opts.newRef, row.id);
     if (opts.newDerivedFrom !== undefined) {
       db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
     }
-    if (row.search_text !== searchText) deleteEntryVectors(db, row.id);
+    if (row.embed_hash !== hash) deleteEntryVectors(db, row.id);
     if (document)
       replaceFtsEntry(
         db,
@@ -358,52 +368,6 @@ function rewriteUsageEventRefForMove(opts: RekeyEntryOptions): void {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to rewrite usage events for move: ${message}`, { cause: error });
   }
-}
-
-/**
- * Phase 2A / Rec 5: bulk-load positive feedback event counts for the given
- * entry ids. Used by the utility-decay forgetting curve to stabilize
- * (extend the half-life of) memories that have repeatedly proven useful.
- *
- * Returns a `Map<entryId, count>` containing only entries with at least one
- * positive feedback event — missing ids implicitly map to `0`. Chunks at
- * `SQLITE_CHUNK_SIZE` (500) to respect `SQLITE_MAX_VARIABLE_NUMBER`.
- *
- * Cheap when called with zero ids, and silently empty when state.db (or its
- * `usage_events` table) is absent.
- *
- * Chunk-8 WI-8.3: usage_events lives in state.db — this reads it there (no
- * entries join needed; the ids are supplied by the caller). Gated by the caller
- * (`shouldQueryPositiveFeedbackCounts`) so the state.db open is not on the
- * default search hot path.
- */
-export function getPositiveFeedbackCountsByIds(ids: number[]): Map<number, number> {
-  const result = new Map<number, number>();
-  if (ids.length === 0 || !fs.existsSync(getStateDbPath())) return result;
-  bestEffort(() => {
-    withStateDb((stateDb) => {
-      for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
-        const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
-        const placeholders = chunk.map(() => "?").join(",");
-        const rows = stateDb
-          .prepare(
-            `SELECT entry_id, COUNT(*) AS cnt
-               FROM usage_events
-               WHERE event_type = 'feedback'
-                 AND signal = 'positive'
-                 AND entry_id IN (${placeholders})
-               GROUP BY entry_id`,
-          )
-          .all(...chunk) as Array<{ entry_id: number | null; cnt: number }>;
-        for (const row of rows) {
-          if (row.entry_id !== null && row.cnt > 0) {
-            result.set(row.entry_id, row.cnt);
-          }
-        }
-      }
-    });
-  }, "positive feedback counts are best-effort");
-  return result;
 }
 
 /**
@@ -474,14 +438,33 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 }
 
 /**
- * Delete the complete regenerable entry generation through the same child-row
- * authority used by targeted deletes. The caller may retain cross-database
- * usage events so the finalize pass can relink them to the new row ids.
+ * The `file_path` of every entry indexed under one bundle — used by
+ * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
+ * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
+ * reports rather than rewrites.
  */
-export function deleteAllEntries(db: Database, options: { cleanupUsageEvents?: boolean } = {}): number[] {
+export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+    file_path: string;
+  }>;
+  return rows.map((row) => row.file_path);
+}
+
+/**
+ * Re-key every entry row's `bundle_id`/`item_ref` from `oldBundleId` to
+ * `newBundleId` in place (`akm bundle rename`, D6). Unlike
+ * {@link rekeyEntryInPlace} (one asset, `akm mv`), this is a bulk identity
+ * change with no content move: `concept_id`/`file_path`/`document_json` are
+ * untouched, so no FTS/vector rebuild is needed (FTS and `embeddings` key on
+ * the entry's row `id`, which this preserves, not on `item_ref`). Returns the
+ * number of rows renamed.
+ */
+export function renameEntriesBundleId(db: Database, oldBundleId: string, newBundleId: string): number {
   return db.transaction(() => {
-    const rows = db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>;
-    return deleteEntryRows(db, rows, options);
+    const result = db
+      .prepare("UPDATE entries SET bundle_id = ?, item_ref = ? || '//' || concept_id WHERE bundle_id = ?")
+      .run(newBundleId, newBundleId, oldBundleId);
+    return Number(result.changes);
   })();
 }
 
@@ -518,7 +501,6 @@ function deleteRelatedRows(
 ): void {
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
-  const vecAvail = isVecAvailable(db);
 
   // FTS is part of the canonical mutation boundary, not a caller-maintained
   // dirty queue. Delete it before the parent row inside this transaction.
@@ -532,12 +514,6 @@ function deleteRelatedRows(
       () => db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk),
       "delete embeddings for entries",
     );
-    if (vecAvail) {
-      bestEffort(
-        () => db.prepare(`DELETE FROM entries_vec WHERE id IN (${placeholders})`).run(...chunk),
-        "delete entries_vec for entries",
-      );
-    }
     // Clean up utility scores before deleting entries
     bestEffort(
       () => db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk),
@@ -549,48 +525,14 @@ function deleteRelatedRows(
     );
   }
 
-  // Graph rows are independently keyed and intentionally survive entry
-  // deletion. Resolve their owning roots through the canonical physical path
-  // before entries disappear, then refresh the derived summary counts.
-  const affectedGraphRoots = new Set<string>();
-  for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(",");
-    bestEffort(() => {
-      const rows = db
-        .prepare(
-          `SELECT DISTINCT gf.stash_root
-             FROM graph_files gf
-             JOIN entries e ON e.file_path = gf.file_path
-            WHERE e.id IN (${placeholders})`,
-        )
-        .all(...chunk) as Array<{ stash_root: string }>;
-      for (const row of rows) affectedGraphRoots.add(row.stash_root);
-    }, "resolve graph roots for graph_meta recompute");
-  }
-  for (const stashRoot of affectedGraphRoots) {
-    bestEffort(
-      () =>
-        db
-          .prepare(
-            `UPDATE graph_meta
-                SET extracted_files = (SELECT COUNT(*) FROM graph_files WHERE stash_root = ?),
-                    entity_count    = (SELECT COUNT(*) FROM graph_file_entities WHERE stash_root = ?),
-                    relation_count  = (SELECT COUNT(*) FROM graph_file_relations WHERE stash_root = ?)
-              WHERE stash_root = ?`,
-          )
-          .run(stashRoot, stashRoot, stashRoot, stashRoot),
-      "sync graph_meta counts after entries delete",
-    );
-  }
-
   // usage_events lives in state.db, outside this transaction. Index persistence
   // disables this cleanup and runs it only after its index.db transaction
   // commits; standalone delete callers retain the immediate behavior.
   if (options.cleanupUsageEvents !== false) deleteUsageEventsByEntryIds(numericIds);
 
   // graph_files is keyed by its own stash_root/file_path/body_hash identity,
-  // so deleting an entry row intentionally leaves extracted graph data intact.
+  // so deleting an entry row intentionally leaves extracted graph data intact,
+  // and with it the graph_meta counts the graph writer derives from those rows.
 }
 
 export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
@@ -608,7 +550,7 @@ export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
 
 /**
  * Delete entries by their primary key IDs, along with all related rows
- * (embeddings, entries_vec, entries_fts, utility scores, usage_events).
+ * (embeddings, entries_fts, utility scores, usage_events).
  *
  * Used by explicit `--clean` reconciliation before embeddings and final
  * verification to remove stale entries whose source files no longer exist.
@@ -816,6 +758,23 @@ export function getEntryById(
   };
 }
 
+/** The `item_ref` and `type` of every id that has an entry row. */
+export function getEntryRefsAndTypes(
+  db: Database,
+  ids: readonly number[],
+): Map<number, { itemRef: string; type: string }> {
+  const out = new Map<number, { itemRef: string; type: string }>();
+  for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT id, item_ref, type FROM entries WHERE id IN (${placeholders})`)
+      .all(...chunk) as Array<{ id: number; item_ref: string; type: string }>;
+    for (const row of rows) out.set(row.id, { itemRef: row.item_ref, type: row.type });
+  }
+  return out;
+}
+
 export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[] {
   return parseEntryRows(selectRowsInDirectory<EntryRow>(db, dirPath, ENTRY_COLUMNS), "getEntriesByDir");
 }
@@ -1018,14 +977,7 @@ function resolveUsageEventEntryId(db: Database, ref: string): number | undefined
  * distinct linked entry_ids in usage_events is small — and the re-resolution
  * reads `entries` from `indexDb`.
  */
-function qualifiedUsageEventsTable(stateSchema?: string): string {
-  if (stateSchema === undefined) return "usage_events";
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(stateSchema)) throw new Error("Invalid attached state schema name.");
-  return `"${stateSchema}".usage_events`;
-}
-
-export function relinkUsageEvents(indexDb: Database, stateDb: Database, options: RelinkUsageEventsOptions = {}): void {
-  const usageEvents = qualifiedUsageEventsTable(options.stateSchema);
+export function relinkUsageEvents(indexDb: Database, stateDb: Database): void {
   bestEffort(() => {
     // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
     // Leaving them in place would let `recomputeUtilityScores` aggregate by an
@@ -1034,7 +986,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     // transaction. Nulled rows can be re-resolved by step 2 below; events whose
     // entry is permanently gone simply stay null and age out via retention.
     const linkedRows = stateDb
-      .prepare(`SELECT DISTINCT entry_id AS id, entry_ref AS ref FROM ${usageEvents} WHERE entry_id IS NOT NULL`)
+      .prepare("SELECT DISTINCT entry_id AS id, entry_ref AS ref FROM usage_events WHERE entry_id IS NOT NULL")
       .all() as Array<{ id: number; ref: string | null }>;
     const entryIdentity = indexDb.prepare("SELECT item_ref AS itemRef FROM entries WHERE id = ?");
     const staleLinks = linkedRows.filter(({ id, ref }) => {
@@ -1042,9 +994,7 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
       return live == null || (ref !== null && live.itemRef !== ref);
     });
     if (staleLinks.length > 0) {
-      const nullOut = stateDb.prepare(
-        `UPDATE ${usageEvents} SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?`,
-      );
+      const nullOut = stateDb.prepare("UPDATE usage_events SET entry_id = NULL WHERE entry_id = ? AND entry_ref IS ?");
       const nullTx = stateDb.transaction(() => {
         for (const { id, ref } of staleLinks) nullOut.run(id, ref);
       });
@@ -1054,10 +1004,10 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     // Step 2: re-resolve each fully-qualified ref. Bare rows are not current
     // durable identities and remain detached.
     const refs = stateDb
-      .prepare(`SELECT DISTINCT entry_ref AS ref FROM ${usageEvents} WHERE entry_id IS NULL AND entry_ref IS NOT NULL`)
+      .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_id IS NULL AND entry_ref IS NOT NULL")
       .all() as { ref: string }[];
 
-    const update = stateDb.prepare(`UPDATE ${usageEvents} SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL`);
+    const update = stateDb.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
     const relinkTx = stateDb.transaction(() => {
       for (const { ref } of refs) {
         let id: number | undefined;

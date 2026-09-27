@@ -8,7 +8,7 @@ import path from "node:path";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { ConfigError } from "../core/errors";
-import { getCacheDir, getConfigDir, getDataDir, getTaskContextDir } from "../core/paths";
+import { getTaskContextDir } from "../core/paths";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
 import { normaliseTaskConceptId } from "./task-id";
 
@@ -21,6 +21,18 @@ export const SCHEDULED_TASK_CONTEXT_KEYS = [
 ] as const;
 
 type ScheduledTaskContextKey = (typeof SCHEDULED_TASK_CONTEXT_KEYS)[number];
+
+/**
+ * Directories a descriptor carries ONLY when the process that ran `task sync`
+ * had them set explicitly in its environment. They are never resolved from
+ * defaults: a descriptor written from inside an app whose environment pointed
+ * `$STATE` somewhere private (an OpenCode desktop session, 2026-08 → 2026-09)
+ * froze that directory into eight cron rows, and the scheduled improve runs
+ * then held their locks in a `locks/` directory no interactive command could
+ * see. At fire time an absent key resolves exactly as it does for an
+ * interactive command on the same host.
+ */
+const EXPLICIT_CONTEXT_KEYS = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"] as const;
 
 /**
  * The AKM directory context currently restored from a scheduler descriptor.
@@ -36,11 +48,25 @@ export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): R
   return out;
 }
 
-export type ScheduledTaskContext = Record<ScheduledTaskContextKey, string>;
+/**
+ * `AKM_BUNDLE_DIR` is always present — it is how sync attributes an installed
+ * row to the installation that wrote it (#846). Every other key is an
+ * explicit override only ({@link EXPLICIT_CONTEXT_KEYS}).
+ */
+export type ScheduledTaskContext = { AKM_BUNDLE_DIR: string } & Partial<
+  Record<(typeof EXPLICIT_CONTEXT_KEYS)[number], string>
+>;
 
 export interface ScheduledTaskContextDescriptor {
   version: 1;
-  environment: ScheduledTaskContext & { PATH: string };
+  /**
+   * `PATH` appears only in descriptors written before 0.9.17, which froze the
+   * syncing shell's PATH. The reader still applies it, so a row an older
+   * release wrote keeps working until `akm task sync` rewrites it. Current
+   * writers put PATH in the native artifact instead: a `PATH=` line in the
+   * crontab's akm section, `EnvironmentVariables` in a launchd plist.
+   */
+  environment: ScheduledTaskContext & { PATH?: string };
 }
 
 export interface ScheduledTaskInvocation {
@@ -56,19 +82,19 @@ export interface ParsedScheduledBindingInvocation {
 
 export const SCHEDULER_CONTEXT_ARG = "--scheduler-context";
 
-/** Resolve the complete non-secret AKM directory context captured by schedulers. */
-export function resolveScheduledTaskContext(
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): ScheduledTaskContext {
-  return canonicalContext({
-    AKM_BUNDLE_DIR: path.resolve(resolveStashDir(env)),
-    AKM_CONFIG_DIR: path.resolve(getConfigDir(env, platform)),
-    AKM_DATA_DIR: path.resolve(getDataDir(env, platform)),
-    AKM_CACHE_DIR: path.resolve(getCacheDir(env)),
-    // Capture the complete process directory context used by scheduled commands.
-    AKM_STATE_DIR: path.resolve(resolveStateDir(env, platform)),
-  });
+/**
+ * The directory context a scheduler descriptor carries: the resolved bundle
+ * path, plus whichever `AKM_*_DIR` overrides the syncing process had set
+ * explicitly. Resolved defaults are deliberately not captured — see
+ * {@link EXPLICIT_CONTEXT_KEYS}.
+ */
+export function resolveScheduledTaskContext(env: NodeJS.ProcessEnv = process.env): ScheduledTaskContext {
+  const context: Record<string, string> = { AKM_BUNDLE_DIR: path.resolve(resolveStashDir(env)) };
+  for (const key of EXPLICIT_CONTEXT_KEYS) {
+    const value = env[key]?.trim();
+    if (value) context[key] = path.resolve(value);
+  }
+  return canonicalContext(context);
 }
 
 /** Build an installed argv from one already-validated public scheduler tail. */
@@ -86,18 +112,16 @@ export function buildScheduledBindingInvocation(
 
 export function schedulerContextDescriptor(
   context: ScheduledTaskContext = resolveScheduledTaskContext(),
-  envPath: string = process.env.PATH ?? "",
 ): ScheduledTaskContextDescriptor {
-  return {
-    version: 1,
-    environment: { ...canonicalContext(context), PATH: validatePathValue(envPath) },
-  };
+  return { version: 1, environment: canonicalContext(context) };
 }
 
 export function schedulerContextPath(descriptor: ScheduledTaskContextDescriptor): string {
   const bytes = serializeDescriptor(descriptor);
   const digest = createHash("sha256").update(bytes).digest("hex");
-  return path.join(getTaskContextDir(descriptor.environment), `${digest}.json`);
+  // The descriptor lives under the data directory it names when it names
+  // one, otherwise under this process's own.
+  return path.join(getTaskContextDir({ ...process.env, ...descriptor.environment }), `${digest}.json`);
 }
 
 /** Write a content-addressed descriptor without ever replacing existing content. */
@@ -132,8 +156,11 @@ export function writeSchedulerContextDescriptor(
 
 export function loadSchedulerContextDescriptor(file: string, env: NodeJS.ProcessEnv = process.env): void {
   const descriptor = validateSchedulerContextDescriptor(file);
-  for (const key of SCHEDULED_TASK_CONTEXT_KEYS) env[key] = descriptor.environment[key];
-  env.PATH = descriptor.environment.PATH;
+  for (const key of SCHEDULED_TASK_CONTEXT_KEYS) {
+    const value = descriptor.environment[key];
+    if (value !== undefined) env[key] = value;
+  }
+  if (descriptor.environment.PATH !== undefined) env.PATH = descriptor.environment.PATH;
 }
 
 export function validateSchedulerContextDescriptor(file: string): ScheduledTaskContextDescriptor {
@@ -311,17 +338,16 @@ function isValidSchedulerInputFlagTail(tail: readonly string[]): boolean {
 }
 
 function canonicalContext(input: Record<string, unknown>): ScheduledTaskContext {
-  const inputKeys = Object.keys(input);
-  if (
-    inputKeys.length !== SCHEDULED_TASK_CONTEXT_KEYS.length ||
-    inputKeys.some((key) => !SCHEDULED_TASK_CONTEXT_KEYS.includes(key as ScheduledTaskContextKey))
-  ) {
+  if (Object.keys(input).some((key) => !SCHEDULED_TASK_CONTEXT_KEYS.includes(key as ScheduledTaskContextKey))) {
     throw invalidSchedulerContext();
   }
-
-  const context = {} as ScheduledTaskContext;
+  const context: Record<string, string> = {};
   for (const key of SCHEDULED_TASK_CONTEXT_KEYS) {
     const value = input[key];
+    if (value === undefined) {
+      if (key === "AKM_BUNDLE_DIR") throw invalidSchedulerContext();
+      continue;
+    }
     if (
       typeof value !== "string" ||
       value.trim().length === 0 ||
@@ -332,7 +358,7 @@ function canonicalContext(input: Record<string, unknown>): ScheduledTaskContext 
     }
     context[key] = value;
   }
-  return context;
+  return context as ScheduledTaskContext;
 }
 
 function canonicalDescriptor(input: unknown): ScheduledTaskContextDescriptor {
@@ -343,11 +369,12 @@ function canonicalDescriptor(input: unknown): ScheduledTaskContextDescriptor {
   if (typeof rawEnvironment !== "object" || rawEnvironment === null || Array.isArray(rawEnvironment)) {
     throw invalidSchedulerContext();
   }
-  const environment = rawEnvironment as Record<string, unknown>;
-  if (Object.keys(environment).length !== SCHEDULED_TASK_CONTEXT_KEYS.length + 1) throw invalidSchedulerContext();
-  const PATH = validatePathValue(environment.PATH);
-  const { PATH: _, ...rawContext } = environment;
-  return { version: 1, environment: { ...canonicalContext(rawContext), PATH } };
+  const { PATH, ...rawContext } = rawEnvironment as Record<string, unknown>;
+  const context = canonicalContext(rawContext);
+  return {
+    version: 1,
+    environment: PATH === undefined ? context : { ...context, PATH: validatePathValue(PATH) },
+  };
 }
 
 function serializeDescriptor(descriptor: ScheduledTaskContextDescriptor): string {
@@ -391,32 +418,10 @@ function containsControlCharacter(value: string): boolean {
   return false;
 }
 
-function resolveStateDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
-  const override = env.AKM_STATE_DIR?.trim();
-  if (override) return override;
-
-  if (platform === "win32") {
-    const localAppData = env.LOCALAPPDATA?.trim();
-    if (localAppData) return path.join(localAppData, "akm", "state");
-    const userProfile = env.USERPROFILE?.trim();
-    if (userProfile) return path.join(userProfile, "AppData", "Local", "akm", "state");
-    const appData = env.APPDATA?.trim();
-    if (appData) return path.join(appData, "..", "Local", "akm", "state");
-    throw new ConfigError(
-      "Unable to determine state directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
-      "CONFIG_DIR_UNRESOLVABLE",
-    );
-  }
-
-  const xdgStateHome = env.XDG_STATE_HOME?.trim();
-  if (xdgStateHome) return path.join(xdgStateHome, "akm");
-  const home = env.HOME?.trim();
-  return home ? path.join(home, ".local", "state", "akm") : path.join("/tmp", "akm-state");
-}
-
 function invalidSchedulerContext(): ConfigError {
   return new ConfigError(
-    `Invalid scheduler context; expected exactly ${SCHEDULED_TASK_CONTEXT_KEYS.join(", ")} as absolute paths.`,
+    "Invalid scheduler context; expected AKM_BUNDLE_DIR as an absolute path, " +
+      `optionally with ${EXPLICIT_CONTEXT_KEYS.join(", ")} as absolute paths.`,
     "INVALID_CONFIG_FILE",
   );
 }

@@ -41,7 +41,7 @@ export function deleteMeta(db: Database, key: string): void {
 export function getIndexDirState(db: Database, dirPath: string): IndexDirState | undefined {
   const row = db
     .prepare(
-      "SELECT dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at, row_count FROM index_dir_state WHERE dir_path = ?",
+      "SELECT dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at, row_count, index_variant FROM index_dir_state WHERE dir_path = ?",
     )
     .get(dirPath) as
     | {
@@ -51,6 +51,7 @@ export function getIndexDirState(db: Database, dirPath: string): IndexDirState |
         reason: string;
         updated_at: string;
         row_count: number | null;
+        index_variant: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -61,22 +62,24 @@ export function getIndexDirState(db: Database, dirPath: string): IndexDirState |
     reason: row.reason,
     updatedAt: row.updated_at,
     rowCount: row.row_count ?? undefined,
+    indexVariant: row.index_variant ?? undefined,
   };
 }
 
 export function upsertIndexDirState(
   db: Database,
-  state: Pick<IndexDirState, "dirPath" | "fileSetHash" | "fileMtimeMaxMs" | "reason" | "rowCount">,
+  state: Pick<IndexDirState, "dirPath" | "fileSetHash" | "fileMtimeMaxMs" | "reason" | "rowCount" | "indexVariant">,
 ): void {
   db.prepare(
-    `INSERT INTO index_dir_state (dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at, row_count)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO index_dir_state (dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at, row_count, index_variant)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(dir_path) DO UPDATE SET
        file_set_hash = excluded.file_set_hash,
        file_mtime_max_ms = excluded.file_mtime_max_ms,
        reason = excluded.reason,
        updated_at = excluded.updated_at,
-       row_count = excluded.row_count`,
+       row_count = excluded.row_count,
+       index_variant = excluded.index_variant`,
   ).run(
     state.dirPath,
     state.fileSetHash,
@@ -84,6 +87,7 @@ export function upsertIndexDirState(
     state.reason,
     new Date().toISOString(),
     state.rowCount ?? null,
+    state.indexVariant ?? null,
   );
 }
 

@@ -26,7 +26,7 @@ import {
   akmTasksSync,
 } from "../../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { schedulerActivations, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { buildCronLine, CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import type { SchedulerBinding } from "../../src/tasks/scheduler-binding";
 import {
@@ -83,8 +83,8 @@ function cron() {
 
 /**
  * #846: `SCHEDULED_CONTEXT` above is an intentionally unwritable fake path
- * (exercising special-character handling in the default cron line), so
- * belongsToBundle's owning-path check could never resolve it. Tests that
+ * (exercising special-character handling in the default cron line), so the
+ * primary bundle's owning-path check could never resolve it. Tests that
  * need a primary-bundle entry to actually be recognized as this stash's
  * own across more than one sync use this real, writable context instead.
  */
@@ -103,7 +103,7 @@ function writeTaskFile(dir: string, id: string, yaml: string): void {
   fs.mkdirSync(path.join(dir, "tasks"), { recursive: true });
   fs.writeFileSync(path.join(dir, "tasks", `${id}.yml`), yaml, "utf8");
   const bundle = dir === work.dir ? "work" : dir === readonlyDir.dir ? "readonly" : "stash";
-  setSchedulerRefEnabled("task", `${bundle}//tasks/${id}`, true);
+  setSchedulerRefEnabled(`${bundle}//tasks/${id}`, true);
 }
 
 function taskYaml(): string {
@@ -156,7 +156,7 @@ describe("bundle-targeted tasks via --bundle", () => {
     // The file must NOT have been written to the primary stash.
     expect(fs.existsSync(path.join(iso.stashDir, "tasks", "foo.yml"))).toBe(false);
 
-    setSchedulerRefEnabled("task", "work//tasks/foo", false);
+    setSchedulerRefEnabled("work//tasks/foo", false);
     const resynced = await akmTasksSync({ backend: cron() }, "work");
     expect(resynced.removed).toEqual(["foo"]);
     expect(cronBody(exec.current(), "foo")).toBeUndefined();
@@ -165,27 +165,25 @@ describe("bundle-targeted tasks via --bundle", () => {
   test("enable and disable mutate only host-local config for a task in any configured bundle", async () => {
     const source = taskYaml();
     writeTaskFile(work.dir, "foo", source);
-    setSchedulerRefEnabled("task", "work//tasks/foo", false);
+    setSchedulerRefEnabled("work//tasks/foo", false);
 
     const enabled = await akmTasksEnable("work//tasks/foo", {}, { backend: cron() });
     expect(enabled).toMatchObject({ ref: "work//tasks/foo", enabled: true, changed: true });
     expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
-    expect(schedulerActivations(loadConfig())).toContainEqual(
-      expect.objectContaining({ kind: "task", ref: "work//tasks/foo", sourceId: expect.stringMatching(/^sha256:/) }),
-    );
+    expect(schedulerEnabledRefs(loadConfig())).toContain("work//tasks/foo");
 
     const disabled = await akmTasksDisable("work//tasks/foo", {}, { backend: cron() });
     expect(disabled).toMatchObject({ ref: "work//tasks/foo", enabled: false, changed: true });
     expect(cronBody(exec.current(), "foo")).toBeUndefined();
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
-    expect(schedulerActivations(loadConfig())).not.toContainEqual({ kind: "task", ref: "work//tasks/foo" });
+    expect(schedulerEnabledRefs(loadConfig())).not.toContain("work//tasks/foo");
   });
 
   test("a task from a read-only bundle can be enabled without modifying its source", async () => {
     const source = taskYaml();
     writeTaskFile(readonlyDir.dir, "vendor-job", source);
-    setSchedulerRefEnabled("task", "readonly//tasks/vendor-job", false);
+    setSchedulerRefEnabled("readonly//tasks/vendor-job", false);
 
     const result = await akmTasksEnable("readonly//tasks/vendor-job", {}, { backend: cron() });
 
@@ -227,7 +225,7 @@ describe("bundle-targeted tasks via --bundle", () => {
   });
 
   test("plain sync removes a disabled bundle while reconciling bundles that remain active", async () => {
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
     writeTaskFile(iso.stashDir, "primary", taskYaml());
     writeTaskFile(work.dir, "secondary", taskYaml());
     await akmTasksSync({ backend: cronRealContext() });
@@ -249,28 +247,17 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(cronBody(exec.current(), "secondary")).toBeUndefined();
   });
 
-  test("plain sync rejects cross-bundle native-id collisions before mutation", async () => {
+  test("plain sync reports two bundles claiming one native id and installs neither", async () => {
     writeTaskFile(iso.stashDir, "same", taskYaml());
     writeTaskFile(work.dir, "same", taskYaml());
-
-    await expect(akmTasksSync({ backend: cron() })).rejects.toThrow(/claimed by both|rename one task/i);
-    expect(exec.current()).toBe("");
-  });
-
-  test("activation kind is part of the grant and cannot enable a task through a workflow entry", async () => {
-    writeTaskFile(work.dir, "foo", taskYaml());
-    setSchedulerRefEnabled("task", "work//tasks/foo", false);
-    setSchedulerRefEnabled("workflow", "work//tasks/foo", true);
+    writeTaskFile(work.dir, "other", taskYaml());
 
     const result = await akmTasksSync({ backend: cron() });
 
-    expect(result.installed).toEqual([]);
-    expect(result.failures).toContainEqual({
-      path: "work//tasks/foo",
-      ref: "work//tasks/foo",
-      reason: 'Enabled workflow "work//tasks/foo" was not found or has no schedule.',
-    });
-    expect(exec.current()).toBe("");
+    expect(result.installed).toEqual(["other"]);
+    expect(result.failures.map((failure) => failure.ref).sort()).toEqual(["stash//tasks/same", "work//tasks/same"]);
+    expect(result.failures[0]?.reason).toMatch(/is claimed by .*Rename one task/);
+    expect(cronBody(exec.current(), "same")).toBeUndefined();
   });
 
   test("add --bundle on a NON-writable bundle fails with a writable-enforcement error", async () => {
@@ -297,7 +284,7 @@ describe("bundle-targeted tasks via --bundle", () => {
     // #846: the primary ("bar") entry needs to be recognized as this
     // stash's own across the two primary syncs below — use the real,
     // writable context for it (see cronRealContext).
-    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+    writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
 
     // A primary task and a work-bundle task, both scheduled.
     await akmTasksAdd({ id: "bar", schedule: "@daily", command: "true" }, { backend: cronRealContext() });
@@ -341,7 +328,7 @@ describe("bundle-targeted tasks via --bundle", () => {
       task,
       ["/usr/local/bin/akm"],
       "/var/log/akm",
-      schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, "")),
+      schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT)),
     );
     expect(body).toBe(expectedLine);
 

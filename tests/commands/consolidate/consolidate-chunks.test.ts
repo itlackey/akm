@@ -16,15 +16,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isConsolidationEligibleMemoryName, type MemoryEntry } from "../../../src/commands/improve/consolidate";
 import {
   buildChunkPrompt,
   computeSafeChunkSize,
   DEFAULT_CONTEXT_LENGTH_TOKENS,
 } from "../../../src/commands/improve/consolidate/chunking";
-import { isConsolidationEligibleMemoryName } from "../../../src/commands/improve/consolidate/eligibility";
-import type { MemoryEntry } from "../../../src/commands/improve/consolidate/types";
-import { writeContradictEdge } from "../../../src/commands/improve/memory/memory-belief";
-import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -276,7 +273,7 @@ describe("buildChunkPrompt size bounds", () => {
   });
 });
 
-describe("buildChunkPrompt header is ref-free (CONS2, tier3-0917 R5c)", () => {
+describe("buildChunkPrompt header is ref-free (CONS2, R5c)", () => {
   it("header names the memory count, not a memories/<name> range", () => {
     const memories = makeMemoryBatch(tempDir, 3, 50);
     const prompt = buildChunkPrompt("/test/stash", memories, 1, 4, 500);
@@ -521,11 +518,11 @@ describe("body truncation", () => {
     expect(prompt).toContain("Z".repeat(500));
   });
 
-  // R5 (d) tier1-0917: the excerpt truncates the BODY, not the raw file
+  // R5 (d): the excerpt truncates the BODY, not the raw file
   // (frontmatter + body). Before the fix, `body.slice(0, bodyTruncation)`
   // sliced the raw file, so a memory whose frontmatter alone exceeds
   // bodyTruncation (~21% of the pool) was judged on metadata only.
-  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5 tier1-0917)", () => {
+  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5)", () => {
     const longFrontmatter = `---\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Actual body text that must appear.`;
     const entry = makeMemoryEntry(tempDir, "long-frontmatter", body);
@@ -534,7 +531,7 @@ describe("body truncation", () => {
     expect(prompt).toContain("Actual body text that must appear.");
   });
 
-  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5 tier1-0917)", () => {
+  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5)", () => {
     const longFrontmatter = `---\ncaptureMode: hot\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Body text.`;
     const entry = makeMemoryEntry(tempDir, "hot-long-frontmatter", body);
@@ -548,52 +545,5 @@ describe("consolidation memory eligibility", () => {
   it("excludes inferred derived memories from consolidation input", () => {
     expect(isConsolidationEligibleMemoryName("release-process")).toBe(true);
     expect(isConsolidationEligibleMemoryName("release-process.derived")).toBe(false);
-  });
-});
-
-// ── C-3 / #382 — memory-belief.ts writeContradictEdge ────────────────────────
-
-describe("C-3: writeContradictEdge writes contradictedBy frontmatter edges (#382)", () => {
-  const tmpDirs: string[] = [];
-
-  afterEach(() => {
-    for (const dir of tmpDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("writes contradictedBy and beliefState: contradicted to memory frontmatter", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-c3-"));
-    tmpDirs.push(tmpDir);
-    const memFile = path.join(tmpDir, "auth-a.md");
-    fs.writeFileSync(memFile, "---\ndescription: Auth tips A\n---\nContent A.\n", "utf8");
-
-    writeContradictEdge(memFile, "memories/auth-b");
-
-    const content = fs.readFileSync(memFile, "utf8");
-    const parsed = parseFrontmatter(content);
-    expect(parsed.data.beliefState).toBe("contradicted");
-    expect(Array.isArray(parsed.data.contradictedBy)).toBe(true);
-    expect(parsed.data.contradictedBy as string[]).toContain("memories/auth-b");
-  });
-
-  it("is idempotent — does not write duplicate edges", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-c3-idem-"));
-    tmpDirs.push(tmpDir);
-    const memFile = path.join(tmpDir, "auth-a.md");
-    fs.writeFileSync(
-      memFile,
-      "---\nbeliefState: contradicted\ncontradictedBy:\n  - memory:auth-b\n---\nContent A.\n",
-      "utf8",
-    );
-
-    // Write the same edge again — should be a no-op
-    writeContradictEdge(memFile, "memories/auth-b");
-
-    const content = fs.readFileSync(memFile, "utf8");
-    const parsed = parseFrontmatter(content);
-    const refs = parsed.data.contradictedBy as string[];
-    // Still exactly one edge (no duplicate)
-    expect(refs.filter((r) => r === "memories/auth-b")).toHaveLength(1);
   });
 });

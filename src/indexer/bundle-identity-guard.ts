@@ -37,7 +37,7 @@ import { rethrowIfTestIsolationError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
-import { isCanonicalIndexGeneration } from "../storage/repositories/index-entry-schema";
+import { hasCurrentEntriesTable } from "../storage/repositories/index-entry-schema";
 
 let guardSettled = false;
 
@@ -58,7 +58,7 @@ function indexedBundlePaths(dbPath: string): IndexedBundlePath[] | undefined {
   try {
     db = openReadonlyExistingDatabase(dbPath);
     if (!db) return undefined;
-    if (!isCanonicalIndexGeneration(db)) return undefined;
+    if (!hasCurrentEntriesTable(db)) return undefined;
     return db
       .prepare(
         "SELECT DISTINCT bundle_id AS bundleId, file_path AS filePath FROM entries " +

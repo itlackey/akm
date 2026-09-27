@@ -33,9 +33,6 @@ const fakeBackend: SchedulerBackend = {
   },
   setEnabled: async () => {},
   list: async () => [],
-  inspectBindings: async () => ({ installed: [], artifacts: [] }),
-  snapshotBindings: async (nativeIds) => ({ nativeIds: [...nativeIds], artifacts: [] }),
-  restoreBindings: async () => {},
   expectedSignature: (binding) => JSON.stringify([binding.cron, binding.enabled, binding.invocation]),
 };
 
@@ -104,7 +101,7 @@ describe("task asset mutations honor write-target resolution", () => {
     }
   });
 
-  test("add preserves scheduler rollback behavior on install failure", async () => {
+  test("add reports an install failure and keeps the task it wrote", async () => {
     const iso = withIsolatedAkmStorage();
     const target = makeSandboxDir("akm-task-target");
     try {
@@ -131,9 +128,8 @@ describe("task asset mutations honor write-target resolution", () => {
       }
 
       expect(failure).toBeInstanceOf(Error);
-      expect(failure).not.toBeInstanceOf(AggregateError);
-      expect((failure as Error).message).toMatch(/install failed/);
-      expect(fs.existsSync(path.join(target.dir, "tasks", "broken.yml"))).toBe(false);
+      expect((failure as Error).message).toMatch(/could not be scheduled: install failed for broken/);
+      expect(fs.existsSync(path.join(target.dir, "tasks", "broken.yml"))).toBe(true);
     } finally {
       iso.cleanup();
       target.cleanup();

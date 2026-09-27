@@ -3,20 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 export interface SearchHitAttribution {
-  lexical?: {
-    execution: "exact" | "prefix" | "relaxed";
-    nameMatchTier: number;
-  };
   memoryInference?: {
     exposure: "direct" | "surface";
     childRef?: string;
     surfaceFields?: Array<"description" | "tags">;
     surfaceDescription?: string;
-  };
-  graphExtraction?: {
-    boost: number;
-    bodyHash?: string;
-    extractionRunId?: string;
   };
 }
 
@@ -24,11 +15,6 @@ export interface UsageEventAttribution {
   memoryInference?: {
     exposure: "direct" | "surface";
     childRef: string;
-  };
-  graphExtraction?: {
-    boost: number;
-    bodyHash?: string;
-    extractionRunId?: string;
   };
 }
 
@@ -46,20 +32,12 @@ export function attachSearchHitAttribution(target: object, attribution: SearchHi
 }
 
 export function copySearchHitAttribution(from: object, to: object, outputDescription?: string): void {
-  const attribution = (from as AttributionHost)[ATTRIBUTION];
-  if (!attribution) return;
-  const memoryInference = attribution.memoryInference;
+  const memoryInference = (from as AttributionHost)[ATTRIBUTION]?.memoryInference;
+  if (!memoryInference) return;
   const memorySurvives =
-    memoryInference?.exposure !== "surface" ||
+    memoryInference.exposure !== "surface" ||
     (memoryInference.surfaceDescription !== undefined && memoryInference.surfaceDescription === outputDescription);
-  const applicable = {
-    ...(attribution.lexical ? { lexical: attribution.lexical } : {}),
-    ...(memorySurvives && memoryInference ? { memoryInference } : {}),
-    ...(attribution.graphExtraction ? { graphExtraction: attribution.graphExtraction } : {}),
-  };
-  if (applicable.lexical || applicable.memoryInference || applicable.graphExtraction) {
-    attachSearchHitAttribution(to, applicable);
-  }
+  if (memorySurvives) attachSearchHitAttribution(to, { memoryInference });
 }
 
 export function getSearchHitAttribution(target: object): SearchHitAttribution | undefined {
@@ -71,33 +49,19 @@ export function buildUsageEventAttribution(
   entryRef: string,
   projection: AttributionProjection = "full",
 ): UsageEventAttribution | undefined {
-  if (!attribution) return undefined;
-  const memoryInference = attribution.memoryInference;
-  const childRef = memoryInference?.exposure === "direct" ? entryRef : memoryInference?.childRef;
-  const graphExtraction = attribution.graphExtraction;
-  const graphApplies =
-    graphExtraction !== undefined && Number.isFinite(graphExtraction.boost) && graphExtraction.boost > 0;
-  const surfaceFields = memoryInference?.surfaceFields ?? [];
+  const memoryInference = attribution?.memoryInference;
+  if (!memoryInference) return undefined;
+  const childRef = memoryInference.exposure === "direct" ? entryRef : memoryInference.childRef;
+  const surfaceFields = memoryInference.surfaceFields ?? [];
   const surfaceVisible =
-    memoryInference?.exposure !== "surface" ||
+    memoryInference.exposure !== "surface" ||
     (projection === "full"
       ? surfaceFields.length > 0
       : projection === "normal" || projection === "agent"
         ? surfaceFields.includes("description")
         : false);
-  const memoryApplies = memoryInference !== undefined && childRef?.includes("//") === true && surfaceVisible;
-  if (!memoryApplies && !graphApplies) return undefined;
-  return {
-    ...(memoryApplies
-      ? {
-          memoryInference: {
-            exposure: memoryInference.exposure,
-            childRef,
-          },
-        }
-      : {}),
-    ...(graphApplies ? { graphExtraction } : {}),
-  };
+  if (childRef?.includes("//") !== true || !surfaceVisible) return undefined;
+  return { memoryInference: { exposure: memoryInference.exposure, childRef } };
 }
 
 export function usageEventAttributionMetadata(

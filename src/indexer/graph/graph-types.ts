@@ -8,7 +8,7 @@
  *
  * Split out of `graph-extraction.ts` so that `indexer/db/graph-db.ts` — the
  * SQLite-backed store, which `graph-extraction.ts` imports
- * `drainExtractionQueue`/`loadStoredGraphSnapshot`/`replaceStoredGraph` from
+ * `peekExtractionQueue`/`loadStoredGraphSnapshot`/`replaceStoredGraph` from
  * by value — does not need to import back into `graph-extraction.ts` (the
  * orchestrator) just for these shapes. That back-edge was a static-graph
  * cycle even though it was type-only (chunk 9 WI-9.8 KILL 5 sever): the
@@ -90,27 +90,32 @@ export interface GraphFile {
   stashRoot: string;
   /** Per-file extraction results. */
   files: GraphFileNode[];
-  /** Deduplicated entity list across all files (schema v2+). Canonical casing, first-seen order. */
+  /** Distinct entity names across all files (loaded snapshots only). */
   entities?: string[];
-  /** Deduplicated relation list across all files (schema v2+). Dangling relations excluded. */
+  /** Every file's relations (loaded snapshots only). */
   relations?: GraphRelation[];
-  /** Graph quality telemetry emitted by the extraction pass. */
+  /** The stored counts from `graph_meta` (loaded snapshots only; a write derives them from the rows). */
   quality?: GraphQualityTelemetry;
   /** Durable latest-run extraction telemetry. */
   telemetry?: GraphExtractionTelemetry;
 }
 
+/**
+ * The `graph_meta` counts. Every field is derived from the rows stored for one
+ * stash root (`readStoredGraphQuality` in `../db/graph-db.ts`), so the counts
+ * always describe what the graph tables hold.
+ */
 export interface GraphQualityTelemetry {
-  /** Eligible files considered by extraction. */
+  /** Stored graph files: every extraction outcome kept for the root, with or without entities. */
   consideredFiles: number;
-  /** Files with at least one extracted entity. */
+  /** Stored graph files with at least one entity row. */
   extractedFiles: number;
-  /** Unique deduplicated entity count in the graph. */
+  /** Distinct entities in the stored rows, case-folded. */
   entityCount: number;
-  /** Unique deduplicated relation count in the graph. */
+  /** Distinct relations in the stored rows, keyed on case-folded endpoints and type. */
   relationCount: number;
-  /** Fraction of eligible files that produced at least one entity. */
+  /** `extractedFiles / consideredFiles`. */
   extractionCoverage: number;
-  /** Undirected graph density over unique entities/relations. */
+  /** Undirected graph density: `relationCount` over the possible pairs of `entityCount` entities. */
   density: number;
 }

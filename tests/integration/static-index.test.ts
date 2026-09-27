@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { resolveRegistryProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
@@ -151,14 +152,21 @@ describe("StaticIndexProvider", () => {
       expect(result.hits.some((h) => h.id === "github:vercel-labs/agent-skills")).toBe(true);
     });
 
-    test("version 1 index returns null (unsupported)", async () => {
-      // version 1 is explicitly unsupported per schema comment
+    test("an unknown index version is read, with one warning naming it", async () => {
       const v1Index = { ...FIXTURE_INDEX, version: 1 };
       const srv = serveJson(v1Index);
       const provider = makeProvider(srv.url);
-      const result = await provider.search({ query: "agent", limit: 10 });
-      // No hits because the parser returns null for unsupported versions
-      expect(result.hits).toHaveLength(0);
+      const warnings: string[] = [];
+      _setWarnSinkForTests((level, args) => {
+        if (level === "warn") warnings.push(args.map(String).join(" "));
+      });
+      try {
+        const result = await provider.search({ query: "agent", limit: 10 });
+        expect(result.hits.some((h) => h.id === "github:vercel-labs/agent-skills")).toBe(true);
+      } finally {
+        _setWarnSinkForTests();
+      }
+      expect(warnings.filter((line) => line.includes("index version 1"))).toHaveLength(1);
     });
   });
 });

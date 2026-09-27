@@ -252,7 +252,7 @@ const tasksAddCommand = defineJsonCommand({
     force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
     rebind: {
       type: "boolean",
-      description: "Explicitly permit scheduler creation from this ineligible local invocation",
+      description: "Also point the bundle's installed scheduler rows at this akm invocation (as `task sync --rebind`)",
       default: false,
     },
   },
@@ -396,13 +396,13 @@ export function taskSyncDryRunExitCode(preview: {
 const tasksSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
-    description: "Atomically preflight and reconcile a bundle's task/workflow schedules with the OS scheduler",
+    description: "Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
   },
   args: {
     ...bundleArg,
     rebind: {
       type: "boolean",
-      description: "Replace installed bindings with the current invocation",
+      description: "Point installed rows at this akm invocation instead of keeping their launcher",
       default: false,
     },
     "dry-run": {
@@ -479,16 +479,17 @@ const tasksDoctorCommand = defineJsonCommand({
 });
 
 /**
- * #907: `akm task validate`'s exit-code contract — only current-schema
- * `valid` is successful (exit 0); `blocked`/`invalid`/`not-a-task` are
- * diagnosed defects the caller must act on (exit 1, mirroring `task sync`'s
- * own `failures.length > 0 -> EXIT_CODES.GENERAL`). A missing path or an
+ * #907: `akm task validate`'s exit-code contract — `valid` and `converts`
+ * (a v2/v3 document the in-memory shim converted successfully) are both
+ * successful (exit 0); `blocked`/`invalid`/`not-a-task` are diagnosed
+ * defects the caller must act on (exit 1, mirroring `task sync`'s own
+ * `failures.length > 0 -> EXIT_CODES.GENERAL`). A missing path or an
  * unreadable file never reaches this function at all — `akmTaskValidate`
  * throws a `UsageError` for those, which `defineJsonCommand`'s wrapping
  * already maps to exit 2.
  */
 export function taskValidateExitCode(result: { outcome: string }): number | undefined {
-  return result.outcome === "valid" ? undefined : EXIT_CODES.GENERAL;
+  return result.outcome === "valid" || result.outcome === "converts" ? undefined : EXIT_CODES.GENERAL;
 }
 
 const tasksValidateCommand = defineJsonCommand({

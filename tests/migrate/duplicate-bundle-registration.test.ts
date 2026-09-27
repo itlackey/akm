@@ -24,7 +24,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectMigrationPlan, inspectTaskV4MigrationStatus } from "../../scripts/akm-migrate/task-migrate";
+import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { withPrimaryBundle } from "../../src/commands/sources/bundle-config-ops";
 import { type AkmConfig, bundleContentRoot, bundleKeyForContentRoot } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
@@ -144,7 +144,7 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
         },
       });
 
-      expect(() => inspectMigrationPlan()).toThrow(/bundle-a.*bundle-b.*same physical content root/i);
+      expect(() => inspectTaskFilesMigration()).toThrow(/bundle-a.*bundle-b.*same physical content root/i);
     } finally {
       storage.cleanup();
     }
@@ -172,7 +172,7 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
 
       let caught: unknown;
       try {
-        inspectTaskV4MigrationStatus();
+        inspectTaskFilesMigration();
       } catch (error) {
         caught = error;
       }

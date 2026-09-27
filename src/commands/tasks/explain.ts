@@ -35,11 +35,10 @@
  *     `with.content`, an inline `akm/command` prompt body, or a stored
  *     command's own rendered content is never read, let alone printed;
  *   - effective execution settings (engine/model/timeout) reuse
- *     `prepareResolvedExecution` (`src/integrations/agent/execution-preparation.ts`)
- *     — the SAME cascade-composition entry point `prepareCommandInvocation`
- *     itself calls once a command/persona source is already rendered — fed a
- *     BLANK inline placeholder command (`createInlineResolvedCommand`) and an
- *     EMPTY command-layer values map, instead of the task's real referenced
+ *     `resolveExecution` (`src/integrations/agent/execution.ts`) — the SAME
+ *     resolution entry point every command/persona invocation goes through —
+ *     fed a BLANK inline placeholder command (`createInlineResolvedCommand`)
+ *     and an EMPTY command-layer values map, instead of the task's real referenced
  *     command source. This is a deliberate, documented trade-off: a
  *     referenced command's OWN frontmatter overrides (its own `engine:`/
  *     `model:`, if any) do not contribute a layer here, in exchange for never
@@ -71,9 +70,8 @@
  * `suppliedInputs`). Do not paste this command's output into an untrusted
  * place on the assumption that it can never contain a credential.
  *
- * Field-level execution provenance is READ from `planExecutionCascade`'s own
- * `ResolvedExecutionPlanV1.provenance` (via `prepareResolvedExecution`) —
- * this module is a CONSUMER of the one common cascade resolver, never a
+ * Field-level execution provenance is READ from `resolveExecution`'s own
+ * `provenance` — this module is a CONSUMER of the one common resolver, never a
  * second resolver: it never re-derives engine/model precedence itself.
  */
 
@@ -91,7 +89,7 @@ import {
 } from "../../execution/input-contract";
 import { createInlineResolvedCommand } from "../../execution/resolved-request";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { prepareResolvedExecution } from "../../integrations/agent/execution-preparation";
+import { resolveExecution } from "../../integrations/agent/execution";
 import { isSchedulerRefEnabled } from "../../tasks/activation-config";
 import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
@@ -288,10 +286,9 @@ function currentExecutionValues(document: PreparableTaskDocument): Record<string
 function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSettingsSection {
   if (!isCommandTarget(document)) return { provenance: {} };
   const current = currentExecutionValues(document);
-  const prepared = prepareResolvedExecution({
+  const prepared = resolveExecution({
     command: createInlineResolvedCommand({ template: "", content: "" }),
     config: loadConfig(),
-    invocationKind: "task",
     commandLayer: { id: "task-explain", values: {} },
     ...(Object.keys(current).length > 0 ? { current } : {}),
   });
@@ -304,7 +301,7 @@ function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSe
     },
     ...(prepared.request.model !== undefined ? { model: prepared.request.model } : {}),
     ...(prepared.request.runtime.timeoutMs !== undefined ? { timeoutMs: prepared.request.runtime.timeoutMs } : {}),
-    provenance: prepared.plan.provenance,
+    provenance: prepared.provenance,
   };
 }
 
@@ -355,7 +352,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const defaultedInputs = applyInputDefaults(inputContract, materializedInputs);
 
   const document: PreparableTaskDocument = projectTaskSourceV4(parsed.v4);
-  const enabled = isSchedulerRefEnabled(loadConfig(), "task", makeBundleRef(bundle.source.name, taskConceptId));
+  const enabled = isSchedulerRefEnabled(loadConfig(), makeBundleRef(bundle.source.name, taskConceptId));
 
   const schedule: ScheduleBindingRow[] = parsed.v4.schedule.map((entry) => ({
     ordinal: entry.ordinal,

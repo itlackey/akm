@@ -5,14 +5,13 @@
 /**
  * `akm task prune` (#851): reclaim installed scheduler entries `sync` can
  * never see because their own `--scheduler-context` descriptor doesn't
- * resolve to a live bundle (#846's `belongsToBundle` deliberately excludes
- * them rather than guessing ownership).
+ * resolve to a live bundle (#846's ownership attribution deliberately
+ * excludes them rather than guessing).
  *
  * Mirrors tests/integration/tasks-sync-dry-run.test.ts's harness: a real
  * `CRON_BACKEND` wired to an in-memory `CronExec`, so these tests exercise
- * the exact production path (`akmTasksPrune` -> `buildSchedulerRemoveOperation`
- * -> `applySchedulerTransaction`) with zero interaction with any real
- * crontab/plist/schtasks state.
+ * the exact production path (`akmTasksPrune` -> the backend's `uninstall`)
+ * with zero interaction with any real crontab/plist/schtasks state.
  *
  * ABSOLUTE SAFETY REQUIREMENTS this file exists to prove:
  *   1. Default invocation (no --yes, no --id) makes ZERO scheduler writes —
@@ -70,7 +69,7 @@ function writeTask(id: string, schedule: string): void {
     `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
-  setSchedulerRefEnabled("task", makeBundleRef(path.basename(stashDir).toLowerCase(), `tasks/${id}`), true);
+  setSchedulerRefEnabled(makeBundleRef(path.basename(stashDir).toLowerCase(), `tasks/${id}`), true);
 }
 
 beforeEach(() => {
@@ -96,7 +95,7 @@ const backendFor = (exec: CronExec) => {
   // operations that don't pass their own contextPath fall back to this one,
   // and it resolves to THIS sandbox's stash dir, so a plain `akmTasksSync`
   // install is always alive/live from prune's point of view.
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },
@@ -128,7 +127,7 @@ function missingContextPath(): string {
 function deadBundleContextPath(): string {
   const context = resolveScheduledTaskContext();
   const deadDir = path.join(os.tmpdir(), `akm-t851-dead-bundle-${Math.random().toString(36).slice(2)}`);
-  const descriptor = schedulerContextDescriptor({ ...context, AKM_BUNDLE_DIR: deadDir }, "");
+  const descriptor = schedulerContextDescriptor({ ...context, AKM_BUNDLE_DIR: deadDir });
   return writeSchedulerContextDescriptor(descriptor) ?? schedulerContextPath(descriptor);
 }
 

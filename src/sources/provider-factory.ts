@@ -3,29 +3,28 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Source provider factory map.
- *
- * Maps source kind identifiers (e.g. "filesystem", "git", "website", "npm")
- * to factory functions that build {@link SourceProvider} instances from a
- * {@link SourceConfigEntry}.
- *
- * Distinct from the registry-discovery factory (`registry/factory.ts`).
- * Both share `create-provider-registry.ts` for the underlying string→factory
- * map.
+ * Source provider factories for the four supported source kinds
+ * (`filesystem`, `git`, `website`, `npm`).
  */
 
-import { createProviderRegistry } from "../registry/create-provider-registry";
 import type { SourceProviderFactory } from "./provider";
-import type { SourceKind } from "./types";
+import { createFilesystemProvider } from "./providers/filesystem";
+import { GitSourceProvider } from "./providers/git-provider";
+import { NpmSourceProvider } from "./providers/npm";
+import { createWebsiteProvider } from "./providers/website";
 
-// ── Factory map ─────────────────────────────────────────────────────────────
-
-const registry = createProviderRegistry<SourceProviderFactory>();
-
-export function registerSourceProvider(type: SourceKind, factory: SourceProviderFactory): void {
-  registry.register(type, factory);
-}
-
+/** The factory for a configured source kind, or null for a kind akm does not support. */
 export function resolveSourceProviderFactory(type: string): SourceProviderFactory | null {
-  return registry.resolve(type);
+  switch (type) {
+    case "filesystem":
+      return createFilesystemProvider;
+    case "git":
+      return (config) => new GitSourceProvider(config);
+    case "npm":
+      return (config) => new NpmSourceProvider(config);
+    case "website":
+      return createWebsiteProvider;
+    default:
+      return null;
+  }
 }

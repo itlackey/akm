@@ -8,7 +8,7 @@ import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "../../core/config/engine-se
 import { listEnvsRecursive } from "../../core/env-secret-ref";
 import { ConfigError } from "../../core/errors";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
-import { listPendingStateMigrations } from "../../core/state-db";
+import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
 import type { WhichFn } from "../../integrations/agent/detect";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import {
@@ -16,7 +16,7 @@ import {
   isLlmCredentialAvailable,
   resolveEngine,
 } from "../../integrations/agent/engine-resolution";
-import { executionEngineDefinitionsFromConfig } from "../../integrations/agent/execution-definitions";
+import { executionEngineDefinitionsFromConfig } from "../../integrations/agent/execution";
 import {
   type LoadedModelMap,
   type LoadModelMapOptions,
@@ -68,15 +68,12 @@ export interface HealthCheckContext {
   stateDbIntegrity: StateDbQuickCheckResult;
   /** R0: freelist/page-count reading, computed once for `state-db-integrity`'s reclaimable-space report. */
   stateDbFreelist: StateDbFreelistInfo;
+  /** What this run's own state.db open applied (every open applies pending migrations). */
+  stateDbMigrations: StateDatabaseMigrationReport;
   /** Total task_history rows read in the window. */
   taskRowCount: number;
   /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
   taskFailRate: number;
-  /** task_history rows whose log_path is non-null. */
-  taskRowsWithLogsCount: number;
-  /** Subset of {@link taskRowsWithLogsCount} whose log_path resolves on disk. */
-  existingLogRowsCount: number;
-  logBackingRate: number;
   /** Active runs older than the stale threshold. */
   stuckActiveRuns: number;
   /** One entry per {@link stuckActiveRuns} row: which task and how stale. */
@@ -94,7 +91,6 @@ export interface HealthCheckContext {
    * "<reason>-dominant" message suffix when the check is warn/fail.
    */
   agentFailureReasonCounts: Record<string, number>;
-  sessionExtraction: ImproveHealthMetrics["sessionExtraction"];
   /**
    * #914: `extract_sessions_seen` outcome counts for the rolling 7-day
    * ledger window (independent of the top-level `--since`) — what lets
@@ -1129,16 +1125,10 @@ export interface PendingStateMigrationsCheckDependencies {
 }
 
 /**
- * Hard check: state.db's migration ledger has no pending entries.
- *
- * Read-only via `listPendingStateMigrations` (a preflight open, never a
- * managed one), so running this check is always safe — even when the
- * corresponding managed open would refuse outright because a pending
- * migration is historical-destructive (see `beforeMigrationLocked` in
- * `src/core/state/migrations.ts`). This is what lets `akm health` report that
- * refusal as an ordinary `fail` check instead of crashing the whole command —
- * and what replaces a bundler grepping akm's refusal error text
- * to detect the same case.
+ * `state-db-migrations` when the open itself failed: the migrations still
+ * pending after a failed apply, from a read-only listing that never applies
+ * anything. A `fail` row, not a crash, is what a bundler watches for instead
+ * of grepping akm's error text.
  */
 export function runPendingStateMigrationsCheck(
   stateDbPath: string,
@@ -1163,6 +1153,32 @@ export function runPendingStateMigrationsCheck(
     confidence: "high",
     message: `${pending.length} pending state.db migration(s) (${range}); run \`akm migrate apply\`.`,
     evidence: { path: stateDbPath, pending },
+  };
+}
+
+/**
+ * Hard check: state.db's ledger is current. Every open applies the pending
+ * migrations (copying the file aside first when one drops schema), so after
+ * health's own open nothing is pending; this names what that open applied, so
+ * an upgrade that migrated state.db is visible in the report.
+ */
+export function appliedStateMigrationsCheck(
+  stateDbPath: string,
+  report: StateDatabaseMigrationReport,
+): HealthCheckResult {
+  const { applied, backupPath } = report;
+  const range = applied.length > 1 ? `${applied[0]} … ${applied[applied.length - 1]}` : applied[0];
+  return {
+    name: "state-db-migrations",
+    kind: "deterministic",
+    status: "pass",
+    confidence: "high",
+    message:
+      applied.length === 0
+        ? "state.db has no pending migrations."
+        : `Applied ${applied.length} pending state.db migration(s) on open (${range})` +
+          (backupPath ? `; the pre-migration copy is ${backupPath}.` : "."),
+    evidence: { path: stateDbPath, pending: [], applied, ...(backupPath ? { backupPath } : {}) },
   };
 }
 
@@ -1245,7 +1261,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
           confidence: "high",
           message:
             `state.db failed PRAGMA quick_check: ${detail}. Repair: back up state.db, then run ` +
-            `sqlite3 state.db ".dump" | sqlite3 state.new.db, verify state.new.db passes quick_check, and swap it in.`,
+            `sqlite3 state.db ".recover" | sqlite3 state.new.db, verify state.new.db passes quick_check, stop ` +
+            "every akm process, then delete state.db-wal and state.db-shm before swapping state.new.db in as " +
+            "state.db — a leftover WAL from the OLD database is replayed onto the new one and corrupts it.",
           evidence: { path: ctx.stateDbPath, lines, freelistRatio },
         };
       }
@@ -1280,7 +1298,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
   {
     name: "state-db-migrations",
     channel: "hard",
-    run: (ctx) => runPendingStateMigrationsCheck(ctx.stateDbPath),
+    run: (ctx) => appliedStateMigrationsCheck(ctx.stateDbPath, ctx.stateDbMigrations),
   },
   {
     name: "task-history-read",
@@ -1292,21 +1310,6 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       confidence: "high",
       message: `Read ${ctx.taskRowCount} task-history row(s) since ${ctx.since}.`,
       evidence: { rows: ctx.taskRowCount, since: ctx.since },
-    }),
-  },
-  {
-    name: "task-log-backing",
-    channel: "hard",
-    run: (ctx) => ({
-      name: "task-log-backing",
-      kind: "deterministic",
-      status: ctx.logBackingRate === 1 ? "pass" : "fail",
-      confidence: "high",
-      message:
-        ctx.logBackingRate === 1
-          ? "Every task_history log_path resolved on disk."
-          : `${ctx.taskRowsWithLogsCount - ctx.existingLogRowsCount} task log(s) referenced in task_history are missing.`,
-      evidence: { totalWithLogs: ctx.taskRowsWithLogsCount, existingLogs: ctx.existingLogRowsCount },
     }),
   },
   {
@@ -1484,52 +1487,6 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         ...base,
         status: "pass",
         message: `Session extraction active in the last ${days} days (${outcomeSummary}).`,
-      };
-    },
-  },
-  {
-    // #603: pool-saturation advisory. The raw `sessionsScanned` count fired on
-    // normal cadence changes (the Jun 12 false alarm). Instead track the ratio
-    // of NEW (unseen) sessions to the total session pool extract evaluated in
-    // the window: a low ratio is the *expected* steady state, only a near-zero
-    // ratio signals a possible discovery/dedup bug.
-    //
-    // unseen ≈ `sessionsScanned` (extract only processes new sessions; already-
-    // seen ones are deduped into `sessionsSkipped`). total = scanned + skipped.
-    // This is a heuristic approximation — `sessionsSkipped` also folds in
-    // too-short skips — so the check is informational and never gates status.
-    name: "pool-saturation",
-    channel: "advisory",
-    run: (ctx) => {
-      const sx = ctx.sessionExtraction;
-      const total = sx.sessionsScanned + sx.sessionsSkipped;
-      const unseen = sx.sessionsScanned;
-      const ratio = total > 0 ? unseen / total : null;
-      const pct = ratio === null ? null : Math.round(ratio * 1000) / 10;
-
-      let status: HealthCheckResult["status"] = "pass";
-      let confidence: HealthCheckResult["confidence"] = "low";
-      let message: string;
-      if (!sx.ran || ratio === null) {
-        message = "Pool saturation: no extract activity in the window — no signal.";
-      } else if (ratio < 0.02) {
-        status = "warn";
-        confidence = "medium";
-        message = `Session pool near-exhausted: only ${pct}% of the ${total}-session pool was new (<2%). Possible discovery/dedup bug — verify extract is still finding new sessions.`;
-      } else if (ratio < 0.1) {
-        confidence = "medium";
-        message = `Session pool saturation: ${pct}% of ${total} sessions were new (<10%, steady-state expected — informational).`;
-      } else {
-        confidence = "medium";
-        message = `Session pool healthy: ${pct}% of ${total} sessions were new.`;
-      }
-      return {
-        name: "pool-saturation",
-        kind: "heuristic",
-        status,
-        confidence,
-        message,
-        evidence: { totalSessions: total, unseenSessions: unseen, saturationRatio: ratio },
       };
     },
   },

@@ -92,6 +92,11 @@ const LlmEngineSchema = z
     maxTokens: positiveInt.optional(),
     timeoutMs: timeoutMsField,
     concurrency: positiveInt.optional(),
+    // Same user-settable override LlmConnectionConfigSchema declares above; a
+    // named `kind: "llm"` engine is validated by THIS object, so without the
+    // field here the unknown-key walk reported a live setting as unknown and
+    // `akm migrate apply` dropped it from config.json.
+    supportsJsonSchema: z.boolean().optional(),
     extraParams: ExtraParamsSchema.optional(),
     contextLength: positiveInt.optional(),
     enableThinking: z.boolean().optional(),

@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
-import type { TasksSyncResult } from "../src/commands/tasks/tasks";
-import { loadConfig } from "../src/core/config/config";
+import { akmTasksSync, type TasksSyncResult } from "../src/commands/tasks/tasks";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { deleteAssetFromSource, writeAssetToSource } from "../src/core/write-source";
 import { buildSetupSteps } from "../src/setup/setup";
 import {
@@ -17,8 +17,15 @@ import {
   prepareSetupTaskDefinitions,
   stepScheduledTasks,
 } from "../src/setup/steps/tasks";
-import { schedulerActivations } from "../src/tasks/activation-config";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
+import type { InstalledSchedulerBinding } from "../src/tasks/scheduler-binding";
+import {
+  resolveScheduledTaskContext,
+  schedulerContextDescriptor,
+  writeSchedulerContextDescriptor,
+} from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -94,10 +101,12 @@ const EMPTY_SYNC_RESULT: TasksSyncResult = {
 function makeDeps(
   installed: Array<{ id: string; schedule: string; enabled: boolean; description?: string }>,
   syncResult: TasksSyncResult = EMPTY_SYNC_RESULT,
+  options: { inspection?: { installed: readonly InstalledSchedulerBinding[] } } = {},
 ) {
   const calls = {
     prepared: [] as PreparedSetupTask[][],
     syncCalls: 0,
+    inspectInstalledCalls: 0,
   };
   const deps = {
     list: () => installed,
@@ -110,6 +119,10 @@ function makeDeps(
       state.events.push("sync");
       calls.syncCalls += 1;
       return syncResult;
+    },
+    inspectInstalled: async () => {
+      calls.inspectInstalledCalls += 1;
+      return options.inspection ?? { installed: [] };
     },
   };
   return { deps, calls };
@@ -172,6 +185,9 @@ describe("stepScheduledTasks", () => {
     state.confirmReturn = true;
     state.onConfirm = () => {
       expect(state.notes).toHaveLength(1);
+      // The read-only inventory used to pre-check the review has already run by now, but nothing
+      // that mutates task files or scheduler state has.
+      expect(calls.inspectInstalledCalls).toBe(1);
       expect(calls.prepared).toHaveLength(0);
       expect(calls.syncCalls).toBe(0);
     };
@@ -198,6 +214,9 @@ describe("stepScheduledTasks", () => {
     expect(calls.syncCalls).toBe(1);
   });
 
+  // Reviewer finding: carry-forward must run after the operator's confirmation
+  // and before `prepare` revokes every managed ref the operator left unchecked, so a grant carried
+  // forward for a ref the operator just deselected is still removed by that same `prepare` call.
   test("reports every skipped task and no activation success for a partial sync", async () => {
     const { deps } = makeDeps([], {
       ...EMPTY_SYNC_RESULT,
@@ -337,9 +356,7 @@ describe("task definition preparation", () => {
       expect(updated).not.toContain("enabled:");
       expect(updated).toContain("cron: '0 1 * * *'");
       expect(updated).toContain("cron: '30 13 * * 1,2,3,4,5'");
-      expect(schedulerActivations(loadConfig())).toContainEqual(
-        expect.objectContaining({ kind: "task", ref: "stash//tasks/improve", sourceId: expect.any(String) }),
-      );
+      expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/improve");
     } finally {
       storage.cleanup();
     }
@@ -429,5 +446,119 @@ describe("scheduled-tasks step registration", () => {
     });
     expect(steps.find((step) => step.id === "scheduled-tasks")).toBeUndefined();
     expect(steps[steps.length - 1]?.id).toBe("output");
+  });
+});
+
+function memoryExec(initial = ""): CronExec & { current: () => string } {
+  let store = initial;
+  return {
+    read: (): CronExecResult => ({ status: 0, stdout: store, stderr: "" }),
+    write: (content: string): CronExecResult => {
+      store = content;
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    current: () => store,
+  };
+}
+
+describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
+  beforeEach(resetClack);
+
+  test("a config without scheduler.enabled takes the installed akm rows as the host's choice", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "orphan.yml"),
+        'version: 4\nrun: echo orphan\nname: orphan\nschedule:\n  - cron: "*/5 * * * *"\n',
+        "utf8",
+      );
+      setSchedulerRefEnabled("stash//tasks/orphan", true);
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+      await akmTasksSync({ backend });
+      expect(exec.current()).toContain("task run orphan");
+
+      // A pre-0.9.17 config has no list at all: the installed row IS the choice.
+      const { scheduler: _dropped, ...withoutList } = loadConfig();
+      saveConfig(withoutList);
+      resetConfigCache();
+      expect(schedulerEnabledRefs(loadConfig())).toBeUndefined();
+
+      state.confirmReturn = true;
+      await stepScheduledTasks({
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (deps, bundleTarget, syncOptions) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => ({ installed: await backend.list() }),
+      });
+
+      expect(exec.current()).toContain("task run orphan");
+      expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/orphan");
+
+      // An explicit empty list is a choice, not a missing one: nothing is re-derived.
+      saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
+      resetConfigCache();
+      await akmTasksSync({ backend });
+      expect(exec.current()).not.toContain("task run orphan");
+      expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  test("does not re-activate a task definition the operator deselects on a rerun", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
+
+      const exec = memoryExec();
+      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+      const deps = {
+        list: listSetupTaskDefinitions,
+        prepare: prepareSetupTaskDefinitions,
+        sync: (
+          deps: Parameters<typeof akmTasksSync>[0],
+          bundleTarget?: string,
+          syncOptions?: Parameters<typeof akmTasksSync>[2],
+        ) => akmTasksSync({ ...deps, backend }, bundleTarget, syncOptions),
+        inspectInstalled: async () => ({ installed: await backend.list() }),
+      };
+
+      // First run: select the embedded `extract` task and activate it.
+      state.multiselectReturn = ["extract"];
+      state.confirmReturn = true;
+      await stepScheduledTasks(deps);
+      expect(exec.current()).toContain("task run extract");
+      expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/extract");
+
+      // Second run: leave `extract` unchecked. Its YAML stays prepared on disk; the choice is the list.
+      resetClack();
+      state.confirmReturn = true;
+
+      await stepScheduledTasks(deps);
+
+      expect(schedulerEnabledRefs(loadConfig())).not.toContain("stash//tasks/extract");
+      expect(exec.current()).not.toContain("task run extract");
+    } finally {
+      storage.cleanup();
+    }
   });
 });

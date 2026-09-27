@@ -21,7 +21,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { enqueueGraphExtraction, loadStoredGraphSnapshot, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { SearchSource } from "../../../src/indexer/search/search-source";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -173,7 +172,6 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
       db,
       filePath,
       entry,
-      buildSearchText(entry as Parameters<typeof buildSearchText>[0]),
       deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name),
     );
   } finally {
@@ -235,7 +233,7 @@ describe("collectEligibleFiles", () => {
   test("returns empty when neither memories/ nor knowledge/ exists", () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-empty-"));
     try {
-      expect(collectEligibleFiles(fresh)).toEqual([]);
+      expect(collectEligibleFiles(fresh)).toEqual({ files: [], complete: true });
     } finally {
       fs.rmSync(fresh, { recursive: true, force: true });
     }
@@ -246,7 +244,7 @@ describe("collectEligibleFiles", () => {
     writeFile("knowledge/k1.md", {}, "Knowledge body about ServiceB.");
     writeFile("memories/sub/m2.md", {}, "Nested memory body.");
 
-    const eligible = collectEligibleFiles(tmpStash);
+    const eligible = collectEligibleFiles(tmpStash).files;
     const names = eligible.map((e) => path.relative(tmpStash, e.absPath)).sort();
     expect(names).toEqual([
       path.join("knowledge", "k1.md"),
@@ -260,11 +258,11 @@ describe("collectEligibleFiles", () => {
     writeFile("knowledge/k1.md", {}, "Knowledge body.");
     writeFile("commands/c1.md", {}, "Command body.");
 
-    const defaults = collectEligibleFiles(tmpStash);
+    const defaults = collectEligibleFiles(tmpStash).files;
     const defaultNames = defaults.map((e) => path.relative(tmpStash, e.absPath)).sort();
     expect(defaultNames).toEqual([path.join("knowledge", "k1.md"), path.join("memories", "m1.md")]);
 
-    const expanded = collectEligibleFiles(tmpStash, ["memory", "command"]);
+    const expanded = collectEligibleFiles(tmpStash, ["memory", "command"]).files;
     const expandedNames = expanded.map((e) => path.relative(tmpStash, e.absPath)).sort();
     expect(expandedNames).toEqual([path.join("commands", "c1.md"), path.join("memories", "m1.md")]);
   });
@@ -283,7 +281,7 @@ describe("collectEligibleFiles", () => {
     writeFile("memories/parent.md", {}, "Parent body.");
     writeFile("memories/parent.derived.md", { inferred: true, source: "memories/parent" }, "# Derived\n\nCompressed.");
 
-    const eligible = collectEligibleFiles(tmpStash);
+    const eligible = collectEligibleFiles(tmpStash).files;
     const names = eligible.map((e) => path.relative(tmpStash, e.absPath));
     expect(names).toContain(path.join("memories", "parent.md"));
     expect(names).not.toContain(path.join("memories", "parent.derived.md"));
@@ -295,7 +293,7 @@ describe("collectEligibleFiles", () => {
     // contents between them), so we use a single key to force a real
     // frontmatter block.
     writeFile("memories/empty.md", { type: "memory" }, "   \n\n   ");
-    expect(collectEligibleFiles(tmpStash)).toEqual([]);
+    expect(collectEligibleFiles(tmpStash).files).toEqual([]);
   });
 });
 
@@ -471,33 +469,34 @@ describe("runGraphExtractionPass — standalone index engine gating", () => {
     });
   });
 
-  test("single-file graph dispatches keep the preflight credential after removal", async () => {
+  test("single-file graph dispatches each read the credential current at that call", async () => {
     writeFile("memories/a.md", {}, "Alice works with Bob.");
     writeFile("memories/b.md", {}, "Carol supports Service C.");
     extractor = (body) => ({ entities: [body.includes("Alice") ? "Alice" : "Carol"], relations: [] });
     const cfg = configWithLlm({
-      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_LEASE_SINGLE_KEY" } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_SINGLE_KEY" } },
       index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 1 } },
     });
     const secret = "graph-single-original-092";
+    const rotated = "graph-single-rotated-092";
     const authorization: Array<string | null> = [];
     onLlmRequest = (request) => {
       authorization.push(request.headers.get("authorization"));
-      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_LEASE_SINGLE_KEY", undefined);
+      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_SINGLE_KEY", rotated);
     };
 
-    const result = await withEnv({ AKM_GRAPH_LEASE_SINGLE_KEY: secret }, () =>
-      withGraphDb("single-lease", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
+    const result = await withEnv({ AKM_GRAPH_SINGLE_KEY: secret }, () =>
+      withGraphDb("single-rotation", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
     );
     expect(result).toMatchObject({ considered: 2, extracted: 2, written: true });
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${rotated}`]);
   });
 
-  test("batched graph dispatches keep the original credential after replacement", async () => {
+  test("batched graph dispatches pick up a replaced credential on the next call", async () => {
     for (const name of ["a", "b", "c", "d"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
     extractor = (body) => ({ entities: [body.slice(-2)], relations: [] });
     const cfg = configWithLlm({
-      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_LEASE_BATCH_KEY" } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_BATCH_KEY" } },
       index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 2 } },
     });
     const secret = "graph-batch-original-092";
@@ -505,39 +504,40 @@ describe("runGraphExtractionPass — standalone index engine gating", () => {
     const authorization: Array<string | null> = [];
     onLlmRequest = (request) => {
       authorization.push(request.headers.get("authorization"));
-      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_LEASE_BATCH_KEY", replacement);
+      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_BATCH_KEY", replacement);
     };
 
-    const result = await withEnv({ AKM_GRAPH_LEASE_BATCH_KEY: secret }, () =>
-      withGraphDb("batch-lease", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
+    const result = await withEnv({ AKM_GRAPH_BATCH_KEY: secret }, () =>
+      withGraphDb("batch-rotation", (db) => runGraphExtractionPass({ config: cfg, sources: sources(), db })),
     );
     expect(result).toMatchObject({ considered: 4, extracted: 4, written: true });
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${replacement}`]);
   });
 
-  test("queued and sweep graph calls share one credential snapshot", async () => {
+  test("queued and sweep graph calls each read the credential at dispatch", async () => {
     const queuedPath = writeFile("memories/a-queued.md", {}, "Queued Alice body.");
     writeFile("memories/b-sweep.md", {}, "Sweep Bob body.");
     extractor = (body) => ({ entities: [body.includes("Alice") ? "Alice" : "Bob"], relations: [] });
     const cfg = configWithLlm({
-      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_LEASE_QUEUE_KEY" } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, apiKey: "$AKM_GRAPH_QUEUE_KEY" } },
       index: { defaults: { engine: "index" }, graph: { enabled: true, graphExtractionBatchSize: 1 } },
     });
     const secret = "graph-queue-original-092";
+    const rotated = "graph-queue-rotated-092";
     const authorization: Array<string | null> = [];
     onLlmRequest = (request) => {
       authorization.push(request.headers.get("authorization"));
-      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_LEASE_QUEUE_KEY", undefined);
+      if (authorization.length === 1) mutateScopedEnv("AKM_GRAPH_QUEUE_KEY", rotated);
     };
 
-    const result = await withEnv({ AKM_GRAPH_LEASE_QUEUE_KEY: secret }, () =>
-      withGraphDb("queue-lease", (db) => {
+    const result = await withEnv({ AKM_GRAPH_QUEUE_KEY: secret }, () =>
+      withGraphDb("queue-rotation", (db) => {
         enqueueGraphExtraction(db, tmpStash, queuedPath, computeBodyHash("Queued Alice body."), 10);
         return runGraphExtractionPass({ config: cfg, sources: sources(), db });
       }),
     );
     expect(result.written).toBe(true);
-    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    expect(authorization).toEqual([`Bearer ${secret}`, `Bearer ${rotated}`]);
   });
 
   test("an all-cache-hit sweep does not materialize a required credential", async () => {
@@ -1181,10 +1181,8 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
     );
 
     // A failed cached result must never be reused — the file is re-extracted,
-    // and the FRESH successful result (not the poisoned one) lands in the
-    // cache. (graph_files itself skips rewriting entities when the body hash
-    // is unchanged — a pre-existing, unrelated optimization — so the cache
-    // table, which always overwrites, is what this asserts on.)
+    // and the FRESH successful result (not the poisoned one) lands in both the
+    // cache and the stored graph rows (the body hash is unchanged).
     expect(extractorCallCount).toBe(2);
     expect(second.extracted).toBe(1);
     await withGraphDb("failed-cache-read", (db) => {
@@ -1195,6 +1193,11 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
       const cached = JSON.parse(row?.result_json ?? "{}");
       expect(cached.status).toBe("extracted");
       expect(cached.entities).toEqual(["ServiceA2"]);
+      const stored = loadStoredGraphSnapshot(tmpStash, db);
+      expect(stored?.files.find((file) => file.path === filePath)).toMatchObject({
+        status: "extracted",
+        entities: ["ServiceA2"],
+      });
     });
   });
 

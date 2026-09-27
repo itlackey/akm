@@ -255,18 +255,14 @@ describe("config CLI helpers", () => {
     ).toThrow(/Expected integer/);
   });
 
-  test("setConfigValue rejects an embedding dimension above the vec-table cap (4096)", () => {
-    // The index schema's vec-table guard rejects dims outside 1–4096; the
-    // config schema must fail the same value at set-time with a clear zod
-    // message instead of letting `akm index` crash on it later (§24.2).
+  test("setConfigValue accepts an embedding dimension above 4096 (the vec-table cap is gone)", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() =>
-      setConfigValue(
-        base,
-        "embedding",
-        '{"endpoint":"https://api.openai.com/v1/embeddings","model":"m","dimension":8192}',
-      ),
-    ).toThrow(/4096/);
+    const updated = setConfigValue(
+      base,
+      "embedding",
+      '{"endpoint":"https://api.openai.com/v1/embeddings","model":"m","dimension":8192}',
+    );
+    expect(updated.embedding?.dimension).toBe(8192);
   });
 
   test("setConfigValue rejects invalid output values", () => {
@@ -371,10 +367,10 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
     expect(withImprove.defaults?.improveStrategy).toBe("fast");
   });
 
-  test("search.minScore is settable", () => {
+  test("search.curateRerank.topN is settable", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const withMinScore = setConfigValue(base, "search.minScore", "0.42");
-    expect(withMinScore.search?.minScore).toBe(0.42);
+    const withTopN = setConfigValue(base, "search.curateRerank.topN", "30");
+    expect(withTopN.search?.curateRerank?.topN).toBe(30);
   });
 
   test("feedback.requireReason / archiveRetentionDays / improve.eventRetentionDays settable", () => {

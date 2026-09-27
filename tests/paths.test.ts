@@ -8,8 +8,6 @@ import {
   getDataDir,
   getDbPath,
   getDefaultStashDir,
-  getDistillRejectedDir,
-  getEvalCasesDir,
   getLockfileLockPath,
   getLockfilePath,
   getMeasurementVerdictsDir,
@@ -496,8 +494,6 @@ describe("per-stash $STATE/$CACHE writer dirs", () => {
   test("namespace two different stashes to two different directories", () => {
     process.env.XDG_STATE_HOME = "/state";
     process.env.XDG_CACHE_HOME = "/cache";
-    expect(getDistillRejectedDir("/stash-a")).not.toBe(getDistillRejectedDir("/stash-b"));
-    expect(getEvalCasesDir("/stash-a")).not.toBe(getEvalCasesDir("/stash-b"));
     expect(getMeasurementVerdictsDir("/stash-a")).not.toBe(getMeasurementVerdictsDir("/stash-b"));
     expect(getUnresolvedSourcesDir("/stash-a")).not.toBe(getUnresolvedSourcesDir("/stash-b"));
     expect(getStashLocksDir("/stash-a")).not.toBe(getStashLocksDir("/stash-b"));
@@ -507,8 +503,6 @@ describe("per-stash $STATE/$CACHE writer dirs", () => {
     process.env.XDG_STATE_HOME = "/state";
     process.env.XDG_CACHE_HOME = "/cache";
     const key = getStashStateKey("/stash-a");
-    expect(getDistillRejectedDir("/stash-a")).toBe(path.join("/state", "akm", "improve", "distill-rejected", key));
-    expect(getEvalCasesDir("/stash-a")).toBe(path.join("/state", "akm", "improve", "eval-cases", key));
     expect(getMeasurementVerdictsDir("/stash-a")).toBe(
       path.join("/state", "akm", "improve", "measurement", "verdicts", key),
     );

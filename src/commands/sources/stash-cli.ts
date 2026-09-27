@@ -83,7 +83,7 @@ export const indexCommand = defineCommand({
     },
     reembed: {
       type: "boolean",
-      description: "Force re-embedding of every entry, bypassing the embedding-model-rename compatibility check.",
+      description: "Discard every stored vector and re-embed all entries under the configured model.",
       default: false,
     },
     "skip-if-locked": {

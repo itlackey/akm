@@ -3,13 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #944 — per-run LLM usage reporting: fold the process x engine x model
- * cross-tab (`summarizeLlmUsageCrossTab`, `health/llm-usage.ts`) together with
- * the resolved process routing table (`projectResolvedProcessRouting`, #947)
- * into the `usageReport` field `finalizeImproveResult` persists, and render
- * both halves as one fixed-width table shared by the end-of-run stderr
- * summary (`improve-cli.ts`) and `akm improve report`'s text output
- * (`src/output/text/improve-report.ts`).
+ * The per-run LLM usage report (#944): the process × engine × model cross-tab
+ * plus the enabled processes that made no call and why, rendered as one table
+ * for the end-of-run stderr summary and `akm improve report`.
  */
 
 import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "../../core/config/engine-semantics";
@@ -17,20 +13,17 @@ import type { DistillSkippedAggregate, ImproveActionResult, ImproveEligibleRef }
 import type { LlmUsageCrossTabRow } from "../health/types";
 import type { AutonomyLane, GatedLane } from "./autonomy-gate";
 import {
+  eligibleRefCount,
   type ImproveProcessName,
   type ProcessRoutingRow,
   projectResolvedProcessRouting,
   type ResolvedImprovePlan,
-  shouldSkipRef,
 } from "./improve-strategies";
 
 /**
- * The processes this report covers — only the ones {@link IMPROVE_PROCESS_ENGINE_CAPABILITIES}
- * marks `"llm"`. `triage` ("runner" kind — its LLM cost, if any, is
- * attributed to the separate `"triage.judgment"` pseudo-row, itself excluded
- * below) and `proactiveMaintenance` (no engine at all) never make an
- * attributable LLM call, so listing them as "zero calls" would always be a
- * false positive, not a real finding.
+ * Only processes that call an LLM themselves: triage (a runner, attributed to
+ * its judgment engine) and proactive maintenance (no engine) would always read
+ * as "zero calls".
  */
 const LLM_BACKED_PROCESSES = new Set<ImproveProcessName>(
   (Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]).filter(
@@ -38,10 +31,7 @@ const LLM_BACKED_PROCESSES = new Set<ImproveProcessName>(
   ),
 );
 
-/** Ref-scoped processes `shouldSkipRef` understands — the only ones an eligible-ref count is meaningful for. */
-const REF_SCOPED_PROCESSES = new Set<ImproveProcessName>(["reflect", "distill", "consolidate"]);
-
-/** The autonomy lane (if any) gating each LLM-backed process, per `autonomy-gate.ts`'s `AUTONOMY_LANES`. */
+/** The autonomy lane gating each LLM-backed process, if any. */
 const AUTONOMY_LANE_BY_PROCESS: Partial<Record<ImproveProcessName, AutonomyLane>> = {
   memoryInference: "memoryInference",
 };
@@ -57,7 +47,6 @@ export interface ImproveUsageReport {
   noCalls: readonly UsageReportNoCallRow[];
 }
 
-/** `{reason -> count}` for the dominant-reason lookup in {@link deriveNoCallReason}. */
 function dominantReason(counts: Record<string, number>): string | undefined {
   let best: string | undefined;
   let bestCount = 0;
@@ -71,23 +60,11 @@ function dominantReason(counts: Record<string, number>): string | undefined {
 }
 
 /**
- * The single decision point for why an LLM-backed process made zero LLM
- * calls this run — every case `buildImproveUsageReport` needs to report,
- * decided in one place instead of split between this function and its
- * caller. Priority order: `"engine_unavailable"` (the row's engine or
- * credential could not be resolved) beats everything else, including a
- * process that also happens to be autonomy-gated; then, for a disabled row
- * that IS resolvable, `"autonomy_gated"` when its lane was gated, else
- * `undefined` (a `false`-in-config process never reached the routing table
- * in the first place, so a disabled-and-not-gated row has no other
- * explanation to report); for an enabled row, `"strategy_filtered_all_passes"`
- * when every ref got filtered out, then the process's own dominant skip
- * reason, else the `"no_signal"` fallback.
- *
- * Reuses the SAME reason strings already emitted elsewhere
- * (`improve_skipped` events, reflect's `AkmReflectFailure.reason`, distill's
- * `distillSkipped.byReason` keys) rather than inventing a translation layer —
- * per the brief, never a fabricated category like `"limit_reached"`.
+ * Why an LLM-backed process made no call, in priority order: its engine is
+ * unavailable; disabled — `autonomy_gated` when its lane was gated, else
+ * nothing to report; every ref strategy-filtered; its dominant skip reason;
+ * else `no_signal`. The reasons are the ones the events and results already
+ * use.
  */
 export function deriveNoCallReason(args: {
   row: Pick<ProcessRoutingRow, "enabled" | "unavailable"> & { process: ImproveProcessName };
@@ -109,7 +86,7 @@ export function deriveNoCallReason(args: {
   return "no_signal";
 }
 
-/** Reflect's per-ref skip reason, read off `AkmReflectFailure.reason` for both cooldown and skipped actions. */
+/** Reflect's skip reasons, from its skipped (and older cooldown) actions. */
 function countReflectSkipReasons(actions: readonly ImproveActionResult[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const action of actions) {
@@ -121,17 +98,7 @@ function countReflectSkipReasons(actions: readonly ImproveActionResult[]): Recor
   return counts;
 }
 
-/**
- * Assemble this run's `usageReport` (#944): the process x engine x model
- * cross-tab plus which enabled processes made zero calls and why. Pure — no
- * I/O; the caller (`finalizeImproveResult`) supplies the cross-tab (already
- * computed from this run's `llm_usage` events) and every other input from
- * data it already has in scope.
- *
- * Returns `undefined` when both halves would be empty (e.g. a run whose
- * active strategy enables no LLM-backed process), matching the envelope's
- * existing convention of omitting empty optional sections.
- */
+/** This run's `usageReport`, or `undefined` when both halves are empty. */
 export function buildImproveUsageReport(args: {
   resolvedPlan: ResolvedImprovePlan;
   byProcessEngineModel: readonly LlmUsageCrossTabRow[];
@@ -140,11 +107,7 @@ export function buildImproveUsageReport(args: {
   persistedActions: readonly ImproveActionResult[];
   distillSkippedAggregate?: DistillSkippedAggregate;
 }): ImproveUsageReport | undefined {
-  // Only the LLM-backed processes (see LLM_BACKED_PROCESSES) — this also
-  // drops the "triage.judgment" pseudo-row (#947): judgment dispatch does
-  // not route through `withLlmStage`, so its calls (if any) are never
-  // attributable to a "triage.judgment" process in the cross-tab, and
-  // reporting it here would always read as a false "zero calls".
+  // The "triage.judgment" row is dropped too: its calls are never attributed to it (#947).
   const routing = projectResolvedProcessRouting(args.resolvedPlan).filter(
     (row): row is typeof row & { process: ImproveProcessName } =>
       row.process !== "triage.judgment" && LLM_BACKED_PROCESSES.has(row.process as ImproveProcessName),
@@ -155,16 +118,7 @@ export function buildImproveUsageReport(args: {
   const noCalls: UsageReportNoCallRow[] = [];
   for (const row of routing) {
     if (calledProcesses.has(row.process)) continue;
-    const eligibleRefs = REF_SCOPED_PROCESSES.has(row.process)
-      ? args.loopRefs.filter(
-          (entry) =>
-            !shouldSkipRef(
-              entry.ref,
-              row.process as "reflect" | "distill" | "consolidate",
-              args.resolvedPlan.strategy.config,
-            ).skip,
-        ).length
-      : undefined;
+    const eligibleRefs = eligibleRefCount(args.loopRefs, row.process, args.resolvedPlan.strategy.config);
     const reason = deriveNoCallReason({
       row,
       autonomyGated: args.resolvedPlan.autonomyGated,
@@ -185,8 +139,6 @@ export function buildImproveUsageReport(args: {
   return { byProcessEngineModel: args.byProcessEngineModel, noCalls };
 }
 
-// ── Shared fixed-width text rendering ────────────────────────────────────────
-
 function renderFixedWidthTable(headers: readonly string[], rows: readonly (readonly string[])[]): string[] {
   const widths = headers.map((header, index) => Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)));
   const renderRow = (cells: readonly string[]): string =>
@@ -197,14 +149,7 @@ function renderFixedWidthTable(headers: readonly string[], rows: readonly (reado
   return [renderRow(headers), ...rows.map(renderRow)];
 }
 
-/**
- * Render a `usageReport` as fixed-width plain text — the ONE formatter shared
- * by the end-of-run `[improve] ...` stderr table (`improve-cli.ts`) and `akm
- * improve report`'s `--format text` output
- * (`src/output/text/improve-report.ts`), per the brief. `notes` surfaces
- * degraded-precision caveats (e.g. a pre-0.9.15 run recomputed from raw
- * events, per `improve-report.ts`).
- */
+/** The usage report as a fixed-width table; `notes` carry precision caveats (e.g. an older run recomputed from events). */
 export function formatUsageReportTable(usageReport: ImproveUsageReport, notes?: readonly string[]): string {
   const lines: string[] = ["[improve] usage report (process x engine x model):"];
   if (usageReport.byProcessEngineModel.length === 0) {

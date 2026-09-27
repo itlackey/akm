@@ -65,7 +65,6 @@ describe("runImprovePostLoopStage dead-URL scan coverage (#892)", () => {
             actionableRefs,
             cleanupWarnings: [],
             memoryRefsForInference: new Set(),
-            consolidationRan: false,
             improveProfile: { processes: disabledProcesses() } as ImproveProfileConfig,
           }),
         (url) => {

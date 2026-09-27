@@ -126,10 +126,6 @@ describe("--shape agent field projection", () => {
       "action",
       "score",
       "estimatedTokens",
-      // Issue #856: which stage of the progressive AND->OR lexical ladder
-      // produced this hit; surfaced at --shape agent since agents need it
-      // to gauge how much to trust a hit.
-      "matchStage",
     ]);
     for (const key of keys) {
       expect(allowedKeys.has(key)).toBe(true);
@@ -319,10 +315,6 @@ describe("--format jsonl", () => {
         "action",
         "score",
         "estimatedTokens",
-        // Issue #856: which stage of the progressive AND->OR lexical ladder
-        // produced this hit; surfaced at --shape agent since agents need it
-        // to gauge how much to trust a hit.
-        "matchStage",
       ]);
       for (const key of Object.keys(parsed)) {
         expect(allowedKeys.has(key)).toBe(true);

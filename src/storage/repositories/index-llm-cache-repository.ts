@@ -11,6 +11,7 @@
 
 import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../database";
+import { escapeLikePattern } from "../like-pattern";
 import type { LlmCacheEntry } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
@@ -122,6 +123,27 @@ export function clearStaleCacheEntries(db: Database): void {
     WHERE asset_ref NOT IN (SELECT file_path FROM entries)
       AND asset_ref NOT IN (SELECT item_ref FROM entries)
   `);
+}
+
+/**
+ * Rewrite every `llm_enrichment_cache.asset_ref` naming `oldBundleId` (a
+ * metadata-enrichment cache key, the canonical `<bundle>//conceptId` form of
+ * `entries.item_ref`) to `newBundleId` (`akm bundle rename`, D6). Must run in
+ * the same `index.db` write as `renameEntriesBundleId` — otherwise the next
+ * `akm index`'s {@link clearStaleCacheEntries} deletes every row still keyed
+ * to the old bundle, forcing a full LLM re-enrichment. A graph/memory cache
+ * row (keyed by absolute file path, not `item_ref`) never matches the `//`
+ * prefix and is left alone. Returns the number of rows rewritten.
+ */
+export function renameLlmCacheAssetRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE llm_enrichment_cache SET asset_ref = ? || substr(asset_ref, ?) WHERE asset_ref LIKE ? ESCAPE '\\'`,
+      )
+      .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+  );
 }
 
 /**

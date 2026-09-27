@@ -11,7 +11,6 @@ import {
   archiveProposal,
   type CreateProposalInput,
   createProposal as createProposalRaw,
-  isProposalSkipped,
   listProposals,
   purgeOrphanProposals,
 } from "../src/commands/proposal/repository";
@@ -64,7 +63,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "not-a-ref",
         source: "reflect",
-        force: true,
         payload: { content: "x", frontmatter: { description: "ok" } },
       });
     } catch (err) {
@@ -80,7 +78,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "bogusType:foo",
         source: "reflect",
-        force: true,
         payload: { content: "x", frontmatter: { description: "ok" } },
       });
     } catch (err) {
@@ -102,7 +99,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "memories/foo",
         source: "reflect",
-        force: true,
         payload: { content: "   " },
       });
     } catch (err) {
@@ -118,7 +114,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "memories/foo",
         source: "consolidate",
-        force: true,
         payload: { content: "x", frontmatter: { tags: ["a"] } },
       });
     } catch (err) {
@@ -132,35 +127,29 @@ describe("createProposal validation", () => {
     const stash = makeStashDir();
     // Reflect proposals legitimately have varied content shapes — don't reject
     // for missing description, only consolidate does that.
-    const result = createProposal(stash, {
+    createProposal(stash, {
       ref: "memories/bar",
       source: "reflect",
-      force: true,
       payload: { content: "x", frontmatter: { tags: ["a"] } },
     });
-    expect(isProposalSkipped(result)).toBe(false);
   });
 
   test("accepts valid proposal", () => {
     const stash = makeStashDir();
-    const result = createProposal(stash, {
+    createProposal(stash, {
       ref: "memories/alpha",
       source: "reflect",
-      force: true,
       payload: { content: "body text", frontmatter: { description: "good description" } },
     });
-    expect(isProposalSkipped(result)).toBe(false);
   });
 
   test("accepts proposal without frontmatter", () => {
     const stash = makeStashDir();
-    const result = createProposal(stash, {
+    createProposal(stash, {
       ref: "memories/beta",
       source: "reflect",
-      force: true,
       payload: { content: "body text" },
     });
-    expect(isProposalSkipped(result)).toBe(false);
   });
 
   // Ported for workflow-format-unification: the old grammar's authoring
@@ -177,7 +166,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "workflows/ship-feature-from-spec",
         source: "reflect",
-        force: true,
         payload: {
           content:
             "---\ntype: workflow\ndescription: Ship Feature From Spec\nsteps:\n  - id: validate\n---\n\n## Step 1: Validate inputs\n\nValidate the specification.\n",
@@ -200,7 +188,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "tasks/nightly",
         source: "reflect",
-        force: true,
         payload: {
           content: "version: 4\nuses: akm/command\nrun: akm index\nwith:\n  content: one\n",
         },
@@ -216,7 +203,6 @@ describe("createProposal validation", () => {
       createProposal(stash, {
         ref: "lessons/no-trigger",
         source: "distill",
-        force: true,
         payload: { content: "---\ndescription: A complete description of the lesson.\n---\n\nBody.\n" },
       }),
     ).toThrow(/invalid lesson structure.*when_to_use/is);
@@ -236,7 +222,6 @@ describe("purgeOrphanProposals", () => {
     createProposal(stash, {
       ref: "lessons/new-lesson",
       source: "reflect",
-      force: true,
       payload: {
         content:
           "---\ndescription: A complete lesson description for proposal validation.\nwhen_to_use: Apply this lesson when validating proposal retention behavior.\n---\n\nBody.\n",
@@ -253,7 +238,6 @@ describe("purgeOrphanProposals", () => {
     createProposal(stash, {
       ref: "memories/never-existed",
       source: "distill",
-      force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
     });
     const result = purgeOrphanProposals(stash, [stash]);
@@ -266,7 +250,6 @@ describe("purgeOrphanProposals", () => {
     createProposal(stash, {
       ref: "memories/orphaned",
       source: "reflect",
-      force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
     });
     const result = purgeOrphanProposals(stash, [stash]);
@@ -287,7 +270,6 @@ describe("purgeOrphanProposals", () => {
     createProposal(primary, {
       ref: "memories/shared",
       source: "reflect",
-      force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
     });
     const result = purgeOrphanProposals(primary, [primary, secondary]);
@@ -302,13 +284,10 @@ describe("purgeOrphanProposals", () => {
     const created = createProposal(stash, {
       ref: "memories/already-accepted",
       source: "reflect",
-      force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
     });
-    if (!isProposalSkipped(created)) {
-      // Archive it as accepted so it disappears from the pending queue.
-      archiveProposal(stash, created.id, "accepted", undefined);
-    }
+    // Archive it as accepted so it disappears from the pending queue.
+    archiveProposal(stash, created.id, "accepted", undefined);
     const result = purgeOrphanProposals(stash, [stash]);
     // No pending reflect proposals → nothing checked, nothing rejected.
     expect(result.checked).toBe(0);
@@ -327,7 +306,6 @@ describe("purgeOrphanProposals", () => {
     createProposal(stash, {
       ref: "scripts/never-existed",
       source: "reflect",
-      force: true,
       payload: { content: "console.log('hi')", frontmatter: { description: "ok" } },
     });
     const result = purgeOrphanProposals(stash, [stash]);

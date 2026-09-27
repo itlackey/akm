@@ -27,11 +27,11 @@
  * producer.
  *
  * The workflow-side trigger classifier that used to live here
- * (`classifyTaskV3Triggers`) is re-homed to
- * `src/workflows/source-ir/triggers.ts` as `classifyWorkflowYamlTriggers`
- * (P4-N3) — its subject was always a WORKFLOW's `on:` trigger fragment, not
- * a task document, and after the move `src/workflows/**` imports nothing at
- * all from `src/tasks/**` source modules.
+ * (`classifyTaskV3Triggers`) is re-homed to `src/workflows/github-yaml.ts`
+ * (`parseTriggers`, P4-N3) — its subject was always a WORKFLOW's `on:`
+ * trigger fragment, not a task document, and after the move
+ * `src/workflows/**` imports nothing at all from `src/tasks/**` source
+ * modules.
  */
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
@@ -100,11 +100,9 @@ export type TaskV3Target =
     }>;
 
 /**
- * Structurally identical to `WorkflowYamlTriggerPlan`/`WorkflowYamlScheduleBinding`
- * (`src/workflows/source-ir/triggers.ts`, where the classifier that used to
- * produce this shape moved) — kept as a local, independent declaration
- * rather than an import so `src/tasks/**` and `src/workflows/**` stay
- * decoupled in both directions (P4-N3). `src/tasks/source/project-v4.ts`'s
+ * The trigger shape a task document projects to — a local, independent
+ * declaration rather than an import so `src/tasks/**` and `src/workflows/**`
+ * stay decoupled in both directions (P4-N3). `src/tasks/source/project-v4.ts`'s
  * `projectTaskSourceV4()` is the only producer of a value in this shape now.
  */
 interface PreparableTaskTriggerPlan {

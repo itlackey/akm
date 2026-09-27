@@ -26,10 +26,12 @@
  */
 
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
+import { renameBundle } from "../../core/bundle-rename";
 import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
+import { akmTasksSync } from "../tasks/tasks";
 import { addCommand } from "./add-cli";
 import { akmInit } from "./init";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
@@ -194,11 +196,36 @@ const updateCommand = defineJsonCommand({
   },
 });
 
+const renameCommand = defineJsonCommand({
+  meta: {
+    name: "rename",
+    description:
+      "Rename a configured bundle's key everywhere akm persists it (config, lock, index, and its own proposals/task history). Content inside the bundle that still spells the old ref is reported, not rewritten.",
+  },
+  args: {
+    old: { type: "positional", description: "Current bundle name", required: true },
+    new: { type: "positional", description: "New bundle name (must be a legal, unused slug)", required: true },
+    "dry-run": {
+      type: "boolean",
+      description: "Show the rename plan without writing anything",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    const result = await renameBundle(
+      args.old,
+      args.new,
+      { dryRun: args["dry-run"] },
+      {
+        syncTasks: (newId, backend) => akmTasksSync({ backend }, newId),
+      },
+    );
+    output("bundle-rename", result);
+  },
+});
+
 export function isSkippableBundleUpdateLock(error: unknown): error is TransientError {
-  return (
-    error instanceof TransientError &&
-    ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED", "MAINTENANCE_BARRIER_BUSY"].includes(error.code)
-  );
+  return error instanceof TransientError && ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED"].includes(error.code);
 }
 
 export const bundleCommand = defineGroupCommand({
@@ -213,5 +240,6 @@ export const bundleCommand = defineGroupCommand({
     show: showCommand,
     remove: removeCommand,
     update: updateCommand,
+    rename: renameCommand,
   },
 });

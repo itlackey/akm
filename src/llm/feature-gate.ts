@@ -40,7 +40,6 @@ export type LlmFeatureKey =
   | "metadata_enhance"
   | "lesson_quality_gate"
   | "proposal_quality_gate"
-  | "memory_contradiction_detection"
   | "session_extraction"
   | "reflect_proposal"
   | "remember_enrich"

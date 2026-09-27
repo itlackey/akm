@@ -16,6 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getConfigPath, getDataDir, getStateDir } from "../../../src/core/paths";
 
 /**
  * One dead-residue path, relative to `$STASH/.akm`. `runs.archived-<ts>/` is
@@ -83,7 +84,80 @@ function sizeOf(target: string): number {
  * Find every Tier-1 dead-residue path that actually exists under
  * `$STASH/.akm`, with its computed size. Read-only — never deletes.
  */
-export function findDeadResidueEntries(stashDir: string): DeadResidueEntry[] {
+/**
+ * Files older releases kept under $DATA/$STATE/$CONFIG for machinery that no
+ * longer exists: transaction journals, the maintenance barrier and its
+ * per-process activity registry, SQLite lock-operation mutex sidecars, and
+ * the startup version stamp. Each is safe to delete: nothing reads them.
+ */
+function hostResidue(): DeadResidueEntry[] {
+  const data = getDataDir();
+  const state = getStateDir();
+  const configDir = path.dirname(getConfigPath());
+  const named: Array<{ absolutePath: string; reason: string }> = [
+    { absolutePath: path.join(data, "txn"), reason: "filesystem transaction journals (removed in 0.9.17)" },
+    { absolutePath: path.join(data, "txn-quarantine"), reason: "quarantined transaction journals (removed in 0.9.17)" },
+    { absolutePath: path.join(data, "maintenance.barrier.lock"), reason: "maintenance barrier (removed in 0.9.17)" },
+    // The registry was created next to the barrier lock, i.e. under $DATA
+    // (one host measured 229,943 leaked entries, 927 MB, there); it is listed
+    // under $STATE as well for layouts that kept the barrier there.
+    { absolutePath: path.join(data, "maintenance-activities"), reason: "per-process activity registry (removed in 0.9.17)" },
+    { absolutePath: path.join(state, "maintenance-activities"), reason: "per-process activity registry (removed in 0.9.17)" },
+    { absolutePath: path.join(state, "version-reconcile.json"), reason: "startup reconcile stamp (removed in 0.9.17)" },
+    { absolutePath: path.join(state, "locks", "version-reconcile.lock"), reason: "startup reconcile lock (removed in 0.9.17)" },
+  ];
+  const found: DeadResidueEntry[] = [];
+  const claimed = new Set<string>();
+  for (const entry of named) {
+    if (claimed.has(entry.absolutePath) || !fs.existsSync(entry.absolutePath)) continue;
+    try {
+      found.push({ ...entry, relativePath: entry.absolutePath, sizeBytes: sizeOf(entry.absolutePath) });
+      claimed.add(entry.absolutePath);
+    } catch {
+      // vanished between exists and stat
+    }
+  }
+  // Lock-operation mutex sidecars (`.<lock>.operations.sensitive`), wherever a
+  // lock lived. A directory already claimed whole above is not descended into:
+  // the activity registry is one entry, not hundreds of thousands.
+  for (const root of new Set([data, state, configDir])) {
+    for (const sidecar of findSidecars(root, 3, claimed)) {
+      try {
+        found.push({
+          relativePath: sidecar,
+          absolutePath: sidecar,
+          sizeBytes: sizeOf(sidecar),
+          reason: "lock-operation mutex sidecar (removed in 0.9.17)",
+        });
+      } catch {
+        // vanished
+      }
+    }
+  }
+  return found;
+}
+
+function findSidecars(root: string, depth: number, skip: ReadonlySet<string>): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isFile() && entry.name.endsWith(".operations.sensitive")) found.push(entryPath);
+    else if (entry.isDirectory() && depth > 0 && !skip.has(entryPath)) {
+      found.push(...findSidecars(entryPath, depth - 1, skip));
+    }
+  }
+  return found;
+}
+
+export function findDeadResidueEntries(stashDir: string | undefined): DeadResidueEntry[] {
+  const host = hostResidue();
+  if (stashDir === undefined) return host;
   const akmDir = path.join(stashDir, ".akm");
   let names: string[];
   try {
@@ -124,7 +198,7 @@ export interface DeadResidueRemoval {
  * --clean-dead-residue`) — never as a side effect of a plain `akm health`
  * read. Best-effort per-path: one failure does not abort the rest.
  */
-export function removeDeadResidue(stashDir: string): DeadResidueRemoval[] {
+export function removeDeadResidue(stashDir: string | undefined): DeadResidueRemoval[] {
   const entries = findDeadResidueEntries(stashDir);
   return entries.map((entry) => {
     try {

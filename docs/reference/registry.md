@@ -343,7 +343,7 @@ entry that the indexer walks like any other source.
 Fetches a static JSON v3 index from the configured URL and performs
 client-side scoring. The index is cached locally with a 1-hour TTL. There is
 currently no fallback to a stale cache row past that TTL on fetch failure —
-`fetchCachedJson` (`src/storage/repositories/registry-cache.ts`) only
+`fetchCachedJson` (`src/storage/repositories/registry-index-cache-repository.ts`) only
 consults the cache row that its own `getRegistryIndexCache` lookup returned
 under the same TTL, and that lookup returns nothing once the row is older
 than `maxAgeMs`, so a fetch failure after the TTL expires surfaces as an

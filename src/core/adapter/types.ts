@@ -244,11 +244,6 @@ export interface IndexDocument {
   beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
   supersededBy?: string[];
   contradictedBy?: string[];
-  /**
-   * R5 — merge depth counter (frontmatter `generation`), maintained by
-   * consolidation provenance metadata. Absent = original asset.
-   */
-  generation?: number;
   currentBeliefRefs?: string[];
   /**
    * How the memory was captured. `hot` indicates a user-driven write
@@ -292,8 +287,8 @@ export interface IndexDocument {
   /**
    * OKF v0.2 trust/provenance family ← frontmatter `generated`/`verified`/`sources`.
    * This TypeScript field is NAMESPACED to avoid colliding with the
-   * pre-existing `sources?: string[]` (wiki citations), `generation?: number`
-   * (consolidation depth), and `quality: "generated"` (enum value) fields
+   * pre-existing `sources?: string[]` (wiki citations) and
+   * `quality: "generated"` (enum value) fields
    * above — see the file-level note ahead of {@link OkfProvenance}. The
    * ON-DISK spelling is a separate, deliberately hybrid decision (#730
    * review): `okf` (D1) parses third-party OKF v0.2 bundles' bare top-level
@@ -325,8 +320,6 @@ export interface IndexDocument {
 //     frontmatter block is a list of OBJECTS (`{resource, id?, title?, …}`),
 //     an incompatible shape that would silently drop to `[]` if folded onto
 //     this field (the exact collision this namespacing avoids).
-//   - `generation?: number`  (below) — consolidation merge-depth counter; NOT
-//     the OKF v0.2 `generated: {by, at}` provenance mapping.
 //   - `quality: "generated"` (above) — an existing enum VALUE, unrelated.
 // See D1.3 (`docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §0.1)
 // and `docs/architecture/specs/okf-support.md`'s v0.2 note.

@@ -63,7 +63,7 @@ import { resetConfigCache } from "../../src/core/config/config";
 import type { FrozenDirectoryIdentity } from "../../src/execution/directory-identity";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import { decodeWorkflowPlanV4 } from "../../src/workflows/ir/schema-v4";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -196,7 +196,7 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
 
       const started = await startWorkflowRun("workflows/script-step");
       const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-      const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+      const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
       const root = plan.steps[0]?.root;
       const before = root && root.kind !== "map" ? root.frozenTarget : undefined;
       expect(before?.kind).toBe("script");

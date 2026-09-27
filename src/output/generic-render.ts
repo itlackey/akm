@@ -20,10 +20,12 @@
  * envelope happens to contain. The shape is discovered, not declared, so a new
  * command is covered the day it is added.
  *
- * Deliberately dependency-free apart from the shared detail types: this module
- * sits underneath the per-command renderer registries and must not import
- * them.
+ * Deliberately dependency-free apart from the shared detail types and
+ * `escapeHtml`: this module sits underneath the per-command renderer
+ * registries and must not import them.
  */
+
+import { escapeHtml } from "./html-render";
 
 /** A row of an array-of-uniform-objects table: every entry shares these keys. */
 type TableRow = Record<string, unknown>;
@@ -135,19 +137,6 @@ export function renderGenericMarkdown(command: string, value: unknown): string {
 }
 
 // ── HTML ─────────────────────────────────────────────────────────────────────
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-/** Escape every value that reaches the document — this is untrusted content. */
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
-}
 
 function htmlTable(rows: readonly TableRow[]): string {
   const columns = tableColumns(rows);

@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Improve-pipeline metric shapes (chunk-9 WI-9.5d per-domain split of
- * `./types`). This is the largest domain: the window-level
- * {@link ImproveHealthMetrics} accumulator plus its WS-5 sub-rollups
- * (coverage, perf telemetry, degradation, enrichment-vs-minting). Consumed
- * across health/{improve-metrics,task-runs,windows,metrics,advisories}.ts,
- * the report renderers, and the check registry.
+ * Improve-pipeline metric shapes for `akm health`: the window-level
+ * {@link ImproveHealthMetrics} accumulator. Every field here is rendered by
+ * the md/html report, read per window by the Discord health script
+ * (`improve.coverage.distinctRefs`), or diffed by `--window-compare`. A
+ * counter nothing renders does not belong here.
  */
 
 export interface ImproveResultRowAccounting {
@@ -21,114 +20,34 @@ export interface ImproveResultRowAccounting {
 }
 
 export interface ImproveHealthMetrics {
+  /** `improve_invoked` events in the window. */
   invoked: number;
+  /** `improve_completed` events in the window. */
   completed: number;
+  /** `improve_skipped` events in the window; see {@link skipReasons}. */
   skipped: number;
-  skipReasons: Record<string, number>;
-  /** Always emitted by `akm health`; optional for existing schema-v3 value constructors. */
-  resultRows?: ImproveResultRowAccounting;
-  plannedRefs: number;
   /**
-   * Refs the planner dropped up-front because no enabled pass on the active
-   * strategy would accept them (e.g. `script:*` for reflect+distill). Sourced
-   * from `improve_runs.result_json.strategyFilteredRefs[]` for v2 rows.
-   * after the planner pre-filter at improve.ts:collectEligibleRefs landed
-   * in commit 0e9f283 but the metric reader was missed.
+   * `skipped` by reason. A per-occurrence event counts 1; a reason whose
+   * events carry a `count` (a whole-stash snapshot such as `no_new_signal`)
+   * reports the most recent run's count, never the sum across runs.
    */
-  strategyFilteredRefs: number;
+  skipReasons: Record<string, number>;
+  /** Always emitted by `akm health`; optional for hand-built values. */
+  resultRows?: ImproveResultRowAccounting;
+  /** `improve_runs.result_json.actions[]` outcomes by mode. */
   actions: {
-    /**
-     * Reflect action outcomes split by mode. Sourced from improve_runs.result_json
-     * rather than the lossy events.metadata projection.
-     */
-    reflect: {
-      ok: number;
-      failed: number;
-      cooldown: number;
-      skipped: number;
-      /**
-       * Content-policy guard rejections (e.g. reflect size-rail hits:
-       * `EXCESSIVE_SHRINKAGE` / `EXCESSIVE_EXPANSION`). These are NOT LLM
-       * faults — the LLM produced a syntactically valid response and a
-       * downstream deterministic guard blocked it. Split out of `failed`
-       * so failure-rate dashboards do not conflate "model is broken" with
-       * "model proposed an unsafe edit and we caught it". See
-       * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
-       */
-      guardRejected: number;
-      /**
-       * Breakdown of `skipped` reflects by sub-reason. Sourced from
-       * `actions[].result.reason` for `mode === "reflect-skipped"` entries.
-       * Mirrors {@link distill.deferredByReason} (commit `d1273d0`). Values
-       * observed today: `type-filter`, `raw-wiki`, `process-disabled`,
-       * `unsupported_type`, `no_change` (#580 noise gate),
-       * `derived-memory-reflect-skipped`. Totals here
-       * should match `skipped`. Pre-2026-05-26 this was discarded by the
-       * rollup — the 18/18 reflect-skipped runs in `release/0.8.0` could not
-       * be tuned because no operator could see WHY they were skipped. See
-       * `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q1.
-       */
-      skippedByReason: Record<string, number>;
-    };
-    /**
-     * Distill outcomes split by `AkmDistillResult.outcome`. `skipped` here is
-     * the distill-skipped action mode (cooldown), not the same as
-     * `outcome: "skipped"` inside a successful distill envelope.
-     */
+    reflect: { ok: number; failed: number; cooldown: number; skipped: number };
     distill: {
       queued: number;
       llmFailed: number;
-      /**
-       * LLM-judge rejection (outcomes `quality_rejected` and `review_needed`).
-       * Tuning lever: prompt/temperature/model — the judge said the output
-       * was substantively low quality. Pre-2026-05-26 lumped with
-       * deterministic lint failures. See review §1b.
-       */
+      /** LLM-judge rejection (`quality_rejected` / `review_needed`). */
       judgeRejected: number;
-      /**
-       * Deterministic lint/schema validator rejection (outcome
-       * `validation_failed`). Tuning lever: validator config / prompt schema
-       * — the LLM is fine, our post-LLM validators rejected the artifact.
-       * In live 7d data, validator failures made up the entire former combined
-       * rejection bucket.
-       */
+      /** Deterministic lint/schema rejection (`validation_failed`). */
       validatorRejected: number;
       configDisabled: number;
+      /** Pre-loop skips (`distillSkipped.total`); by reason in {@link skippedByReason}. */
       skipped: number;
-      /**
-       * Breakdown of `skipped` distill actions by sub-reason. Sourced from
-       * `actions[].result.reason` for `mode === "distill-skipped"` entries.
-       * Mirrors {@link reflect.skippedByReason} (commit `b3c2328`) so per-
-       * reason tuning is possible. Reasons observed in production:
-       * `no new signal since last proposal`, `distill signal-delta`,
-       * `derived-memory-reflect-skipped`, `type-filter`, `raw-wiki`,
-       * `process-disabled`, `pending proposal exists`,
-       * `distill reject grace window`, `memory requires recent feedback signal`.
-       * Totals here should match `skipped`. Pre-2026-05-27 these 7+ reasons
-       * collapsed into a single counter; 62 539 events/7d on `release/0.8.0`
-       * had no sub-reason visibility — see
-       * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md` §3.
-       *
-       * TODO(naming): `distill.skipped` is the SYNTHETIC pre-loop skip
-       * counter; the REAL "LLM was called and returned skipped" counter is
-       * `distill.deferred`. The names are swapped from intuition. The deep
-       * analysis report (P2 follow-up) flagged the rename as a separate,
-       * out-of-scope cleanup.
-       */
       skippedByReason: Record<string, number>;
-      /**
-       * Distill actions where the planner produced a result with
-       * `outcome: "skipped"` — i.e. the LLM was either bypassed by an
-       * input-type guard (`recursive_lesson_input`), resolved a destination
-       * conflict as NOOP, or its proposal was deduped at the persistence
-       * layer (cooldown / content-hash match). These are successful no-ops,
-       * not failures. Pre-2026-05-26 they were dropped on the floor by
-       * health.ts (no `case "skipped"`). 465 events/7d were invisible in
-       * the user's stack. See review §1d.
-       */
-      deferred: number;
-      /** Breakdown of `deferred` by `skipReason` field on the result. */
-      deferredByReason: Record<string, number>;
     };
     memoryPrune: number;
     memoryInference: number;
@@ -136,418 +55,62 @@ export interface ImproveHealthMetrics {
     error: number;
   };
   autoAccept: {
-    /** Total proposals promoted by the auto-accept gate across all phases. */
+    /** Proposals promoted by the auto-accept gate. */
     promoted: number;
-    /**
-     * Total proposals that passed the confidence threshold but failed
-     * validation during auto-accept (e.g. truncated description, invalid
-     * frontmatter). These remain in the queue for manual review.
-     */
+    /** Proposals that passed the confidence threshold but failed validation; they stay pending. */
     validationFailed: number;
   };
-  reflectsWithErrorContext: number;
-  coverageGapCount: number;
-  deadUrlCount: number;
-  /**
-   * Coverage of the dead-link check across the window (#892): every
-   * actionable knowledge ref is scanned for URLs (no bundle-size cap), so
-   * `deadUrlsTotal` is the true count found. `deadUrlsChecked` can still fall
-   * short of it — a URL whose request hit a DNS/connection-level failure
-   * (see `checkDeadUrls` in commands/url-checker.ts) is indeterminate rather
-   * than confirmed dead, so it lands in `deadUrlsSkipped` instead.
-   * `deadUrlsChecked + deadUrlsSkipped === deadUrlsTotal`.
-   */
-  deadUrlsChecked: number;
-  deadUrlsTotal: number;
-  deadUrlsSkipped: number;
-  memorySummary: {
-    eligible: number;
-    derived: number;
-  };
-  memoryCleanup: {
-    pruneCandidates: number;
-    contradictionCandidates: number;
-    beliefStateTransitions: number;
-    consolidationCandidates: number;
-    archived: number;
-    warnings: number;
-  };
+  /** Whole-stash snapshot from the newest complete run in the window — never a sum across runs. */
+  memorySummary: { eligible: number; derived: number };
   consolidation: {
-    ran: boolean;
     processed: number;
     promoted: number;
     merged: number;
     deleted: number;
     contradicted: number;
-    /**
-     * Memories the LLM "saw" inside a chunk but proposed no op for. Computed
-     * per chunk as `chunk.length − unique(ops.targetRefs)` and accumulated
-     * across all chunks in a run. Pre-2026-05-26 this was completely
-     * invisible: 78/119 (66%) of memories in the 23:07 UTC cron run had no
-     * warning, event, or counter — they were a pure silent drop. Without
-     * this metric no consolidate prompt tuning is empirically possible. See
-     * `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
-     */
+    /** Memories the LLM saw in a chunk but proposed no op for. */
     judgedNoAction: number;
-    /**
-     * Secondary memories absorbed into successful merge operations across the
-     * window. 2026-05-26 accounting-leak fix: `merged` is op-level, but each
-     * successful merge actions `1 + secondaries.length` memories — without
-     * this counter the invariant
-     * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
-     *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`
-     * does not hold.
-     */
-    mergedSecondaries: number;
-    /**
-     * Memories in chunks whose LLM call failed (transport / invalid plan /
-     * abort) before any per-chunk noAction calculation could run. 2026-05-26
-     * accounting-leak fix: without this bucket, `failedChunks > 0` runs
-     * silently dropped `Σ(failed_chunk.length)` memories from the envelope's
-     * accounting.
-     */
-    failedChunkMemories: number;
-    /**
-     * Histogram of structured per-op skip reasons emitted by `consolidate.ts`
-     * when a deterministic post-LLM guard rejects an operation the LLM
-     * proposed. Codes observed in production: `dedup_pending_proposal`,
-     * `captureMode_hot_refused`, `merge_missing_description`,
-     * `merge_sanitization_failed`, `merge_invalid_frontmatter`,
-     * `merge_truncated_description`, `merge_content_preservation_failed`,
-     * `merge_participant_blocked`, `promote_source_too_small`,
-     * `promote_dedup_window`, `promote_already_promoted_this_run`,
-     * `promote_already_exists`, `promote_superseded`,
-     * `promote_sanitization_failed`, `promote_invalid_frontmatter`,
-     * `contradict_target_missing`. Each bucket is a separate tuning knob
-     * (queue cleanup, memory recategorization, prompt fix, etc.). Pre-fix
-     * these were buried in `warnings: string[]` as freeform English. See
-     * review §1e and tuning investigation §Q2.
-     */
-    skipReasons: Record<string, number>;
-    /**
-     * Aggregated count of chunks that failed (HTTP error / empty response /
-     * invalid plan) across runs in the window. Pre-2026-05-26 this was
-     * invisible: a 100%-failure run still reported a healthy
-     * `processed = memories.length` and `ok: true`. See
-     * `/tmp/akm-health-investigations/consolidation-no-op.md`.
-     */
     failedChunks: number;
-    /** Aggregated total chunks attempted across runs in the window. */
     totalChunks: number;
     durationMs: number;
   };
   memoryInference: {
-    ran: boolean;
-    /** All pending parents inspected this run, including cache hits. */
+    /** Pending parents inspected, including cache hits. */
     considered: number;
-    /**
-     * Parents whose body hash matched a prior LLM call's cached result.
-     * Surfacing this separately keeps the operational yield rate
-     * interpretable as the cache warms — without it, `written / considered`
-     * collapses toward zero just because the cache absorbs most candidates.
-     */
-    cacheHits: number;
-    /** Single bounded retries triggered for transient LLM failures during inference. */
-    retryAttempts: number;
-    /** `considered - cacheHits - skippedAborted` — the number of parents that actually hit the LLM. Budget-abort items return {aborted:true} with no LLM call; excluding them from the denominator prevents budget-exhaustion from appearing as a quality regression. */
+    /** `considered − cacheHits − skippedAborted`: parents that actually hit the LLM. */
     freshAttempts: number;
-    splitParents: number;
     written: number;
     skippedNoFacts: number;
-    /**
-     * LLM produced a valid derived draft but `<parent>.derived.md` already
-     * existed on disk (or the write threw). Without this counter the
-     * attempt would silently inflate `freshAttempts` and tank the
-     * health-reported yield rate. Plumbed straight through from the
-     * `memoryInference` envelope.
-     */
-    skippedChildExists: number;
-    /**
-     * Records short-circuited by an abort signal before issuing a fresh
-     * LLM call. Counted (rather than dropped) so `considered` decomposes
-     * cleanly and aborts do not pollute yield.
-     */
-    skippedAborted: number;
-    /**
-     * Catch-all for per-record outcomes the pass could not categorise.
-     * Should stay zero; a non-zero value means a code path is leaking
-     * attempts past the counter taxonomy.
-     */
-    unaccounted: number;
-    /**
-     * Parents whose LLM call returned an HTML body (e.g. LM Studio serving its
-     * web UI) instead of JSON. Surfaced distinctly from `skippedNoFacts` so a
-     * provider-load failure is observable rather than masked as an empty-result
-     * skip. Sourced from the `memoryInference` envelope's `htmlErrorCount`.
-     */
-    htmlErrorCount: number;
-    /**
-     * `written / freshAttempts`, 4dp; 0 when freshAttempts=0.
-     *
-     * Was previously `written / considered`. Changed 2026-05-25 because
-     * the cache-hit denominator inflation made the metric drift toward
-     * zero as the cache warmed even when actual extraction productivity
-     * was steady. Use `freshAttempts` as the denominator so the rate
-     * reflects "of the parents we actually re-inferred, how many produced
-     * a fact?" — independent of cache state.
-     */
+    /** `written / freshAttempts`, 4dp; 0 when `freshAttempts` is 0. */
     yieldRate: number;
     durationMs: number;
   };
   graphExtraction: {
-    ran: boolean;
     extractedFiles: number;
-    /** Files eligible for extraction in the window (denominator of `extractionCoverage`). */
-    consideredFiles: number;
     entities: number;
     relations: number;
-    /**
-     * `extractedFiles / consideredFiles`, 4dp; 0 when consideredFiles=0.
-     * Folded in from the `akm graph summary` command dropped in 0.9.0 (owner
-     * ruling 12) — same underlying quality telemetry, aggregated over the
-     * health window instead of read live off the stored graph snapshot.
-     */
-    extractionCoverage: number;
-    cacheHits: number;
-    cacheMisses: number;
-    /** hits / (hits + misses), 4dp; 0 when both are 0. */
-    cacheHitRate: number;
-    truncations: number;
     failures: number;
-    /**
-     * Asset extractions where the provider returned an HTML body (e.g. LM
-     * Studio serving its web UI) instead of JSON. Tracked distinctly from
-     * `failures` so a provider-load failure is observable rather than folded
-     * into the generic failure count. Sourced from the graph-extraction
-     * telemetry's `htmlErrorCount`.
-     */
-    htmlErrors: number;
-    /** Single bounded retries triggered for transient LLM failures during extraction. */
-    retryAttempts: number;
-    /**
-     * Batch extraction calls that stayed non-array even after the stricter
-     * retry, each forcing a per-asset fallback. A rising count signals the
-     * batch→per-asset cost cliff (#635). Sourced from the graph-extraction
-     * telemetry's `nonArrayBatchFailures`.
-     */
-    nonArrayBatchFailures: number;
     durationMs: number;
   };
+  /** Wall time of the window's improve runs (nearest-rank percentiles). */
+  wallTime: { medianMs: number; p95Ms: number };
   /**
-   * Session-extraction pass metrics (Phase 0.4 — `akmExtract`).
-   * Aggregated across all harnesses and runs in the window.
-   * `ran` is false when session_extraction is disabled or no harness
-   * was available. `sessionsExtracted` counts sessions that produced
-   * at least one proposal; `sessionsSkipped` counts already-seen
-   * sessions deduped by state.db.
+   * Proposals accepted in the window (`updated_at` within `[since, until)`).
+   * `distinctRefs` counts assets touched — repeated rewrites of one asset
+   * count once — and is what the Discord health script reads per window.
    */
-  sessionExtraction: {
-    ran: boolean;
-    sessionsScanned: number;
-    sessionsExtracted: number;
-    sessionsSkipped: number;
-    proposalsCreated: number;
-    warnings: number;
-    durationMs: number;
-  };
-  wallTime: {
-    count: number;
-    medianMs: number;
-    p95Ms: number;
-    minMs: number;
-    maxMs: number;
-    /**
-     * Per-phase wall-time aggregates derived from per-envelope `durationMs`
-     * fields that the passes already record. Answers "where did the 19-min
-     * p95 go?" without raw envelope spelunking.
-     *
-     * Only phases that record their own durationMs surface here:
-     *   - consolidation: from `consolidation.durationMs` on each envelope.
-     *   - memoryInference: from top-level `memoryInferenceDurationMs`.
-     *   - graphExtraction: from top-level `graphExtractionDurationMs`.
-     *
-     * `count` is the number of envelopes that contributed a duration (i.e.
-     * the phase actually ran on that run). `totalMs` is the sum across the
-     * window. Reflect and distill per-loop aggregates are deferred — only
-     * per-action `durationMs` is recorded today; aggregating them is the
-     * P1 follow-up (review §3 / P1 #8). See
-     * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k.
-     */
-    byPhase: {
-      consolidation: { count: number; totalMs: number; medianMs: number; p95Ms: number };
-      memoryInference: { count: number; totalMs: number; medianMs: number; p95Ms: number };
-      graphExtraction: { count: number; totalMs: number; medianMs: number; p95Ms: number };
-    };
-  };
-  /**
-   * WS-5 perf telemetry (Part V §5). Aggregated across runs in the window.
-   * Emitted regardless of gate so operators can baseline before enabling
-   * behavior-changing work-streams. All fields are zero when consolidation
-   * did not run or pre-WS-5 envelopes are in the window.
-   */
-  perfTelemetry: ImprovePerfTelemetry;
-  /**
-   * WS-5 per-run degradation metrics (Part V §4). Sourced from the stash on
-   * the read path (health-command read), not from run envelopes, so they
-   * reflect the CURRENT corpus state rather than historical per-run snapshots.
-   * Absent when not enough data is available (e.g. empty stash).
-   */
-  degradation?: ImproveDegradationMetrics;
-  /**
-   * WS-5 denominator-fixed coverage (Part V §3).
-   * `coverage = distinct_accepted_refs / total_assets` (denominator is fixed
-   * at total stash size, not the moving eligible set). The numerator counts
-   * DISTINCT refs, not proposals — repeated accepted rewrites of one asset
-   * are churn, not coverage, and previously inflated this rate.
-   * `eligibleFraction` is reported separately so narrowing eligibility doesn't
-   * spuriously inflate coverage. Rates are NaN when total_assets=0 (empty stash).
-   */
-  coverage: {
-    /** distinct_accepted_refs / total_assets (fixed denominator). NaN when total=0. */
-    rate: number;
-    /** eligible_assets / total_assets. NaN when total=0. */
-    eligibleFraction: number;
-    /** Total proposals accepted (window-scoped, from state.db). Raw volume — includes churn. */
-    acceptedProposals: number;
-    /** Distinct asset refs among the window's accepted proposals. */
-    distinctRefs: number;
-    /**
-     * acceptedProposals / distinctRefs. 1.0 = every accepted proposal touched
-     * a different asset; values above ~1.5 mean the loop is repeatedly
-     * rewriting the same assets (churn). NaN when distinctRefs=0.
-     */
-    churnRatio: number;
-    /** Total stash assets at the time of the most recent run (whole-stash snapshot). */
-    totalAssets: number;
-  };
-  /**
-   * Enrichment-vs-minting policy rollup (reporting-only). Enrichment-classed
-   * lanes are ratified to EDIT existing assets, not mint new ones; this
-   * surfaces the split so drift is visible without a manual DB query.
-   * Absent when no lane-attributed accepted proposals exist in the window.
-   */
-  enrichmentMinting?: EnrichmentMintingRollup;
+  coverage: { acceptedProposals: number; distinctRefs: number };
 }
 
 /**
- * Lanes ratified as ENRICHMENT-ONLY: they may propose edits to existing
- * assets (metadata, relations, content refresh) but must not mint new ones.
- * New-asset generation belongs to the signal-gated minting lanes
- * (extract/distill/memory-inference).
- */
-export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "signal-delta"];
-
-/** Minted share of enrichment-lane accepts that triggers a WARN advisory. */
-export const ENRICHMENT_MINTED_WARN_SHARE = 0.05;
-
-/** Minted share of enrichment-lane accepts that triggers a FAIL advisory. */
-export const ENRICHMENT_MINTED_FAIL_SHARE = 0.15;
-
-/**
- * Cron task failure rate at or above which the `task-fail-rate` health advisory
- * warns. 0.05 (5%) is the SAME threshold the HTML report already applies as its
- * fail-rate pass/warn cutoff (`failOk = taskFailRate < 0.05` in
- * src/commands/health/html-report.ts) — this constant makes it the single
- * source so the advisory and the rendered badge cannot drift.
+ * Cron task failure rate at or above which the `task-fail-rate` advisory
+ * warns; also the HTML report's fail-rate badge cutoff, so the two cannot drift.
  */
 export const TASK_FAIL_RATE_WARN = 0.05;
 
 /**
  * Minimum task_history rows a single task_id needs in the window before its
- * per-task fail rate feeds the `task-fail-rate` advisory's "worst single
- * task" signal. Guards against a rarely-run task (e.g. 1 failure out of 1
- * run) reading as a 100% fail rate off a single noisy sample.
+ * own fail rate feeds `task-fail-rate` — a task run once and failed once is
+ * not a 100% signal.
  */
 export const MIN_ROWS_FOR_WORST_TASK_FAIL_RATE = 5;
-
-/**
- * The enrichment-vs-minting split over the health window's accepted,
- * lane-attributed proposals. Create-vs-update is discriminated by
- * `metadata_json.backupContent`: apply captures the prior content for
- * updates, so its absence means a genuinely new asset was minted.
- */
-export interface EnrichmentMintingRollup {
-  /** Accepted enrichment-lane proposals that MINTED a new asset (no backupContent). */
-  minted: number;
-  /** Accepted enrichment-lane proposals that UPDATED an existing asset. */
-  updated: number;
-  /** minted / (minted + updated) across enrichment lanes. NaN when they decided nothing. */
-  share: number;
-  /** Per-lane minted/updated split for every lane-attributed accepted proposal. */
-  byLane: Record<string, { minted: number; updated: number }>;
-}
-
-/**
- * WS-5 perf telemetry for the consolidation pipeline. All fields are additive
- * sums across runs in the health window. Per-run rates (e.g. cache hit rate)
- * are computed by health callers from the raw counters.
- */
-export interface ImprovePerfTelemetry {
-  /** Sum of dedupPoolSize across consolidation runs in the window. */
-  dedupPoolSize: number;
-  /** Sum of llmPoolSize across consolidation runs in the window. */
-  llmPoolSize: number;
-  /** Total embedding wall-clock time across consolidation runs (ms). */
-  embedMs: number;
-  /** Total body-embedding cache hits across consolidation runs. */
-  embedCacheHits: number;
-  /** Total body-embedding cache misses across consolidation runs. */
-  embedCacheMisses: number;
-  /**
-   * Number of consolidation runs that reported estimatedBudgetFractionUsed > 1.0
-   * (consolidation alone exceeded the caller's declared budget — SIGTERM risk).
-   */
-  overBudgetRuns: number;
-  /** Number of consolidation runs that reported any perfTelemetry (denominator for rates). */
-  runsWithTelemetry: number;
-}
-
-/**
- * WS-5 per-run degradation metrics (Part V §4). Computed on the health read
- * path from the current corpus state. These catch slow rot that a throughput
- * gate misses.
- */
-export interface ImproveDegradationMetrics {
-  /**
-   * Gini coefficient of positive `retrieval_salience` values across currently
-   * resolvable assets. NaN when fewer than 5 assets have retrieval evidence.
-   */
-  corpusCentroidDistance: number;
-  /** Number of positive, resolvable salience rows in the Gini sample. */
-  retrievalSalienceSampleSize: number;
-  /**
-   * Whether corpusCentroidDistance exceeds the 0.35 entrenchment threshold.
-   * `undefined` when the metric is NaN.
-   */
-  entrenchmentFlagged?: boolean;
-  /**
-   * Low-tail Gini flag: `true` when observed retrieval-salience values across
-   * the resolvable corpus have Gini below 0.08 and therefore carry little
-   * discrimination between assets with retrieval evidence.
-   * `undefined` when the metric is NaN.
-   */
-  salienceUniformityFlagged?: boolean;
-  /**
-   * Merge fidelity: fraction of accepted merge proposals in the window whose
-   * result was later contradicted (a proxy for "the merge degraded content").
-   * 0 = no contradictions detected; higher = potential fidelity loss.
-   */
-  mergeFidelityContradictionRate: number;
-  /**
-   * Oracle spot-check: up to 5 recently accepted proposals sampled from the
-   * window, surfaced for human eyeballing in the health report.
-   */
-  oracleSpotCheck: OracleSpotCheckEntry[];
-}
-
-/** One sample in the oracle spot-check. */
-export interface OracleSpotCheckEntry {
-  /** Proposal id. */
-  proposalId: string;
-  /** Asset ref the proposal targets. */
-  ref: string;
-  /** Source phase that produced the proposal (reflect, distill, consolidate, …). */
-  source: string;
-  /** ISO-8601 timestamp when the proposal was accepted. */
-  acceptedAt: string;
-}

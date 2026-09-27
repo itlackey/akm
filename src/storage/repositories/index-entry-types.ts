@@ -17,7 +17,6 @@
  */
 
 import type { IndexDocument } from "../../indexer/passes/metadata";
-import type { LexicalQueryExecution } from "../../indexer/search/fts-query";
 
 /**
  * Durable bundle-adapter identity attached to every current `entries` row.
@@ -36,7 +35,6 @@ export interface DbIndexedEntry {
   id: number;
   filePath: string;
   entry: IndexDocument;
-  searchText: string;
   /** Canonical durable ref from `entries.item_ref`. */
   itemRef: string;
   /**
@@ -51,32 +49,6 @@ export interface DbIndexedEntry {
   adapterId: string;
   type: string;
   contentHash?: string;
-}
-
-/** One FTS5 search hit joined back to its `entries` row. */
-export interface DbSearchResult {
-  id: number;
-  filePath: string;
-  entry: IndexDocument;
-  searchText: string;
-  bm25Score: number;
-  /** Fixed-calibrated lexical contribution; fragment and parent FTS tables are
-   * not asserted to have directly comparable raw BM25 magnitudes. */
-  lexicalScore?: number;
-  /** Present only when a single safe Markdown fragment independently matched. */
-  fragmentId?: string;
-  /**
-   * Chunk-5 flip F5d (Step 2): the durable fully-qualified `<bundle>//<concept-id>`
-   * stored spelling from the `entries.item_ref` column, surfaced onto the search
-   * read path so salience keys on durable identity. Null provenance marks an
-   * invalid indexed row.
-   */
-  itemRef: string;
-  bundleId: string;
-  conceptId: string;
-  adapterId: string;
-  /** Which stage of the single progressive lexical plan produced this row. */
-  lexicalMatch: LexicalQueryExecution;
 }
 
 /** One nearest-neighbour hit from the vector index (id + L2 distance). */
@@ -103,6 +75,13 @@ export interface IndexDirState {
    * (those directories depend on their predecessors and keep draining).
    */
   rowCount?: number;
+  /**
+   * Adapter id and version (`akm@1`) the last drain recognized this directory
+   * with. A drain under the same variant may skip re-persisting an entry whose
+   * content hash is unchanged; `undefined` on rows written before it was
+   * recorded, which re-persist every entry once.
+   */
+  indexVariant?: string;
 }
 
 /** Parameters for `rekeyEntryInPlace`. */
@@ -155,14 +134,6 @@ export interface UtilityScoreRow extends UtilityScoreData {
   updatedAt: string;
 }
 
-/** A single row from `utility_scores_scoped`. */
-export interface ScopedUtilityRow {
-  entryId: number;
-  scopeKey: string;
-  utility: number;
-  lastUsedAt: number;
-}
-
 /**
  * A cached LLM enrichment result keyed by a stable asset_ref string.
  * The body_hash (SHA-256 hex) guards against stale results when the
@@ -174,19 +145,4 @@ export interface LlmCacheEntry {
   bodyHash: string;
   resultJson: string;
   updatedAt: number;
-}
-
-/** Source mapping used to preserve qualified usage-event identity while relinking. */
-export interface UsageEventRelinkSource {
-  path: string;
-  registryId?: string;
-}
-
-export interface RelinkUsageEventsOptions {
-  /** Ordered sources from the active index run. */
-  sources?: readonly UsageEventRelinkSource[];
-  /** Default root from the active index run. Bare durable refs are not relinked. */
-  defaultStashDir?: string;
-  /** Attached state.db schema used by the source-update unified transaction. */
-  stateSchema?: string;
 }

@@ -83,7 +83,7 @@ describe("akm help / akm hints against a config akm 0.9 cannot load", () => {
     const config = sandboxXdgConfigHome(home.cleanup);
     const cache = sandboxXdgCacheHome(config.cleanup);
     cleanup = sandboxXdgDataHome(cache.cleanup).cleanup;
-    fs.writeFileSync(getConfigPath(), '{"configVersion":"0.8.0","stashDir":"/home/user/old-stash"}\n');
+    fs.writeFileSync(getConfigPath(), "{ not valid json\n");
   });
 
   afterEach(() => {
@@ -130,6 +130,6 @@ describe("akm help / akm hints against a config akm 0.9 cannot load", () => {
     const { code, stderr } = await runCliCapture(["search", "anything"]);
     expect(code).toBe(78);
     const parsed = JSON.parse(stderr.trim());
-    expect(parsed.code).toBe("UNSUPPORTED_CONFIG_VERSION");
+    expect(parsed.code).toBe("INVALID_CONFIG_FILE");
   });
 });

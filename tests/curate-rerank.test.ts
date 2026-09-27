@@ -4,15 +4,16 @@
 
 /**
  * #951 — the "rerank engine kind" curate wiring: an optional cross-encoder
- * rerank pass over `akm curate`'s already-selected candidates.
+ * rerank pass over the top fused search candidates.
  *
  * Locks:
- *   - disabled by default: curate's own ranking order is untouched with no
+ *   - disabled by default: the search order is untouched with no
  *     `search.curateRerank` config at all
  *   - enabled + a working endpoint: candidates come back reordered by the
  *     endpoint's relevance scores
- *   - enabled + a failing endpoint (network error): falls back to curate's
- *     own ranking, never throwing
+ *   - enabled: the top 30 candidates are sent, not just the final `limit`
+ *   - enabled + a failing endpoint (network error): falls back to the search
+ *     order, never throwing
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { curateSearchResults } from "../src/commands/read/curate";
@@ -93,7 +94,40 @@ describe("curateSearchResults — rerank wiring (#951)", () => {
     ]);
   });
 
-  test("enabled + failing endpoint: falls back to curate's own ranking, never throws", async () => {
+  test("enabled: reranks the top 30 candidates, not just the final limit", async () => {
+    const sb = sandboxXdgConfigHome();
+    restoreConfigEnv = sb.cleanup;
+    writeSandboxConfig({
+      search: { curateRerank: { enabled: true, endpoint: "http://localhost:9/rerank" } },
+    });
+    const hits = Array.from({ length: 35 }, (_, index) =>
+      stashHit({
+        type: "skill",
+        name: `hit-${index}`,
+        ref: `skill/hit-${index}`,
+        path: `skill/hit-${index}.md`,
+        description: `candidate ${index}`,
+      }),
+    );
+    let documents: string[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      documents = (JSON.parse(String(init.body)) as { documents: string[] }).documents;
+      // Score the last candidate sent highest.
+      const results = documents.map((_, index) => ({ index, relevance_score: index }));
+      return new Response(JSON.stringify({ results }), { headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const result = await curateSearchResults("query", searchResponse(hits), 2);
+
+    expect(documents).toHaveLength(30);
+    expect(documents[0]).toBe("hit-0\ncandidate 0");
+    expect(result.items.map((item) => ("ref" in item ? item.ref : undefined))).toEqual([
+      "skill/hit-29",
+      "skill/hit-28",
+    ]);
+  });
+
+  test("enabled + failing endpoint: falls back to the search order, never throws", async () => {
     const sb = sandboxXdgConfigHome();
     restoreConfigEnv = sb.cleanup;
     writeSandboxConfig({

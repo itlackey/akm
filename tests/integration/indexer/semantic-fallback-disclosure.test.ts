@@ -42,13 +42,12 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
   });
 
   try {
-    const db = openIndexDatabase(getDbPath(), { embeddingDim: 4 });
+    const db = openIndexDatabase(getDbPath());
     try {
       const entryId = upsertEntry(
         db,
         `${storage.stashDir}/knowledge/deploy-guide.md`,
         { type: "knowledge", name: "deploy-guide", description: "deploy applications safely" } as IndexDocument,
-        "deploy-guide deploy applications safely",
         deriveEntryProvenance(
           { bundleId: "stash", componentId: "stash", adapterId: "akm" },
           "knowledge",
@@ -79,8 +78,6 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       stashDir: storage.stashDir,
       sources: [{ path: storage.stashDir }],
       config,
-      disableProjectContext: true,
-      disableScopedUtility: true,
     });
 
     expect(result.hits.map((hit) => hit.ref)).toContain("knowledge/deploy-guide");
@@ -112,8 +109,6 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       stashDir: storage.stashDir,
       sources: [{ path: storage.stashDir }],
       config: { semanticSearchMode: "off" },
-      disableProjectContext: true,
-      disableScopedUtility: true,
     });
     expect(intentionalKeyword.mode).toBe("keyword");
     expect(intentionalKeyword.warnings ?? []).not.toContainEqual(expect.stringContaining("Vector search unavailable"));

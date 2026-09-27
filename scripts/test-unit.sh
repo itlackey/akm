@@ -94,6 +94,12 @@ for t in "${tmps[@]}"; do
   # undiagnosable).
   if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
     grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
+    # Every assertion diff, wherever it sits in the log: bun prints the
+    # `error:` block at the point of failure, which the tail alone misses in
+    # a long shard (a CI failure whose diff was not in the log cost a whole
+    # reproduce-locally round trip).
+    echo "── failure details: ${t} ──"
+    grep -n -B4 -A30 -E "^error:|panic" "$t" | head -400 || true
     echo "── shard log tail (last 80 lines): ${t} ──"
     tail -80 "$t"
   fi

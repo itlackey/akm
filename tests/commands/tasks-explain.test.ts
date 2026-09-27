@@ -149,15 +149,14 @@ function hasNamedVersionField(json: unknown, keyPattern: RegExp, expected: numbe
 /**
  * Locate at least one FIELD-LEVEL EXECUTION PROVENANCE object anywhere in the
  * envelope — the exact `{layer, kind, via}` shape
- * `planExecutionCascade`'s `ResolvedExecutionPlanV1.provenance` actually
- * returns (`src/integrations/agent/execution-cascade.ts`'s `provenance()`
- * helper: `Object.freeze({layer: layer.id, kind: layer.kind, via})`) —
+ * `resolveExecution`'s `provenance` actually returns
+ * (`src/integrations/agent/execution.ts`) —
  * structurally, not merely because the resolved engine NAME ("test-agent")
  * appears somewhere in the envelope (P2b test-review finding #3: a whole-
  * envelope substring probe for the engine name alone is satisfiable by an
  * envelope that prints the RESOLVED value with no provenance tracking at
  * all). Finding this shape is the direct, structural proof that `akm task
- * explain` REUSES planExecutionCascade's own provenance rather than writing
+ * explain` REUSES resolveExecution's own provenance rather than writing
  * a second resolver (spec B-N4).
  */
 function hasExecutionFieldProvenance(json: unknown): boolean {
@@ -395,7 +394,7 @@ describe("akm task explain <ref> --format json (B-53)", () => {
     // these four were unpinned by every existing assertion in this
     // describe: the absolute source path and owning bundle name, the source
     // version, and at least one FIELD-LEVEL execution-provenance object
-    // proving `explain` reuses planExecutionCascade's own provenance rather
+    // proving `explain` reuses resolveExecution's own provenance rather
     // than writing a second resolver.
     expect(rendered).toContain(path.join(tasksDir, "explain-demo.yml"));
     expect(hasNamedField(envelope, /bundle/i, "stash")).toBe(true);

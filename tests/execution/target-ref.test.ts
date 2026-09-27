@@ -54,7 +54,7 @@ import path from "node:path";
 import ts from "typescript";
 import { UsageError } from "../../src/core/errors";
 import type { TargetRefKind } from "../../src/execution/target-ref";
-import { classifyWorkflowStepUses, WorkflowSourceSemanticError } from "../../src/workflows/source-ir/semantics";
+import { classifyWorkflowStepUses, WorkflowSourceSemanticError } from "../../src/workflows/source-semantics";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -267,13 +267,8 @@ function isSourceV3Specifier(specifier: string): boolean {
 describe("import boundary — the workflow uses-classification seam imports nothing from tasks/source-v3 (P1a §4.2/§4.3)", () => {
   // GREEN since P1a's implement step re-pointed uses.ts at
   // classifyTargetRef — see the file docstring for the RED-phase history.
-  test("src/workflows/source-ir/uses.ts imports nothing from tasks/source-v3", () => {
-    const specifiers = importedModuleSpecifiers(path.join(ROOT, "src/workflows/source-ir/uses.ts"));
-    expect(specifiers.filter(isSourceV3Specifier)).toEqual([]);
-  });
-
-  test("src/workflows/source-ir/semantics.ts imports nothing from tasks/source-v3", () => {
-    const specifiers = importedModuleSpecifiers(path.join(ROOT, "src/workflows/source-ir/semantics.ts"));
+  test("src/workflows/source-semantics.ts imports nothing from tasks/source-v3", () => {
+    const specifiers = importedModuleSpecifiers(path.join(ROOT, "src/workflows/source-semantics.ts"));
     expect(specifiers.filter(isSourceV3Specifier)).toEqual([]);
   });
 });

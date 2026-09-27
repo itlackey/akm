@@ -16,6 +16,8 @@
 import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { redactCredentialPatterns } from "../../core/redaction";
+import { withStateDbTelemetry } from "../../core/state-db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
@@ -24,11 +26,6 @@ import {
   getSearchHitAttribution,
   usageEventAttributionMetadata,
 } from "../../indexer/search/search-attribution";
-import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
-// Eagerly import source providers to trigger self-registration before the
-// indexer or path-resolution code runs.
-import "../../sources/providers/index";
-import { withStateDbTelemetry } from "../../core/state-db";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type {
   AkmSearchType,
@@ -40,6 +37,7 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
@@ -47,7 +45,7 @@ const DEFAULT_LIMIT = 20;
 function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: string): string[] {
   const ownersByConcept = new Map<string, string[]>();
   for (const hit of hits) {
-    const displayRef = (hit.parentRef ?? hit.ref).split("#", 1)[0] ?? hit.ref;
+    const displayRef = hit.ref.split("#", 1)[0] ?? hit.ref;
     const boundary = displayRef.indexOf("//");
     const conceptId = boundary >= 0 ? displayRef.slice(boundary + 2) : displayRef;
     const owner = hit.origin ?? defaultBundle ?? "working-bundle";
@@ -82,8 +80,7 @@ export async function akmSearch(input: {
    * whose `entry.scope.<key>` exactly equals the supplied value. Unfiltered
    * queries match entries with or without scope metadata.
    *
-   * Filtering narrows the result set; ranking is unchanged. There is still
-   * one scoring pipeline.
+   * Filtering narrows the result set; ranking is unchanged.
    */
   filters?: StashEntryScope;
   /**
@@ -106,10 +103,6 @@ export async function akmSearch(input: {
    * `session`). No effect when an explicit `type` is supplied.
    */
   includeSessions?: boolean;
-  /** Disable the automatic project-context ranking boost for this search only. */
-  disableProjectContext?: boolean;
-  /** Disable scoped-utility ranking for this search only. */
-  disableScopedUtility?: boolean;
   /**
    * When true, skip logging usage events. Used by internal callers
    * (curate, improve context gathering) to avoid polluting user
@@ -133,7 +126,6 @@ export async function akmSearch(input: {
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
-  const normalizedQuery = query.toLowerCase();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);
   const parsedSource = parseSearchSource(input.source ?? "local");
@@ -201,7 +193,7 @@ export async function akmSearch(input: {
     source === "registry"
       ? undefined
       : await searchLocal({
-          query: normalizedQuery,
+          query,
           searchType,
           limit,
           stashDir,
@@ -217,8 +209,6 @@ export async function akmSearch(input: {
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
           includeExcludedTypes: input.includeSessions === true,
-          disableProjectContext: input.disableProjectContext === true,
-          disableScopedUtility: input.disableScopedUtility === true,
         });
 
   const registryResult =
@@ -358,12 +348,18 @@ function resolveEntryIds(
  * have no local entry_id to reference.
  */
 function logSearchEvent(
-  query: string,
+  rawQuery: string,
   response: SearchResponse,
   mode: "semantic" | "keyword" = "keyword",
   eventSource: UsageEventSource = "user",
   attributionProjection: AttributionProjection = "full",
 ): void {
+  // Credentials pasted into a query (e.g. by the Claude Code hook that
+  // curates every user prompt) must never reach state.db verbatim — see
+  // `redactCredentialPatterns`. Redacted once here so every persistence call
+  // below (events.metadata_json via appendEvent, usage_events.query via
+  // insertUsageEvent) gets the same scrubbed text.
+  const query = redactCredentialPatterns(rawQuery);
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
@@ -412,18 +408,11 @@ function logSearchEvent(
             source: eventSource,
           });
         }, TELEMETRY_BUSY_TIMEOUT_MS);
-        // No live utility_scores/utility_scores_scoped write here (#862): a
-        // search result is an impression, not a signal that the asset was
-        // useful. Rewarding every returned hit created a feedback loop where
-        // merely appearing in results inflated future ranking — assets
-        // surfaced because they'd surfaced before, not because a user acted
-        // on them. Retrieval counts are still recorded above via
-        // insertUsageEvent (search_count) and rolled into utility_scores by
-        // the offline `recomputeUtilityScores` pass (`akm index`), which uses
-        // the show/search *select rate* — a ratio that requires an actual
-        // `show`/select event, not raw impressions. Explicit signal comes
-        // from `akm feedback` (applyFeedbackToUtilityScore) and from
-        // selection (recordShowUsage / the `select` event derived from it).
+        // No live utility_scores write here (#862): a search result is an
+        // impression, not a signal that the asset was useful. Retrieval
+        // counts are recorded above via insertUsageEvent (search_count) and
+        // rolled into utility_scores by the offline `recomputeUtilityScores`
+        // pass (`akm index`).
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );

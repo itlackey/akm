@@ -11,8 +11,8 @@
  *   (a) an open/foreign token is ACCEPTED as data by `validateStashEntry`
  *       and the `akm` adapter's `recognize` gate (which replaced the deleted
  *       flat-walk matcher pass in the F4 engine swap);
- *   (b) `KNOWN_TYPES` exhaustiveness — `TYPE_BOOST` and `TYPE_PRESENTATION`
- *       compile-cover all 14 known types;
+ *   (b) `KNOWN_TYPES` exhaustiveness — `TYPE_PRESENTATION` compile-covers
+ *       all 14 known types;
  *   (c) `presentationFor` returns the generic fallback for an unknown type;
  *   (d) retired AKM types remain rejected by AKM's legacy ref parser, but the
  *       format-neutral index projection accepts them when another adapter owns
@@ -26,7 +26,6 @@ import { describe, expect, test } from "bun:test";
 import { DEPRECATED_REJECTED_TYPES, isKnownType, KNOWN_TYPES } from "../../src/core/recognition-util";
 import { presentationFor, TYPE_PRESENTATION } from "../../src/core/type-presentation";
 import { validateStashEntry } from "../../src/indexer/passes/metadata";
-import { TYPE_BOOST, typeBoostFor } from "../../src/indexer/search/ranking-contributors";
 
 // ── (a) open-token acceptance as DATA ───────────────────────────────────────
 
@@ -59,20 +58,6 @@ describe("KNOWN_TYPES exhaustiveness — typed tables compile-cover all 14", () 
   test("KNOWN_TYPES has exactly the 14 AKM-owned type keys", () => {
     expect(KNOWN_TYPES.length).toBe(14);
     expect(new Set(KNOWN_TYPES).size).toBe(14); // no duplicates
-  });
-
-  test("TYPE_BOOST's previously-absent types are explicit 0 entries (behavior-preserving, D1.5-5)", () => {
-    // `wiki` left this set in chunk 4 (the wiki asset-type is retired).
-    for (const type of ["env", "secret", "lesson", "task", "session"] as const) {
-      expect(TYPE_BOOST[type]).toBe(0);
-    }
-  });
-
-  test("typeBoostFor matches TYPE_BOOST for every known type and falls back to 0 for foreign types", () => {
-    for (const type of KNOWN_TYPES) {
-      expect(typeBoostFor(type)).toBe(TYPE_BOOST[type]);
-    }
-    expect(typeBoostFor("some-foreign-type")).toBe(0);
   });
 
   test("a KNOWN_TYPE always satisfies isKnownType", () => {

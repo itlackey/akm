@@ -4,11 +4,9 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { formatSearchPlain } from "../../src/output/text/helpers";
 import { seedStoredGraph } from "../_helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
-const REGISTRY_FIXTURE_PRELOAD = path.join(__dirname, "..", "fixtures", "registry-network", "loopback-preload.ts");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -78,7 +76,7 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   // shapes, not semantic ranking.
   writeConfig(xdgConfig, { configVersion: "0.9.0", semanticSearchMode: "off", ...(config ?? {}) });
 
-  const child = spawn("bun", ["--preload", REGISTRY_FIXTURE_PRELOAD, CLI, ...args], {
+  const child = spawn("bun", [CLI, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
@@ -238,32 +236,6 @@ describe("output baseline", () => {
     expect(output).toContain("  - memory: memories/incident");
     expect(output).toContain("    shared: Guide");
     expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));
-  });
-
-  test("search text output uses query match and neighbors graph labels", () => {
-    const output = formatSearchPlain(
-      {
-        hits: [
-          {
-            type: "knowledge",
-            name: "guide",
-            action: "akm show knowledge/guide -> read reference material",
-            score: 1,
-            graph: {
-              entities: [
-                { name: "Guide", kind: "matched" },
-                { name: "Incident", kind: "connected" },
-              ],
-              relations: [{ from: "Guide", to: "Incident" }],
-            },
-          },
-        ],
-      },
-      "normal",
-    );
-
-    expect(output).toContain("graph: query match=");
-    expect(output).toContain("neighbors=");
   });
 
   test("config defaults drive output mode and CLI flags override them", () => {

@@ -52,12 +52,10 @@ export interface AgentDispatchRequest {
   schema?: Record<string, unknown>;
 }
 
-/** Pure harness-owned projection produced before argv/SDK dispatch. */
+/** A harness's view of one resolved request, before argv/SDK dispatch. */
 export interface LoweredAgentDispatch {
   readonly prompt: string;
   readonly dispatch: Readonly<AgentDispatchRequest>;
-  readonly translatedFields: readonly string[];
-  readonly untranslatedFields: readonly string[];
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
 
@@ -125,11 +123,7 @@ export interface AgentRequestLowerer {
   readonly platform: string;
   /** Whether this transport has a distinct native persona/system channel. */
   readonly personaChannel: "native" | "prompt";
-  /**
-   * Optimistically lower one branded common request into this harness's own
-   * dispatch shape. This implementation, rather than a central capability
-   * matrix, is authoritative for which selected fields are translated.
-   */
+  /** Map one resolved request onto this harness's dispatch shape. */
   lower(profile: AgentProfile, request: ResolvedExecutionRequestV1): LoweredAgentDispatch;
 }
 

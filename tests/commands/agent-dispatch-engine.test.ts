@@ -9,7 +9,7 @@ import { agentCommand } from "../../src/commands/agent/contribute-cli";
 import type { AkmConfig } from "../../src/core/config/config-types";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { FALLBACK_ANNOUNCEMENT } from "../../src/integrations/agent/engine-fallback";
-import { executeInteractiveAgentInvocation } from "../../src/integrations/agent/execution-lowering";
+import { executeInteractiveAgentInvocation } from "../../src/integrations/agent/runner-dispatch";
 import { withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
@@ -26,7 +26,7 @@ describe("akm agent CLI help", () => {
 });
 
 describe("akmAgentDispatch engine capability", () => {
-  test("shared prompt-free lowering preserves native TTY options and redacts leased environment diagnostics", async () => {
+  test("shared prompt-free lowering preserves native TTY options and redacts passthrough credentials", async () => {
     const secret = "sk-interactive-boundary-secret-123456";
     const calls: unknown[] = [];
     const execution = await withEnv({ ANTHROPIC_API_KEY: secret }, () =>
@@ -70,7 +70,6 @@ describe("akmAgentDispatch engine capability", () => {
       },
     });
     const nativeOptions = (calls[0] as { options: Record<string, unknown> }).options;
-    expect(Object.hasOwn(nativeOptions, "envSource")).toBe(true);
     for (const field of ["env", "args", "stdin", "dispatch", "builderRegistry", "signal"]) {
       expect(Object.hasOwn(nativeOptions, field)).toBe(false);
     }

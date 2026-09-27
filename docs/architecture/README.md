@@ -48,6 +48,7 @@ Current-truth subsystem references.
 - [Registry Network Boundary](internals/registry-network-boundary.md) -- Outbound registry request inventory, destination policy, redirects, and DNS guarantees
 - [Functional Contract Patterns](internals/functional-contract-patterns.md) -- Quick reference for contributor pipelines and small process contracts
 - [Fresh-Host Rebuild Runbook](internals/fresh-host-rebuild-runbook.md) -- Rebuild an akm install on a new machine
+- [Persisted-Data Compatibility Contract](persisted-data-compat.md) -- What a reader owes data an earlier release wrote, per persisted format
 
 ## Reviews (`reviews/`)
 

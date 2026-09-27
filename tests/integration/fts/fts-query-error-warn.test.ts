@@ -48,20 +48,20 @@ afterEach(() => {
   envCleanup = () => {};
 });
 
-function insertEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
+function insertEntry(db: Database, key: string, entry: IndexDocument): number {
   const provenance = deriveEntryProvenance(
     { bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" },
     entry.type,
     key,
   );
-  return upsertEntry(db, `/test/dir/${key}.ts`, entry, searchText, provenance);
+  return upsertEntry(db, `/test/dir/${key}.ts`, entry, provenance);
 }
 
 describe("runFtsQuery error handling", () => {
   test("propagates a query error instead of silently returning []", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertEntry(db, "deploy", { name: "deploy", type: "script", description: "deploy things" }, "deploy");
+      insertEntry(db, "deploy", { name: "deploy", type: "script", description: "deploy things" });
       rebuildFts(db);
 
       // Sanity: query works before we break the schema.

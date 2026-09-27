@@ -5,7 +5,6 @@
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import type { SourceProvider, SyncOptions } from "../provider";
-import { registerSourceProvider } from "../provider-factory";
 import { getWebsiteCachePaths, shouldAllowPrivateWebsiteUrlForTests, validateWebsiteUrl } from "../website-url";
 
 export interface WebsiteSourceProvider extends SourceProvider {
@@ -42,5 +41,3 @@ export function createWebsiteProvider(config: SourceConfigEntry): WebsiteSourceP
     },
   };
 }
-
-registerSourceProvider("website", createWebsiteProvider);

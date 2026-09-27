@@ -5,7 +5,7 @@ import path from "node:path";
 import { addStash, removeStash } from "../src/commands/sources/source-manage";
 import { getSources, loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
-import { schedulerActivations, setSchedulerRefEnabled } from "../src/tasks/activation-config";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -358,11 +358,11 @@ describe("removeStash", () => {
   test("revokes scheduler grants owned by the removed bundle", () => {
     const fsPath = createTmpDir("akm-rm-scheduled-");
     addStash({ target: fsPath, name: "scheduled" });
-    setSchedulerRefEnabled("task", "scheduled//tasks/nightly", true);
+    setSchedulerRefEnabled("scheduled//tasks/nightly", true);
 
     removeStash("scheduled");
 
-    expect(schedulerActivations(loadConfig())).toEqual([]);
+    expect(schedulerEnabledRefs(loadConfig()) ?? []).toEqual([]);
   });
 
   test("returns removed: false for non-existent source", () => {

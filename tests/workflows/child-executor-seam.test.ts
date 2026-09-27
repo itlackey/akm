@@ -53,9 +53,9 @@ import { canonicalJson, computePlanHash } from "../../src/workflows/ir/plan-hash
 import type {
   FrozenChildWorkflowTarget,
   FrozenWorkflowTarget,
-  IrStepPlanV4,
-  WorkflowPlanGraphV4,
-} from "../../src/workflows/ir/schema-v4";
+  WorkflowPlan,
+  WorkflowPlanStep,
+} from "../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -92,7 +92,7 @@ function childContentHash(fields: {
 }
 
 function buildChildTarget(
-  childPlan: WorkflowPlanGraphV4,
+  childPlan: WorkflowPlan,
   options: { ref?: string; inputBindings?: readonly TaskInputBinding[] } = {},
 ): FrozenChildWorkflowTarget {
   const ref = options.ref ?? "workflows/child";
@@ -109,7 +109,7 @@ function buildChildTarget(
 }
 
 /** A minimal one-step child plan with no completion criteria — a plain, terminal-ready leaf. */
-function leafChildPlan(): WorkflowPlanGraphV4 {
+function leafChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", "Do the child's work.", ""].join(
       "\n",
@@ -119,7 +119,7 @@ function leafChildPlan(): WorkflowPlanGraphV4 {
 }
 
 /** Wraps `target` as the sole unit of a minimal composing step plan (mirrors hash-v6.test.ts's stepPlanWithTarget). */
-function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "compose"): IrStepPlanV4 {
+function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "compose"): WorkflowPlanStep {
   return {
     stepId,
     title: stepId,
@@ -133,7 +133,7 @@ function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "compose"): I
       frozenTarget: target,
       environment: [],
     },
-    gate: { kind: "gate", id: `${stepId}.gate`, stepId, criteria: [], frozenJudge: null },
+    gate: { kind: "gate", id: `${stepId}.gate`, stepId, criteria: [], maxLoops: 1, frozenJudge: null },
   };
 }
 
@@ -153,7 +153,6 @@ async function seedParentRun(input: { runId: string; stepId: string }): Promise<
       updatedAt: now,
       agentHarness: null,
       agentSessionId: null,
-      checkinArmedAt: null,
     });
     repo.insertSteps([
       {

@@ -10,7 +10,6 @@
  *   2. Converts raw `outcome_score` → `outcomeSalience` via `outcomeScoreToSalience`.
  *   3. Forwards `outcomeSalience` into `computeSalience` so it appears in the
  *      persisted `asset_salience.outcome_salience` and flows into `rank_score`.
- *   4. Emits `outcome_proxy_inverted` when `corr(outcome_score, accepted_change_rate) < -0.3`.
  *
  * These tests close the gap identified in the WS-2 review: the 120-line wiring block
  * in `improve.ts` had zero coverage — only the pure functions were tested. Because the
@@ -25,7 +24,6 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import { getAssetOutcome } from "../../../../src/commands/improve/outcome-loop";
 import { getAssetSalience } from "../../../../src/commands/improve/salience";
 import { saveConfig } from "../../../../src/core/config/config";
-import { readEvents } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
@@ -228,30 +226,5 @@ describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", 
     } finally {
       db2.close();
     }
-  });
-});
-
-// ── Test 3: proxy-adequacy tripwire emits outcome_proxy_inverted event ─────────
-
-describe("WS-2 wiring — proxy-adequacy tripwire event", () => {
-  test("no outcome_proxy_inverted event when data is insufficient (< 3 rows)", async () => {
-    // A single-asset stash produces only one asset_outcome row — below the 3-row
-    // minimum for the correlation. The tripwire should not fire.
-    const stash = isolatedStash();
-    writeSkill(stash, "ws2-lone", "Lone asset for tripwire test.");
-    await buildIndex(stash);
-
-    await akmImprove({
-      scope: "skill",
-      stashDir: stash,
-      config: minimalConfig(),
-      ...noopIndexFns,
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-      distillFn: async ({ ref }) => noopDistill(ref ?? ""),
-    });
-
-    const { events } = readEvents({ type: "outcome_proxy_inverted" });
-    // With fewer than 3 rows computeProxyAdequacy returns isInverted=false — no event.
-    expect(events.length).toBe(0);
   });
 });

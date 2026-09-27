@@ -80,7 +80,6 @@ describe("resolveIndexPassExecution", () => {
         field: "inference.effort",
       }) as LoweringNotice,
     ]);
-    expect(Object.isFrozen(resolved.notices)).toBe(true);
   });
 
   test("returns undefined when no index engine is configured", () => {

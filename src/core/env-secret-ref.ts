@@ -354,7 +354,6 @@ export function withEnvSecretWrite<T>(
     target,
     paths,
     {
-      ignored: "local-only",
       purpose: `${ref.type}-${op.toLowerCase()}`,
       message: `${op} ${formatRefForMessage({ type: ref.type, name: ref.name, origin: target.source.name })}`,
     },

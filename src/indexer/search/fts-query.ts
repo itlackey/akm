@@ -3,75 +3,44 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pure FTS5 query planning and ref-query helpers.
+ * Pure FTS5 query building and ref-query helpers.
  *
- * The lexical planner transforms a raw user query into bounded FTS5-safe
- * MATCH expressions. It touches no database state, so it is unit-testable
- * with zero DB setup.
+ * The lexical channel matches ANY query word: BM25 over an OR of the query's
+ * non-stopword tokens. Requiring every word first and relaxing only when that
+ * found nothing cost 0.108 nDCG@10 on the retrieval suite
+ * (`akm/eval/retrieval/reports/baseline-2026-09-27.md`): one conjunctive match
+ * in a long document suppressed every better OR candidate.
  * `parseRefPrefixQuery` is the one non-FTS helper: it decides whether a raw
  * query should bypass FTS entirely (SPEC-4 ref-prefix enumeration).
  */
 
-export type LexicalQueryExecution = "exact" | "prefix" | "relaxed";
-
-export interface LexicalQueryPlan {
-  tokens: string[];
-  /** Quoted implicit-AND query. */
-  exact: string;
-  /** Quoted prefix-AND query, omitted when no token is eligible. */
-  exactPrefix?: string;
-  /** One bounded prefix-OR recovery query, present only for multi-term input. */
-  relaxed?: string;
-}
+/** English function words dropped from the lexical query (the retrieval lab's list). */
+const STOPWORDS: ReadonlySet<string> = new Set(
+  `a about above after again against all am an and any are as at be because been before being below between both but
+  by can could did do does doing down during each few for from further had has have having he her here hers herself
+  him himself his how i if in into is it its itself just me more most my myself no nor not now of off on once only or
+  other our ours out over own same she should so some such than that the their theirs them then there these they this
+  those through to too under until up very was we were what when where which while who whom why will with would you
+  your yours yourself`.split(/\s+/),
+);
 
 const UNICODE_TOKEN = /[\p{L}\p{N}]+/gu;
 
-function quoteToken(token: string): string {
-  return `"${token}"`;
-}
-
-function prefixToken(token: string): string {
-  return [...token].length >= 3 ? `${quoteToken(token)}*` : quoteToken(token);
-}
-
 /**
- * Build the sole lexical retrieval plan from raw user input.
- *
- * Tokenization follows the useful portion of SQLite FTS5's `unicode61`
- * tokenizer (Unicode letters and numbers). Quoting every term makes FTS
- * operators ordinary searchable words. Tokens are normalized and deduplicated
- * case-insensitively.
- *
- * There is deliberately NO cap on token count. `MAX_LEXICAL_QUERY_TOKENS = 16`
- * used to truncate here, silently: a query past 16 unique tokens searched only
- * its first 16, dropping the tail — which for natural-language input is
- * usually where the discriminating words are. It was unexplained in both the
- * code and the commit that introduced it, unreachable from any flag, config
- * key, or env var, and the user was never told their query had been altered.
- * A wrong answer delivered silently is worse than a slow one.
+ * The query's lexical tokens: Unicode letters and numbers (the useful part of
+ * FTS5's `unicode61` tokenizer), NFKC-normalized, lowercased and deduplicated,
+ * with stopwords removed. A query made only of stopwords keeps all of them, so
+ * "how to" still searches for something.
  */
-export function buildLexicalQueryPlan(query: string): LexicalQueryPlan {
-  const tokens: string[] = [];
-  const seen = new Set<string>();
-  const normalized = query.normalize("NFKC");
-  for (const match of normalized.matchAll(UNICODE_TOKEN)) {
-    const token = match[0];
-    const key = token.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    tokens.push(token);
-  }
+export function ftsQueryTokens(query: string): string[] {
+  const tokens = [...new Set(query.normalize("NFKC").toLowerCase().match(UNICODE_TOKEN) ?? [])];
+  const content = tokens.filter((token) => !STOPWORDS.has(token));
+  return content.length > 0 ? content : tokens;
+}
 
-  const exact = tokens.map(quoteToken).join(" ");
-  const prefixTokens = tokens.map(prefixToken);
-  const exactPrefix = prefixTokens.some((token) => token.endsWith("*")) ? prefixTokens.join(" ") : undefined;
-  // A slash-bearing, whitespace-free input is an identifier/ref lookup, not
-  // sentence prose. Keep it conjunctive so a mistyped/bare ref never fans out
-  // across every path token through OR recovery.
-  const isRefLikeIdentifier = !/\s/u.test(query.trim()) && query.includes("/");
-  const relaxed = tokens.length > 1 && !isRefLikeIdentifier ? prefixTokens.join(" OR ") : undefined;
-
-  return { tokens, exact, exactPrefix, relaxed };
+/** FTS5 MATCH expression matching any token. Quoting makes FTS operators ordinary words. */
+export function ftsOrMatch(tokens: readonly string[]): string {
+  return tokens.map((token) => `"${token}"`).join(" OR ");
 }
 
 /**

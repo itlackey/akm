@@ -40,8 +40,6 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import { bundleRefToString, parseBundleRef } from "../asset/asset-ref";
-import { warnOnce } from "../warn";
 import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
@@ -81,7 +79,7 @@ export {
 export { IndexConfigSchema, IndexPassConfigSchema } from "./schema/index-config";
 export { OutputConfigSchema } from "./schema/output";
 export { CURRENT_CONFIG_VERSION, LlmInvocationOverridesSchema } from "./schema/primitives";
-export { SchedulerActivationSchema, SchedulerConfigSchema } from "./schema/scheduler";
+export { SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
 export { SetupConfigSchema } from "./schema/setup";
 export {
@@ -171,14 +169,6 @@ const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   const raw = config as Record<string, unknown>;
-  for (const key of ["profiles", "llm", "agent", "features", "stashes", "modelAliases", "bindings", "writable"]) {
-    if (key in raw) {
-      warnOnce(
-        `config:retired-key:${key}`,
-        `Config key "${key}" is retired in 0.9 and is ignored; configure engines/improve.strategies/bundles.<id> instead.`,
-      );
-    }
-  }
   // Only the current source shape enters the runtime. There is no config
   // compatibility path; `bundles` + `defaultBundle` fully supersede these keys.
   for (const key of ["stashDir", "sources", "installed"]) {
@@ -226,30 +216,6 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: ["defaultWriteTarget"],
         message: `defaultWriteTarget "${config.defaultWriteTarget}" is disabled`,
-      });
-    }
-  }
-  const activationKeys = new Set<string>();
-  for (const [index, activation] of (config.scheduler?.enabled ?? []).entries()) {
-    try {
-      const parsed = parseBundleRef(activation.ref);
-      if (!parsed.bundle || parsed.fragment !== undefined || bundleRefToString(parsed) !== activation.ref) {
-        throw new Error("not canonical");
-      }
-      const key = `${activation.kind}\0${activation.ref}`;
-      if (activationKeys.has(key)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["scheduler", "enabled", index],
-          message: "duplicates an earlier scheduler activation",
-        });
-      }
-      activationKeys.add(key);
-    } catch {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scheduler", "enabled", index, "ref"],
-        message: "must be one canonical fully-qualified ref without a fragment",
       });
     }
   }

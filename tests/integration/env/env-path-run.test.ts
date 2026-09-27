@@ -19,7 +19,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "../../_helpers/sandbox";
@@ -44,7 +43,6 @@ async function runCli(
   return withEnv({ AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
-    resetGraphBoostCache();
     const { stdout, stderr, code } = await runCliCapture(args);
     return { stdout, stderr, status: code };
   });
@@ -53,13 +51,11 @@ async function runCli(
 beforeEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 });
 
 afterEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 });
 
 describe("env path", () => {

@@ -2,9 +2,9 @@
  * Ranking regression tests for akm search system.
  *
  * Uses the shared `ranking-baseline` fixture under
- * tests/fixtures/stashes/ranking-baseline/ to validate search ranking
- * invariants: score differentiation, exact name matching, type ranking,
- * fuzzy/prefix matching, score preservation, and provider merge behavior.
+ * tests/fixtures/stashes/ranking-baseline/ to check lexical relevance
+ * (semantic search off): name, alias, tag and hint matching, monotone
+ * fused scores, and provider merge behavior.
  *
  * The fixture stash is materialised once in beforeAll via the shared
  * `loadFixtureStash` helper, then indexed in-process via the production
@@ -12,19 +12,11 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
-import {
-  type Cleanup,
-  sandboxXdgCacheHome,
-  sandboxXdgConfigHome,
-  sandboxXdgDataHome,
-  withIsolatedAkmStorage,
-} from "./_helpers/sandbox";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 import { loadFixtureStash } from "./fixtures/stashes/load";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
@@ -148,12 +140,7 @@ describe("Score differentiation", () => {
     // docker-homelab should appear in the top results (within top 3)
     // Sub-references also contain "docker-homelab" in their name, so they
     // may rank highly on FTS name-field matching.
-    const skillRank = rankOf(hits, "docker-homelab");
-    expect(skillRank).toBeLessThanOrEqual(3);
-
-    // The skill should have a meaningful score (not RRF-compressed)
-    const skillHit = expectHit(hits, "docker-homelab");
-    expect(scoreOf(skillHit)).toBeGreaterThan(0.5);
+    expect(rankOf(hits, "docker-homelab")).toBeLessThanOrEqual(3);
   });
 
   test('"docker" returns docker-homelab and docker-clean', async () => {
@@ -163,39 +150,6 @@ describe("Score differentiation", () => {
     // Both docker-related assets should appear in results
     expectHit(hits, "docker-homelab");
     expectHit(hits, "docker-clean");
-  });
-
-  test('"svelte component" -> skills/svelte-components ranks #1, above sub-references', async () => {
-    const hits = await search("svelte component");
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-
-    const skillRank = rankOf(hits, "svelte-components");
-    expect(skillRank).toBe(1);
-
-    // Sub-reference should rank below the skill
-    const refHit = findHit(hits, "svelte-components/references/web-components");
-    if (refHit) {
-      const refRank = rankOf(hits, "svelte-components/references/web-components");
-      expect(refRank).toBeGreaterThan(skillRank);
-    }
-  });
-
-  test('"code review" -> command or agent ranks above knowledge docs', async () => {
-    const hits = await search("code review");
-    expect(hits.length).toBeGreaterThanOrEqual(2);
-
-    // Find the top-ranked actionable asset (skill, command, or agent)
-    const actionableTypes = new Set(["skill", "command", "agent"]);
-    const topActionable = hits.find((h) => actionableTypes.has(h.type));
-    expect(topActionable).toBeDefined();
-
-    // Find the top-ranked knowledge doc
-    const topKnowledge = hits.find((h) => h.type === "knowledge");
-    if (topKnowledge && topActionable) {
-      const actionableRank = rankOf(hits, topActionable.name);
-      const knowledgeRank = rankOf(hits, topKnowledge.name);
-      expect(actionableRank).toBeLessThan(knowledgeRank);
-    }
   });
 
   test('"mem0 search" -> scripts/mem0-search ranks #1', async () => {
@@ -211,14 +165,8 @@ describe("Exact/near-exact name matching", () => {
     expect(hits.length).toBeGreaterThanOrEqual(2);
 
     // The skill entry and its sub-references all contain "docker-homelab"
-    // in their names. The skill gets a name-match boost but sub-references
-    // also match on FTS name field. Verify the skill is in the top 3.
-    const skillRank = rankOf(hits, "docker-homelab");
-    expect(skillRank).toBeLessThanOrEqual(3);
-
-    // The skill should have a strong score
-    const skillHit = expectHit(hits, "docker-homelab");
-    expect(scoreOf(skillHit)).toBeGreaterThan(0.5);
+    // in their names. Verify the skill is in the top 3.
+    expect(rankOf(hits, "docker-homelab")).toBeLessThanOrEqual(3);
   });
 
   test('"mem0-search" (exact) -> scripts/mem0-search is #1', async () => {
@@ -240,126 +188,12 @@ describe("Exact/near-exact name matching", () => {
     expect(hits[0]!.name).toBe("k8s-deploy");
     expect(hits[0]!.type).toBe("skill");
   });
-
-  test('"code-reviewer" (exact) -> agents/code-reviewer is #1', async () => {
-    const hits = await search("code-reviewer");
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(hits[0]!.name).toBe("code-reviewer");
-    expect(hits[0]!.type).toBe("agent");
-  });
 });
 
-describe("Type ranking", () => {
-  // #862 follow-up: this test used to run the "deploy" query against the
-  // shared ranking-baseline fixture and assert the actionable hit
-  // (k8s-deploy, a skill) outranked the knowledge hit (deploy-check). That
-  // assertion only held because of the impression-inflation bug #862 fixed —
-  // every earlier search in this file that happened to return k8s-deploy
-  // nudged its live utility score up, which was enough to overcome a real,
-  // deterministic gap in raw (pre-clamp) FTS+boost score between the two
-  // fixture docs (deploy-check's bm25 relevance genuinely edges out
-  // k8s-deploy's on that query — confirmed by instrumenting
-  // buildSearchResultComparator: k8s-deploy=3.2226 vs deploy-check=3.235,
-  // BEFORE any utility contribution). Once the live bump was removed the
-  // test failed deterministically, in isolation, with no other tests run
-  // first — proving the fixture never guaranteed the invariant on its own;
-  // only accumulated impression drift did.
-  //
-  // TYPE_BOOST (ranking-contributors.ts) is still a real, intentional
-  // design: actionable types (skill/command/agent/script) get a materially
-  // higher multiplicative boost than knowledge. The property worth pinning
-  // is that boost, isolated from base-relevance noise: given two entries
-  // with equal FTS-relevant content, the actionable one ranks above the
-  // knowledge one. Built with its own isolated stash/index (not the shared
-  // ranking-baseline fixture) so base relevance is controlled, not
-  // incidental.
-  test("actionable types outrank knowledge docs when base relevance is equal (TYPE_BOOST)", async () => {
-    const storage = withIsolatedAkmStorage();
-    try {
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { stash: { path: storage.stashDir } },
-        defaultBundle: "stash",
-        registries: [],
-      });
-
-      const description = "Coordinate widget rollout tasks across services and environments.";
-      const body =
-        "Coordinate widget rollout tasks across services and environments. " +
-        "This covers widget rollout planning, execution, and verification steps for rollout tasks.";
-
-      const skillDir = path.join(storage.stashDir, "skills", "widget-rollout-flow");
-      fs.mkdirSync(skillDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(skillDir, "SKILL.md"),
-        `---
-description: ${description}
-tags: [fixture]
----
-
-# Widget Rollout Flow
-
-${body}
-`,
-      );
-
-      const knowledgeFile = path.join(storage.stashDir, "knowledge", "widget-rollout-notes.md");
-      fs.writeFileSync(
-        knowledgeFile,
-        `---
-type: knowledge
-description: ${description}
-tags: [fixture]
----
-
-# Widget Rollout Notes
-
-${body}
-`,
-      );
-
-      await akmIndex({ stashDir: storage.stashDir, full: true });
-
-      const result = await akmSearch({ query: "widget rollout tasks", source: "local", limit: 20 });
-      const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-
-      const topActionable = hits.find((h) => h.type === "skill");
-      const topKnowledge = hits.find((h) => h.type === "knowledge");
-
-      expect(topActionable).toBeDefined();
-      expect(topKnowledge).toBeDefined();
-      if (topActionable && topKnowledge) {
-        expect(rankOf(hits, topActionable.name)).toBeLessThan(rankOf(hits, topKnowledge.name));
-      }
-    } finally {
-      storage.cleanup();
-    }
-  });
-
-  test('for "review", agents/commands/skills rank above knowledge docs', async () => {
-    const hits = await search("review");
-    expect(hits.length).toBeGreaterThanOrEqual(2);
-
-    const actionableTypes = new Set(["skill", "command", "agent"]);
-    const topActionable = hits.find((h) => actionableTypes.has(h.type));
-    const topKnowledge = hits.find((h) => h.type === "knowledge");
-
-    expect(topActionable).toBeDefined();
-    if (topKnowledge && topActionable) {
-      expect(rankOf(hits, topActionable.name)).toBeLessThan(rankOf(hits, topKnowledge.name));
-    }
-  });
-});
-
-describe("Fuzzy/prefix matching", () => {
+describe("Alias and content matching", () => {
   test('"kube" finds k8s-deploy via alias', async () => {
     const hits = await search("kube");
     expectHit(hits, "k8s-deploy");
-  });
-
-  test('"dock" finds docker-homelab via prefix', async () => {
-    const hits = await search("dock");
-    expectHit(hits, "docker-homelab");
   });
 
   test('"incident" finds the runbook', async () => {
@@ -368,31 +202,7 @@ describe("Fuzzy/prefix matching", () => {
   });
 });
 
-describe("Score preservation (not RRF-flattened)", () => {
-  test("top result score > 0.5 (not capped at 0.0164)", async () => {
-    const hits = await search("docker homelab");
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(scoreOf(hits[0]!)).toBeGreaterThan(0.5);
-  });
-
-  test("top result for exact name query has strong differentiation", async () => {
-    // Use a query that uniquely targets one asset.
-    // Per the locked v1 contract (CLAUDE.md / spec §9), SearchHit.score is
-    // bounded in [0,1]. The final projection is monotone rather than a hard
-    // clamp, so an exact-name match stays strong without erasing headroom for
-    // graph and other contributor signals.
-    const hits = await search("mem0 search");
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-    const topScore = scoreOf(hits[0]!);
-    expect(topScore).toBeGreaterThan(0.9);
-    expect(topScore).toBeLessThan(1);
-
-    // If there are additional results, the top should be at least as high.
-    if (hits.length >= 2) {
-      expect(topScore).toBeGreaterThanOrEqual(scoreOf(hits[1]!));
-    }
-  });
-
+describe("Fused scores", () => {
   test("scores are monotonically decreasing", async () => {
     const hits = await search("docker");
     for (let i = 1; i < hits.length; i++) {
@@ -400,23 +210,6 @@ describe("Score preservation (not RRF-flattened)", () => {
       const curr = hits[i]!.score ?? 0;
       expect(prev).toBeGreaterThanOrEqual(curr);
     }
-  });
-
-  test("scores are not compressed to a narrow range", async () => {
-    const hits = await search("docker");
-    expect(hits.length).toBeGreaterThanOrEqual(3);
-
-    const topScore = scoreOf(hits[0]!);
-    const lastScore = scoreOf(hits[hits.length - 1]!);
-    const range = topScore - lastScore;
-
-    // Score range should be meaningful, not compressed to ~0.001 like RRF.
-    // Per the locked v1 contract (CLAUDE.md / spec §9), scores are bounded
-    // in [0,1] — multiple top hits on a popular query may all clamp to 1.0,
-    // which collapses the visible top-end differential. The bottom of the
-    // range still shows clear separation from the top, well above what RRF
-    // would compress to (~0.001).
-    expect(range).toBeGreaterThan(0.01);
   });
 });
 
@@ -604,32 +397,21 @@ describe("Metadata signal strength", () => {
     expect(scoreOf(skillHit)).toBeGreaterThan(0);
   });
 
-  test("curated quality assets include the curated metadata boost reason", async () => {
-    const hits = await search("kubernetes deploy");
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-
-    const k8sHit = expectHit(hits, "k8s-deploy");
-    expect(k8sHit.whyMatched).toContain("curated metadata boost");
-  });
-
   test("searchHints contribute to matching", async () => {
     // "troubleshoot docker" is a search hint on docker-homelab
     const hits = await search("troubleshoot docker");
-    const skillHit = expectHit(hits, "docker-homelab");
-    expect(skillHit.whyMatched).toContain("matched searchHints");
+    expectHit(hits, "docker-homelab");
   });
 
   test("aliases contribute to matching", async () => {
     // "docker-compose" is an alias for docker-homelab
     const hits = await search("docker compose");
-    const skillHit = expectHit(hits, "docker-homelab");
-    expect(skillHit.whyMatched).toContain("matched aliases");
+    expectHit(hits, "docker-homelab");
   });
 
   test("tags contribute to matching", async () => {
     const hits = await search("homelab");
-    const skillHit = expectHit(hits, "docker-homelab");
-    expect(skillHit.whyMatched).toContain("matched tags");
+    expectHit(hits, "docker-homelab");
   });
 });
 

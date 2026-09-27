@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { TransientError } from "../src/core/errors";
 import { getLockfileLockPath } from "../src/core/paths";
 import {
   _setLockAcquireTimeoutMsForTests,
@@ -206,9 +207,18 @@ describe("writeLockfile", () => {
     await writeLockfile([validEntry({ id: "original" })]);
     fs.writeFileSync(getLockfileLockPath(), String(process.pid), { flag: "wx" });
 
-    await expect(writeLockfile([validEntry({ id: "forbidden" })])).rejects.toThrow(
-      /refusing to write without exclusive ownership/,
-    );
+    let caught: unknown;
+    try {
+      await writeLockfile([validEntry({ id: "forbidden" })]);
+    } catch (error) {
+      caught = error;
+    }
+    // Ordinary contention, not a config error (#948 addendum): TransientError
+    // maps to exit 75 (sysexits EX_TEMPFAIL), telling a caller to retry rather
+    // than stop retrying as exit 78 (ConfigError) would.
+    expect(caught).toBeInstanceOf(TransientError);
+    expect((caught as TransientError).code).toBe("LOCKFILE_CONTENDED");
+    expect((caught as Error).message).toMatch(/refusing to write without exclusive ownership/);
     expect(readLockfile().map((entry) => entry.id)).toEqual(["original"]);
   });
 });

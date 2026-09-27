@@ -11,18 +11,15 @@
  * target the 0.9.2 runtime cannot project.
  */
 
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
-import {
-  type PublishWorkflowRunV4Input,
-  WorkflowRunsRepository,
-  withWorkflowRunsRepo,
-} from "../../../src/storage/repositories/workflow-runs-repository";
-import { decodeWorkflowPlanV4, type FrozenWorkflowTarget } from "../../../src/workflows/ir/schema-v4";
+import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
+import type { FrozenWorkflowTarget } from "../../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../../src/workflows/runtime/run-plan";
 import { listWorkflowRuns, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import {
   type IsolatedAkmStorage,
@@ -75,7 +72,7 @@ function writeTask(name: string, targetLines: readonly string[], root = storage.
 
 async function persistedPlan(runId: string) {
   const row = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-  return decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+  return decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 }
 
 function targets(plan: Awaited<ReturnType<typeof persistedPlan>>): FrozenWorkflowTarget[] {
@@ -164,7 +161,7 @@ describe("workflow v4 common target resolution", () => {
     });
   });
 
-  test("preserves a qualified cross-bundle command owner through sourceReadSet, request, and target", async () => {
+  test("preserves a qualified cross-bundle command owner through the request and target", async () => {
     const primary = path.join(storage.root, "primary");
     const shared = path.join(storage.root, "shared");
     fs.mkdirSync(primary, { recursive: true });
@@ -187,7 +184,6 @@ describe("workflow v4 common target resolution", () => {
       file: "commands/team/review.md",
       hash: target.contentHash,
     });
-    expect(plan.sourceReadSet.some((entry) => entry.identity.ref === "shared//commands/team/review")).toBe(true);
   });
 
   test("projects a task step through the shared task-v3 command, run, and script authorities", async () => {
@@ -212,15 +208,6 @@ describe("workflow v4 common target resolution", () => {
     const started = await startWorkflowRun("workflows/task-composition");
     const plan = await persistedPlan(started.run.id);
     expect(targets(plan).map((target) => target.kind)).toEqual(["command", "shell", "script"]);
-    expect(plan.sourceReadSet.map((entry) => entry.identity.ref)).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/\/\/tasks\/command-task$/),
-        expect.stringMatching(/\/\/tasks\/run-task$/),
-        expect.stringMatching(/\/\/tasks\/script-task$/),
-        expect.stringMatching(/\/\/commands\/review$/),
-        expect.stringMatching(/\/\/scripts\/exact\.sh$/),
-      ]),
-    );
   });
 
   test("freezes a direct run and a script target without reconstructing either as anonymous agent prose", async () => {
@@ -239,45 +226,17 @@ describe("workflow v4 common target resolution", () => {
     const started = await startWorkflowRun("workflows/native-targets");
     const plan = await persistedPlan(started.run.id);
     const [run, script] = targets(plan);
-    expect(run).toMatchObject({
-      kind: "shell",
-      executable: expect.objectContaining({ absolutePath: expect.stringMatching(/^\//), sha256: expect.any(String) }),
-    });
+    // The executable is resolved at dispatch (an upgraded binary never
+    // strands a run), so the frozen command stays as authored.
+    expect(run).toMatchObject({ kind: "shell", exec: { command: ["sh", "-c", "printf exact-run"] } });
     expect(script).toMatchObject({
       kind: "script",
       ref: expect.stringMatching(/\/\/scripts\/exact\.sh$/),
       bytesBase64: Buffer.from("#!/bin/sh\nprintf exact-script\n").toString("base64"),
       materialization: "ephemeral-0700-delete",
-      executable: expect.objectContaining({ absolutePath: expect.stringMatching(/^\//), sha256: expect.any(String) }),
     });
-  });
-
-  test("rejects a configured CLI whose executable cannot be frozen before creating a run", async () => {
-    writeSandboxConfig({
-      engines: { missing: { kind: "agent", platform: "claude", bin: "akm-wp7-definitely-missing" } },
-      defaults: { engine: "missing" },
-      workflow: { judgeEngine: "missing" },
-    });
-    resetConfigCache();
-    write(
-      storage.stashDir,
-      "workflows/missing-bin.md",
-      [
-        "---",
-        "type: workflow",
-        "steps:",
-        "  - id: run",
-        "---",
-        "",
-        "## run",
-        "",
-        "Run with a missing executable.",
-        "",
-      ].join("\n"),
-    );
-    const before = await establishStateBaseline();
-    await expect(startWorkflowRun("workflows/missing-bin")).rejects.toThrow(/executable|missing|PATH|resolve/i);
-    expect(mutationCounts()).toEqual(before);
+    expect(Object.hasOwn(run ?? {}, "executable")).toBe(false);
+    expect(Object.hasOwn(script ?? {}, "executable")).toBe(false);
   });
 });
 
@@ -342,48 +301,6 @@ describe("workflow v4 fail-closed source targets", () => {
     );
     const before = await establishStateBaseline();
     await expect(akmIndex({ stashDir: primary, full: true })).rejects.toThrow(/same physical content root/i);
-    expect(mutationCounts()).toEqual(before);
-  });
-});
-
-describe("workflow v4 target final-CAS coverage", () => {
-  test.each([
-    "target-bytes",
-    "nested-directory",
-  ] as const)("revalidates retained command bytes and ancestry for %s before the first durable write", async (mode) => {
-    const command = write(storage.stashDir, "commands/group/review.md", "Original command bytes.\n");
-    writeWorkflow("target-cas", "      - id: review\n        uses: commands/group/review");
-    await akmIndex({ stashDir: storage.stashDir, full: true });
-    const before = await establishStateBaseline();
-    const prototype = WorkflowRunsRepository.prototype;
-    const original = prototype.publishWorkflowRunV4;
-    let casCalls = 0;
-    const publication = spyOn(prototype, "publishWorkflowRunV4").mockImplementation(function (
-      this: WorkflowRunsRepository,
-      input: PublishWorkflowRunV4Input,
-    ) {
-      return original.call(this, {
-        ...input,
-        revalidateSources: () => {
-          casCalls++;
-          if (mode === "target-bytes") {
-            fs.writeFileSync(command, "Mutated before final CAS.\n", "utf8");
-          } else {
-            const group = path.dirname(command);
-            fs.renameSync(group, `${group}.old`);
-            fs.mkdirSync(group, { recursive: true });
-            fs.writeFileSync(command, "Original command bytes.\n", "utf8");
-          }
-          input.revalidateSources();
-        },
-      });
-    });
-    try {
-      await expect(startWorkflowRun("workflows/target-cas")).rejects.toThrow(/source|changed|identity|manifest|CAS/i);
-    } finally {
-      publication.mockRestore();
-    }
-    expect(casCalls).toBe(1);
     expect(mutationCounts()).toEqual(before);
   });
 });

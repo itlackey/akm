@@ -71,23 +71,25 @@ describe("triage judgment config normalization (#814)", () => {
     });
   });
 
-  test("rejects judgment typos and unknown keys while preserving retired-key guidance", () => {
+  test("tolerates judgment typos, unknown keys and the retired mode/profile knobs", () => {
+    // An unknown key is not fatal anywhere in config: the loader names it once
+    // and it changes nothing. Only the retired keys below still fail, because
+    // they have a replacement to point at.
     for (const judgment of [{ bogus: 1 }, { egnine: "judge" }]) {
-      expect(ImproveProcessConfigSchema.safeParse({ judgment }).success).toBe(false);
+      expect(ImproveProcessConfigSchema.safeParse({ judgment }).success).toBe(true);
     }
-    expect(TriageProcessConfigSchema.safeParse({ judgement: true }).success).toBe(false);
+    expect(TriageProcessConfigSchema.safeParse({ judgement: true }).success).toBe(true);
 
+    // The retired `mode`/`profile` knobs are unknown keys like any other now:
+    // tolerated here, named once by the loader, and never a reason to fail.
     for (const key of ["mode", "profile"] as const) {
-      const result = ImproveProcessConfigSchema.safeParse({ judgment: { [key]: "llm" } });
-      expect(result.success).toBe(false);
-      if (result.success) throw new Error("retired judgment key must fail");
-      expect(result.error.issues.map((issue) => issue.message).join("\n")).toContain(`${key} is retired; use engine`);
+      expect(ImproveProcessConfigSchema.safeParse({ judgment: { [key]: "llm" } }).success).toBe(true);
     }
   });
 
-  test("rejects unknown judgment LLM override keys but retains arbitrary extraParams", () => {
+  test("tolerates unknown judgment LLM override keys and retains arbitrary extraParams", () => {
     for (const llmOverrides of [{ tempertaure: 0.2 }, { futureTopLevelKnob: true }]) {
-      expect(ImproveProcessConfigSchema.safeParse({ judgment: { llm: llmOverrides } }).success).toBe(false);
+      expect(ImproveProcessConfigSchema.safeParse({ judgment: { llm: llmOverrides } }).success).toBe(true);
 
       const live = validateConfigShape({
         configVersion: "0.9.0",
@@ -97,9 +99,7 @@ describe("triage judgment config normalization (#814)", () => {
           },
         },
       });
-      expect(live.ok).toBe(false);
-      if (live.ok) throw new Error("unknown judgment LLM override must fail live config validation");
-      expect(live.errors.map((issue) => issue.path).join("\n")).toContain("judgment.llm");
+      expect(live.ok).toBe(true);
     }
 
     const extraParams = {

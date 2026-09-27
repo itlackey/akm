@@ -3,17 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm health` used to let the managed
- * `openStateDatabase` call throw when state.db held a pending
- * historical-destructive migration (018-drop-dead-lane-schema) — the whole
- * command crashed with a config-error exit (78) instead of reporting the
- * ordinary `fail` status its callers already know how to parse. Bundlers
- * (OpenPalm) grepped the refusal's error text to detect this case; that grep
- * is the coupling this test pins the replacement for.
+ * `akm health` used to let the managed `openStateDatabase` call throw when
+ * state.db held a pending historical-destructive migration
+ * (018-drop-dead-lane-schema) — the whole command crashed with a config-error
+ * exit (78) instead of reporting. Bundlers (OpenPalm) grepped the refusal's
+ * error text to detect this case; the `state-db-migrations` hard check is the
+ * coupling this file pins the replacement for.
  *
- * `akmHealth()` must instead report a `state-db-migrations` hard check and
- * exit through the same `fail` path as any other hard-check failure — never
- * throw, never exit 78.
+ * Every state.db open now applies pending migrations (copying the file aside
+ * first when one drops schema), health's own open included. So a pending
+ * migration is no longer a failure to report: `state-db-migrations` passes and
+ * names what health's open applied, and the command never exits 78.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -26,7 +26,7 @@ import { resetConfigCache } from "../../../src/core/config/config";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
-import { runMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -61,38 +61,35 @@ function findHardCheck(result: Awaited<ReturnType<typeof akmHealth>>, name: stri
   return found;
 }
 
-test("a pending historical-destructive migration reports as a fail check, not a crash", async () => {
+test("health's own open applies a pending historical-destructive migration and reports it", async () => {
   const file = getStateDbPath();
   seedBefore018(file);
 
-  // RED on the old code: `akmHealth()` let the managed `openStateDatabase`
-  // call throw "Refusing to apply historical destructive state migration
-  // 018-drop-dead-lane-schema during an ordinary managed open. Run `akm
-  // upgrade`..." straight out of this call — no envelope was ever produced.
   const result = await akmHealth();
 
   const check = findHardCheck(result, "state-db-migrations");
-  expect(check.status).toBe("fail");
-  expect((check.evidence?.pending as string[])[0]).toBe("018-drop-dead-lane-schema");
-  expect(result!.status).toBe("fail");
-  expect(result!.ok).toBe(false);
+  expect(check.status).toBe("pass");
+  const applied = check.evidence?.applied as string[];
+  expect(applied[0]).toBe("018-drop-dead-lane-schema");
+  expect(applied.at(-1)).toBe(STATE_MIGRATIONS.at(-1)?.id);
+  expect(check.evidence?.pending).toEqual([]);
+  expect(check.evidence?.backupPath).toBe(`${file}.pre-018-drop-dead-lane-schema.bak`);
+  expect(fs.existsSync(`${file}.pre-018-drop-dead-lane-schema.bak`)).toBe(true);
 });
 
-test("the CLI exits health's normal fail code (not 78) when a migration is pending", async () => {
+test("the CLI migrates a pending state.db and never exits 78", async () => {
   const file = getStateDbPath();
   seedBefore018(file);
 
-  // RED on the old code: this exited EXIT_CODES.CONFIG (78) via the thrown
-  // ConfigError wrapping the migration-refusal message, and the stdout JSON
-  // envelope was an `{ok:false, error, code}` error shape, not a health
-  // result carrying `hardChecks`.
   const { code, stdout } = await runCliCapture(["health", "--format", "json"]);
-  expect(code).toBe(EXIT_CODES.GENERAL);
   expect(code).not.toBe(EXIT_CODES.CONFIG);
 
-  const parsed = JSON.parse(stdout) as { hardChecks?: Array<{ name: string; status: string }> };
+  const parsed = JSON.parse(stdout) as {
+    hardChecks?: Array<{ name: string; status: string; evidence?: { applied?: string[] } }>;
+  };
   const check = parsed.hardChecks?.find((c) => c.name === "state-db-migrations");
-  expect(check?.status).toBe("fail");
+  expect(check?.status).toBe("pass");
+  expect(check?.evidence?.applied?.[0]).toBe("018-drop-dead-lane-schema");
 });
 
 test("applying the pending migration flips the check back to pass", async () => {

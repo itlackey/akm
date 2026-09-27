@@ -14,13 +14,9 @@
  * consumers: the akm-eval harness runner (`curate-bench.ts`, black-box CLI,
  * via the sibling `curate-metrics.ts` re-export shim), the in-process CI
  * guards `tests/curate-metrics.test.ts` and
- * `tests/integration/curate-golden-eval.test.ts` (both via that same shim),
- * and the R5 collapse/churn detector's INTEGRATION TEST
- * (`tests/integration/commands/improve/collapse-detector.test.ts`, which
- * imports `ndcgAtK` directly to score its collapse simulation) — NOT the
- * `src/commands/improve/collapse-detector.ts` production module itself,
- * which never imported this file. No IO, no akm imports — just arrays of
- * refs in returned order vs. labeled judgments.
+ * `tests/integration/curate-golden-eval.test.ts` (both via that same shim).
+ * No IO, no akm imports — just arrays of refs in returned order vs. labeled
+ * judgments.
  */
 
 export interface CurateJudgment {

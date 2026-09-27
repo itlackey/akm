@@ -170,12 +170,13 @@ describe("scheduled task invocation", () => {
     ).toBeUndefined();
   });
 
-  test("writes an immutable restrictive descriptor containing only directories and PATH", () => {
+  test("captures the bundle path plus only the AKM_*_DIR overrides set explicitly, and never PATH", () => {
     const sandbox = makeSandboxDir("akm-scheduler-context-");
     try {
       fs.mkdirSync(path.join(sandbox.dir, "stash"));
-      const context = resolveScheduledTaskContext({
+      const explicit = resolveScheduledTaskContext({
         HOME: sandbox.dir,
+        PATH: "/opt/bin:/usr/bin",
         AKM_BUNDLE_DIR: path.join(sandbox.dir, "stash"),
         AKM_CONFIG_DIR: path.join(sandbox.dir, "config"),
         AKM_DATA_DIR: path.join(sandbox.dir, "data"),
@@ -183,19 +184,52 @@ describe("scheduled task invocation", () => {
         AKM_STATE_DIR: path.join(sandbox.dir, "state"),
         AKM_LLM_API_KEY: "must-not-be-serialized",
       });
-      const descriptor = schedulerContextDescriptor(context, "/opt/bin:/usr/bin");
+      expect(Object.keys(explicit)).toEqual([...SCHEDULED_TASK_CONTEXT_KEYS]);
+
+      // Defaults — including an XDG_STATE_HOME some other application set for
+      // this shell — resolve at fire time and are never frozen into the row.
+      const implicit = resolveScheduledTaskContext({
+        HOME: sandbox.dir,
+        PATH: "/opt/bin:/usr/bin",
+        XDG_STATE_HOME: path.join(sandbox.dir, "some-desktop-app"),
+        AKM_BUNDLE_DIR: path.join(sandbox.dir, "stash"),
+      });
+      expect(implicit).toEqual({ AKM_BUNDLE_DIR: path.join(sandbox.dir, "stash") });
+
+      const descriptor = schedulerContextDescriptor(explicit);
       const file = writeSchedulerContextDescriptor(descriptor);
       const serialized = fs.readFileSync(file, "utf8");
-
-      expect(JSON.parse(serialized)).toEqual({ version: 1, environment: { ...context, PATH: "/opt/bin:/usr/bin" } });
-      expect(Object.keys(context)).toEqual([...SCHEDULED_TASK_CONTEXT_KEYS]);
+      expect(JSON.parse(serialized)).toEqual({ version: 1, environment: explicit });
+      expect(serialized).not.toContain("PATH");
       expect(serialized).not.toContain("must-not-be-serialized");
       if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
       expect(writeSchedulerContextDescriptor(descriptor)).toBe(file);
 
+      // Loading applies only what the descriptor carries; the fire-time
+      // environment keeps its own PATH and state directory.
+      const loaded: NodeJS.ProcessEnv = { PATH: "/fire/time/bin", AKM_STATE_DIR: "/fire/time/state" };
+      loadSchedulerContextDescriptor(writeSchedulerContextDescriptor(schedulerContextDescriptor(implicit)), loaded);
+      expect(loaded).toEqual({
+        PATH: "/fire/time/bin",
+        AKM_STATE_DIR: "/fire/time/state",
+        AKM_BUNDLE_DIR: path.join(sandbox.dir, "stash"),
+      });
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("still applies a pre-0.9.17 descriptor, PATH included, until sync rewrites the row", () => {
+    const sandbox = makeSandboxDir("akm-scheduler-context-legacy-");
+    try {
+      const context = testContext(sandbox.dir);
+      const file = writeRawDescriptor(path.join(sandbox.dir, "context"), {
+        version: 1,
+        environment: { ...context, PATH: "/frozen/bin:/usr/bin" },
+      });
       const loaded: NodeJS.ProcessEnv = {};
       loadSchedulerContextDescriptor(file, loaded);
-      expect(loaded).toEqual({ ...context, PATH: "/opt/bin:/usr/bin" });
+      expect(loaded).toEqual({ ...context, PATH: "/frozen/bin:/usr/bin" });
     } finally {
       sandbox.cleanup();
     }
@@ -204,9 +238,9 @@ describe("scheduled task invocation", () => {
   test("rejects tampered content and a mismatched content-addressed filename", () => {
     const sandbox = makeSandboxDir("akm-scheduler-context-hash-");
     try {
-      const descriptor = schedulerContextDescriptor(testContext(sandbox.dir), "/usr/bin");
+      const descriptor = schedulerContextDescriptor(testContext(sandbox.dir));
       const file = writeSchedulerContextDescriptor(descriptor);
-      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("/usr/bin", "/opt/bin"), { mode: 0o600 });
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("config", "confog"), { mode: 0o600 });
       expect(() => loadSchedulerContextDescriptor(file, {})).toThrow("content SHA-256");
 
       const valid = writeRawDescriptor(path.join(sandbox.dir, "other"), descriptor);
@@ -221,7 +255,7 @@ describe("scheduled task invocation", () => {
   test("rejects symlinked and non-regular descriptor paths", () => {
     const sandbox = makeSandboxDir("akm-scheduler-context-type-");
     try {
-      const descriptor = schedulerContextDescriptor(testContext(sandbox.dir), "/usr/bin");
+      const descriptor = schedulerContextDescriptor(testContext(sandbox.dir));
       const file = writeSchedulerContextDescriptor(descriptor);
       if (process.platform !== "win32") {
         const symlinkDir = path.join(sandbox.dir, "links");
@@ -242,7 +276,7 @@ describe("scheduled task invocation", () => {
   test.skipIf(process.platform === "win32")("rejects group or other permissions on POSIX", () => {
     const sandbox = makeSandboxDir("akm-scheduler-context-mode-");
     try {
-      const file = writeSchedulerContextDescriptor(schedulerContextDescriptor(testContext(sandbox.dir), "/usr/bin"));
+      const file = writeSchedulerContextDescriptor(schedulerContextDescriptor(testContext(sandbox.dir)));
       fs.chmodSync(file, 0o644);
       expect(() => loadSchedulerContextDescriptor(file, {})).toThrow("group or other permissions");
     } finally {
@@ -250,15 +284,30 @@ describe("scheduled task invocation", () => {
     }
   });
 
-  test("validates the fixed v1 schema after content verification", () => {
+  test("validates the v1 schema after content verification", () => {
     const sandbox = makeSandboxDir("akm-scheduler-context-schema-");
     try {
       const context = testContext(sandbox.dir);
-      const file = writeRawDescriptor(path.join(sandbox.dir, "context"), {
+      const extra = writeRawDescriptor(path.join(sandbox.dir, "extra"), {
         version: 1,
-        environment: { ...context, PATH: "/usr/bin", EXTRA: "not-allowed" },
+        environment: { ...context, EXTRA: "not-allowed" },
       });
-      expect(() => loadSchedulerContextDescriptor(file, {})).toThrow("Invalid scheduler context");
+      expect(() => loadSchedulerContextDescriptor(extra, {})).toThrow("Invalid scheduler context");
+
+      const { AKM_BUNDLE_DIR: _, ...withoutBundle } = context;
+      const missing = writeRawDescriptor(path.join(sandbox.dir, "missing"), {
+        version: 1,
+        environment: withoutBundle,
+      });
+      expect(() => loadSchedulerContextDescriptor(missing, {})).toThrow("Invalid scheduler context");
+
+      const minimal = writeRawDescriptor(path.join(sandbox.dir, "minimal"), {
+        version: 1,
+        environment: { AKM_BUNDLE_DIR: context.AKM_BUNDLE_DIR },
+      });
+      const loaded: NodeJS.ProcessEnv = {};
+      loadSchedulerContextDescriptor(minimal, loaded);
+      expect(loaded).toEqual({ AKM_BUNDLE_DIR: context.AKM_BUNDLE_DIR });
     } finally {
       sandbox.cleanup();
     }

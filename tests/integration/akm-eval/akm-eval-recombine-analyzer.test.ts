@@ -477,8 +477,8 @@ function buildDbFixture(): DbFixture {
       .prepare(
         `INSERT INTO entries
          (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-          content_hash, document_json, search_text, derived_from)
-         VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, ?, ?, ?, NULL)`,
+          content_hash, document_json, derived_from)
+         VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, ?, ?, NULL)`,
       )
       .run(
         id,
@@ -495,7 +495,6 @@ function buildDbFixture(): DbFixture {
           fileSize: 1000 + id,
           description: `SENSITIVE_DESCRIPTION_CANARY_${id}`,
         }),
-        `SENSITIVE_SEARCH_TEXT_CANARY_${id}`,
       );
     index.prepare("INSERT INTO graph_files VALUES (?, ?, ?)").run(stashDir, filePath, `hash-${id}`);
     index
@@ -506,9 +505,9 @@ function buildDbFixture(): DbFixture {
     .prepare(
       `INSERT INTO entries
        (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-        content_hash, document_json, search_text, derived_from)
+        content_hash, document_json, derived_from)
        VALUES (99, 'invalid-ref', 'team', 'team', 'memories/legacy-only', 'akm', 'memory',
-               '/missing', NULL, ?, '', NULL)`,
+               '/missing', NULL, ?, NULL)`,
     )
     .run(JSON.stringify({ name: "legacy-only", type: "memory", tags: ["auth"] }));
   index.close();
@@ -561,8 +560,8 @@ function insertGraphMemory(db: Database, fixtureDb: DbFixture, id: number, entit
   db.prepare(
     `INSERT INTO entries
      (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-      content_hash, document_json, search_text, derived_from)
-     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, '', NULL)`,
+      content_hash, document_json, derived_from)
+     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, NULL)`,
   ).run(
     id,
     `team//memories/${name}`,
@@ -580,7 +579,7 @@ function insertGraphMemory(db: Database, fixtureDb: DbFixture, id: number, entit
 }
 
 describe("akm-eval recombine analyzer CLI read-only boundary", () => {
-  test("refuses a pre-canonical index instead of rebuilding refs from legacy entry_key", () => {
+  test("refuses a legacy entries table instead of rebuilding refs from legacy entry_key", () => {
     const root = tempDir();
     const indexDb = path.join(root, "index.db");
     const db = new Database(indexDb);
@@ -607,42 +606,7 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toContain("current canonical entries schema");
-    expect(digestTree(root)).toEqual(before);
-  });
-
-  test("refuses a stamped exact-name entries table without the canonical constraints", () => {
-    const root = tempDir();
-    const indexDb = path.join(root, "index.db");
-    const db = new Database(indexDb);
-    db.exec(`
-      CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO index_meta (key, value) VALUES ('version', '${DB_VERSION}');
-      CREATE TABLE entries (
-        id, item_ref, bundle_id, component_id, concept_id, adapter_id,
-        type, file_path, content_hash, document_json, search_text, derived_from
-      );
-      CREATE INDEX idx_entries_bundle ON entries(bundle_id);
-      CREATE INDEX idx_entries_type ON entries(type);
-      CREATE INDEX idx_entries_file_path ON entries(file_path);
-      CREATE INDEX idx_entries_derived_from ON entries(derived_from);
-      INSERT INTO entries VALUES
-        (1, 'team//memories/hostile', 'team', 'team', 'memories/hostile', 'akm',
-         'memory', '/stash/memories/hostile.md', NULL,
-         '{"name":"hostile","type":"memory","tags":["auth"]}', 'hostile', NULL);
-    `);
-    db.close();
-    const before = digestTree(root);
-
-    const result = Bun.spawnSync([WRAPPER, "--index-db", indexDb, "--format", "json"], {
-      cwd: REPO_ROOT,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toContain("current canonical entries schema");
+    expect(result.stderr.toString()).toContain("no entries table this akm reads");
     expect(digestTree(root)).toEqual(before);
   });
 
@@ -665,7 +629,6 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.stdout.toString()).not.toContain("SENSITIVE_BODY_CANARY");
     expect(result.stdout.toString()).not.toContain("SENSITIVE_DESCRIPTION_CANARY");
-    expect(result.stdout.toString()).not.toContain("SENSITIVE_SEARCH_TEXT_CANARY");
     const report = JSON.parse(result.stdout.toString()) as {
       graph: {
         availability: string;
@@ -918,8 +881,8 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
                 .prepare(
                   `INSERT INTO entries
                      (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-                      content_hash, document_json, search_text, derived_from)
-                     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, '', NULL)`,
+                      content_hash, document_json, derived_from)
+                     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, NULL)`,
                 )
                 .run(
                   id,
@@ -1067,8 +1030,8 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
         .prepare(
           `INSERT INTO entries
            (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-            content_hash, document_json, search_text, derived_from)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            content_hash, document_json, derived_from)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           100,
@@ -1081,7 +1044,6 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
           String(row.file_path),
           row.content_hash == null ? null : String(row.content_hash),
           String(row.document_json),
-          String(row.search_text),
           row.derived_from == null ? null : String(row.derived_from),
         ),
     ).toThrow();

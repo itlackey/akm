@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
+import { stageJudgedProposal } from "../../src/commands/improve/stage";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
-import { createProposal, getProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
+import { createProposal, getProposal } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { slugForPath } from "../../src/indexer/installations";
 import { runCliCapture } from "../_helpers/cli";
@@ -92,7 +93,7 @@ describe("akm proposal drain strategy selector", () => {
               graphExtraction: { enabled: false },
               extract: { enabled: false },
               validation: { enabled: false },
-              triage: { enabled: true, policy: "manual", applyMode: "queue" },
+              triage: { enabled: true, applyMode: "queue" },
             },
           },
         },
@@ -102,7 +103,6 @@ describe("akm proposal drain strategy selector", () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       strategy: "queue-only",
-      policy: "manual",
       applyMode: "queue",
       judgmentEngine: null,
       judgmentKind: null,
@@ -148,12 +148,12 @@ describe("akm proposal drain strategy selector", () => {
     const created = createProposal(stashDir, {
       ref: "lessons/cli-stale",
       source: "extract",
-      force: true,
       sourceRun: "run-x",
       target: { source: slugForPath(stashDir), root: stashDir },
       payload: { content: VALID_LESSON, frontmatter: { description: "cli-stale fixture" } },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    // A quality judge passed it, so the drain tries to promote it.
+    stageJudgedProposal(stashDir, created);
     fs.writeFileSync(
       assetPath,
       "---\ndescription: Someone else edited this.\nwhen_to_use: Testing.\n---\n\nNewer.\n",
@@ -180,10 +180,8 @@ function seedProposal(stash: string, ref = "lessons/rg-over-grep") {
   const result = createProposal(stash, {
     ref,
     source: "reflect",
-    force: true,
     payload: { content: VALID_LESSON },
   });
-  if (isProposalSkipped(result)) throw new Error("unexpected skip in seedProposal");
   return result;
 }
 

@@ -15,6 +15,7 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
@@ -236,9 +237,9 @@ describe("Issue #36: buildSearchText includes script content from comments", () 
           const scriptEntry = entries.find((e) => e.entry.name.includes("provision"));
           expect(scriptEntry).toBeDefined();
 
-          // The search text should include words from filename AND from the description
-          // (which is extracted from the comment header)
-          const searchText = scriptEntry?.searchText;
+          // The embedded text should include words from filename AND from the
+          // description (which is extracted from the comment header)
+          const searchText = scriptEntry ? buildSearchText(scriptEntry.entry) : undefined;
           expect(searchText).toContain("provision");
           expect(searchText).toContain("foundry");
         } finally {

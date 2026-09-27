@@ -105,11 +105,8 @@ export interface ThrowIfNotOkOptions {
 /**
  * Throw a `ConfigError` (code `INVALID_CONFIG_FILE`) when `result` doesn't
  * satisfy `isOk` (default: `status === 0`); otherwise return `result`
- * unchanged. Factors out the "run a native scheduler command, throw a
- * formatted error on a bad exit" idiom repeated across the cron/launchd/
- * schtasks backends — NOT the accumulate-into-`rollbackErrors`-and-continue
- * idiom used during rollback, which stays inline (throwing there would
- * change control flow: rollback needs to keep trying its remaining steps).
+ * unchanged: the "run a native scheduler command, throw a formatted error on
+ * a bad exit" idiom shared by the cron/launchd/schtasks backends.
  */
 export function throwIfNotOk(result: ExecResult, options: ThrowIfNotOkOptions): ExecResult {
   const ok = options.isOk ? options.isOk(result) : result.status === 0;

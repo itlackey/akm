@@ -3,47 +3,61 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * index.db schema and version stamps, kept in the
- * storage layer. This isolates the one genuinely risky area (schema
- * evolution) from the CRUD/FTS/vector queries.
+ * index.db schema, kept in the storage layer so schema evolution stays apart
+ * from the CRUD/FTS/vector queries.
  *
- * The meta accessors, embedding purge, and vec-availability probe that
- * `ensureSchema` leans on live in the sibling `index-meta-repository` /
- * `index-vec-repository` modules.
+ * `ensureSchema` runs on every writable open and brings an older layout up
+ * to date in place: `CREATE ... IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN`
+ * for columns added after a table first shipped, drops of retired derived
+ * tables and columns, and one in-place rebuild of the (derived, cheap) FTS
+ * table when its layout is older than this release's. It never drops
+ * `entries`, `embeddings`, `utility_scores*`, `graph_*`, or
+ * `llm_enrichment_cache` to cross a version boundary; the only from-scratch
+ * rebuild is the SQLITE_CORRUPT path in `index-connection.ts`. A layout newer
+ * than this release's is refused, naming the upgrade
+ * ({@link newerIndexLayoutError}).
  */
 
+import { createRequire } from "node:module";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
+import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
-import { ensureEmbeddingSalvageTable, salvageEmbeddingsBeforeDiscard } from "./embedding-salvage-repository";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
-  classifyIndexGeneration,
-  isCanonicalIndexGeneration,
+  entriesFtsDdl,
+  isContentlessFtsDdl,
+  missingEntryColumns,
+  readTableSql,
+  supportsContentlessDelete,
+  tableExists,
 } from "./index-entry-schema";
+import { rebuildFts } from "./index-fts-repository";
 import { getMeta, setMeta } from "./index-meta-repository";
-import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-// index.db is a regenerable cache. Incompatible entry-schema changes advance
-// this generation and discard only derived index tables; durable state remains
-// in state.db. Current readers and writers therefore target exactly one schema
-// and never carry live compatibility SQL for previous generations.
-//
-// v20→v21: remove the transitional entry_key/dir_path/stash_dir/entry_json/
-// entry_type columns. item_ref is the sole conflict key; document_json is the
-// sole stored document projection; bundle provenance and file_path provide the
-// current identity and materialized read path.
-//
-// v21→v22: entry mutations publish FTS synchronously and no dirty queue exists.
-// Discard the old derived generation so stale FTS rows and caller-managed dirty
-// state cannot cross the mutation-authority boundary.
 export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
-export const EMBEDDING_DIM = 384;
+/** `index_meta` key set when the writable opener migrated the layout; cleared once `akm index` VACUUMs. */
+export const VACUUM_PENDING_META = "vacuumPending";
 // #624-P1: graph_files is keyed to (stash_root, file_path, body_hash).
 export const GRAPH_SCHEMA_VERSION = 4;
+
+/**
+ * The refusal for an index a newer akm wrote. Readers and the writable opener
+ * both raise it: a newer layout may lack tables or columns this release reads
+ * (layout 25 dropped `entries.search_text`), and writing it back at this
+ * layout would undo the newer release's migration.
+ */
+export function newerIndexLayoutError(storedVersion: number, dbPath?: string): ConfigError {
+  return new ConfigError(
+    `Index database${dbPath ? ` at ${dbPath}` : ""} was written by a newer akm (layout ${storedVersion}; this akm ` +
+      `understands ${DB_VERSION}). Upgrade akm to use this index.`,
+    "INDEX_SCHEMA_INCOMPATIBLE",
+    "Upgrade akm to a version that understands this index layout.",
+  );
+}
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -52,23 +66,8 @@ export const GRAPH_SCHEMA_VERSION = 4;
  * (managed by this module), so its DDL belongs here next to the `ensureSchema`
  * that applies it — not in state-db.ts.
  *
- * Created with CREATE TABLE IF NOT EXISTS so it is safe to call inside
- * `ensureSchema()`. Caches the result of resolving and fetching remote registry
- * stash indexes so `akm search` does not hit the network on every invocation.
- *
- * Indexed (query) columns:
- *   registry_url  TEXT PK   — canonical URL of the registry; cache key.
- *   fetched_at    TEXT      — ISO-8601; used to detect stale entries (TTL).
- *   etag          TEXT      — HTTP ETag for conditional GET (If-None-Match).
- *   last_modified TEXT      — HTTP Last-Modified for conditional GET.
- *
- * Non-indexed payload:
- *   index_json    TEXT      — JSON blob of the fetched registry index document.
- *
- * ADD COLUMN extension points (future migrations):
- *   ALTER TABLE registry_index_cache ADD COLUMN schema_version INTEGER DEFAULT 1;
- *   ALTER TABLE registry_index_cache ADD COLUMN kit_count INTEGER DEFAULT NULL;
- *   ALTER TABLE registry_index_cache ADD COLUMN error_message TEXT DEFAULT NULL;
+ * Caches the result of resolving and fetching remote registry stash indexes so
+ * `akm search` does not hit the network on every invocation.
  */
 const REGISTRY_INDEX_CACHE_DDL = `
   CREATE TABLE IF NOT EXISTS registry_index_cache (
@@ -86,6 +85,11 @@ const REGISTRY_INDEX_CACHE_DDL = `
 /**
  * Create the graph-extraction tables (`graph_meta`/`graph_files`/`graph_file_entities`/
  * `graph_file_relations`/`graph_extraction_queue`).
+ *
+ * graph_files is self-keyed on (stash_root, file_path, body_hash) and is not
+ * tied to entries.id (#624-P1): re-upserting an entries row never disturbs the
+ * extracted graph, and a content change yields a distinct key. A UNIQUE index
+ * on (stash_root, file_path) still enforces one graph_files row per path.
  */
 function ensureGraphTables(db: Database): void {
   db.exec(`
@@ -163,7 +167,6 @@ function ensureGraphTables(db: Database): void {
     -- #624-P3: lazy graph-extraction queue. Standalone table (NO FK to
     -- graph_files — a queued file by definition has no graph row yet).
     -- Idempotent on (stash_root, file_path); drained highest-priority-first.
-    -- CREATE TABLE IF NOT EXISTS is the forward migration (no DB_VERSION bump).
     CREATE TABLE IF NOT EXISTS graph_extraction_queue (
       stash_root TEXT NOT NULL,
       file_path  TEXT NOT NULL,
@@ -179,78 +182,119 @@ function ensureGraphTables(db: Database): void {
 }
 
 /**
- * Cross the incompatible entry-schema boundary by discarding the derived index
- * generation. No row conversion or dual-schema compatibility is attempted:
- * the next index run rebuilds entries, FTS, embeddings, utility aggregates,
- * graph extraction, and enrichment caches from current sources/state.
+ * An `entries` table missing a required column cannot be read or written by
+ * this release (the last such change was v20→v21, which removed the
+ * transitional `entry_key`/`dir_path`/... columns and made `item_ref` the
+ * key). Recreate only the tables keyed by `entries.id` — their ids are about
+ * to be re-minted, so the rows would dangle anyway. Graph rows (keyed by
+ * path) and the LLM enrichment cache (keyed by ref) are kept. The next index
+ * run re-walks every source.
  */
-function rebuildIncompatibleIndexGeneration(db: Database): void {
-  const version = getMeta(db, "version");
-  const hasEntries = tableExists(db, "entries");
-  if (!hasEntries && version === undefined) return;
-  if (isCanonicalIndexGeneration(db)) return;
-
-  const classification = classifyIndexGeneration(db);
-  if (classification.status === "newer") {
-    throw new ConfigError(
-      `Index database was built by a newer akm (stored generation ${classification.storedVersion ?? "unknown"}; ` +
-        `this binary understands generation ${CANONICAL_INDEX_DB_VERSION}). Refusing to modify it — upgrade akm ` +
-        "to use this index.",
-      "INDEX_SCHEMA_INCOMPATIBLE",
-      "Upgrade akm to a version that understands this index generation.",
-    );
-  }
-
+function ensureEntriesLayout(db: Database): void {
+  if (!tableExists(db, "entries")) return;
+  const missing = missingEntryColumns(db);
+  if (missing.length === 0) return;
   warn(
-    `Index database generation ${classification.storedVersion ?? "unknown"} is older than this akm's generation ` +
-      `${CANONICAL_INDEX_DB_VERSION} — rebuilding the derived index (entries, FTS, embeddings, graph tables, ` +
-      "utility scores, and the LLM enrichment cache). This re-walks and re-indexes every source on the next run.",
+    `Index database entries table predates the ${missing.join(", ")} column${missing.length === 1 ? "" : "s"} — ` +
+      "recreating the entries-keyed tables (entries, full-text, embeddings, utility scores); graph data and the " +
+      "LLM enrichment cache are kept. The next index run re-walks every source.",
   );
-
-  let vecResetPending = false;
-  try {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
-  } catch {
-    // A vec0 table cannot be dropped while sqlite-vec is unavailable. It does
-    // not reference entries, so leave a marker and drop it on the first later
-    // open where the extension is available.
-    vecResetPending = true;
-  }
-
   db.transaction(() => {
-    // #955: copy embeddings about to be discarded wholesale into
-    // `embedding_salvage` (keyed by content hash + the fingerprint they were
-    // generated under) BEFORE dropping `embeddings`, in the same transaction
-    // as the drop, so the copy and the discard commit or roll back together.
-    // The next embedding pass hands salvaged vectors back to unchanged
-    // content instead of re-embedding the whole corpus after this bump.
-    salvageEmbeddingsBeforeDiscard(db);
-    db.exec("DROP TABLE IF EXISTS graph_file_relations");
-    db.exec("DROP TABLE IF EXISTS graph_file_entities");
-    db.exec("DROP TABLE IF EXISTS graph_files");
-    db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
-    db.exec("DROP TABLE IF EXISTS graph_meta");
-    db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
-    db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
-    db.exec("DROP TABLE IF EXISTS entry_fragments");
-    db.exec("DROP TABLE IF EXISTS entries_fts");
-    db.exec("DROP TABLE IF EXISTS embeddings");
-    db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
-    db.exec("DROP TABLE IF EXISTS utility_scores");
-    db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
-    db.exec("DROP TABLE IF EXISTS index_dir_state");
-    db.exec("DROP TABLE IF EXISTS entries");
-    db.exec("DELETE FROM index_meta");
-    // embedding_salvage is deliberately absent from the drop list above —
-    // it is the ONE piece of derived state a generation rebuild must not
-    // discard.
+    for (const table of [
+      "entries_fts",
+      "entry_fragments",
+      "embeddings",
+      "utility_scores_scoped",
+      "utility_scores",
+      "index_dir_state",
+      "entries",
+    ]) {
+      db.exec(`DROP TABLE IF EXISTS ${table}`);
+    }
+    db.exec("DELETE FROM index_meta WHERE key IN ('builtAt', 'hasEmbeddings')");
   })();
-
-  if (vecResetPending) setMeta(db, "vecResetPending", "1");
 }
 
-export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
-  // Create meta table first so we can check version
+/**
+ * Drop the sqlite-vec mirror of `embeddings` (`entries_vec`, layout 24 and
+ * earlier); vectors are searched from `embeddings` alone. Dropping a vec0
+ * table needs its module, so an install without sqlite-vec leaves the table
+ * in place, unread, and the next writable open that can load it drops it.
+ */
+function dropVecMirror(db: Database): void {
+  if (!tableExists(db, "entries_vec")) return;
+  try {
+    createRequire(import.meta.url)("sqlite-vec").load(db);
+    db.exec("DROP TABLE entries_vec");
+  } catch {
+    // sqlite-vec is not loadable here.
+  }
+}
+
+/**
+ * Layout 25 keeps a hash of each entry's embedding input (`embed_hash`)
+ * instead of the text (`search_text`, layout 24 and earlier); the text is
+ * derived from `document_json` when the entry is embedded. The hash is taken
+ * from the stored text, so every vector stays valid until its entry's text
+ * changes. One transaction: a crash leaves `search_text` for the next
+ * writable open.
+ */
+function replaceSearchTextWithHash(db: Database): void {
+  if (!tableHasColumn(db, "entries", "search_text")) return;
+  db.transaction(() => {
+    ensureColumn(db, "entries", "embed_hash", "TEXT");
+    const page = db.prepare("SELECT id, search_text FROM entries WHERE id > ? ORDER BY id LIMIT 500");
+    const update = db.prepare("UPDATE entries SET embed_hash = ? WHERE id = ?");
+    let afterId = -1;
+    for (;;) {
+      const rows = page.all(afterId) as Array<{ id: number; search_text: string }>;
+      if (rows.length === 0) break;
+      afterId = rows[rows.length - 1]!.id;
+      for (const row of rows) update.run(sha256Hex(row.search_text), row.id);
+    }
+    db.exec("ALTER TABLE entries DROP COLUMN search_text");
+  })();
+}
+
+/**
+ * Bring `entries_fts` to the contentless layout, rebuilding it from `entries`
+ * when it is missing or still carries the content-bearing layout older
+ * releases wrote (the one-time v23→v24 migration). One transaction: a crash
+ * mid-rebuild leaves the old table in place and the next writable open
+ * retries. A SQLite without `contentless_delete` keeps (or gets) the
+ * content-bearing layout instead.
+ */
+function ensureFtsLayout(db: Database): void {
+  const contentless = supportsContentlessDelete(db);
+  const sql = readTableSql(db, "entries_fts");
+  if (sql !== null && isContentlessFtsDdl(sql) === contentless) return;
+  const entryCount = Number((db.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number }).n);
+  if (entryCount > 0) {
+    warn(
+      `Rebuilding the full-text index for ${entryCount} entr${entryCount === 1 ? "y" : "ies"} ` +
+        "(embeddings, utility scores, graph data and the LLM enrichment cache are kept).",
+    );
+  }
+  db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS entries_fts");
+    db.exec(entriesFtsDdl(contentless));
+    rebuildFts(db);
+  })();
+}
+
+function tableHasColumn(db: Database, table: string, column: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return columns.some((existing) => existing.name === column);
+}
+
+/** `ALTER TABLE ... ADD COLUMN` for a column added after the table first shipped. Idempotent. */
+function ensureColumn(db: Database, table: string, column: string, type: string): boolean {
+  if (tableHasColumn(db, table, column)) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  return true;
+}
+
+export function ensureSchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,
@@ -258,35 +302,47 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     );
   `);
 
-  // #955: created before the generation-rebuild check below so a discard
-  // has somewhere to copy vectors to. Additive-only — it carries no bearing
-  // on the `entries` generation fingerprint (`hasCanonicalEntrySchema`), so
-  // adding it does not require a `CANONICAL_INDEX_DB_VERSION` bump.
-  ensureEmbeddingSalvageTable(db);
+  const storedVersion = Number(getMeta(db, "version") ?? 0);
+  if (storedVersion > DB_VERSION) throw newerIndexLayoutError(storedVersion);
 
-  rebuildIncompatibleIndexGeneration(db);
+  ensureEntriesLayout(db);
 
+  const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
+  replaceSearchTextWithHash(db);
 
-  // Workflow source is compiled directly into source IR at each command
-  // boundary. The former workflow_documents cache duplicated that IR in a
-  // second persisted representation and was never used by current execution.
-  // index.db is derived state, so remove the obsolete table on every open.
+  // Retired derived tables: the workflow IR cache, the pre-v22 FTS dirty
+  // queue, the #955 embedding salvage staging table (embeddings now carry
+  // their model per row, so nothing is copied aside and reused), and the
+  // fragment FTS table search stopped reading (layout 24 and earlier).
   db.exec("DROP TABLE IF EXISTS workflow_documents");
+  db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
+  db.exec("DROP TABLE IF EXISTS embedding_salvage");
+  db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
 
-  // BLOB-based embedding storage (always available, no sqlite-vec needed)
+  // One float32 BLOB per entry, searched by an exact scan
+  // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
+  // (`deriveSemanticProviderFingerprint`); the embedding pass re-embeds only
+  // rows whose model differs from the configured one. NULL means the row
+  // predates model tracking and is trusted as the current model.
   db.exec(`
     CREATE TABLE IF NOT EXISTS embeddings (
       id        INTEGER PRIMARY KEY,
       embedding BLOB NOT NULL,
+      model     TEXT,
       FOREIGN KEY (id) REFERENCES entries(id)
     );
   `);
+  if (ensureColumn(db, "embeddings", "model", "TEXT")) {
+    // Rows written before model tracking were generated under the fingerprint
+    // the last pass recorded; label them so a later model change re-embeds
+    // them instead of trusting them forever.
+    const fingerprint = getMeta(db, "embeddingFingerprint");
+    if (fingerprint) db.prepare("UPDATE embeddings SET model = ? WHERE model IS NULL").run(fingerprint);
+  }
 
-  // usage_events lives in state.db. utility_scores remains a regenerable
-  // index.db cache.
-
-  // Utility scores table (aggregated per-entry utility metrics)
+  // Utility scores (aggregated per-entry utility metrics) — a regenerable
+  // cache recomputed from state.db's usage_events on every index run.
   db.exec(`
     CREATE TABLE IF NOT EXISTS utility_scores (
       entry_id     INTEGER PRIMARY KEY,
@@ -302,7 +358,6 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
 
   // Per-project scoped utility scores — tracks usage per (entry, cwd-anchor)
   // so assets useful in project A don't pollute rankings in project B.
-  // The global utility_scores table is preserved as a fallback / cold-start aid.
   db.exec(`
     CREATE TABLE IF NOT EXISTS utility_scores_scoped (
       entry_id     INTEGER NOT NULL,
@@ -322,17 +377,19 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
       file_mtime_max_ms REAL NOT NULL,
       reason            TEXT NOT NULL,
       updated_at        TEXT NOT NULL,
-      row_count         INTEGER
+      row_count         INTEGER,
+      index_variant     TEXT
     );
   `);
-  ensureIndexDirStateRowCountColumn(db);
+  // #900 (`row_count`) and the adapter variant were added after the table's
+  // first release. Pre-existing rows keep NULL until their directory is next
+  // drained.
+  ensureColumn(db, "index_dir_state", "row_count", "INTEGER");
+  ensureColumn(db, "index_dir_state", "index_variant", "TEXT");
 
-  // LLM enrichment result cache. Stores a SHA-256 body hash and the JSON
-  // result for each asset so that subsequent `akm index --enrich` runs can
-  // skip the LLM call when the body hasn't changed. The cache is keyed by
-  // a stable asset_ref string (e.g. the absolute file path for graph/memory
-  // passes, or `itemRef:passId` for the metadata-enhance pass).
-  // Entries are cleaned up when assets are removed or --re-enrich is used.
+  // LLM enrichment result cache, keyed by a stable asset_ref string (the
+  // absolute file path for graph/memory passes, `item_ref` for the
+  // metadata-enhance pass) plus the body hash the result was produced for.
   db.exec(`
     CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
       asset_ref     TEXT NOT NULL,
@@ -347,117 +404,28 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
        ON llm_enrichment_cache(updated_at);
   `);
 
-  // Graph extraction tables — schema v4 ((stash_root, file_path, body_hash) PK).
-  //
-  // graph_files is self-keyed on (stash_root, file_path, body_hash) and is NO
-  // LONGER tied to entries.id. This is the #624-P1 win: deleting and
-  // re-inserting an entries row during a reindex no longer cascade-wipes the
-  // extracted graph — as long as the file's body_hash is unchanged, the graph
-  // data survives. body_hash is part of the PK so a content change yields a
-  // distinct key; a UNIQUE index on (stash_root, file_path) still enforces
-  // exactly one graph_files row per path (delete-then-insert on a hash change).
-  //
-  // graph_file_entities and graph_file_relations carry (stash_root, file_path,
-  // body_hash) and declare a composite FK -> graph_files ON DELETE CASCADE so
-  // child rows are removed when a graph_files row is replaced.
-  //
   ensureGraphTables(db);
 
-  // If a generation rebuild could not drop a vec0 table while the extension
-  // was unavailable, finish that reset as soon as vec0 can be loaded again.
-  if (isVecAvailable(db) && getMeta(db, "vecResetPending") === "1") {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
-    setMeta(db, "vecResetPending", "0");
-  }
+  dropVecMirror(db);
+  // Meta keys only the sqlite-vec mirror read.
+  db.exec("DELETE FROM index_meta WHERE key IN ('embeddingDim', 'vecFastPathReady')");
 
-  // sqlite-vec table
-  //
-  // Dimension contract:
-  //   - When `embeddingDim` is `undefined`, the caller did NOT request a
-  //     specific dim. Do not touch `index_meta.embeddingDim` and do not run
-  //     the dim-change wipe — fall back to the stored dim (or the static
-  //     default) only when we have to materialise the vec table for the
-  //     first time. Without this guard, registry-side and other dim-unaware
-  //     `openDatabase()` callers would silently overwrite the dim-aware
-  //     improve/index value and oscillate the stored dim.
-  //   - When `embeddingDim` is a number, the caller explicitly asked for
-  //     that dim and owns the dim-change/backup/wipe semantics.
-  const dimExplicit = embeddingDim !== undefined;
-  const requestedDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
-  const effectiveDim = Number.isInteger(requestedDim) && requestedDim > 0 ? requestedDim : EMBEDDING_DIM;
-  if (effectiveDim !== requestedDim) {
-    warn(`Invalid embedding dimension ${requestedDim} — falling back to the default (${EMBEDDING_DIM}).`);
-  }
-  if (isVecAvailable(db)) {
-    // Check if stored embedding dimension differs from configured one
-    if (dimExplicit) {
-      const storedDim = getMeta(db, "embeddingDim");
-      if (storedDim && storedDim !== String(effectiveDim)) {
-        // Stored vectors are incompatible with the new dimension. Drop the vec
-        // table so the block below recreates it at the new width; the BLOB rows
-        // go too. Regenerable from markdown — re-embedded by the next index.
-        purgeEmbeddings(db, { dropVecTable: true });
-      }
-    }
-
-    const vecExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries_vec'").get();
-    if (!vecExists) {
-      db.exec(`
-        CREATE VIRTUAL TABLE entries_vec USING vec0(
-          id       INTEGER PRIMARY KEY,
-          embedding FLOAT[${effectiveDim}]
-        );
-      `);
-    }
-    if (dimExplicit) {
-      setMeta(db, "embeddingDim", String(effectiveDim));
-    }
-  } else {
-    // Also purge BLOB embeddings on dimension change (JS fallback path).
-    // When sqlite-vec is unavailable, entries_vec doesn't exist but the BLOB
-    // embeddings table still stores vectors. If the configured dimension
-    // changes, those stored BLOBs become silently incompatible.
-    if (dimExplicit) {
-      const storedDim = getMeta(db, "embeddingDim");
-      if (storedDim && storedDim !== String(effectiveDim)) {
-        // JS-fallback path: no vec table, just clear the stale BLOB vectors.
-        purgeEmbeddings(db);
-      }
-      setMeta(db, "embeddingDim", String(effectiveDim));
-    }
-  }
-
-  // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
-  // no longer created here.
-
-  // Registry index cache table — caches remote registry index documents so
-  // `akm search` does not hit the network on every invocation.
   db.exec(REGISTRY_INDEX_CACHE_DDL);
 
-  // Write the generation stamp only after every required DDL surface exists.
-  // A crash before this point leaves an unversioned generation that the next
-  // writable open safely rebuilds instead of admitting a partial v23 index.
-  setMeta(db, "version", String(DB_VERSION));
-}
+  ensureFtsLayout(db);
 
-/**
- * Returns true when a table exists in the current database.
- */
-function tableExists(db: Database, name: string): boolean {
-  const row = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1").get(name);
-  return row !== undefined && row !== null;
-}
-
-/**
- * #900: `row_count` was added after the table's first release, so a database
- * created before it needs an `ALTER TABLE` (`CREATE TABLE IF NOT EXISTS` only
- * shapes a fresh table). Idempotent. Pre-existing rows keep NULL until their
- * directory is next drained; index.db is a regenerable cache, so nothing is
- * backfilled.
- */
-function ensureIndexDirStateRowCountColumn(db: Database): void {
-  const columns = db.prepare("PRAGMA table_info(index_dir_state)").all() as Array<{ name: string }>;
-  if (!columns.some((column) => column.name === "row_count")) {
-    db.exec("ALTER TABLE index_dir_state ADD COLUMN row_count INTEGER");
+  // An index that had no fragment source table (v22 and earlier) has no safe
+  // Markdown for `akm show` to resolve fragment selectors from until each
+  // directory is drained again. Clearing the per-directory cursor makes the
+  // next run re-read every source; entry ids, embeddings and utility rows
+  // stay put.
+  if (!hadFragmentSource && tableExists(db, "entries")) {
+    db.exec("DELETE FROM index_dir_state");
   }
+
+  // Migrating an existing layout drops tables and columns; the next `akm index`
+  // VACUUMs the pages they leave free (`vacuumIndexDb`, indexer.ts), since a
+  // writable open may run inside a caller's transaction, where VACUUM cannot.
+  if (storedVersion > 0 && storedVersion < DB_VERSION) setMeta(db, VACUUM_PENDING_META, "1");
+  setMeta(db, "version", String(DB_VERSION));
 }

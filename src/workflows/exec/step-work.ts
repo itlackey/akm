@@ -3,20 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared step semantics — the ONE implementation of a step's orchestration
- * decisions, consumed by the engine loop (`run-workflow.ts` +
- * `native-executor.ts`) on both the fresh-execution and the resume/replay
- * path, so a first run and a resumed run of the same frozen plan produce
- * byte-identical unit graphs. `computeStepWorkList` and its reducer/gate/route
- * helpers are PURE (no clock, no IO, no journal read); the gate-evaluation
- * journaling functions are the one deliberate exception. This module never
- * dispatches a unit and never writes step rows.
- *
- * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md for
- * the full purity-contract design history.
+ * Shared step semantics: the one implementation of a step's orchestration
+ * decisions, used by the engine on both a fresh run and a resume, so the same
+ * frozen plan produces byte-identical unit graphs. Pure except the
+ * gate-evaluation journaling; never dispatches and never writes step rows.
+ * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import unitPreambleTemplate from "../../assets/prompts/workflow-unit-preamble.md" with { type: "text" };
 import { UsageError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
@@ -30,8 +24,18 @@ import {
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
 import { canonicalJson } from "../ir/plan-hash";
-import type { IrIsolation, IrMapReducer, IrOnError, IrRetry, IrRouteSpec, IrRuntimeKind } from "../ir/schema";
-import type { FrozenWorkflowTarget, IrStepPlanV4, IrUnitNodeV4, WorkflowPlanGraphV4 } from "../ir/schema-v4";
+import type {
+  FrozenWorkflowTarget,
+  WorkflowIsolation,
+  WorkflowOnError,
+  WorkflowPlan,
+  WorkflowPlanStep,
+  WorkflowReducer,
+  WorkflowRetry,
+  WorkflowRoute,
+  WorkflowRuntimeKind,
+  WorkflowUnitNode,
+} from "../plan";
 import {
   type ExpressionScope,
   parseReference,
@@ -40,7 +44,6 @@ import {
 } from "../program/expressions";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
-import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import { type JudgeCallIdentity, parseJudgeVerdict, type SummaryJudge } from "../validate-summary";
 import { gateNodeId } from "./frozen-judge";
 import { enqueueUnitWrite } from "./unit-writer";
@@ -48,7 +51,7 @@ import { enqueueUnitWrite } from "./unit-writer";
 /** How much raw unit output is retained in step evidence (full text lives on the unit row). */
 const EVIDENCE_TEXT_CLIP = 2_000;
 
-/** How much artifact JSON the completion-criteria judge receives (addendum R2, artifact-judging gates). */
+/** How much artifact JSON the completion-criteria judge receives. */
 const GATE_ARTIFACT_CLIP = 4_000;
 
 // ── Unit outcomes + gate feedback (shared vocabulary) ────────────────────────
@@ -69,14 +72,7 @@ export interface UnitOutcome {
    * structured-output retries). Persisted by `finishUnitAttempt`.
    */
   sessionId?: string;
-  /**
-   * Live-only child-run identity for a child-workflow unit (P3b, spec
-   * docs/plans/specs/p3b-child-executor.md §3.4). Excluded from durable
-   * evidence — the current contract intentionally excludes it from
-   * result_json/evidence, exactly like {@link notices}: `buildEvidence`
-   * projects a closed whitelist that this field is not a member of, so it
-   * cannot leak into a hashed artifact.
-   */
+  /** Live-only child-run identity for a child-workflow unit; never part of evidence (like {@link notices}). */
   childRun?: {
     runId: string;
     ref: string;
@@ -130,11 +126,11 @@ export interface StepWorkUnit {
   isFanOut: boolean;
   /** Journal id root for attempt 0 (`<unitId>` or `<unitId>~l<loop>` in a gate loop). */
   journalBaseId: string;
-  runner: IrRuntimeKind;
+  runner: WorkflowRuntimeKind;
   /** The sole normalized execution target. */
   frozenTarget: FrozenWorkflowTarget;
   /** Frozen named environment bindings materialized only at dispatch. */
-  environment: IrUnitNodeV4["environment"];
+  environment: WorkflowUnitNode["environment"];
   /**
    * `AKM_*` context environment for an exec unit's child (run/step/unit ids,
    * params, fan-out item + index, declared inputs) — the argv-array analogue of
@@ -146,28 +142,20 @@ export interface StepWorkUnit {
   /** Resolved timeout (unit override else engine default); null = no timeout. */
   timeoutMs: number | null;
   schema?: Record<string, unknown>;
-  retry?: IrRetry;
-  onError: IrOnError;
-  isolation?: IrIsolation;
+  retry?: WorkflowRetry;
+  onError: WorkflowOnError;
+  isolation?: WorkflowIsolation;
   /** The unit's rendered instructions, built once by the work-list builder. */
   prompt: string;
   /** Canonical hash of this unit's frozen inputs — the durable-reuse identity. */
   inputHash: string;
-  /**
-   * A child-workflow unit's resolved `with:` bindings (P3b, spec
-   * docs/plans/specs/p3b-child-executor.md §3.3 step 2), set from the SAME
-   * resolution every frozen target's `inputBindings` already runs
-   * ({@link buildStepWorkUnit}'s `taskInputs` — no second binding resolver
-   * exists). Consumed by `child-workflow.ts`'s `driveChildWorkflowUnit` as the
-   * published child run's `params_json`; absent (never `{}`) when the step
-   * binds nothing, exactly like `taskInputs`.
-   */
+  /** A child-workflow unit's resolved `with:` bindings: the child run's params. Absent, never `{}`, when empty. */
   childParams?: Readonly<Record<string, unknown>>;
 }
 
 export interface StepWorkList {
-  template: IrUnitNodeV4;
-  reducer: IrMapReducer;
+  template: WorkflowUnitNode;
+  reducer: WorkflowReducer;
   isFanOut: boolean;
   /** Per-step concurrency (map `concurrency`; 1 for a solo step). */
   concurrency?: number;
@@ -180,31 +168,10 @@ export interface StepWorkList {
 export type ComputeWorkListResult = { ok: true; list: StepWorkList } | { ok: false; error: string };
 
 /**
- * Compute a step's expected work-list PURELY from the frozen plan and its
- * inputs: resolve the fan-out list, derive content-derived unit ids, assemble
- * each unit's prompt (preamble + interpolated instructions + gate feedback +
- * schema directive), and hash the resolved input. Same inputs ⇒ byte-identical
- * ids/hashes/prompts — the invariant resume/replay relies on to recognize the
- * units an earlier run already journaled.
- *
- * Whole-list failures (missing subgraph, unresolvable / non-array `over`,
- * null or duplicate fan-out items) return `{ ok: false }`. Per-unit resolution
- * cannot fail in the shared source IR — prose is never scanned for references,
- * and everything that CAN fail (map.over / route.input / inputs:) resolves
- * once per step, failing the whole list above.
- */
-/**
- * Validate a fan-out item list BEFORE any identity/dispatch work: expansion
- * within the resource limit, no null/undefined items, no canonical duplicates.
- * Returns the failure message, or undefined when the list is dispatchable.
- *
- * Null items: producer garbage — there is nothing to hand the unit as its work
- * item. The pre-unification format rejected them incidentally (substituting
- * `${{ item }}` failed); with items attached as context instead of spliced,
- * nothing later would stop a unit from being dispatched with "Item: null", so
- * the rejection is explicit here. Duplicates: content-derived unit identity
- * makes canonical duplicates collide on id — an authoring error caught
- * deterministically, before dispatch.
+ * Validate a fan-out item list before any identity/dispatch work: no
+ * null/undefined items (there would be nothing to hand the unit) and no
+ * canonical duplicates (content-derived unit ids would collide). Returns the
+ * failure message, or undefined when the list is dispatchable.
  */
 function validateFanOutItems(stepId: string, items: unknown[]): string | undefined {
   const nullIndex = items.findIndex((item) => item === null || item === undefined);
@@ -218,17 +185,9 @@ function validateFanOutItems(stepId: string, items: unknown[]): string | undefin
 }
 
 /**
- * Resolve one whole-value reference, refusing a value a persisted TRUNCATION
- * ENVELOPE stands in for (`clipStepEvidenceForPersistence`, runtime/runs.ts).
- *
- * The first occurrence of a given canonical value keeps the byte-identical id
- * {@link unitIdFor} always produced for it — so a plan with no duplicates (the
- * overwhelming common case) is completely unaffected, and no prior journal
- * entry is ever invalidated by this change. Only the SECOND and later
- * occurrences gain a `#<n>` suffix (`#2`, `#3`, …), computed purely from each
- * item's position in `items` — deterministic across a fresh run and a
- * resumed one, since both call this from the same place in
- * {@link computeStepWorkList} over the same resolved list.
+ * Unit ids for a fan-out list: the first occurrence of a canonical value keeps
+ * {@link unitIdFor}'s id; later occurrences gain `#2`, `#3`, … by position, so
+ * a fresh run and a resume derive the same ids.
  */
 function occurrenceSuffixedUnitIds(nodeId: string, items: readonly unknown[]): string[] {
   const occurrenceByCanonical = new Map<string, number>();
@@ -241,21 +200,9 @@ function occurrenceSuffixedUnitIds(nodeId: string, items: readonly unknown[]): s
   });
 }
 
-/**
- * Resolve one whole-value reference (`inputs[]`, `map.over`, `route.input`).
- *
- * Every step artifact is now persisted whole (issue C), so this is a thin
- * wrapper: source adapters may retain GitHub's whole-value `${{ ... }}`
- * spelling, and this work-list seam unwraps only an exact whole-value
- * wrapper — it never interpolates prose.
- */
+/** Resolve one whole-value reference (`inputs[]`, `map.over`, `route.input`, a binding's `from`). */
 function resolveStepReference(reference: string, scope: ExpressionScope): ResolveReferenceResult {
-  // Source adapters may retain GitHub's whole-value `${{ ... }}` spelling.
-  // The source IR owns GitHub's whole-value spelling; this work-list seam
-  // unwraps only an exact whole-value wrapper and never interpolates prose.
-  const exactWrapper = /^\$\{\{\s*([^{}]+?)\s*\}\}$/.exec(reference);
-  const canonicalReference = exactWrapper?.[1] ?? reference;
-  return resolveReferenceString(canonicalReference, scope);
+  return resolveReferenceString(reference, scope);
 }
 
 /** The whole-step failure shape `computeStepWorkList` returns — one field, so a resolver's own failure IS this shape. */
@@ -264,18 +211,10 @@ type TaskInputBindingsResolution =
   | { ok: false; error: string };
 
 /**
- * Pre-attempt resolution of a task-composing step's frozen `inputBindings`
- * (spec docs/plans/specs/p2b-input-bindings.md §3.6, B-31..B-34): a
- * `{kind:"literal"}` passes through unchanged — its schema was already
- * checked at FREEZE (`freezeTaskInputBindings`,
- * `src/workflows/freeze/task-bindings.ts`), so it is never re-validated. A
- * `{kind:"reference"}` resolves via the SAME {@link resolveStepReference}
- * every other whole-value position uses, then validates the resolved value
- * against the binding's own frozen `schema` — a mismatch (or a reference that
- * fails to resolve at all) fails the WHOLE step here, before
- * `reserveUnitAttempt` is ever called by the native executor. Absent
- * `bindings` (the overwhelmingly common case — no `with:` on this step's
- * target) resolves trivially to `{}` with no scope access at all.
+ * Resolve a composing step's frozen `inputBindings` before any attempt: a
+ * literal passes through (checked at freeze); a reference resolves like every
+ * other whole-value position and is validated against its frozen schema. A
+ * failure fails the whole step. No bindings resolve to `{}`.
  */
 function resolveTaskInputBindings(
   bindings: readonly TaskInputBinding[] | undefined,
@@ -320,7 +259,14 @@ function resolveTaskInputBindings(
   return { ok: true, values };
 }
 
-export function computeStepWorkList(plan: IrStepPlanV4, input: WorkListInput): ComputeWorkListResult {
+/**
+ * Compute a step's work list purely from the frozen plan and its inputs:
+ * resolve the fan-out list, derive content-derived unit ids, assemble each
+ * unit's prompt, and hash its input. Same inputs give byte-identical
+ * ids/hashes/prompts — what resume relies on to recognize journaled units.
+ * Every reference resolves once per step, so failures fail the whole list.
+ */
+export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput): ComputeWorkListResult {
   const root = plan.root;
   // Route-only steps (YAML `route:`) carry no execution subgraph.
   if (!root) {
@@ -331,7 +277,7 @@ export function computeStepWorkList(plan: IrStepPlanV4, input: WorkListInput): C
   }
 
   const template = root.kind === "map" ? root.template : root;
-  const reducer: IrMapReducer = root.kind === "map" ? root.reducer : "collect";
+  const reducer: WorkflowReducer = root.kind === "map" ? root.reducer : "collect";
 
   const scope: ExpressionScope = { params: input.params, stepOutputs: input.stepOutputs };
 
@@ -355,15 +301,7 @@ export function computeStepWorkList(plan: IrStepPlanV4, input: WorkListInput): C
     resolvedInputs.push({ reference, value: resolved.value });
   }
 
-  // P2b Lane A2 — pre-attempt resolution of a task-composing step's frozen
-  // `inputBindings` (spec §3.6, B-31..B-34): a `{kind:"literal"}` passes
-  // through unchanged (its schema was already checked at freeze, B-34); a
-  // `{kind:"reference"}` resolves against this SAME scope, then its resolved
-  // value is validated against the binding's own frozen `schema` — a
-  // mismatch fails the WHOLE step here, before `reserveUnitAttempt` is ever
-  // reached (B-32). This runs for every target kind (command/shell/script);
-  // Lane B's delivery consumes the result via `StepWorkUnitContext.taskInputs`
-  // / `taskInputsJson` below.
+  // A composing step's frozen `inputBindings`, resolved against this scope for every target kind.
   const taskInputsResolution = resolveTaskInputBindings(template.frozenTarget.inputBindings, plan.stepId, scope);
   if (!taskInputsResolution.ok) return taskInputsResolution;
   const hasTaskInputs = Object.keys(taskInputsResolution.values).length > 0;
@@ -405,33 +343,16 @@ export function computeStepWorkList(plan: IrStepPlanV4, input: WorkListInput): C
   const gateLoop = input.gateLoop ?? 1;
   const target = template.frozenTarget;
   const frozenExec = target.kind === "shell" || target.kind === "script" ? target.exec : undefined;
-  const runner: IrRuntimeKind = target.kind === "command" ? target.runner.kind : "exec";
-  // Taken VERBATIM from the frozen plan — there is no engine-side backstop, by
-  // design. The whole timeout decision happens once at freeze time
-  // (`ir/freeze.ts` `effectiveTimeout`: unit `timeout:` → document
-  // `defaults.timeout` → `engines.<name>.timeoutMs` → the engine-kind default,
-  // `DEFAULT_LLM_TIMEOUT_MS` / `DEFAULT_AGENT_TIMEOUT_MS`). A frozen `null`
-  // means genuinely unbounded and is honored as such: it is reached either by an
-  // author writing `timeout: none` — an explicit, documented opt-out that a
-  // silent cap here would break — or by `DEFAULT_AGENT_TIMEOUT_MS`, which is
-  // itself `null` because agent harnesses own their own lifetime. The frozen IR
-  // collapses both to `timeoutMs: null`, so this layer could not tell them apart
-  // even if it wanted to; anything that should bound a unit belongs in
-  // `effectiveTimeout`, not here.
-  // An exec unit's budget is frozen on its exec spec (there is no engine to
-  // inherit one from); `ir/freeze.ts` resolved it once from unit `timeout:` →
-  // `defaults.timeout` → DEFAULT_EXEC_TIMEOUT_MS.
+  const runner: WorkflowRuntimeKind = target.kind === "command" ? target.runner.kind : "exec";
+  // Taken verbatim from the frozen plan, resolved once at freeze (an exec
+  // unit's on its exec spec). A frozen `null` means genuinely unbounded
+  // (`timeout: none`, or an agent harness that owns its own lifetime).
   const timeoutMs =
     target.kind === "command"
       ? (target.runner.timeoutMs ?? null)
       : target.kind === "child-workflow"
-        ? // A child-workflow target carries no exec spec of its own (§3.5).
-          // computeStepWorkList still builds this unit's context
-          // unconditionally — the child executor (child-workflow.ts,
-          // reached from native-executor.ts's dispatch seam, P3b §3.2) is
-          // what actually drives a child-workflow unit, not this line, so
-          // `null` only needs to be a value this layer can carry, never one
-          // an engine acts on.
+        ? // A child-workflow target carries no exec spec of its own.
+          // A child-workflow unit is driven by child-workflow.ts, never by this value.
           null
         : target.exec.timeoutMs;
 
@@ -445,7 +366,7 @@ export function computeStepWorkList(plan: IrStepPlanV4, input: WorkListInput): C
     frozenExec && resolvedInputs.length > 0
       ? (canonicalJson(Object.fromEntries(resolvedInputs.map((entry) => [entry.reference, entry.value]))) ?? "{}")
       : undefined;
-  // P2b Lane A2 (§3.6): the resolved effective task-composition inputs,
+  // P2b Lane A2: the resolved effective task-composition inputs,
   // serialized ONCE here (mirrors execParamsJson/execInputsJson above) —
   // Lane B's delivery (buildUnitPrompt's "## Task inputs" block,
   // buildExecContextEnv's AKM_TASK_INPUTS) reads both back per unit.
@@ -477,13 +398,13 @@ export function computeStepWorkList(plan: IrStepPlanV4, input: WorkListInput): C
 
 /** Everything {@link buildStepWorkUnit} needs, resolved ONCE per step. */
 interface StepWorkUnitContext {
-  plan: IrStepPlanV4;
+  plan: WorkflowPlanStep;
   input: WorkListInput;
-  template: IrUnitNodeV4;
+  template: WorkflowUnitNode;
   isFanOut: boolean;
   gateLoop: number;
   resolvedInputs: Array<{ reference: string; value: unknown }>;
-  runner: IrRuntimeKind;
+  runner: WorkflowRuntimeKind;
   timeoutMs: number | null;
   target: FrozenWorkflowTarget;
   frozenExec?: Extract<FrozenWorkflowTarget, { kind: "shell" | "script" }>["exec"];
@@ -491,32 +412,15 @@ interface StepWorkUnitContext {
   execParamsJson?: string;
   execInputsJson?: string;
   /**
-   * P2b Lane B (delivery) / Lane A2 (pre-attempt resolution, spec
-   * docs/plans/specs/p2b-input-bindings.md §3.6, §4.1/§4.2): the composed
-   * task's EFFECTIVE `inputBindings` — resolved (references against
-   * `input.params`/`input.stepOutputs`) and schema-validated once per step,
-   * exactly like `resolvedInputs` above. `taskInputs` feeds the command-target
-   * prompt's `## Task inputs` block (`buildUnitPrompt`); `taskInputsJson` is
-   * its canonical-JSON serialization, feeding `AKM_TASK_INPUTS`
-   * (`buildExecContextEnv`). Both are absent when the frozen target carries no
-   * `inputBindings` or every resolved value is empty (B-39) — this module's
-   * own delivery consumers (Lane B) never populate these fields; only the
-   * pre-attempt resolution step does.
+   * The composed target's resolved `inputBindings`: `taskInputs` feeds the
+   * prompt's `## Task inputs` block, `taskInputsJson` feeds `AKM_TASK_INPUTS`.
+   * Both absent when nothing is bound.
    */
   taskInputs?: Readonly<Record<string, unknown>>;
   taskInputsJson?: string;
 }
 
-/**
- * Build ONE unit of the step's work list: its journal id, its assembled prompt,
- * its exec context env (exec units only), and its canonical input hash.
- *
- * Extracted from {@link computeStepWorkList} verbatim — same inputs, same
- * bytes. It is a separate named pass only because the step-level resolution
- * (inputs, fan-out items, runner, timeout) and the per-unit instantiation are
- * two different jobs, and keeping them in one function had grown it past the
- * repo's 220-line function bar.
- */
+/** Build one unit of the step's work list: journal id, prompt, exec context env, and input hash. */
 function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unknown, index: number): StepWorkUnit {
   const { plan, input, template, isFanOut, resolvedInputs, target, frozenExec, taskInputs } = ctx;
   // Gate loops (>= 2) journal under `<unitId>~l<loop>` so loop 1's rows are
@@ -524,17 +428,10 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
   // {{UNIT_ID}}) stays the base id.
   const journalBaseId = ctx.gateLoop > 1 ? `${unitId}~l${ctx.gateLoop}` : unitId;
 
-  // Context attachment (workflow-format-unification, spec §4): every unit
-  // receives the run params (already in the preamble), its item + index if
-  // it is a map unit, and the artifacts named by its step's `inputs:`.
-  // Instructions reach the unit byte-exact — never interpolated.
-  //
-  // An EXEC unit gets NO prompt: there is no model to read one, the exec
-  // dispatch branch returns before ever touching `request.prompt`, and the input
-  // hash is built from `template.instructions`, not from the assembled string.
-  // Its context reaches the child through {@link buildExecContextEnv} instead —
-  // attached as environment, never spliced into argv, which is the argv-array
-  // analogue of "data is attached context, not string splices".
+  // Every unit receives the run params, its item + index if it is a map unit,
+  // and its step's `inputs:` artifacts as attached context; instructions are
+  // never interpolated. An exec unit gets no prompt: its context reaches the
+  // child as environment ({@link buildExecContextEnv}), never spliced into argv.
   const prompt = frozenExec
     ? ""
     : buildUnitPrompt({
@@ -544,7 +441,7 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
         params: input.params,
         ...(isFanOut ? { item, itemIndex: index } : {}),
         ...(resolvedInputs.length > 0 ? { inputs: resolvedInputs } : {}),
-        // P2b Lane B (§4.2, B-38/B-39): the composed task's resolved
+        // P2b Lane B: the composed task's resolved
         // `inputBindings`, when non-empty — see StepWorkUnitContext.taskInputs.
         ...(taskInputs && Object.keys(taskInputs).length > 0 ? { taskInputs } : {}),
         ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
@@ -570,7 +467,7 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
     ...(template.retry ? { retry: template.retry } : {}),
     onError: template.onError,
     ...(template.isolation ? { isolation: template.isolation } : {}),
-    // P3b §3.3 step 2: the SAME resolved `with:` bindings `taskInputs` already
+    // the SAME resolved `with:` bindings `taskInputs` already
     // carries, exposed under the name `child-workflow.ts`'s drive contract
     // reads. Absent (never `{}`) when the step binds nothing.
     ...(taskInputs && Object.keys(taskInputs).length > 0 ? { childParams: taskInputs } : {}),
@@ -580,30 +477,11 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
 }
 
 /**
- * The `AKM_*` context environment an exec unit's child receives.
- *
- * An exec unit's argv is FROZEN and never interpolated (the shared source IR has
- * no substitution language at all), so this is how a fan-out item, the run
- * params, and the step's declared `inputs:` artifacts actually reach a command
- * — as attached environment, exactly as they reach an engine unit as attached
- * prompt context. Values are canonical JSON so a command can parse them.
- *
- * These are applied on top of the resolved `env:` bindings in the child, so an
- * engine-authored context variable can never be shadowed by a binding. Params
- * are DECLARED NON-SECRET (`exec/param-secrets.ts` explains why: they are in
- * every unit prompt and in the input hash, so they cannot be redacted);
- * secrets belong in `env:` bindings, which reach the child by name.
- *
- * SIZE is not bounded here, on purpose. A workflow artifact has no bound
- * comparable to an OS environment entry, so `AKM_INPUTS` (and `AKM_PARAMS` /
- * `AKM_ITEM` / `AKM_TASK_INPUTS`) can serialize past what `execve` accepts and
- * make PROCESS CREATION
- * fail with a bare `E2BIG`. The check belongs at the spawn boundary, where the
- * failure can be journaled as a unit outcome with an actionable message naming
- * the variable: `checkExecContextSize` in `exec/exec-unit.ts`, against
- * `execContextLimits()` for the platform the run is actually on (a Linux run is
- * checked against Linux's ceiling, not against the smallest supported one).
- * This function stays PURE and total.
+ * The `AKM_*` context environment an exec unit's child receives: how a fan-out
+ * item, the run params, and the step's `inputs:` artifacts reach a frozen argv
+ * (as canonical JSON). Applied over the resolved `env:` bindings so a binding
+ * cannot shadow it. Size is checked at the spawn boundary
+ * (`checkExecContextSize`, exec-unit.ts), where an E2BIG can be reported by name.
  */
 function buildExecContextEnv(args: {
   ctx: StepWorkUnitContext;
@@ -625,36 +503,17 @@ function buildExecContextEnv(args: {
     env.AKM_ITEM_INDEX = String(index);
   }
   if (ctx.execInputsJson !== undefined) env.AKM_INPUTS = ctx.execInputsJson;
-  // P2b Lane B (spec §4.1, B-35/B-36/B-39, B-N1): ONE variable carrying the
-  // composed task's effective `inputBindings` as canonical JSON — never one
-  // var per input. Absent when the frozen target carries no `inputBindings`
-  // or every resolved value is empty. Sizing is enforced by the SAME generic
-  // `checkExecContextSize` loop as every other `AKM_*` entry (exec-unit.ts) —
-  // no change there, the roster is just longer by one name (B-37).
+  // One variable carrying the resolved `inputBindings` as canonical JSON; absent when nothing is bound.
   if (ctx.taskInputsJson !== undefined) env.AKM_TASK_INPUTS = ctx.taskInputsJson;
   return env;
 }
 
 /**
- * The canonical dispatch-input envelope: every field here is an input that
- * changes what the backend is actually asked to do, so a completed unit is
- * reused ONLY when all of them match. `env` carries names only, never
- * resolved secret values. `retry`/`onError` are deliberately excluded — they
- * govern failed-unit re-dispatch, not a completed unit's inputs/output.
- * `gateFeedback` is included conditionally (a gate retry is a materially
- * different ask). `taskInputs` is likewise included conditionally (R-R15,
- * `hashVersion` 7): a reference binding's RESOLVED value reaches the unit's
- * prompt / `AKM_TASK_INPUTS` / `childParams`, so a changed upstream value is a
- * materially different ask even though the binding's authored shape inside
- * `frozenTarget` is unchanged — hashing it makes a resume whose journaled
- * upstream output was altered fail loudly as replay divergence instead of
- * silently reusing the stale row. The key is absent for a unit whose target
- * carries no `inputBindings`, so a binding-free unit's preimage keeps the same
- * shape it had (only the version fields moved 6 → 7). This is the ONE place a
- * unit's inputHash is computed.
- *
- * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md for
- * the full field-by-field inclusion/exclusion rationale (reviewer finding #1).
+ * The unit's `input_hash`: every input that changes what the backend is asked
+ * to do (names, never secret values). Informational — resume reuses a
+ * completed row by unit id. `gateFeedback`/`taskInputs` are included only when
+ * present so the loop-1, binding-free preimage keeps its `hashVersion` 7 shape.
+ * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md.
  */
 function computeUnitInputHash(ctx: StepWorkUnitContext, item: unknown): string {
   return createHash("sha256")
@@ -693,7 +552,7 @@ export interface BuildUnitPromptInput {
   /** Resolved artifacts named by the step's `inputs:`, in declaration order. */
   inputs?: Array<{ reference: string; value: unknown }>;
   /**
-   * P2b Lane B (spec §4.2, B-38/B-39, B-N2): the composed task's effective
+   * P2b Lane B: the composed task's effective
    * `inputBindings`, resolved. Renders as the `## Task inputs` fenced JSON
    * block, appended after `inputs` and before `gateFeedback`. Absent (or
    * empty) renders nothing — byte-identical to today's prompt shape.
@@ -706,13 +565,10 @@ export interface BuildUnitPromptInput {
 }
 
 /**
- * Assemble the final prompt: engine preamble (run params + item/index +
- * declared-input artifacts, all as structured JSON context) + the step's
- * BYTE-EXACT prose instructions (+ gate feedback on loop re-executions, +
- * schema directive). Instructions are NEVER interpolated (workflow-format-
- * unification, spec §2.3) — data reaches the unit as attached context, not
- * string splices; only the ENGINE's own preamble placeholders are substituted
- * here.
+ * Assemble the final prompt: the engine preamble (params, item/index, input
+ * artifacts as JSON context) + the step's byte-exact instructions (+ gate
+ * feedback on a loop, + schema directive). Only the preamble's own
+ * placeholders are substituted.
  */
 export function buildUnitPrompt(input: BuildUnitPromptInput): string {
   const { runId, stepId, unitId, params, itemIndex, item, inputs, taskInputs, gateFeedback, schema, instructions } =
@@ -739,12 +595,7 @@ export function buildUnitPrompt(input: BuildUnitPromptInput): string {
       ? `\n\n## Declared inputs\n${inputs.map((i) => `### ${i.reference}\n${safeJson(i.value)}`).join("\n\n")}`
       : "";
 
-  // P2b Lane B (spec §4.2, B-38/B-39, B-N2): the composed task's resolved
-  // `inputBindings`, as a structured fenced JSON block — the same "attached
-  // context, never a splice" mechanism as itemBlock/inputsBlock above.
-  // `canonicalInputJson` (sorted keys) matches the AKM_TASK_INPUTS env var's
-  // own serialization, so the effective-inputs value reads identically on
-  // every delivery surface. Absent (or empty) appends nothing (B-39).
+  // The resolved `inputBindings` as a fenced JSON block, serialized exactly like AKM_TASK_INPUTS.
   const taskInputsBlock =
     taskInputs && Object.keys(taskInputs).length > 0
       ? `\n\n## Task inputs\nThe composed task's declared inputs resolved to:\n\`\`\`json\n${canonicalInputJson(taskInputs)}\n\`\`\``
@@ -808,26 +659,18 @@ export function stepOutputsFromEvidence(
 }
 
 /** The step's dispatch template — the map template for a fan-out, else the root unit. */
-function stepTemplate(stepPlan: IrStepPlanV4): IrUnitNodeV4 | undefined {
+function stepTemplate(stepPlan: WorkflowPlanStep): WorkflowUnitNode | undefined {
   const root = stepPlan.root;
   if (!root) return undefined;
   return root.kind === "map" ? root.template : root;
 }
 
 /**
- * The step ids that ANOTHER step of the frozen plan can still read: the
- * producers named by an `inputs[]` entry, a `map.over`, or a `route.input`.
- * Those three fields are the WHOLE reference surface — instructions are never
- * scanned (workflow-format-unification, spec §2.3) — so a step outside this set
- * has no in-plan consumer and nothing needs to hold its artifact in memory once
- * it is journaled.
- *
- * Derived from the plan alone: O(plan), independent of run state, and stable
- * across the retry and gate loops (a retry re-opens one failed step, and a
- * looping step has not advanced, so neither can turn an unreferenced producer
- * into a referenced one mid-invocation).
+ * The step ids another step can still read (named by `inputs[]`, `map.over`,
+ * or `route.input` — the whole reference surface). A step outside this set
+ * need not keep its artifact in memory once journaled. Derived from the plan alone.
  */
-export function referencedStepIds(plan: WorkflowPlanGraphV4): Set<string> {
+export function referencedStepIds(plan: WorkflowPlan): Set<string> {
   const referenced = new Set<string>();
   const note = (reference: string): void => {
     const parsed = parseReference(reference);
@@ -842,12 +685,12 @@ export function referencedStepIds(plan: WorkflowPlanGraphV4): Set<string> {
 }
 
 /**
- * Typed artifacts (addendum, R2): validate the promoted step artifact against
- * `IrStepPlan.outputSchema`. Returns the step-failure summary (validation
+ * Typed artifacts: validate the promoted step artifact against
+ * `WorkflowPlanStep.outputSchema`. Returns the step-failure summary (validation
  * errors included) on mismatch, undefined when valid or when no schema is
  * declared.
  */
-export function validateStepArtifact(plan: IrStepPlanV4, evidence: Record<string, unknown>): string | undefined {
+export function validateStepArtifact(plan: WorkflowPlanStep, evidence: Record<string, unknown>): string | undefined {
   if (!plan.outputSchema) return undefined;
   const errors = validateJsonSchemaSubset(projectStepOutput(evidence), plan.outputSchema);
   if (errors.length === 0) return undefined;
@@ -858,16 +701,11 @@ export function validateStepArtifact(plan: IrStepPlanV4, evidence: Record<string
 }
 
 /**
- * Warn-only check of each successful unit's own promoted value against its
- * template's declared `schema` (`unit.output`) — the one field a harness that
- * cannot request structured output drops during lowering (`untranslated-field`,
- * field `outputSchema`), after which nothing else ever compares the returned
- * text to it. Unlike {@link validateStepArtifact} this never fails the step:
- * a harness that DID honor the schema already returned a compliant `result`
- * (this re-check then finds nothing), and one that could not is exactly the
- * case this exists to surface — the run continues either way.
+ * Warn-only check of each successful unit's value against its declared
+ * `unit.output` schema — the field a harness without structured output drops
+ * during lowering. Never fails the step (unlike {@link validateStepArtifact}).
  */
-export function unitSchemaWarning(plan: IrStepPlanV4, units: readonly UnitOutcome[]): string | undefined {
+export function unitSchemaWarning(plan: WorkflowPlanStep, units: readonly UnitOutcome[]): string | undefined {
   const schema = stepTemplate(plan)?.schema;
   if (!schema) return undefined;
   const mismatches: string[] = [];
@@ -913,18 +751,14 @@ function unitOutputValue(unit: UnitOutcome): unknown {
   return unit.text ?? null;
 }
 
-export function buildEvidence(units: UnitOutcome[], reducer: IrMapReducer, isFanOut: boolean): Record<string, unknown> {
-  // Per-unit evidence is the DURABLE projection of the unit graph — a fresh run
-  // and a resumed run of the same plan must agree on it byte-for-byte. It
-  // therefore carries ONLY fields that can be reproduced from the journal alone:
-  //   - a SUCCESS keeps its promoted contribution (structured `result` or clipped
-  //     `text`) — the reuse path rehydrates exactly these from the unit row;
-  //   - a FAILURE keeps only its `failureReason` (the durable, journaled failure
-  //     vocabulary). The in-memory dispatch diagnostic (`error`) and any residual
-  //     `text` on a failed unit are NOT persisted here: they do not survive a
-  //     restart, so persisting them on the live-dispatch path alone would make
-  //     the durable graph depend on WHEN it was built. The full raw text/reason
-  //     still lives on the unit row for diagnostics; this is the shared graph.
+export function buildEvidence(
+  units: UnitOutcome[],
+  reducer: WorkflowReducer,
+  isFanOut: boolean,
+): Record<string, unknown> {
+  // Per-unit evidence carries only what the journal can reproduce, so a fresh
+  // run and a resume agree byte-for-byte: a success keeps its `result`/clipped
+  // `text`, a failure only its `failureReason` (diagnostics stay on the unit row).
   const collected = units.map((u) =>
     u.ok
       ? {
@@ -967,13 +801,8 @@ export function buildEvidence(units: UnitOutcome[], reducer: IrMapReducer, isFan
     } else {
       const winner = ranked[0]!.value;
       evidence.vote = { winner, votes: ranked[0]!.count, total: units.length };
-      // An empty free-text unit normalizes to absent text, so its vote value is
-      // `undefined`. Assigning that to `evidence.output` made the key vanish
-      // under JSON serialization: a LIVE run then saw `output` absent (and fell
-      // back to the whole evidence envelope), while a RESUMED run rehydrated the
-      // same step from the journal and produced a different artifact — with the
-      // raw envelope exposed as `steps.<id>.output`. Normalize to an explicit
-      // empty string so both paths promote the same value.
+      // An empty free-text winner is `undefined`; normalize to "" so a live run
+      // and a resume promote the same `output` key.
       evidence.output = winner === undefined ? "" : winner;
     }
   }
@@ -982,14 +811,9 @@ export function buildEvidence(units: UnitOutcome[], reducer: IrMapReducer, isFan
 }
 
 /**
- * The reduced outcome of a step's executed units — the shared post-dispatch
- * decision. `executeStepPlan` feeds its {@link UnitOutcome}[] through
- * {@link reduceStepOutcomes} to produce this, whether the outcomes came from a
- * live dispatch or were rehydrated from journaled rows on resume, so the same
- * frozen plan always promotes the SAME artifact, applies the SAME `on_error`
- * policy, and validates against the SAME output schema. The
- * dispatch-only accounting (`unitsDispatched` / `tokensUsed`) lives on the
- * executor's richer result, not here.
+ * The reduced outcome of a step's units — live or rehydrated from the journal —
+ * so the same frozen plan always promotes the same artifact under the same
+ * `on_error` policy and output schema.
  */
 export interface ExecutedStepOutcome {
   ok: boolean;
@@ -999,14 +823,7 @@ export interface ExecutedStepOutcome {
   /** Set when `ok` is false BECAUSE the promoted artifact failed the step's
    * declared output schema (the one failure a gate loop may re-run). */
   artifactSchemaFailure?: true;
-  /**
-   * Set when a unit failed because the child workflow it composes is
-   * `blocked` (P3b, spec docs/plans/specs/p3b-child-executor.md §3.4).
-   * Carries what `blockStepForChildWorkflow` needs to build the resume
-   * notes; `finalizeExecutedStep`'s `!result.ok` arm checks this FIRST,
-   * before the `artifactSchemaFailure` retry branch — a gate is a gate for a
-   * child workflow too, so this is never fed into the bounded gate loop.
-   */
+  /** Set when a unit's composed child workflow is `blocked`; the step blocks too, never gate-looping. */
   childBlocked?: {
     childRunId: string;
     childRef: string;
@@ -1015,19 +832,9 @@ export interface ExecutedStepOutcome {
 }
 
 /**
- * The FIRST failed unit's diagnostic, appended to the step summary.
- *
- * A failure reason alone is not a diagnosis. `non_zero_exit` says a command
- * failed; for an exec unit the reason it failed is on stderr, and the summary is
- * what `akm workflow run` prints and what the failed step row keeps as its
- * notes. Bounded on both axes: ONE unit (a 10 000-wide fan-out must not turn its
- * summary into a log) clipped to {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP} — the same
- * bound the journal and `status --units` use.
- *
- * Reproducible on both surfaces: a live dispatch carries the diagnostic as
- * `error`; a unit rehydrated from the journal carries it as `text` (the column
- * `journaledUnitResultJson` wrote it to), so the fallback below composes the
- * SAME summary from either.
+ * The first failed unit's diagnostic (e.g. an exec unit's stderr), clipped to
+ * {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP}, for the step summary. A live outcome
+ * carries it as `error`, a rehydrated one as `text`; both give the same summary.
  */
 function firstFailureDiagnostic(failed: UnitOutcome[]): string {
   const first = failed.find((u) => (u.error ?? u.text)?.trim());
@@ -1037,19 +844,15 @@ function firstFailureDiagnostic(failed: UnitOutcome[]): string {
 }
 
 /**
- * Reduce a step's terminal unit outcomes into the promoted artifact + step
- * verdict — the shared semantics between native dispatch and the report path.
- * Applies the `on_error` policy (`fail` vs `continue`), the reducer (via
- * {@link buildEvidence}), the vote-tie failure, and the typed-artifact schema
- * validation (fail-fast, errors in the summary, `artifactSchemaFailure` marker).
- * Callers own dispatch-specific concerns (replay-divergence, budget) BEFORE
- * calling this; those never occur on the report path (units are journaled).
+ * Reduce a step's terminal unit outcomes into the promoted artifact and step
+ * verdict: the `on_error` policy, the reducer, the vote-tie failure, and the
+ * typed-artifact schema check (`artifactSchemaFailure` marks a retryable one).
  */
 export function reduceStepOutcomes(
-  plan: IrStepPlanV4,
-  reducer: IrMapReducer,
+  plan: WorkflowPlanStep,
+  reducer: WorkflowReducer,
   isFanOut: boolean,
-  onError: IrOnError,
+  onError: WorkflowOnError,
   units: UnitOutcome[],
 ): ExecutedStepOutcome {
   const failed = units.filter((u) => !u.ok);
@@ -1083,12 +886,8 @@ export function reduceStepOutcomes(
     if (schemaWarning !== undefined) summary += ` ${schemaWarning}`;
   }
 
-  // P3b §3.4: a composed child workflow that blocked is carried on the
-  // failed unit's LIVE-ONLY `childRun` field (child-workflow.ts's
-  // driveChildWorkflowUnit). Surfaced here, unconditionally on the unit
-  // list, so `finalizeExecutedStep` can check it before deciding whether
-  // this step's failure is retryable — an `onError: "continue"` step that
-  // tolerates the failure (`ok` stays true) never reaches that check at all.
+  // A blocked child workflow (the failed unit's live-only `childRun`) is
+  // surfaced so `finalizeExecutedStep` blocks the step instead of retrying.
   const blockedChildUnit = failed.find((u) => u.failureReason === "child_workflow_blocked" && u.childRun !== undefined);
   const childBlocked = blockedChildUnit?.childRun
     ? {
@@ -1109,20 +908,11 @@ export function reduceStepOutcomes(
 }
 
 /**
- * The reduced outcome of a step whose fan-out list resolved to EMPTY (`over: []`
- * or a producer that yielded `[]`): no units are dispatched, so the promoted
- * artifact is the degenerate empty value — the empty array for a `collect`
- * reducer, `null` for `vote` (references into a missing winner fail loudly at
- * resolution rather than silently reading the envelope). Even the degenerate
- * artifact must honor the step's declared `outputSchema` before it can complete.
- *
- * Used by native dispatch (`executeStepPlan`'s `items.length === 0` branch): a
- * zero-unit step can never be advanced by a unit completion, so it is promoted
- * here instead. Deliberately does NOT run the reducer/vote-tie logic: an empty
- * step has no successful results to count, and a vote-tie "failure" would
- * diverge from the engine's long-standing empty-list semantics.
+ * The outcome of a step whose fan-out list is empty: no units dispatch and the
+ * artifact is `[]` (collect) or `null` (vote), still checked against the step's
+ * `outputSchema`. The reducer/vote-tie logic does not run.
  */
-export function reduceEmptyStep(plan: IrStepPlanV4, reducer: IrMapReducer): ExecutedStepOutcome {
+export function reduceEmptyStep(plan: WorkflowPlanStep, reducer: WorkflowReducer): ExecutedStepOutcome {
   const evidence: Record<string, unknown> = { units: [], itemCount: 0, output: reducer === "collect" ? [] : null };
   const schemaFailure = validateStepArtifact(plan, evidence);
   return {
@@ -1135,16 +925,9 @@ export function reduceEmptyStep(plan: IrStepPlanV4, reducer: IrMapReducer): Exec
 }
 
 /**
- * Rehydrate a journaled unit row into a {@link UnitOutcome}. The executor's
- * durable-row reuse (`native-executor.ts`) calls it for completed rows; the
- * failed-row branch keeps the mapping TOTAL, so any reduction driven off the
- * journal yields the same outcome the live dispatch produced. A completed row's
- * text unit journals its output as a JSON string; a schema unit journals the
- * validated structure. A failed row carries its `failure_reason` plus whatever
- * `journaledUnitResultJson` (native-executor.ts) wrote to `result_json` —
- * surfaced as `text`, its historical meaning. {@link firstFailureDiagnostic} is
- * the one consumer that wants it as a diagnostic and falls back to `text`, so
- * the step summary stays the same on both surfaces.
+ * Rehydrate a journaled unit row into the {@link UnitOutcome} its live dispatch
+ * produced: a completed row's JSON text or structured result, or a failed row's
+ * `failure_reason` with its journaled diagnostic as `text`.
  */
 export function unitOutcomeFromRow(unitId: string, row: WorkflowRunUnitRow, hasSchema: boolean): UnitOutcome {
   let parsed: unknown;
@@ -1182,16 +965,12 @@ export { canonicalJson };
 
 // ── Gate-feedback recovery (PURE) ────────────────────────────────────────────
 //
-// A gate rejection is journaled as `<stepId>.gate:l<loop>` with result_json
-// `{ complete: false, missing, feedback }` (see journalGateEvaluationFinish).
-// The feedback stored there is BYTE-IDENTICAL to what the engine threads into
-// the next loop's prompts — both are the same `rejection.feedback`/`.missing`.
-// A resume recovers it from the journal so its loop-N work-list (and therefore
-// every unit id and input hash in it) matches the one the original run built.
-// `native-executor.test.ts` asserts the round-trip identity.
+// A gate rejection journals `{ complete: false, missing, feedback }` under
+// `<stepId>.gate:l<loop>`, byte-identical to what the next loop's prompts
+// carry, so a resume rebuilds the same loop-N work list.
 
-// GATE_EVALUATION_PHASE moved to ../runtime/unit-phases.ts (leaf) so
-// unit-checkin can key on it without closing the exec ↔ runtime cycle.
+/** `phase` marker on gate-evaluation unit rows (dispatch rows journal `phase: null`). */
+const GATE_EVALUATION_PHASE = "gate";
 
 /** The unit id of a step's gate-evaluation row for a given 1-based loop. */
 export function gateUnitId(stepId: string, loop: number): string {
@@ -1199,42 +978,20 @@ export function gateUnitId(stepId: string, loop: number): string {
 }
 
 /**
- * How many times a step's subgraph may run under its completion gate — the
- * bound the engine loop walks and the one `loopsRemaining` is derived from.
- *
- * A gate loop only earns its re-dispatch when the subgraph can ANSWER the
- * judge: an engine unit reads the rejection feedback in its prompt and produces
- * different work. An `exec` unit cannot. Its argv is frozen and never
- * interpolated, {@link buildExecContextEnv} exposes no feedback variable, and
- * the default dispatcher drops feedback for exec — so a second loop re-runs the
- * BYTE-IDENTICAL command for a verdict that cannot change, which for a deploy /
- * publish / migrate command means performing the side effect twice. The same
- * reasoning already pins exec structured output to a single attempt and makes
- * `exec_capture_incomplete` non-retryable (`native-executor.ts`).
- *
- * So an exec step's gate still EVALUATES — the verdict can still fail the step
- * — but it never loops: a rejection lands on the gate-exhausted terminal
- * instead of re-dispatching. An authored `gate.max_loops` on an engine step is
- * untouched.
+ * How many times a step's subgraph may run under its gate. An exec step never
+ * loops: its frozen argv cannot read the judge's feedback, so a second loop
+ * would only repeat the command's side effects. Its gate still evaluates.
  */
-export function effectiveGateMaxLoops(stepPlan: IrStepPlanV4): number {
+export function effectiveGateMaxLoops(stepPlan: WorkflowPlanStep): number {
   const declared = Math.max(1, stepPlan.gate.maxLoops ?? 1);
   const target = stepTemplate(stepPlan)?.frozenTarget;
   return target && target.kind !== "command" ? 1 : declared;
 }
 
 /**
- * The gate loop the engine is about to (re-)run for an ACTIVE step, derived
- * purely from the journal: one past the highest journaled loop that REJECTED
- * (`complete: false`). No rejected gate rows ⇒ loop 1 (the first execution).
- * A passed gate would have advanced the spine, so an active step never has a
- * `complete: true` row as its latest gate evaluation.
- *
- * Reviewer #17: a gate row that EXISTS but cannot be parsed (or carries an
- * invalid verdict shape) is CORRUPTION — {@link parseGateVerdict} throws loudly
- * rather than letting `gateRowRejected` swallow the parse error, which would
- * silently drop the loop back to 1 and re-dispatch work whose gate outcome is
- * unknown.
+ * The gate loop the engine is about to run for an active step: one past the
+ * highest journaled rejected loop (loop 1 when none). An unparseable gate row
+ * throws ({@link parseGateVerdict}) rather than silently restarting at loop 1.
  */
 export function activeGateLoop(rows: WorkflowRunUnitRow[], stepId: string): number {
   let maxRejectedLoop = 0;
@@ -1249,14 +1006,8 @@ export function activeGateLoop(rows: WorkflowRunUnitRow[], stepId: string): numb
 }
 
 /**
- * Recover the gate feedback the engine threads into `loop`'s unit prompts: the
- * `{ feedback, missing }` journaled by the previous loop's rejection
- * (`<stepId>.gate:l<loop-1>`). Loop 1 (or a missing/passed/errored previous row)
- * has no feedback. Pure — the journal rows are passed in.
- *
- * Reviewer #17: a PRESENT previous gate row that cannot be parsed fails LOUDLY
- * (via {@link parseGateVerdict}) instead of returning undefined — a corrupt row
- * must not make an in-loop step look like loop 1 with no recovered feedback.
+ * The `{ feedback, missing }` the previous loop's rejection journaled, which
+ * `loop`'s prompts carry; none for loop 1. An unparseable previous row throws.
  */
 export function recoverGateFeedback(
   rows: WorkflowRunUnitRow[],
@@ -1287,16 +1038,9 @@ type GateVerdict =
   | { kind: "empty" };
 
 /**
- * Classify a gate-evaluation row's journaled verdict, failing LOUDLY on a
- * corrupt one (reviewer #17). A NULL `result_json` is the LEGITIMATE
- * completion-error / in-flight shape (`journalGateEvaluationFinish` writes null
- * if completion itself throws after judge invocation, and a `running` row has no
- * verdict yet) and classifies as `empty`. But a PRESENT `result_json` that does
- * not parse as JSON, or parses to
- * anything other than an object with a boolean `complete` field, is corruption —
- * a truncated or hand-edited row — and MUST NOT be silently treated as absent
- * (which would reset an active step's gate loop to 1 and re-dispatch work whose
- * completion outcome is unknown). We refuse to guess.
+ * Classify a gate row's journaled verdict. A NULL `result_json` (in flight, or
+ * a completion error) is `empty`; a present value that is not `{ complete:
+ * boolean }` throws rather than resetting the gate loop to 1.
  */
 function parseGateVerdict(row: WorkflowRunUnitRow): GateVerdict {
   if (row.result_json === null) return { kind: "empty" };
@@ -1345,9 +1089,8 @@ export interface GateUnitRef {
   loop: number;
   engine: string;
   model: string | null;
-  runner: IrRuntimeKind;
+  runner: WorkflowRuntimeKind;
   inputHash: string;
-  claimHolder?: string;
   durableAttempt?: WorkflowRunUnitAttemptRowV4;
   tokens?: number;
 }
@@ -1355,8 +1098,6 @@ export interface GateUnitRef {
 /** Insert the gate-evaluation unit row (running) just before the judge runs. */
 export async function journalGateEvaluationStart(gate: GateUnitRef): Promise<GateUnitRef> {
   const unitId = gateUnitId(gate.stepId, gate.loop);
-  const now = new Date().toISOString();
-  const claimHolder = gate.claimHolder ?? `direct:${randomUUID()}`;
   const reserved = await enqueueUnitWrite(() =>
     withWorkflowRunsRepo((repo) =>
       repo.reserveUnitAttempt({
@@ -1369,28 +1110,18 @@ export async function journalGateEvaluationStart(gate: GateUnitRef): Promise<Gat
         engine: gate.engine,
         model: gate.model,
         inputHash: gate.inputHash,
-        claimHolder,
-        claimExpiresAt: new Date(Date.parse(now) + 90_000).toISOString(),
-        now,
-        leaseMode: gate.claimHolder === undefined ? "direct" : "engine",
+        now: new Date().toISOString(),
       }),
     ),
   );
-  if (reserved.kind === "busy") {
-    throw new UsageError(`Gate ${unitId} has a live durable attempt held by another engine.`);
-  }
-  return { ...gate, claimHolder, durableAttempt: reserved.attempt };
+  return { ...gate, durableAttempt: reserved.attempt };
 }
 
 /**
- * Finish the gate-evaluation unit row with the verdict as observed from the
- * completion outcome: a rejection journals `{ complete: false, missing,
- * feedback }`; a pass journals `{ complete: true, missing: [] }`. An ERRORED
- * evaluation (thrown judge, malformed verdict, completion failure after the
- * judge ran) journals a failed row with NO verdict (`result_json` NULL) —
- * `errored` takes precedence over any synthesized fail-closed rejection, so
- * `activeGateLoop`/`recoverGateFeedback` never mistake a judge outage for an
- * honest rejection and burn a gate loop on resume.
+ * Finish the gate-evaluation row: a rejection journals `{ complete: false,
+ * missing, feedback }`, a pass `{ complete: true, missing: [] }`. An errored
+ * evaluation journals a failed row with no verdict, so a judge outage never
+ * burns a gate loop on resume.
  */
 export async function journalGateEvaluationFinish(
   gate: GateUnitRef,
@@ -1413,7 +1144,6 @@ export async function journalGateEvaluationFinish(
         unitId,
         attempt: durableAttempt.attempt,
         dispatchId: durableAttempt.dispatch_id,
-        claimHolder: durableAttempt.claim_holder,
         status,
         resultJson: verdict ? JSON.stringify(verdict) : null,
         tokens: gate.tokens ?? null,
@@ -1423,7 +1153,7 @@ export async function journalGateEvaluationFinish(
     }),
   );
   if (!finished) {
-    throw new UsageError(`Gate ${unitId} no longer owns its durable attempt; refusing a late terminal write.`);
+    throw new UsageError(`Gate ${unitId} was already finished; refusing a duplicate terminal write.`);
   }
 }
 
@@ -1440,7 +1170,7 @@ export type RouteSkipInfo = { router: string; selected: string | null };
  * ambient key search. Only primitive values route; the comparison is exact
  * string equality against the declared `when:` matches.
  */
-export function evaluateRoute(route: IrRouteSpec, scope: ExpressionScope): RouteDecision {
+export function evaluateRoute(route: WorkflowRoute, scope: ExpressionScope): RouteDecision {
   const resolved = resolveStepReference(route.input, scope);
   if (!resolved.ok) {
     return { ok: false, error: `route input ${route.input} failed to resolve: ${resolved.error.message}` };
@@ -1472,7 +1202,7 @@ export function evaluateRoute(route: IrRouteSpec, scope: ExpressionScope): Route
  * already claimed it. Shared by the live skip path and the journal replay.
  */
 export function cascadeSkippedRouter(
-  route: IrRouteSpec,
+  route: WorkflowRoute,
   routerId: string,
   routeUnselected: Map<string, RouteSkipInfo>,
 ): void {
@@ -1491,7 +1221,7 @@ export function cascadeSkippedRouter(
  * evaluation path and the journal replay.
  */
 export function applyRouteDecision(
-  route: IrRouteSpec,
+  route: WorkflowRoute,
   routerId: string,
   selected: string,
   routeSelected: Set<string>,
@@ -1534,20 +1264,12 @@ function journaledRouteSelection(evidence: Record<string, unknown> | undefined):
 }
 
 /** The set of steps a route may legally select: its `when` branches + default. */
-function routeTargets(route: IrRouteSpec): Set<string> {
+function routeTargets(route: WorkflowRoute): Set<string> {
   return new Set([...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])]);
 }
 
-/**
- * Reviewer #7: a journaled route decision must name a target the route actually
- * DECLARES (`when` branch or `default`). Corrupted or hand-edited evidence can
- * otherwise mark a non-existent step as `selected` — which unselects and skips
- * every REAL branch target, silently steering the run down a phantom branch.
- * `evaluateRoute` can only ever produce a declared target, so a stored value
- * outside that set is provably tampered evidence: fail loudly rather than seed a
- * bogus skip set.
- */
-function assertRouteTargetDeclared(route: IrRouteSpec, stepId: string, selected: string, runId: string): void {
+/** A journaled route decision must name a target the route declares; anything else fails loudly. */
+function assertRouteTargetDeclared(route: WorkflowRoute, stepId: string, selected: string, runId: string): void {
   const targets = routeTargets(route);
   if (!targets.has(selected)) {
     throw new UsageError(
@@ -1567,7 +1289,7 @@ function assertRouteTargetDeclared(route: IrRouteSpec, stepId: string, selected:
  * targets into the skip set exactly as on the live path.
  */
 export function seedJournaledRouteDecisions(
-  plan: WorkflowPlanGraphV4,
+  plan: WorkflowPlan,
   state: WorkflowNextResult,
   routeSelected: Set<string>,
   routeUnselected: Map<string, RouteSkipInfo>,
@@ -1587,7 +1309,7 @@ export function seedJournaledRouteDecisions(
 
     let selected = journaledRouteSelection(stepState.evidence);
     if (selected !== undefined) {
-      // Reviewer #7: a stored decision must name a declared target — a bogus one
+      // a stored decision must name a declared target — a bogus one
       // (tampered/hand-edited evidence) fails loudly rather than seeding a skip
       // set that buries the real branches.
       assertRouteTargetDeclared(stepPlan.route, stepPlan.stepId, selected, state.run.id);
@@ -1613,19 +1335,15 @@ export function seedJournaledRouteDecisions(
 
 // ── Step finalization (IO) — the shared completion path ──────────────────────
 //
-// ONE implementation of "given a step's executed outcome at a gate loop,
-// evaluate the route, judge the completion gate, and advance (or not) the
-// spine." Every step completion goes through it — first pass or resume — so
-// route evaluation, artifact-judged gates, gate-row journaling, and the
-// bounded-loop rejection contract have exactly one definition. The
-// caller owns the SPINE-WALKING glue (which loop to run next, skip cascades,
-// lease renewal); this function performs exactly ONE completion attempt.
+// The one implementation of "evaluate the route, judge the gate, and advance
+// (or not) the spine" for an executed step, first pass or resume. The caller
+// walks the spine; this performs exactly one completion attempt.
 
 export interface FinalizeStepInput {
   runId: string;
   workflowRef: string;
   stepId: string;
-  stepPlan: IrStepPlanV4;
+  stepPlan: WorkflowPlanStep;
   /** The step's declared completion criteria (empty ⇒ no artifact-judging gate). */
   completionCriteria: string[];
   /** 1-based gate-loop attempt being completed. */
@@ -1647,18 +1365,6 @@ export interface FinalizeStepInput {
   summaryJudge: SummaryJudge | null | undefined;
   /** Cooperative run cancellation checked before completion is committed. */
   signal?: AbortSignal;
-  /**
-   * The EFFECTIVE dispatch signal the judge call runs under — the engine's
-   * heartbeat-chained controller, which aborts on a LOST LEASE as well as on a
-   * caller abort. It must reach the completion path, because the interruption
-   * guard there is what tells an aborted judge apart from a failed one: seeing
-   * only {@link signal}, a lost-lease abort mid-judge reads as a thrown judge
-   * call and durably blocks the step blaming verifier infrastructure, moments
-   * before the real lost-lease error is raised. Defaults to {@link signal}.
-   */
-  dispatchSignal?: AbortSignal;
-  /** Engine run-lease holder (engine path only); absent on the manual/report path. */
-  leaseHolder?: string;
 }
 
 export type FinalizeStepResult =
@@ -1704,16 +1410,8 @@ export interface JudgeFailureBlock {
   stepId: string;
   /** What went wrong, spliced into the shared notes. */
   cause: string;
-  /**
-   * The executed step's evidence, when the judge failed AFTER its units ran.
-   * Persisting it is what makes the documented recovery real: `akm workflow
-   * resume` re-evaluates the gate against these results instead of
-   * re-dispatching them. The PRE-DISPATCH failure (an unresolvable frozen
-   * judge, caught before a single unit runs) has no results to preserve and
-   * omits it — the difference is what the step produced, not a policy split.
-   */
+  /** The step's evidence when the judge failed after its units ran, so a resume re-judges instead of re-dispatching. */
   evidence?: Record<string, unknown>;
-  leaseHolder?: string;
 }
 
 /**
@@ -1731,7 +1429,6 @@ export async function blockStepForJudgeFailure(input: JudgeFailureBlock): Promis
     status: "blocked",
     notes,
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return notes;
 }
@@ -1743,20 +1440,11 @@ async function blockFinalizedStep(input: FinalizeStepInput, cause: string): Prom
     stepId: input.stepId,
     cause,
     evidence: input.result.evidence,
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return { kind: "judge-failed", summary };
 }
 
-/**
- * §3.4's exact `blockStepForChildWorkflow` notes — the ONE place the
- * blocked-child resume sequence is worded, mirroring {@link judgeFailureNotes}.
- * Two properties this wording pins (each its own test): the CHILD is resumed
- * FIRST, and the PARENT's own re-drive is what advances it (the child drive
- * never calls `resumeWorkflowRun` itself, row A-22); the notes name the child
- * run id and both commands verbatim, so the text renderer needs no change
- * (B-N15 — Lane A touches no output module).
- */
+/** The blocked-child resume notes: resume the child first, then re-drive the parent. */
 function childWorkflowBlockedNotes(
   runId: string,
   stepId: string,
@@ -1782,17 +1470,9 @@ export interface ChildWorkflowBlock {
   childStepId: string | null;
   /** The executed step's evidence (the composing unit's outcome, including the child run identity). */
   evidence?: Record<string, unknown>;
-  leaseHolder?: string;
 }
 
-/**
- * Complete a step `blocked` because the child workflow it composes is
- * blocked, and return the notes written (P3b §3.4). Sits beside
- * {@link blockStepForJudgeFailure} — the SAME shape of "infrastructure-like"
- * block: the step is completed `blocked`, and `akm workflow resume` is what
- * clears it (of the CHILD first, then the parent) rather than an automatic
- * in-step re-dispatch.
- */
+/** Complete a step `blocked` because its child workflow is blocked; `akm workflow resume` clears it. */
 export async function blockStepForChildWorkflow(input: ChildWorkflowBlock): Promise<string> {
   const notes = childWorkflowBlockedNotes(
     input.runId,
@@ -1807,7 +1487,6 @@ export async function blockStepForChildWorkflow(input: ChildWorkflowBlock): Prom
     status: "blocked",
     notes,
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return notes;
 }
@@ -1824,40 +1503,27 @@ async function blockFinalizedStepForChildWorkflow(
     childRef: childBlocked.childRef,
     childStepId: childBlocked.childStepId,
     evidence: input.result.evidence,
-    ...(input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {}),
   });
   return { kind: "child-blocked", summary };
 }
 
 /**
- * Perform ONE completion attempt for an executed step:
- *
- *  - a hard unit failure completes the step `failed` (a retryable typed-artifact
- *    mismatch with loops remaining returns `retry` WITHOUT journaling a gate row
- *    — no judge ran, exactly like the engine);
- *  - a route decision is evaluated against params + prior/fresh step outputs; an
- *    unroutable value fails the step; a valid decision is journaled on the
- *    step evidence and applied to the skip bookkeeping;
- *  - the completion gate judges a summary BUILT FROM the promoted artifact (when
- *    the step declares criteria), journaled as a `<stepId>.gate:l<loop>` unit
- *    row; a rejection with loops remaining returns `retry` (feedback threaded
- *    into the next loop), a rejection with none returns `gate-exhausted`, a pass
- *    returns `advanced`;
- *  - a judge INFRASTRUCTURE failure (missing judge, thrown judge call, or a
- *    malformed verdict) is NOT a verdict: it consumes no gate loop and blocks
- *    the step for `akm workflow resume` (`judge-failed`) instead of feeding
- *    the bounded loop's re-dispatch.
- *
- * Every DB advance goes through {@link completeWorkflowStep} — the gate spine is
- * never bypassed. Behavior is byte-identical to the engine's former inline loop
- * body (its tests prove it).
+ * Perform one completion attempt for an executed step:
+ *  - a hard unit failure fails the step (a retryable artifact-schema mismatch
+ *    with loops left returns `retry` without a gate row);
+ *  - a route decision is evaluated, journaled on the evidence, and applied to
+ *    the skip bookkeeping; an unroutable value fails the step;
+ *  - the gate judges a summary built from the promoted artifact: a rejection
+ *    returns `retry` (loops left) or `gate-exhausted`, a pass `advanced`;
+ *  - a judge infrastructure failure is not a verdict: it blocks the step for
+ *    `akm workflow resume` (`judge-failed`) without consuming a loop.
+ * Every advance goes through {@link completeWorkflowStep}.
  */
 export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<FinalizeStepResult> {
   const { runId, workflowRef, stepId, stepPlan, completionCriteria, gateLoop, loopsRemaining, result } = input;
-  const lease = input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {};
 
   if (!result.ok) {
-    // P3b §3.4: a composed child workflow that blocked is never fed into the
+    // a composed child workflow that blocked is never fed into the
     // bounded gate loop — a gate is a gate for a child workflow too. Checked
     // FIRST, before the artifactSchemaFailure retry branch below.
     if (result.childBlocked) {
@@ -1875,7 +1541,6 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       status: "failed",
       notes: result.summary,
       evidence: result.evidence,
-      ...lease,
     });
     return { kind: "failed", summary: result.summary };
   }
@@ -1907,7 +1572,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
     const decision = evaluateRoute(stepPlan.route, scope);
     if (!decision.ok) {
       const notes = `Step "${stepId}" route failed: ${decision.error}`;
-      await completeWorkflowStep({ runId, stepId, status: "failed", notes, evidence: result.evidence, ...lease });
+      await completeWorkflowStep({ runId, stepId, status: "failed", notes, evidence: result.evidence });
       return { kind: "failed", summary: notes, routeFailure: true };
     }
     applyRouteDecision(stepPlan.route, stepId, decision.selected, input.routeSelected, input.routeUnselected);
@@ -1966,7 +1631,6 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
                 }),
               )
               .digest("hex"),
-            ...(input.leaseHolder !== undefined ? { claimHolder: input.leaseHolder } : {}),
           };
           gateUnit = await journalGateEvaluationStart(gateUnit);
         }
@@ -2005,23 +1669,10 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       }
     : null;
 
-  // Reviewer #6: once the judge is invoked, its gate row is journaled `running`
-  // (journalGateEvaluationStart) and MUST be finished on every exit. The
-  // already-fixed window is the judge itself throwing (caught inside
-  // validateStepSummary — `judgeFailure` records it). The remaining
-  // window is `completeWorkflowStep` throwing AFTER the judge ran — a stolen
-  // lease, a concurrent state change, a DB error — which would otherwise skip the
-  // finish and strand the gate row in `running`. Finish it as an errored row (the
-  // observed outcome: the completion did not succeed), then re-propagate.
-  //
-  // The signal handed down is the DISPATCH signal (the judge call runs under
-  // it), not just the caller's: the interruption guard inside the completion
-  // path rethrows an abort instead of classifying it as a judge outage, and a
-  // lost lease aborting mid-judge is an interruption — recording it as a
-  // verifier failure would blame infrastructure and durably block a step whose
-  // gate simply never finished evaluating.
+  // Once the judge runs, its `running` gate row must be finished on every
+  // exit: if `completeWorkflowStep` throws afterwards, finish it as errored,
+  // then re-propagate.
   let completion: Awaited<ReturnType<typeof completeWorkflowStep>>;
-  const completionSignal = input.dispatchSignal ?? input.signal;
   try {
     completion = await completeWorkflowStep({
       runId,
@@ -2030,8 +1681,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       summary,
       evidence: result.evidence,
       summaryJudge,
-      ...(completionSignal ? { signal: completionSignal } : {}),
-      ...lease,
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   } catch (err) {
     if (gateUnit) await journalGateEvaluationFinish(gateUnit, true, undefined);

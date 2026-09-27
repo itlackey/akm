@@ -25,8 +25,7 @@ type FeatureKey =
   | "graph_extraction"
   | "metadata_enhance"
   | "lesson_quality_gate"
-  | "proposal_quality_gate"
-  | "memory_contradiction_detection";
+  | "proposal_quality_gate";
 
 /**
  * Helper: build an AkmConfig where the named features are toggled on/off
@@ -34,10 +33,7 @@ type FeatureKey =
  */
 function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
   const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp/stash" };
-  const processes: Record<
-    string,
-    { enabled?: boolean; qualityGate?: { enabled?: boolean }; contradictionDetection?: { enabled?: boolean } }
-  > = {};
+  const processes: Record<string, { enabled?: boolean; qualityGate?: { enabled?: boolean } }> = {};
   for (const [key, val] of Object.entries(features) as Array<[FeatureKey, boolean]>) {
     switch (key) {
       case "memory_consolidation":
@@ -65,9 +61,6 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
         break;
       case "proposal_quality_gate":
         processes.reflect = { ...(processes.reflect ?? {}), qualityGate: { enabled: val } };
-        break;
-      case "memory_contradiction_detection":
-        processes.consolidate = { ...(processes.consolidate ?? {}), contradictionDetection: { enabled: val } };
         break;
     }
   }

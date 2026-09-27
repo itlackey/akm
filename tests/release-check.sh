@@ -132,6 +132,9 @@ run_step \
 run_step "Package Acceptance" bun scripts/package-install.ts test-package --skip-build
 run_step "Pack Package Candidate" pack_package_candidate
 run_step \
+	"Upgrade Rehearsal" \
+	env AKM_UPGRADE_REHEARSAL=1 AKM_CANDIDATE_TARBALL="$PACKAGE_CANDIDATE" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
+run_step \
 	"Verify npm candidate release surface" \
 	tar -tzf "$PACKAGE_CANDIDATE" \
 	package/dist/assets/models.json \

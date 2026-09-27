@@ -31,8 +31,6 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { resolveAssetPath } from "../../src/indexer/walk/path-resolver";
 import { type ProposalRow, proposalRowToProposal } from "../../src/storage/repositories/proposals-repository";
 import { planTaskToV3File } from "../../src/tasks/source/task-to-v3";
-// Trigger source-provider self-registration.
-import "../../src/sources/providers/index";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 function write(root: string, rel: string, content: string): void {

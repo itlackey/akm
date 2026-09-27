@@ -17,6 +17,11 @@ import { type CombinedMigrationPlan, runMigration } from "./run-migrate";
 
 function printPlan(plan: CombinedMigrationPlan): void {
   console.log(JSON.stringify(plan));
+  // `runMigration` does not throw for one step's own anomaly — it records
+  // the step in `plan.failedSteps` and folds `status` to "blocked" instead,
+  // so a poisoned step already lands here as an ordinary blocked plan
+  // (GENERAL/1) rather than an uncaught throw reaching `runWithJsonErrors`
+  // and exiting INTERNAL(70) with no plan printed.
   if (plan.status === "blocked") process.exitCode = EXIT_CODES.GENERAL;
 }
 
@@ -28,10 +33,12 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     case "help":
       console.log(helpText.trimEnd());
       return;
-    case "status":
-      if (rest.length > 0) throw new UsageError("`status` accepts no options.", "INVALID_FLAG_VALUE");
+    case "status": {
+      const unknown = rest[0];
+      if (unknown !== undefined) throw new UsageError(`\`status\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
       printPlan(await runMigration({ apply: false }));
       return;
+    }
     case "apply": {
       const unknown = rest.find((arg) => arg !== "--dry-run");
       if (unknown !== undefined) throw new UsageError(`\`apply\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");

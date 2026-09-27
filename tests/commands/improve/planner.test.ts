@@ -16,21 +16,20 @@ function ref(name: string, eligibilitySource: ImproveEligibleRef["eligibilitySou
 }
 
 describe("selectEffectiveImproveRefs", () => {
-  test("shares the ranked limit and additive replay rule without mutating the snapshot", () => {
+  test("applies the ranked limit, reflect-path refs first, without mutating the snapshot", () => {
     const ordinary = ref("ordinary", "signal-delta");
     const distillOnly = ref("distill-only", "signal-delta");
-    const replay = ref("replay", "replay");
-    const ranked = [ordinary, distillOnly, replay];
+    const proactive = ref("proactive", "proactive");
+    const ranked = [ordinary, distillOnly, proactive];
     const before = structuredClone(ranked);
 
     const selection = selectEffectiveImproveRefs({
       rankedRefs: ranked,
       distillOnlyRefs: [distillOnly],
-      limit: 1,
-      replayBudget: 1,
+      limit: 2,
     });
 
-    expect(selection.loopRefs.map((entry) => entry.ref)).toEqual([ordinary.ref, replay.ref]);
+    expect(selection.loopRefs.map((entry) => entry.ref)).toEqual([ordinary.ref, proactive.ref]);
     expect(selection.distillOnlyRefs.map((entry) => entry.ref)).toEqual([distillOnly.ref]);
     expect(selection.limitRemoved).toBe(1);
     expect(ranked).toEqual(before);
@@ -38,40 +37,21 @@ describe("selectEffectiveImproveRefs", () => {
 
   test("distinguishes an omitted cap from an explicit zero", () => {
     const ranked = [ref("a", "proactive"), ref("b", "proactive")];
-    expect(
-      selectEffectiveImproveRefs({ rankedRefs: ranked, distillOnlyRefs: [], replayBudget: 0 }).loopRefs,
-    ).toHaveLength(2);
-    expect(
-      selectEffectiveImproveRefs({ rankedRefs: ranked, distillOnlyRefs: [], limit: 0, replayBudget: 0 }).loopRefs,
-    ).toEqual([]);
+    expect(selectEffectiveImproveRefs({ rankedRefs: ranked, distillOnlyRefs: [] }).loopRefs).toHaveLength(2);
+    expect(selectEffectiveImproveRefs({ rankedRefs: ranked, distillOnlyRefs: [], limit: 0 }).loopRefs).toEqual([]);
   });
 
-  test("counts refs removed by both the ordinary cap and the replay budget", () => {
-    const ranked = [ref("ordinary-a", "scope"), ref("ordinary-b", "scope"), ref("replay", "replay")];
-    const selection = selectEffectiveImproveRefs({
-      rankedRefs: ranked,
-      distillOnlyRefs: [],
-      limit: 1,
-      replayBudget: 0,
-    });
-
-    expect(selection.loopRefs.map((entry) => entry.ref)).toEqual(["memories/ordinary-a"]);
-    expect(selection.limitRemoved).toBe(2);
-  });
-
-  test("reports the additive replay allowance separately from the ordinary and total ceilings", () => {
+  test("reports a zero replay allowance and the ordinary cap as the total ceiling", () => {
     const ordinary = ref("ordinary", "proactive");
-    const replay = ref("replay", "replay");
     const plan = buildImproveExecutionPlan({
       dryRun: true,
       snapshot: { status: "ready", reason: "test snapshot" },
-      rawInScope: 2,
-      selectedRefs: [ordinary, replay],
-      effectiveRefs: [ordinary, replay],
+      rawInScope: 1,
+      selectedRefs: [ordinary],
+      effectiveRefs: [ordinary],
       distillOnlyRefs: new Set(),
       configuredLimits: { cli: 1 },
       effectiveLimit: 1,
-      replayBudget: 1,
       gates: [],
       processes: [],
       consolidation: {
@@ -99,8 +79,8 @@ describe("selectEffectiveImproveRefs", () => {
     expect(plan.limits).toEqual({
       configured: { cli: 1 },
       effective: 1,
-      additiveReplayAllowance: 1,
-      totalCeiling: 2,
+      additiveReplayAllowance: 0,
+      totalCeiling: 1,
     });
   });
 
@@ -117,7 +97,6 @@ describe("selectEffectiveImproveRefs", () => {
       effectiveRefs: [],
       distillOnlyRefs: new Set(),
       configuredLimits: {},
-      replayBudget: 0,
       gates: [],
       processes,
       consolidation: {

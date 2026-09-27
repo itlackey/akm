@@ -54,7 +54,7 @@ describe("improve whole-run lock", () => {
   // `ConfigError("INVALID_CONFIG_FILE")` (exit 78) — a config-error code for
   // ordinary, retryable contention between two legitimate `improve` runs.
   // Reclassified to `TransientError`/`IMPROVE_LOCK_HELD` (exit 75), mirroring
-  // `MAINTENANCE_BARRIER_BUSY`/`INDEX_DB_CONTENDED` (#956).
+  // `INDEX_DB_CONTENDED` (#956).
   test("a losing contender without --skip-if-locked throws TransientError(IMPROVE_LOCK_HELD), never a ConfigError", () => {
     const first = tryAcquireImproveLock(lockPath, false);
     if (first.state !== "acquired") throw new Error("expected first acquisition");

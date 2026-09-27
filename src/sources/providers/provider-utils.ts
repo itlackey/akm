@@ -8,7 +8,7 @@ import path from "node:path";
 import { getAdapters } from "../../core/adapter/registry";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import type { SourceSpec } from "../../core/config/config";
-import { cancelRegistryResponse, fetchRegistryResponse, type RegistryNetworkPolicy } from "../../registry/network";
+import { fetchRegistry } from "../../registry/network";
 import { writeResponseToFileCapped } from "../../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
@@ -119,19 +119,10 @@ export function applyAkmIncludeConfig(
 }
 
 /** Stream a remote archive to disk via the runtime boundary's response writer. */
-export async function downloadArchive(
-  url: string,
-  destination: string,
-  networkPolicy: RegistryNetworkPolicy,
-): Promise<void> {
-  const response = await fetchRegistryResponse(url, undefined, { policy: networkPolicy, timeoutMs: 120_000 });
-  if (!response.ok) {
-    await cancelRegistryResponse(response);
-    throw new Error(`Failed to download archive (${response.status}) from ${url}`);
-  }
-  // Stream to disk with an explicit byte cap + body-read deadline: the fetch
-  // timeout above bounds only the connection/header phase, so an unbounded or
-  // dribbling body could otherwise fill the disk or hang the install forever.
+export async function downloadArchive(url: string, destination: string): Promise<void> {
+  const response = await fetchRegistry(url, { timeoutMs: 120_000 });
+  // Stream to disk with an explicit byte cap + body-read deadline so an
+  // unbounded or dribbling body cannot fill the disk or hang the install.
   await writeResponseToFileCapped(destination, response);
 }
 

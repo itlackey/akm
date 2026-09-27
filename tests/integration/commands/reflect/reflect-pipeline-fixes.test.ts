@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
-import { createProposal, isProposalSkipped, listProposals } from "../../../../src/commands/proposal/repository";
+import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
@@ -406,14 +406,9 @@ describe("Reflect quality gate — source context", () => {
     expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "no-judge-configured" });
   });
 
-  test.each([
-    { mutation: "deletion", nextCredential: undefined },
-    { mutation: "replacement", nextCredential: "replacement-secret" },
-  ])("agent generation and its separately resolved judge survive ambient credential $mutation", async ({
-    nextCredential,
-  }) => {
+  test("a separately resolved judge reads its credential at dispatch, after agent generation", async () => {
     const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Judge lease boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
+    const sourceContent = `---\ndescription: Judge credential boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
     const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     const config = {
       ...quietQualityGateConfig(),
@@ -423,25 +418,26 @@ describe("Reflect quality gate — source context", () => {
           kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
           model: "judge-model",
-          apiKey: "$AKM_REFLECT_JUDGE_LEASE_KEY",
+          apiKey: "$AKM_REFLECT_JUDGE_ROTATING_KEY",
         },
       },
       defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
       improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
     } as AkmConfig;
     const original = "reflect-judge-original-secret";
+    const rotated = "reflect-judge-rotated-secret";
     const observed: Array<string | undefined> = [];
-    const spawn = fakeSpawn(JSON.stringify({ ref: "knowledge/judge-lease", content: candidateContent }), "", 0);
+    const spawn = fakeSpawn(JSON.stringify({ ref: "knowledge/judge-rotation", content: candidateContent }), "", 0);
 
-    const result = await withEnv({ AKM_REFLECT_JUDGE_LEASE_KEY: original }, () =>
+    const result = await withEnv({ AKM_REFLECT_JUDGE_ROTATING_KEY: original }, () =>
       akmReflect({
-        ref: "knowledge/judge-lease",
+        ref: "knowledge/judge-rotation",
         stashDir: stash,
         config,
         assetContent: sourceContent,
         runAgentOptions: {
           spawn: (...args) => {
-            mutateScopedEnv("AKM_REFLECT_JUDGE_LEASE_KEY", nextCredential);
+            mutateScopedEnv("AKM_REFLECT_JUDGE_ROTATING_KEY", rotated);
             return spawn(...args);
           },
         },
@@ -453,13 +449,13 @@ describe("Reflect quality gate — source context", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(observed).toEqual([original]);
+    expect(observed).toEqual([rotated]);
     expect(listProposals(stash)).toHaveLength(1);
   });
 
-  test("SDK fallback generation and a separate judge snapshot both credentials before invocation", async () => {
+  test("SDK fallback generation and a separate judge each read their credential at dispatch", async () => {
     const stash = makeStashDir();
-    const sourceContent = `---\ndescription: SDK and judge lease boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
+    const sourceContent = `---\ndescription: SDK and judge credential boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
     const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     const config = {
       ...quietQualityGateConfig(),
@@ -483,6 +479,7 @@ describe("Reflect quality gate — source context", () => {
     } as AkmConfig;
     const sdkSecret = "reflect-sdk-original-secret";
     const judgeSecret = "reflect-sdk-judge-original-secret";
+    const judgeRotated = "reflect-sdk-judge-rotated-secret";
     const observedSdk: Array<string | undefined> = [];
     const observedJudge: Array<string | undefined> = [];
 
@@ -490,18 +487,17 @@ describe("Reflect quality gate — source context", () => {
       { AKM_REFLECT_SDK_FALLBACK_KEY: sdkSecret, AKM_REFLECT_SDK_JUDGE_KEY: judgeSecret },
       () =>
         akmReflect({
-          ref: "knowledge/sdk-judge-lease",
+          ref: "knowledge/sdk-judge-rotation",
           stashDir: stash,
           config,
           assetContent: sourceContent,
           runSdk: async (_profile, _prompt, _options, fallbackConnection) => {
             observedSdk.push(fallbackConnection?.apiKey);
-            mutateScopedEnv("AKM_REFLECT_SDK_FALLBACK_KEY", undefined);
-            mutateScopedEnv("AKM_REFLECT_SDK_JUDGE_KEY", undefined);
+            mutateScopedEnv("AKM_REFLECT_SDK_JUDGE_KEY", judgeRotated);
             return {
               ok: true,
               exitCode: 0,
-              stdout: JSON.stringify({ ref: "knowledge/sdk-judge-lease", content: candidateContent }),
+              stdout: JSON.stringify({ ref: "knowledge/sdk-judge-rotation", content: candidateContent }),
               stderr: "",
               durationMs: 1,
             };
@@ -515,8 +511,10 @@ describe("Reflect quality gate — source context", () => {
 
     expect(result.ok).toBe(true);
     expect(observedSdk).toEqual([sdkSecret]);
-    expect(observedJudge).toEqual([judgeSecret]);
+    expect(observedJudge).toEqual([judgeRotated]);
     expect(listProposals(stash)).toHaveLength(1);
+    const persisted = JSON.stringify(listProposals(stash));
+    for (const secret of [sdkSecret, judgeSecret, judgeRotated]) expect(persisted).not.toContain(secret);
   });
 
   test("judges the proposal against the source content already loaded by reflect", async () => {
@@ -975,13 +973,11 @@ describe("Reflect truncation-marker leak guard — a leaked cap notice is flagge
     const created = createProposal(stash, {
       ref: "knowledge/leak-marker-accept",
       source: "reflect",
-      force: true,
       target: { source: "stash", root: path.resolve(stash) },
       payload: {
         content: `---\ndescription: Leaked marker doc\n---\n\nRewritten body.\n${REFLECT_TRUNCATION_MARKER}`,
       },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     await expect(akmProposalAccept({ stashDir: stash, id: created.id, config })).rejects.toThrow(
       "reflect-truncation-marker-leak",

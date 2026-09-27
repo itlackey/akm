@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { isProcessAlive } from "../src/core/common";
+import { TransientError } from "../src/core/errors";
 import { getIndexWriterLockPath } from "../src/core/paths";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import {
@@ -75,9 +76,18 @@ describe("asset mutation lease", () => {
     // unit scope) and portable across platforms.
     fs.writeFileSync(lockPath, String(process.ppid), "utf8");
 
-    await expect(acquireAssetMutationLease({ purpose: "waiter", maxWaitMs: 20 })).rejects.toThrow(
-      "timed out waiting for asset mutation lease",
-    );
+    let caught: unknown;
+    try {
+      await acquireAssetMutationLease({ purpose: "waiter", maxWaitMs: 20 });
+    } catch (error) {
+      caught = error;
+    }
+    // Ordinary contention (previously a bare Error, exit 70): TransientError
+    // maps to exit 75 (sysexits EX_TEMPFAIL) so a caller retries instead of
+    // treating a live holder as an internal failure.
+    expect(caught).toBeInstanceOf(TransientError);
+    expect((caught as TransientError).code).toBe("ASSET_MUTATION_LEASE_HELD");
+    expect((caught as Error).message).toBe("timed out waiting for asset mutation lease for waiter");
   });
 
   test("never reclaims a live holder's lease purely on age (#872: no age-based stale window)", async () => {
@@ -201,9 +211,17 @@ describe("asset mutation lease", () => {
         if (level === "warn") notices.push(args.map(String).join(" "));
       });
 
-      expect(() => withAssetMutationLeaseSync("waiter", () => {})).toThrow(
-        "timed out waiting for asset mutation lease for waiter",
-      );
+      let caught: unknown;
+      try {
+        withAssetMutationLeaseSync("waiter", () => {});
+      } catch (error) {
+        caught = error;
+      }
+      // Ordinary contention (previously a bare Error, exit 70): TransientError
+      // maps to exit 75 (sysexits EX_TEMPFAIL).
+      expect(caught).toBeInstanceOf(TransientError);
+      expect((caught as TransientError).code).toBe("ASSET_MUTATION_LEASE_HELD");
+      expect((caught as Error).message).toBe("timed out waiting for asset mutation lease for waiter");
 
       expect(notices.length).toBeGreaterThan(0);
       expect(

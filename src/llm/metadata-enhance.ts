@@ -14,7 +14,6 @@ import type { AkmConfig } from "../core/config/config";
 import { parseJsonResponse } from "../core/parse";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { IndexDocument } from "../indexer/passes/metadata";
-import type { LoweredExecutionDispatchLease } from "../integrations/agent/execution-lowering";
 import { callStructured, type StructuredLlmRunner } from "./structured-call";
 
 const SYSTEM_PROMPT = metadataEnhanceSystemPrompt;
@@ -23,7 +22,7 @@ export type EnhancedMetadata = { description?: string; searchHints?: string[]; t
 
 /**
  * Outcome of an enrichment attempt. Distinguishes the three cases the caller
- * MUST treat differently (see `enhanceStashWithLlm`):
+ * MUST treat differently (see `enhanceEntriesWithLlm`):
  *   - `enriched`: a real LLM response was received and processed. `metadata`
  *     MAY be empty (`{}`) — an empty-but-successful response still counts as
  *     enriched so the caller caches it and avoids re-paying for a known no-op.
@@ -56,7 +55,6 @@ export async function enhanceMetadata(
   signal?: AbortSignal,
   akmConfig?: AkmConfig,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
-  lease?: LoweredExecutionDispatchLease,
 ): Promise<EnhanceMetadataOutcome> {
   const contextParts = [`Name: ${entry.name}`, `Type: ${entry.type}`];
   if (entry.description) contextParts.push(`Current description: ${entry.description}`);
@@ -87,7 +85,6 @@ Return ONLY the JSON object, no explanation.`;
     feature: "metadata_enhance",
     akmConfig,
     runner,
-    ...(lease ? { lease } : {}),
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt },

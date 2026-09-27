@@ -22,7 +22,7 @@
  * The `renderer` NAMES and `action` builders below are the SINGLE SOURCE OF
  * TRUTH for search-hit rendering — chunk-3 folded the old mutable renderer/
  * action registry singleton into this static table (reached via
- * {@link defaultRendererRegistry}). They cover all built-in types — INCLUDING
+ * {@link presentationFor}). They cover all built-in types — INCLUDING
  * the 15th type `instruction` (a read-like-knowledge markdown doc added for the
  * format-family adapters) and the 6 "static-only" mappings
  * (script/skill/command/agent/knowledge/memory) — §6 "6 renderer mappings".
@@ -185,26 +185,3 @@ export function presentationFor(type: string | undefined): Presentation {
 export function allowsFragmentRef(type: string): boolean {
   return presentationFor(type).fragmentRef !== false;
 }
-
-/**
- * Renderer-name / action-builder lookup surface for search-hit rendering.
- *
- * Chunk-3 folded the old mutable renderer/action registry singleton into this
- * static presentation table. The registry indirection is kept as an interface
- * so tests can inject an isolated lookup without mutating module state; the
- * default implementation reads the built-in {@link TYPE_PRESENTATION} via
- * {@link presentationFor}.
- */
-export interface RendererRegistry {
-  rendererNameFor(type: string): string | undefined;
-  actionBuilderFor(type: string): ((ref: string) => string) | undefined;
-}
-
-export const defaultRendererRegistry: RendererRegistry = {
-  rendererNameFor(type) {
-    return presentationFor(type).renderer;
-  },
-  actionBuilderFor(type) {
-    return presentationFor(type).action;
-  },
-};

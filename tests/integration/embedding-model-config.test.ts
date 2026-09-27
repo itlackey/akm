@@ -217,47 +217,6 @@ describe("dimension consistency on model change", () => {
       setQuiet(true); // restore harness default
     }
   });
-
-  test("db dimension mismatch triggers vec table recreation", async () => {
-    // This is already tested in db.test.ts but we verify the concept:
-    // when embedding dimensions change (due to model change), the
-    // database handles it by recreating the vec table
-    const { openIndexDatabase, closeDatabase } = await import("../../src/storage/repositories/index-connection");
-    const { getMeta } = await import("../../src/storage/repositories/index-meta-repository");
-    const { isVecAvailable } = await import("../../src/storage/repositories/index-vec-repository");
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const path = await import("node:path");
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embed-model-"));
-    const dbPath = path.join(tmpDir, "test.db");
-
-    try {
-      // Open with old model dimension (384 = all-MiniLM-L6-v2)
-      let db = openIndexDatabase(dbPath, { embeddingDim: 384 });
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("384");
-      }
-      closeDatabase(db);
-
-      // Open with new model dimension (384 = bge-small-en-v1.5, same dims)
-      // Both models happen to be 384-dim, so no recreation needed
-      db = openIndexDatabase(dbPath, { embeddingDim: 384 });
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("384");
-      }
-      closeDatabase(db);
-
-      // But if someone uses a different-dimension model (e.g. 768), it should recreate
-      db = openIndexDatabase(dbPath, { embeddingDim: 768 });
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("768");
-      }
-      closeDatabase(db);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
 });
 
 // ── Test 7: Config parsing roundtrip for localModel via loadConfig ────────

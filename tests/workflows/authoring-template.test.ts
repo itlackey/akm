@@ -16,8 +16,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { getWorkflowTemplate } from "../../src/workflows/authoring/authoring";
-import { compileWorkflowPlan } from "../../src/workflows/ir/compile";
-import { compileWorkflowSource } from "../../src/workflows/source-ir/compile";
+import { checkWorkflowPlan, compileWorkflowSource } from "../../src/workflows/compile";
 
 describe("shipped workflow template", () => {
   test("parses and compiles cleanly", () => {
@@ -28,7 +27,7 @@ describe("shipped workflow template", () => {
       throw new Error(`template compile failed: ${source.errors.map((e) => `${e.line}: ${e.message}`).join(" | ")}`);
     }
 
-    const compiled = compileWorkflowPlan(source.ir, "template");
+    const compiled = checkWorkflowPlan(source.plan);
     if (!compiled.ok) {
       throw new Error(`template compile failed: ${compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | ")}`);
     }

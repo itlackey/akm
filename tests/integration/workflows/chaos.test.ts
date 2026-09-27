@@ -21,7 +21,7 @@ import {
   type StepWorkList,
   stepOutputsFromEvidence,
 } from "../../../src/workflows/exec/step-work";
-import type { WorkflowPlanGraphV4 as WorkflowPlanGraph } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
@@ -41,17 +41,15 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfi
  *      re-dispatches ONLY incomplete work; an interrupted completion path
  *      (units done, gate not yet finalized — including a dangling gate row)
  *      converges on resume without duplicate gate rows or double promotion.
- *   2. Lease contention — two concurrent engine invocations race for one run;
- *      exactly one drives, the loser is refused naming holder+expiry; an
- *      expired lease is reclaimed; a crash retains the forensic lease and
- *      explicit resume clears it so an immediate re-run works.
+ *   2. (Single-driver contention lives in run-lock.test.ts.)
  *   3. Hostile content — `${{ … }}`/contract-lookalike/injection/100KB/invalid
  *      UTF-16 in items and results; proves single-pass resolution, events carry
  *      ids/status/enums only, artifacts clip at the documented bound, journaled
  *      gate feedback round-trips as JSON data, and no secret env VALUE ever
  *      reaches a durable surface.
- *   4. Replay divergence under chaos — a tampered journal input_hash (or a
- *      tampered params row) fails the engine resume loudly, naming the unit.
+ *   4. Resume skips completed units — a journaled completed row is reused
+ *      whatever its recorded input_hash (or an edited params row) says, and
+ *      only the missing units dispatch.
  *   5. Gate judge failures — throwing / malformed / feedback-less judges each
  *      converge on a defined outcome with a TERMINAL gate row.
  */
@@ -390,22 +388,7 @@ describe("chaos: crash INSIDE the completion path", () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 2. Lease contention
-// ═══════════════════════════════════════════════════════════════════════════
-
-const SOLO_WF = [
-  "---",
-  "type: workflow",
-  "steps:",
-  "  - id: only",
-  "---",
-  "",
-  "## only",
-  "",
-  "Do the leased thing.",
-  "",
-].join("\n");
+// Shared fan-out fixture (sections 4 and 4b).
 
 const SOLO_FANOUT_WF = [
   "---",
@@ -423,153 +406,6 @@ const SOLO_FANOUT_WF = [
   "Review the assigned item.",
   "",
 ].join("\n");
-
-describe("chaos: lease contention", () => {
-  test("two concurrent engine invocations race: exactly one drives, the loser is refused naming holder + expiry", async () => {
-    writeProgram("leased", SOLO_WF);
-    const started = await startWorkflowRun("workflows/leased", {});
-    const runId = started.run.id;
-
-    // The winner blocks in dispatch until we release it, guaranteeing its lease
-    // is live while the loser tries to acquire — a deterministic race with no sleeps.
-    let releaseWinner: () => void = () => {};
-    const blocked = new Promise<void>((resolve) => {
-      releaseWinner = resolve;
-    });
-    let dispatchCount = 0;
-    const dispatcher = async (): Promise<UnitDispatchResult> => {
-      dispatchCount++;
-      await blocked;
-      return { ok: true, text: "done" };
-    };
-
-    const p1 = runWorkflowSteps({ target: runId, summaryJudge: null, dispatcher });
-    const p2 = runWorkflowSteps({ target: runId, summaryJudge: null, dispatcher });
-
-    // The lease is a single atomic UPDATE: exactly one invocation acquires it.
-    // The loser rejects immediately; the winner is parked in dispatch, so the
-    // FIRST promise to settle is necessarily the loser's refusal.
-    const first = await Promise.race([
-      p1.then(
-        () => ({ tag: "won" as const }),
-        (err) => ({ tag: "lost" as const, err }),
-      ),
-      p2.then(
-        () => ({ tag: "won" as const }),
-        (err) => ({ tag: "lost" as const, err }),
-      ),
-    ]);
-    expect(first.tag).toBe("lost");
-    if (first.tag === "lost") {
-      const message = String(first.err);
-      expect(message).toMatch(/being driven by engine|run lease expires/);
-      // Names the actual holder (a UUID) and the expiry timestamp.
-      const holder = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-      expect(message).toContain(holder?.engine_lease_holder ?? "<none>");
-      expect(message).toContain(holder?.engine_lease_until ?? "<none>");
-    }
-
-    // Let the winner finish. Exactly one invocation fulfilled, one rejected,
-    // and only ONE unit was ever dispatched (no double execution).
-    releaseWinner();
-    const settled = await Promise.allSettled([p1, p2]);
-    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(settled.filter((r) => r.status === "rejected")).toHaveLength(1);
-    expect(dispatchCount).toBe(1);
-
-    // The lease is released after the winner exits.
-    const finalLease = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    expect(finalLease?.engine_lease_holder).toBeNull();
-    const finalStatus = await getWorkflowStatus(runId);
-    expect(finalStatus.run.status).toBe("completed");
-  });
-
-  test("a live foreign lease refuses a second engine invocation up front, writing NOTHING", async () => {
-    writeProgram("leased-fanout", SOLO_FANOUT_WF);
-    const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflows/leased-fanout", params);
-    const runId = started.run.id;
-
-    // A live lease held by a DIFFERENT engine (the previous test races two real
-    // invocations; this one pins the refusal to a planted, unexpired lease).
-    const until = new Date(Date.now() + 60_000).toISOString();
-    await withWorkflowRunsRepo((repo) => {
-      expect(repo.acquireEngineLease(runId, "engine-live", until, new Date().toISOString())).toBe(true);
-    });
-
-    let dispatches = 0;
-    await expect(
-      runWorkflowSteps({
-        target: runId,
-        summaryJudge: null,
-        dispatcher: async (): Promise<UnitDispatchResult> => {
-          dispatches++;
-          return { ok: true, text: "ok" };
-        },
-      }),
-    ).rejects.toThrow(/being driven by engine|run lease expires/);
-
-    // Refused BEFORE any dispatch, and nothing was journaled.
-    expect(dispatches).toBe(0);
-    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
-    expect(rows).toHaveLength(0);
-    // The incumbent lease is untouched — the refused invocation never stole it.
-    const run = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    expect(run?.engine_lease_holder).toBe("engine-live");
-    expect(run?.engine_lease_until).toBe(until);
-  });
-
-  test("a crash retains the forensic lease and explicit resume clears it for an immediate re-run", async () => {
-    writeProgram("leased-fanout", SOLO_FANOUT_WF);
-    const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflows/leased-fanout", params);
-    const runId = started.run.id;
-
-    // Plant a STALE lease from a dead engine (expired), then crash the run.
-    await withWorkflowRunsRepo((repo) => {
-      expect(
-        repo.acquireEngineLease(
-          runId,
-          "dead-engine",
-          new Date(Date.now() - 5_000).toISOString(),
-          new Date().toISOString(),
-        ),
-      ).toBe(true);
-    });
-
-    // The expired lease is claimable — the run proceeds — but the dispatcher
-    // throws, failing the run. The final holder remains as forensic state.
-    let holderDuringDispatch: string | null | undefined;
-    const crashed = await runWorkflowSteps({
-      target: runId,
-      summaryJudge: null,
-      dispatcher: async (): Promise<UnitDispatchResult> => {
-        holderDuringDispatch =
-          (await withWorkflowRunsRepo((repo) => repo.getRunById(runId)))?.engine_lease_holder ?? null;
-        throw new Error("boom");
-      },
-    });
-    expect(crashed.run.status).toBe("failed");
-    // The stale holder was replaced while driving…
-    expect(holderDuringDispatch).toBeTruthy();
-    expect(holderDuringDispatch).not.toBe("dead-engine");
-    // …and retained on the failed run.
-    const afterCrash = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    expect(afterCrash?.engine_lease_holder).toBe(holderDuringDispatch);
-    expect(afterCrash?.engine_lease_until).toBeTruthy();
-
-    // Explicit resume clears the forensic lease, so an immediate re-run is not wedged.
-    await resumeWorkflowRun(runId);
-    expect((await withWorkflowRunsRepo((repo) => repo.getRunById(runId)))?.engine_lease_holder).toBeNull();
-    const rerun = await runWorkflowSteps({
-      target: runId,
-      summaryJudge: null,
-      dispatcher: async (): Promise<UnitDispatchResult> => ({ ok: true, text: "recovered" }),
-    });
-    expect(rerun.done).toBe(true);
-    expect((await withWorkflowRunsRepo((repo) => repo.getRunById(runId)))?.engine_lease_holder).toBeNull();
-  });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. Hostile content
@@ -886,59 +722,52 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4. Replay divergence under chaos
+// 4. Resume skips completed units
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("chaos: replay divergence under a tampered journal", () => {
-  test("engine resume fails the run loudly, naming the tampered unit", async () => {
+describe("chaos: resume skips completed units, runs the rest", () => {
+  test("a completed row is reused whatever input_hash it recorded; only the missing unit dispatches", async () => {
     writeProgram("leased-fanout", SOLO_FANOUT_WF);
     const params = { files: ["a.ts", "b.ts"] };
     const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
-    const ua = workListFor(plan, 0, runId, params)[0]!;
+    const [ua, ub] = workListFor(plan, 0, runId, params);
 
-    // Tamper: a completed unit row whose input_hash cannot have come from the
-    // frozen plan (a corrupted / hand-edited journal).
+    // A completed row whose input_hash no invocation would compute today.
     seedUnitRow({
       runId,
-      unitId: ua.unitId,
+      unitId: ua!.unitId,
       stepId: "review",
       nodeId: "review.unit",
       status: "completed",
       inputHash: "deadbeefdeadbeef",
-      resultJson: JSON.stringify("stale"),
+      resultJson: JSON.stringify("from the journal"),
     });
 
-    const dispatched = new Set<string>();
+    const dispatched: string[] = [];
     const result = await runWorkflowSteps({
       target: runId,
       summaryJudge: null,
       dispatcher: async (req): Promise<UnitDispatchResult> => {
-        dispatched.add(req.unitId);
+        dispatched.push(req.unitId);
         return { ok: true, text: "fresh" };
       },
     });
 
-    // Hard failure regardless of on_error — never a silent re-dispatch.
-    expect(dispatched.has(ua.unitId)).toBe(false);
-    expect(result.run.status).toBe("failed");
-    expect(result.executed[0]?.ok).toBe(false);
-    expect(result.executed[0]?.summary).toContain(ua.unitId);
-    expect(result.executed[0]?.summary).toContain("replay divergence");
+    expect(dispatched).toEqual([ub!.unitId]);
+    expect(result.run.status).toBe("completed");
+    const status = await getWorkflowStatus(runId);
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual(["from the journal", "fresh"]);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4b. Replay divergence via a tampered PARAMS row
+// 4b. An edited PARAMS row does not re-run completed work
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// The frozen plan_hash covers the plan graph but NOT `params_json` — params are
-// re-read every invocation. A hand-edited params row that changes a unit's
-// resolved prompt therefore changes its input hash, diverging from a journaled
-// loop-1 row whose hash was computed under the ORIGINAL params. That must fail
-// loudly (naming the unit) on both the engine resume and the report surface,
-// never silently re-dispatch — exactly like a tampered journal row.
+// `params_json` is re-read every invocation and changes the unit's input hash,
+// which is informational: the completed row for the unit is still its result.
 
 const PARAM_SOLO_WF = [
   "---",
@@ -951,17 +780,15 @@ const PARAM_SOLO_WF = [
   "",
   "## work",
   "",
-  // Body prose is never templated (spec §2.3); the run's FULL params object is
-  // always part of the unit's input hash preimage regardless (step-work.ts),
-  // so a "mode" param change still diverges the hash without needing to
-  // splice it into the instructions.
   "Do the work.",
   "",
 ].join("\n");
 
-describe("chaos: replay divergence via a tampered params row (plan_hash does not cover params)", () => {
-  /** Seed a completed loop-1 row (engine's own hash under the ORIGINAL params), then tamper params. */
-  async function seedThenTamper(runId: string): Promise<{ unitId: string }> {
+describe("chaos: an edited params row does not re-run a completed unit", () => {
+  test("the completed unit is reused and the run completes without dispatching", async () => {
+    writeProgram("param-tamper", PARAM_SOLO_WF);
+    const started = await startWorkflowRun("workflows/param-tamper", { mode: "alpha" });
+    const runId = started.run.id;
     const plan = await frozenPlan(runId);
     const unit = workListFor(plan, 0, runId, { mode: "alpha" })[0]!;
     seedUnitRow({
@@ -973,27 +800,21 @@ describe("chaos: replay divergence via a tampered params row (plan_hash does not
       inputHash: unit.inputHash,
       resultJson: JSON.stringify("alpha result"),
     });
-    // Rewrite params so the recomputed prompt/hash can no longer match the row.
     execOnWorkflowDb("UPDATE workflow_runs SET params_json = ? WHERE id = ?", JSON.stringify({ mode: "beta" }), runId);
-    return { unitId: unit.unitId };
-  }
 
-  test("engine resume fails the run loudly, naming the unit", async () => {
-    writeProgram("param-tamper", PARAM_SOLO_WF);
-    const started = await startWorkflowRun("workflows/param-tamper", { mode: "alpha" });
-    const runId = started.run.id;
-    const { unitId } = await seedThenTamper(runId);
-
+    let dispatches = 0;
     const result = await runWorkflowSteps({
       target: runId,
       summaryJudge: null,
-      dispatcher: async (): Promise<UnitDispatchResult> => ({ ok: true, text: "fresh" }),
+      dispatcher: async (): Promise<UnitDispatchResult> => {
+        dispatches++;
+        return { ok: true, text: "fresh" };
+      },
     });
 
-    expect(result.run.status).toBe("failed");
-    expect(result.executed[0]?.ok).toBe(false);
-    expect(result.executed[0]?.summary).toContain("replay divergence");
-    expect(result.executed[0]?.summary).toContain(unitId);
+    expect(dispatches).toBe(0);
+    expect(result.run.status).toBe("completed");
+    expect((await getWorkflowStatus(runId)).workflow.steps[0]!.evidence?.output).toBe("alpha result");
   });
 });
 

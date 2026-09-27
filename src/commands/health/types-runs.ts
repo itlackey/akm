@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-run improve summary shape (chunk-9 WI-9.5d per-domain split of
- * `./types`). Used by `akm health --group-by run` and the HTML/Markdown
- * report renderers.
+ * Per-run improve summary shape. Used by `akm health --group-by run` and the
+ * HTML/Markdown report renderers.
  */
 
 import type { ImproveHealthMetrics } from "./types-improve";
@@ -27,16 +26,13 @@ export interface ImproveRunSummary {
    * `akm-improve-frequent`), resolved by matching the run's start time to a
    * `task_history` row with a `task_id` beginning `akm-improve` (±5 min).
    * `"manual"` when no scheduled task matches (a hand-run `akm improve`).
-   * Drives the health report's Task column + task filter.
    */
   taskId: string;
   actions: ImproveHealthMetrics["actions"];
   memorySummary: ImproveHealthMetrics["memorySummary"];
-  memoryCleanup: ImproveHealthMetrics["memoryCleanup"];
   consolidation: ImproveHealthMetrics["consolidation"];
   memoryInference: ImproveHealthMetrics["memoryInference"];
   graphExtraction: ImproveHealthMetrics["graphExtraction"];
-  reflectsWithErrorContext: number;
   orphansPurged: number;
   lintFixed: number;
   lintFlagged: number;

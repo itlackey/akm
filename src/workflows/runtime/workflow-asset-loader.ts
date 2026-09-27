@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
@@ -12,31 +13,22 @@ import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import type { WorkflowParameter, WorkflowStepDefinition } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
-import { compileWorkflowSource } from "../source-ir/compile";
-import { sourceStepInstructions } from "../source-ir/program";
-import type { WorkflowSourceIrV1, WorkflowSourceStep } from "../source-ir/schema";
+import { compileWorkflowSource } from "../compile";
+import type { WorkflowPlan } from "../plan";
 
-/**
- * A workflow asset compiled from either authored format into the one source IR.
- */
+/** A resolved workflow asset, compiled from either authored format into its plan. */
 export type WorkflowAsset = {
   ref: string;
   path: string;
   sourcePath: string;
   adapterId?: string;
-  /**
-   * Run-level display title. The shared source IR carries no authored title
-   * (workflow-format-unification, spec §2.2) — a step is its id, and the
-   * asset's human name is its `description`/H1 like any other asset. This is
-   * the asset's canonical name (the file-derived slug), used only for the
-   * `workflow_runs.workflow_title` display column (unchanged journal shape).
-   */
+  /** Run-level display title: the asset's canonical name (a step is its id; there are no authored titles). */
   title: string;
-  parameters?: WorkflowParameter[];
-  steps: WorkflowStepDefinition[];
-  sourceIr: WorkflowSourceIrV1;
+  /** The compiled, not-yet-frozen plan. */
+  plan: WorkflowPlan;
+  /** sha256 of the source bytes the plan was compiled from. */
+  sourceHash: string;
 };
 
 /**
@@ -70,7 +62,7 @@ export async function canonicalizeWorkflowRefInput(ref: string): Promise<string>
 }
 
 /**
- * Resolve a workflow ref and compile its authored bytes into source IR.
+ * Resolve a workflow ref and compile its authored bytes into a plan.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   const bundleRef = parseWorkflowRefInput(ref);
@@ -135,8 +127,31 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
       ? makeBundleRef(sourceBundleId, canonicalName)
       : canonicalWorkflowRunRef(sourceBundleId, canonicalName);
 
-  const sourceIr = compileWorkflowSourceFromDisk(assetPath, resolvedSourcePath);
-  return projectAsset(sourceIr, fullRef, assetPath, resolvedSourcePath, workflowAdapterId as string, canonicalName);
+  const title = canonicalName.split("/").pop() || canonicalName;
+  const bytes = fs.readFileSync(assetPath);
+  const result = compileWorkflowSource(bytes.toString("utf8"), {
+    path: assetPath,
+    workspaceRoot: resolvedSourcePath,
+    title,
+  });
+  if (!result.ok) {
+    const details = result.errors.map((error) => `  ${error.path}:${error.line} — ${error.message}`).join("\n");
+    const isMultiJob = result.errors.length === 1 && result.errors[0]?.code === "multi-job-unsupported";
+    throw new UsageError(
+      `Workflow source has ${result.errors.length} error(s):\n${details}`,
+      isMultiJob ? "COMPOSITION_INVALID" : "WORKFLOW_SOURCE_INVALID",
+      isMultiJob ? COMPOSITION_INVALID_MULTI_JOB_HINT : undefined,
+    );
+  }
+  return {
+    ref: fullRef,
+    path: assetPath,
+    sourcePath: resolvedSourcePath,
+    adapterId: workflowAdapterId as string,
+    title,
+    plan: result.plan,
+    sourceHash: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 function ownsNativeWorkflowRuntime(source: SearchSource): boolean {
@@ -166,70 +181,4 @@ export function resolveWorkflowEntryId(_sourcePath: string, ref: string, adapter
       .get(itemRef, ...(adapterId ? [adapterId] : [])) as { id: number } | undefined;
     return row?.id ?? null;
   });
-}
-
-function compileWorkflowSourceFromDisk(assetPath: string, workspaceRoot: string): WorkflowSourceIrV1 {
-  const content = fs.readFileSync(assetPath, "utf8");
-  const result = compileWorkflowSource(content, { path: assetPath, workspaceRoot });
-  if (!result.ok) {
-    // P4-N2's mapping (docs/plans/specs/p4-deletions-closeout.md §3.3.4): this
-    // is the FIRST compile of a workflow's own source that a ref resolves
-    // through (loadWorkflowAsset runs before compileResolveFreezeWorkflowV4),
-    // so it must apply the same code split as the freeze wrapper — otherwise
-    // row B-44's COMPOSITION_INVALID promise never reaches `startWorkflowRun`
-    // callers, which never get past this point on a multi-job source.
-    const details = result.errors.map((error) => `  ${error.path}:${error.line} — ${error.message}`).join("\n");
-    const isMultiJob = result.errors.length === 1 && result.errors[0]?.code === "multi-job-unsupported";
-    const code = isMultiJob ? "COMPOSITION_INVALID" : "WORKFLOW_SOURCE_INVALID";
-    throw new UsageError(
-      `Workflow source has ${result.errors.length} error(s):\n${details}`,
-      code,
-      isMultiJob ? COMPOSITION_INVALID_MULTI_JOB_HINT : undefined,
-    );
-  }
-  return result.ir;
-}
-
-function projectAsset(
-  sourceIr: WorkflowSourceIrV1,
-  ref: string,
-  assetPath: string,
-  sourcePath: string,
-  adapterId: string,
-  canonicalName: string,
-): WorkflowAsset {
-  const title = canonicalName.split("/").pop() || canonicalName;
-  return {
-    ref,
-    path: assetPath,
-    sourcePath,
-    adapterId,
-    title,
-    ...(sourceIr.params
-      ? {
-          parameters: Object.entries(sourceIr.params).map(([name, schema]) => {
-            const description = schema.description;
-            return { name, ...(typeof description === "string" && description ? { description } : {}) };
-          }),
-        }
-      : {}),
-    steps: sourceIr.jobs.flatMap((job) =>
-      job.steps.map((step, sequenceIndex) => ({
-        id: step.id,
-        title: step.id,
-        instructions: step.route ? stepFallbackInstructions(step) : sourceStepInstructions(step),
-        ...(step.gate?.rubric?.trim() ? { completionCriteria: [step.gate.rubric] } : {}),
-        sequenceIndex,
-      })),
-    ),
-    sourceIr,
-  };
-}
-
-/** A route-only step with no body section still needs a non-empty spine instructions string. */
-function stepFallbackInstructions(step: WorkflowSourceStep): string {
-  if (!step.route) return "";
-  const branches = step.route.branches.map((b) => `"${b.match}" -> ${b.stepId}`);
-  if (step.route.defaultStepId !== undefined) branches.push(`default -> ${step.route.defaultStepId}`);
-  return `Route on ${step.route.input}: ${branches.join(", ")}.`;
 }

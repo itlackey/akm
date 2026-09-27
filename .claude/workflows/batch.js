@@ -155,7 +155,10 @@ const confirmedOf = (review) => (review?.findings ?? []).filter((f) => f.severit
 const renderFindings = (findings) =>
   findings.map((f, i) => `${i + 1}. [${f.file}${f.line ? `:${f.line}` : ''}] ${f.summary}\n   Required change: ${f.requiredChange}`).join('\n')
 const issueTag = (item) => (item.issue ? ` (#${item.issue})` : '')
-const subjectSuffix = (item) => (item.issue ? `(#${item.issue})` : `(${BATCH})`)
+// A commit subject names the issue it closes, or nothing: a batch label in
+// a subject means nothing to a later reader and every review flagged it.
+const subjectRule = (item) =>
+  item.issue ? `Conventional subject ending in "(#${item.issue})"` : 'Conventional subject with no batch label or other suffix'
 
 function readingList(brief) {
   const lines = [`- ${REPO}/AGENTS.md — the repository's rules.`, ...RULES.map((r) => `- ${r}`), `- ${brief} — the brief for this iteration. Implement ONLY your item.`]
@@ -174,7 +177,7 @@ Set up your own worktree, and work ONLY inside it (never edit ${REPO} itself, ne
 Then:
 - Read the code the item names before changing it. Test first: the new test must FAIL against the unchanged code — run it both ways and record both results in testsRun.
 - Surgical: touch only what the item needs; match existing style; no new config keys or magic numbers unless the brief asks; reuse existing helpers instead of duplicating them; real issue numbers only.
-- One commit per logical change: a test with the code that makes it pass; docs with their CHANGELOG bullet; a schema change with its regenerated output (\`bun scripts/gen-config-schema.ts\`). Conventional subject ending in "${subjectSuffix(item)}"; trailers per the rules files.
+- One commit per logical change: a test with the code that makes it pass; docs with their CHANGELOG bullet; a schema change with its regenerated output (\`bun scripts/gen-config-schema.ts\`). ${subjectRule(item)}; no batch or iteration labels in the body either; trailers per the rules files.
 - Before each commit: \`bunx biome check --write src/ tests/\` and \`bunx tsc --noEmit\`. Before finishing: the focused tests for your change and \`bun run lint\`. Do NOT run the full unit or integration suites — the batch gate runs them once after integration.
 - Finish with \`git status\` clean. Return ONLY the structured output (commits from \`git log --format=%h\\ %s --reverse ${base}..HEAD\`).`
 }
@@ -200,7 +203,7 @@ ${renderFindings(findings)}
 
 ${readingList(brief)}
 
-Rules: work only in ${wt}; surgical; \`bunx biome check --write src/ tests/\` and \`bunx tsc --noEmit\` before committing; one commit naming the finding(s), subject ending in "${subjectSuffix(item)}", trailers per the rules files; run the affected test files; \`git status\` clean. Do NOT run the full suites. Return ONLY the structured output (headSha = HEAD after your commit).`
+Rules: work only in ${wt}; surgical; \`bunx biome check --write src/ tests/\` and \`bunx tsc --noEmit\` before committing; one commit naming the finding(s) (${subjectRule(item)}), trailers per the rules files; run the affected test files; \`git status\` clean. Do NOT run the full suites. Return ONLY the structured output (headSha = HEAD after your commit).`
 }
 
 function integratePrompt(base, landed) {

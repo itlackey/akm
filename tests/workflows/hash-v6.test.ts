@@ -83,7 +83,8 @@ import type { UnitDispatchResult } from "../../src/workflows/exec/native-executo
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type WorkListInput } from "../../src/workflows/exec/step-work";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
-import { decodeWorkflowPlanV4, type FrozenWorkflowTarget, type IrStepPlanV4 } from "../../src/workflows/ir/schema-v4";
+import type { FrozenWorkflowTarget, WorkflowPlanStep } from "../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -113,7 +114,7 @@ interface ChildWorkflowTargetFixture {
  * §3.5: FrozenChildWorkflowTarget landed in Implement as a real
  * discriminated-union member. `ChildWorkflowTargetFixture.frozenPlan` stays
  * `unknown` on purpose — this file only hashes the frozen target, it never
- * decodes it, so building a fully-valid `WorkflowPlanGraphV4` fixture would
+ * decodes it, so building a fully-valid `WorkflowPlan` fixture would
  * add weight nothing here reads — so the fixture is structurally a
  * `FrozenChildWorkflowTarget` except for that one field, and the cast
  * routes through `unknown` (never truly type-legal, so `@ts-expect-error`
@@ -173,7 +174,7 @@ function buildChildTargetFixture(options: {
 }
 
 /** A minimal one-unit step plan whose sole unit targets `target`. */
-function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "spawn"): IrStepPlanV4 {
+function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "spawn"): WorkflowPlanStep {
   return {
     stepId,
     title: stepId,
@@ -187,7 +188,7 @@ function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "spawn"): IrS
       frozenTarget: target,
       environment: [],
     },
-    gate: { kind: "gate", id: `${stepId}.gate`, stepId, criteria: [], frozenJudge: null },
+    gate: { kind: "gate", id: `${stepId}.gate`, stepId, criteria: [], maxLoops: 1, frozenJudge: null },
   };
 }
 
@@ -477,7 +478,7 @@ describe("hashVersion 7 — the gate hash (A-12)", () => {
     expect(gateRow?.input_hash).toBeTruthy();
 
     const planRow = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
-    const plan = decodeWorkflowPlanV4(JSON.parse(planRow?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(planRow?.plan_json ?? "null"));
     const gateTarget = plan.steps[0]?.gate.frozenJudge;
     expect(gateTarget).toBeTruthy();
 

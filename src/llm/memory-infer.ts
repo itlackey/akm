@@ -25,7 +25,6 @@ import type { AkmConfig } from "../core/config/config";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
-import type { LoweredExecutionDispatchLease } from "../integrations/agent/execution-lowering";
 import type { TryLlmFeatureFallbackEvent } from "./feature-gate";
 import { callStructured, type StructuredLlmRunner } from "./structured-call";
 
@@ -107,7 +106,6 @@ export async function compressMemoryToDerivedMemory(
   telemetry?: MemoryInferTelemetry,
   onRetryAttempt?: () => void,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
-  lease?: LoweredExecutionDispatchLease,
 ): Promise<DerivedMemoryDraft | undefined> {
   const trimmedBody = body.trim();
   if (!trimmedBody) return undefined;
@@ -125,7 +123,6 @@ export async function compressMemoryToDerivedMemory(
     feature: "memory_inference",
     akmConfig,
     runner: llmRunner,
-    ...(lease ? { lease } : {}),
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt },
