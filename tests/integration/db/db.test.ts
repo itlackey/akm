@@ -481,8 +481,10 @@ describe("FTS search", () => {
 
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("deploy-tool");
-      expect(results[1]!.entry.name).toBe("infra-tool");
+      expect(results.map((r) => r.itemRef)).toEqual([
+        "test-bundle//scripts/deploy-tool",
+        "test-bundle//scripts/infra-tool",
+      ]);
     } finally {
       closeDatabase(db);
     }
@@ -505,7 +507,7 @@ describe("FTS search", () => {
 
       const scriptResults = searchFts(db, "build", 10, "script");
       expect(scriptResults).toHaveLength(1);
-      expect(scriptResults[0]!.entry.type).toBe("script");
+      expect(scriptResults[0]!.itemRef).toBe("test-bundle//scripts/build-script");
 
       const allResults = searchFts(db, "build", 10);
       expect(allResults).toHaveLength(2);
@@ -525,7 +527,7 @@ describe("FTS search", () => {
 
       // Should not throw a SQL error despite special characters
       const results = searchFts(db, "hello! world@123", 10);
-      expect(results[0]!.entry.name).toBe("hello-tool");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/hello-tool");
       // "hello" and "world" and "123" are valid tokens after sanitization
       expect(results.length).toBeGreaterThanOrEqual(1);
     } finally {
@@ -570,7 +572,7 @@ describe("FTS search", () => {
       insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
       rebuildFts(db);
 
-      // "a b c" — single-char tokens are passed to FTS5 but don't match
+      // "a b c" — "a" is a stopword; "b" and "c" reach FTS5 but don't match
       // "alpha", "bravo", "charlie" because FTS5 doesn't do prefix matching.
       const results = searchFts(db, "a b c", 10);
       expect(results).toEqual([]);
@@ -586,16 +588,11 @@ describe("FTS search", () => {
       insertTestEntry(db, "bar-tool", { description: "bar qux quux", searchText: "bar qux quux" });
       rebuildFts(db);
 
-      // "NEAR(foo, bar)" is raw FTS5 syntax that should be sanitized.
-      // After sanitization, syntax chars and NEAR are stripped, leaving
-      // tokens "foo" "bar" (implicit AND) — should not throw and should
-      // return matches containing both foo and bar.
+      // "NEAR(foo, bar)" is raw FTS5 syntax. Every token is quoted, so NEAR
+      // is an ordinary word and the query matches any of near/foo/bar — it
+      // must not throw, and the document with both foo and bar ranks first.
       const results = searchFts(db, "NEAR(foo, bar)", 10);
-      expect(results.length).toBeGreaterThanOrEqual(1);
-
-      // foo-tool has both "foo" and "bar" in its search text
-      const names = results.map((r) => r.entry.name);
-      expect(names).toContain("foo-tool");
+      expect(results.map((r) => r.itemRef)).toEqual(["test-bundle//scripts/foo-tool", "test-bundle//scripts/bar-tool"]);
     } finally {
       closeDatabase(db);
     }
@@ -615,8 +612,7 @@ describe("FTS search", () => {
       rebuildFts(db);
 
       const results = searchFts(db, "deploy production", 10);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.entry.name).toBe("deploy-prod");
+      expect(results.map((r) => r.itemRef)).toEqual(["test-bundle//scripts/deploy-prod"]);
     } finally {
       closeDatabase(db);
     }
@@ -632,8 +628,7 @@ describe("FTS search", () => {
       rebuildFts(db);
 
       const alphaResults = searchFts(db, "alpha", 10);
-      expect(alphaResults).toHaveLength(1);
-      expect(alphaResults[0]!.entry.name).toBe("alpha");
+      expect(alphaResults.map((r) => r.itemRef)).toEqual(["test-bundle//scripts/alpha"]);
 
       const allResults = searchFts(db, "functionality", 10);
       expect(allResults).toHaveLength(3);

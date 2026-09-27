@@ -277,33 +277,9 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
     // Optional v1 spec §4.2 quality marker (e.g. "curated" / "proposed").
     if (typeof hit.quality === "string" && hit.quality) lines.push(`  quality: ${hit.quality}`);
-    // Issue #856: which stage of the progressive AND->OR lexical ladder
-    // produced this hit ("exact" | "prefix" | "relaxed").
-    if (typeof hit.matchStage === "string" && hit.matchStage) lines.push(`  matchStage: ${hit.matchStage}`);
     // Surface optional hit-level warnings (v1 spec §4.2).
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
-    }
-    const graph =
-      typeof hit.graph === "object" && hit.graph !== null ? (hit.graph as Record<string, unknown>) : undefined;
-    if (graph) {
-      const entities = Array.isArray(graph.entities) ? (graph.entities as Array<Record<string, unknown>>) : [];
-      if (entities.length > 0) {
-        const matched = entities
-          .filter((entity) => String(entity.kind ?? "") === "matched")
-          .map((entity) => String(entity.name ?? "?"));
-        const neighbors = entities
-          .filter((entity) => String(entity.kind ?? "") !== "matched")
-          .map((entity) => String(entity.name ?? "?"));
-        lines.push(
-          `  graph: ${[
-            matched.length > 0 ? `query match=${matched.join(", ")}` : undefined,
-            neighbors.length > 0 ? `neighbors=${neighbors.join(", ")}` : undefined,
-          ]
-            .filter(Boolean)
-            .join("; ")}`,
-        );
-      }
     }
 
     if (detail === "full") {

@@ -8,10 +8,8 @@
  * Walks the primary stash for `memory:` and `knowledge:` assets, asks the
  * configured LLM to extract entities and relations from each one, and
  * persists the result to stash-local SQLite graph tables keyed by stash root.
- * The artifact is consumed by the search
- * pipeline (see `src/indexer/graph/graph-boost.ts`) as a single boost component
- * inside the existing FTS5+boosts loop — there is NO second SearchHit
- * scorer and no parallel ranking track.
+ * The artifact backs `akm show`'s `related` list and curate's support refs
+ * (`src/indexer/graph/graph-related.ts`); it plays no part in search ranking.
  *
  * Disabling — three preconditions must ALL hold for the pass to run:
  *   1. An LLM profile must be configured (no provider = no extraction). When
@@ -25,7 +23,7 @@
  *      Set to `false` to skip just this pass while leaving other passes
  *      that share the same LLM profile enabled.
  *   Toggling any one off does NOT delete the existing persisted graph — the
- *   user keeps the boost component they already have, it just stops
+ *   user keeps the related links they already have, they just stop
  *   refreshing.
  *
  * Locked v1 contract:

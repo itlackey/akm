@@ -184,7 +184,7 @@ describe("Parallel search: vector unavailable", () => {
       expect(lintHit).toBeDefined();
       expect(lintHit?.score).toBeGreaterThan(0);
       // With semanticSearchMode disabled, should use FTS ranking
-      expect(lintHit?.whyMatched).toContain("fts bm25 relevance");
+      expect(lintHit?.whyMatched).toEqual(["lexical rank 1"]);
     });
   });
 });

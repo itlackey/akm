@@ -17,7 +17,6 @@
  */
 
 import type { IndexDocument } from "../../indexer/passes/metadata";
-import type { LexicalQueryExecution } from "../../indexer/search/fts-query";
 
 /**
  * Durable bundle-adapter identity attached to every current `entries` row.
@@ -51,32 +50,6 @@ export interface DbIndexedEntry {
   adapterId: string;
   type: string;
   contentHash?: string;
-}
-
-/** One FTS5 search hit joined back to its `entries` row. */
-export interface DbSearchResult {
-  id: number;
-  filePath: string;
-  entry: IndexDocument;
-  searchText: string;
-  bm25Score: number;
-  /** Fixed-calibrated lexical contribution; fragment and parent FTS tables are
-   * not asserted to have directly comparable raw BM25 magnitudes. */
-  lexicalScore?: number;
-  /** Present only when a single safe Markdown fragment independently matched. */
-  fragmentId?: string;
-  /**
-   * Chunk-5 flip F5d (Step 2): the durable fully-qualified `<bundle>//<concept-id>`
-   * stored spelling from the `entries.item_ref` column, surfaced onto the search
-   * read path so salience keys on durable identity. Null provenance marks an
-   * invalid indexed row.
-   */
-  itemRef: string;
-  bundleId: string;
-  conceptId: string;
-  adapterId: string;
-  /** Which stage of the single progressive lexical plan produced this row. */
-  lexicalMatch: LexicalQueryExecution;
 }
 
 /** One nearest-neighbour hit from the vector index (id + L2 distance). */
@@ -160,14 +133,6 @@ export interface UtilityScoreData {
 export interface UtilityScoreRow extends UtilityScoreData {
   entryId: number;
   updatedAt: string;
-}
-
-/** A single row from `utility_scores_scoped`. */
-export interface ScopedUtilityRow {
-  entryId: number;
-  scopeKey: string;
-  utility: number;
-  lastUsedAt: number;
 }
 
 /**

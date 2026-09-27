@@ -10,8 +10,7 @@
  *     `supersededBy: [<new ref>]` — a metadata edit only: every other
  *     frontmatter key and the body are preserved byte-for-byte.
  *   - The demotion is immediately live: the mutated old asset is reindexed,
- *     so `--belief current` hides it and the beliefStateBoost (-0.25) ranks
- *     the correction above the stale incumbent.
+ *     so `--belief current` hides it.
  *   - Re-running the correction is idempotent (no duplicated supersededBy
  *     entry); `writeSupersededEdge` sorted-set-appends across corrections.
  *   - An unresolvable ref is INPUT VALIDATION: UsageError → exit 2 with the
@@ -209,14 +208,12 @@ describe("remember --supersedes", () => {
     expect(currentRefs).toContain(conceptId(newRef));
     expect(currentRefs).not.toContain(conceptId(old.ref));
 
-    // Unfiltered search still returns both, with the correction ranked above
-    // the superseded incumbent (beliefStateBoost demotion, -0.25).
+    // Unfiltered search still returns both.
     const all = await runCliCapture(["search", "quantum rotation", "--type", "memory"]);
     expect(all.code).toBe(0);
     const allRefs = ((JSON.parse(all.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => conceptId(h.ref));
     expect(allRefs).toContain(conceptId(newRef));
     expect(allRefs).toContain(conceptId(old.ref));
-    expect(allRefs.indexOf(conceptId(newRef))).toBeLessThan(allRefs.indexOf(conceptId(old.ref)));
   });
 
   test("re-running the correction is idempotent: supersededBy is not duplicated", async () => {
@@ -757,9 +754,8 @@ describe("writeSupersededEdge in memory-belief", () => {
   });
 
   test("never weakens a stronger demotion: contradicted/archived keep their state, edge still appends", async () => {
-    // Severity order (BELIEF_STATE_SCORE_CEILINGS, ranking-contributors.ts):
-    // superseded 0.25 > contradicted 0.2 > archived 0.15 — overwriting
-    // contradicted/archived with superseded would RAISE the incumbent's rank.
+    // contradicted and archived are stronger demotions than superseded;
+    // overwriting them with superseded would weaken the incumbent's state.
     const writeSupersededEdge = await loadWriteSupersededEdge();
     for (const state of ["contradicted", "archived"] as const) {
       const dir = makeDir("akm-superseded-edge-state");

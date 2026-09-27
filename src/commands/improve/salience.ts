@@ -191,7 +191,7 @@ export function getLastUseMsByRef(
     if (ref) idToRef.set(indexed.id, ref);
   }
   if (idToRef.size === 0) return result;
-  const { global: scores } = getUtilityScoresByIds(indexDb, [...idToRef.keys()]);
+  const scores = getUtilityScoresByIds(indexDb, [...idToRef.keys()]);
   for (const [id, row] of scores) {
     const ref = idToRef.get(id);
     const lastUsedAt = row.lastUsedAt;

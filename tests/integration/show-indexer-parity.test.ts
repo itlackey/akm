@@ -19,9 +19,11 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified, showLocal } from "../../src/commands/read/show";
 import { parseBundleRef } from "../../src/core/asset/asset-ref";
+import { splitMarkdownFragments } from "../../src/core/asset/markdown-fragments";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex, lookupBundleRef } from "../../src/indexer/indexer";
+import { projectMarkdownFragmentContent } from "../../src/indexer/passes/metadata";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
@@ -91,8 +93,6 @@ async function onlyHit(bundleId: string, query: string): Promise<SourceSearchHit
     query,
     source: bundleId,
     skipLogging: true,
-    disableProjectContext: true,
-    disableScopedUtility: true,
   });
   const hits = result.hits.filter((hit): hit is SourceSearchHit => "path" in hit);
   expect(hits).toHaveLength(1);
@@ -497,33 +497,30 @@ jobs:
     writeFile(assetPath, original);
     await akmIndex({ stashDir, full: true });
 
+    // Search ranks whole documents, so the hit is the parent ref; the
+    // fragment selector comes from the same safe projection the index stores.
     const hit = (await akmSearch({ query: "latefragmentneedle", type: "knowledge", skipLogging: true })).hits.find(
       (candidate): candidate is SourceSearchHit => "path" in candidate,
     );
-    if (!hit) throw new Error("expected fragment hit");
-    expect(hit.ref).toMatch(/#akm-fragment-/);
-    expect(hit.selectedRef).toBe(hit.ref);
-    expect(hit.parentRef).toBe("knowledge/memory");
-    expect(hit.fragmentOrdinal).toBeGreaterThan(20);
-    expect(hit.fragmentCount).toBeGreaterThanOrEqual(hit.fragmentOrdinal!);
-    expect(hit.startLine).toBeGreaterThan(20);
-    expect(hit.previousRef).toMatch(/#akm-fragment-/);
-    expect(hit.fragmentEstimatedTokens).toBe(hit.estimatedTokens);
-    expect(hit.parentEstimatedTokens).toBeGreaterThan(hit.estimatedTokens!);
-    expect(hit.matchStage).toBe("exact");
+    expect(hit?.ref).toBe("knowledge/memory");
+    const fragments = splitMarkdownFragments(projectMarkdownFragmentContent(original) ?? "");
+    const fragment = fragments.find((candidate) => candidate.text.includes("latefragmentneedle"));
+    if (!fragment) throw new Error("expected the needle fragment");
+    expect(fragment.fragmentId).toMatch(/^akm-fragment-/);
+    const fragmentRef = `knowledge/memory#${fragment.fragmentId}`;
 
-    const exact = await akmShowUnified({ ref: hit.ref, skipLogging: true });
+    const exact = await akmShowUnified({ ref: fragmentRef, skipLogging: true });
     expect(exact.content).toContain("latefragmentneedle selected proof");
     expect(exact.content).not.toContain("Serenity Yoga");
     expect(exact.contextMode).toBe("exact");
-    expect(exact.selectedRef).toBe(hit.ref);
+    expect(exact.selectedRef).toBe(fragmentRef);
 
     // Opaque selectors continue to resolve the indexed revision even if disk
     // changes before show. Context assembly must not reconstruct from this
     // newer raw file or reintroduce bytes removed by the safe projection.
     writeFile(assetPath, "# Replaced\nNEW_DISK_ONLY <!-- NEW_COMMENT_SECRET -->");
     const contextual = await akmShowUnified({
-      ref: hit.ref,
+      ref: fragmentRef,
       contextMode: "lead",
       maxContextChars: 3200,
       skipLogging: true,
@@ -538,10 +535,10 @@ jobs:
     expect(contextual.content).not.toContain("secret.invalid");
     expect(contextual).toMatchObject({
       ref: "knowledge/memory",
-      selectedRef: hit.ref,
+      selectedRef: fragmentRef,
       parentRef: "knowledge/memory",
-      fragmentOrdinal: hit.fragmentOrdinal,
-      fragmentCount: hit.fragmentCount,
+      fragmentOrdinal: fragment.ordinal + 1,
+      fragmentCount: fragments.length,
       contextMode: "lead",
       contextMaxChars: 3200,
     });

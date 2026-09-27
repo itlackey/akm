@@ -65,14 +65,6 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
   await akmIndex({ stashDir, full: true });
 }
 
-function expectDefined<T>(value: T | null | undefined): T {
-  expect(value).toBeDefined();
-  if (value === undefined || value === null) {
-    throw new Error("Expected value to be defined");
-  }
-  return value;
-}
-
 function seedIndexEntry(
   db: ReturnType<typeof openIndexDatabase>,
   name: string,
@@ -218,215 +210,50 @@ describe("upsertUtilityScore / getUtilityScore", () => {
   });
 });
 
-// ── Test 3: Entries with usage data get utility boost in search ───────────────
+// ── Test 3: search ranking ignores utility scores ───────────────────────────
 
-describe("Utility boost in search scoring", () => {
-  test("entries with usage data get utility boost in search", async () => {
+describe("Utility scores and search ranking", () => {
+  test("a utility score does not change the order or scores of search hits", async () => {
     const stashDir = tmpStash();
 
-    // Create two entries with identical FTS content
+    // Two entries with identical FTS content: their fused scores tie and the
+    // item ref orders them (alpha-tool before zeta-tool).
     writeFile(
-      path.join(stashDir, "scripts", "boosted-tool", "boosted-tool.sh"),
-      "#!/bin/bash\n# A deployment automation utility for servers\necho boosted\n",
+      path.join(stashDir, "scripts", "alpha-tool", "alpha-tool.sh"),
+      "#!/bin/bash\n# A deployment automation utility for servers\necho alpha\n",
     );
-
     writeFile(
-      path.join(stashDir, "scripts", "plain-tool", "plain-tool.sh"),
-      "#!/bin/bash\n# A deployment automation utility for servers\necho plain\n",
+      path.join(stashDir, "scripts", "zeta-tool", "zeta-tool.sh"),
+      "#!/bin/bash\n# A deployment automation utility for servers\necho zeta\n",
     );
 
     await buildTestIndex(stashDir, {});
+    const search = async () =>
+      (await akmSearch({ query: "deployment automation", source: "local", skipLogging: true })).hits
+        .filter((h): h is SourceSearchHit => h.type !== "registry")
+        .map((h) => [h.name, h.score]);
+    const before = await search();
+    expect(before.map(([name]) => name)).toEqual(["alpha-tool/alpha-tool.sh", "zeta-tool/zeta-tool.sh"]);
 
-    // Now inject utility score for the boosted entry
-    const dbPath = getDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openIndexDatabase(getDbPath());
     try {
-      const boostedEntry = db.prepare("SELECT id FROM entries WHERE file_path LIKE '%boosted-tool%'").get() as
-        | { id: number }
-        | undefined;
-      if (boostedEntry) {
-        upsertUtilityScore(db, boostedEntry.id, {
-          utility: 0.8,
-          showCount: 20,
-          searchCount: 25,
-          selectRate: 0.8,
-          lastUsedAt: new Date().toISOString(),
-        });
-      }
+      const zeta = db.prepare("SELECT id FROM entries WHERE file_path LIKE '%zeta-tool%'").get() as { id: number };
+      upsertUtilityScore(db, zeta.id, {
+        utility: 0.8,
+        showCount: 20,
+        searchCount: 25,
+        selectRate: 0.8,
+        lastUsedAt: new Date().toISOString(),
+      });
     } finally {
       closeDatabase(db);
     }
 
-    const result = await akmSearch({ query: "deployment automation", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const boostedHit = localHits.find((h) => h.name === "boosted-tool/boosted-tool.sh");
-    const plainHit = localHits.find((h) => h.name === "plain-tool/plain-tool.sh");
-
-    const resolvedBoosted = expectDefined(boostedHit);
-    const resolvedPlain = expectDefined(plainHit);
-
-    // The boosted entry should rank ahead of the plain one due to utility
-    // boost. Per CLAUDE.md / spec §9, displayed scores are clamped to [0,1];
-    // both hits may clamp to the ceiling on a strong-match query, so the
-    // observable contract is rank order, not raw score magnitude. The
-    // boosted score must still be at least as high as the plain one.
-    const boostedIdx = localHits.indexOf(resolvedBoosted);
-    const plainIdx = localHits.indexOf(resolvedPlain);
-    expect(boostedIdx).toBeLessThan(plainIdx);
-    expect(resolvedBoosted.score ?? 0).toBeGreaterThanOrEqual(resolvedPlain.score ?? 0);
+    expect(await search()).toEqual(before);
   });
 });
 
-// ── Test 4: Entries without usage data get no utility boost ──────────────────
-
-describe("No utility boost for entries without usage data", () => {
-  test("entries without usage data get no utility boost (score unchanged)", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(
-      path.join(stashDir, "scripts", "no-usage", "no-usage.sh"),
-      "#!/bin/bash\n# A simple test tool with no usage history\necho no usage\n",
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const result = await akmSearch({ query: "simple test tool", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const hit = localHits.find((h) => h.name === "no-usage/no-usage.sh");
-
-    const resolved = expectDefined(hit);
-    // No utility data means no utilityBoost in whyMatched
-    expect(resolved.whyMatched).toBeDefined();
-    expect(resolved.whyMatched).not.toContain("usage history boost");
-  });
-});
-
-// ── Test 5: Utility boost is capped at 1.5x ─────────────────────────────────
-
-describe("Utility boost cap", () => {
-  test("utility boost is capped at 1.5x", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(
-      path.join(stashDir, "scripts", "capped-a", "capped-a.sh"),
-      "#!/bin/bash\n# A network monitoring tool for production\necho capped\n",
-    );
-
-    writeFile(
-      path.join(stashDir, "scripts", "capped-b", "capped-b.sh"),
-      "#!/bin/bash\n# A network monitoring tool for production\necho baseline\n",
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    // Inject an extremely high utility score for capped-a
-    const dbPath = getDbPath();
-    const db = openIndexDatabase(dbPath);
-    try {
-      const cappedEntry = db.prepare("SELECT id FROM entries WHERE file_path LIKE '%capped-a%'").get() as
-        | { id: number }
-        | undefined;
-      if (cappedEntry) {
-        upsertUtilityScore(db, cappedEntry.id, {
-          utility: 10.0, // Extremely high utility
-          showCount: 1000,
-          searchCount: 1000,
-          selectRate: 1.0,
-          lastUsedAt: new Date().toISOString(),
-        });
-      }
-    } finally {
-      closeDatabase(db);
-    }
-
-    const result = await akmSearch({ query: "network monitoring", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const cappedHit = localHits.find((h) => h.name === "capped-a/capped-a.sh");
-    const baselineHit = localHits.find((h) => h.name === "capped-b/capped-b.sh");
-
-    const resolvedCapped = expectDefined(cappedHit);
-    const resolvedBaseline = expectDefined(baselineHit);
-
-    // The ratio between boosted and baseline should be at most 1.5x
-    // (the cap). Allow a tiny tolerance for floating point + other small boosts.
-    const ratio = expectDefined(resolvedCapped.score) / expectDefined(resolvedBaseline.score);
-    expect(ratio).toBeLessThanOrEqual(1.55); // small tolerance for name boost differences
-  });
-});
-
-// ── Test 6: Recency decay reduces boost for old usage ────────────────────────
-
-describe("Recency decay on utility boost", () => {
-  test("recent usage produces higher boost than old usage", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(
-      path.join(stashDir, "scripts", "recent-use", "recent-use.sh"),
-      "#!/bin/bash\n# A data processing pipeline tool for analytics\necho recent\n",
-    );
-
-    writeFile(
-      path.join(stashDir, "scripts", "old-use", "old-use.sh"),
-      "#!/bin/bash\n# A data processing pipeline tool for analytics\necho old\n",
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const dbPath = getDbPath();
-    const db = openIndexDatabase(dbPath);
-    try {
-      const recentEntry = db.prepare("SELECT id FROM entries WHERE file_path LIKE '%recent-use%'").get() as
-        | { id: number }
-        | undefined;
-      const oldEntry = db.prepare("SELECT id FROM entries WHERE file_path LIKE '%old-use%'").get() as
-        | { id: number }
-        | undefined;
-
-      if (recentEntry) {
-        upsertUtilityScore(db, recentEntry.id, {
-          utility: 0.8,
-          showCount: 20,
-          searchCount: 25,
-          selectRate: 0.8,
-          lastUsedAt: new Date().toISOString(), // Just now
-        });
-      }
-      if (oldEntry) {
-        // Same utility score but last used 90 days ago
-        const oldDate = new Date();
-        oldDate.setDate(oldDate.getDate() - 90);
-        upsertUtilityScore(db, oldEntry.id, {
-          utility: 0.8,
-          showCount: 20,
-          searchCount: 25,
-          selectRate: 0.8,
-          lastUsedAt: oldDate.toISOString(),
-        });
-      }
-    } finally {
-      closeDatabase(db);
-    }
-
-    const result = await akmSearch({ query: "data processing pipeline", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const recentHit = localHits.find((h) => h.name === "recent-use/recent-use.sh");
-    const oldHit = localHits.find((h) => h.name === "old-use/old-use.sh");
-
-    const resolvedRecent = expectDefined(recentHit);
-    const resolvedOld = expectDefined(oldHit);
-
-    // Recent usage should rank ahead of old usage. Per CLAUDE.md / spec §9
-    // the displayed score is clamped to [0,1]; on a strong-match query both
-    // hits may clamp to the ceiling, so rank ordering is the observable
-    // contract for the recency signal.
-    const recentIdx = localHits.indexOf(resolvedRecent);
-    const oldIdx = localHits.indexOf(resolvedOld);
-    expect(recentIdx).toBeLessThan(oldIdx);
-    expect(resolvedRecent.score ?? 0).toBeGreaterThanOrEqual(resolvedOld.score ?? 0);
-  });
-});
-
-// ── Test 7: recomputeUtilityScores aggregates from usage_events ──────────────
+// ── Test 4: recomputeUtilityScores ──────────────────────────────────────────
 
 describe("recomputeUtilityScores", () => {
   test("aggregates search and show events from usage_events", () => {
@@ -520,49 +347,6 @@ describe("recomputeUtilityScores", () => {
       closeDatabase(db);
       stateDb.close();
     }
-  });
-});
-
-// ── Test 8: whyMatched includes usage history boost when applicable ──────────
-
-describe("whyMatched includes usage history boost", () => {
-  test("whyMatched includes usage history boost when utility > 0", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(
-      path.join(stashDir, "scripts", "why-util", "why-util.sh"),
-      "#!/bin/bash\n# A logging infrastructure tool for debugging\necho why utility\n",
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    // Inject utility score
-    const dbPath = getDbPath();
-    const db = openIndexDatabase(dbPath);
-    try {
-      const entry = db.prepare("SELECT id FROM entries WHERE file_path LIKE '%why-util%'").get() as
-        | { id: number }
-        | undefined;
-      if (entry) {
-        upsertUtilityScore(db, entry.id, {
-          utility: 0.6,
-          showCount: 10,
-          searchCount: 15,
-          selectRate: 0.67,
-          lastUsedAt: new Date().toISOString(),
-        });
-      }
-    } finally {
-      closeDatabase(db);
-    }
-
-    const result = await akmSearch({ query: "logging infrastructure", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const hit = localHits.find((h) => h.name === "why-util/why-util.sh");
-
-    const resolved = expectDefined(hit);
-    expect(resolved.whyMatched).toBeDefined();
-    expect(resolved.whyMatched).toContain("usage history boost");
   });
 });
 

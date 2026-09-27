@@ -65,7 +65,6 @@ import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-fl
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
-import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { disposeDispatchResources } from "../../src/integrations/agent/runner-dispatch";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
@@ -76,9 +75,8 @@ import { withEnv } from "./sandbox";
  * Reset every module-level process singleton the CLI caches, so an in-process
  * run re-reads its state from the (sandboxed) environment — matching
  * fresh-subprocess semantics. This is a SUPERSET of the historical
- * config+output-mode reset: it additionally clears the graph-boost cache, the
- * local embedder, the embedding cache, and the warn-module quiet/verbose/log-file
- * state. Every call is to a verified-exported, no-argument, idempotent reset, so
+ * config+output-mode reset: it additionally clears the local embedder, the
+ * embedding cache, and the warn-module quiet/verbose/log-file state. Every call is to a verified-exported, no-argument, idempotent reset, so
  * invoking them here (and possibly again in `tests/_preload.ts`) is safe and makes
  * isolation order-independent.
  *
@@ -96,7 +94,6 @@ import { withEnv } from "./sandbox";
 export function resetAllProcessState(): void {
   resetConfigCache();
   resetOutputMode();
-  resetGraphBoostCache();
   resetLocalEmbedder();
   clearEmbeddingCache();
   resetQuiet();

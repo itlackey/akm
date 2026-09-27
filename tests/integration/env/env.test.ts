@@ -5,7 +5,6 @@ import path from "node:path";
 import { buildShellExportScript, createEnv, listKeys, loadEnv } from "../../../src/commands/env/env";
 import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
 import { getDbPath } from "../../../src/core/paths";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
@@ -54,7 +53,6 @@ async function runCli(
   return withEnv({ AKM_BUNDLE_DIR: undefined, AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
-    resetGraphBoostCache();
     const { stdout, stderr, code } = await runCliCapture(args);
     return { stdout, stderr, status: code };
   });

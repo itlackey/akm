@@ -3,22 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Top-level `improve` config section (utility decay, salience, state GC,
- * strategies). Retired keys (`salience.replayBudget`, `collapseDetector`) are
+ * Top-level `improve` config section (salience, state GC, strategies). Retired
+ * keys (`salience.replayBudget`, `collapseDetector`, `utilityDecay`) are
  * tolerated as unknown keys.
  */
 import { z } from "zod";
 import { ImproveProfileConfigSchema } from "./improve-processes";
 import { engineName, nonNegativeNumber } from "./primitives";
 
-// ── Improve top-level (utility decay, event retention) ─────────────────────
-
-const ImproveUtilityDecaySchema = z
-  .object({
-    halfLifeDays: z.number().finite().min(0.1).optional(),
-    feedbackStabilityBoost: z.number().finite().min(1).optional(),
-  })
-  .passthrough();
+// ── Improve top-level (event retention, salience, state GC) ────────────────
 
 const ImproveSalienceSchema = z
   .object({
@@ -61,7 +54,6 @@ const ImproveStateGcSchema = z
 export const ImproveConfigSchema = z
   .object({
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
-    utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     salience: ImproveSalienceSchema.optional(),
     stateGc: ImproveStateGcSchema.optional(),

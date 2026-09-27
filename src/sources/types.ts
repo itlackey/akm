@@ -16,7 +16,7 @@ export type FragmentContextMode = "exact" | "lead";
 
 /** Public provenance for an indexed-safe Markdown fragment selection. */
 export interface FragmentProvenance {
-  /** Fragment-qualified selector that search chose or show resolved. */
+  /** Fragment-qualified selector that show resolved. */
   selectedRef?: string;
   /** Canonical parent asset ref, without a selector. */
   parentRef?: string;
@@ -34,7 +34,7 @@ export interface FragmentProvenance {
   parentEstimatedTokens?: number;
 }
 
-export interface SourceSearchHit extends FragmentProvenance {
+export interface SourceSearchHit {
   type: string;
   name: string;
   path: string;
@@ -72,14 +72,6 @@ export interface SourceSearchHit extends FragmentProvenance {
    * `quality` field.
    */
   quality?: string;
-  /**
-   * Which stage of the progressive AND→OR lexical search ladder produced
-   * this hit: `"exact"` (strict AND), `"prefix"` (prefix AND), or
-   * `"relaxed"` (OR fallback). Absent when the hit has no FTS component
-   * (e.g. a pure-semantic hybrid contribution, or a registry/browse hit
-   * that never goes through the lexical ladder).
-   */
-  matchStage?: "exact" | "prefix" | "relaxed";
   beliefState?: string;
   currentBeliefRefs?: string[];
   /**
@@ -96,10 +88,6 @@ export interface SourceSearchHit extends FragmentProvenance {
    * child when this pointer is set.
    */
   expandTo?: string;
-  graph?: {
-    entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
-    relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
-  };
 }
 
 export interface RegistrySearchResultHit {

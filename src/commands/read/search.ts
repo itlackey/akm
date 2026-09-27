@@ -44,7 +44,7 @@ const DEFAULT_LIMIT = 20;
 function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: string): string[] {
   const ownersByConcept = new Map<string, string[]>();
   for (const hit of hits) {
-    const displayRef = (hit.parentRef ?? hit.ref).split("#", 1)[0] ?? hit.ref;
+    const displayRef = hit.ref.split("#", 1)[0] ?? hit.ref;
     const boundary = displayRef.indexOf("//");
     const conceptId = boundary >= 0 ? displayRef.slice(boundary + 2) : displayRef;
     const owner = hit.origin ?? defaultBundle ?? "working-bundle";
@@ -79,8 +79,7 @@ export async function akmSearch(input: {
    * whose `entry.scope.<key>` exactly equals the supplied value. Unfiltered
    * queries match entries with or without scope metadata.
    *
-   * Filtering narrows the result set; ranking is unchanged. There is still
-   * one scoring pipeline.
+   * Filtering narrows the result set; ranking is unchanged.
    */
   filters?: StashEntryScope;
   /**
@@ -103,10 +102,6 @@ export async function akmSearch(input: {
    * `session`). No effect when an explicit `type` is supplied.
    */
   includeSessions?: boolean;
-  /** Disable the automatic project-context ranking boost for this search only. */
-  disableProjectContext?: boolean;
-  /** Disable scoped-utility ranking for this search only. */
-  disableScopedUtility?: boolean;
   /**
    * When true, skip logging usage events. Used by internal callers
    * (curate, improve context gathering) to avoid polluting user
@@ -213,8 +208,6 @@ export async function akmSearch(input: {
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
           includeExcludedTypes: input.includeSessions === true,
-          disableProjectContext: input.disableProjectContext === true,
-          disableScopedUtility: input.disableScopedUtility === true,
         });
 
   const registryResult =
@@ -408,18 +401,11 @@ function logSearchEvent(
             source: eventSource,
           });
         }, TELEMETRY_BUSY_TIMEOUT_MS);
-        // No live utility_scores/utility_scores_scoped write here (#862): a
-        // search result is an impression, not a signal that the asset was
-        // useful. Rewarding every returned hit created a feedback loop where
-        // merely appearing in results inflated future ranking — assets
-        // surfaced because they'd surfaced before, not because a user acted
-        // on them. Retrieval counts are still recorded above via
-        // insertUsageEvent (search_count) and rolled into utility_scores by
-        // the offline `recomputeUtilityScores` pass (`akm index`), which uses
-        // the show/search *select rate* — a ratio that requires an actual
-        // `show`/select event, not raw impressions. Explicit signal comes
-        // from `akm feedback` (applyFeedbackToUtilityScore) and from
-        // selection (recordShowUsage / the `select` event derived from it).
+        // No live utility_scores write here (#862): a search result is an
+        // impression, not a signal that the asset was useful. Retrieval
+        // counts are recorded above via insertUsageEvent (search_count) and
+        // rolled into utility_scores by the offline `recomputeUtilityScores`
+        // pass (`akm index`).
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );

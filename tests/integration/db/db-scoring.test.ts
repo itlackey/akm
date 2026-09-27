@@ -97,13 +97,13 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
       const results = searchFts(db, "code-review", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
       // The code-review entry should be the top result
-      expect(results[0]!.entry.name).toBe("code-review");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/code-review");
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("AND semantics: multi-word query only matches entries containing all terms", () => {
+  test("OR semantics: any query word admits a document, more matching words rank higher", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-tool", {
@@ -120,54 +120,40 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
       });
       rebuildFts(db);
 
-      // With AND semantics, "code review" should NOT match "deploy-tool"
-      // (which has neither "code" nor "review")
-      // "review-tool" has both "review" and "code" in its search text
-      const results = searchFts(db, "code review", 10);
-      const names = results.map((r) => r.entry.name);
-      expect(names).not.toContain("deploy-tool");
-      // review-tool should match (it contains both "code" and "review")
-      expect(names).toContain("review-tool");
+      const refs = searchFts(db, "code review", 10).map((r) => r.itemRef);
+      expect(refs).toEqual(["test-bundle//scripts/review-tool", "test-bundle//scripts/code-tool"]);
     } finally {
       closeDatabase(db);
     }
   });
 });
 
-describe("searchFts candidate boundary expansion (#940)", () => {
-  test("includes every row at the boundary but excludes strictly weaker rows", () => {
+describe("searchFts candidate limit", () => {
+  test("a strict limit, with equal BM25 scores ordered by item_ref", () => {
     const db = openIndexDatabase(tmpDbPath("fts-mixed-boundary"));
     try {
-      for (const name of ["better-a", "better-b"]) {
+      for (const name of ["better-b", "better-a"]) {
         insertTestEntry(db, name, {
           description: "needle needle needle needle",
           searchText: "needle needle needle needle",
         });
       }
-      for (const name of ["boundary-a", "boundary-b", "boundary-c"]) {
+      for (const name of ["boundary-c", "boundary-a", "boundary-b"]) {
         insertTestEntry(db, name, { description: "needle", searchText: "needle" });
-      }
-      for (const name of ["worse-a", "worse-b"]) {
-        const text = `needle ${"filler ".repeat(80)}`;
-        insertTestEntry(db, name, { description: text, searchText: text });
       }
       rebuildFts(db);
 
-      // N=3: two stronger rows plus the three-way boundary tie. The latter
-      // must be complete; the strictly weaker rows remain outside the pool.
-      expect(searchFts(db, "needle", 3).map((row) => row.entry.name)).toEqual([
-        "better-a",
-        "better-b",
-        "boundary-a",
-        "boundary-b",
-        "boundary-c",
+      expect(searchFts(db, "needle", 3).map((row) => row.itemRef)).toEqual([
+        "test-bundle//scripts/better-a",
+        "test-bundle//scripts/better-b",
+        "test-bundle//scripts/boundary-a",
       ]);
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("applies typed and exclusion filters before finding the boundary", () => {
+  test("applies typed and exclusion filters before the limit", () => {
     const db = openIndexDatabase(tmpDbPath("fts-filtered-boundary"));
     try {
       insertTestEntry(db, "skill-a", { type: "skill", description: "needle", searchText: "needle" });
@@ -175,21 +161,18 @@ describe("searchFts candidate boundary expansion (#940)", () => {
       insertTestEntry(db, "knowledge-a", { type: "knowledge", description: "needle", searchText: "needle" });
       rebuildFts(db);
 
-      expect(searchFts(db, "needle", 1, "skill").map((row) => row.entry.name)).toEqual(["skill-a", "skill-b"]);
-      expect(searchFts(db, "needle", 1, undefined, ["skill"]).map((row) => row.entry.name)).toEqual(["knowledge-a"]);
+      expect(searchFts(db, "needle", 1, "skill").map((row) => row.itemRef)).toEqual(["test-bundle//skills/skill-a"]);
+      expect(searchFts(db, "needle", 1, undefined, ["skill"]).map((row) => row.itemRef)).toEqual([
+        "test-bundle//knowledge/knowledge-a",
+      ]);
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("retains a large exact-BM25 boundary instead of silently choosing opaque row ids", () => {
+  test("thousands of exact BM25 ties still return exactly `limit` rows, quickly", () => {
     const db = openIndexDatabase(tmpDbPath("fts-boundary"));
     try {
-      // The caller's final ranker owns contributor-aware tie resolution. A
-      // lexical limit of 10 must therefore return all 3,000 exact BM25 ties,
-      // not an arbitrary prefix selected by SQLite's generated entry id.
-      // This is intentionally data-bound behavior, so the assertion records
-      // the contract rather than treating it as an accidental overshoot.
       for (let index = 0; index < 3_000; index += 1) {
         insertTestEntry(db, `opaque-${index.toString().padStart(4, "0")}`, {
           description: "needle",
@@ -204,10 +187,9 @@ describe("searchFts candidate boundary expansion (#940)", () => {
       const results = searchFts(db, "needle", 10);
       const elapsedMs = performance.now() - started;
 
-      expect(results).toHaveLength(3_000);
-      // Guard against a query-plan regression to repeated correlated scans;
-      // leave generous room for slower CI runners while keeping this a real
-      // indexed lookup rather than an accidental multi-second walk.
+      expect(results.map((row) => row.itemRef)).toEqual(
+        Array.from({ length: 10 }, (_, index) => `test-bundle//scripts/opaque-000${index}`),
+      );
       expect(elapsedMs).toBeLessThan(5_000);
     } finally {
       closeDatabase(db);

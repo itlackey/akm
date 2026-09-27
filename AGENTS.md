@@ -38,7 +38,7 @@
 - `bunfig.toml` preloads `tests/_preload.ts` for every `bun test` invocation. The preload owns process state that crosses test boundaries:
   - `HOME` and all four `XDG_*_HOME` env vars are pointed at a per-process sandbox dir at preload time. Test files never read the developer's real `~/.config/akm/`, `~/.cache/akm/`, etc. unless they go through `process.env.HOME` after explicitly restoring it.
   - Every test gets a `beforeEach`/`afterEach` that snapshots the harnessed env (HOME, XDG_*, AKM_BUNDLE_DIR, AKM_CONFIG_DIR, AKM_CACHE_DIR, AKM_DATA_DIR, AKM_STATE_DIR, AKM_VERBOSE, AKM_LLM_API_KEY, AKM_EMBED_API_KEY, AKM_REGISTRY_URL, AKM_NPM_REGISTRY), `process.cwd()`, and `globalThis.fetch`, then restores them after.
-  - All module-level singletons in production code are reset between tests: `cachedConfig`, `cachedParsedGraph`, `embedCache`, `localEmbedder`, quiet/verbose flags, and the warn-module log file path.
+  - All module-level singletons in production code are reset between tests: `cachedConfig`, `embedCache`, `localEmbedder`, quiet/verbose flags, and the warn-module log file path.
   - `mock.restore()` is called unconditionally on `afterEach`.
   - A tripwire **throws** if any test leaks an `AKM_*` / `XDG_*` / `HOME` env var that wasn't there at preload time, leaves `process.cwd()` changed, or leaves `globalThis.fetch` replaced.
 - Helpers live in `tests/_helpers/sandbox.ts`: `sandboxStashDir()`, `sandboxHome()`, `sandboxXdgConfigHome()`, `sandboxXdgDataHome()`, `writeSandboxConfig(partial)`, and `withMockedFetch(fn, mock)`. Use them rather than mutating env / fetch by hand.

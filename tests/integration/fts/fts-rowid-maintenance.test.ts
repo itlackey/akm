@@ -19,7 +19,7 @@ import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { deleteFtsEntries, searchFts } from "../../../src/storage/repositories/index-fts-repository";
+import { deleteFtsEntries } from "../../../src/storage/repositories/index-fts-repository";
 
 const FRAGMENT_ROWID_ORDINAL_SPAN = 2 ** 20;
 
@@ -138,9 +138,18 @@ describe("FTS rowid maintenance", () => {
       expect(countFor("entry_fragments_fts", idA)).toBeGreaterThan(0);
       expect(countFor("entry_fragments_fts", idC)).toBeGreaterThan(0);
 
-      expect(searchFts(db, "deletememarker", 5)).toHaveLength(0);
-      expect(searchFts(db, "keepamarker", 5).map((hit) => hit.itemRef)).toEqual(["fixture//knowledge/keep-a"]);
-      expect(searchFts(db, "keepcmarker", 5).map((hit) => hit.itemRef)).toEqual(["fixture//knowledge/keep-c"]);
+      const fragmentOwners = (marker: string): number[] => [
+        ...new Set(
+          (
+            db.prepare("SELECT rowid FROM entry_fragments_fts WHERE entry_fragments_fts MATCH ?").all(marker) as Array<{
+              rowid: number;
+            }>
+          ).map((row) => Math.floor(row.rowid / FRAGMENT_ROWID_ORDINAL_SPAN)),
+        ),
+      ];
+      expect(fragmentOwners("deletememarker")).toEqual([]);
+      expect(fragmentOwners("keepamarker")).toEqual([idA]);
+      expect(fragmentOwners("keepcmarker")).toEqual([idC]);
     } finally {
       closeDatabase(db);
     }

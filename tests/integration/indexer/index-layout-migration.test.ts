@@ -217,7 +217,6 @@ describe("index.db layout 23 → 24", () => {
       const db = open();
       if (!db) throw new Error("expected a handle");
       try {
-        expect(searchFts(db, "zeppelin", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/alpha-deploy"]);
         expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
         expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
         expect(searchVec(db, [0, 1, 0], 1)[0]?.id).toBe(2);
@@ -271,10 +270,11 @@ describe("index.db layout 23 → 24", () => {
       expect(tableNames(db)).not.toContain("entries_fts_content");
       expect(tableNames(db)).not.toContain("entry_fragments_fts_content");
       expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
-      const fragmentHit = searchFts(db, "zeppelin", 10);
-      expect(fragmentHit.map((hit) => hit.itemRef)).toEqual(["stash//knowledge/alpha-deploy"]);
-      expect(fragmentHit[0]?.fragmentId).toBeDefined();
-      expect(fragmentHit[0]?.fragmentId).not.toBe("stale-fragment-id");
+      // The fragment projection (read by `akm show`) was rebuilt from the stored safe Markdown.
+      const fragmentRows = db
+        .prepare("SELECT rowid FROM entry_fragments_fts WHERE entry_fragments_fts MATCH ?")
+        .all("zeppelin") as Array<{ rowid: number }>;
+      expect(fragmentRows.map((row) => Math.floor(row.rowid / FRAGMENT_ROWID_SPAN))).toEqual([1]);
     } finally {
       closeDatabase(db);
     }

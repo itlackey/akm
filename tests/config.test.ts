@@ -799,81 +799,45 @@ describe("primary stash config", () => {
 // ── search config ────────────────────────────────────────────────────────────
 
 describe("search config", () => {
-  test("loads search.graphBoost values", () => {
+  test("loads search.defaultExcludeTypes and search.curateRerank", () => {
     writeCurrentConfig({
-      search: {
-        minScore: 0.15,
-        graphBoost: {
-          directBoostPerEntity: 0.2,
-          directBoostCap: 0.6,
-          hopBoostPerEntity: 0.08,
-          hopBoostCap: 0.24,
-          maxHops: 2,
-          confidenceMode: "blend",
-          confidenceWeight: 0.4,
-        },
-      },
+      search: { defaultExcludeTypes: ["session", "memory"], curateRerank: { enabled: true, topN: 30 } },
     });
-
     expect(loadConfig().search).toEqual({
-      minScore: 0.15,
-      graphBoost: {
-        directBoostPerEntity: 0.2,
-        directBoostCap: 0.6,
-        hopBoostPerEntity: 0.08,
-        hopBoostCap: 0.24,
-        maxHops: 2,
-        confidenceMode: "blend",
-        confidenceWeight: 0.4,
-      },
+      defaultExcludeTypes: ["session", "memory"],
+      curateRerank: { enabled: true, topN: 30 },
     });
   });
 
-  test("rejects search.graphBoost.confidenceWeight > 1 (no silent clamp)", () => {
-    writeCurrentConfig({
-      search: {
-        graphBoost: {
-          confidenceMode: "blend",
-          confidenceWeight: 99,
-        },
-      },
-    });
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/confidenceWeight/);
-  });
-
-  test("rejects search.graphBoost.maxHops > 3 (no silent clamp)", () => {
-    writeCurrentConfig({ search: { graphBoost: { maxHops: 99 } } });
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/maxHops/);
-  });
-
-  test("tolerates unknown search.graphBoost keys (lenient unknown-key policy)", () => {
-    // Lenient policy: unknown keys are preserved, not rejected — cross-version
-    // config skew must not become INVALID_CONFIG_FILE. Known keys still validate.
-    writeCurrentConfig({
-      search: {
-        graphBoost: {
-          maxHops: 2,
-          unsupportedNested: "x",
-        },
-      },
-    });
-
+  test("tolerates the retired search.minScore and search.graphBoost keys (lenient unknown-key policy)", () => {
+    // Search ranking no longer reads either key. A config an older release
+    // wrote must still load, keeping the values in memory rather than failing.
+    writeCurrentConfig({ search: { minScore: 0.15, graphBoost: { maxHops: 99, confidenceWeight: 99 } } });
     expect(() => loadConfig()).not.toThrow();
-    const gb = loadConfig().search?.graphBoost as Record<string, unknown>;
-    expect(gb.maxHops).toBe(2);
-    expect(gb.unsupportedNested).toBe("x");
+    expect(loadConfig().search).toEqual({ minScore: 0.15, graphBoost: { maxHops: 99, confidenceWeight: 99 } });
   });
 });
 
 describe("embedding profile config", () => {
-  test("loads embedding.queryTemplate and documentTemplate", () => {
+  test("loads embedding.queryTemplate, documentTemplate and queryTimeoutMs", () => {
     writeCurrentConfig({
-      embedding: { localModel: "Xenova/bge-small-en-v1.5", queryTemplate: "", documentTemplate: "doc: {text}" },
+      embedding: {
+        localModel: "Xenova/bge-small-en-v1.5",
+        queryTemplate: "",
+        documentTemplate: "doc: {text}",
+        queryTimeoutMs: 800,
+      },
     });
-    expect(loadConfig().embedding).toMatchObject({ queryTemplate: "", documentTemplate: "doc: {text}" });
+    expect(loadConfig().embedding).toMatchObject({
+      queryTemplate: "",
+      documentTemplate: "doc: {text}",
+      queryTimeoutMs: 800,
+    });
+  });
+
+  test("rejects a non-positive embedding.queryTimeoutMs", () => {
+    writeCurrentConfig({ embedding: { localModel: "Xenova/bge-small-en-v1.5", queryTimeoutMs: 0 } });
+    expect(() => loadConfig()).toThrow(ConfigError);
   });
 });
 

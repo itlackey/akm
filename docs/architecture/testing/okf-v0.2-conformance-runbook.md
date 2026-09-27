@@ -217,9 +217,9 @@ docker exec "$AKM_OKF_CONTAINER" akm bundle add \
 docker exec "$AKM_OKF_CONTAINER" akm index --full
 docker exec "$AKM_OKF_CONTAINER" akm bundle list
 docker exec "$AKM_OKF_CONTAINER" akm search orders \
-  --format json --detail full --limit 100 --no-project-context
+  --format json --detail full --limit 100
 docker exec "$AKM_OKF_CONTAINER" akm search events \
-  --format json --detail full --limit 100 --no-project-context
+  --format json --detail full --limit 100
 docker exec "$AKM_OKF_CONTAINER" akm show \
   okf-ga4//tables/events_ --format json --detail full
 ```
@@ -271,7 +271,7 @@ Verify that search emits path refs rather than title refs:
 ```bash
 docker exec "$AKM_OKF_CONTAINER" sh -lc '
 set -eu
-akm search events --format json --detail full --limit 100 --no-project-context > /tmp/ga4-search.json
+akm search events --format json --detail full --limit 100 > /tmp/ga4-search.json
 bun -e '\''import fs from "node:fs"; const r=JSON.parse(fs.readFileSync("/tmp/ga4-search.json","utf8")); const h=r.hits.find((x)=>x.path.endsWith("/tables/events_.md")); if(!h) throw new Error("events_ hit missing"); if(h.ref!=="okf-ga4//tables/events_") throw new Error(`wrong ref: ${h.ref}`);'\''
 '
 ```
@@ -561,7 +561,7 @@ Verify unknown type filtering and path-based show:
 ```bash
 docker exec "$AKM_OKF_CONTAINER" akm search Vendor \
   --type 'Some Vendor Thing' \
-  --format json --detail full --limit 100 --no-project-context
+  --format json --detail full --limit 100
 docker exec "$AKM_OKF_CONTAINER" akm show \
   adversarial//unknown --format json --detail full
 docker exec "$AKM_OKF_CONTAINER" akm show \
@@ -578,7 +578,7 @@ Verify the search ref for the unknown-type document:
 ```bash
 docker exec "$AKM_OKF_CONTAINER" sh -lc '
 set -eu
-akm search Vendor --format json --detail full --limit 100 --no-project-context > /tmp/vendor-search.json
+akm search Vendor --format json --detail full --limit 100 > /tmp/vendor-search.json
 bun -e '\''import fs from "node:fs"; const r=JSON.parse(fs.readFileSync("/tmp/vendor-search.json","utf8")); const h=r.hits.find((x)=>x.path==="/tmp/okf-adversarial/unknown.md"); if(!h) throw new Error("vendor hit missing"); if(h.ref!=="adversarial//unknown") throw new Error(`wrong ref: ${h.ref}`);'\''
 '
 ```

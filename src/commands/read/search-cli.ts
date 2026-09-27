@@ -87,39 +87,26 @@ export const searchCommand = defineJsonCommand({
         "Memory belief filter: all|current|historical. current keeps active memory beliefs; historical keeps contradicted/superseded/archived memory beliefs.",
       default: "all",
     },
-    // Declared as the POSITIVE name with `default: true` so citty's native
-    // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
-    // negates the remainder BEFORE consulting the declared-args table — see
-    // node_modules/citty/dist/index.mjs) does the work, the same pattern
-    // `sync --push/--no-push` uses. A flag DECLARED as `no-project-context`
-    // can never be negated: `--no-project-context` parses as "negate
-    // `project-context`", a name nothing declared, leaving the real key at
-    // its default `false` forever (F1/A1).
-    "project-context": {
-      type: "boolean",
-      default: true,
-      description:
-        "Automatic project-context ranking boost: assets whose name/tags/aliases match the current working " +
-        "directory's project get a small score boost, and this search's usage also feeds the scoped-utility " +
-        "ranking signal. Default: on. Use --no-project-context to disable BOTH the project-context boost and " +
-        "the scoped-utility signal for this search only.",
-    },
     "include-sessions": {
       type: "boolean",
       description:
         "Include session assets (excluded from default search results via config.search.defaultExcludeTypes).",
       default: false,
     },
-    // Declared as the POSITIVE name with `default: true` for the same reason
-    // as `project-context` above — never declare a flag whose NAME starts
-    // with `no-`.
+    // Declared as the POSITIVE name with `default: true` so citty's native
+    // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
+    // negates the remainder BEFORE consulting the declared-args table — see
+    // node_modules/citty/dist/index.mjs) does the work, the same pattern
+    // `sync --push/--no-push` uses. A flag DECLARED as `no-track-usage` could
+    // never be negated: `--no-track-usage` parses as "negate `track-usage`",
+    // a name nothing declared, leaving the real key at its default forever
+    // (F1/A1).
     "track-usage": {
       type: "boolean",
       default: true,
       description:
-        "A successful search updates ranking signals (usage-events telemetry and the MemRL utility-score bump " +
-        "used to prioritize future results). Default: on. Use --no-track-usage to run a read-only search that " +
-        "does not influence future ranking.",
+        "A successful search records usage-events telemetry. Default: on. Use --no-track-usage to run a " +
+        "search that records nothing.",
     },
   },
   async run({ args }) {
@@ -134,7 +121,6 @@ export const searchCommand = defineJsonCommand({
     const filters = parseScopeFilterFlags(filterTokens, "--filter");
     const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
-    const disableProjectContext = args["project-context"] === false;
     const skipLogging = args["track-usage"] === false;
     const includeSessions = args["include-sessions"];
     const assets = args.assets === true;
@@ -148,8 +134,6 @@ export const searchCommand = defineJsonCommand({
       includeProposed,
       belief,
       includeSessions,
-      disableProjectContext,
-      disableScopedUtility: disableProjectContext,
       skipLogging,
       assets,
       eventSource: resolveUsageEventSource(),
@@ -188,15 +172,14 @@ export const curateCommand = defineJsonCommand({
         "one curate call.",
     },
     // Declared as the POSITIVE name with `default: true` — see the
-    // `project-context` comment on `searchCommand` above for why a flag NAME
+    // `track-usage` comment on `searchCommand` above for why a flag NAME
     // must never start with `no-`.
     "track-usage": {
       type: "boolean",
       default: true,
       description:
-        "A successful curate updates ranking signals (usage-events telemetry for the curated items and the " +
-        "underlying search). Default: on. Use --no-track-usage to run a read-only curate that does not " +
-        "influence future ranking.",
+        "A successful curate records usage-events telemetry for the curated items. Default: on. Use " +
+        "--no-track-usage to run a curate that records nothing.",
     },
   },
   async run({ args }) {
@@ -344,15 +327,14 @@ export const showCommand = defineJsonCommand({
       description: "Exact context budget in characters. Requires --context lead; mutually exclusive with --max-tokens.",
     },
     // Declared as the POSITIVE name with `default: true` — see the
-    // `project-context` comment on `searchCommand` above for why a flag NAME
+    // `track-usage` comment on `searchCommand` above for why a flag NAME
     // must never start with `no-`.
     "track-usage": {
       type: "boolean",
       default: true,
       description:
-        "A successful show updates ranking signals (usage-events telemetry, including the search-selection " +
-        "linkage when this show follows a recent search). Default: on. Use --no-track-usage to run a " +
-        "read-only show that does not influence future ranking.",
+        "A successful show records usage-events telemetry, including the search-selection linkage when this " +
+        "show follows a recent search. Default: on. Use --no-track-usage to run a show that records nothing.",
     },
   },
   async run({ args }) {

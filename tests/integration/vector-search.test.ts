@@ -1,17 +1,10 @@
 /**
- * Tests for vector/semantic search path coverage.
+ * Tests for the vector search path (`searchVec`):
  *
- * The entire test suite previously set `semanticSearchMode: "off"`, so
- * `tryVecScores()` and the hybrid score merging pipeline were dead code
- * in tests. This file covers:
- *
- *  - tryVecScores runs when semantic status is ready
- *  - Hybrid score merging (FTS 0.7 + vec 0.3 weights)
- *  - FTS-only entries surviving in hybrid mode
- *  - NaN/Infinity guard on vector distances
- *  - Stable FTS5 BM25 calibration in the hybrid pipeline
+ *  - results from the BLOB table, closest first
  *  - JS fallback path (BLOB-based cosine similarity, no sqlite-vec)
  *  - Dimension mismatch produces zero similarity
+ *  - targeted embedding selection and the L2-to-cosine conversion
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -20,12 +13,11 @@ import os from "node:os";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { combineSearchScores, normalizeFtsScores } from "../../src/indexer/search/ranking";
 import { cosineSimilarity } from "../../src/llm/embedder";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { rebuildFts, searchFts } from "../../src/storage/repositories/index-fts-repository";
+import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
 import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import {
   getAllEntriesForEmbedding,
@@ -119,9 +111,9 @@ afterEach(() => {
   envCleanup = () => {};
 });
 
-// ── Test a: tryVecScores runs when status is ready ─────────────────────────
+// ── Test a: searchVec over the BLOB table ──────────────────────────────────
 
-describe("tryVecScores activation", () => {
+describe("searchVec over stored embeddings", () => {
   test("searchVec returns results when embeddings exist in BLOB table", () => {
     // Verify the low-level searchVec (which delegates to searchBlobVec
     // when sqlite-vec is unavailable) returns results from the embeddings
@@ -189,305 +181,6 @@ describe("tryVecScores activation", () => {
       expect(closeResult).toBeDefined();
       expect(farResult).toBeDefined();
       expect(closeResult?.distance).toBeLessThan(farResult?.distance ?? Number.POSITIVE_INFINITY);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-});
-
-// ── Test b: Hybrid score merging ───────────────────────────────────────────
-
-describe("Hybrid score merging (FTS 0.7 + vec 0.3 weights)", () => {
-  test("combined score uses FTS and vec weights correctly", () => {
-    // Directly verify the weighted combination formula:
-    //   combinedScore = ftsNormalized * 0.7 + vecCosine * 0.3
-    // This mirrors the logic in searchDatabase() lines 228-237.
-    const FTS_WEIGHT = 0.7;
-    const VEC_WEIGHT = 0.3;
-
-    const ftsNormalized = 0.8; // Hypothetical normalized FTS score
-    const vecCosine = 0.9; // Hypothetical cosine similarity
-
-    const expected = ftsNormalized * FTS_WEIGHT + vecCosine * VEC_WEIGHT;
-    // 0.8 * 0.7 + 0.9 * 0.3 = 0.56 + 0.27 = 0.83
-    expect(expected).toBeCloseTo(0.83, 2);
-
-    // Verify the vec component matters: a high vec score should pull up
-    // an entry with a lower FTS score
-    const lowFts = 0.3;
-    const highVec = 1.0;
-    const boostedScore = lowFts * FTS_WEIGHT + highVec * VEC_WEIGHT;
-    // 0.3 * 0.7 + 1.0 * 0.3 = 0.21 + 0.3 = 0.51
-    expect(boostedScore).toBeCloseTo(0.51, 2);
-
-    // And vice versa: high FTS with low vec
-    const highFts = 1.0;
-    const lowVec = 0.1;
-    const ftsHeavy = highFts * FTS_WEIGHT + lowVec * VEC_WEIGHT;
-    // 1.0 * 0.7 + 0.1 * 0.3 = 0.7 + 0.03 = 0.73
-    expect(ftsHeavy).toBeCloseTo(0.73, 2);
-  });
-
-  test("FTS and vec rankings differ but combined score reflects both", () => {
-    // Simulate the scenario where FTS and vec disagree on ranking.
-    // Entry A: high FTS, low vec. Entry B: low FTS, high vec.
-    // The combined scores should place them closer together than either
-    // signal alone would suggest.
-    const FTS_WEIGHT = 0.7;
-    const VEC_WEIGHT = 0.3;
-
-    // Entry A: FTS champion
-    const aFts = 1.0;
-    const aVec = 0.2;
-    const aCombined = aFts * FTS_WEIGHT + aVec * VEC_WEIGHT;
-
-    // Entry B: Vector champion
-    const bFts = 0.4;
-    const bVec = 1.0;
-    const bCombined = bFts * FTS_WEIGHT + bVec * VEC_WEIGHT;
-
-    // A should still win (FTS weight is higher), but B is close
-    expect(aCombined).toBeGreaterThan(bCombined);
-    // The gap should be smaller than FTS-only
-    const ftsOnlyGap = aFts - bFts; // 0.6
-    const combinedGap = aCombined - bCombined; // (0.76 - 0.58) = 0.18
-    expect(combinedGap).toBeLessThan(ftsOnlyGap);
-  });
-});
-
-// ── Test c: FTS-only entries in hybrid mode ────────────────────────────────
-
-describe("FTS-only entries survive in hybrid mode", () => {
-  test("entry matching FTS but with no embedding appears in results", () => {
-    const dbPath = tmpDbPath("fts-only-hybrid");
-    const dim = 4;
-    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
-    try {
-      // Insert two entries: one with embedding, one without
-      const idWithEmb = insertTestEntry(db, "with-embedding", {
-        description: "A tool with vector support for deploy",
-        searchText: "with-embedding deploy tool vector support",
-        stashDir: "/test/stash",
-      });
-      const idNoEmb = insertTestEntry(db, "no-embedding", {
-        description: "A deploy tool without vector support",
-        searchText: "no-embedding deploy tool without vector",
-        stashDir: "/test/stash",
-      });
-      rebuildFts(db);
-
-      // Only add embedding for the first entry
-      const embedding = makeNormalizedVec(dim);
-      upsertEmbedding(db, idWithEmb, embedding);
-      setMeta(db, "hasEmbeddings", "1");
-
-      // Both should appear in FTS results for "deploy"
-      const ftsResults = searchFts(db, "deploy", 10);
-      const ftsIds = ftsResults.map((r) => r.id);
-      expect(ftsIds).toContain(idWithEmb);
-      expect(ftsIds).toContain(idNoEmb);
-
-      // The entry without an embedding still has a valid FTS score.
-      // In the hybrid merging code, it gets rankingMode "fts" (not "hybrid").
-      // Verify both entries found by FTS are valid.
-      for (const result of ftsResults) {
-        expect(Number.isFinite(result.bm25Score)).toBe(true);
-        expect(Number.isNaN(result.bm25Score)).toBe(false);
-      }
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("FTS results with no embedding counterpart get ftsScore only (no vec component)", () => {
-    // Simulate the merging logic: when embedScoreMap has no entry for an id,
-    // the combined score equals ftsScore alone (no vec weight added).
-    const ftsScoreMap = new Map<number, number>();
-    ftsScoreMap.set(1, 0.8); // has embedding
-    ftsScoreMap.set(2, 0.6); // no embedding
-
-    const embedScoreMap = new Map<number, number>();
-    embedScoreMap.set(1, 0.9); // only entry 1 has vec score
-
-    const FTS_WEIGHT = 0.7;
-    const VEC_WEIGHT = 0.3;
-
-    // Entry 1: hybrid score
-    const entry1Embed = embedScoreMap.get(1);
-    const entry1Fts = ftsScoreMap.get(1);
-    if (entry1Fts === undefined) {
-      throw new Error("Expected FTS score for entry 1");
-    }
-    const entry1Score = entry1Embed !== undefined ? entry1Fts * FTS_WEIGHT + entry1Embed * VEC_WEIGHT : entry1Fts;
-    expect(entry1Score).toBeCloseTo(0.8 * 0.7 + 0.9 * 0.3, 4);
-
-    // Entry 2: FTS-only score (no vec component)
-    const entry2Embed = embedScoreMap.get(2);
-    const entry2Fts = ftsScoreMap.get(2);
-    if (entry2Fts === undefined) {
-      throw new Error("Expected FTS score for entry 2");
-    }
-    const entry2Score = entry2Embed !== undefined ? entry2Fts * FTS_WEIGHT + entry2Embed * VEC_WEIGHT : entry2Fts;
-    expect(entry2Score).toBe(0.6); // Pure FTS score, no weighting
-  });
-});
-
-// ── Test d: NaN/Infinity guard ─────────────────────────────────────────────
-
-describe("NaN/Infinity guard on vector distances", () => {
-  test("NaN distance is clamped to 0 by the guard formula", () => {
-    // The guard in tryVecScores:
-    //   const raw = 1 - (distance * distance) / 2;
-    //   scores.set(id, Number.isFinite(raw) ? Math.max(0, raw) : 0);
-    const distance = Number.NaN;
-    const raw = 1 - (distance * distance) / 2;
-    expect(Number.isNaN(raw)).toBe(true);
-    const guarded = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    expect(guarded).toBe(0);
-  });
-
-  test("Infinity distance is clamped to 0 by the guard formula", () => {
-    const distance = Number.POSITIVE_INFINITY;
-    const raw = 1 - (distance * distance) / 2;
-    expect(Number.isFinite(raw)).toBe(false);
-    const guarded = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    expect(guarded).toBe(0);
-  });
-
-  test("negative Infinity distance is clamped to 0", () => {
-    const distance = Number.NEGATIVE_INFINITY;
-    const raw = 1 - (distance * distance) / 2;
-    expect(Number.isFinite(raw)).toBe(false);
-    const guarded = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    expect(guarded).toBe(0);
-  });
-
-  test("large distance producing negative raw is clamped to 0", () => {
-    // distance = 3 => raw = 1 - 9/2 = 1 - 4.5 = -3.5
-    const distance = 3;
-    const raw = 1 - (distance * distance) / 2;
-    expect(raw).toBeLessThan(0);
-    const guarded = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    expect(guarded).toBe(0);
-  });
-
-  test("normal distance 0 produces cosine similarity of 1", () => {
-    const distance = 0;
-    const raw = 1 - (distance * distance) / 2;
-    expect(raw).toBe(1);
-    const guarded = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    expect(guarded).toBe(1);
-  });
-
-  test("normal distance ~1.414 (orthogonal vectors) produces cosine ~0", () => {
-    // For orthogonal unit vectors, L2 distance = sqrt(2) ~ 1.414
-    const distance = Math.sqrt(2);
-    const raw = 1 - (distance * distance) / 2;
-    // raw = 1 - 2/2 = 0
-    expect(raw).toBeCloseTo(0, 5);
-    const guarded = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    expect(guarded).toBeCloseTo(0, 5);
-  });
-});
-
-// ── Test e: stable FTS5 BM25 calibration (#933) ───────────────────────────
-
-describe("stable FTS5 BM25 calibration (#933)", () => {
-  test("uses real weighted FTS5 values without pinning the leader or rewriting it when candidates expand", () => {
-    const db = openIndexDatabase(tmpDbPath("stable-bm25"));
-    try {
-      const filler = (count: number): string =>
-        Array.from({ length: count }, (_, index) => `filler${index % 31}`).join(" ");
-      insertTestEntry(db, "calibrationmarker", {
-        description: "A short exact-name lexical hit",
-        searchText: "calibrationmarker short exact-name lexical hit",
-        stashDir: "/test/stash",
-      });
-      insertTestEntry(db, "body-match", {
-        content: `${filler(4_000)} calibrationmarker ${filler(4_000)}`,
-        description: "A long body-only lexical hit",
-        searchText: "long body-only lexical hit",
-        stashDir: "/test/stash",
-      });
-      insertTestEntry(db, "weaker-body-match", {
-        content: `${filler(12_000)} calibrationmarker ${filler(12_000)}`,
-        description: "An even longer body-only lexical hit",
-        searchText: "even longer body-only lexical hit",
-        stashDir: "/test/stash",
-      });
-      rebuildFts(db);
-
-      // searchFts runs the shipped `bm25(entries_fts, 0, 10, 5, 3, 2, 1)`
-      // query. These are actual SQLite FTS5 scores, not synthetic values.
-      const hits = searchFts(db, "calibrationmarker", 10);
-      expect(hits).toHaveLength(3);
-      const [top, second, weakest] = hits;
-      expect(top).toBeDefined();
-      expect(second).toBeDefined();
-      expect(weakest).toBeDefined();
-      if (!top || !second || !weakest) throw new Error("expected calibration hits");
-
-      const leadersOnly = normalizeFtsScores([top, second]);
-      const expanded = normalizeFtsScores(hits);
-      const topScore = expanded.get(top.id)!.score;
-      const weakScore = expanded.get(weakest.id)!.score;
-
-      expect(top.bm25Score).toBeLessThan(second.bm25Score);
-      expect(second.bm25Score).toBeLessThan(weakest.bm25Score);
-      expect(topScore).toBeGreaterThan(weakScore);
-      expect(topScore - weakScore).toBeGreaterThan(0.05);
-      expect(topScore).toBeLessThan(1);
-      expect(weakScore).toBeLessThan(0.38);
-      expect(expanded.get(top.id)!.score).toBeCloseTo(leadersOnly.get(top.id)!.score, 12);
-      expect(expanded.get(second.id)!.score).toBeCloseTo(leadersOnly.get(second.id)!.score, 12);
-
-      const lexicalOnly = combineSearchScores({
-        ftsScoreMap: new Map([[top.id, expanded.get(top.id)!]]),
-        embedScoreMap: new Map(),
-        getEntryById: () => undefined,
-      })[0]!;
-      const semanticOnly = combineSearchScores({
-        ftsScoreMap: new Map(),
-        embedScoreMap: new Map([[999, 0.9]]),
-        getEntryById: () => ({
-          entry: top.entry,
-          filePath: top.filePath,
-          itemRef: top.itemRef,
-          bundleId: top.bundleId,
-          conceptId: top.conceptId,
-        }),
-      })[0]!;
-      const hybrid = combineSearchScores({
-        ftsScoreMap: new Map([[top.id, expanded.get(top.id)!]]),
-        embedScoreMap: new Map([[top.id, 0.9]]),
-        getEntryById: () => undefined,
-      })[0]!;
-
-      expect(hybrid.score).toBeGreaterThan(lexicalOnly.score);
-      expect(lexicalOnly.score).toBeGreaterThan(semanticOnly.score);
-
-      insertTestEntry(db, "rarenessmarker", {
-        description: "A rare exact-name lexical hit",
-        searchText: "rarenessmarker rare exact-name lexical hit",
-        stashDir: "/test/stash",
-      });
-      for (let index = 0; index < 100; index += 1) {
-        insertTestEntry(db, `unmatched-${index}`, {
-          content: filler(100),
-          description: "Unmatched corpus row",
-          searchText: "unmatched corpus row",
-          stashDir: "/test/stash",
-        });
-      }
-      rebuildFts(db);
-      const rare = searchFts(db, "rarenessmarker", 10)[0];
-      expect(rare).toBeDefined();
-      if (!rare) throw new Error("expected rare calibration hit");
-      const rareScore = normalizeFtsScores([rare]).get(rare.id)!.score;
-      expect(rareScore).toBeGreaterThan(topScore);
-      // A rare term is much stronger, but the log-domain curve deliberately
-      // leaves contributor headroom instead of flattening it to 0.8.
-      expect(rareScore).toBeLessThan(0.75);
     } finally {
       closeDatabase(db);
     }

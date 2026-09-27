@@ -171,7 +171,7 @@ describe("completions command", () => {
   });
 
   test("includes canonical negated boolean flags", () => {
-    for (const flag of ["--no-init", "--no-project-context", "--no-track-usage", "--no-push"]) {
+    for (const flag of ["--no-init", "--no-track-usage", "--no-push"]) {
       expect(script).toContain(flag);
     }
   });

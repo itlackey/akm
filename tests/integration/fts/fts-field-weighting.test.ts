@@ -93,7 +93,7 @@ describe("FTS5 field weighting", () => {
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
       // The name match should rank first (lower bm25 score = better in FTS5)
-      expect(results[0]!.entry.name).toBe("deploy");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/name-deploy");
     } finally {
       closeDatabase(db);
     }
@@ -125,7 +125,7 @@ describe("FTS5 field weighting", () => {
 
       const results = searchFts(db, "kubernetes", 10);
       expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("kubernetes");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/name-k8s");
     } finally {
       closeDatabase(db);
     }
@@ -157,7 +157,7 @@ describe("FTS5 field weighting", () => {
 
       const results = searchFts(db, "terraform", 10);
       expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("infra-tool");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/desc-tf");
     } finally {
       closeDatabase(db);
     }
@@ -190,7 +190,7 @@ describe("FTS5 field weighting", () => {
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
       // The multi-field match should rank first
-      expect(results[0]!.entry.name).toBe("deploy");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/multi-deploy");
     } finally {
       closeDatabase(db);
     }

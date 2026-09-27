@@ -7,7 +7,6 @@ import { _setWarnSinkForTests } from "../../../src/core/warn";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import { MARKDOWN_CONTENT_MAX_CHARS, projectMarkdownContent } from "../../../src/indexer/passes/metadata";
 import { recognizeStashEntries } from "../../../src/indexer/scan/drain-dir";
-import { buildLexicalQueryPlan } from "../../../src/indexer/search/fts-query";
 import { buildSearchFields, buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
@@ -76,103 +75,76 @@ function insert(db: AkmDatabase, name: string, entry: IndexDocument): void {
   ).run(inserted.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
 }
 
-describe("progressive lexical query planning (#819)", () => {
-  test("normalizes Unicode tokens, deduplicates them, and quotes operators", () => {
-    const repeated = Array.from({ length: 40 }, (_, index) => `token${index}`).join(" ");
-    const plan = buildLexicalQueryPlan(`CAFÉ café NEAR or ${repeated}`);
+describe("whole-document BM25 over any query word", () => {
+  function fixtureDb(): AkmDatabase {
+    const db = makeDb();
+    insert(db, "identifier", {
+      type: "knowledge",
+      name: "cache-pruner",
+      description: "Removes expired build artifacts",
+    });
+    insert(db, "unicode", {
+      type: "knowledge",
+      name: "café-déploiement",
+      description: "Orchestration naïve à Montréal",
+    });
+    insert(db, "structured", {
+      type: "knowledge",
+      name: "spectral-quokka-rotation",
+      description: "Exact operator procedure",
+    });
+    insert(db, "body", {
+      type: "knowledge",
+      name: "field-notes",
+      description: "Assorted operational observations",
+      content: "The spectral quokka calibration nonce rotates every Thursday.",
+    });
+    return db;
+  }
 
-    expect(plan.tokens.slice(0, 4)).toEqual(["CAFÉ", "NEAR", "or", "token0"]);
-    // 43 input words, minus the case-duplicate "café" = 43 distinct tokens.
-    // This used to assert 16 — the old MAX_LEXICAL_QUERY_TOKENS cap, deleted
-    // for silently truncating queries past 16 unique terms. Every token the
-    // user typed now reaches FTS; the tail is no longer dropped.
-    expect(plan.tokens).toHaveLength(43);
-    expect(plan.tokens.at(-1)).toBe("token39");
-    expect(plan.exact).toStartWith('"CAFÉ" "NEAR" "or" "token0"');
-    expect(plan.relaxed).toContain('"NEAR"*');
+  test("a document matching any non-stopword token is a candidate, best BM25 first", () => {
+    const db = fixtureDb();
+    try {
+      const refs = (query: string) => searchFts(db, query, 10).map((hit) => hit.itemRef);
+      expect(refs("cache-pruner")[0]).toBe("fixture//knowledge/identifier");
+      expect(refs("CAFÉ déploiement")[0]).toBe("fixture//knowledge/unicode");
+      // Requiring every word would find nothing here; any word finds both
+      // quokka documents, the one matching more words first.
+      expect(refs("how do I find the spectral quokka calibration nonce safely")).toEqual([
+        "fixture//knowledge/body",
+        "fixture//knowledge/structured",
+      ]);
+    } finally {
+      db.close();
+    }
   });
 
-  test("does not truncate a long query — every distinct token reaches FTS", () => {
-    const plan = buildLexicalQueryPlan(Array.from({ length: 500 }, (_, i) => `tok${i}`).join(" "));
-    expect(plan.tokens).toHaveLength(500);
-    expect(plan.exact).toContain('"tok499"');
+  test("stopwords match nothing unless the query is only stopwords", () => {
+    const db = fixtureDb();
+    try {
+      // "the" and "every" appear in the body document, but "the" is a stopword
+      // and is dropped while a content word remains.
+      expect(searchFts(db, "the rotation", 10).map((hit) => hit.itemRef)).toEqual([
+        "fixture//knowledge/structured",
+        "fixture//knowledge/body",
+      ]);
+      expect(searchFts(db, "the", 10).map((hit) => hit.itemRef)).toEqual(["fixture//knowledge/body"]);
+    } finally {
+      db.close();
+    }
   });
 
-  test.each([
-    { query: "code-review", tokens: ["code", "review"] },
-    { query: "k8s.setup", tokens: ["k8s", "setup"] },
-    { query: "deploy_prod", tokens: ["deploy", "prod"] },
-    { query: 'deploy:prod "code-review"', tokens: ["deploy", "prod", "code", "review"] },
-    { query: "R ai", tokens: ["R", "ai"] },
-    { query: "NEAR OR and", tokens: ["NEAR", "OR", "and"] },
-    { query: '"()*:^{}', tokens: [] },
-  ])("is the sole safe identifier/operator planner: $query", ({ query, tokens }) => {
-    const plan = buildLexicalQueryPlan(query);
-    expect(plan.tokens).toEqual([...tokens]);
-    expect(plan.exact).toBe(tokens.map((token) => `"${token}"`).join(" "));
-    expect(plan.exact).not.toContain(":");
-    expect(plan.exact).not.toContain("(");
-    expect(plan.exact).not.toContain(")");
-  });
-
-  test("keeps ref-shaped identifiers conjunctive instead of widening them through OR recovery", () => {
-    const plan = buildLexicalQueryPlan("memories/projecta/auth-tip");
-    expect(plan.tokens).toEqual(["memories", "projecta", "auth", "tip"]);
-    expect(plan.relaxed).toBeUndefined();
-  });
-
-  test("uses one strict → prefix → relaxed pipeline without changing strict top-1", () => {
+  test("equal BM25 scores are ordered by item_ref, and operators are plain words", () => {
     const db = makeDb();
     try {
-      insert(db, "identifier", {
-        type: "knowledge",
-        name: "cache-pruner",
-        description: "Removes expired build artifacts",
-      });
-      insert(db, "prefix", {
-        type: "knowledge",
-        name: "kubernetes-configurator",
-        description: "Cluster deployment reference",
-      });
-      insert(db, "unicode", {
-        type: "knowledge",
-        name: "café-déploiement",
-        description: "Orchestration naïve à Montréal",
-      });
-      insert(db, "structured", {
-        type: "knowledge",
-        name: "spectral-quokka-rotation",
-        description: "Exact operator procedure",
-      });
-      insert(db, "body", {
-        type: "knowledge",
-        name: "field-notes",
-        description: "Assorted operational observations",
-        content: "The spectral quokka calibration nonce rotates every Thursday.",
-      });
-      const cases = [
-        { query: "cache-pruner", expected: "cache-pruner", execution: "exact" },
-        { query: "kuber config", expected: "kubernetes-configurator", execution: "prefix" },
-        { query: "CAFÉ déploiement", expected: "café-déploiement", execution: "exact" },
-        {
-          query: "how do I find the spectral quokka calibration nonce safely",
-          expected: "field-notes",
-          execution: "relaxed",
-        },
-      ] as const;
-
-      for (const row of cases) {
-        const results = searchFts(db, row.query, 10);
-        expect(
-          results.some((result) => result.entry.name === row.expected),
-          row.query,
-        ).toBe(true);
-        expect(results[0]?.lexicalMatch, row.query).toBe(row.execution);
-      }
-
-      expect(searchFts(db, "spectral quokka rotation", 10)[0]?.entry.name).toBe("spectral-quokka-rotation");
+      insert(db, "zeta", { type: "knowledge", name: "zeta", description: "twinmarker" });
+      insert(db, "alpha", { type: "knowledge", name: "alpha", description: "twinmarker" });
+      expect(searchFts(db, "twinmarker", 10).map((hit) => hit.itemRef)).toEqual([
+        "fixture//knowledge/alpha",
+        "fixture//knowledge/zeta",
+      ]);
       expect(() => searchFts(db, 'NEAR OR and " ( ) *** the the', 3)).not.toThrow();
-      expect(searchFts(db, 'NEAR OR and " ( ) *** the the', 3).length).toBeLessThanOrEqual(3);
+      expect(searchFts(db, '"()*:^{}', 3)).toEqual([]);
     } finally {
       db.close();
     }

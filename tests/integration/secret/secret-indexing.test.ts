@@ -15,7 +15,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { setSecret } from "../../../src/commands/env/secret";
 import { getDbPath } from "../../../src/core/paths";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
@@ -38,7 +37,6 @@ let envCleanup: Cleanup = () => {};
 beforeEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 
   const cacheResult = sandboxXdgCacheHome();
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
@@ -63,7 +61,6 @@ afterEach(() => {
   currentStashDir = "";
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 });
 
 describe("secret indexer safety", () => {

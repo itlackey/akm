@@ -3,32 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `search` config section (graph-boost tuning). Extracted verbatim from the
- * former `config-schema.ts` monolith — no behavior change.
+ * `search` config section: default type exclusion and the optional curate
+ * reranker.
  */
 import { z } from "zod";
-import { httpUrl, nonEmptyString, nonNegativeNumber, positiveInt, symbolicOrWarnApiKey } from "./primitives";
+import { httpUrl, nonEmptyString, positiveInt, symbolicOrWarnApiKey } from "./primitives";
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
-const SearchGraphBoostSchema = z
-  .object({
-    directBoostPerEntity: nonNegativeNumber.optional(),
-    directBoostCap: nonNegativeNumber.optional(),
-    hopBoostPerEntity: nonNegativeNumber.optional(),
-    hopBoostCap: nonNegativeNumber.optional(),
-    /** Hard-capped at 3; values > 3 hard-error so users see the typo. */
-    maxHops: positiveInt.max(3).optional(),
-    /** Only "blend" is exercised; "off"/"multiply" were never set in practice and were removed. */
-    confidenceMode: z.enum(["blend"]).default("blend").optional(),
-    /** Range [0, 1]; values > 1 hard-error (no silent clamp). */
-    confidenceWeight: z.number().finite().min(0).max(1).default(0.2).optional(),
-  })
-  .passthrough();
-
 /**
  * `search.curateRerank` (#951) — an optional cross-encoder rerank pass over
- * `akm curate`'s already-selected candidates.
+ * `akm curate`'s top fused candidates.
  *
  * Deliberately its own small config arm rather than a third member of the
  * `engines` map (`EngineConfigSchema` in ./engines.ts): that union's "llm" /
@@ -52,16 +37,14 @@ export const CurateRerankConfigSchema = z
     model: nonEmptyString.optional(),
     apiKey: symbolicOrWarnApiKey("search.curateRerank.apiKey").optional(),
     timeoutMs: positiveInt.optional(),
-    /** How many of curate's already-ranked candidates to send to the reranker. Default 8. */
+    /** How many of the top fused search candidates curate sends to the reranker. Default 30. */
     topN: positiveInt.max(50).optional(),
   })
   .passthrough();
 
 export const SearchConfigSchema = z
   .object({
-    minScore: nonNegativeNumber.optional(),
     defaultExcludeTypes: z.array(nonEmptyString).optional(),
-    graphBoost: SearchGraphBoostSchema.optional(),
     curateRerank: CurateRerankConfigSchema.optional(),
   })
   .passthrough();

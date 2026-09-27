@@ -79,8 +79,6 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       stashDir: storage.stashDir,
       sources: [{ path: storage.stashDir }],
       config,
-      disableProjectContext: true,
-      disableScopedUtility: true,
     });
 
     expect(result.hits.map((hit) => hit.ref)).toContain("knowledge/deploy-guide");
@@ -112,8 +110,6 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       stashDir: storage.stashDir,
       sources: [{ path: storage.stashDir }],
       config: { semanticSearchMode: "off" },
-      disableProjectContext: true,
-      disableScopedUtility: true,
     });
     expect(intentionalKeyword.mode).toBe("keyword");
     expect(intentionalKeyword.warnings ?? []).not.toContainEqual(expect.stringContaining("Vector search unavailable"));

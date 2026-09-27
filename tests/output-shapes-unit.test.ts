@@ -145,67 +145,6 @@ describe("shapeSearchHit — local stash hits", () => {
   test("full passes the hit through verbatim", () => {
     expect(shapeSearchHit(fullHit, "full")).toEqual(fullHit);
   });
-
-  // Issue #856: matchStage reports which stage of the progressive AND->OR
-  // lexical ladder produced the hit ("exact" | "prefix" | "relaxed").
-  describe("matchStage", () => {
-    const hitWithStage = { ...fullHit, matchStage: "relaxed" as const };
-
-    test("brief omits matchStage", () => {
-      expect(shapeSearchHit(hitWithStage, "brief")).not.toHaveProperty("matchStage");
-    });
-
-    test("normal surfaces matchStage when present", () => {
-      const out = shapeSearchHit(hitWithStage, "normal");
-      expect(out.matchStage).toBe("relaxed");
-    });
-
-    test("normal omits matchStage when absent from the hit", () => {
-      const out = shapeSearchHit(fullHit, "normal");
-      expect(out).not.toHaveProperty("matchStage");
-    });
-
-    test("full passes matchStage through verbatim", () => {
-      expect(shapeSearchHit(hitWithStage, "full")).toEqual(hitWithStage);
-    });
-  });
-
-  test("fragment provenance survives brief, normal, and agent projections", () => {
-    const fragmentHit = {
-      ...fullHit,
-      ref: "knowledge/guide#akm-fragment-3-abc",
-      selectedRef: "knowledge/guide#akm-fragment-3-abc",
-      parentRef: "knowledge/guide",
-      fragmentOrdinal: 3,
-      fragmentCount: 5,
-      startLine: 40,
-      endLine: 47,
-      previousRef: "knowledge/guide#akm-fragment-2-def",
-      nextRef: "knowledge/guide#akm-fragment-4-ghi",
-      fragmentChars: 400,
-      fragmentEstimatedTokens: 100,
-      parentChars: 8000,
-      parentEstimatedTokens: 2000,
-    };
-
-    expect(shapeSearchHit(fragmentHit, "brief")).toMatchObject({
-      selectedRef: fragmentHit.selectedRef,
-      parentRef: fragmentHit.parentRef,
-      fragmentOrdinal: 3,
-      fragmentCount: 5,
-      parentEstimatedTokens: 2000,
-    });
-    expect(shapeSearchHit(fragmentHit, "normal")).toMatchObject({
-      startLine: 40,
-      endLine: 47,
-      fragmentEstimatedTokens: 100,
-    });
-    expect(shapeSearchHitForAgent(fragmentHit)).toMatchObject({
-      selectedRef: fragmentHit.selectedRef,
-      previousRef: fragmentHit.previousRef,
-      nextRef: fragmentHit.nextRef,
-    });
-  });
 });
 
 describe("shapeSearchHit — registry hits", () => {
@@ -295,25 +234,6 @@ describe("shapeSearchHitForAgent", () => {
       editHint: "akm clone team//skills/deploy",
     });
     expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
-  });
-
-  // Issue #856: agents are the primary consumer named by the issue, so
-  // matchStage must survive the agent projection.
-  test("includes matchStage when present, omits it when absent", () => {
-    const withStage = shapeSearchHitForAgent({
-      type: "skill",
-      name: "deploy",
-      ref: "skills/deploy",
-      matchStage: "prefix",
-    });
-    expect(withStage.matchStage).toBe("prefix");
-
-    const withoutStage = shapeSearchHitForAgent({
-      type: "skill",
-      name: "deploy",
-      ref: "skills/deploy",
-    });
-    expect(withoutStage).not.toHaveProperty("matchStage");
   });
 });
 

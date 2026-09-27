@@ -23,7 +23,6 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
 import { withEnv } from "../../_helpers/sandbox";
@@ -69,7 +68,6 @@ async function runCli(args: string[], options: { stashDir?: string; configDir: s
     async () => {
       clearEmbeddingCache();
       resetLocalEmbedder();
-      resetGraphBoostCache();
       const { stdout, stderr, code } = await runCliCapture(args);
       return { status: code, stdout, stderr };
     },

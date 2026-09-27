@@ -244,6 +244,10 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "queryTimeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
         "queryTemplate": {
           "type": "string"
         },
@@ -573,56 +577,12 @@
     "search": {
       "type": "object",
       "properties": {
-        "minScore": {
-          "type": "number",
-          "minimum": 0
-        },
         "defaultExcludeTypes": {
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1
           }
-        },
-        "graphBoost": {
-          "type": "object",
-          "properties": {
-            "directBoostPerEntity": {
-              "type": "number",
-              "minimum": 0
-            },
-            "directBoostCap": {
-              "type": "number",
-              "minimum": 0
-            },
-            "hopBoostPerEntity": {
-              "type": "number",
-              "minimum": 0
-            },
-            "hopBoostCap": {
-              "type": "number",
-              "minimum": 0
-            },
-            "maxHops": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 3
-            },
-            "confidenceMode": {
-              "type": "string",
-              "enum": [
-                "blend"
-              ],
-              "default": "blend"
-            },
-            "confidenceWeight": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1,
-              "default": 0.2
-            }
-          },
-          "additionalProperties": true
         },
         "curateRerank": {
           "type": "object",
@@ -1608,20 +1568,6 @@
             "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
           }
         },
-        "utilityDecay": {
-          "type": "object",
-          "properties": {
-            "halfLifeDays": {
-              "type": "number",
-              "minimum": 0.1
-            },
-            "feedbackStabilityBoost": {
-              "type": "number",
-              "minimum": 1
-            }
-          },
-          "additionalProperties": true
-        },
         "eventRetentionDays": {
           "type": "number",
           "minimum": 0
@@ -1963,6 +1909,10 @@
               "type": "integer",
               "exclusiveMinimum": 0
             },
+            "queryTimeoutMs": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
             "queryTemplate": {
               "type": "string"
             },
@@ -2292,56 +2242,12 @@
         "search": {
           "type": "object",
           "properties": {
-            "minScore": {
-              "type": "number",
-              "minimum": 0
-            },
             "defaultExcludeTypes": {
               "type": "array",
               "items": {
                 "type": "string",
                 "minLength": 1
               }
-            },
-            "graphBoost": {
-              "type": "object",
-              "properties": {
-                "directBoostPerEntity": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "directBoostCap": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "hopBoostPerEntity": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "hopBoostCap": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "maxHops": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 3
-                },
-                "confidenceMode": {
-                  "type": "string",
-                  "enum": [
-                    "blend"
-                  ],
-                  "default": "blend"
-                },
-                "confidenceWeight": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1,
-                  "default": 0.2
-                }
-              },
-              "additionalProperties": true
             },
             "curateRerank": {
               "type": "object",
@@ -3327,20 +3233,6 @@
                 "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
               }
             },
-            "utilityDecay": {
-              "type": "object",
-              "properties": {
-                "halfLifeDays": {
-                  "type": "number",
-                  "minimum": 0.1
-                },
-                "feedbackStabilityBoost": {
-                  "type": "number",
-                  "minimum": 1
-                }
-              },
-              "additionalProperties": true
-            },
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
@@ -3554,6 +3446,10 @@
           "additionalProperties": true
         },
         "timeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "queryTimeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0
         },

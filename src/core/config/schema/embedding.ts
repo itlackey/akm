@@ -72,6 +72,12 @@ export const EmbeddingConnectionConfigSchema = z
      */
     timeoutMs: positiveInt.optional(),
     /**
+     * How long search waits for the query embedding (default 3000,
+     * `DEFAULT_QUERY_EMBED_TIMEOUT_MS` in `src/indexer/search/db-search.ts`).
+     * On expiry the search is served by keyword ranking alone, with a warning.
+     */
+    queryTimeoutMs: positiveInt.optional(),
+    /**
      * Text sent to the model around a search query, `{text}` marking the
      * query (a template without it is a prefix). Overrides the preset matched
      * on the model name (`src/llm/embedders/profile.ts`); `""` sends the query

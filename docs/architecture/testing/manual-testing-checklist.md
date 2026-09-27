@@ -674,15 +674,15 @@ test -s "$AKM_SANDBOX/index-verbose.stderr"
 
 ```sh
 akm search k8s-deploy \
-  --detail full --no-track-usage --no-project-context --format json |
+  --detail full --no-track-usage --format json |
   jq -e '
     .hits[0].ref == "skills/k8s-deploy" and
     .hits[0].type == "skill" and
     .hits[0].score >= 0 and .hits[0].score <= 1
   '
 
-json_count="$(akm search docker --no-track-usage --no-project-context | jq '.hits | length')"
-jsonl_count="$(akm search docker --no-track-usage --no-project-context --format jsonl | jq -s 'length')"
+json_count="$(akm search docker --no-track-usage | jq '.hits | length')"
+jsonl_count="$(akm search docker --no-track-usage --format jsonl | jq -s 'length')"
 test "$json_count" -gt 0
 test "$json_count" -eq "$jsonl_count"
 ```
@@ -704,9 +704,8 @@ test "$json_count" -eq "$jsonl_count"
 - [ ] **[LOCAL]** Belief current/historical/all partitions state correctly.
 - [ ] **[LOCAL]** Proposed quality and sessions are excluded by default and
       included only through explicit flags.
-- [ ] **[LOCAL]** `--no-track-usage` leaves event/ranking state unchanged;
+- [ ] **[LOCAL]** `--no-track-usage` leaves usage-event state unchanged;
       default successful read advances it.
-- [ ] **[LOCAL]** `--no-project-context` removes cwd/repository boost.
 - [ ] **[LOCAL]** Zero/negative/fractional/prefix numeric limits (`2x`), overflow,
       and conflicting repeats are rejected. `parseInt` prefix acceptance fails.
 
@@ -2270,7 +2269,7 @@ jq -e '
 ' "$AKM_SANDBOX/semantic-deterministic-index.json"
 
 akm search "deploy docker compose in a homelab" \
-  --detail full --no-project-context --format json \
+  --detail full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-search.json"
 akm log --type search --limit 1 --detail full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-log.json"
@@ -2311,7 +2310,7 @@ jq -e '
    .verification.semanticStatus == "ready-vec")
 ' "$AKM_SANDBOX/semantic-remote-index.json"
 
-akm search deploy --detail full --no-project-context --format json \
+akm search deploy --detail full --format json \
   >"$AKM_SANDBOX/semantic-remote-search.json"
 jq -s -e '
   [.[] | select(.pathname == "/v1/embeddings")] as $requests |
@@ -2365,7 +2364,7 @@ jq -e '
   .verification.semanticStatus == "blocked"
 ' "$AKM_SANDBOX/semantic-blocked-index.json"
 
-akm search deploy --detail full --no-project-context --format json \
+akm search deploy --detail full --format json \
   >"$AKM_SANDBOX/semantic-blocked-search.json"
 jq -e '(.hits | length) > 0 and (.warnings | length) > 0' \
   "$AKM_SANDBOX/semantic-blocked-search.json"

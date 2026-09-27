@@ -327,7 +327,7 @@ export function buildUtilityMap(refs: ImproveEligibleRef[], readOnly = false): M
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     if (idToRef.size === 0) return;
-    for (const [id, score] of getUtilityScoresByIds(db, [...idToRef.keys()]).global) {
+    for (const [id, score] of getUtilityScoresByIds(db, [...idToRef.keys()])) {
       const ref = idToRef.get(id);
       if (ref) map.set(ref, score.utility);
     }

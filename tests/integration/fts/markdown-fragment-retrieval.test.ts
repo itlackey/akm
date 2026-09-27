@@ -1,22 +1,22 @@
 // Opens a real index.db to verify atomic parent + fragment FTS publication.
+// Fragments are a write-side projection that `akm show` reads; search ranks
+// whole documents and never selects a fragment.
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fragmentForSelector, splitMarkdownFragments } from "../../../src/core/asset/markdown-fragments";
-import { stableFtsScore } from "../../../src/core/lexical-score";
+import { splitMarkdownFragments } from "../../../src/core/asset/markdown-fragments";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import {
   type IndexDocument,
   projectMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../../src/indexer/passes/metadata";
-import { applyRankingRules } from "../../../src/indexer/search/ranking";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { getIndexedMarkdownFragments, searchFts } from "../../../src/storage/repositories/index-fts-repository";
+import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -41,202 +41,14 @@ function put(db: Database, name: string, body: string, description = "ordinary m
   );
 }
 
-describe("isolated lexical Markdown fragments (#937)", () => {
-  test("returns a selector only for an independently matching fragment and round-trips it", () => {
-    const db = open();
-    try {
-      const body = [
-        "# Intro",
-        "",
-        Array.from({ length: 500 }, () => "ordinary background prose").join(" "),
-        "",
-        "# Evidence",
-        "",
-        "rarefragmenttoken carries proof",
-      ].join("\n");
-      put(db, "note", body);
-      const hit = searchFts(db, "rarefragmenttoken", 5)[0];
-      expect(hit?.fragmentId).toMatch(/^akm-fragment-/);
-      const safe = projectMarkdownFragmentContent(body)!;
-      expect(fragmentForSelector(safe, hit!.fragmentId!)?.text).toContain("rarefragmenttoken");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("calibrates separate parent and fragment BM25 populations before merging", () => {
-    const db = open();
-    try {
-      put(
-        db,
-        "buried",
-        `${Array.from({ length: 1200 }, () => "background prose").join(" ")}\n\nrarecalibrationtoken proof`,
-      );
-      const parent = db
-        .prepare("SELECT bm25(entries_fts, 0, 10, 5, 3, 2, 1) AS score FROM entries_fts WHERE entries_fts MATCH ?")
-        .get("rarecalibrationtoken") as { score: number };
-      const fragment = db
-        .prepare("SELECT bm25(entry_fragments_fts) AS score FROM entry_fragments_fts WHERE entry_fragments_fts MATCH ?")
-        .get("rarecalibrationtoken") as { score: number };
-      // These are two FTS corpora, so raw magnitudes are evidence only, not a
-      // shared ordering. The fixed population-aware mapping is what the merge
-      // consumes; a short decisive fragment beats its length-penalized parent.
-      expect(parent.score).toBeLessThan(0);
-      expect(fragment.score).toBeLessThan(0);
-      expect(stableFtsScore(fragment.score, "fragment")).toBeGreaterThan(stableFtsScore(parent.score, "parent"));
-      expect(searchFts(db, "rarecalibrationtoken", 5)[0]?.fragmentId).toMatch(/^akm-fragment-/);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("keeps metadata + later-body conjunction on the parent and metadata-only hits selector-free", () => {
-    const db = open();
-    try {
-      const body = ["# First", "alpha only", "", "# Later", "bodyonlymarker later"].join("\n");
-      put(db, "note", body, "metadatamarker description");
-      expect(searchFts(db, "metadatamarker", 5)[0]?.fragmentId).toBeUndefined();
-      // No one fragment holds both terms, so the established parent FTS row is
-      // responsible for the conjunction and no misleading selector is emitted.
-      expect(searchFts(db, "metadatamarker bodyonlymarker", 5)[0]?.fragmentId).toBeUndefined();
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("scans past many matching fragments from one parent to fill distinct parents", () => {
-    const db = open();
-    try {
-      put(db, "monopoly", Array.from({ length: 80 }, (_, i) => `needle monopoly paragraph ${i}\n\n`).join(""));
-      put(db, "other-a", "needle other alpha");
-      put(db, "other-b", "needle other beta");
-      const names = searchFts(db, "needle", 3).map((hit) => hit.entry.name);
-      expect(new Set(names).size).toBe(3);
-      expect(names).toContain("other-a");
-      expect(names).toContain("other-b");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("keeps every tied distinct fragment parent for downstream ranking", () => {
-    const db = open();
-    try {
-      for (const name of ["fragment-a", "fragment-b", "fragment-c"]) {
-        // The parent projection deliberately does not contain the needle: this
-        // exercises the fragment boundary rather than inheriting parent FTS's
-        // already-covered #940 expansion.
-        const entry: IndexDocument = { name, type: "knowledge", content: "ordinary parent text" };
-        setMarkdownFragmentContent(entry, projectMarkdownFragmentContent("fragmentboundary proof"));
-        upsertEntry(
-          db,
-          `/fixture/knowledge/${name}.md`,
-          entry,
-          buildSearchText(entry),
-          deriveEntryProvenance({ bundleId: "fixture", componentId: "fixture", adapterId: "akm" }, "knowledge", name),
-        );
-      }
-      expect(searchFts(db, "fragmentboundary", 1).map((hit) => hit.entry.name)).toEqual([
-        "fragment-a",
-        "fragment-b",
-        "fragment-c",
-      ]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("uses a single SQLite parent-window plan under broad monopoly pressure", () => {
-    const db = open();
-    try {
-      const longParagraph = `broadneedle ${"filler ".repeat(260)}`;
-      put(db, "monopoly-window", Array.from({ length: 90 }, () => longParagraph).join("\n\n"));
-      for (let index = 0; index < 40; index++) put(db, `parent-${index}`, `broadneedle parent ${index}`);
-      const plan = db
-        .prepare(
-          `EXPLAIN QUERY PLAN WITH matches AS MATERIALIZED (
-             SELECT e.id, f.fragment_id, f.fragment_ordinal, bm25(entry_fragments_fts) AS bm25Score
-             FROM entry_fragments_fts f JOIN entries e ON e.id = f.entry_id
-             WHERE entry_fragments_fts MATCH ?
-           ), ranked AS MATERIALIZED (
-             SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY bm25Score, fragment_ordinal, fragment_id) AS parentRank FROM matches
-           ), parents AS MATERIALIZED (
-             SELECT * FROM ranked WHERE parentRank = 1
-           ), boundary AS (
-             SELECT bm25Score FROM parents ORDER BY bm25Score LIMIT 1 OFFSET ?
-           ) SELECT e.id, e.document_json
-             FROM parents JOIN entries e ON e.id = parents.id
-             WHERE NOT EXISTS (SELECT 1 FROM boundary)
-                OR parents.bm25Score <= (SELECT bm25Score FROM boundary)
-             ORDER BY parents.bm25Score, parents.id`,
-        )
-        .all("broadneedle", 9) as Array<{ detail: string }>;
-      expect(plan.some((row) => /VIRTUAL TABLE|entry_fragments_fts/i.test(row.detail))).toBe(true);
-      const started = performance.now();
-      const hits = searchFts(db, "broadneedle", 10);
-      const elapsedMs = performance.now() - started;
-      // The tie-preserving candidate rule may return more than K distinct
-      // parents, but a fragmented monopoly still cannot consume a parent slot.
-      expect(new Set(hits.map((hit) => hit.id)).size).toBeGreaterThanOrEqual(10);
-      // CI budget, deliberately roomy; this catches a return to client OFFSET
-      // pagination without encoding machine-specific microbenchmarks.
-      expect(elapsedMs).toBeLessThan(1000);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("batch-enriches selected fragment provenance within a bounded p95 cost", () => {
-    const db = open();
-    try {
-      for (let index = 0; index < 20; index++) {
-        const name = `enrichment-${index}`;
-        const safeBody = Array.from(
-          { length: 30 },
-          (_, ordinal) =>
-            `## Turn ${ordinal + 1}\nbatchedneedle parent ${index} turn ${ordinal} ${"context ".repeat(80)}`,
-        ).join("\n\n");
-        const entry: IndexDocument = { name, type: "knowledge", content: "ordinary parent projection" };
-        setMarkdownFragmentContent(entry, safeBody);
-        upsertEntry(
-          db,
-          `/fixture/knowledge/${name}.md`,
-          entry,
-          buildSearchText(entry),
-          deriveEntryProvenance({ bundleId: "fixture", componentId: "fixture", adapterId: "akm" }, "knowledge", name),
-        );
-      }
-      const hits = searchFts(db, "batchedneedle", 20);
-      const selections = hits.flatMap((hit) =>
-        hit.fragmentId ? [{ itemRef: hit.itemRef, fragmentId: hit.fragmentId }] : [],
-      );
-      expect(selections).toHaveLength(20);
-
-      const timings: number[] = [];
-      let enriched: ReturnType<typeof getIndexedMarkdownFragments> = [];
-      for (let run = 0; run < 25; run++) {
-        const started = performance.now();
-        enriched = getIndexedMarkdownFragments(db, selections);
-        timings.push(performance.now() - started);
-      }
-      const p95 = timings.sort((left, right) => left - right)[Math.floor(timings.length * 0.95)]!;
-      expect(enriched).toHaveLength(20);
-      expect(enriched.every((fragment) => fragment?.count === 30)).toBe(true);
-      // Deliberately roomy CI budget: catches an accidental return to one
-      // query or repeated full-parent split per selected fragment.
-      expect(p95).toBeLessThan(1000);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
+describe("Markdown fragment publication (#937)", () => {
   test("replaces parent and fragment rows atomically on incremental update", () => {
     const db = open();
     try {
       put(db, "replace", "oldfragmentmarker");
       put(db, "replace", "newfragmentmarker");
       expect(searchFts(db, "oldfragmentmarker", 5)).toHaveLength(0);
-      expect(searchFts(db, "newfragmentmarker", 5)[0]?.entry.name).toBe("replace");
+      expect(searchFts(db, "newfragmentmarker", 5)[0]?.itemRef).toBe("fixture//knowledge/replace");
     } finally {
       closeDatabase(db);
     }
@@ -264,7 +76,7 @@ describe("isolated lexical Markdown fragments (#937)", () => {
       expect(rowCount(db, "entries_fts")).toBe(beforeParentFts!);
       expect(rowCount(db, "entry_fragments")).toBe(beforeFragmentSource!);
       expect(rowCount(db, "entry_fragments_fts")).toBe(beforeFragmentFts!);
-      expect(searchFts(db, "oldatomicmarker", 5)[0]?.entry.name).toBe("atomic");
+      expect(searchFts(db, "oldatomicmarker", 5)[0]?.itemRef).toBe("fixture//knowledge/atomic");
     } finally {
       closeDatabase(db);
     }
@@ -291,7 +103,7 @@ describe("isolated lexical Markdown fragments (#937)", () => {
       );
       expect(rowCount(db, "entry_fragments")).toBe(0);
       expect(searchFts(db, "oldtransitionmarker", 5)).toHaveLength(0);
-      expect(searchFts(db, "parentonlymarker", 5)[0]?.fragmentId).toBeUndefined();
+      expect(searchFts(db, "parentonlymarker", 5)[0]?.itemRef).toBe("fixture//knowledge/transition");
 
       const script: IndexDocument = { name: "plain-script", type: "script", content: "nativemarkernonmarkdown" };
       upsertEntry(
@@ -305,14 +117,14 @@ describe("isolated lexical Markdown fragments (#937)", () => {
           "plain-script",
         ),
       );
-      expect(searchFts(db, "nativemarkernonmarkdown", 5)[0]?.fragmentId).toBeUndefined();
+      expect(searchFts(db, "nativemarkernonmarkdown", 5)[0]?.itemRef).toBe("fixture//scripts/plain-script");
       expect(rowCount(db, "entry_fragments")).toBe(0);
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("keeps the same winning selector across identical reindexes and preserves structured parent fields once", () => {
+  test("identical reindexes keep one parent FTS row and preserve structured parent fields", () => {
     const db = open();
     try {
       const body = `${Array.from({ length: 400 }, () => "background").join(" ")}\n\ndeterministicmarker proof`;
@@ -328,53 +140,18 @@ describe("isolated lexical Markdown fragments (#937)", () => {
         "knowledge",
         "structured",
       );
-      let firstSelector: string | undefined;
       for (let run = 0; run < 2; run++) {
         setMarkdownFragmentContent(entry, projectMarkdownFragmentContent(body));
         upsertEntry(db, "/fixture/knowledge/structured.md", entry, buildSearchText(entry), provenance);
-        const hit = searchFts(db, "deterministicmarker", 5)[0];
-        if (run === 0) expect(hit?.fragmentId).toBeDefined();
-        else expect(hit?.fragmentId).toBe(firstSelector);
-        if (run === 0) firstSelector = hit?.fragmentId;
+        expect(searchFts(db, "deterministicmarker", 5).map((hit) => hit.itemRef)).toEqual([
+          "fixture//knowledge/structured",
+        ]);
       }
       expect(rowCount(db, "entries_fts")).toBe(1);
       const parent = db
         .prepare("SELECT document_json FROM entries WHERE item_ref = ?")
         .get("fixture//knowledge/structured") as { document_json: string };
       expect(JSON.parse(parent.document_json)).toMatchObject({ toc: entry.toc, parameters: entry.parameters });
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("many matching fragments contribute parent ranking signals exactly once", () => {
-    const db = open();
-    try {
-      const repeated = Array.from({ length: 90 }, () => `contributorneedle ${"filler ".repeat(260)}`).join("\n\n");
-      put(db, "many-fragments", repeated);
-      const result = searchFts(db, "contributorneedle", 5);
-      expect(result).toHaveLength(1);
-      const hit = result[0]!;
-      const ranked = applyRankingRules({
-        db,
-        query: "contributorneedle",
-        graphContext: null,
-        items: [
-          {
-            id: hit.id,
-            entry: { ...hit.entry, quality: "curated" },
-            filePath: hit.filePath,
-            score: 0.5,
-            rankingMode: "fts",
-            lexicalMatch: hit.lexicalMatch,
-          },
-        ],
-      });
-      expect(ranked).toHaveLength(1);
-      // One parent item reaches contributor application regardless of 90
-      // matching children; the fixed curated contribution is therefore not
-      // multiplied by fragment count.
-      expect(ranked[0]!.score).toBeCloseTo(0.635, 6);
     } finally {
       closeDatabase(db);
     }

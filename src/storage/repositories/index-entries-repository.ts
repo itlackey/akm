@@ -361,52 +361,6 @@ function rewriteUsageEventRefForMove(opts: RekeyEntryOptions): void {
 }
 
 /**
- * Phase 2A / Rec 5: bulk-load positive feedback event counts for the given
- * entry ids. Used by the utility-decay forgetting curve to stabilize
- * (extend the half-life of) memories that have repeatedly proven useful.
- *
- * Returns a `Map<entryId, count>` containing only entries with at least one
- * positive feedback event — missing ids implicitly map to `0`. Chunks at
- * `SQLITE_CHUNK_SIZE` (500) to respect `SQLITE_MAX_VARIABLE_NUMBER`.
- *
- * Cheap when called with zero ids, and silently empty when state.db (or its
- * `usage_events` table) is absent.
- *
- * Chunk-8 WI-8.3: usage_events lives in state.db — this reads it there (no
- * entries join needed; the ids are supplied by the caller). Gated by the caller
- * (`shouldQueryPositiveFeedbackCounts`) so the state.db open is not on the
- * default search hot path.
- */
-export function getPositiveFeedbackCountsByIds(ids: number[]): Map<number, number> {
-  const result = new Map<number, number>();
-  if (ids.length === 0 || !fs.existsSync(getStateDbPath())) return result;
-  bestEffort(() => {
-    withStateDb((stateDb) => {
-      for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
-        const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
-        const placeholders = chunk.map(() => "?").join(",");
-        const rows = stateDb
-          .prepare(
-            `SELECT entry_id, COUNT(*) AS cnt
-               FROM usage_events
-               WHERE event_type = 'feedback'
-                 AND signal = 'positive'
-                 AND entry_id IN (${placeholders})
-               GROUP BY entry_id`,
-          )
-          .all(...chunk) as Array<{ entry_id: number | null; cnt: number }>;
-        for (const row of rows) {
-          if (row.entry_id !== null && row.cnt > 0) {
-            result.set(row.entry_id, row.cnt);
-          }
-        }
-      }
-    });
-  }, "positive feedback counts are best-effort");
-  return result;
-}
-
-/**
  * Rows whose `file_path` sits directly in `dirPath`. A half-open byte range
  * over `idx_entries_file_path` (`[dir + sep, dir + sep + 1)`) turns the lookup
  * into an index seek; the range is exact for "starts with `dir/`" but also
@@ -833,6 +787,23 @@ export function getEntryById(
     conceptId: row.concept_id,
     adapterId: row.adapter_id,
   };
+}
+
+/** The `item_ref` and `type` of every id that has an entry row. */
+export function getEntryRefsAndTypes(
+  db: Database,
+  ids: readonly number[],
+): Map<number, { itemRef: string; type: string }> {
+  const out = new Map<number, { itemRef: string; type: string }>();
+  for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT id, item_ref, type FROM entries WHERE id IN (${placeholders})`)
+      .all(...chunk) as Array<{ id: number; item_ref: string; type: string }>;
+    for (const row of rows) out.set(row.id, { itemRef: row.item_ref, type: row.type });
+  }
+  return out;
 }
 
 export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[] {
