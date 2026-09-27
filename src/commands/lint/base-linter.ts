@@ -48,6 +48,7 @@ import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
 import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
+import { DERIVED_SUFFIX } from "../../core/recognition-util";
 import { findFenceRegions } from "./markdown-insertion";
 import type { LintContext, LintIssue } from "./types";
 
@@ -234,15 +235,28 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
 }
 
 /**
+ * The stash-relative files that satisfy a ref, in preference order: its own
+ * placement spellings, then, for a memory, the `<name>.derived.md` child (#882),
+ * so an edge to a parent whose plain `.md` is gone still reaches the child it was
+ * distilled into. This is lint's reachability rule only; the child owns
+ * `memories/<name>.derived`, never `memories/<name>`.
+ */
+function refPathCandidates(refType: string, typeDir: string, refName: string): string[] {
+  const candidates = assetPathCandidatesForName(refType, typeDir, refName);
+  if (refType !== "memory" || refName.endsWith(DERIVED_SUFFIX)) return candidates;
+  return [...candidates, assetPathForName(refType, typeDir, `${refName}${DERIVED_SUFFIX}`)];
+}
+
+/**
  * True when `(refType, refName)` names a memory that prune archived in any
  * root. Mirrors `resolveRefPathInStash`'s candidate set so a ref that resolved
- * through the `.derived.md` twin (#882) still resolves once archived.
+ * through the `.derived.md` child (#882) still resolves once archived.
  */
 function memoryArchiveHasRef(refType: string, refName: string, stashRoots: string[]): boolean {
   if (refType !== "memory") return false; // only memories are ever archived
   const typeDir = stashDirFor(refType);
   if (typeDir === undefined) return false;
-  const candidates = assetPathCandidatesForName(refType, typeDir, refName);
+  const candidates = refPathCandidates(refType, typeDir, refName);
   for (const root of stashRoots) {
     for (const candidate of candidates) {
       if (isArchivedRelPath(candidate, root)) return true;
@@ -256,8 +270,8 @@ function memoryArchiveHasRef(refType: string, refName: string, stashRoots: strin
  * the same reachability rules (in the same order) as
  * {@link refExistsInAnyStash}, which delegates here. Returns the absolute path
  * of the file that makes the ref "exist" — for a multi-file skill directory
- * that is its `SKILL.md` primary, for a `memory` ref its `.derived.md` twin
- * when the plain `.md` is absent (#882, see `assetPathCandidatesForName`) —
+ * that is its `SKILL.md` primary, for a `memory` ref its `.derived.md` child
+ * when the plain `.md` is absent (#882, see {@link refPathCandidates}) —
  * or `null` when the ref does not resolve in this root.
  *
  * Extracted for SPEC-5 (`--supersedes` demotion): write commands need the
@@ -268,7 +282,7 @@ function memoryArchiveHasRef(refType: string, refName: string, stashRoots: strin
  */
 export function resolveRefPathInStash(relPath: string, refType: string, refName: string, root: string): string | null {
   const typeDir = stashDirFor(refType);
-  const candidates = typeDir === undefined ? [relPath] : assetPathCandidatesForName(refType, typeDir, refName);
+  const candidates = typeDir === undefined ? [relPath] : refPathCandidates(refType, typeDir, refName);
   for (const candidate of candidates) {
     const absPath = path.join(root, candidate);
     if (fs.existsSync(absPath)) return absPath;

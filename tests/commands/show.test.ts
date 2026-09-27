@@ -674,6 +674,29 @@ describe("akmShow markdown fragments", () => {
   });
 });
 
+// ── Derived memory children ──────────────────────────────────────────────────
+
+describe("akmShow memory with a .derived.md child", () => {
+  test("the memory, a section of it, and its derived child all show", async () => {
+    const parent = path.join(stashDir, "memories", "ops", "gate.md");
+    const child = path.join(stashDir, "memories", "ops", "gate.derived.md");
+    writeFile(parent, "---\ndescription: Parent\n---\n# Gate\n\n## Checks\nParent body.\n");
+    writeFile(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
+    saveConfig({ semanticSearchMode: "off" });
+
+    const shown = await akmShow({ ref: "memories/ops/gate", skipLogging: true });
+    expect(shown.path).toBe(parent);
+    expect(shown.content).toContain("Parent body.");
+
+    const section = await akmShow({ ref: "memories/ops/gate#checks", skipLogging: true });
+    expect(section.content).toBe("## Checks\nParent body.\n");
+
+    const derived = await akmShow({ ref: "memories/ops/gate.derived", skipLogging: true });
+    expect(derived.path).toBe(child);
+    expect(derived.content).toContain("Derived body.");
+  });
+});
+
 // F6/R-021: direct unit coverage for `input.detail === "brief"` /
 // `buildBriefResponse` on `akmShowUnified` itself — previously ZERO test in
 // the suite exercised this path (the CLI-layer resolution that feeds it is

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm show` works for a memory that has a `.derived.md` child.** When
+  `memories/X.md` and `memories/X.derived.md` both existed, `akm show
+  memories/X`, with or without a `#fragment`, failed with
+  `RESOURCE_ALREADY_EXISTS` ("multiple physical owners"); `akm curate`
+  previewed such a memory from its description alone, and `akm curate --pack`
+  left it out. The index gives the derived child its own ref,
+  `memories/X.derived`, but the ref lookup also counted `X.derived.md` as a
+  file for `memories/X`. The lookup now follows the index: `memories/X` is
+  `X.md` and `memories/X.derived` is `X.derived.md`. A derived child whose
+  parent file is gone no longer answers for the parent's ref either, so it
+  cannot hide a real `X.md` in a lower-priority bundle. `akm lint` and
+  `--xref` / `--supersedes` validation still accept a ref to `memories/X`
+  when only `X.derived.md` remains. Broken since 0.9.7.
+  (`src/core/asset/asset-placement.ts`, `src/commands/lint/base-linter.ts`)
+
 ## [0.9.17-alpha.4] - 2026-09-27
 
 Search and curate are rebuilt on measured evidence. On a 221-query suite of real

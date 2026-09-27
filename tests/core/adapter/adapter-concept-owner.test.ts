@@ -26,6 +26,7 @@ import {
   AdapterConceptCollisionError,
   resolveAdapterConceptOwner,
 } from "../../../src/indexer/lookup/adapter-concept-owner";
+import { buildFileContext } from "../../../src/indexer/walk/file-context";
 import { sandboxStashDir } from "../../_helpers/sandbox";
 
 describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
@@ -205,6 +206,47 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.writeFileSync(namedEnv, "TOKEN=hidden\n");
       const owner = resolveAdapterConceptOwner(root, "dotenv", "env/default", { mode: "read" });
       expect(owner?.path).toBe(dotEnv);
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  // A `.derived.md` memory is a separate child item: the indexer gives
+  // `gate.derived.md` the conceptId `memories/ops/gate.derived`, so ownership
+  // must agree. Counting it as a second owner of `memories/ops/gate` made
+  // `akm show` of every memory with a derived child fail.
+  test("a memory and its .derived.md child each own only the conceptId the indexer gives them", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "akm");
+      const component = { id: "akm", adapter: "akm", root, writable: false };
+      const parent = path.join(root, "memories", "ops", "gate.md");
+      const child = path.join(root, "memories", "ops", "gate.derived.md");
+      fs.mkdirSync(path.dirname(parent), { recursive: true });
+      fs.writeFileSync(parent, "---\ndescription: Parent\n---\nParent body.\n");
+      fs.writeFileSync(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
+
+      expect(akmAdapter.recognize(component, buildFileContext(root, parent))?.conceptId).toBe("memories/ops/gate");
+      expect(akmAdapter.recognize(component, buildFileContext(root, child))?.conceptId).toBe(
+        "memories/ops/gate.derived",
+      );
+      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate")?.path).toBe(parent);
+      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate.derived")?.path).toBe(child);
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("a derived-only memory does not own its parent's conceptId", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "akm");
+      const child = path.join(root, "memories", "ops", "gate.derived.md");
+      fs.mkdirSync(path.dirname(child), { recursive: true });
+      fs.writeFileSync(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
+
+      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate")).toBeUndefined();
+      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate.derived")?.path).toBe(child);
     } finally {
       sandbox.cleanup();
     }
