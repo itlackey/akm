@@ -324,6 +324,86 @@ function addPlainMatches(coverageDelta: Int32Array, text: string, needle: string
 }
 
 /**
+ * Name components (after splitting an identifier on `_`/`-` and camelCase
+ * boundaries) that mark a `NAME=value` / `NAME: value` pair as
+ * credential-shaped regardless of length — the free-text-pattern sibling of
+ * `isInferredSecretName` in `src/tasks/log-redaction.ts`, which does the same
+ * job for environment variable names. Bare-word matching only: this
+ * deliberately does NOT flag "author" ("auth" is not a whole word/component
+ * of "author", the same anchoring reasoning `isInferredSecretName` documents)
+ * nor prose like "token budget" (no `=`/`:` for the pattern below to anchor
+ * on in the first place).
+ */
+const CREDENTIAL_KEY_WORDS = new Set(["password", "passwd", "secret", "token", "auth", "credential", "credentials"]);
+
+/** Split an identifier into lowercase words at `_`/`-` and camelCase boundaries. */
+function identifierWords(identifier: string): string[] {
+  return identifier
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[_-]+/)
+    .filter(Boolean);
+}
+
+/**
+ * True when `identifier` names a credential by shape: a whole word from
+ * {@link CREDENTIAL_KEY_WORDS}, or `api[_-]?key` / `private[_-]?key` in any
+ * of their glued, snake_case, kebab-case or camelCase spellings.
+ */
+function isCredentialLikeKeyName(identifier: string): boolean {
+  const lower = identifier.toLowerCase();
+  if (lower.includes("apikey") || lower.includes("privatekey")) return true;
+  const words = identifierWords(identifier);
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!;
+    if (CREDENTIAL_KEY_WORDS.has(word)) return true;
+    if ((word === "api" || word === "private") && words[i + 1] === "key") return true;
+  }
+  return false;
+}
+
+/**
+ * `NAME=value` / `NAME: value`, name captured in group 1, separator in group
+ * 2. Source string (not a shared `RegExp`, which would carry `lastIndex`
+ * state across calls) for {@link redactNamedCredentialValues} to instantiate
+ * fresh each call.
+ */
+const NAMED_CREDENTIAL_VALUE_SOURCE = String.raw`\b([A-Za-z][A-Za-z0-9_-]*)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;"']+)`;
+
+/**
+ * Redact `NAME=value` / `NAME: value` pairs whose name is credential-shaped
+ * (see {@link isCredentialLikeKeyName}).
+ *
+ * Not a plain `input.replace(re, fn)`: the greedy unquoted-value alternative
+ * happily matches straight through a NESTED assignment when a non-credential
+ * name comes first with no separator of its own — `"config: DB_PASSWORD=…"`
+ * matches name `config` with value `DB_PASSWORD=…` (one contiguous
+ * whitespace-free run), and a plain global replace treats that as ONE
+ * consumed, non-matching span and never revisits `DB_PASSWORD=…` on its own,
+ * silently leaking the credential. Rejecting a non-credential candidate here
+ * instead rewinds the scan to one character past where IT started, so the
+ * engine keeps looking and still finds the real assignment nested inside.
+ */
+function redactNamedCredentialValues(input: string): string {
+  const re = new RegExp(NAMED_CREDENTIAL_VALUE_SOURCE, "g");
+  let result = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null = re.exec(input);
+  while (match !== null) {
+    const [full, name, sep] = match as unknown as [string, string, string];
+    if (isCredentialLikeKeyName(name)) {
+      result += input.slice(cursor, match.index) + name + sep + "[REDACTED]";
+      cursor = match.index + full.length;
+      re.lastIndex = cursor;
+    } else {
+      re.lastIndex = match.index + 1;
+    }
+    match = re.exec(input);
+  }
+  return result + input.slice(cursor);
+}
+
+/**
  * Redact credential-shaped substrings from arbitrary text by pattern alone —
  * unlike {@link redactSensitiveText}, which requires the exact secret value
  * up front, this catches credentials no caller ever knew to list. No
@@ -339,24 +419,50 @@ function addPlainMatches(coverageDelta: Int32Array, text: string, needle: string
  *    is kept, only the token segment is redacted
  *  - Slack incoming-webhook URLs (`hooks.slack.com/services/<team>/<channel>/<token>`)
  *    — the team/channel ids are kept, only the trailing token is redacted
+ *  - PEM private-key blocks (`-----BEGIN … PRIVATE KEY-----…-----END … PRIVATE KEY-----`)
+ *    — the BEGIN/END markers are kept, only the body is redacted
+ *  - JWTs (`eyJ…….…….…`)
+ *  - GitHub tokens (`ghp_`/`gho_`/`ghs_`/`ghu_`/`ghr_…`)
+ *  - Slack tokens (`xoxa-`/`xoxb-`/`xoxp-`/`xoxr-…`)
+ *  - AWS access key ids (`AKIA…`)
+ *  - `scheme://user:pass@host` URLs — the scheme and host are kept, only the
+ *    userinfo is redacted
+ *  - `NAME=value` / `NAME: value` where `NAME` names a credential by shape
+ *    (password, passwd, secret, token, auth, credential(s), api/private key
+ *    — see {@link isCredentialLikeKeyName}) — the name is kept, only the
+ *    value is redacted
  */
 export function redactCredentialPatterns(input: string): string {
   if (!input) return "";
-  return (
-    input
-      // Bearer tokens (case-insensitive)
-      .replace(/\bBearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]")
-      // sk-/sk_ style keys
-      .replace(/\bsk[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
-      // key-/key_ shorthand keys
-      .replace(/\bkey[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
-      // JSON-style "api_key": "...", "apiKey": "...", "api-key": "..."
-      .replace(/("(?:api[_-]?key|apiKey|authorization|token)"\s*:\s*")([^"]*)(")/gi, "$1[REDACTED]$3")
-      // Discord webhook URLs: keep the webhook id, redact the token segment.
-      .replace(/(discord(?:app)?\.com\/api\/webhooks\/\d+\/)[A-Za-z0-9_-]+/gi, "$1[REDACTED]")
-      // Slack incoming-webhook URLs: keep the team/channel ids, redact the token.
-      .replace(/(hooks\.slack\.com\/services\/[A-Za-z0-9]+\/[A-Za-z0-9]+\/)[A-Za-z0-9]+/gi, "$1[REDACTED]")
-  );
+  const patterned = input
+    // Bearer tokens (case-insensitive)
+    .replace(/\bBearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]")
+    // sk-/sk_ style keys
+    .replace(/\bsk[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
+    // key-/key_ shorthand keys
+    .replace(/\bkey[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
+    // JSON-style "api_key": "...", "apiKey": "...", "api-key": "..."
+    .replace(/("(?:api[_-]?key|apiKey|authorization|token)"\s*:\s*")([^"]*)(")/gi, "$1[REDACTED]$3")
+    // Discord webhook URLs: keep the webhook id, redact the token segment.
+    .replace(/(discord(?:app)?\.com\/api\/webhooks\/\d+\/)[A-Za-z0-9_-]+/gi, "$1[REDACTED]")
+    // Slack incoming-webhook URLs: keep the team/channel ids, redact the token.
+    .replace(/(hooks\.slack\.com\/services\/[A-Za-z0-9]+\/[A-Za-z0-9]+\/)[A-Za-z0-9]+/gi, "$1[REDACTED]")
+    // PEM private-key blocks: keep the BEGIN/END markers, redact the body.
+    .replace(/(-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----)/g, "$1[REDACTED]$2")
+    // JWTs: three dot-separated base64url segments; the header always
+    // starts "eyJ" (base64 of `{"`).
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED]")
+    // GitHub tokens (ghp_/gho_/ghs_/ghu_/ghr_...)
+    .replace(/\bgh[posur]_[A-Za-z0-9]{20,255}\b/g, "[REDACTED]")
+    // Slack tokens (xoxa-/xoxb-/xoxp-/xoxr-...)
+    .replace(/\bxox[abpr]-[A-Za-z0-9-]+\b/g, "[REDACTED]")
+    // AWS access key ids
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED]")
+    // URLs carrying `user:pass@` userinfo: keep the scheme and host.
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@");
+  // NAME=value / NAME: value for credential-shaped names. Not a plain
+  // `.replace()` in the chain above — see `redactNamedCredentialValues`.
+  return redactNamedCredentialValues(patterned);
 }
 
 /**

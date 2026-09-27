@@ -21,6 +21,7 @@ import { parseRefInput } from "../../core/asset/resolve-ref";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import {
@@ -184,11 +185,17 @@ const CURATE_REFERENCE_QUERY_RE = /\b(?:reference|docs?|guide|how|explain|learn|
  * Never blocks the caller; errors are silently ignored.
  */
 function logCurateEvent(
-  query: string,
+  rawQuery: string,
   result: CurateResponse,
   eventSource: UsageEventSource = "user",
   attributionProjection: AttributionProjection = "full",
 ): void {
+  // Credentials pasted into a query (e.g. by the Claude Code hook that
+  // curates every user prompt) must never reach state.db verbatim — see
+  // `redactCredentialPatterns`. Redacted once here so every persistence call
+  // below (events.metadata_json via appendEvent, usage_events.query via
+  // insertUsageEvent) gets the same scrubbed text.
+  const query = redactCredentialPatterns(rawQuery);
   const itemRefs = result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`));
   appendEvent({
     eventType: "curate",

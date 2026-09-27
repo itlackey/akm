@@ -376,6 +376,23 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
 
 ### Fixed
 
+- **`akm search`/`akm curate` no longer store a pasted credential verbatim in
+  `state.db`.** The Claude Code hook curates every user prompt, so a
+  credential pasted into a prompt (`PASSWORD=…`, `TOKEN=…`, `SECRET=…`, a
+  `Bearer` header, a JWT, a `ghp_…`/`xox…`/`AKIA…` token, a PEM private key, a
+  `user:pass@` URL, …) flowed straight into the query text and was persisted
+  as-is in both `usage_events.query` and the `events` table's
+  `metadata_json` — a scan of mined queries found 22 credential-like values
+  stored this way. `logSearchEvent`/`logCurateEvent` now redact the query
+  with `redactCredentialPatterns` (extended with the shapes above, plus a
+  `NAME=value`/`NAME: value` pass for names containing password, passwd,
+  secret, token, auth, credential(s), or an api/private key — the value is
+  replaced with `[REDACTED]`, the name is kept so queries stay useful for
+  evaluation) before either write, so a `show`/`select` event tracing back to
+  the search — which copies the search event's already-persisted `query`
+  metadata — inherits the same redacted text. Existing rows already written
+  are not rewritten. (`src/core/redaction.ts`, `src/commands/read/search.ts`,
+  `src/commands/read/curate.ts`)
 - **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
   key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
   reads it, but the named-engine object (`LlmEngineSchema`) never listed it,
