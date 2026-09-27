@@ -13,7 +13,8 @@
  */
 
 // 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`
-// is dropped (`dropVecMirror`, index-schema.ts).
+// is dropped (`dropVecMirror`, index-schema.ts), and so is the fragment FTS
+// table `entry_fragments_fts`, which search no longer reads.
 // 24: the FTS5 tables are contentless (`content=''`) — the indexed text lives
 // once, in `entries` / `entry_fragments`, and FTS rows are keyed by rowid only.
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
@@ -48,9 +49,8 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
   );
 `;
 
-// Both FTS tables are contentless: FTS5 keeps only the inverted index, and a
-// row is addressed by its rowid (`entries_fts.rowid = entries.id`;
-// `entry_fragments_fts.rowid = entries.id * 2^20 + fragment ordinal`, see
+// The FTS table is contentless: FTS5 keeps only the inverted index, and a row
+// is addressed by its rowid (`entries_fts.rowid = entries.id`, see
 // index-fts-repository.ts). `contentless_delete=1` lets a row be deleted by
 // rowid alone — an external-content table would instead need the exact text
 // originally indexed, which is derived in JS from `document_json`
@@ -61,23 +61,12 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
 // and the content-bearing one older releases wrote — which is also the
 // layout written when the linked SQLite predates `contentless_delete` (3.43,
 // e.g. the macOS 13 system library Bun links there).
-//
-// Parent metadata and body fragments are separate FTS populations on purpose:
-// combining them changes parent-document IDF and conjunction semantics.
 const CONTENTLESS_OPTIONS = "content='', contentless_delete=1,";
 
 export function entriesFtsDdl(contentless: boolean): string {
   return `
   CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     entry_id UNINDEXED, name, description, tags, hints, content,
-    ${contentless ? CONTENTLESS_OPTIONS : ""} tokenize='porter unicode61'
-  );`;
-}
-
-export function fragmentsFtsDdl(contentless: boolean): string {
-  return `
-  CREATE VIRTUAL TABLE IF NOT EXISTS entry_fragments_fts USING fts5(
-    entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content,
     ${contentless ? CONTENTLESS_OPTIONS : ""} tokenize='porter unicode61'
   );`;
 }

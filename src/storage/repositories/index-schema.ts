@@ -23,7 +23,6 @@ import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
   entriesFtsDdl,
-  fragmentsFtsDdl,
   isContentlessFtsDdl,
   missingEntryColumns,
   readTableSql,
@@ -191,7 +190,6 @@ function ensureEntriesLayout(db: Database, storedVersion: number): void {
   db.transaction(() => {
     for (const table of [
       "entries_fts",
-      "entry_fragments_fts",
       "entry_fragments",
       "embeddings",
       "utility_scores_scoped",
@@ -222,22 +220,17 @@ function dropVecMirror(db: Database): void {
 }
 
 /**
- * Bring both FTS5 tables to the contentless layout, rebuilding them from
- * `entries` / `entry_fragments` when either is missing or still carries the
- * content-bearing layout older releases wrote (the one-time v23→v24
- * migration). One transaction: a crash mid-rebuild leaves the old tables in
- * place and the next writable open retries. A SQLite without
- * `contentless_delete` keeps (or gets) the content-bearing layout instead.
+ * Bring `entries_fts` to the contentless layout, rebuilding it from `entries`
+ * when it is missing or still carries the content-bearing layout older
+ * releases wrote (the one-time v23→v24 migration). One transaction: a crash
+ * mid-rebuild leaves the old table in place and the next writable open
+ * retries. A SQLite without `contentless_delete` keeps (or gets) the
+ * content-bearing layout instead.
  */
 function ensureFtsLayout(db: Database): void {
   const contentless = supportsContentlessDelete(db);
-  const isCurrent = (table: string) => {
-    const sql = readTableSql(db, table);
-    return sql !== null && isContentlessFtsDdl(sql) === contentless;
-  };
-  const parentCurrent = isCurrent("entries_fts");
-  const fragmentsCurrent = isCurrent("entry_fragments_fts");
-  if (parentCurrent && fragmentsCurrent) return;
+  const sql = readTableSql(db, "entries_fts");
+  if (sql !== null && isContentlessFtsDdl(sql) === contentless) return;
   const entryCount = Number((db.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number }).n);
   if (entryCount > 0) {
     warn(
@@ -246,10 +239,8 @@ function ensureFtsLayout(db: Database): void {
     );
   }
   db.transaction(() => {
-    if (!parentCurrent) db.exec("DROP TABLE IF EXISTS entries_fts");
-    if (!fragmentsCurrent) db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
+    db.exec("DROP TABLE IF EXISTS entries_fts");
     db.exec(entriesFtsDdl(contentless));
-    db.exec(fragmentsFtsDdl(contentless));
     rebuildFts(db);
   })();
 }
@@ -289,11 +280,13 @@ export function ensureSchema(db: Database): void {
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
 
   // Retired derived tables: the workflow IR cache, the pre-v22 FTS dirty
-  // queue, and the #955 embedding salvage staging table (embeddings now carry
-  // their model per row, so nothing is copied aside and reused).
+  // queue, the #955 embedding salvage staging table (embeddings now carry
+  // their model per row, so nothing is copied aside and reused), and the
+  // fragment FTS table search stopped reading (layout 24 and earlier).
   db.exec("DROP TABLE IF EXISTS workflow_documents");
   db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
   db.exec("DROP TABLE IF EXISTS embedding_salvage");
+  db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
 
   // One float32 BLOB per entry, searched by an exact scan
   // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
@@ -389,10 +382,11 @@ export function ensureSchema(db: Database): void {
 
   ensureFtsLayout(db);
 
-  // An index that had no fragment source table (v22 and earlier) has parent
-  // FTS rebuilt above but no body fragments to index until each directory is
-  // drained again. Clearing the per-directory cursor makes the next run
-  // re-read every source; entry ids, embeddings and utility rows stay put.
+  // An index that had no fragment source table (v22 and earlier) has no safe
+  // Markdown for `akm show` to resolve fragment selectors from until each
+  // directory is drained again. Clearing the per-directory cursor makes the
+  // next run re-read every source; entry ids, embeddings and utility rows
+  // stay put.
   if (!hadFragmentSource && tableExists(db, "entries")) {
     db.exec("DELETE FROM index_dir_state");
   }

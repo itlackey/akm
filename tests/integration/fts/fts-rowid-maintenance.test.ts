@@ -3,16 +3,14 @@
 // classification rule.
 //
 // Covers the FTS rowid maintenance contract: entries_fts.rowid = entry_id,
-// entry_fragments_fts.rowid = entry_id * 2^20 + fragment_ordinal, constant
-// upsert cost as the tables grow, and that a targeted delete removes exactly
-// its own entry's rows. (The layout-23 → 24 rebuild that establishes the
-// contract on an older index is covered by
+// constant upsert cost as the tables grow, and that a targeted delete removes
+// exactly its own entry's FTS row and fragment source. (The layout-23 → 24
+// rebuild that establishes the contract on an older index is covered by
 // tests/integration/indexer/index-layout-migration.test.ts.)
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { splitMarkdownFragments } from "../../../src/core/asset/markdown-fragments";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { type IndexDocument, setMarkdownFragmentContent } from "../../../src/indexer/passes/metadata";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
@@ -20,8 +18,6 @@ import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { deleteFtsEntries } from "../../../src/storage/repositories/index-fts-repository";
-
-const FRAGMENT_ROWID_ORDINAL_SPAN = 2 ** 20;
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -50,24 +46,16 @@ function putEntry(db: Database, name: string, marker: string): number {
 }
 
 describe("FTS rowid maintenance", () => {
-  test("entries_fts and entry_fragments_fts rows carry the rowid = entry_id / encoded-fragment-rowid contract", () => {
+  test("entries_fts rows carry the rowid = entry_id contract, and the fragment source is stored once per entry", () => {
     const db = openIndexDatabase(tempDbPath());
     try {
       const entryId = putEntry(db, "contract", "contractmarker");
 
       const parentRows = db.prepare("SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'name:contract'").all();
       expect(parentRows).toEqual([{ rowid: entryId }]);
-
-      const fragmentRows = db
-        .prepare(
-          "SELECT rowid FROM entry_fragments_fts WHERE entry_fragments_fts MATCH 'contractmarker' ORDER BY rowid",
-        )
-        .all() as Array<{ rowid: number }>;
-      expect(fragmentRows.map((row) => row.rowid)).toEqual(
-        splitMarkdownFragments(fragmentBody("contractmarker")).map(
-          (fragment) => entryId * FRAGMENT_ROWID_ORDINAL_SPAN + fragment.ordinal,
-        ),
-      );
+      expect(db.prepare("SELECT entry_id, safe_markdown FROM entry_fragments").all()).toEqual([
+        { entry_id: entryId, safe_markdown: fragmentBody("contractmarker") },
+      ]);
     } finally {
       closeDatabase(db);
     }
@@ -110,7 +98,7 @@ describe("FTS rowid maintenance", () => {
     }
   });
 
-  test("deleteFtsEntries removes exactly the target entry's FTS and fragment rows and no other's", () => {
+  test("deleteFtsEntries removes exactly the target entry's FTS row and fragment source and no other's", () => {
     const db = openIndexDatabase(tempDbPath());
     try {
       const idA = putEntry(db, "keep-a", "keepamarker");
@@ -119,37 +107,14 @@ describe("FTS rowid maintenance", () => {
 
       deleteFtsEntries(db, [idB]);
 
-      const countFor = (table: string, entryId: number): number => {
-        const [start, end] =
-          table === "entries_fts"
-            ? [entryId, entryId + 1]
-            : [entryId * FRAGMENT_ROWID_ORDINAL_SPAN, (entryId + 1) * FRAGMENT_ROWID_ORDINAL_SPAN];
-        return (
-          db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE rowid >= ? AND rowid < ?`).get(start, end) as {
-            c: number;
-          }
-        ).c;
-      };
-
-      expect(countFor("entries_fts", idB)).toBe(0);
-      expect(countFor("entry_fragments_fts", idB)).toBe(0);
-      expect(countFor("entries_fts", idA)).toBe(1);
-      expect(countFor("entries_fts", idC)).toBe(1);
-      expect(countFor("entry_fragments_fts", idA)).toBeGreaterThan(0);
-      expect(countFor("entry_fragments_fts", idC)).toBeGreaterThan(0);
-
-      const fragmentOwners = (marker: string): number[] => [
-        ...new Set(
-          (
-            db.prepare("SELECT rowid FROM entry_fragments_fts WHERE entry_fragments_fts MATCH ?").all(marker) as Array<{
-              rowid: number;
-            }>
-          ).map((row) => Math.floor(row.rowid / FRAGMENT_ROWID_ORDINAL_SPAN)),
-        ),
-      ];
-      expect(fragmentOwners("deletememarker")).toEqual([]);
-      expect(fragmentOwners("keepamarker")).toEqual([idA]);
-      expect(fragmentOwners("keepcmarker")).toEqual([idC]);
+      const ftsRowids = (
+        db.prepare("SELECT rowid FROM entries_fts ORDER BY rowid").all() as Array<{ rowid: number }>
+      ).map((row) => row.rowid);
+      expect(ftsRowids).toEqual([idA, idC]);
+      const fragmentOwners = (
+        db.prepare("SELECT entry_id FROM entry_fragments ORDER BY entry_id").all() as Array<{ entry_id: number }>
+      ).map((row) => row.entry_id);
+      expect(fragmentOwners).toEqual([idA, idC]);
     } finally {
       closeDatabase(db);
     }

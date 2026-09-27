@@ -140,9 +140,10 @@ run whose embedding phase fails.
 
 The canonical entry repository owns each complete synchronous mutation of
 `index.db`: the `entries` row, its weighted `entries_fts` projection, its
-separate `entry_fragments` / `entry_fragments_fts` body projection, and stale
-vector invalidation are committed in one SQLite transaction. Entry deletion
-removes FTS, fragment, vector, and utility children before the parent row.
+`entry_fragments` safe Markdown (read by `akm show` for `#fragment` refs), and
+stale vector invalidation are committed in one SQLite transaction. Entry
+deletion removes FTS, fragment, vector, and utility children before the
+parent row.
 Callers do not maintain a dirty queue or request an incremental FTS rebuild.
 The full `rebuildFts()` operation remains only as an explicit recovery verifier
 for this regenerable database.
@@ -201,12 +202,10 @@ skipped unless the caller explicitly requests re-enrichment.
 
 Once entries are upserted, `generateEmbeddingsForDb`
 (`src/indexer/materialize-embeddings.ts`) generates and stores vectors for
-every entry that does not already have one. **Fragments are lexical only and
-are never embedded** — the FTS index (`entry_fragments`/`entry_fragments_fts`)
-carries fragment-level text for keyword/BM25 matching, but every entry vector
-comes from that entry's own (capped, see below) search text, not from any of
-its fragments. In practice this means the embedding phase issues roughly one
-embedder input per entry, not per fragment.
+every entry that does not already have one. **Fragments are never embedded
+or searched** — `entry_fragments` only lets `akm show` select a section — so
+every entry vector comes from that entry's own (capped, see below) search
+text, and the embedding phase issues one embedder input per entry.
 
 **Per-document cap** (`embedding.maxInputTokens`, default 512, #956) —
 before batching, each pending document's search text is truncated to
@@ -398,8 +397,8 @@ re-embed "canary" and a full rebuild copied vectors aside into
 ## Database Tables
 
 `index.db`'s schema (`ensureSchema()`,
-`src/storage/repositories/index-schema.ts`) creates 16 logical
-tables, including two FTS5 virtual tables. Full column-level detail lives in
+`src/storage/repositories/index-schema.ts`) creates 15 logical
+tables, including one FTS5 virtual table. Full column-level detail lives in
 [Storage Locations](storage-locations.md#dataindexdb--main-search-index);
 this is a purpose summary:
 
@@ -408,7 +407,6 @@ this is a purpose summary:
 | `entries` | normalized asset records |
 | `entries_fts` (virtual, FTS5) | multi-column full-text index |
 | `entry_fragments` | safe Markdown projection retained per parent entry for fragment resolution |
-| `entry_fragments_fts` (virtual, FTS5) | separate lexical body-fragment index; no copied parent metadata |
 | `embeddings` | stored embedding vectors, each tagged with its model; vector search scans them |
 | `utility_scores` | recomputed utility boost state (global) |
 | `utility_scores_scoped` | same EMA per `(entry, project-anchor)` pair |

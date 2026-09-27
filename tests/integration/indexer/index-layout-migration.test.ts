@@ -267,15 +267,18 @@ describe("index.db layout 23 → 24", () => {
       expect(count(db, "index_dir_state")).toBe(1);
       expect(tableNames(db)).not.toContain("embedding_salvage");
 
-      // FTS answers queries from the rebuilt, single-copy layout.
+      // FTS answers queries from the rebuilt, single-copy layout; the fragment
+      // FTS table is gone, and the safe Markdown `akm show` reads is kept.
       expect(tableNames(db)).not.toContain("entries_fts_content");
-      expect(tableNames(db)).not.toContain("entry_fragments_fts_content");
+      expect(tableNames(db).filter((name) => name.startsWith("entry_fragments_fts"))).toEqual([]);
       expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
-      // The fragment projection (read by `akm show`) was rebuilt from the stored safe Markdown.
-      const fragmentRows = db
-        .prepare("SELECT rowid FROM entry_fragments_fts WHERE entry_fragments_fts MATCH ?")
-        .all("zeppelin") as Array<{ rowid: number }>;
-      expect(fragmentRows.map((row) => Math.floor(row.rowid / FRAGMENT_ROWID_SPAN))).toEqual([1]);
+      expect(
+        (
+          db.prepare("SELECT safe_markdown FROM entry_fragments ORDER BY entry_id").all() as Array<{
+            safe_markdown: string;
+          }>
+        ).map((row) => row.safe_markdown),
+      ).toEqual(ENTRIES.map((fixture) => fixture.body));
     } finally {
       closeDatabase(db);
     }
@@ -300,6 +303,10 @@ describe("index.db layout 24 → 25", () => {
     try {
       createRequire(import.meta.url)("sqlite-vec").load(db);
       db.exec("CREATE VIRTUAL TABLE entries_vec USING vec0(id INTEGER PRIMARY KEY, embedding FLOAT[3])");
+      db.exec(`CREATE VIRTUAL TABLE entry_fragments_fts USING fts5(
+        entry_id UNINDEXED, fragment_id UNINDEXED, fragment_ordinal UNINDEXED, content,
+        content='', contentless_delete=1, tokenize='porter unicode61'
+      )`);
       const meta = db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)");
       meta.run("version", "24");
       meta.run("embeddingFingerprint", FINGERPRINT);
@@ -320,6 +327,11 @@ describe("index.db layout 24 → 25", () => {
         const vector = Buffer.from(new Float32Array(fixture.vector).buffer);
         db.prepare("INSERT INTO embeddings (id, embedding, model) VALUES (?, ?, ?)").run(id, vector, FINGERPRINT);
         db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(id, vector);
+        db.prepare("INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?)").run(id, fixture.body);
+        db.prepare("INSERT INTO entry_fragments_fts (rowid, content) VALUES (?, ?)").run(
+          id * FRAGMENT_ROWID_SPAN,
+          fixture.body.toLowerCase(),
+        );
       });
     } finally {
       db.close();
@@ -330,11 +342,13 @@ describe("index.db layout 24 → 25", () => {
     storage.cleanup();
   });
 
-  test("the writable open drops the sqlite-vec mirror and its meta keys; vectors are served from embeddings", () => {
+  test("the writable open drops the sqlite-vec mirror, its meta keys and the fragment FTS table", () => {
     const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
       expect(tableNames(db).filter((name) => name.startsWith("entries_vec"))).toEqual([]);
+      expect(tableNames(db).filter((name) => name.startsWith("entry_fragments_fts"))).toEqual([]);
+      expect(count(db, "entry_fragments")).toBe(3);
       expect(getMeta(db, "embeddingDim")).toBeUndefined();
       expect(getMeta(db, "vecFastPathReady")).toBeUndefined();
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);

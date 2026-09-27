@@ -189,25 +189,11 @@ Rows carry `rowid = entry_id`, so a per-entry delete is a rowid lookup.
 | `entry_id` | INTEGER PRIMARY KEY | FK → `entries(id)` ON DELETE CASCADE; one safe source projection per parent entry |
 | `safe_markdown` | TEXT NOT NULL | Line-preserving, retrieval-safe Markdown projection used to resolve a returned fragment selector |
 
-This table keeps the parent-owned source for lexical fragment retrieval. It is
-derived state and is replaced or removed in the same transaction as the
-parent's FTS projections.
-
-#### Virtual Table: `entry_fragments_fts` (FTS5)
-
-Separate lexical body-fragment population. Tokenizer: `porter unicode61`.
-Contentless like `entries_fts`: only `content` is indexed, and the owning
-entry and fragment ordinal are decoded from the rowid (the declared
-`entry_id`/`fragment_id`/`fragment_ordinal` UNINDEXED columns read back NULL;
-the fragment id is resolved from `entry_fragments.safe_markdown`). Parent metadata is not
-copied onto fragment rows, preserving the parent FTS conjunction semantics and
-keeping the two BM25 populations independently calibrated. Search selects one
-fragment per matching parent and merges it with parent results; `fragment_id`
-is the selector returned in the hit ref.
-
-Rows carry an explicit `rowid = entry_id * 2^20 + fragment_ordinal`, so
-a per-entry delete is a rowid RANGE (`>= start < end`) instead of a full-table
-scan of the `entry_id UNINDEXED` column.
+`akm show <ref>#<fragment>` splits this text at read time to resolve the
+selector (#937); nothing searches it. It is derived state and is replaced or
+removed in the same transaction as the parent's FTS row. Layout 24 and
+earlier also indexed each fragment in a second FTS5 table,
+`entry_fragments_fts`; the writable opener drops it.
 
 #### Table: `embeddings`
 

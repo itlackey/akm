@@ -83,6 +83,14 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   vec0 column needed. (`src/storage/repositories/index-vec-repository.ts`,
   `src/storage/repositories/index-schema.ts`,
   `src/indexer/materialize-embeddings.ts`.)
+- **The fragment full-text table is gone (index layout 25).** Nothing has
+  read `entry_fragments_fts` since fragments stopped competing as search
+  candidates, so an upsert no longer splits the body into fragment rows and
+  the first writable open drops the table (39 MB on a 24k-entry index).
+  `entry_fragments` stays: `akm show <ref>#akm-fragment-…` (#937) resolves the
+  selector from its stored safe Markdown.
+  (`src/storage/repositories/index-fts-repository.ts`,
+  `src/storage/repositories/index-schema.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,

@@ -1,6 +1,6 @@
-// Opens a real index.db to verify atomic parent + fragment FTS publication.
-// Fragments are a write-side projection that `akm show` reads; search ranks
-// whole documents and never selects a fragment.
+// Opens a real index.db to verify atomic publication of the parent FTS row and
+// its fragment source. Fragments are a write-side projection that `akm show`
+// reads; search ranks whole documents and never selects a fragment.
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -54,16 +54,14 @@ describe("Markdown fragment publication (#937)", () => {
     }
   });
 
-  test("rolls back entry, parent FTS, fragment source, and fragment FTS together on a fragment write failure", () => {
+  test("rolls back entry, parent FTS, and fragment source together on a fragment write failure", () => {
     const db = open();
     try {
       put(db, "atomic", "oldatomicmarker");
-      const before = ["entries", "entries_fts", "entry_fragments", "entry_fragments_fts"].map((table) =>
-        rowCount(db, table),
-      );
-      const [beforeEntries, beforeParentFts, beforeFragmentSource, beforeFragmentFts] = before;
-      // Fail after replacement removed old FTS rows, while all four surfaces
-      // still exist, so the savepoint rollback is observable end to end.
+      const before = ["entries", "entries_fts", "entry_fragments"].map((table) => rowCount(db, table));
+      const [beforeEntries, beforeParentFts, beforeFragmentSource] = before;
+      // Fail after replacement removed the old FTS row, while all three
+      // surfaces still exist, so the savepoint rollback is observable end to end.
       db.exec(`
         CREATE TRIGGER abort_fragment_source BEFORE INSERT ON entry_fragments
         WHEN NEW.safe_markdown LIKE '%newatomicmarker%'
@@ -75,7 +73,6 @@ describe("Markdown fragment publication (#937)", () => {
       expect(rowCount(db, "entries")).toBe(beforeEntries!);
       expect(rowCount(db, "entries_fts")).toBe(beforeParentFts!);
       expect(rowCount(db, "entry_fragments")).toBe(beforeFragmentSource!);
-      expect(rowCount(db, "entry_fragments_fts")).toBe(beforeFragmentFts!);
       expect(searchFts(db, "oldatomicmarker", 5)[0]?.itemRef).toBe("fixture//knowledge/atomic");
     } finally {
       closeDatabase(db);

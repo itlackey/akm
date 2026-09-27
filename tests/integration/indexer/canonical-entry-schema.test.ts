@@ -167,7 +167,6 @@ describe("canonical derived-index entry schema", () => {
       // queue, and no fragment tables.
       legacy.exec(`
         DROP TABLE entries_fts;
-        DROP TABLE entry_fragments_fts;
         DROP TABLE entry_fragments;
         CREATE VIRTUAL TABLE entries_fts USING fts5(
           entry_id UNINDEXED, name, description, tags, hints, content, tokenize='porter unicode61'
