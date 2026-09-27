@@ -505,11 +505,7 @@ export async function runImproveMaintenancePasses(args: {
     memoryInferenceFn: options.memoryInferenceFn ?? runMemoryInferencePass,
     graphExtractionFn: options.graphExtractionFn ?? runGraphExtractionPass,
   };
-  const openIndexDb = () =>
-    openIndexDatabase(
-      getDbPath(),
-      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-    );
+  const openIndexDb = () => openIndexDatabase(getDbPath());
   const dbCell: IndexDbCell = {};
   const actions: ImproveActionResult[] = [];
   try {

@@ -15,6 +15,7 @@
  * SQLITE_CORRUPT path in `index-connection.ts`.
  */
 
+import { createRequire } from "node:module";
 import { ConfigError } from "../../core/errors";
 import { warn, warnOnce } from "../../core/warn";
 import type { Database } from "../database";
@@ -31,12 +32,10 @@ import {
 } from "./index-entry-schema";
 import { rebuildFts } from "./index-fts-repository";
 import { getMeta, setMeta } from "./index-meta-repository";
-import { ensureVecTableWidth, isVecAvailable } from "./index-vec-repository";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
-export const EMBEDDING_DIM = 384;
 // #624-P1: graph_files is keyed to (stash_root, file_path, body_hash).
 export const GRAPH_SCHEMA_VERSION = 4;
 
@@ -202,14 +201,23 @@ function ensureEntriesLayout(db: Database, storedVersion: number): void {
     ]) {
       db.exec(`DROP TABLE IF EXISTS ${table}`);
     }
-    db.exec("DELETE FROM index_meta WHERE key IN ('builtAt', 'hasEmbeddings', 'vecFastPathReady')");
+    db.exec("DELETE FROM index_meta WHERE key IN ('builtAt', 'hasEmbeddings')");
   })();
-  // A vec0 table cannot be dropped while sqlite-vec is unavailable; its rows
-  // are orphans the next embedding pass's mirror repair removes.
+}
+
+/**
+ * Drop the sqlite-vec mirror of `embeddings` (`entries_vec`, layout 24 and
+ * earlier); vectors are searched from `embeddings` alone. Dropping a vec0
+ * table needs its module, so an install without sqlite-vec leaves the table
+ * in place, unread, and the next writable open that can load it drops it.
+ */
+function dropVecMirror(db: Database): void {
+  if (!tableExists(db, "entries_vec")) return;
   try {
-    db.exec("DROP TABLE IF EXISTS entries_vec");
+    createRequire(import.meta.url)("sqlite-vec").load(db);
+    db.exec("DROP TABLE entries_vec");
   } catch {
-    // Left for repairVecFastPath.
+    // sqlite-vec is not loadable here.
   }
 }
 
@@ -258,7 +266,7 @@ function ensureColumn(db: Database, table: string, column: string, type: string)
   return true;
 }
 
-export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
+export function ensureSchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,
@@ -287,8 +295,8 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
   db.exec("DROP TABLE IF EXISTS embedding_salvage");
 
-  // BLOB-based embedding storage (always available, no sqlite-vec needed).
-  // `model` is the provider fingerprint the vector was generated under
+  // One float32 BLOB per entry, searched by an exact scan
+  // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
   // (`deriveSemanticProviderFingerprint`); the embedding pass re-embeds only
   // rows whose model differs from the configured one. NULL means the row
   // predates model tracking and is trusted as the current model.
@@ -373,24 +381,9 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
 
   ensureGraphTables(db);
 
-  // sqlite-vec mirror of `embeddings` for the current model.
-  //
-  // Dimension contract:
-  //   - `embeddingDim === undefined`: the caller did not request a specific
-  //     dim (registry providers, graph helpers, ad-hoc subcommands). Do not
-  //     touch `index_meta.embeddingDim`; fall back to the stored dim (or the
-  //     default) only to create the table for the first time.
-  //   - a number: the caller explicitly asked for that dim. The vec table is
-  //     recreated at that width when its declared width differs; the BLOB
-  //     rows are untouched (each carries its own model and byte length).
-  const dimExplicit = embeddingDim !== undefined;
-  const requestedDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
-  const effectiveDim = Number.isInteger(requestedDim) && requestedDim > 0 ? requestedDim : EMBEDDING_DIM;
-  if (effectiveDim !== requestedDim) {
-    warn(`Invalid embedding dimension ${requestedDim} — falling back to the default (${EMBEDDING_DIM}).`);
-  }
-  if (isVecAvailable(db)) ensureVecTableWidth(db, effectiveDim);
-  if (dimExplicit) setMeta(db, "embeddingDim", String(effectiveDim));
+  dropVecMirror(db);
+  // Meta keys only the sqlite-vec mirror read.
+  db.exec("DELETE FROM index_meta WHERE key IN ('embeddingDim', 'vecFastPathReady')");
 
   db.exec(REGISTRY_INDEX_CACHE_DDL);
 

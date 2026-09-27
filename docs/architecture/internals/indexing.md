@@ -369,10 +369,7 @@ pass (#956). That column is the pass's cursor: an entry is embedded when it
 has no row for the configured model, so a model change re-embeds entry by
 entry with per-batch commits — nothing is purged first, an interrupted run
 resumes with only the entries still on the old model, and readers serve
-only the configured model's rows in the meantime. The sqlite-vec mirror
-(`entries_vec`) serves one model: it is emptied on a model change, recreated
-at the new width when the first vector of a run has a different width, and
-refilled as entries are re-embedded. `akm index --reembed` is the one path
+only the configured model's rows in the meantime. `akm index --reembed` is the one path
 that discards every stored vector. `upsertEntry` deletes an entry's vector
 when its search text changes; `akm index --full` keeps entry ids, so it
 re-embeds only changed text. (Until layout 24 a model-string change ran a
@@ -401,10 +398,8 @@ re-embed "canary" and a full rebuild copied vectors aside into
 ## Database Tables
 
 `index.db`'s schema (`ensureSchema()`,
-`src/storage/repositories/index-schema.ts`) creates 16 unconditional logical
-tables, including two FTS5 virtual tables. When the optional `sqlite-vec`
-extension loads, it also creates `entries_vec`, a third, conditional virtual
-table. Full column-level detail lives in
+`src/storage/repositories/index-schema.ts`) creates 16 logical
+tables, including two FTS5 virtual tables. Full column-level detail lives in
 [Storage Locations](storage-locations.md#dataindexdb--main-search-index);
 this is a purpose summary:
 
@@ -414,8 +409,7 @@ this is a purpose summary:
 | `entries_fts` (virtual, FTS5) | multi-column full-text index |
 | `entry_fragments` | safe Markdown projection retained per parent entry for fragment resolution |
 | `entry_fragments_fts` (virtual, FTS5) | separate lexical body-fragment index; no copied parent metadata |
-| `embeddings` | stored embedding vectors, each tagged with its model (JS cosine-similarity fallback) |
-| `entries_vec` (virtual, conditional) | `sqlite-vec` ANN index, created only when the extension loads |
+| `embeddings` | stored embedding vectors, each tagged with its model; vector search scans them |
 | `utility_scores` | recomputed utility boost state (global) |
 | `utility_scores_scoped` | same EMA per `(entry, project-anchor)` pair |
 | `index_meta` | schema/version/runtime metadata |
@@ -528,4 +522,4 @@ When semantic search is enabled:
 - semantic readiness is tracked in `semantic-status.json`
 - provider fingerprints include model/dimension for remote configs, deliberately EXCLUDING the endpoint — moving the same model+dimension to a different host does not force a rebuild
 - fingerprint changes force semantic status back to pending until a rebuild
-- `sqlite-vec` is optional; JS vector fallback still supports embeddings
+- vector search is an exact cosine scan of `embeddings` in JavaScript; no extension is needed

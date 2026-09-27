@@ -21,13 +21,6 @@ import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
-  isVecAvailable,
-  isVecFastPathReady,
-  searchVec,
-  setVecFastPathReady,
-  upsertEmbedding,
-} from "../../../src/storage/repositories/index-vec-repository";
-import {
   type Cleanup,
   sandboxEnvDir,
   sandboxStashDir,
@@ -169,65 +162,6 @@ describe("indexWrittenAssets", () => {
     const search = await akmSearch({ query: "gasoline", skipLogging: true });
     expect(search.searchMode).toBe("semantic");
     expect(search.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/fuel-delivery-note");
-  });
-
-  test("a targeted success cannot promote a globally incomplete vec fast path", async () => {
-    const vector = Array.from({ length: 384 }, (_, index) => (index === 0 ? 1 : 0));
-    overrideSeam(_setEmbedderForTests, {
-      embed: async () => vector,
-      embedBatch: async (texts, _config, _signal, _onSkip, onBatch) => {
-        const embeddings = texts.map(() => vector);
-        // The materializer commits per onBatch call (#954); a fake standing
-        // in for a whole provider must still fire it, or its writes never land.
-        onBatch?.(
-          texts.map((_t, i) => i),
-          embeddings,
-        );
-        return embeddings;
-      },
-    });
-    writeSandboxConfig({ semanticSearchMode: "auto" });
-    writeMemory("second-existing-memory", "A second entry establishes the degraded generation.");
-    await akmIndex({ stashDir, full: true });
-
-    const degradedDb = openExistingDatabase(getDbPath());
-    try {
-      expect(isVecAvailable(degradedDb)).toBe(true);
-      const ids = (degradedDb.prepare("SELECT id FROM entries ORDER BY id").all() as Array<{ id: number }>).map(
-        (row) => row.id,
-      );
-      expect(ids).toHaveLength(2);
-      expect(degradedDb.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 2 });
-
-      const retainedVecId = ids[1];
-      if (retainedVecId === undefined) throw new Error("expected two seeded embedding rows");
-      degradedDb.prepare("DELETE FROM entries_vec").run();
-      expect(upsertEmbedding(degradedDb, retainedVecId, vector).vec).toBe("ok");
-      setVecFastPathReady(degradedDb, false);
-      expect(degradedDb.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 1 });
-    } finally {
-      closeDatabase(degradedDb);
-    }
-
-    const freshFile = writeMemory("targeted-after-degradation", "This targeted write embeds successfully.");
-    expect(await indexWrittenAssets(stashDir, [freshFile])).toBe(true);
-
-    const verifiedDb = openExistingDatabase(getDbPath());
-    try {
-      const allIds = (verifiedDb.prepare("SELECT id FROM entries ORDER BY id").all() as Array<{ id: number }>).map(
-        (row) => row.id,
-      );
-      expect(verifiedDb.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 3 });
-      expect(verifiedDb.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 2 });
-      expect(isVecFastPathReady(verifiedDb)).toBe(false);
-      expect(
-        searchVec(verifiedDb, vector, 10)
-          .map((result) => result.id)
-          .sort((left, right) => left - right),
-      ).toEqual(allIds);
-    } finally {
-      closeDatabase(verifiedDb);
-    }
   });
 
   test("embedding failure preserves the authored file and FTS row and reports the failure live", async () => {

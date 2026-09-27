@@ -61,6 +61,28 @@ config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
   applied only to the final `limit` items) and sends each as its name,
   description and the start of its indexed content (2,000 characters in all)
   instead of name and description. (`src/commands/read/curate.ts`.)
+- **Vectors are stored once (index layout 25).** Each entry's vector lives
+  only in `embeddings`, and search scores every current-model row by cosine
+  similarity in JavaScript. The sqlite-vec mirror `entries_vec` is gone with
+  its repair pass, readiness flag and width bookkeeping: sqlite-vec cannot
+  load in the standalone binaries (`bun build --compile` does not bundle the
+  optional package), under Bun on macOS (the system SQLite refuses
+  extensions) or wherever the optional dependency is missing, so those
+  installs always searched the BLOB rows anyway, and a mirror that fell out
+  of step returned wrong neighbours without an error. The scan now reads
+  float32 views of the rows instead of copying each into an array: 85 ms per
+  query for 24k 1,024-dimension vectors in a fresh process, against 460 ms for
+  the old fallback and 41 ms for sqlite-vec. The first writable open drops
+  `entries_vec` (100 MB on that index) and the `embeddingDim` and
+  `vecFastPathReady` meta keys; dropping a vec0 table needs the extension, so
+  sqlite-vec stays an optional dependency for that alone, and an install
+  without it leaves the unread table in place. `semanticStatus` is `ready-js`
+  whenever every entry has a vector (`ready-vec` is gone), the `vecAvailable`
+  field leaves `akm index` and `akm info` output, setup no longer probes for
+  sqlite-vec, and `embedding.dimension` loses its 4,096 cap, which only the
+  vec0 column needed. (`src/storage/repositories/index-vec-repository.ts`,
+  `src/storage/repositories/index-schema.ts`,
+  `src/indexer/materialize-embeddings.ts`.)
 - **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
   A `--scheduler-context` descriptor now carries the resolved bundle path
   (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,

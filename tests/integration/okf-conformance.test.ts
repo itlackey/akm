@@ -323,11 +323,6 @@ describe("OKF first-class conformance", () => {
       expect(
         switched.prepare(`SELECT COUNT(*) AS count FROM embeddings WHERE id IN (${placeholders})`).get(...ids),
       ).toEqual({ count: 0 });
-      expect(
-        switched.prepare(`SELECT COUNT(*) AS count FROM entries_vec WHERE id IN (${placeholders})`).get(...ids),
-      ).toEqual({
-        count: 0,
-      });
       for (const row of staleRows) {
         expect(switched.prepare("SELECT 1 FROM index_dir_state WHERE dir_path = ?").get(row.dirPath)).toBeNull();
       }

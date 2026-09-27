@@ -16,6 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { type Database, openDatabase } from "../../../src/storage/database";
@@ -229,7 +230,7 @@ describe("index.db layout 23 → 24", () => {
   });
 
   test("the writable open migrates in place: FTS rebuilt once, nothing else dropped", () => {
-    const db = openIndexDatabase(dbPath, { embeddingDim: 3 });
+    const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
       expect(warnings.filter((line) => line.includes("Rebuilding the full-text index for 3 entries"))).toHaveLength(1);
@@ -281,7 +282,65 @@ describe("index.db layout 23 → 24", () => {
 
     // The migration is one-time: a second writable open does no rebuild.
     warnings = [];
-    closeDatabase(openIndexDatabase(dbPath, { embeddingDim: 3 }));
+    closeDatabase(openIndexDatabase(dbPath));
     expect(warnings.some((line) => line.includes("Rebuilding the full-text index"))).toBe(false);
+  });
+});
+
+describe("index.db layout 24 → 25", () => {
+  let storage: IsolatedAkmStorage;
+  let dbPath = "";
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    dbPath = path.join(storage.root, "layout-24.db");
+    // A current index, then the sqlite-vec mirror and meta keys layout 24 kept beside it.
+    closeDatabase(openIndexDatabase(dbPath));
+    const db = openDatabase(dbPath);
+    try {
+      createRequire(import.meta.url)("sqlite-vec").load(db);
+      db.exec("CREATE VIRTUAL TABLE entries_vec USING vec0(id INTEGER PRIMARY KEY, embedding FLOAT[3])");
+      const meta = db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)");
+      meta.run("version", "24");
+      meta.run("embeddingFingerprint", FINGERPRINT);
+      meta.run("embeddingDim", "3");
+      meta.run("vecFastPathReady", "1");
+      ENTRIES.forEach((fixture, index) => {
+        const id = index + 1;
+        db.prepare(
+          "INSERT INTO entries (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, document_json, search_text) " +
+            "VALUES (?, ?, 'stash', 'stash', ?, 'akm', 'knowledge', ?, ?, '')",
+        ).run(
+          id,
+          `stash//knowledge/${fixture.name}`,
+          `knowledge/${fixture.name}`,
+          path.join(storage.stashDir, "knowledge", `${fixture.name}.md`),
+          JSON.stringify({ name: fixture.name, type: "knowledge", description: fixture.description }),
+        );
+        const vector = Buffer.from(new Float32Array(fixture.vector).buffer);
+        db.prepare("INSERT INTO embeddings (id, embedding, model) VALUES (?, ?, ?)").run(id, vector, FINGERPRINT);
+        db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(id, vector);
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  test("the writable open drops the sqlite-vec mirror and its meta keys; vectors are served from embeddings", () => {
+    const db = openIndexDatabase(dbPath);
+    try {
+      expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+      expect(tableNames(db).filter((name) => name.startsWith("entries_vec"))).toEqual([]);
+      expect(getMeta(db, "embeddingDim")).toBeUndefined();
+      expect(getMeta(db, "vecFastPathReady")).toBeUndefined();
+      expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
+      expect(searchVec(db, [0, 0, 1], 1)[0]?.id).toBe(3);
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

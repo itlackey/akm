@@ -63,7 +63,7 @@ describe("canonical derived-index entry schema", () => {
         // This fails at a later required DDL surface. Before the v23 ordering
         // fix, the version was already stamped just after entries creation.
         partial.exec("CREATE VIEW index_dir_state AS SELECT 1 AS placeholder");
-        expect(() => ensureSchema(partial, undefined)).toThrow(/Cannot add a column to a view/);
+        expect(() => ensureSchema(partial)).toThrow(/Cannot add a column to a view/);
       } finally {
         partial.close();
       }

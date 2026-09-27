@@ -331,11 +331,10 @@ Returns a JSON object with:
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
-| `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
+| `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings` |
 
 `semanticSearch.status` values:
-- `"ready-vec"` — native sqlite-vec extension active (fastest)
-- `"ready-js"` — pure JS fallback active (correct but slower at scale)
+- `"ready-js"` — every entry has a vector; semantic search is active (the name is historical: `"ready-vec"`, the sqlite-vec variant, is gone)
 - `"pending"` — not yet initialized (run `akm index` to set up)
 - `"blocked"` — setup failed (see `reason` and `message` fields)
 - `"disabled"` — semantic search is turned off in config

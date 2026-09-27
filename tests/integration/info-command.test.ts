@@ -151,7 +151,6 @@ describe("assembleInfo", () => {
 
     expect(info.indexStats.entryCount).toBe(1);
     expect(info.indexStats.lastBuiltAt).toBe("2026-03-17T00:00:00Z");
-    expect(typeof info.indexStats.vecAvailable).toBe("boolean");
   });
 
   // R-057(a): indexStats previously carried only an aggregate entryCount with
@@ -264,7 +263,7 @@ describe("assembleInfo", () => {
     const stashDir = makeStashDir();
 
     const dbPath = path.join(tmpDir("db"), "test.db");
-    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    let db = openIndexDatabase(dbPath);
     const entry = makeEntry("skill", "embed-skill");
     const id = upsertEntry(
       db,
@@ -282,7 +281,7 @@ describe("assembleInfo", () => {
 
     expect(info.indexStats.entryCount).toBe(1);
 
-    db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    db = openIndexDatabase(dbPath);
     try {
       expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
     } finally {

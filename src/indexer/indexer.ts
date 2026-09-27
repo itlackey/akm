@@ -83,12 +83,7 @@ import {
   upsertIndexDirState,
 } from "../storage/repositories/index-meta-repository";
 import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
-import {
-  getEmbeddingCount,
-  isVecAvailable,
-  isVecFastPathReady,
-  warnIfVecMissing,
-} from "../storage/repositories/index-vec-repository";
+import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { deleteStoredGraph } from "./db/graph-db";
 import { reclassifyIndexDbContention } from "./index-db-contention";
@@ -434,7 +429,6 @@ function finalizeIndex(args: {
     setMeta(db, "sourceOwners", JSON.stringify(sourceOwners(sources)));
   }
 
-  warnIfVecMissing(db);
   return { tFtsEnd };
 }
 
@@ -706,10 +700,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   const enrichmentExecution = resolveIndexPassExecution("enrichment", config);
   const loweringNotices: Array<Readonly<LoweringNotice>> = [...enrichmentExecution.notices];
 
-  // Open database — pass embedding dimension from config if available
   const dbPath = getDbPath();
-  const embeddingDim = config.embedding?.dimension;
-  const db = openIndexDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
+  const db = openIndexDatabase(dbPath);
 
   try {
     // `--full` folds into `isIncremental`: a full run drains every directory
@@ -728,7 +720,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
         llmEnabled: !!enrichmentExecution.runner,
-        vecAvailable: isVecAvailable(db),
       }),
     });
 
@@ -1849,14 +1840,9 @@ function buildIndexSummaryMessage(options: {
   semanticSearchMode: AkmConfig["semanticSearchMode"];
   embeddingProvider: "local" | "remote";
   llmEnabled: boolean;
-  vecAvailable: boolean;
 }): string {
   const stashSourceLabel = options.sourcesCount === 1 ? "stash source" : "stash sources";
-  const semanticDetail = getSemanticSearchLabel(
-    options.semanticSearchMode,
-    options.embeddingProvider,
-    options.vecAvailable,
-  );
+  const semanticDetail = options.semanticSearchMode === "off" ? "disabled" : `${options.embeddingProvider} embeddings`;
   return `Starting ${options.mode} index (${options.sourcesCount} ${stashSourceLabel}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
 }
 
@@ -1866,15 +1852,6 @@ function getEmbeddingProvider(
   return isHttpUrl(embedding?.endpoint) ? "remote" : "local";
 }
 
-function getSemanticSearchLabel(
-  semanticSearchMode: AkmConfig["semanticSearchMode"],
-  embeddingProvider: "local" | "remote",
-  vecAvailable: boolean,
-): string {
-  if (semanticSearchMode === "off") return "disabled";
-  return `${embeddingProvider} embeddings, ${vecAvailable ? "sqlite-vec" : "JS fallback"}`;
-}
-
 function verifyIndexState(
   db: Database,
   config: AkmConfig,
@@ -1882,7 +1859,6 @@ function verifyIndexState(
   embeddingResult: EmbeddingGenerationResult,
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
-  const vecAvailable = isVecAvailable(db);
   const embeddingProvider = getEmbeddingProvider(config.embedding);
   const verification = (
     ok: boolean,
@@ -1900,7 +1876,6 @@ function verifyIndexState(
     embeddingProvider,
     entryCount: embeddableEntries,
     embeddingCount,
-    vecAvailable,
   });
   const pendingStatus = config.semanticSearchMode === "off" ? "disabled" : "pending";
 
@@ -1916,23 +1891,11 @@ function verifyIndexState(
     return verification(true, "Keyword index ready. Semantic search is disabled.", false, "disabled");
   }
   if (embeddingCount >= embeddableEntries) {
-    // "ready-vec" must reflect the path search will ACTUALLY take: the vec
-    // extension being loaded is not enough when the embedding phase recorded
-    // fast-path insert failures (searchVec then routes to the JS-cosine
-    // fallback via isVecFastPathReady). Reporting vec health from
-    // isVecAvailable alone overstated `akm info` after partial vec failures
-    // (§24.2 "Semantic" gate — truthful ready-vec).
-    const vecActive = vecAvailable && isVecFastPathReady(db);
-    const searchPath = vecActive
-      ? "sqlite-vec active"
-      : vecAvailable
-        ? "JS fallback active — vec fast path degraded; run 'akm index' to repair valid stored vectors or 'akm index --reembed' to regenerate incompatible ones"
-        : "JS fallback active";
     return verification(
       true,
-      `Semantic search ready (${embeddingCount}/${embeddableEntries} embeddings, ${searchPath}).`,
+      `Semantic search ready (${embeddingCount}/${embeddableEntries} embeddings).`,
       true,
-      vecActive ? "ready-vec" : "ready-js",
+      "ready-js",
     );
   }
   return verification(

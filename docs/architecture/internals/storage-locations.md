@@ -107,10 +107,9 @@ journal mode. Foreign-key policy is called out per database below.
 ### `$DATA/index.db` — Main Search Index
 
 Schema managed by `ensureSchema()` (`src/storage/repositories/index-schema.ts`).
-The current layout is 24 (`index_meta.version`, a layout marker, not a
+The current layout is 25 (`index_meta.version`, a layout marker, not a
 compatibility gate). It uses the shared opening pragma policy above with
-foreign keys ON and optionally loads the `sqlite-vec` extension for fast ANN
-(approximate nearest-neighbour) vector search.
+foreign keys ON. Vector search is an exact scan of the `embeddings` table.
 
 Opened by:
 - `openIndexDatabase()` — managed schema initialization, called by `akm index`
@@ -137,7 +136,7 @@ enrichment cache are kept. This path never modifies `state.db`.
 | `key` | TEXT PRIMARY KEY | Metadata key |
 | `value` | TEXT NOT NULL | String-encoded value |
 
-Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `embeddingDim` (e.g. `"384"`), `hasEmbeddings` (`"0"` or `"1"`).
+Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `hasEmbeddings` (`"0"` or `"1"`).
 
 #### Table: `entries`
 
@@ -220,12 +219,13 @@ scan of the `entry_id UNINDEXED` column.
 
 The embedding pass's cursor: an entry is (re-)embedded when it has no row for
 the configured model. `upsertEntry` deletes the row when an entry's search
-text changes. Readers serve only rows of the current model. Used directly by
-the JS cosine-similarity fallback when `sqlite-vec` is absent.
+text changes. Readers serve only rows of the current model: `searchVec`
+scores every one of them by cosine similarity in JavaScript (about 70 ms for
+24k 1,024-dimension vectors).
 
-#### Virtual Table: `entries_vec` (conditional)
-
-Created only when `sqlite-vec` is loadable. Columns: `id INTEGER PRIMARY KEY`, `embedding FLOAT[<dim>]`. A mirror of the current model's `embeddings` rows: recreated at the new width when the dimension changes, emptied when the model changes, and refilled by the embedding pass.
+Layout 24 and earlier also kept a `sqlite-vec` mirror of these rows,
+`entries_vec`. The writable opener drops it; dropping a vec0 table needs the
+extension, so an install without `sqlite-vec` leaves the unread table in place.
 
 #### Workflow source indexing
 

@@ -207,8 +207,7 @@
         },
         "dimension": {
           "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 4096
+          "exclusiveMinimum": 0
         },
         "localModel": {
           "type": "string",
@@ -1872,8 +1871,7 @@
             },
             "dimension": {
               "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 4096
+              "exclusiveMinimum": 0
             },
             "localModel": {
               "type": "string",
@@ -3412,8 +3410,7 @@
         },
         "dimension": {
           "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 4096
+          "exclusiveMinimum": 0
         },
         "localModel": {
           "type": "string",

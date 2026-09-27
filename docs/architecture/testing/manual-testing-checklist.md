@@ -2236,8 +2236,7 @@ restore_semantic_dirs() {
 | --- | --- | --- |
 | `disabled` | Mode is `off` | FTS only, no embedding request |
 | `pending` | Enabled but not verified/current fingerprint changed | FTS fallback with advisory |
-| `ready-js` | Complete vectors, JavaScript cosine path | Hybrid/vector search |
-| `ready-vec` | Complete vectors, sqlite-vec fast path ready | Hybrid/vector search |
+| `ready-js` | Complete vectors (scanned by cosine similarity in JavaScript) | Hybrid/vector search |
 | `blocked` | Recent embedding failure | FTS fallback until retry/expiry |
 
 - [ ] **[CORE]** With mode off, full index reports disabled, stores zero
@@ -2263,8 +2262,7 @@ akm index --full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-index.json"
 jq -e '
   .verification.ok == true and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec") and
+  .verification.semanticStatus == "ready-js" and
   .verification.embeddingCount == .verification.entryCount
 ' "$AKM_SANDBOX/semantic-deterministic-index.json"
 
@@ -2306,8 +2304,7 @@ jq -e '
   .verification.ok == true and
   .verification.embeddingProvider == "remote" and
   .verification.embeddingCount == .verification.entryCount and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec")
+  .verification.semanticStatus == "ready-js"
 ' "$AKM_SANDBOX/semantic-remote-index.json"
 
 akm search deploy --detail full --format json \

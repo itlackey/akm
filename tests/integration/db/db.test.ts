@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import type { Database } from "../../../src/storage/database";
@@ -27,16 +26,8 @@ import {
 } from "../../../src/storage/repositories/index-entries-repository";
 import { rebuildFts, searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
-import { DB_VERSION, EMBEDDING_DIM } from "../../../src/storage/repositories/index-schema";
-import {
-  isVecAvailable,
-  isVecFastPathComplete,
-  isVecFastPathReady,
-  repairVecFastPath,
-  searchVec,
-  setVecFastPathReady,
-  upsertEmbedding,
-} from "../../../src/storage/repositories/index-vec-repository";
+import { DB_VERSION } from "../../../src/storage/repositories/index-schema";
+import { searchVec, upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import {
   getRegistryIndexCache,
   upsertRegistryIndexCache,
@@ -160,39 +151,6 @@ describe("Schema", () => {
         | undefined;
       expect(row).toBeDefined();
       expect(row?.name).toBe("entries_fts");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("isVecAvailable returns true when sqlite-vec is installed", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
-    try {
-      expect(isVecAvailable(db)).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("embeddingDim is stored and triggers vec table recreation", () => {
-    const dbPath = tmpDbPath();
-
-    let db = openIndexDatabase(dbPath, { embeddingDim: 512 });
-    try {
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("512");
-      }
-    } finally {
-      closeDatabase(db);
-    }
-
-    // Reopen with a different dimension
-    db = openIndexDatabase(dbPath, { embeddingDim: 768 });
-    try {
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("768");
-      }
     } finally {
       closeDatabase(db);
     }
@@ -678,27 +636,10 @@ describe("Meta helpers", () => {
 // ── Section 1.5: Vector / Embedding integration ────────────────────────────
 
 describe("Vector / Embedding integration", () => {
-  test("openIndexDatabase creates vec table when extension available", () => {
+  test("upsertEmbedding stores and searchVec retrieves by similarity", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      expect(isVecAvailable(db)).toBe(true);
-      const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_vec'").get() as
-        | { name: string }
-        | undefined;
-      expect(row).toBeDefined();
-      expect(row?.name).toBe("entries_vec");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("upsertEmbedding stores and searchVec retrieves by similarity", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    try {
-      expect(isVecAvailable(db)).toBe(true);
-
       // Insert two entries with distinct embeddings
       const id1 = insertTestEntry(db, "vec-tool-1", { searchText: "deployment" });
       const id2 = insertTestEntry(db, "vec-tool-2", { searchText: "testing" });
@@ -720,7 +661,7 @@ describe("Vector / Embedding integration", () => {
 
   test("upsertEmbedding overwrites existing embedding for same entry", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath);
     try {
       const id = insertTestEntry(db, "vec-update", { searchText: "update test" });
 
@@ -744,18 +685,16 @@ describe("Vector / Embedding integration", () => {
   });
 
   test("upsertEntry invalidates vectors only when the embedding input changes", () => {
-    const db = openIndexDatabase(tmpDbPath(), { embeddingDim: 4 });
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const id = insertTestEntry(db, "vec-input", { searchText: "same projection" });
       upsertEmbedding(db, id, [1, 0, 0, 0]);
 
       expect(insertTestEntry(db, "vec-input", { searchText: "same projection" })).toBe(id);
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings WHERE id = ?").get(id)).toEqual({ count: 1 });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec WHERE id = ?").get(id)).toEqual({ count: 1 });
 
       expect(insertTestEntry(db, "vec-input", { searchText: "changed projection" })).toBe(id);
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings WHERE id = ?").get(id)).toEqual({ count: 0 });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec WHERE id = ?").get(id)).toEqual({ count: 0 });
     } finally {
       closeDatabase(db);
     }
@@ -763,7 +702,7 @@ describe("Vector / Embedding integration", () => {
 
   test("searchVec respects k limit", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert 5 entries with embeddings
       for (let i = 0; i < 5; i++) {
@@ -780,226 +719,22 @@ describe("Vector / Embedding integration", () => {
     }
   });
 
-  test("upsertEmbedding surfaces a vec fast-path insert failure instead of swallowing it", () => {
-    const dbPath = tmpDbPath();
-    // entries_vec is created at dim 4; a dim-3 vector makes the vec0 INSERT
-    // throw while the BLOB row (which has no dimension constraint) still writes.
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+  test("a stored vector of another width never matches a query", () => {
+    const db = openIndexDatabase(tmpDbPath());
     try {
-      expect(isVecAvailable(db)).toBe(true);
-      const id = insertTestEntry(db, "vec-mismatch", { searchText: "mismatch" });
-
-      const res = upsertEmbedding(db, id, [1, 0, 0]);
-
-      // The BLOB is written (semantic search can still fall back)...
-      expect(res.stored).toBe(true);
-      // ...but the vec fast-path failure is REPORTED, not silently swallowed.
-      expect(res.vec).toBe("failed");
+      const id = insertTestEntry(db, "dim-change", { searchText: "dimension test" });
+      upsertEmbedding(db, id, [1, 0, 0, 0]);
+      expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
+      expect(searchVec(db, [1, 0, 0, 0, 0, 0, 0, 0], 10)).toEqual([]);
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("a degraded vec fast path routes searchVec to the JS-cosine BLOB fallback", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    try {
-      const id = insertTestEntry(db, "vec-degraded", { searchText: "degraded" });
-      // BLOB + vec rows both written by a healthy upsert.
-      expect(upsertEmbedding(db, id, [1, 0, 0, 0]).vec).toBe("ok");
-
-      // Simulate the state after failed/partial vec inserts: the BLOB table is
-      // complete but the vec table is empty.
-      db.prepare("DELETE FROM entries_vec").run();
-
-      // Trusting the (now-empty) fast path returns nothing — the dishonest case.
-      setVecFastPathReady(db, true);
-      expect(isVecFastPathReady(db)).toBe(true);
-      expect(searchVec(db, [1, 0, 0, 0], 10).length).toBe(0);
-
-      // Marking the fast path degraded routes search to the complete BLOB table
-      // via JS-cosine — honest degradation, not a hard failure.
-      setVecFastPathReady(db, false);
-      expect(isVecFastPathReady(db)).toBe(false);
-      const fallback = searchVec(db, [1, 0, 0, 0], 10);
-      expect(fallback.length).toBe(1);
-      expect(fallback[0]!.id).toBe(id);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec fast-path completeness accepts identical BLOB and vec ID sets", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-complete-exact"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-complete-first");
-      const secondId = insertTestEntry(db, "vec-complete-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, secondId, [0, 1, 0, 0]).vec).toBe("ok");
-
-      expect(isVecFastPathComplete(db)).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec fast-path completeness rejects a missing vec ID", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-complete-partial"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-partial-first");
-      const secondId = insertTestEntry(db, "vec-partial-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, secondId, [0, 1, 0, 0]).vec).toBe("ok");
-      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(secondId);
-
-      expect(isVecFastPathComplete(db)).toBe(false);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec fast-path completeness rejects equal counts with mismatched IDs", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-complete-mismatched"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-mismatch-first");
-      const missingId = insertTestEntry(db, "vec-mismatch-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, missingId, [0, 1, 0, 0]).vec).toBe("ok");
-      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(missingId);
-      const orphanId = missingId + 100_000;
-      const orphanVector = Buffer.from(new Float32Array([0, 0, 1, 0]).buffer);
-      db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(orphanId, orphanVector);
-
-      expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 2 });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 2 });
-      expect(isVecFastPathComplete(db)).toBe(false);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("targeted vec repair backfills missing rows and removes orphans from durable BLOBs", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-repair"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-repair-first");
-      const secondId = insertTestEntry(db, "vec-repair-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, secondId, [0, 1, 0, 0]).vec).toBe("ok");
-      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(secondId);
-      const orphanId = secondId + 100_000;
-      db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(
-        orphanId,
-        Buffer.from(new Float32Array([0, 0, 1, 0]).buffer),
-      );
-      setVecFastPathReady(db, false);
-
-      expect(repairVecFastPath(db, 4)).toEqual({
-        available: true,
-        repaired: 1,
-        removedOrphans: 1,
-        rejected: 0,
-        complete: true,
-      });
-      expect(isVecFastPathReady(db)).toBe(true);
-      expect(isVecFastPathComplete(db)).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec repair rejects malformed BLOBs and never promotes a partial repair", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-repair-reject"), { embeddingDim: 4 });
-    try {
-      const validId = insertTestEntry(db, "vec-repair-valid");
-      const corruptId = insertTestEntry(db, "vec-repair-corrupt");
-      expect(upsertEmbedding(db, validId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, corruptId, [0, 1, 0, 0]).vec).toBe("ok");
-      db.prepare("DELETE FROM entries_vec").run();
-      db.prepare("UPDATE embeddings SET embedding = ? WHERE id = ?").run(Buffer.alloc(3), corruptId);
-      setVecFastPathReady(db, false);
-
-      expect(repairVecFastPath(db, 4)).toEqual({
-        available: true,
-        repaired: 1,
-        removedOrphans: 0,
-        rejected: 1,
-        complete: false,
-      });
-      expect(isVecFastPathReady(db)).toBe(false);
-      expect(isVecFastPathComplete(db)).toBe(false);
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec WHERE id = ?").get(corruptId)).toEqual({
-        count: 0,
-      });
-      expect(searchVec(db, [1, 0, 0, 0], 10).map(({ id }) => id)).toEqual([validId]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("a non-integer or non-positive embeddingDim warns and falls back to the default instead of aborting", () => {
-    // index-schema.ts used to throw a bare Error for any dim outside 1–4096,
-    // aborting the whole index open at exit 70 mid-run — including for
-    // legitimately large real embedding widths above 4096, which the config
-    // schema does not itself reject. A dimension that cannot back a vec0
-    // column at all (non-integer, zero, negative) still cannot be used, but
-    // degrades to a warning and the static default (matching how
-    // index-connection.ts's resolveConfiguredEmbeddingDim already handles the
-    // same bad-value case) rather than aborting.
-    for (const dim of [0, -1, 384.5]) {
-      const messages: string[] = [];
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") messages.push(args.map(String).join(" "));
-      });
-      let db: Database | undefined;
-      try {
-        db = openIndexDatabase(tmpDbPath(), { embeddingDim: dim });
-        expect(getMeta(db, "embeddingDim")).toBe(String(EMBEDDING_DIM));
-        expect(messages.some((message) => message.includes("Invalid embedding dimension"))).toBe(true);
-      } finally {
-        if (db) closeDatabase(db);
-        _setWarnSinkForTests(undefined);
-      }
-    }
-  });
-
-  test("an embeddingDim above the old 4096 ceiling is honored, not rejected", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 8192 });
-    try {
-      expect(getMeta(db, "embeddingDim")).toBe("8192");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("embeddingDim change recreates the vec table; an old-width vector never matches a new-width query", () => {
+  test("openExistingDatabase serves the stored embeddings", () => {
     const dbPath = tmpDbPath();
 
-    // Open with dim=4 and insert an embedding
-    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    const id = insertTestEntry(db, "dim-change", { searchText: "dimension test" });
-    upsertEmbedding(db, id, [1, 0, 0, 0]);
-    let results = searchVec(db, [1, 0, 0, 0], 10);
-    expect(results.length).toBe(1);
-    closeDatabase(db);
-
-    // Reopen with dim=8 — the vec table is recreated at the new width; the
-    // stored 4-dim row is kept until the entry is re-embedded.
-    db = openIndexDatabase(dbPath, { embeddingDim: 8 });
-    try {
-      expect(getMeta(db, "embeddingDim")).toBe("8");
-      // Old embedding was dim=4 and table was recreated for dim=8, so no results
-      results = searchVec(db, [1, 0, 0, 0, 0, 0, 0, 0], 10);
-      expect(results.length).toBe(0);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("openExistingDatabase preserves existing embedding dimension and embeddings", () => {
-    const dbPath = tmpDbPath();
-
-    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    let db = openIndexDatabase(dbPath);
     const id = insertTestEntry(db, "dim-stable", { searchText: "dimension stable" });
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     setMeta(db, "hasEmbeddings", "1");
@@ -1007,7 +742,6 @@ describe("Vector / Embedding integration", () => {
 
     db = openExistingDatabase(dbPath);
     try {
-      expect(getMeta(db, "embeddingDim")).toBe("4");
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
       const results = searchVec(db, [1, 0, 0, 0], 10);
       expect(results.length).toBe(1);

@@ -42,7 +42,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
   });
 
   try {
-    const db = openIndexDatabase(getDbPath(), { embeddingDim: 4 });
+    const db = openIndexDatabase(getDbPath());
     try {
       const entryId = upsertEntry(
         db,

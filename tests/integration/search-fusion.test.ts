@@ -34,7 +34,7 @@ let db: Database;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  db = openIndexDatabase(getDbPath(), { embeddingDim: 4 });
+  db = openIndexDatabase(getDbPath());
   // Satisfies ensure-index's indexCanServeStash() so searchLocal serves this
   // hand-built index instead of rebuilding it from the (empty) stash.
   setMeta(db, "stashDir", storage.stashDir);

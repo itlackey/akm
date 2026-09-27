@@ -149,7 +149,7 @@ describe("akm bundle update: embedding durability (#954)", () => {
       const result = await updatePromise;
 
       expect(result.index.semanticStatus).toBeDefined();
-      expect(["ready-vec", "ready-js"]).toContain(result.index.semanticStatus as string);
+      expect(result.index.semanticStatus).toBe("ready-js");
       const finalReader = openReadonlyExistingDatabase(getDbPath());
       if (!finalReader) throw new Error("expected an existing index after the update completed");
       try {

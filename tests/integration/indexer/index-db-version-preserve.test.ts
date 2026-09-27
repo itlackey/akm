@@ -24,7 +24,7 @@ describe("index.db layout marker", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-layout-marker-"));
     const dbPath = path.join(tmpDir, "index.db");
     try {
-      let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+      let db = openIndexDatabase(dbPath);
       const id = upsertEntry(
         db,
         "/s/memories/a.md",
@@ -36,7 +36,7 @@ describe("index.db layout marker", () => {
       setMeta(db, "version", String(DB_VERSION - 1));
       closeDatabase(db);
 
-      db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+      db = openIndexDatabase(dbPath);
       try {
         expect(getEntryCount(db)).toBe(1);
         expect(getEmbeddingCount(db)).toBe(1);

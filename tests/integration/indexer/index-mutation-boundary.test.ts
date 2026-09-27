@@ -193,10 +193,6 @@ test("a full run keeps an entry's id; changed content drops only its stale vecto
     expect(rowCount(currentDb, "entries_fts", "WHERE rowid = ?", [oldId])).toBe(1);
     expect(searchFts(currentDb, "zeppelin", 10).map((hit) => hit.id)).toEqual([oldId]);
     expect(rowCount(currentDb, "embeddings", "WHERE id = ?", [oldId])).toBe(0);
-    const hasVec = currentDb
-      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'entries_vec'")
-      .get() as { present: number } | undefined;
-    if (hasVec) expect(rowCount(currentDb, "entries_vec", "WHERE id = ?", [oldId])).toBe(0);
   } finally {
     closeDatabase(currentDb);
   }

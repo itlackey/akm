@@ -29,7 +29,7 @@ import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-m
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
-import { deleteEntryVectors, isVecAvailable } from "./index-vec-repository";
+import { deleteEntryVectors } from "./index-vec-repository";
 
 // ── Entry operations ────────────────────────────────────────────────────────
 
@@ -236,7 +236,7 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * A stale row already occupying the new item ref (the caller has verified no
  * FILE exists at the target, so such a row can only be a leftover for a
  * deleted file) is evicted first — through {@link deleteRelatedRows}, so its
- * child rows (embeddings, entries_vec, utility scores, usage events) go with
+ * child rows (embeddings, utility scores, usage events) go with
  * it. A bare `DELETE FROM entries` would trip the non-CASCADE `embeddings`
  * FK under `PRAGMA foreign_keys = ON` and roll back the whole re-key.
  * The moved row keeps its id.
@@ -295,7 +295,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       | undefined
       | null;
     if (stale && stale.id !== row.id) {
-      // Full child-row cleanup (embeddings, entries_vec, utility scores,
+      // Full child-row cleanup (embeddings, utility scores,
       // usage events, FTS + dirty marks) BEFORE the entries delete: the
       // `embeddings` FK is non-CASCADE and `foreign_keys = ON`, so a bare
       // entries delete would throw and roll back the entire re-key; and
@@ -445,7 +445,7 @@ export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
  * `newBundleId` in place (`akm bundle rename`, D6). Unlike
  * {@link rekeyEntryInPlace} (one asset, `akm mv`), this is a bulk identity
  * change with no content move: `concept_id`/`file_path`/`document_json` are
- * untouched, so no FTS/vector rebuild is needed (FTS and `entries_vec` key on
+ * untouched, so no FTS/vector rebuild is needed (FTS and `embeddings` key on
  * the entry's row `id`, which this preserves, not on `item_ref`). Returns the
  * number of rows renamed.
  */
@@ -491,7 +491,6 @@ function deleteRelatedRows(
 ): void {
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
-  const vecAvail = isVecAvailable(db);
 
   // FTS is part of the canonical mutation boundary, not a caller-maintained
   // dirty queue. Delete it before the parent row inside this transaction.
@@ -505,12 +504,6 @@ function deleteRelatedRows(
       () => db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk),
       "delete embeddings for entries",
     );
-    if (vecAvail) {
-      bestEffort(
-        () => db.prepare(`DELETE FROM entries_vec WHERE id IN (${placeholders})`).run(...chunk),
-        "delete entries_vec for entries",
-      );
-    }
     // Clean up utility scores before deleting entries
     bestEffort(
       () => db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk),
@@ -581,7 +574,7 @@ export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
 
 /**
  * Delete entries by their primary key IDs, along with all related rows
- * (embeddings, entries_vec, entries_fts, utility scores, usage_events).
+ * (embeddings, entries_fts, utility scores, usage_events).
  *
  * Used by explicit `--clean` reconciliation before embeddings and final
  * verification to remove stale entries whose source files no longer exist.

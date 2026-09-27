@@ -12,12 +12,14 @@
  * touching embeddings, utility scores, graph rows, or the LLM enrichment cache.
  */
 
+// 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`
+// is dropped (`dropVecMirror`, index-schema.ts).
 // 24: the FTS5 tables are contentless (`content=''`) — the indexed text lives
 // once, in `entries` / `entry_fragments`, and FTS rows are keyed by rowid only.
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
 // content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
 // tables from the stored entries when it finds the older layout.
-export const CANONICAL_INDEX_DB_VERSION = 24;
+export const CANONICAL_INDEX_DB_VERSION = 25;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (

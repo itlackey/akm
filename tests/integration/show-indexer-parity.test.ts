@@ -235,11 +235,8 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
       await lookupBundleRef(parseBundleRef("skills/embed-skill"));
       await akmShowUnified({ ref: "skills/embed-skill" });
 
-      const db = openIndexDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), {
-        embeddingDim: 4,
-      });
+      const db = openIndexDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"));
       try {
-        expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
         expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
       } finally {

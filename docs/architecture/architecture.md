@@ -575,6 +575,6 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 
 - Runtime: Bun
 - Language: TypeScript (ESM, strict)
-- Database: `bun:sqlite` with FTS5 and optional `sqlite-vec`
+- Database: `bun:sqlite` with FTS5; vectors are float32 BLOBs scanned in JavaScript
 - Testing: `bun:test`
 - Formatting/linting: Biome

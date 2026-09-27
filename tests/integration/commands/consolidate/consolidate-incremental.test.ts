@@ -133,8 +133,8 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
 
   // Insert an indexed memory entry + its embedding into the real index DB so
   // findEntryIdByRef("memory:NAME") and getNeighborsByEntryId() resolve it.
-  // The dim-4 unit vectors are crafted so cosine similarity (the JS fallback in
-  // searchBlobVec, and sqlite-vec when present) ranks neighbours deterministically.
+  // The dim-4 unit vectors are crafted so cosine similarity (searchVec) ranks
+  // neighbours deterministically.
   function indexMemory(db: ReturnType<typeof openIndexDatabase>, name: string, embedding: number[]): number {
     const entry: IndexDocument = { type: "memory", name, description: `desc for ${name}` };
     // Chunk-8: production resolves entries by their D-R2 item_ref
@@ -150,8 +150,6 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     upsertEmbedding(db, id, embedding);
     return id;
   }
-
-  const DIM = 4;
 
   // narrowToIncrementalCandidates keeps EVERY top-k neighbour of a changed
   // memory (k = NEIGHBORS_PER_CHANGED = 5, queried as k+1 = 6 including self).
@@ -180,7 +178,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     // entries at 1°..4.5° are even closer, filling 5 of the 6 top-k slots
     // alongside A itself — so C lands at rank 6 (kept), while B (90°) and
     // D (180°) are ranks 7+ and excluded.
-    const db = openIndexDatabase(getDbPath(), { embeddingDim: DIM });
+    const db = openIndexDatabase(getDbPath());
     try {
       indexMemory(db, "alpha", vecAtAngle(0));
       indexMemory(db, "gamma", vecAtAngle(5)); // C — in pool, kept neighbour
@@ -220,7 +218,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     // padding — all closer to A than beta. ghost and padding are never passed
     // in `memories`, so the byName.has() guard drops them. beta (90°) is far
     // enough that it lands past rank 6 → excluded too. Net: only alpha kept.
-    const db = openIndexDatabase(getDbPath(), { embeddingDim: DIM });
+    const db = openIndexDatabase(getDbPath());
     try {
       indexMemory(db, "alpha", vecAtAngle(0));
       indexMemory(db, "ghost", vecAtAngle(5)); // nearest to alpha, not in pool

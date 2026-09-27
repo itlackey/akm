@@ -4,8 +4,12 @@
 
 /** Result types shared by `akmIndex()` and its callers. */
 
-/** Live runtime state of semantic search, computed fresh at index-finalize time. */
-export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "ready-vec" | "blocked";
+/**
+ * Live runtime state of semantic search, computed fresh at index-finalize
+ * time. `ready-js` means every entry has a vector; the name is historical (the
+ * sqlite-vec variant, `ready-vec`, is gone).
+ */
+export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
 
 /**
  * Verification of the post-index semantic-search state. Produced by the
@@ -21,7 +25,6 @@ export interface IndexVerification {
   embeddingProvider: "local" | "remote";
   entryCount: number;
   embeddingCount: number;
-  vecAvailable: boolean;
 }
 
 /** Canonical configured owner that disappeared or moved since the last complete scan. */
