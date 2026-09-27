@@ -67,6 +67,33 @@ describe("addStash", () => {
     expect(result.entry?.name).toBe("my-stash");
   });
 
+  test("an illegal or taken --name fails instead of being replaced", () => {
+    const taken = createTmpDir("akm-fs-name-taken-");
+    addStash({ target: taken, name: "taken" });
+
+    expect(() => addStash({ target: "https://a.example.com", providerType: "website", name: "my.bundle" })).toThrow(
+      "is not a legal bundle name",
+    );
+    expect(() => addStash({ target: "lodash", providerType: "npm", name: "taken" })).toThrow(
+      'Bundle name "taken" already exists',
+    );
+    expect(() => addStash({ target: createTmpDir("akm-fs-name-bad-"), name: "a/b" })).toThrow(
+      "is not a legal bundle name",
+    );
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["taken"]);
+  });
+
+  test("re-adding a source under another --name points at bundle rename", () => {
+    addStash({ target: "https://docs.example.com", providerType: "website", name: "docs" });
+
+    expect(() => addStash({ target: "https://docs.example.com", providerType: "website", name: "other" })).toThrow(
+      "akm bundle rename docs other",
+    );
+    const again = addStash({ target: "https://docs.example.com", providerType: "website", name: "docs" });
+    expect(again.added).toBe(false);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["docs"]);
+  });
+
   test("inserts a new bundle before or after an existing bundle (#982)", () => {
     const first = createTmpDir("akm-fs-order-first-");
     const second = createTmpDir("akm-fs-order-second-");
@@ -398,17 +425,6 @@ describe("removeStash", () => {
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(1);
     expect(getSources(config)[0]!.name).toBe("other-source");
-  });
-
-  test("prefers path match over name match", () => {
-    const fsPath = createTmpDir("akm-rm-prio-");
-    addStash({ target: fsPath, name: "path-source" });
-    addStash({ target: "https://other.example.com", providerType: "website", name: fsPath });
-
-    // Should match by path (first entry), not by name (second entry)
-    const result = removeStash(fsPath);
-    expect(result.removed).toBe(true);
-    expect(result.entry?.type).toBe("filesystem");
   });
 
   test("removes http:// URL source", () => {

@@ -111,7 +111,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     ]);
     previousLauncher = previousReadbackInstall.launcher;
 
-    home = await buildHome(liveInstall.launcher, path.join(workRoot, "home"));
+    home = await buildHome(liveInstall.launcher, liveInstall.version, path.join(workRoot, "home"));
     // Surfaced (not silently dropped) rather than left as an unread field.
     console.log(`upgrade-rehearsal home deviations:\n- ${home.deviations.join("\n- ")}`);
 

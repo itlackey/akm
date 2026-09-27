@@ -105,12 +105,9 @@ export function bundleKeyForUrl(config: AkmConfig, url: string): string | undefi
  * (path/url) — the shared {@link deriveBundleId} rule (D-R5), made unique against
  * the currently-configured bundle keys.
  *
- * This helper stays forgiving (no `--name` contract enforcement): it is also
- * used by `akm source add` (`source-manage.ts`'s `addStash`), which predates
- * and is not in scope for the D6 `--name` contract. A caller that DOES need
- * the D6 contract (an illegal or already-taken explicit name failing loudly)
- * validates with {@link validateExplicitBundleName} itself before calling in,
- * as `source-add.ts`'s local/website/registry add paths do.
+ * Every add path validates an explicit `--name` with
+ * {@link validateExplicitBundleName} before calling in (an illegal or taken
+ * name fails loudly), so a `preferredName` that reaches here is returned as is.
  */
 export function nextBundleKey(
   bundles: Record<string, BundleConfigEntry>,
