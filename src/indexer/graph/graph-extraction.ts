@@ -801,6 +801,10 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
   telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
   telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
+  telemetry.filteredGenericEntities = runtimeTelemetry.filteredGenericEntities ?? 0;
+  telemetry.filteredInvalidRelations = runtimeTelemetry.filteredInvalidRelations ?? 0;
+  telemetry.filteredLowConfidenceRelations = runtimeTelemetry.filteredLowConfidenceRelations ?? 0;
+  telemetry.contextBatchRetries = runtimeTelemetry.contextBatchRetries ?? 0;
   telemetry.aborted = abortState.aborted;
 
   const graph = buildGraphFile(primary.path, mergeGraphNodes(previousGraph.files, nodes, keptPaths), telemetry);

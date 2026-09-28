@@ -66,6 +66,14 @@ export interface GraphExtractionTelemetry {
    * observable instead of silent (#635).
    */
   nonArrayBatchFailures?: number;
+  /** Entities the parser dropped: generic, path-like, or with no letter or digit. */
+  filteredGenericEntities?: number;
+  /** Relations the parser dropped: malformed, self-referencing, generic, or naming an unlisted entity. */
+  filteredInvalidRelations?: number;
+  /** Relations the parser dropped for a confidence under the minimum. */
+  filteredLowConfidenceRelations?: number;
+  /** Batches split in half after a context-size error. */
+  contextBatchRetries?: number;
   /**
    * Chunks skipped because an asset's body exceeded
    * `processes.graphExtraction.maxChunksPerAsset` (R12b + R20) — coverage

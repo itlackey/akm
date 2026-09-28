@@ -160,9 +160,7 @@ export type GraphExtractionReason =
   | "invalid_json"
   | "context_limit"
   | "llm_error"
-  | "low_confidence"
-  | "generic_entities_only"
-  | "filtered_low_quality";
+  | "generic_entities_only";
 
 export interface GraphBatchState {
   batchingDisabled: boolean;
@@ -292,6 +290,13 @@ async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: 
   };
   await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker));
   return results;
+}
+
+/** Count what the parser dropped from one parsed extraction (single-asset or batch item). */
+function bumpFilterTelemetry(telemetry: GraphRuntimeTelemetry | undefined, extraction: GraphExtraction): void {
+  bumpTelemetry(telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
+  bumpTelemetry(telemetry, "filteredInvalidRelations", extraction.filteredInvalidRelations ?? 0);
+  bumpTelemetry(telemetry, "filteredLowConfidenceRelations", extraction.filteredLowConfidenceRelations ?? 0);
 }
 
 function normalizeBatchState(state?: GraphBatchState): GraphBatchState | undefined {
@@ -664,6 +669,7 @@ function applySuccessfulBatchResults(
   nonEmptyBodies: string[],
   nonEmptyIndices: number[],
   batchState: GraphBatchState | undefined,
+  telemetry: GraphRuntimeTelemetry | undefined,
 ): void {
   if (batchState) batchState.nonArrayBatchFailures = 0;
   if (batchResult.length > nonEmptyBodies.length) {
@@ -675,7 +681,10 @@ function applySuccessfulBatchResults(
   for (let j = 0; j < nonEmptyBodies.length; j++) {
     const originalIndex = nonEmptyIndices[j];
     if (originalIndex === undefined) continue;
-    if (j < batchResult.length) results[originalIndex] = parseBatchItem(batchResult[j]);
+    if (j >= batchResult.length) continue;
+    const extraction = parseBatchItem(batchResult[j]);
+    bumpFilterTelemetry(telemetry, extraction);
+    results[originalIndex] = extraction;
   }
 }
 
@@ -759,14 +768,7 @@ export async function extractGraphFromBodies(
   // batch's asset count so a compliant provider bounds every element's
   // entities/relations by the same maxItems as the single-asset path.
   const batchResponseSchema = buildBatchResponseSchema(nonEmptyBodies.length);
-  const truncatedBodies = nonEmptyBodies.filter((body) => body.length > MAX_BATCH_BODY_CHARS).length;
-  if (truncatedBodies > 0) {
-    warnVerbose(
-      `graph extraction (batch): ${truncatedBodies}/${nonEmptyBodies.length} asset body/bodies exceed the batch body threshold of ${MAX_BATCH_BODY_CHARS} chars.`,
-    );
-  }
   let batchContextError = false;
-  let nonArrayResponse = false;
   // R2: a dead/erroring provider must not be hammered with a per-asset
   // fallback retry for every body in the batch — that is what turned one
   // outage into 15,453 additional retry attempts. `isTransportFailure`
@@ -828,7 +830,6 @@ export async function extractGraphFromBodies(
           parsed = retryRaw ? parseEmbeddedJsonResponse<unknown[]>(retryRaw, { expect: "array" }) : undefined;
         }
         if (!Array.isArray(parsed)) {
-          nonArrayResponse = true;
           bumpTelemetry(options.telemetry, "nonArrayBatchFailures");
           if (batchState) {
             batchState.nonArrayBatchFailures += 1;
@@ -885,7 +886,7 @@ export async function extractGraphFromBodies(
 
   // Map successful batch results back to their original indices.
   if (batchResult !== null) {
-    applySuccessfulBatchResults(results, batchResult, nonEmptyBodies, nonEmptyIndices, batchState);
+    applySuccessfulBatchResults(results, batchResult, nonEmptyBodies, nonEmptyIndices, batchState, options.telemetry);
   } else if (batchProviderError) {
     // No per-asset fallback against a failing provider — record every asset
     // in this batch as a genuine failure so it is neither silently empty nor
@@ -951,8 +952,6 @@ export async function extractGraphFromBodies(
       `graph extraction (batch): skipped ${nonEmptyBodies.length} asset(s) due to context size error; ` +
         `consider increasing llm.contextLength or reducing index.graph.graphExtractionBatchSize to 1.`,
     );
-  } else if (nonArrayResponse && batchState?.batchingDisabled) {
-    warn("graph extraction (batch): disabling batching for the rest of this run after repeated non-array responses.");
   }
 
   return results;
@@ -1052,13 +1051,7 @@ export async function extractGraphFromBody(
       }
 
       const extraction = parseGraphExtraction(parsed);
-      bumpTelemetry(options.telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
-      bumpTelemetry(options.telemetry, "filteredInvalidRelations", extraction.filteredInvalidRelations ?? 0);
-      bumpTelemetry(
-        options.telemetry,
-        "filteredLowConfidenceRelations",
-        extraction.filteredLowConfidenceRelations ?? 0,
-      );
+      bumpFilterTelemetry(options.telemetry, extraction);
       if (extraction.status === "failed") bumpTelemetry(options.telemetry, "failureCount");
       return extraction;
     },

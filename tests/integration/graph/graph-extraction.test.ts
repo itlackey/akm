@@ -1018,6 +1018,37 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(notices(same)).toEqual([]);
   });
 
+  test("the run's telemetry reports what the parser filtered, on the batch and single paths", async () => {
+    for (const name of ["m1", "m2", "m3"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
+    // Per file: a generic and a path-like entity, a relation to an unknown
+    // entity, and a relation under the minimum confidence.
+    extractor = () => ({
+      entities: ["Redis", "data", "src/app.ts", "Kafka"],
+      relations: [
+        { from: "Redis", to: "Kafka", type: "feeds" },
+        { from: "Redis", to: "Nowhere", type: "feeds" },
+        { from: "Redis", to: "Kafka", type: "uses", confidence: 0.2 },
+      ],
+    });
+
+    // Batches of two: m1 and m2 in one batch call, m3 on the single-asset path.
+    const result = await withGraphDb("filter-telemetry", (db) =>
+      runGraphExtractionPass({
+        config: configWithLlm({ index: { defaults: { engine: "index" }, graph: { graphExtractionBatchSize: 2 } } }),
+        sources: sources(),
+        db,
+      }),
+    );
+
+    expect(result.extracted).toBe(3);
+    expect(result.telemetry).toMatchObject({
+      filteredGenericEntities: 6,
+      filteredInvalidRelations: 3,
+      filteredLowConfidenceRelations: 3,
+      contextBatchRetries: 0,
+    });
+  });
+
   test("a cached extraction holding two forms of one entity stores it once", async () => {
     const filePath = writeFile("memories/m1.md", {}, "Body about Redis and Kafka.");
     extractor = () => ({ entities: ["Redis", "Kafka"], relations: [] });
