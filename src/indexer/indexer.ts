@@ -115,7 +115,7 @@ import {
 } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
-import { purgeOldUsageEvents } from "./usage/usage-events";
+import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
 import type { IndexVerification, RemovedIndexSource } from "./walk/index-context";
 import { walkStashFlatWithStatus } from "./walk/walker";
@@ -2256,9 +2256,6 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
 }
 
 // ── Utility score recomputation ──────────────────────────────────────────────
-
-/** Retention window for usage events: events older than this are purged. */
-const USAGE_EVENT_RETENTION_DAYS = 90;
 
 /**
  * Recompute utility scores for all entries based on usage_events data.

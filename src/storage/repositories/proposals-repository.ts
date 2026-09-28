@@ -461,6 +461,14 @@ export function getStateProposal(db: Database, id: string, stashDir?: string): P
   return row ? proposalRowToProposal(row) : undefined;
 }
 
+/** `(ref, source)` of every proposal, any status, in one stash: no payload is read. */
+export function listProposalRefSources(db: Database, stashDir: string): Array<{ ref: string; source: string }> {
+  return db.prepare("SELECT ref, source FROM proposals WHERE stash_dir = ?").all(stashDir) as Array<{
+    ref: string;
+    source: string;
+  }>;
+}
+
 /**
  * Find PENDING proposal ids in one stash whose id starts with `idPrefix`.
  * Backs the UUID-prefix form of `akm proposal show/accept/... <prefix>` —

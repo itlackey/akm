@@ -588,8 +588,17 @@ describe("consolidate ledger eligibility", () => {
     );
     writeMemory(stash, "fresh-mem", "Edited since the last judgement.", new Date(Date.now() + 5_000));
     await buildIndex(stash);
+    // #986: a judged memory is back in the pool only while retrieval returns it.
+    const db = openStateDatabase();
+    try {
+      db.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES ('show', ?, 'user')").run(
+        durableRef("memories/fresh-mem"),
+      );
+    } finally {
+      db.close();
+    }
 
-    await akmImprove({
+    const result = await akmImprove({
       scope: "memory",
       config: configWithoutPoolGuard(stash),
       stashDir: stash,
@@ -601,6 +610,7 @@ describe("consolidate ledger eligibility", () => {
 
     const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
+    expect(result.plan?.consolidation.candidatePoolSize).toBe(1);
   });
 
   // #551: consolidation runs BEFORE the session-extract phase. The

@@ -137,7 +137,8 @@ export interface ImproveEligibleRef {
 export type ImprovePlanLane = EligibilitySource | "distill-only";
 
 export interface ImprovePlanGate {
-  name: "profile" | "cleanup" | "validation" | "signal" | "disk" | "limit";
+  /** `retrieval` is absent from plans stored before 0.9.17-alpha.7 (#986). */
+  name: "profile" | "cleanup" | "validation" | "retrieval" | "signal" | "disk" | "limit";
   removed: number;
   reason: string;
 }

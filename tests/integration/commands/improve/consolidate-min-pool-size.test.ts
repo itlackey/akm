@@ -232,7 +232,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     expect(rows.get("memories/secondary")).toBe("judged_no_action");
   });
 
-  test("a memory judged recently and unchanged is not judged again; editing it brings it back", async () => {
+  test("a memory judged recently and unchanged is not judged again; an edit brings it back once retrieval returns it", async () => {
     writeMemory("steady", "A steady memory the model has already looked at and found nothing to do with.");
     writeMemory("edited", "A memory that will be edited after its first judgement.");
     await akmIndex({ stashDir, full: true });
@@ -254,8 +254,21 @@ describe("#553 consolidate minPoolSize guard", () => {
     const later = new Date(Date.now() + 5_000);
     fs.utimesSync(editedPath, later, later);
 
+    // #986: the edit lifts the ledger window, but improve already judged this
+    // memory and retrieval never returned it, so it stays out of the pool.
     const third = await runImprove(configWithMinPoolSize(0));
-    expect(third.consolidation?.processed).toBe(1);
+    expect(third.consolidation?.processed ?? 0).toBe(0);
+
+    const db = openStateDatabase();
+    try {
+      db.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES ('search', ?, 'user')").run(
+        "stash//memories/edited",
+      );
+    } finally {
+      db.close();
+    }
+    const fourth = await runImprove(configWithMinPoolSize(0));
+    expect(fourth.consolidation?.processed).toBe(1);
   });
 
   test("a promotion that fails to persist leaves the memory unrecorded, so the next run retries it", async () => {

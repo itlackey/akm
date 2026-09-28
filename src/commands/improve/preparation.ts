@@ -33,7 +33,7 @@ import type {
 } from "../../core/improve-types";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
-import { countUsageEventsByType } from "../../indexer/usage/usage-events";
+import { countUsageEventsByType, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { Database } from "../../storage/database";
@@ -92,6 +92,7 @@ import {
 } from "./outcome-loop";
 import { projectMemoryCleanup, selectEffectiveImproveRefs } from "./planner";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
+import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import {
   buildRankChangeReport,
   computeSalience,
@@ -867,10 +868,24 @@ async function selectLoopCandidates(
   const processableRefs = [...partition.eligibleRefs, ...partition.distillOnlyRefs];
   const signalFiltered = processableRefs.filter((c) => snapshot.feedback.get(c.ref)?.hasSignal === true);
   const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
-  const noFeedbackCandidates = dedupeRefs([
+  // The fallback lanes (proactive, high salience, forgetting safety) have no
+  // usage evidence of their own: they pick only what retrieval returned or new
+  // material improve never processed (#986). Evaluated once per candidate.
+  const fallbackEligible = postCleanupRefs.filter((c) => !validationFailureRefs.has(c.ref));
+  const retrievalScope =
+    scope.mode === "ref"
+      ? undefined
+      : loadRetrievalScope({ eventsCtx, ...(persist ? {} : { readOnly: true }) }, primaryStashDir ?? options.stashDir);
+  const unscoped = new Set(
+    fallbackEligible.filter((c) => !isInRetrievalScope(retrievalScope, c.ref, c.filePath)).map((c) => c.ref),
+  );
+  const noFeedbackPool = dedupeRefs([
     ...processableRefs.filter((r) => !signalBearingSet.has(r.ref)),
     ...partition.noFeedbackPool,
   ]);
+  const noFeedbackCandidates = noFeedbackPool.filter((r) => !unscoped.has(r.ref));
+  // Only a ref no fallback lane may pick anymore is charged to the retrieval gate.
+  const outOfScope = new Set(noFeedbackPool.filter((r) => unscoped.has(r.ref)).map((r) => r.ref));
   const retrieval = fetchRetrievalSignals(options, signalFiltered, noFeedbackCandidates, eventsCtx, persist);
   const allowFallbacks = options.requireFeedbackSignal !== true;
   const proactive = allowFallbacks
@@ -900,11 +915,12 @@ async function selectLoopCandidates(
   if (scope.mode === "ref") for (const r of processableRefs) sourceByRef.set(r.ref, "scope");
   for (const r of mergedRefs) r.eligibilitySource = sourceByRef.get(r.ref) ?? "unknown";
 
-  // Forgetting safety may only reuse this plan's own surviving objects, and
-  // never a ref whose reflect window is still open.
-  const fallbackEligible = postCleanupRefs.filter((c) => !validationFailureRefs.has(c.ref));
+  // Forgetting safety may only reuse this plan's own surviving objects inside
+  // the retrieval scope, and never a ref whose reflect window is still open.
   const forgettingEligible = fallbackEligible.filter(
-    (c) => !isLedgerBlocked(ledgerRowFor(snapshot.ledger, "reflect", c.ref, c.itemRef), snapshot.nowIso),
+    (c) =>
+      !unscoped.has(c.ref) &&
+      !isLedgerBlocked(ledgerRowFor(snapshot.ledger, "reflect", c.ref, c.itemRef), snapshot.nowIso),
   );
   const scored = scoreSalience(args, mergedRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
   mergedRefs = applyForgettingSafety({
@@ -953,20 +969,30 @@ async function selectLoopCandidates(
   // Skip observability waits until every fallback lane has finalized the
   // survivors, so a rescued ref is never also reported skipped.
   const survivors = new Set(sorted.map((c) => c.ref));
-  const signalSkipped = fallbackEligible.filter((c) => !survivors.has(c.ref));
+  const skipped = fallbackEligible.filter((c) => !survivors.has(c.ref));
+  const retrievalSkipped = skipped.filter((c) => outOfScope.has(c.ref));
+  const signalSkipped = skipped.filter((c) => !outOfScope.has(c.ref));
   for (const ref of partition.distillCooledRefs) {
     actions.push({ ref, mode: "distill-skipped", result: { ok: true, reason: "distill signal-delta" } });
     if (persist) recordImproveSkip(eventsCtx, ref, { reason: "distill_no_new_signal" });
   }
-  for (const candidate of signalSkipped) {
+  for (const candidate of skipped) {
     actions.push({
       ref: candidate.ref,
       mode: "distill-skipped",
-      result: { ok: true, reason: "no new signal since last proposal" },
+      result: {
+        ok: true,
+        reason: outOfScope.has(candidate.ref)
+          ? "not retrieved inside the usage window"
+          : "no new signal since last proposal",
+      },
     });
   }
   if (persist && signalSkipped.length > 0) {
     recordImproveSkip(eventsCtx, undefined, { reason: "no_new_signal", count: signalSkipped.length });
+  }
+  if (persist && retrievalSkipped.length > 0) {
+    recordImproveSkip(eventsCtx, undefined, { reason: "not_retrieved", count: retrievalSkipped.length });
   }
   const blocked = signalSkipped.length + partition.distillOnlyRefs.length;
   if (blocked > 0) {
@@ -975,7 +1001,17 @@ async function selectLoopCandidates(
         `(${signalSkipped.length} fully skipped, ${partition.distillOnlyRefs.length} routed to distill-only)`,
     );
   }
+  if (retrievalSkipped.length > 0) {
+    info(
+      `[improve] ${retrievalSkipped.length} refs left out: not retrieved in the last ${USAGE_EVENT_RETENTION_DAYS} days, and not new material`,
+    );
+  }
   const gates: ImprovePlanGate[] = [
+    {
+      name: "retrieval",
+      removed: retrievalSkipped.length,
+      reason: `no feedback, and neither returned by search, curate or show in the last ${USAGE_EVENT_RETENTION_DAYS} days nor new material improve never processed`,
+    },
     {
       name: "signal",
       removed: signalSkipped.length,

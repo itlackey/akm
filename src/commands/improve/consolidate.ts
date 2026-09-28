@@ -30,6 +30,7 @@ import { warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import type { Database } from "../../storage/database";
@@ -52,6 +53,7 @@ import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
+import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import { callStage, type LlmRunner, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
 
 export interface MemoryEntry {
@@ -482,6 +484,8 @@ export interface ConsolidationPoolSnapshot {
   prefilteredAlreadyPromoted: number;
   /** Memories the ledger skipped: judged within their revisit window and unchanged since. */
   judgedUnchanged: number;
+  /** Memories left out because retrieval did not return them and they are not new (#986). */
+  outsideRetrievalScope: number;
 }
 
 interface ConsolidationSourceOwner {
@@ -562,6 +566,13 @@ export function inspectConsolidationPool(
     });
   }
   const judgedUnchanged = poolSize - memories.length;
+  // Only what retrieval returned or new material improve never processed (#986).
+  const retrievalScope = loadRetrievalScope({ proposalsCtx: opts.proposalsCtx, readOnly }, stashDir);
+  const beforeScope = memories.length;
+  memories = memories.filter((memory) =>
+    isInRetrievalScope(retrievalScope, conceptIdFromTypeName("memory", memory.name), memory.filePath),
+  );
+  const outsideRetrievalScope = beforeScope - memories.length;
   if (opts.incrementalSince && memories.length > 0) {
     memories = narrowToIncrementalCandidates(
       memories,
@@ -607,6 +618,7 @@ export function inspectConsolidationPool(
     memories,
     prefilteredAlreadyPromoted,
     judgedUnchanged,
+    outsideRetrievalScope,
   };
 }
 
@@ -827,6 +839,11 @@ async function consolidate(
   if (pool.judgedUnchanged > 0) {
     warnings.push(
       `Consolidation: skipped ${pool.judgedUnchanged} ${plural(pool.judgedUnchanged)} judged within the revisit window and unchanged since.`,
+    );
+  }
+  if (pool.outsideRetrievalScope > 0) {
+    warnings.push(
+      `Consolidation: skipped ${pool.outsideRetrievalScope} ${plural(pool.outsideRetrievalScope)} already judged that retrieval has not returned in the last ${USAGE_EVENT_RETENTION_DAYS} days.`,
     );
   }
   if (prefilteredAlreadyPromoted > 0) {
