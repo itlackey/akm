@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.7] - 2026-09-28
+
+A scheduled task is now just a command and a schedule. Each native row
+carries its own `AKM_BUNDLE_DIR` instead of pointing at a descriptor file,
+and the runtime reads only v4 task files; older files convert once with
+`akm migrate apply`. The first `akm task sync` after upgrading rewrites each
+row once, keeping every task and schedule. `akm improve` reworks only assets
+that retrieval returned or that are new, and reflect refuses a rewrite that
+grades worse on the asset's own searches. `--require-engines` no longer
+skips a run because the LLM endpoint is busy.
+
 ### Changed
 
 - **akm reads only task source v4.** A `version: 2` or `version: 3` task
