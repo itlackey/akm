@@ -6,6 +6,49 @@
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+// #956 round 3: install the signal-forwarding scaffolding before ANYTHING
+// else in this process — env var setup, the bun-version probe, spawning the
+// child — gets a chance to run. The three `process.once` listeners used to
+// go up only after spawn() (below) returned; a scheduler preemption right
+// after that syscall was enough for a signal to arrive with no listener yet,
+// and the runtime's default (process-terminating) disposition killed the
+// launcher outright, never reaching the child at all (flaky
+// tests/integration/launcher-signal-forwarding.test.ts). `child` starts
+// unset: a signal that arrives before it exists is queued and flushed the
+// moment it does; if this process ends up never spawning one (the
+// direct-import branch below), the queued signal is re-raised against
+// ourselves once we hand default disposition back, so it behaves exactly
+// like the runtime's own default rather than being silently swallowed.
+let child;
+let childExited = false;
+const pendingSignals = [];
+const forwardHandlers = new Map();
+const forwardSignal = (signal) => {
+  if (childExited) return;
+  if (!child) {
+    pendingSignals.push(signal);
+    return;
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // Child exited in the race between the check above and here.
+  }
+};
+// `.once`, not `.on`: Node/Bun suppress a signal's default
+// (process-terminating) disposition for as long as ANY listener stays
+// registered for it. A persistent `.on` listener would still be registered
+// when the `process.kill(process.pid, result.signal)` re-raise below runs at
+// shutdown, swallowing it and leaving this launcher exiting 0 instead of
+// reflecting the child's signal. `.once` consumes only the
+// externally-delivered signal that triggers the forward, so the re-raise
+// correctly falls through to the OS default.
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  const handler = () => forwardSignal(signal);
+  forwardHandlers.set(signal, handler);
+  process.once(signal, handler);
+}
+
 // A scheduled row sets its environment itself (a cron `VAR=value` prefix, a
 // launchd plist's EnvironmentVariables), and the scheduler supplies PATH, so
 // runtime selection below needs nothing from it. A row written by 0.9.0 –
@@ -42,13 +85,21 @@ const bunEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
 const nodeEntry = fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
 
 if (!useBun && !process.versions.bun) {
-  await import("./cli-node.mjs");
+  // No child is ever spawned on this path — the imported module runs
+  // in-process, so it IS the work, and the runtime's ordinary default signal
+  // disposition is exactly correct for it. Hand that back (the forwarding
+  // listeners above no longer apply here), re-raising anything that already
+  // arrived so it is not silently swallowed by a listener that now does
+  // nothing.
+  for (const [signal, handler] of forwardHandlers) process.removeListener(signal, handler);
+  if (pendingSignals.length > 0) process.kill(process.pid, pendingSignals[0]);
+  else await import("./cli-node.mjs");
 } else {
   const command = useBun ? (process.versions.bun ? process.execPath : "bun") : "node";
   const entry = useBun ? bunEntry : nodeEntry;
   const runtime = useBun ? "Bun" : "Node.js";
   const result = await new Promise((resolve) => {
-    const child = spawn(command, [entry, ...process.argv.slice(2)], {
+    child = spawn(command, [entry, ...process.argv.slice(2)], {
       stdio: "inherit",
       env: process.env,
       // #956: give the child its OWN process group on POSIX (`setsid()` —
@@ -75,29 +126,12 @@ if (!useBun && !process.versions.bun) {
     // forward once the child has already exited: forwarding to a
     // dead/replaced pid would be at best a no-op and at worst a signal to
     // an unrelated process that reused the pid.
-    let childExited = false;
     child.once("exit", () => {
       childExited = true;
     });
-    const forwardSignal = (signal) => {
-      if (childExited) return;
-      try {
-        child.kill(signal);
-      } catch {
-        // Child exited in the race between the check above and here.
-      }
-    };
-    // `.once`, not `.on`: Node/Bun suppress a signal's default
-    // (process-terminating) disposition for as long as ANY listener stays
-    // registered for it. A persistent `.on` listener would still be
-    // registered when the `process.kill(process.pid, result.signal)`
-    // re-raise below runs at shutdown, swallowing it and leaving this
-    // launcher exiting 0 instead of reflecting the child's signal. `.once`
-    // consumes only the externally-delivered signal that triggers the
-    // forward, so the re-raise correctly falls through to the OS default.
-    for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-      process.once(signal, () => forwardSignal(signal));
-    }
+    // Flush whatever arrived in the (now much smaller) window between the
+    // listeners going up and the child existing to receive them.
+    for (const signal of pendingSignals.splice(0)) forwardSignal(signal);
     child.once("error", (error) => resolve({ error }));
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
