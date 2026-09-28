@@ -24,6 +24,7 @@
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/config";
+import type { GraphExtraction } from "../../../src/llm/graph-extract";
 import { testLlmRunner } from "../../_helpers/llm-runner";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
@@ -46,41 +47,54 @@ const errorStatusQueue: number[] = [];
 const htmlErrorStatusQueue: number[] = [];
 /** When true, the next 200 response has a body that is not valid JSON (parse_error). */
 let malformedJsonNext = false;
+/**
+ * Per-request response delays in ms, consumed in request order. The response is
+ * chosen before the delay, so a request the client has given up on never
+ * takes a later test's queued response.
+ */
+const delayQueue: number[] = [];
 
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
-    chatCallCount++;
-    if (errorStatusQueue.length > 0) {
-      const status = errorStatusQueue.shift() as number;
-      return new Response("simulated provider error", { status });
-    }
-    if (htmlErrorStatusQueue.length > 0) {
-      const status = htmlErrorStatusQueue.shift() as number;
-      return new Response("<html><body>Service Unavailable</body></html>", { status });
-    }
-    if (malformedJsonNext) {
-      malformedJsonNext = false;
-      return new Response("not valid json", { status: 200 });
-    }
-    const body = (await request.json()) as {
-      messages?: Array<{ role?: string; content?: string }>;
-    };
-    const userContent = body.messages?.find((m) => m.role === "user")?.content ?? "";
-    let content = "";
-    if (userContent.includes("N=")) {
-      content = batchRawQueue.shift() ?? "";
-    } else {
-      content = singleRawQueue.shift() ?? "";
-    }
-    return new Response(
-      JSON.stringify({
-        choices: [{ message: { content } }],
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    );
+    const delayMs = delayQueue.shift() ?? 0;
+    const response = await respond(request);
+    if (delayMs > 0) await Bun.sleep(delayMs);
+    return response;
   },
 });
+
+async function respond(request: Request): Promise<Response> {
+  chatCallCount++;
+  if (errorStatusQueue.length > 0) {
+    const status = errorStatusQueue.shift() as number;
+    return new Response("simulated provider error", { status });
+  }
+  if (htmlErrorStatusQueue.length > 0) {
+    const status = htmlErrorStatusQueue.shift() as number;
+    return new Response("<html><body>Service Unavailable</body></html>", { status });
+  }
+  if (malformedJsonNext) {
+    malformedJsonNext = false;
+    return new Response("not valid json", { status: 200 });
+  }
+  const body = (await request.json()) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  const userContent = body.messages?.find((m) => m.role === "user")?.content ?? "";
+  let content = "";
+  if (userContent.includes("N=")) {
+    content = batchRawQueue.shift() ?? "";
+  } else {
+    content = singleRawQueue.shift() ?? "";
+  }
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content } }],
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
 
 const { extractGraphFromBodies, extractGraphFromBody } = await import("../../../src/llm/graph-extract");
 
@@ -147,6 +161,7 @@ beforeEach(() => {
   htmlErrorStatusQueue.length = 0;
   malformedJsonNext = false;
   deadConnAttempts = 0;
+  delayQueue.length = 0;
 });
 
 afterAll(() => {
@@ -183,9 +198,47 @@ describe("extractGraphFromBodies — unit", () => {
       (evt) => fallbackEvents.push({ feature: evt.feature, reason: evt.reason }),
     );
 
-    expect(result).toEqual({ entities: [], relations: [] });
+    // No model answer is a failure, never a cacheable "no entities" result.
+    expect(result).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
     expect(chatCallCount).toBe(0);
     expect(fallbackEvents).toEqual([{ feature: "graph_extraction", reason: "disabled" }]);
+  });
+
+  test("a single-asset call that times out is a failure, not an empty result", async () => {
+    const fallbackReasons: string[] = [];
+    delayQueue.push(400);
+
+    const result = await extractGraphFromBody(
+      testLlmRunner({ ...SAMPLE_CONNECTION, timeoutMs: 100 }, "test-graph-extraction"),
+      "Alpha references Beta.",
+      undefined,
+      AKM_CFG_WITH_GATE,
+      (evt) => fallbackReasons.push(evt.reason),
+    );
+
+    expect(result).toEqual({ entities: [], relations: [], status: "failed", reason: "llm_error" });
+    expect(fallbackReasons).toEqual(["timeout"]);
+  });
+
+  test("a batch call that times out fails every asset and makes no per-asset calls", async () => {
+    const telemetry: Record<string, number> = {};
+    delayQueue.push(400);
+    singleRawQueue.push(JSON.stringify({ entities: ["Alpha"], relations: [] }));
+    singleRawQueue.push(JSON.stringify({ entities: ["Beta"], relations: [] }));
+
+    const results = await extractGraphFromBodies(
+      testLlmRunner({ ...SAMPLE_CONNECTION, timeoutMs: 100 }, "test-graph-extraction"),
+      ["Alpha body.", "Beta body."],
+      undefined,
+      AKM_CFG_WITH_GATE,
+      undefined,
+      { telemetry },
+    );
+
+    const failed: GraphExtraction = { entities: [], relations: [], status: "failed", reason: "llm_error" };
+    expect(results).toEqual([failed, failed]);
+    expect(chatCallCount).toBe(1);
+    expect(telemetry.failureCount).toBe(2);
   });
 
   test("(a) successful 3-asset batch returns 3 correctly-matched results", async () => {

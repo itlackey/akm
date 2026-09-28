@@ -755,11 +755,12 @@ export async function extractGraphFromBodies(
   // provider itself is failing (a dead endpoint more often raises
   // `network_error` or `provider_html_error` than a plain 5xx), not that this
   // particular response was malformed; skip the fallback and record every
-  // asset as failed instead.
+  // asset as failed instead. A batch that got no answer at all (the gate's
+  // timeout, or a closed gate) is handled the same way.
   let batchProviderError = false;
 
   const batchOutcome = await tryLlmFeature<
-    { kind: "value"; value: unknown[] | null } | { kind: "config-error"; error: ConfigError }
+    { kind: "value"; value: unknown[] | null } | { kind: "config-error"; error: ConfigError } | { kind: "no-answer" }
   >(
     "graph_extraction",
     akmConfig,
@@ -849,14 +850,18 @@ export async function extractGraphFromBodies(
         return { kind: "value", value: null };
       }
     },
-    { kind: "value", value: null },
+    { kind: "no-answer" },
     {
       timeoutMs: llmRunner.timeoutMs,
       onFallback,
     },
   );
   if (batchOutcome.kind === "config-error") throw batchOutcome.error;
-  const batchResult = batchOutcome.value;
+  if (batchOutcome.kind === "no-answer") {
+    batchProviderError = true;
+    bumpTelemetry(options.telemetry, "failureCount", nonEmptyBodies.length);
+  }
+  const batchResult = batchOutcome.kind === "value" ? batchOutcome.value : null;
 
   // Map successful batch results back to their original indices.
   if (batchResult !== null) {
@@ -1063,7 +1068,9 @@ export async function extractGraphFromBody(
         return empty("llm_error", "failed");
       }
     },
-    fallback: empty(),
+    // No answer from the model (the gate's timeout, or a closed gate) is a
+    // failure the next run retries, never a cacheable "no entities".
+    fallback: empty("llm_error", "failed"),
     onFallback,
   });
   if (truncatedChunkCount > 0) result.truncatedChunks = (result.truncatedChunks ?? 0) + truncatedChunkCount;

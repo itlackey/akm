@@ -41,6 +41,8 @@ let extractorCallCount = 0;
 let onLlmRequest: ((request: Request) => void) | undefined;
 /** Queue of HTTP status codes to return instead of a 200, for provider-error/failure tests (R2). */
 const errorStatusQueue: number[] = [];
+/** Per-request response delays in ms, consumed in request order; the response is chosen first. */
+const delayQueue: number[] = [];
 
 /**
  * Detect a batched graph-extract prompt and split it back into per-asset bodies.
@@ -70,44 +72,51 @@ function parseBatchBodies(userContent: string): string[] {
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
-    onLlmRequest?.(request);
-    if (errorStatusQueue.length > 0) {
-      const status = errorStatusQueue.shift() as number;
-      return new Response("simulated provider error", { status });
-    }
-    const payload = (await request.json()) as {
-      messages?: Array<{ role?: string; content?: string }>;
-    };
-    const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
-    extractorCallCount++;
+    const delayMs = delayQueue.shift() ?? 0;
+    const response = await respond(request);
+    if (delayMs > 0) await Bun.sleep(delayMs);
+    return response;
+  },
+});
 
-    // Batch prompt: production sent N>=2 asset bodies in a single call and
-    // expects a JSON array of N results. Without this branch the mock would
-    // return a single object, force the non-array fallback path, and (after
-    // 2 non-array responses) latch `batchingDisabled=true` — which is fine
-    // in isolation but interacts badly with full-suite ordering once
-    // pollution between tests is closed. Returning the array directly keeps
-    // the mock contract aligned with what `extractGraphFromBodies` expects.
-    const batchBodies = parseBatchBodies(userContent);
-    if (batchBodies.length > 0) {
-      const arr = batchBodies.map((body) => extractor(body));
-      return new Response(
-        JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(arr) } }],
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
+async function respond(request: Request): Promise<Response> {
+  onLlmRequest?.(request);
+  if (errorStatusQueue.length > 0) {
+    const status = errorStatusQueue.shift() as number;
+    return new Response("simulated provider error", { status });
+  }
+  const payload = (await request.json()) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
+  extractorCallCount++;
 
-    const content = JSON.stringify(extractor(userContent));
+  // Batch prompt: production sent N>=2 asset bodies in a single call and
+  // expects a JSON array of N results. Without this branch the mock would
+  // return a single object, force the non-array fallback path, and (after
+  // 2 non-array responses) latch `batchingDisabled=true` — which is fine
+  // in isolation but interacts badly with full-suite ordering once
+  // pollution between tests is closed. Returning the array directly keeps
+  // the mock contract aligned with what `extractGraphFromBodies` expects.
+  const batchBodies = parseBatchBodies(userContent);
+  if (batchBodies.length > 0) {
+    const arr = batchBodies.map((body) => extractor(body));
     return new Response(
       JSON.stringify({
-        choices: [{ message: { content } }],
+        choices: [{ message: { content: JSON.stringify(arr) } }],
       }),
       { headers: { "Content-Type": "application/json" } },
     );
-  },
-});
+  }
+
+  const content = JSON.stringify(extractor(userContent));
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content } }],
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
 
 const { runGraphExtractionPass, collectEligibleFiles, GRAPH_FILE_SCHEMA_VERSION, getGraphExtractionIncludeTypes } =
   await import("../../../src/indexer/graph/graph-extraction");
@@ -132,6 +141,7 @@ beforeEach(() => {
   extractorCallCount = 0;
   onLlmRequest = undefined;
   errorStatusQueue.length = 0;
+  delayQueue.length = 0;
 });
 
 afterEach(() => {
@@ -1197,6 +1207,31 @@ describe("runGraphExtractionPass — R2 failed-extraction handling", () => {
       expect(stored?.files.find((file) => file.path === filePath)).toMatchObject({
         status: "extracted",
         entities: ["ServiceA2"],
+      });
+    });
+  });
+
+  test("a timed-out extraction is retried on the next run, not cached as no entities", async () => {
+    const filePath = writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    extractor = () => ({ entities: ["ServiceA"], relations: [] });
+    const cfg = configWithLlm({ engines: { index: { kind: "llm", ...SAMPLE_LLM, timeoutMs: 100 } } });
+    delayQueue.push(400);
+
+    const first = await withGraphDb("timeout-first", (db) =>
+      runGraphExtractionPass({ config: cfg, sources: sources(), db }),
+    );
+    expect(first.extracted).toBe(0);
+
+    const second = await withGraphDb("timeout-retry", (db) =>
+      runGraphExtractionPass({ config: cfg, sources: sources(), db }),
+    );
+    expect(extractorCallCount).toBe(2);
+    expect(second.extracted).toBe(1);
+    await withGraphDb("timeout-read", (db) => {
+      const stored = loadStoredGraphSnapshot(tmpStash, db);
+      expect(stored?.files.find((file) => file.path === filePath)).toMatchObject({
+        status: "extracted",
+        entities: ["ServiceA"],
       });
     });
   });
