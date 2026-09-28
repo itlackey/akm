@@ -503,7 +503,9 @@ embedded with the model's query template (see `embedding.queryTemplate` in
 keyword ranking alone with `fts-fallback` and a warning. Filters (`--type`,
 `--from`, `--filter`, `--belief`, the default session exclusion, proposed
 quality) and one-hit-per-file deduplication narrow the fused list without
-reordering it.
+reordering it. Of entries with identical indexed content (the same body
+saved under another name or in another bundle), only the highest-ranked is
+kept.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |

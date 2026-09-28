@@ -1,6 +1,6 @@
 # Improve Effectiveness
 
-`improve-effectiveness` is a deterministic, non-ceiling twin suite. Its representative flaw is an exact duplicate derived memory: control retrieves both copies, while current improve's high-confidence memory cleanup archives the duplicate and keeps the canonical copy. A separate unrelated anchor protects retrieval health. The suite does not use LLM judging.
+`improve-effectiveness` is a deterministic, non-ceiling twin suite. Its representative flaw is a duplicate derived memory: control retrieves both copies, while current improve's high-confidence memory cleanup archives the duplicate and keeps the canonical copy. A separate unrelated anchor protects retrieval health. The suite does not use LLM judging.
 
 ## Expected scores
 
@@ -85,7 +85,7 @@ scripts/akm-eval/bin/akm-eval-snapshot capture \
 
 The preflight score must be `0.65`, both derived files must still be live, and the parent feedback must be less than 30 days old. Refresh the feedback and recapture rather than reusing a stale snapshot. The event uses a durable bundle-qualified ref, so it remains eligible after snapshot relocation; unlike proposal rows, it does not depend on an absolute `stash_dir`.
 
-The duplicate pair has byte-identical content and provenance. Improve's deterministic cleanup selects `memories/database-restore.derived` as survivor and archives `memories/database-restore-copy.derived` during the live run. The recent parent feedback plus `memory --require-feedback-signal --limit 1` also sends the parent through the configured reflect/distill LLM path, making treatment LLM telemetry and identity mandatory for a conclusive twin result.
+The duplicate pair has the same provenance and the same content except that the copy's body starts with a lowercase letter. Improve's duplicate fingerprint ignores case, so it still sees one memory twice; search does not, so control still retrieves both. (Search returns entries with identical indexed content once, so a byte-identical copy would no longer be retrieved and the suite would measure no lift.) Improve's deterministic cleanup selects `memories/database-restore.derived` as survivor and archives `memories/database-restore-copy.derived` during the live run. The recent parent feedback plus `memory --require-feedback-signal --limit 1` also sends the parent through the configured reflect/distill LLM path, making treatment LLM telemetry and identity mandatory for a conclusive twin result.
 
 ## Recommended twin command
 

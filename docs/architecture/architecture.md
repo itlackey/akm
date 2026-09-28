@@ -137,7 +137,8 @@ There is **one** ranking for all indexed content: reciprocal rank fusion
 
 Filters (type, source, scope, belief, proposed quality, default-excluded
 types) and one-hit-per-file deduplication narrow the fused list without
-reordering it, and a hit's `score` is its fused score. Nothing else — name,
+reordering it, and a hit's `score` is its fused score. Of entries with
+identical indexed content only the highest-ranked is kept. Nothing else — name,
 type, tag, graph, usage or belief-state signals — changes the order. The
 design and its measured alternatives are in the retrieval evaluation
 (`akm/eval/retrieval/reports/baseline-2026-09-27.md`).
