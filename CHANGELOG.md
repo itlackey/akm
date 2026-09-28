@@ -146,9 +146,10 @@ skips a run because the LLM endpoint is busy.
   endpoint is busy.** Its reachability probe, one short completion, gave up
   after 3 seconds, so a local server busy with another job looked
   unreachable and the whole scheduled run failed (all four scheduled runs on
-  2026-09-27). The probe now waits as long as the engine's own `timeoutMs`,
-  like any other request on that connection, and the error's hint says to
-  check the endpoint rather than to run `akm setup`.
+  2026-09-27). The probe now waits up to the engine's own `timeoutMs`, at
+  most two minutes, so a busy server can answer while a hung one still fails
+  fast. The error's hint now says to check the endpoint rather than to run
+  `akm setup`.
   (`src/commands/improve/improve-cli.ts`)
 
 ## [0.9.17-alpha.6] - 2026-09-27

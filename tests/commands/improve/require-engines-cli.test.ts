@@ -13,7 +13,11 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { akmImprove } from "../../../src/commands/improve/improve";
-import { _setAkmImproveForTests, assertRequiredEnginesReachable } from "../../../src/commands/improve/improve-cli";
+import {
+  _setAkmImproveForTests,
+  assertRequiredEnginesReachable,
+  requiredEngineProbeTimeoutMs,
+} from "../../../src/commands/improve/improve-cli";
 import type { ResolvedImprovePlan } from "../../../src/commands/improve/improve-strategies";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -224,6 +228,19 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
       server.stop(true);
     }
   }, 20_000);
+
+  test("the probe bound is the engine's own timeout, at most two minutes", () => {
+    const connection = (timeoutMs?: number | null) =>
+      ({
+        endpoint: "https://x.example.test/v1",
+        model: "m",
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      }) as never;
+    expect(requiredEngineProbeTimeoutMs(connection(10_000))).toBe(10_000);
+    expect(requiredEngineProbeTimeoutMs(connection(900_000))).toBe(120_000);
+    expect(requiredEngineProbeTimeoutMs(connection(null))).toBe(120_000);
+    expect(requiredEngineProbeTimeoutMs(connection())).toBe(120_000);
+  });
 
   test("returns an empty array when there are no required-engine targets", async () => {
     const plan: ResolvedImprovePlan = { processes: {}, triageJudgment: null } as unknown as ResolvedImprovePlan;

@@ -130,13 +130,13 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
     expect(result.stderr).toContain("http://127.0.0.1:1/v1");
   }, 20_000);
 
-  test("a hanging endpoint aborts within the probe bound with exit 78, never reaching a full run", async () => {
+  test("a hanging endpoint aborts within the engine's own timeout with exit 78, never reaching a full run", async () => {
     const server = hangingServer();
     try {
       saveConfig({
         semanticSearchMode: "off",
         engines: {
-          hung: { kind: "llm", endpoint: `http://localhost:${server.port}/v1`, model: "hung-model" },
+          hung: { kind: "llm", endpoint: `http://localhost:${server.port}/v1`, model: "hung-model", timeoutMs: 2_000 },
         },
         defaults: { llmEngine: "hung" },
       });
@@ -144,9 +144,8 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
       const result = await spawnImprove(["--require-engines"]);
 
       expect(result.code).toBe(78);
-      // The bounded probe (akm health's own default) ends this in a handful
-      // of seconds — nowhere near the multi-minute field hang, and nowhere
-      // near the improve run's own much longer per-call defaults.
+      // The probe is bounded by the engine's own timeoutMs (capped at two
+      // minutes), so this 2s engine ends it in a handful of seconds.
       expect(result.elapsedMs).toBeLessThan(10_000);
       expect(result.stderr).toContain("--require-engines");
       expect(result.stderr).toContain("hung");
