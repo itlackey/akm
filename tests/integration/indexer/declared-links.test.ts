@@ -212,6 +212,22 @@ describe("declared links", () => {
     expect(links.some((line) => line.startsWith("stash//tasks/nightly-release"))).toBe(false);
   });
 
+  test("show lists at most 10 refs per kind and counts every link in total", async () => {
+    write("knowledge/hub.md", "---\ndescription: A hub\n---\n\n# Hub\n");
+    for (let i = 0; i < 12; i++) {
+      write(
+        `memories/cites-hub-${String(i).padStart(2, "0")}.md`,
+        "---\ndescription: n\nxrefs:\n  - knowledge/hub\n---\n\nN.\n",
+      );
+    }
+    await akmIndex({ stashDir: storage.stashDir });
+    const hub = await akmShowUnified({ ref: "knowledge/hub" });
+    expect(hub.links?.incoming?.xref?.total).toBe(12);
+    expect(hub.links?.incoming?.xref?.refs).toEqual(
+      Array.from({ length: 10 }, (_, i) => `memories/cites-hub-${String(i).padStart(2, "0")}`),
+    );
+  });
+
   test("a memory whose own file is gone resolves to its .derived child, the reachability rule lint applies", async () => {
     write(
       "memories/old-window.md",
