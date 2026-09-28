@@ -8,7 +8,7 @@
  * Walks the primary stash for `memory:` and `knowledge:` assets, asks the
  * configured LLM to extract entities and relations from each one, and
  * persists the result to stash-local SQLite graph tables keyed by stash root.
- * The artifact backs `akm show`'s `related` list and curate's support refs
+ * The artifact backs `akm show`'s `related` list
  * (`src/indexer/graph/graph-related.ts`); it plays no part in search ranking.
  *
  * Disabling — three preconditions must ALL hold for the pass to run:

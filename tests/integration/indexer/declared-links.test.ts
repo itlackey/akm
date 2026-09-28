@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { akmCurate } from "../../../src/commands/read/curate";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { assembleInfo } from "../../../src/commands/sources/info";
 import { resetConfigCache } from "../../../src/core/config/config";
@@ -23,6 +24,7 @@ import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
+import { insertGraphEntities } from "../../_helpers/graph-store";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -210,6 +212,52 @@ describe("declared links", () => {
     );
     expect(links.some((line) => line.includes("superseded_by"))).toBe(false);
     expect(links.some((line) => line.startsWith("stash//tasks/nightly-release"))).toBe(false);
+  });
+
+  test("curate's support refs are the item's declared links, outgoing first, never the LLM related list", async () => {
+    write(
+      "knowledge/zeppelin-rollout.md",
+      "---\ndescription: Zeppelin rollout plan\nxrefs:\n  - memories/hangar-incident\n  - knowledge/mooring-runbook\n---\n\n# Plan\n",
+    );
+    write("memories/hangar-incident.md", "---\ndescription: A hangar door jammed\n---\n\nJammed.\n");
+    write("knowledge/mooring-runbook.md", "---\ndescription: Mooring the airship\n---\n\n# Mooring\n");
+    write(
+      "memories/crew-notes.md",
+      "---\ndescription: Crew notes\nxrefs:\n  - knowledge/zeppelin-rollout\n---\n\nN.\n",
+    );
+    write("knowledge/balloon-basics.md", "---\ndescription: Balloon basics\n---\n\n# Basics\n");
+    await akmIndex({ stashDir: storage.stashDir });
+    // The LLM entity graph relates the plan to balloon-basics; support refs no longer come from it.
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const ids = db
+        .prepare("SELECT id, file_path FROM entries WHERE concept_id IN (?, ?) ORDER BY concept_id")
+        .all("knowledge/balloon-basics", "knowledge/zeppelin-rollout") as Array<{ id: number; file_path: string }>;
+      for (const row of ids)
+        insertGraphEntities(db, row.id, storage.stashDir, row.file_path, ["Zeppelin"], "knowledge");
+    } finally {
+      closeDatabase(db);
+    }
+
+    const [plan] = (await akmCurate({ query: "zeppelin rollout plan", limit: 1 })).items;
+    expect(plan && "ref" in plan ? plan.ref : undefined).toBe("knowledge/zeppelin-rollout");
+    expect((await akmShowUnified({ ref: "knowledge/zeppelin-rollout" })).related?.total).toBe(1);
+    expect(plan && "supportRefs" in plan ? plan.supportRefs : undefined).toEqual([
+      { ref: "memories/hangar-incident", type: "memory", reason: "Declared link (xref) from this asset." },
+      { ref: "knowledge/mooring-runbook", type: "knowledge", reason: "Declared link (xref) from this asset." },
+    ]);
+
+    // A linked asset curate already selected is not repeated; the next declared link fills in.
+    const both = (await akmCurate({ query: "zeppelin rollout plan mooring", limit: 2 })).items;
+    expect(both.map((item) => ("ref" in item ? item.ref : undefined))).toEqual([
+      "knowledge/zeppelin-rollout",
+      "knowledge/mooring-runbook",
+    ]);
+    expect(both[0] && "supportRefs" in both[0] ? both[0].supportRefs : undefined).toEqual([
+      { ref: "memories/hangar-incident", type: "memory", reason: "Declared link (xref) from this asset." },
+      { ref: "memories/crew-notes", type: "memory", reason: "Declared link (xref) to this asset." },
+    ]);
+    expect(both[1] && "supportRefs" in both[1] ? both[1].supportRefs : undefined).toBeUndefined();
   });
 
   test("show lists at most 10 refs per kind and counts every link in total", async () => {

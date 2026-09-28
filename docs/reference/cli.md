@@ -436,7 +436,8 @@ The indexed entity graph (entities/relations extracted from bundle assets) has
 no dedicated inspection command; its summary counts surface as an info-level
 metric in `akm health`. Graph data is automatically re-extracted on the first
 `akm improve` cycle after a `DB_VERSION` upgrade. The graph backs `akm show`'s
-`related` list and curate's support refs; it does not affect search ranking.
+`related` list; it does not affect search ranking. Curate's support refs come
+from declared links (`akm show`'s `links`), not from this graph.
 
 ### search
 
@@ -595,10 +596,13 @@ akm curate "learn the release workflow" --from all --format text
 | `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
-enriches each with a preview, run details and up to two graph-related support
-refs. With `search.curateRerank.enabled`, a cross-encoder first reorders the
-top 30 fused candidates (`search.curateRerank.topN`) by name, description and
-the start of each asset's indexed content. Curate includes direct follow-up
+enriches each with a preview, run details and up to two support refs: the
+assets the hit's declared links name (`xrefs:`, `supersededBy:` and the other
+kinds `akm show` lists under `links`), what it links to before what links to
+it, skipping assets curate already selected. With
+`search.curateRerank.enabled`, a cross-encoder first reorders the top 30 fused
+candidates (`search.curateRerank.topN`) by name, description and the start of
+each asset's indexed content. Curate includes direct follow-up
 commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
 immediately inspect or install what it found.
 `--detail` and `--shape agent` both work on curate output; `--shape summary`
