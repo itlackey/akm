@@ -45,9 +45,8 @@ export interface RetrievalScope {
 export function loadRetrievalScope(
   access: LedgerAccess | undefined,
   stashDir: string | undefined,
-  now: number = Date.now(),
 ): RetrievalScope | undefined {
-  const sinceMs = now - daysToMs(USAGE_EVENT_RETENTION_DAYS);
+  const sinceMs = Date.now() - daysToMs(USAGE_EVENT_RETENTION_DAYS);
   const used = new Set<string>();
   const processed = new Set<string>();
   try {

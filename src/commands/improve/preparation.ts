@@ -872,8 +872,9 @@ async function selectLoopCandidates(
   // usage evidence of their own: they pick only what retrieval returned or new
   // material improve never processed (#986). Evaluated once per candidate.
   const fallbackEligible = postCleanupRefs.filter((c) => !validationFailureRefs.has(c.ref));
+  const allowFallbacks = options.requireFeedbackSignal !== true;
   const retrievalScope =
-    scope.mode === "ref"
+    scope.mode === "ref" || !allowFallbacks
       ? undefined
       : loadRetrievalScope({ eventsCtx, ...(persist ? {} : { readOnly: true }) }, primaryStashDir ?? options.stashDir);
   const unscoped = new Set(
@@ -887,7 +888,6 @@ async function selectLoopCandidates(
   // Only a ref no fallback lane may pick anymore is charged to the retrieval gate.
   const outOfScope = new Set(noFeedbackPool.filter((r) => unscoped.has(r.ref)).map((r) => r.ref));
   const retrieval = fetchRetrievalSignals(options, signalFiltered, noFeedbackCandidates, eventsCtx, persist);
-  const allowFallbacks = options.requireFeedbackSignal !== true;
   const proactive = allowFallbacks
     ? selectProactiveMaintenanceLane(args, noFeedbackCandidates, snapshot, retrieval, persist)
     : { proactiveRefs: [] as ImproveEligibleRef[] };
