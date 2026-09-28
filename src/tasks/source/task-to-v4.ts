@@ -3,15 +3,28 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pure, byte-producing task-v3 to task-source-v4 migration planner (spec
- * docs/plans/specs/p2b-input-bindings.md §1.3, §1.7 C-N1, §5). Mirrors
- * `task-to-v3.ts`'s fail-closed ladder exactly: the INPUT side is read as a
- * raw record by a vendored bounded-YAML reader (never the typed
- * `parseTaskV3Yaml`, which would normalize away exactly the value bytes this
- * migrator must preserve — a duration string like "5m", or a bare numeric
- * `timeout`, would be converted to milliseconds by the real parser). The
- * OUTPUT side is validated through the REAL `parseTaskSourceV4` before a
- * "changed" outcome is ever handed back (C-N1, B-71).
+ * Pure, byte-producing task-source migration planner: a v2, v3, or v4 task
+ * file straight to task source v4 (spec docs/plans/specs/p2b-input-bindings.md
+ * §1.3, §1.7 C-N1, §5). One planner, one outcome per file — the former
+ * two-generation chain (legacy task to v3, then v3 to v4, composed by
+ * `scripts/akm-migrate/migrate/task-files.ts`) is gone: a v2 file is read
+ * once and converted directly, with no intermediate v3 file ever written to
+ * disk or reported as its own outcome.
+ *
+ * A v3 document — real, or the v3-shape record a v2 file converts to in
+ * memory — is read as a raw record by a vendored bounded-YAML reader, never
+ * the typed `parseTaskV3Yaml`, which would normalize away exactly the value
+ * bytes this migrator must preserve (a duration string like "5m", or a bare
+ * numeric `timeout`, would be converted to milliseconds by the real parser).
+ * The one exception is a pre-validation gate: every v3-versioned document —
+ * real, or freshly built from v2 — is first checked against the REAL typed
+ * `parseTaskV3Yaml`, exactly as the prior two-generation chain did at each of
+ * its hops, so every blocked reason only the typed parser catches (an
+ * escaping `working-directory` symlink, a GitHub-expression schedule, an
+ * invalid builtin-command `with:` shape, and so on) still blocks here, with
+ * the same reason. The OUTPUT side is validated through the REAL
+ * `parseTaskSourceV4` before a "changed" outcome is ever handed back (C-N1,
+ * B-71).
  *
  * `inputs:` is never invented — the migrator translates structure, not
  * intent (spec §5.3).
@@ -20,8 +33,12 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { isMap, isSeq, LineCounter, parseDocument, stringify as stringifyYaml } from "yaml";
-import { assertBoundedTaskYamlDocument } from "./bounded-document";
-import { classifyTaskV3Uses, type TaskV3UsesTarget } from "./task-source-v3-frozen";
+import { bundleRefToString, parseBundleRef } from "../../core/asset/asset-ref";
+import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
+import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_TIMEOUT_MS } from "../../workflows/resource-limits";
+import { validateTaskId } from "../task-id";
+import { assertBoundedTaskYamlDocument, TASK_V3_MAX_REDACT_NAMES } from "./bounded-document";
+import { classifyTaskV3Uses, parseTaskV3Yaml, type TaskV3UsesTarget } from "./task-source-v3-frozen";
 import { parseTaskSourceV4 } from "./task-source-v4";
 
 export interface TaskToV4FileInput {
@@ -58,16 +75,7 @@ export interface TaskToV4Changed extends TaskToV4OutcomeBase {
 
 export interface TaskToV4Skipped extends TaskToV4OutcomeBase {
   readonly status: "skipped";
-  /**
-   * `pending-v2-to-v3-migration` (spec docs/plans/specs/p4-deletions-closeout.md
-   * §3.2.5): generation 2 (v3 -> task source v4) has nothing to do to a file
-   * that is still v2 — that is generation 1's domain, not a "this file is
-   * malformed" signal. Reported as skipped, not blocked, so a combined
-   * `akm migrate status`/`apply` run does not misreport a v2 file mid-pipeline
-   * as needing manual review; it becomes reachable by this generation once
-   * generation 1 converts it to v3.
-   */
-  readonly reason: "already-v4" | "pending-v2-to-v3-migration";
+  readonly reason: "already-v4";
 }
 
 export interface TaskToV4Blocked extends TaskToV4OutcomeBase {
@@ -81,6 +89,8 @@ export interface TaskToV4MigrationPlan {
   readonly generation: string;
   readonly files: readonly TaskToV4FileOutcome[];
 }
+
+// ── v3 grammar (real v3 input, and the v3-shape record a v2 file builds) ────
 
 /** The closed v3 top-level key set (`src/tasks/source-v3.ts`'s own, vendored — not exported there). */
 const V3_TOP_LEVEL_KEYS = new Set([
@@ -131,6 +141,101 @@ const AKM_HOIST_KEYS = [
   "maxRetries",
 ] as const;
 
+// ── v2 grammar ────────────────────────────────────────────────────────────────
+
+const V2_KEYS = new Set([
+  "version",
+  "name",
+  "description",
+  "when_to_use",
+  "tags",
+  "schedule",
+  "enabled",
+  "workflow",
+  "prompt",
+  "command",
+  "params",
+  "engine",
+  "model",
+  "timeoutMs",
+  "maxSteps",
+  "maxRetries",
+  "llm",
+  "redact",
+]);
+const V2_SHARED_KEYS = new Set([
+  "version",
+  "name",
+  "description",
+  "when_to_use",
+  "tags",
+  "schedule",
+  "enabled",
+  "redact",
+]);
+const V2_LLM_KEYS = new Set([
+  "temperature",
+  "maxTokens",
+  "supportsJsonSchema",
+  "extraParams",
+  "contextLength",
+  "enableThinking",
+  "reasoningEffort",
+]);
+const SAFE_V2_COMMAND_TOKEN = /^[A-Za-z0-9_./:=+,-]+$/;
+const SHELL_ASSIGNMENT_WORD = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/**
+ * V2 executed argv directly, while v3 `run:` enters a host shell. An explicit
+ * path bypasses shell aliases/builtins; `akm` is the one bare executable whose
+ * v3 runtime resolution is contractually pinned to the current installation.
+ */
+function shellStableV2Executable(executable: string): boolean {
+  return executable === "akm" || executable.includes("/");
+}
+/**
+ * `env NAME=value... cmd args...` is env(1) itself resolving and exec'ing
+ * `cmd` via its own PATH search — that lookup happens inside env's execvp()
+ * regardless of whether env was launched by direct execve (v2) or by a host
+ * shell (v3 `run:`). The shell-vs-argv divergence `shellStableV2Executable`
+ * guards against (bare names shadowed by shell aliases/builtins/functions)
+ * therefore does not apply to whatever env ultimately invokes, so skip past
+ * a leading `env` and its `NAME=value` assignments to find the real target.
+ * Returns the original tokens, unchanged, when there is no such target
+ * (e.g. `env` with nothing after its assignments).
+ */
+function skipEnvAssignmentPrefix(tokens: readonly string[]): { tokens: readonly string[]; envWrapped: boolean } {
+  if (tokens[0] !== "env") return { tokens, envWrapped: false };
+  let index = 1;
+  while (index < tokens.length && SHELL_ASSIGNMENT_WORD.test(tokens[index] as string)) index += 1;
+  if (index >= tokens.length) return { tokens, envWrapped: false };
+  return { tokens: tokens.slice(index), envWrapped: true };
+}
+const KNOWN_PROMPT_REF_FAMILIES = new Set([
+  "agents",
+  "commands",
+  "env",
+  "facts",
+  "instructions",
+  "knowledge",
+  "lessons",
+  "memories",
+  "scripts",
+  "secrets",
+  "sessions",
+  "skills",
+  "tasks",
+  "workflows",
+]);
+/**
+ * #902: the one blocker with an unambiguous remedy. The sibling shell-safety
+ * reasons need a case-by-case judgement and stay reason-only.
+ */
+const ARGV_ARRAY_BLOCK_DETAIL =
+  "Manual conversion required: an array `command:` has no safe v3 `run:` string. Rewrite it by hand as " +
+  "`run:` (string) plus `shell:` — see docs/migration/v0.9.1-to-v0.9.2.md for the full v2 to v4 field mapping.";
+
+// ── shared helpers ────────────────────────────────────────────────────────────
+
 function hash(bytes: Uint8Array): string {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
@@ -173,15 +278,22 @@ function exactString(value: unknown, label: string, nonempty = false): string {
   return value;
 }
 
+function optionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return exactString(value, label);
+}
+
 /**
- * Vendored raw-record reader (mirrors `task-to-v3.ts`'s `parseLegacyTaskYaml`
- * exactly). Reading the RAW decoded record — rather than the typed
- * `parseTaskV3Yaml` — keeps every field's original value bytes (a duration
- * string, a bare millisecond integer, an env value's exact type) intact for
- * verbatim re-emission; a typed v3 parse would normalize several of these
- * away (C-N1).
+ * Bounded-YAML raw-record reader shared by every version and every
+ * generation (v2 grammar, real v3, and the v3-shape record a v2 file
+ * builds): reading the RAW decoded record — rather than a typed parser —
+ * keeps every field's original value bytes (a duration string, a bare
+ * millisecond integer, an env value's exact type) intact for verbatim
+ * re-emission; a typed parse would normalize several of these away (C-N1).
+ * Which grammar applies to the result is entirely up to the caller, decided
+ * after `data.version` is known.
  */
-function parseV3RawYaml(input: TaskToV4FileInput): { data: Record<string, unknown>; source: string } {
+function parseRawTaskYaml(input: TaskToV4FileInput): { data: Record<string, unknown>; source: string } {
   let source: string;
   try {
     source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(input.bytes);
@@ -201,7 +313,7 @@ function parseV3RawYaml(input: TaskToV4FileInput): { data: Record<string, unknow
   if (parseWarning) throw new Error(`unsupported YAML construct: ${parseWarning.message}`);
   assertBoundedTaskYamlDocument(document, {
     filePath: input.filePath,
-    sourceLabel: "task v3 migration source",
+    sourceLabel: "task migration source",
     lineCounter,
   });
   return { data: plainRecord(document.toJS({ maxAliasCount: 0 }), "task YAML"), source };
@@ -209,7 +321,7 @@ function parseV3RawYaml(input: TaskToV4FileInput): { data: Record<string, unknow
 
 type ScheduleEntry = Readonly<{ cron: string }>;
 
-/** Convert one already-validated v3 raw record to final task source v4 bytes. */
+/** Convert one already-validated v3 raw record (real or v2-derived) to final task source v4 bytes. */
 function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>): TaskToV4FileOutcome {
   const unknownTop = Object.keys(data).filter((key) => !V3_TOP_LEVEL_KEYS.has(key));
   if (unknownTop.length > 0) {
@@ -436,84 +548,348 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
   });
 }
 
-/** Plan exactly one source file without touching disk. */
+// ── v2 → v3-shape record ───────────────────────────────────────────────────
+
+function validateCommonV2(data: Record<string, unknown>): void {
+  const unknown = Object.keys(data).filter((key) => !V2_KEYS.has(key));
+  if (unknown.length > 0) throw new Error(`unknown v2 field(s): ${unknown.join(", ")}`);
+  exactString(data.schedule, "schedule", true);
+  if (data.enabled !== undefined && typeof data.enabled !== "boolean") throw new Error("enabled must be a boolean");
+  for (const key of ["name", "description", "when_to_use"] as const) optionalString(data[key], key);
+  if (data.tags !== undefined && data.tags !== null) {
+    if (!Array.isArray(data.tags) || data.tags.some((entry) => typeof entry !== "string" || entry.length === 0)) {
+      throw new Error("tags must be an array of non-empty strings");
+    }
+  }
+  if (data.timeoutMs !== undefined && data.timeoutMs !== null) {
+    if (
+      !Number.isInteger(data.timeoutMs) ||
+      (data.timeoutMs as number) < 1 ||
+      (data.timeoutMs as number) > WORKFLOW_MAX_TIMEOUT_MS
+    ) {
+      throw new Error(`timeoutMs must be null or an integer from 1 through ${WORKFLOW_MAX_TIMEOUT_MS}`);
+    }
+  }
+  if (data.redact !== undefined && data.redact !== null) {
+    if (
+      !Array.isArray(data.redact) ||
+      data.redact.length > TASK_V3_MAX_REDACT_NAMES ||
+      data.redact.some((entry) => typeof entry !== "string" || !WORKFLOW_ENV_VAR_NAME_PATTERN.test(entry))
+    ) {
+      throw new Error("redact must contain only bounded environment variable names");
+    }
+  }
+}
+
+function validateTargetFields(data: Record<string, unknown>, allowed: readonly string[]): void {
+  const targetFields = new Set([...allowed, "workflow", "prompt", "command"]);
+  const invalid = Object.keys(data).filter((key) => !V2_SHARED_KEYS.has(key) && !targetFields.has(key));
+  if (invalid.length > 0) throw new Error(`field(s) not valid for this target: ${invalid.join(", ")}`);
+}
+
+function validateV2Llm(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  const llm = plainRecord(value, "llm");
+  const unknown = Object.keys(llm).filter((key) => !V2_LLM_KEYS.has(key));
+  if (unknown.length > 0) throw new Error(`llm has unknown field(s): ${unknown.join(", ")}`);
+  if (llm.temperature !== undefined && (typeof llm.temperature !== "number" || !Number.isFinite(llm.temperature))) {
+    throw new Error("llm.temperature must be a finite number");
+  }
+  for (const key of ["maxTokens", "contextLength"] as const) {
+    if (llm[key] !== undefined && (!Number.isInteger(llm[key]) || (llm[key] as number) <= 0)) {
+      throw new Error(`llm.${key} must be a positive integer`);
+    }
+  }
+  for (const key of ["supportsJsonSchema", "enableThinking"] as const) {
+    if (llm[key] !== undefined && typeof llm[key] !== "boolean") throw new Error(`llm.${key} must be a boolean`);
+  }
+  if (llm.reasoningEffort !== undefined && (typeof llm.reasoningEffort !== "string" || !llm.reasoningEffort.trim())) {
+    throw new Error("llm.reasoningEffort must be a non-empty string");
+  }
+  if (llm.extraParams !== undefined) {
+    const issue = validateExtraParams(llm.extraParams)[0];
+    if (issue) throw new Error(formatExtraParamsIssue("llm.extraParams", issue));
+  }
+  return llm;
+}
+
+function commonAkm(data: Record<string, unknown>): Record<string, unknown> {
+  const akm: Record<string, unknown> = {
+    schedule: exactString(data.schedule, "schedule", true),
+    enabled: data.enabled === undefined ? true : data.enabled,
+  };
+  for (const key of ["description", "when_to_use", "tags"] as const) {
+    if (data[key] !== undefined && data[key] !== null) akm[key] = data[key];
+  }
+  return akm;
+}
+
+function addRuntimeOverrides(data: Record<string, unknown>, akm: Record<string, unknown>): void {
+  for (const key of ["engine", "model"] as const) {
+    const value = optionalString(data[key], key);
+    if (value) akm[key] = value;
+  }
+  const llm = validateV2Llm(data.llm);
+  if (llm !== undefined) akm.inference = llm;
+  if (data.timeoutMs !== undefined) akm.timeout = data.timeoutMs;
+  if (data.redact !== undefined && data.redact !== null) {
+    akm.redact = [...new Set(data.redact as string[])];
+  }
+}
+
+function addSharedNonPromptOverrides(data: Record<string, unknown>, akm: Record<string, unknown>): void {
+  if (data.timeoutMs !== undefined) akm.timeout = data.timeoutMs;
+  if (data.redact !== undefined && data.redact !== null) {
+    akm.redact = [...new Set(data.redact as string[])];
+  }
+}
+
+function promptSourceKind(raw: string): "file" | "agent" | "command" | "other-ref" | "inline" {
+  const trimmed = raw.trim();
+  if (
+    trimmed.startsWith("./") ||
+    trimmed.startsWith("../") ||
+    path.isAbsolute(trimmed) ||
+    /^[A-Za-z]:[\\/]/.test(trimmed)
+  ) {
+    return "file";
+  }
+  try {
+    const parsed = parseBundleRef(trimmed);
+    const family = parsed.conceptId.split("/", 1)[0] ?? "";
+    if (bundleRefToString(parsed) !== trimmed || !parsed.conceptId.includes("/")) {
+      return "inline";
+    }
+    if (!KNOWN_PROMPT_REF_FAMILIES.has(family)) return parsed.bundle === undefined ? "inline" : "other-ref";
+    if (family === "agents") return "agent";
+    if (family === "commands") return "command";
+    return "other-ref";
+  } catch {
+    return "inline";
+  }
+}
+
+/**
+ * Convert one already-normalized legacy record to a v3-shape record, in
+ * memory — never written to disk, never reported as its own outcome. Returns
+ * a blocked reason string in place of the record when the v2 document has no
+ * safe v4 representation.
+ */
+function migratedObject(data: Record<string, unknown>): Record<string, unknown> | string {
+  validateCommonV2(data);
+  const targets = ["workflow", "prompt", "command"].filter(
+    (key) => Object.hasOwn(data, key) && data[key] !== null && data[key] !== "",
+  );
+  if (targets.length !== 1) throw new Error("v2 task must declare exactly one of workflow, prompt, or command");
+  const output: Record<string, unknown> = { version: 3 };
+  if (data.name !== undefined && data.name !== null) output.name = data.name;
+  const akm = commonAkm(data);
+
+  if (targets[0] === "workflow") {
+    validateTargetFields(data, ["params", "timeoutMs", "maxSteps", "maxRetries"]);
+    const ref = exactString(data.workflow, "workflow", true).trim();
+    let target: TaskV3UsesTarget;
+    try {
+      target = classifyTaskV3Uses(ref);
+    } catch {
+      throw new Error("workflow is not a canonical v3 asset ref");
+    }
+    if (target.kind !== "workflow") throw new Error("workflow target is not a workflows/ ref");
+    output.uses = ref;
+    if (data.params !== undefined && data.params !== null) {
+      const params = plainRecord(data.params, "params");
+      output.with = params;
+    }
+    if (data.maxSteps !== undefined && data.maxSteps !== null) {
+      if (!Number.isSafeInteger(data.maxSteps) || (data.maxSteps as number) < 1)
+        throw new Error("maxSteps must be positive");
+      akm.maxSteps = data.maxSteps;
+    }
+    if (data.maxRetries !== undefined && data.maxRetries !== null) {
+      if (!Number.isSafeInteger(data.maxRetries) || (data.maxRetries as number) < 0) {
+        throw new Error("maxRetries must be a non-negative integer");
+      }
+      akm.maxRetries = data.maxRetries;
+    }
+    addSharedNonPromptOverrides(data, akm);
+  } else if (targets[0] === "prompt") {
+    validateTargetFields(data, ["engine", "model", "timeoutMs", "llm"]);
+    const prompt = exactString(data.prompt, "prompt", true).trim();
+    const kind = promptSourceKind(prompt);
+    if (kind === "file") return "dynamic-file-read-cannot-be-inlined-without-changing-semantics";
+    if (kind === "agent") return "agent-ref-has-persona-but-no-command-work";
+    if (kind === "other-ref") return "non-command-asset-has-no-v3-command-ref-equivalent";
+    if (kind === "command") output.uses = prompt;
+    else {
+      output.uses = "akm/command";
+      output.with = { content: prompt };
+    }
+    addRuntimeOverrides(data, akm);
+  } else {
+    validateTargetFields(data, ["timeoutMs"]);
+    if (Array.isArray(data.command)) return "argv-array-has-no-portable-shell-string";
+    const command = exactString(data.command, "command", true).trim();
+    if (/['"\\]/.test(command)) return "shell-quoting-changes-v2-whitespace-split-semantics";
+    const tokens = command.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0 || tokens.some((token) => !SAFE_V2_COMMAND_TOKEN.test(token))) {
+      return "shell-operators-change-v2-literal-argv-semantics";
+    }
+    const { tokens: targetTokens, envWrapped } = skipEnvAssignmentPrefix(tokens);
+    const executable = targetTokens[0] as string;
+    if (SHELL_ASSIGNMENT_WORD.test(executable) || (!envWrapped && !shellStableV2Executable(executable))) {
+      return "shell-command-resolution-changes-v2-literal-argv-semantics";
+    }
+    output.run = tokens.join(" ");
+    addSharedNonPromptOverrides(data, akm);
+  }
+  output.akm = akm;
+  return output;
+}
+
+function isReason(value: Record<string, unknown> | string): value is string {
+  return typeof value === "string";
+}
+
+/**
+ * v2 straight to v4: build the v3-shape record in memory, validate it
+ * through the REAL typed v3 parser exactly as the prior v2-to-v3 generation
+ * did (the same safety net, now inline), then hoist it to v4 through the
+ * same `planV3DataToV4` every real v3 file goes through. `before`/
+ * `beforeHash` on the result are always the original v2 bytes (`base(input)`,
+ * computed from the untouched `input`).
+ */
+function planV2DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>): TaskToV4FileOutcome {
+  if (!input.writable || input.onDiskWritable === false) {
+    return blocked(
+      input,
+      "read-only-source",
+      !input.writable ? "the owning source is not writable" : "the source file or publication directory is read-only",
+    );
+  }
+  try {
+    validateTaskId(path.basename(input.filePath, ".yml"));
+  } catch (cause) {
+    return blocked(input, "invalid-v2-task", causeMessage(cause));
+  }
+  let migrated: Record<string, unknown> | string;
+  try {
+    migrated = migratedObject(data);
+  } catch (cause) {
+    return blocked(input, "invalid-v2-task", causeMessage(cause));
+  }
+  if (isReason(migrated)) {
+    const detail = migrated === "argv-array-has-no-portable-shell-string" ? ARGV_ARRAY_BLOCK_DETAIL : undefined;
+    return blocked(input, migrated, detail);
+  }
+
+  const v3Yaml = stringifyYaml(migrated);
+  try {
+    parseTaskV3Yaml({
+      yaml: v3Yaml,
+      filePath: input.filePath,
+      ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
+    });
+  } catch (cause) {
+    return blocked(input, "generated-v3-validation-failed", causeMessage(cause));
+  }
+
+  let v3Data: Record<string, unknown>;
+  try {
+    ({ data: v3Data } = parseRawTaskYaml({ ...input, bytes: Buffer.from(v3Yaml, "utf8") }));
+  } catch (cause) {
+    return blocked(input, "invalid-task-yaml", causeMessage(cause));
+  }
+  const v4Outcome = planV3DataToV4(input, v3Data);
+  return v4Outcome.status === "changed" ? { ...v4Outcome, reason: "task-converted" } : v4Outcome;
+}
+
+// ── v4 (cleanup only) ───────────────────────────────────────────────────────
+
+/** A v4 document: strip 0.9.15's retired per-schedule `enabled`, if present; otherwise already current. */
+function planV4Cleanup(input: TaskToV4FileInput, source: string): TaskToV4FileOutcome {
+  const document = parseDocument(source, { uniqueKeys: true });
+  const schedule = document.get("schedule", true);
+  let removed = false;
+  if (isSeq(schedule)) {
+    for (const entry of schedule.items) {
+      if (!isMap(entry) || !entry.has("enabled")) continue;
+      entry.delete("enabled");
+      removed = true;
+    }
+  }
+  if (removed) {
+    if (!input.writable || input.onDiskWritable === false) {
+      return blocked(
+        input,
+        "read-only-source",
+        !input.writable ? "the owning source is not writable" : "the source file or publication directory is read-only",
+      );
+    }
+    const after = Buffer.from(document.toString(), "utf8");
+    try {
+      parseTaskSourceV4({
+        yaml: after.toString("utf8"),
+        filePath: input.filePath,
+        ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
+      });
+    } catch (cause) {
+      return blocked(input, "generated-v4-validation-failed", causeMessage(cause));
+    }
+    return Object.freeze({
+      status: "changed" as const,
+      ...base(input),
+      reason: "source-enablement-removed" as const,
+      after,
+      afterHash: hash(after),
+      notice: "Removed source-owned schedule enablement; scheduler activation is now host-local config.",
+    });
+  }
+  try {
+    parseTaskSourceV4({
+      yaml: source,
+      filePath: input.filePath,
+      ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
+    });
+    return Object.freeze({ status: "skipped" as const, ...base(input), reason: "already-v4" as const });
+  } catch (cause) {
+    return blocked(input, "invalid-v4-task", causeMessage(cause));
+  }
+}
+
+// ── dispatcher ───────────────────────────────────────────────────────────────
+
+/** Plan exactly one source file — v2, v3, or v4 — straight to v4, without touching disk. */
 export function planTaskToV4File(input: TaskToV4FileInput): TaskToV4FileOutcome {
   let data: Record<string, unknown>;
   let source: string;
   try {
-    ({ data, source } = parseV3RawYaml(input));
+    ({ data, source } = parseRawTaskYaml(input));
   } catch (cause) {
     return blocked(input, "invalid-task-yaml", causeMessage(cause));
   }
 
   if (data.version === 4) {
-    const document = parseDocument(source, { uniqueKeys: true });
-    const schedule = document.get("schedule", true);
-    let removed = false;
-    if (isSeq(schedule)) {
-      for (const entry of schedule.items) {
-        if (!isMap(entry) || !entry.has("enabled")) continue;
-        entry.delete("enabled");
-        removed = true;
-      }
-    }
-    if (removed) {
-      if (!input.writable || input.onDiskWritable === false) {
-        return blocked(
-          input,
-          "read-only-source",
-          !input.writable
-            ? "the owning source is not writable"
-            : "the source file or publication directory is read-only",
-        );
-      }
-      const after = Buffer.from(document.toString(), "utf8");
-      try {
-        parseTaskSourceV4({
-          yaml: after.toString("utf8"),
-          filePath: input.filePath,
-          ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
-        });
-      } catch (cause) {
-        return blocked(input, "generated-v4-validation-failed", causeMessage(cause));
-      }
-      return Object.freeze({
-        status: "changed" as const,
-        ...base(input),
-        reason: "source-enablement-removed" as const,
-        after,
-        afterHash: hash(after),
-        notice: "Removed source-owned schedule enablement; scheduler activation is now host-local config.",
-      });
-    }
+    return planV4Cleanup(input, source);
+  }
+
+  if (data.version === 3) {
     try {
-      parseTaskSourceV4({
+      parseTaskV3Yaml({
         yaml: source,
         filePath: input.filePath,
         ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
       });
-      return Object.freeze({ status: "skipped" as const, ...base(input), reason: "already-v4" as const });
     } catch (cause) {
-      return blocked(input, "invalid-v4-task", causeMessage(cause));
+      return blocked(input, "invalid-v3-task", causeMessage(cause));
     }
+    return planV3DataToV4(input, data);
   }
 
-  // Not this generation's document to validate — v2 grammar is entirely
-  // generation 1's domain (task-to-v3.ts). Reported skipped, not blocked
-  // (see TaskToV4Skipped's own header).
   if (data.version === 2) {
-    return Object.freeze({
-      status: "skipped" as const,
-      ...base(input),
-      reason: "pending-v2-to-v3-migration" as const,
-    });
+    return planV2DataToV4(input, data);
   }
 
-  if (data.version !== 3) {
-    return blocked(input, "unsupported-task-version", `expected version 2, 3, or 4, got ${String(data.version)}`);
-  }
-
-  return planV3DataToV4(input, data);
+  return blocked(input, "unsupported-task-version", `expected version 2, 3, or 4, got ${String(data.version)}`);
 }
 
 function generationFor(files: readonly TaskToV4FileOutcome[]): string {

@@ -113,7 +113,6 @@ import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import { readTaskHistory } from "../../src/tasks/run/task-history";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
-import { planTaskToV3File } from "../../src/tasks/source/task-to-v3";
 import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   type IsolatedAkmStorage,
@@ -133,10 +132,7 @@ function readFixture(name: string): string {
 
 function migrateLegacyTask(filePath: string, yaml: string) {
   const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
-  const v3 = planTaskToV3File(input);
-  const v3Bytes = v3.status === "changed" ? v3.after : input.bytes;
-  expect(v3.status === "changed" || v3.reason === "already-v3").toBe(true);
-  const v4 = planTaskToV4File({ ...input, bytes: v3Bytes });
+  const v4 = planTaskToV4File(input);
   expect(v4.status).toBe("changed");
   if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
   return parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
