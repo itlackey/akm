@@ -6,6 +6,40 @@
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+// #956 round 3: install the signal-forwarding scaffolding before ANYTHING
+// else in this process — the Node-version check, the bun-version probe,
+// spawning the child — gets a chance to run. See the matching fix and
+// comment in scripts/node-runtime/akm: the three `process.once` listeners
+// used to go up only after spawn() (below) returned; a scheduler preemption
+// right after that syscall was enough for a signal to arrive with no
+// listener yet, and the runtime's default (process-terminating) disposition
+// killed the launcher outright, never reaching the child at all. `child`
+// starts unset: a signal that arrives before it exists is queued and
+// flushed the moment it does.
+let child;
+let childExited = false;
+const pendingSignals = [];
+const forwardSignal = (signal) => {
+  if (childExited) return;
+  if (!child) {
+    pendingSignals.push(signal);
+    return;
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // Child exited in the race between the check above and here.
+  }
+};
+// `.once`, not `.on`: see the matching comment in scripts/node-runtime/akm —
+// a persistent `.on` listener would still be registered when the
+// `process.kill(process.pid, result.signal)` re-raise below runs,
+// suppressing the OS default disposition and leaving this launcher exiting
+// 0 instead of reflecting the child's signal.
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.once(signal, () => forwardSignal(signal));
+}
+
 if (!process.versions.bun) {
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
   if (major < 22) {
@@ -34,7 +68,7 @@ const nodeEntry = fileURLToPath(new URL("./scripts/akm-migrate-node.js", import.
   const command = process.versions.bun ? process.execPath : useBun ? "bun" : process.execPath;
   const entry = process.versions.bun || useBun ? bunEntry : nodeEntry;
   const result = await new Promise((resolve) => {
-    const child = spawn(command, [entry, ...process.argv.slice(2)], {
+    child = spawn(command, [entry, ...process.argv.slice(2)], {
       stdio: "inherit",
       env,
       // #956: own process group on POSIX so the launcher's forward below is
@@ -43,27 +77,12 @@ const nodeEntry = fileURLToPath(new URL("./scripts/akm-migrate-node.js", import.
       // directly — see the matching comment in scripts/node-runtime/akm.
       detached: process.platform !== "win32",
     });
-    let childExited = false;
     child.once("exit", () => {
       childExited = true;
     });
-    const forwardSignal = (signal) => {
-      if (childExited) return;
-      try {
-        child.kill(signal);
-      } catch {
-        // Child exited in the race between the check above and here.
-      }
-    };
-    // `.once`, not `.on`: see the matching comment in
-    // scripts/node-runtime/akm — a persistent `.on` listener would still be
-    // registered when the `process.kill(process.pid, result.signal)`
-    // re-raise below runs, suppressing the OS default disposition and
-    // leaving this launcher exiting 0 instead of reflecting the child's
-    // signal.
-    for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-      process.once(signal, () => forwardSignal(signal));
-    }
+    // Flush whatever arrived in the (now much smaller) window between the
+    // listeners going up and the child existing to receive them.
+    for (const signal of pendingSignals.splice(0)) forwardSignal(signal);
     child.once("error", (error) => resolve({ error }));
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
