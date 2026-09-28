@@ -129,14 +129,17 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
 
 /**
  * `--require-engines`, live: probe each connection's real completion path
- * (a gateway can list a model whose completion route is dead, #980) with a 3s
- * bound, once per endpoint + model. Returns each target's latency for the run
- * result (R17); an unreachable one fails the run.
+ * (a gateway can list a model whose completion route is dead, #980), once per
+ * endpoint + model, bounded by the connection's own request timeout like any
+ * other request on it. A local server busy with another job queues the probe
+ * behind that job; a fixed 3s bound failed every scheduled improve run on
+ * 2026-09-27 against a reachable endpoint. Returns each target's latency for
+ * the run result (R17); an unreachable one fails the run.
  */
 export async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
   probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
-    probeLlmReachable(connection, 3_000),
+    probeLlmReachable(connection),
 ): Promise<EngineProbeOutcome[]> {
   const targets = collectRequiredEngineTargets(plan);
   if (targets.length === 0) return [];
@@ -169,6 +172,7 @@ export async function assertRequiredEnginesReachable(
     throw new ConfigError(
       `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
       "LLM_NOT_CONFIGURED",
+      "Check that each listed endpoint is up and serves its model. The probe is one short completion, bounded by the engine's timeoutMs.",
     );
   }
   return probed.map((item) => ({

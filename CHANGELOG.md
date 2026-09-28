@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm improve --require-engines` no longer skips a run because the LLM
+  endpoint is busy.** Its reachability probe, one short completion, gave up
+  after 3 seconds, so a local server busy with another job looked
+  unreachable and the whole scheduled run failed (all four scheduled runs on
+  2026-09-27). The probe now waits as long as the engine's own `timeoutMs`,
+  like any other request on that connection, and the error's hint says to
+  check the endpoint rather than to run `akm setup`.
+  (`src/commands/improve/improve-cli.ts`)
+
 ### Changed
 
 - **akm reads only task source v4.** A `version: 2` or `version: 3` task

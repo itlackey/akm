@@ -187,6 +187,44 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     );
   });
 
+  test("the default probe waits as long as the connection's own timeout, so a busy endpoint is reachable", async () => {
+    // A local server busy with another job queues the probe behind it; a fixed
+    // 3s bound skipped every scheduled improve run on 2026-09-27 against a
+    // reachable endpoint.
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        await Bun.sleep(3_500);
+        return Response.json({ choices: [{ message: { role: "assistant", content: "ok" } }] });
+      },
+    });
+    try {
+      const endpoint = `http://127.0.0.1:${server.port}/v1/chat/completions`;
+      const plan = {
+        processes: {
+          reflect: {
+            enabled: true,
+            config: {},
+            runner: {
+              kind: "llm",
+              engine: "busy",
+              connection: { provider: "openai", endpoint, model: "busy-model", timeoutMs: 10_000 },
+            },
+          },
+        },
+        triageJudgment: null,
+      } as unknown as ResolvedImprovePlan;
+
+      const outcomes = await assertRequiredEnginesReachable(plan);
+
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]?.reachable).toBe(true);
+      expect(outcomes[0]?.latencyMs).toBeGreaterThanOrEqual(3_000);
+    } finally {
+      server.stop(true);
+    }
+  }, 20_000);
+
   test("returns an empty array when there are no required-engine targets", async () => {
     const plan: ResolvedImprovePlan = { processes: {}, triageJudgment: null } as unknown as ResolvedImprovePlan;
     const probeReachable = mock(async () => ({ reachable: true }));
