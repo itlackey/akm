@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The unused `utility_scores_scoped` index table is gone.** It shipped in
+  0.9.17-alpha.5 for per-project scoped utility scores, but no code ever read
+  or wrote a row. An index database drops it on its next writable open, the
+  same way other retired derived tables are dropped, with no layout-version
+  change. (`src/storage/repositories/index-schema.ts`)
+
+### Fixed
+
+- **`index.metadataEnhance`'s default is no longer contradicted by dead
+  code.** Metadata enhancement has always defaulted to off
+  (`isLlmFeatureEnabled`); a second, unreachable code path in
+  `isProcessEnabled` claimed the opposite default and had no caller. Removed,
+  so one default remains. (`src/llm/feature-gate.ts`)
+- **Eval tooling and docs catch up to the current config and index shape.**
+  `scripts/akm-eval/src/curate-bench.ts` wrote the retired `sources` config
+  key and called a nonexistent `akm index --dir`; it now seeds its sandbox
+  the same way the other akm-eval scripts and integration tests do, and
+  drops `--dir`. The graph A/B ablation harness
+  (`scripts/akm-eval/src/graph-ablation.ts`) planted its "graph off" config
+  where the sandboxed `akm` never read it, with config keys that didn't gate
+  anything (one of them a type error); it now writes
+  `index.graph.enabled: false` to the sandbox's actual `AKM_CONFIG_DIR`.
+  Updated `scripts/akm-eval/README.md` and `docs/maintainers/eval.md` to
+  match, and corrected stale `docs/architecture/architecture.md` references
+  to `db-backup`, `staleness-detect`, and `src/commands/graph/`.
+
 ## [0.9.17-alpha.5] - 2026-09-27
 
 `akm show` works again for a memory that has a `.derived.md` child (835 of them
