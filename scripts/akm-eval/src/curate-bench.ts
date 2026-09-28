@@ -31,7 +31,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   type CurateCaseMetrics,
@@ -39,6 +38,7 @@ import {
   scoreCurateCase,
   summarizeCurateMetrics,
 } from "./curate-metrics";
+import { createSandbox } from "./sources/sandbox";
 
 interface CliOptions {
   akm: string;
@@ -141,31 +141,22 @@ function benchOne(cmdStr: string, fixture: string, judgments: JudgmentsFile): {
   summary: ReturnType<typeof summarizeCurateMetrics>;
 } {
   const cmd = cmdStr.split(/\s+/).filter(Boolean);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-curate-bench-"));
-  const stash = path.join(root, "stash");
-  const home = path.join(root, "home");
-  const data = path.join(root, "data");
-  const config = path.join(root, "config");
+  // `createSandbox` carves out HOME/XDG/AKM_*_DIR under a tmpdir and points
+  // AKM_BUNDLE_DIR at the copied fixture — no `config.json` needed: akm
+  // resolves the working stash from AKM_BUNDLE_DIR alone (`resolveStashDir`),
+  // and a written `sources[]` key is rejected at config load (retired in
+  // favor of `bundles`).
+  const sandbox = createSandbox({ fixture, inheritEnv: true, prefix: "akm-curate-bench-" });
   try {
-    fs.cpSync(fixture, stash, { recursive: true });
-    fs.rmSync(path.join(stash, "judgments.json"), { force: true });
-    for (const d of [home, data, path.join(config, "akm")]) fs.mkdirSync(d, { recursive: true });
-    fs.writeFileSync(
-      path.join(config, "akm", "config.json"),
-      JSON.stringify({ semanticSearchMode: "auto", sources: [{ type: "filesystem", path: stash }], registries: [] }, null, 2),
-    );
+    fs.rmSync(path.join(sandbox.stashDir, "judgments.json"), { force: true });
     const env: Record<string, string> = {
-      ...(process.env as Record<string, string>),
+      ...sandbox.env,
       AKM_EMBED_DETERMINISTIC: "1",
       AKM_EVENT_SOURCE: "audit",
-      HOME: home,
-      AKM_BUNDLE_DIR: stash,
-      AKM_DATA_DIR: data,
-      XDG_CONFIG_HOME: config,
-      XDG_CACHE_HOME: path.join(home, ".cache"),
-      XDG_DATA_HOME: path.join(home, ".local", "share"),
     };
-    const idx = spawnSync(cmd[0], [...cmd.slice(1), "index", "--dir", stash], { encoding: "utf8", env });
+    // No `--dir`: `akm index` has no such flag — it always indexes the
+    // configured/implicit bundle (here, AKM_BUNDLE_DIR).
+    const idx = spawnSync(cmd[0], [...cmd.slice(1), "index"], { encoding: "utf8", env });
     if (idx.status !== 0) {
       throw new Error(`akm index failed (exit ${idx.status}): ${(idx.stderr ?? "").trim()}`);
     }
@@ -179,7 +170,7 @@ function benchOne(cmdStr: string, fixture: string, judgments: JudgmentsFile): {
     }
     return { perCase, summary: summarizeCurateMetrics(metrics) };
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    sandbox.cleanup();
   }
 }
 
