@@ -17,14 +17,11 @@
  * drive `curateSearchResults` with a fixture search response.
  */
 
-import fs from "node:fs";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { getIndexPassConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import { searchHitContent } from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
@@ -32,7 +29,6 @@ import {
   getSearchHitAttribution,
   usageEventAttributionMetadata,
 } from "../../indexer/search/search-attribution";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
@@ -47,7 +43,6 @@ import type {
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
-import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -344,11 +339,6 @@ async function enrichCuratedStashHit(
     shown = undefined;
   }
 
-  // #624-P3: when lazy graph extraction is opted in, enqueue an ungraphed
-  // asset for a later pass to extract. Fire-and-forget, non-blocking, NO inline
-  // extraction and NO LLM call here. Default-off (flag unset) = byte-identical.
-  if (shown?.path) maybeEnqueueLazyGraph(shown.path);
-
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
   const supportRefs = buildCurateSupportRefs(shown?.related?.hits, selectedRefs, hit.ref);
@@ -375,46 +365,6 @@ async function enrichCuratedStashHit(
   };
   copySearchHitAttribution(hit, item, item.description);
   return item;
-}
-
-/**
- * #624-P3 — enqueue an ungraphed asset for lazy graph extraction when the
- * `index.graph.lazyGraphExtraction` flag is on. Pure side-effect, fully
- * best-effort: any failure (config, fs, db) is swallowed so curate never fails
- * on it. NO LLM call and NO inline extraction — only a cheap queue insert.
- * Default-off (flag unset) returns immediately = byte-identical behavior.
- */
-function maybeEnqueueLazyGraph(assetPath: string): void {
-  try {
-    const config = loadConfig();
-    if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction !== true) return;
-
-    const sources = resolveSourceEntries();
-    const source = findSourceForPath(assetPath, sources);
-    const stashRoot = source?.path;
-    if (!stashRoot) return;
-
-    let raw: string;
-    try {
-      raw = fs.readFileSync(assetPath, "utf8");
-    } catch {
-      return;
-    }
-    const body = parseFrontmatter(raw).content.trim();
-    if (!body) return;
-    const bodyHash = computeBodyHash(body);
-
-    withIndexDb(
-      (db) => {
-        if (!hasGraphData(db, stashRoot, assetPath)) {
-          enqueueGraphExtraction(db, stashRoot, assetPath, bodyHash, 0);
-        }
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-  }
 }
 
 function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {

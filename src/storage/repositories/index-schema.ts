@@ -11,8 +11,9 @@
  * for columns added after a table first shipped, drops of retired derived
  * tables and columns, and one in-place rebuild of the (derived, cheap) FTS
  * table when its layout is older than this release's. It never drops
- * `entries`, `embeddings`, `utility_scores`, `graph_*`, or
- * `llm_enrichment_cache` to cross a version boundary; the only from-scratch
+ * `entries`, `embeddings`, `utility_scores`, the extracted graph
+ * (`graph_meta`, `graph_files`, `graph_file_*`), or `llm_enrichment_cache`
+ * to cross a version boundary; the only from-scratch
  * rebuild is the SQLITE_CORRUPT path in `index-connection.ts`. A layout newer
  * than this release's is refused, naming the upgrade
  * ({@link newerIndexLayoutError}).
@@ -84,7 +85,7 @@ const REGISTRY_INDEX_CACHE_DDL = `
 
 /**
  * Create the graph-extraction tables (`graph_meta`/`graph_files`/`graph_file_entities`/
- * `graph_file_relations`/`graph_extraction_queue`).
+ * `graph_file_relations`).
  *
  * graph_files is self-keyed on (stash_root, file_path, body_hash) and is not
  * tied to entries.id (#624-P1): re-upserting an entries row never disturbs the
@@ -163,21 +164,6 @@ function ensureGraphTables(db: Database): void {
       FOREIGN KEY (stash_root, file_path, body_hash)
         REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
     );
-
-    -- #624-P3: lazy graph-extraction queue. Standalone table (NO FK to
-    -- graph_files — a queued file by definition has no graph row yet).
-    -- Idempotent on (stash_root, file_path); drained highest-priority-first.
-    CREATE TABLE IF NOT EXISTS graph_extraction_queue (
-      stash_root TEXT NOT NULL,
-      file_path  TEXT NOT NULL,
-      body_hash  TEXT NOT NULL,
-      queued_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      priority   INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (stash_root, file_path)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_graph_extraction_queue_drain
-      ON graph_extraction_queue(stash_root, priority DESC, queued_at);
   `);
 }
 
@@ -314,14 +300,16 @@ export function ensureSchema(db: Database): void {
   // Retired derived tables: the workflow IR cache, the pre-v22 FTS dirty
   // queue, the #955 embedding salvage staging table (embeddings now carry
   // their model per row, so nothing is copied aside and reused), the
-  // fragment FTS table search stopped reading (layout 24 and earlier), and
-  // the per-project scoped utility table (IR-7a): it shipped in alpha.5 but
-  // no code ever read or wrote a row, so there is nothing to preserve.
+  // fragment FTS table search stopped reading (layout 24 and earlier), the
+  // per-project scoped utility table (IR-7a: it shipped, but no code ever read
+  // or wrote a row), and the lazy graph-extraction queue (extraction runs only
+  // in improve).
   db.exec("DROP TABLE IF EXISTS workflow_documents");
   db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
   db.exec("DROP TABLE IF EXISTS embedding_salvage");
   db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
   db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
+  db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
 
   // One float32 BLOB per entry, searched by an exact scan
   // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under

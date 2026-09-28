@@ -847,3 +847,8 @@ profile identities.
 `embedding.chunkSize` was never read by anything under `src/` (#954), so a
 config that still sets it is simply ignored — it still loads, unvalidated
 and without warning.
+
+`index.graph.lazyGraphExtraction` is retired in 0.9.17: `akm show` and
+`akm curate` no longer extract or queue graph work, and graph extraction runs
+only in `akm improve`. A config that still sets it loads; the key is named
+once as unknown, and `akm migrate apply` removes it.

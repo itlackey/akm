@@ -418,7 +418,6 @@ this is a purpose summary:
 | `graph_files` | per-file graph-extraction status |
 | `graph_file_entities` | extracted entities per file |
 | `graph_file_relations` | extracted entity relations per file |
-| `graph_extraction_queue` | lazy, priority-ordered backlog of files awaiting graph extraction |
 
 `usage_events` (search/show/feedback telemetry) and workflow runtime state
 both live in `state.db`, not `index.db`, so rebuildable search state remains

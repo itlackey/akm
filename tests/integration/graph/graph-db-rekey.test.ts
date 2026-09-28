@@ -12,8 +12,8 @@
  * ON DELETE CASCADE, so deleting the entries row wipes the graph rows — this
  * test proves the new self-keyed shape keeps them.
  *
- * These tests cover the self-keyed shape: composite key, hasGraphData,
- * and graph-data survival across a reindex.
+ * These tests cover the self-keyed shape: composite key and graph-data
+ * survival across a reindex.
  *
  * Isolation: no host state. A temp .db file per test; XDG sandboxed so any
  * config read inside openIndexDatabase cannot touch the developer's real config.
@@ -21,9 +21,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import * as graphDb from "../../../src/indexer/db/graph-db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
+import type { GraphFile, GraphFileNode } from "../../../src/indexer/graph/graph-types";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
+import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import {
   deleteEntriesByIds,
@@ -32,14 +33,6 @@ import {
 } from "../../../src/storage/repositories/index-entries-repository";
 import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { DB_VERSION, GRAPH_SCHEMA_VERSION } from "../../../src/storage/repositories/index-schema";
-
-// hasGraphData (P1 deliverable) is referenced via the namespace for ESM-safety;
-// the cast resolves to the real export from graph-db.ts.
-const hasGraphData = (graphDb as { hasGraphData?: (db: Database, stashRoot: string, filePath: string) => boolean })
-  .hasGraphData as (db: Database, stashRoot: string, filePath: string) => boolean;
-
-import type { GraphFile, GraphFileNode } from "../../../src/indexer/graph/graph-types";
-import type { Database } from "../../../src/storage/database";
 import { makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Temp / env management ───────────────────────────────────────────────────
@@ -50,6 +43,14 @@ import { makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 // Both register their cleanups, drained in afterEach.
 
 const cleanups: Array<() => void> = [];
+
+/** Whether a graph_files row exists for the path; a count, so a missing row reads false on every driver. */
+function hasGraphRow(db: Database, stashRoot: string, filePath: string): boolean {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n FROM graph_files WHERE stash_root = ? AND file_path = ?")
+    .get(stashRoot, filePath) as { n: number };
+  return row.n > 0;
+}
 
 function tmpDbPath(): string {
   const { dir, cleanup } = makeSandboxDir("akm-rekey-db");
@@ -222,8 +223,8 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
       expect(after?.entities).toContain("entity-two");
       expect(after?.relations.length).toBe(1);
 
-      // hasGraphData (new P1 helper) reports true post-reindex.
-      expect(hasGraphData(db, STASH, file)).toBe(true);
+      // The graph row survives the reindex.
+      expect(hasGraphRow(db, STASH, file)).toBe(true);
     } finally {
       closeDatabase(db);
     }
@@ -347,6 +348,35 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
     }
   });
 
+  // AC#7 — the lazy-extraction queue is retired (GR-D6/D7): a writable open
+  // drops the table an older release created, with any rows it still held.
+  test("AC#7: a writable open drops the retired graph_extraction_queue table", () => {
+    const dbPath = tmpDbPath();
+    let db = openIndexDatabase(dbPath);
+    db.exec(`CREATE TABLE IF NOT EXISTS graph_extraction_queue (
+      stash_root TEXT NOT NULL,
+      file_path  TEXT NOT NULL,
+      body_hash  TEXT NOT NULL,
+      queued_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      priority   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (stash_root, file_path)
+    )`);
+    db.prepare("INSERT INTO graph_extraction_queue (stash_root, file_path, body_hash) VALUES (?, ?, ?)").run(
+      STASH,
+      path.join(STASH, "queued.md"),
+      "queued-hash",
+    );
+    closeDatabase(db);
+
+    db = openIndexDatabase(dbPath);
+    try {
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE name = 'graph_extraction_queue'").all();
+      expect(tables).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   // AC#6 — an older layout marker is migrated in place: the extracted graph,
   // the entries and their vectors all survive the writable reopen.
   test("AC#6: an older layout keeps derived entries, embeddings, and graph data", () => {
@@ -360,14 +390,14 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
         new Uint8Array([1, 2, 3, 4]),
       );
       replaceStoredGraph(db, graphFor([fileNode(file, "keep-hash", ["alpha", "beta"])]));
-      expect(hasGraphData(db, STASH, file)).toBe(true);
+      expect(hasGraphRow(db, STASH, file)).toBe(true);
       setMeta(db, "version", String(DB_VERSION - 1));
       closeDatabase(db);
 
       db = openIndexDatabase(dbPath);
       expect((db.prepare("SELECT COUNT(*) c FROM entries").get() as { c: number }).c).toBe(1);
       expect((db.prepare("SELECT COUNT(*) c FROM embeddings").get() as { c: number }).c).toBe(1);
-      expect(hasGraphData(db, STASH, file)).toBe(true);
+      expect(hasGraphRow(db, STASH, file)).toBe(true);
       expect(getMeta(db, "version")).toBe(String(DB_VERSION));
     } finally {
       closeDatabase(db);
