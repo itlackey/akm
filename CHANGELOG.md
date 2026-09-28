@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.8] - 2026-09-28
+
+`akm index` now records the links a bundle already declares (`xrefs`,
+`supersededBy`, a `.derived` memory's parent, wiki sources, page links, and
+workflow and task targets) as typed links, with no model. `akm show` lists
+them, and curate's support refs come from them instead of the LLM entity
+graph. The index moves to layout 26 in place on its first writable open;
+0.9.17-alpha.4 through alpha.7 cannot open it. `index.graph.enabled: false`
+now stops graph extraction in `akm improve`, and a partly failed extraction is
+retried. `akm migrate` converts a v2 or v3 task file to v4 in one pass, and
+the launchers no longer lose a signal that arrives before their child starts.
+
 ### Added
 
 - **Declared links (#935).** The relations a bundle already declares are now
