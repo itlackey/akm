@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **akm reads only task source v4.** A `version: 2` or `version: 3` task
+  file, or a `version: 4` file that still carries 0.9.15's retired
+  `schedule[].enabled`, now fails on its own with a message naming
+  `akm migrate apply`, which converts it once, under a backup (`akm upgrade`
+  runs it after an install). Until now every read converted such a file in
+  memory. `akm task sync` reports each one as a failure, leaves its installed
+  row as it is, and keeps reconciling every other task; `akm task run`,
+  `akm lint` and `akm task validate` report it the same way, and
+  `akm task validate`'s `converts` outcome is gone (such a file is
+  `blocked`). A host whose task files are all v4 (`akm migrate status`
+  reports `current`) sees no difference. A root whose only top-level task
+  files are v2/v3 is no longer detected as an `akm-task` bundle; a bundle
+  whose adapter is recorded in config is unaffected.
+  (`src/tasks/source/parse-task-source.ts`, `src/commands/tasks/validate.ts`)
+
 ## [0.9.17-alpha.6] - 2026-09-27
 
 Graph extraction stops losing and wasting work. A timed-out extraction is

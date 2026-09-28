@@ -190,20 +190,14 @@ describe("whole-set task source v4 scheduler sync planning — locally activated
   });
 });
 
-// A stash holding both a task source generation the in-memory v2/v3 shim
-// reads and one the retired-schedule[].enabled v4 shim reads must schedule
-// ONLY when the host has granted them — the shim
-// makes a source readable, never activated — and neither ever shows up in
-// `failures` (`compileTaskSources`'s ungranted branch `continue`s before it
-// even attempts to parse, so an ungranted, unparsed source is silently
-// absent from BOTH `desired` and `failures`, not a failure of its own kind).
-describe("whole-set task source v4 scheduler sync planning — sync-grant gating covers both in-memory read-shim paths", () => {
-  test("a v3 task and a v4 task with a retired schedule[].enabled schedule only when granted, and neither ever appears in failures", async () => {
+// The runtime reads only task source v4 (#987). A granted v3 task, or a
+// granted v4 task still carrying the retired `schedule[].enabled`, is one
+// source that fails — reported with `akm migrate apply` as the remedy — while
+// every other source still compiles. An ungranted source is never read, so it
+// is absent from BOTH `desired` and `failures`.
+describe("whole-set task source v4 scheduler sync planning — sources `akm migrate apply` rewrites are per-file failures", () => {
+  test("a granted v3 task and a granted v4 task with a retired schedule[].enabled fail on their own, naming `akm migrate apply`; a v4 peer still compiles", async () => {
     const bundleRoot = root();
-    // A v3 SHELL task, not `uses: akm/command`: whole-set compilation resolves
-    // an engine for a command task, so that variant only compiles on a machine
-    // with an engine (or the opencode-sdk fallback) on PATH — a CI runner has
-    // neither, and this test is about the read shim, not engine resolution.
     write(
       path.join(bundleRoot, "tasks", "legacy-v3.yml"),
       ["version: 3", "run: echo legacy", "shell: sh", "akm:", "  schedule: '0 3 * * *'", ""].join("\n"),
@@ -220,6 +214,10 @@ describe("whole-set task source v4 scheduler sync planning — sync-grant gating
         "",
       ].join("\n"),
     );
+    write(
+      path.join(bundleRoot, "tasks", "current-v4.yml"),
+      ["version: 4", "run: echo current", "shell: sh", "schedule: '0 5 * * *'", ""].join("\n"),
+    );
 
     const baseInput = {
       sourceRoot: bundleRoot,
@@ -234,22 +232,14 @@ describe("whole-set task source v4 scheduler sync planning — sync-grant gating
 
     const granted = await compileSchedulerSources({
       ...baseInput,
-      enabledRefs: new Set(["team//tasks/legacy-v3", "team//tasks/retired-enabled-v4"]),
+      enabledRefs: new Set(["team//tasks/legacy-v3", "team//tasks/retired-enabled-v4", "team//tasks/current-v4"]),
     });
-    expect(granted.failures).toEqual([]);
-    expect(granted.desired).toHaveLength(2);
-    expect(granted.desired.map((binding) => binding.logicalSource.ref).sort()).toEqual([
+    expect(granted.desired.map((binding) => binding.logicalSource.ref)).toEqual(["team//tasks/current-v4"]);
+    expect(granted.failures.map((failure) => failure.ref)).toEqual([
       "team//tasks/legacy-v3",
       "team//tasks/retired-enabled-v4",
     ]);
-    // Whole-set compilation never reads the source's own retired enabled
-    // field (v3's document-level `akm.enabled`, v4's per-entry
-    // `schedule[].enabled`) into the compiled binding — grant gating above
-    // is the only activation signal, so every compiled binding is `enabled:
-    // true` regardless of what either source said.
-    for (const binding of granted.desired) {
-      expect(binding.enabled).toBe(true);
-    }
+    for (const failure of granted.failures) expect(failure.reason).toContain("akm migrate apply");
   });
 });
 
@@ -845,11 +835,9 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   test("#867: one invalid desired task degrades (reported, excluded) instead of poisoning the whole plan; a valid peer still reconciles", async () => {
     const bundleRoot = root();
     write(path.join(bundleRoot, "tasks", "a-valid.yml"), "version: 4\nrun: echo yes\nshell: sh\nschedule: '@daily'\n");
-    // B-15 (spec docs/plans/specs/p4-deletions-closeout.md §2.2): a
-    // still-version-2 sibling that the deterministic migrator cannot convert
-    // fails TASK_SCHEMA_VERSION_UNSUPPORTED (row B-14) — before #867, this
-    // ONE bad sibling rejected the whole desired set; now it is dropped and
-    // reported, and `a-valid` still reconciles.
+    // A still-version-2 sibling fails TASK_SCHEMA_VERSION_UNSUPPORTED — before
+    // #867, this ONE bad sibling rejected the whole desired set; now it is
+    // dropped and reported, and `a-valid` still reconciles.
     write(path.join(bundleRoot, "tasks", "b-invalid.yml"), "version: 2\nschedule: '@daily'\ncommand: echo no\n");
     let signatures = 0;
 
@@ -867,11 +855,8 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(plan.desired.map((binding) => binding.id)).toEqual(["a-valid"]);
     expect(plan.failures).toHaveLength(1);
     expect(plan.failures[0]?.path).toContain("b-invalid.yml");
-    // The in-memory v2/v3 read shim: an unconvertible v2/v3 file fails with
-    // the shim's "needs a human decision" wording (naming the migrator's
-    // own blocked reason), not the plain TASK_SCHEMA_VERSION_UNSUPPORTED
-    // "akm migrate apply --dry-run" hint.
-    expect(plan.failures[0]?.reason).toContain("needs a human decision");
+    // The runtime reads only v4 (#987): the failure names the migrator.
+    expect(plan.failures[0]?.reason).toContain("akm migrate apply");
     expect(signatures).toBe(1);
   });
 

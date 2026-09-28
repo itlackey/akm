@@ -8,17 +8,18 @@
  * determinism, driven off the fixture corpus at
  * tests/fixtures/execution-contracts/tasks/v3-to-v4/ (deterministic|blocked
  * split, mirroring tests/tasks/migrate-v2-to-v3.test.ts and the tasks/v2
- * manifest.json shape). The same planner runs in memory on every task read
- * (`parse-task-source.ts`) and on disk under `akm migrate apply`
- * (`scripts/akm-migrate/migrate/task-files.ts`, tests/migrate/task-files.test.ts).
+ * manifest.json shape). It runs only under `akm migrate apply`
+ * (`scripts/akm-migrate/migrate/task-files.ts`, tests/migrate/task-files.test.ts):
+ * the runtime reads only task source v4.
  */
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";
 import { parseTaskSourceV4 } from "../../src/tasks/source/task-source-v4";
-import { planTaskToV4File, planTaskToV4Migration } from "../../src/tasks/source/task-to-v4";
+import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,
@@ -367,8 +368,8 @@ describe("pure task v3 to v4 migration planner", () => {
       { filePath: "/z/already.yml", bytes: alreadyV4, mode: 0o600, writable: true },
       fixtureInput("blocked/github-action.yml"),
     ];
-    const first = planTaskToV4Migration(files);
-    const second = planTaskToV4Migration([...files].reverse());
+    const first = planTaskFilesMigration(files);
+    const second = planTaskFilesMigration([...files].reverse());
     expect(first.generation).toMatch(/^[a-f0-9]{64}$/);
     expect(second).toEqual(first);
     expect(first.files.map(({ status, reason }: { status: string; reason: string }) => [status, reason])).toEqual([
@@ -380,6 +381,6 @@ describe("pure task v3 to v4 migration planner", () => {
 
   test("duplicate task migration file paths fail closed", () => {
     const source = memoryInput("version: 3\nuses: commands/publish-report\nakm:\n  schedule: '@daily'\n");
-    expect(() => planTaskToV4Migration([source, { ...source }])).toThrow(/duplicate|file path/i);
+    expect(() => planTaskFilesMigration([source, { ...source }])).toThrow(/duplicate|file path/i);
   });
 });

@@ -63,12 +63,6 @@ export interface TaskToV3Blocked extends TaskToV3OutcomeBase {
 
 export type TaskToV3FileOutcome = TaskToV3Changed | TaskToV3Skipped | TaskToV3Blocked;
 
-export interface TaskToV3MigrationPlan {
-  readonly schemaVersion: 1;
-  readonly generation: string;
-  readonly files: readonly TaskToV3FileOutcome[];
-}
-
 const V2_KEYS = new Set([
   "version",
   "name",
@@ -423,7 +417,7 @@ function isReason(value: Record<string, unknown> | string): value is string {
 }
 
 /** Convert one already-normalized legacy record directly to final task v3. */
-export function planLegacyTaskDataToV3(input: TaskToV3FileInput, data: Record<string, unknown>): TaskToV3FileOutcome {
+function planLegacyTaskDataToV3(input: TaskToV3FileInput, data: Record<string, unknown>): TaskToV3FileOutcome {
   if (data.version !== 2) {
     return blocked(
       input,
@@ -503,62 +497,4 @@ export function planTaskToV3File(input: TaskToV3FileInput): TaskToV3FileOutcome 
     return blocked(input, "unsupported-task-version", `expected version 2, 3, or 4, got ${String(data.version)}`);
   }
   return planLegacyTaskDataToV3(input, data);
-}
-
-function generationFor(files: readonly TaskToV3FileOutcome[]): string {
-  const digest = crypto.createHash("sha256");
-  digest.update("akm-task-to-v3-plan-v1\0");
-  for (const file of files) {
-    digest.update(file.filePath);
-    digest.update("\0");
-    digest.update(file.status);
-    digest.update("\0");
-    digest.update(file.reason);
-    digest.update("\0");
-    digest.update(String(file.mode));
-    digest.update("\0");
-    digest.update(file.writable ? "writable" : "read-only");
-    digest.update("\0");
-    digest.update(file.onDiskWritable === false ? "disk-read-only" : "disk-writable-or-unspecified");
-    digest.update("\0");
-    if (file.containmentRoot) digest.update(file.containmentRoot);
-    digest.update("\0");
-    digest.update(file.beforeHash);
-    digest.update("\0");
-    if (file.status === "changed") digest.update(file.afterHash);
-    digest.update("\0");
-    if (file.detail) digest.update(file.detail);
-    digest.update("\0");
-  }
-  return digest.digest("hex");
-}
-
-/** Build/fingerprint a plan from already-derived immutable outcomes. */
-export function taskToV3PlanFromOutcomes(outcomes: readonly TaskToV3FileOutcome[]): TaskToV3MigrationPlan {
-  const files = [...outcomes].sort((left, right) =>
-    left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0,
-  );
-  for (let index = 1; index < files.length; index += 1) {
-    const previous = files[index - 1];
-    const current = files[index];
-    if (previous && current && path.resolve(previous.filePath) === path.resolve(current.filePath)) {
-      throw new Error(`duplicate task migration file path: ${current.filePath}`);
-    }
-  }
-  return Object.freeze({ schemaVersion: 1 as const, generation: generationFor(files), files: Object.freeze(files) });
-}
-
-/** Plan a complete, stable file set. Input order cannot change the result. */
-export function planTaskToV3Migration(inputs: readonly TaskToV3FileInput[]): TaskToV3MigrationPlan {
-  const sorted = [...inputs].sort((left, right) =>
-    left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0,
-  );
-  let previous: TaskToV3FileInput | undefined;
-  for (const current of sorted) {
-    if (previous && path.resolve(previous.filePath) === path.resolve(current.filePath)) {
-      throw new Error(`duplicate task migration file path: ${current.filePath}`);
-    }
-    previous = current;
-  }
-  return taskToV3PlanFromOutcomes(sorted.map(planTaskToV3File));
 }

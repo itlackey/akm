@@ -5,27 +5,22 @@ Task assets are strict, local automation sources. They live at
 launchd, or Windows Task Scheduler with `akm task sync`. The task file is
 authored source; scheduler entries are derived OS state.
 
-**Task source v4 (`version: 4`) is the current task source grammar.** A
-document with `version: 3` or `version: 2` still reads and runs: an
-in-memory shim converts it to v4 on the same bytes `akm migrate apply`
-would produce, prints a one-line stderr deprecation warning (once per file
-per process), and never writes anything to disk. Only a v2/v3 document the
-deterministic conversion itself cannot resolve (an ambiguous shell command,
-say) fails to load, with `UsageError` code `TASK_SCHEMA_VERSION_UNSUPPORTED`
-naming the specific blocked reason and the human decision it needs. A
-declared `version: 4` document whose `schedule[]` still carries a
-per-entry `enabled` key — 0.9.15's v4 grammar accepted it, this release's
-does not — reads through the same kind of in-memory shim: the key is
-stripped without ever being read (activation is host-local, below) and the
-same one-line deprecation warning is printed. Task source v4 adds typed
-`inputs:` and a single bounded `output:` schema (command targets only), and
-makes scheduling OPTIONAL rather than mandatory. `akm task add` authors
-task source v4 directly.
+**Task source v4 (`version: 4`) is the only task source grammar akm reads.**
+A document with `version: 3` or `version: 2` fails to load with `UsageError`
+code `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate apply`, which
+converts it. A declared `version: 4` document whose `schedule[]` still
+carries a per-entry `enabled` key — 0.9.15's v4 grammar accepted it, this
+release's does not — fails the same way with `TASK_SOURCE_INVALID`
+(activation is host-local, below). Each such file fails on its own:
+`akm task sync` reports it and keeps reconciling every other task. Task
+source v4 adds typed `inputs:` and a single bounded `output:` schema
+(command targets only), and makes scheduling OPTIONAL rather than
+mandatory. `akm task add` authors task source v4 directly.
 
 If you have `version: 3` or `version: 2` files on disk (from an earlier
 akm release), see [Migrating to task source v4](#migrating-to-task-source-v4)
 below — `akm migrate apply` converts both generations in one pass and
-rewrites the file on disk, silencing the read-time deprecation warning. The
+rewrites the file on disk (`akm upgrade` runs it after an install). The
 retired v3 grammar itself is documented at the bottom of this page
 ([Task v3 (retired): grammar reference for migration](#task-v3-retired-grammar-reference-for-migration))
 purely so you can read an old file while migrating it; it is no longer
@@ -38,10 +33,9 @@ indexed, scheduled, or run. Every task should declare `version: 4`; a
 document with no `version:` key, or a `version:` that is not a number,
 fails with `TASK_SOURCE_INVALID` (`must be exactly 4.` / `is required and
 must be exactly 4.`) — a genuinely malformed v4 document, not a legacy one.
-`version: 3` and `version: 2` read via the in-memory deprecation shim
-described above and, only when the deterministic conversion itself cannot
-resolve the document, fail with `TASK_SCHEMA_VERSION_UNSUPPORTED` instead
-(see [Migrating to task source v4](#migrating-to-task-source-v4)).
+`version: 3` and `version: 2` fail with `TASK_SCHEMA_VERSION_UNSUPPORTED`
+naming `akm migrate apply` (see
+[Migrating to task source v4](#migrating-to-task-source-v4)).
 The published [task schema](../../schemas/akm-task.json) describes the
 hand-authored contract; `src/tasks/source/task-source-v4.ts` is the
 authoritative bounded parser.
@@ -414,17 +408,14 @@ for full before/after examples and recovery guidance.
   anything — see [`akm task explain`](#akm-task-explain) above.
 - `akm task validate <path>` parses one task file by filesystem path (the
   file need not live in a configured bundle) and reports the same
-  `valid`/`converts`/`blocked`/`invalid`/`not-a-task` diagnostic
+  `valid`/`blocked`/`invalid`/`not-a-task` diagnostic
   `akm task sync` would produce for it — including sync's own cron-dialect
   check and its per-schedule-entry input-contract check — without touching
   the scheduler and without requiring a configured engine, even for a
   command-kind task. The envelope's own `sourceVersion` field names the
-  file's declared schema version. A version 2/3 file the in-memory shim
-  converts reports `converts` (exit 0); one the shim's deterministic
-  planner cannot resolve reports `blocked` (exit 1) naming the human
-  decision it needs. A `version: 4` file whose only defect is a retired
-  `schedule[].enabled` also reports `converts` (`sourceVersion` still `4`)
-  — it read through the shim too, not the direct v4 path.
+  file's declared schema version. A version 2/3 file, and a `version: 4`
+  file still carrying a retired `schedule[].enabled`, report `blocked`
+  (exit 1) naming `akm migrate apply`, which converts them.
 - `akm task add` validates a task source v4 document, writes it, adds its ref
   to local scheduler activation, and syncs its bundle. `--params` renders
   typed `inputs:` declarations instead of a `with:` bag; `--schedule` is

@@ -6,10 +6,9 @@
  * Filesystem boundary for the task-source migration: every task file under a
  * bundle's task directory, whatever version it declares, planned to task
  * source v4 and written back under one backup. The version-specific work is
- * the pure planners the runtime reader already runs in memory on every read
- * (`src/tasks/source/task-to-v3.ts`, `task-to-v4.ts`, chained exactly as
- * `parse-task-source.ts` chains them); this module only walks directories,
- * snapshots bytes, and replaces files.
+ * the pure planners `src/tasks/source/task-to-v3.ts` and `task-to-v4.ts`,
+ * which only this migration runs — the runtime reads only task source v4;
+ * this module only walks directories, snapshots bytes, and replaces files.
  */
 
 import crypto from "node:crypto";

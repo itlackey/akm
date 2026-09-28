@@ -79,18 +79,17 @@ describe("akm lint — malformed task YAML (issue #760)", () => {
     expect(result.flagged.filter((issue) => issue.issue === "invalid-task-yaml")).toEqual([]);
   });
 
-  test("a v2 task auto-shims to v4 and lints clean (deprecation is a read-time stderr warning, not a lint flag)", async () => {
-    // parseTaskSource converts v2/v3 sources to v4 in memory instead of
-    // throwing (see parse-task-source.ts and the previous-release corpus
-    // test). Lint must agree with the runtime: a readable legacy task is not
-    // "invalid-task-yaml" — flagging it would tell the user their working,
-    // scheduled task is broken when it is not.
+  test("a v2 task is flagged naming `akm migrate apply` (the runtime reads only v4)", async () => {
+    // Lint agrees with the runtime: `akm task run`/`sync` refuse a v2/v3
+    // source, so lint reports it with the command that converts it.
     storage = withIsolatedAkmStorage();
     writeTask(storage.stashDir, "legacy.yml", "version: 2\nschedule: '@daily'\nprompt: hello\n");
 
     const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
 
-    expect(result.flagged.filter((issue) => issue.file.endsWith("legacy.yml"))).toEqual([]);
+    const findings = result.flagged.filter((issue) => issue.file.endsWith("legacy.yml"));
+    expect(findings.map((issue) => issue.issue)).toEqual(["invalid-task-yaml"]);
+    expect(findings[0]?.detail).toContain("akm migrate apply");
   });
 
   test("a tasks/*.yaml file is flagged for its extension instead of being skipped", async () => {

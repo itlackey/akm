@@ -281,8 +281,8 @@ CHANGELOG with a migration note.
   print unredacted. `akm task validate <path>` (new in 0.9.11) is the same
   kind of zero-write introspection as `explain`, but takes a bare filesystem
   path rather than a bundle-qualified ref — it reports whether that ONE file
-  would parse cleanly (`valid`), auto-convert from task v2/v3 (`converts`),
-  need a human decision the deterministic migrator can't make (`blocked`),
+  would parse cleanly (`valid`), need `akm migrate apply` first (`blocked`:
+  task v2/v3, or a retired `schedule[].enabled`),
   fail schema validation (`invalid`), or isn't a task source at all
   (`not-a-task`) — exactly the diagnostic `akm task sync` would produce for
   it, before the file is ever wired into a bundle or the scheduler.
