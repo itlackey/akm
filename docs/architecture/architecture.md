@@ -537,10 +537,10 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
-| `src/indexer/db/` | `db`, `db-backup`, `graph-db`, `llm-cache` — the persistence phase |
+| `src/indexer/db/` | `graph-db`, `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
 | `src/indexer/graph/` | graph related-files/extraction — the graph phase |
 | `src/indexer/search/` | `db-search`, ranking, search-fields, search-source, enrichers — the search phase |
-| `src/indexer/passes/` | memory-inference, staleness-detect, metadata — LLM/metadata passes |
+| `src/indexer/passes/` | memory-inference, dir-staleness, metadata — LLM/metadata passes |
 | `src/indexer/usage/` | usage-events |
 | `src/commands/read/search.ts` | `akm search` orchestration |
 | `src/commands/read/show.ts` | `akm show` orchestration |
@@ -548,7 +548,6 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/commands/proposal/` | proposal-queue slice (proposal/propose + `validators/` core 3-cycle) |
 | `src/commands/sources/` | source/stash lifecycle command surface |
 | `src/commands/env/` | env/secret command surface |
-| `src/commands/graph/` | graph command surface |
 | `src/commands/tasks/` | scheduled-task command surface |
 | `src/commands/agent/` | contribute/agent command surface |
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
