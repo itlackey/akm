@@ -993,6 +993,32 @@ describe("runGraphExtractionPass — enabled", () => {
     };
     expect(repaired.files[0]?.entities).toContain("ServiceC");
   });
+  test("an extractor change is announced once, with the number of cached files it re-extracts", async () => {
+    for (const name of ["m1", "m2"]) writeFile(`memories/${name}.md`, {}, `Body about ${name}.`);
+    extractor = () => ({ entities: ["E"], relations: [] });
+    const batchOf = (size: number) =>
+      configWithLlm({ index: { defaults: { engine: "index" }, graph: { graphExtractionBatchSize: size } } });
+    const notices = (result: { warnings?: string[] }) =>
+      (result.warnings ?? []).filter((warning) => warning.includes("extractor changed"));
+
+    const first = await withGraphDb("extractor-first", (db) =>
+      runGraphExtractionPass({ config: batchOf(1), sources: sources(), db }),
+    );
+    expect(notices(first)).toEqual([]);
+
+    const changed = await withGraphDb("extractor-changed", (db) =>
+      runGraphExtractionPass({ config: batchOf(2), sources: sources(), db }),
+    );
+    expect(notices(changed)).toEqual([
+      "graph extraction: the extractor changed (batch size 1 -> 2), so 2 file(s) with a cached extraction will be extracted again.",
+    ]);
+
+    const same = await withGraphDb("extractor-same", (db) =>
+      runGraphExtractionPass({ config: batchOf(2), sources: sources(), db }),
+    );
+    expect(notices(same)).toEqual([]);
+  });
+
   test("a cached extraction holding two forms of one entity stores it once", async () => {
     const filePath = writeFile("memories/m1.md", {}, "Body about Redis and Kafka.");
     extractor = () => ({ entities: ["Redis", "Kafka"], relations: [] });

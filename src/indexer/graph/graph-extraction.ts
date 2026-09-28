@@ -224,6 +224,41 @@ export function getGraphExtractorId(config: { model: string; batchSize: number; 
   return `${GRAPH_CACHE_VARIANT_PREFIX}:${graphExtract.GRAPH_EXTRACT_PROMPT_VERSION}:${config.model}:${fingerprint}`;
 }
 
+/**
+ * GR-D16: one notice when this run's extractor differs from the one that last
+ * wrote the graph. Cached extractions are keyed by extractor, so a config
+ * change that alters it (model, batch size, included types, prompt version)
+ * re-extracts every cached file; the notice says which change and how many.
+ */
+function extractorChangeNotice(args: {
+  previous: GraphExtractionTelemetry | undefined;
+  current: { extractorId: string; model: string; batchSize: number; promptVersion: string };
+  files: EligibleFile[];
+  db: Database;
+}): string | undefined {
+  const { previous, current, files, db } = args;
+  if (!previous?.extractorId || previous.extractorId === current.extractorId) return undefined;
+  const cachedUnder = (cacheVariant: string) =>
+    new Set(
+      planEligibleGraphExtractions({ eligible: files, db, reEnrich: false, cacheVariant })
+        .filter((plan) => plan.kind === "cache-hit")
+        .map((plan) => plan.candidate.absPath),
+    );
+  const stillCached = cachedUnder(current.extractorId);
+  const reextracted = [...cachedUnder(previous.extractorId)].filter((file) => !stillCached.has(file)).length;
+  const changes = [
+    previous.model !== current.model ? `model ${previous.model} -> ${current.model}` : undefined,
+    previous.batchSize !== current.batchSize ? `batch size ${previous.batchSize} -> ${current.batchSize}` : undefined,
+    previous.promptVersion !== current.promptVersion
+      ? `prompt ${previous.promptVersion} -> ${current.promptVersion}`
+      : undefined,
+  ].filter((change) => change !== undefined);
+  return (
+    `graph extraction: the extractor changed (${changes.join(", ") || "included asset types"}), ` +
+    `so ${reextracted} file(s) with a cached extraction will be extracted again.`
+  );
+}
+
 function buildLowQualityWarnings(quality: GraphQualityTelemetry, telemetry: GraphExtractionTelemetry): string[] {
   const warnings: string[] = [];
   if (quality.consideredFiles >= 5 && quality.extractionCoverage < 0.3) {
@@ -719,6 +754,18 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     nonArrayBatchFailures: 0,
   };
   const abortState: GraphExtractionAbortState = { attempts: 0, failures: 0, aborted: false };
+  const extractorNotice = extractorChangeNotice({
+    previous: previousGraph.telemetry,
+    current: {
+      extractorId,
+      model: llmRunner.connection.model,
+      batchSize,
+      promptVersion: graphExtract.GRAPH_EXTRACT_PROMPT_VERSION,
+    },
+    files: scan.files,
+    db,
+  });
+  if (extractorNotice) warn(extractorNotice);
   warnVerbose(
     `graph extraction: starting for ${considered} eligible file(s) under ${primary.path}; ` +
       `includeTypes=${includeTypes.join(",")}, batchSize=${batchSize}, concurrency=${llmRunner.connection.concurrency ?? 1}, ` +
@@ -764,6 +811,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   const written = writeGraphFile(db, graph);
   const quality = loadStoredGraphMeta(primary.path, db)?.quality ?? EMPTY_RESULT.quality;
   const warnings = buildLowQualityWarnings(quality, telemetry);
+  if (extractorNotice) warnings.push(extractorNotice);
   if (abortState.message) warnings.push(abortState.message);
   for (const warning of warnings) warnVerbose(`graph extraction quality: ${warning}`);
   warnVerbose(
