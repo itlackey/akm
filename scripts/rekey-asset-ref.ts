@@ -169,8 +169,8 @@ function rekeyStateDb(oldRef: string, newRef: string, dryRun: boolean): Record<s
 
 /**
  * Re-key the index `entries` row IN PLACE, preserving its row id — which is
- * what keeps `utility_scores`, `utility_scores_scoped`, and `embeddings`
- * attached across the rename. Returns 1 when a row moved.
+ * what keeps `utility_scores` and `embeddings` attached across the rename.
+ * Returns 1 when a row moved.
  *
  * Zero is the ordinary outcome when `akm index` already ran: the old row was
  * deleted as a missing file and a fresh row minted for the new path, so only

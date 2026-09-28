@@ -267,11 +267,6 @@ re-enrichment callers.
 | `last_used_at` | TEXT | ISO-8601; NULL if never selected |
 | `updated_at` | TEXT NOT NULL | ISO-8601 |
 
-A companion `utility_scores_scoped` table (`entry_id, scope_key` PK) tracks the
-same EMA per `(entry, project-anchor)` pair so an asset useful in one project
-doesn't pollute rankings in another; `utility_scores` is preserved as the
-global fallback / cold-start signal.
-
 See [Utility Score Pipeline](#utility-score-pipeline) below.
 
 `usage_events` (search/show/feedback telemetry) is **not** an `index.db` table;

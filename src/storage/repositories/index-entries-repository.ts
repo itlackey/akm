@@ -223,12 +223,11 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
 /**
  * Re-key an entries row in place for the opt-in source-maintenance script.
  *
- * The row id is preserved on purpose — `utility_scores`,
- * `utility_scores_scoped`, and `embeddings` are keyed by `entry_id`, so an
- * UPDATE (rather than a delete + insert under the new `item_ref`) is what
- * keeps the asset's accumulated usage-ranking history attached across a
- * rename. (`asset_salience` / `asset_outcome` live in state.db keyed by
- * `asset_ref` TEXT and are re-keyed separately by `akm mv` — see
+ * The row id is preserved on purpose — `utility_scores` and `embeddings` are
+ * keyed by `entry_id`, so an UPDATE (rather than a delete + insert under the
+ * new `item_ref`) is what keeps the asset's accumulated usage-ranking history
+ * attached across a rename. (`asset_salience` / `asset_outcome` live in
+ * state.db keyed by `asset_ref` TEXT and are re-keyed separately by `akm mv` — see
  * the state rekey helper.) `document_json.name` (and `filename`, when
  * present) is patched and `embed_hash` recomputed so search reflects the new
  * name. Its FTS projection and stale vector are updated in the same
@@ -518,10 +517,6 @@ function deleteRelatedRows(
     bestEffort(
       () => db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk),
       "delete utility_scores for entries",
-    );
-    bestEffort(
-      () => db.prepare(`DELETE FROM utility_scores_scoped WHERE entry_id IN (${placeholders})`).run(...chunk),
-      "delete utility_scores_scoped for entries",
     );
   }
 

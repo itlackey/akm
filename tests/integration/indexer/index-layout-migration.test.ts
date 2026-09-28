@@ -474,3 +474,54 @@ describe("index.db layout 24 → 25", () => {
     }
   });
 });
+
+describe("index.db layout 25 (0.9.17-alpha.5 shape): retired utility_scores_scoped", () => {
+  let storage: IsolatedAkmStorage;
+  let dbPath = "";
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    dbPath = path.join(storage.root, "layout-25-scoped-utility.db");
+    // alpha.5 shipped `utility_scores_scoped` at layout 25 (IR-7a), but no
+    // code ever read or wrote a row. Build the table exactly as alpha.5's
+    // ensureSchema created it, with a row present, to prove the retirement
+    // drop tolerates non-empty (as well as the real, always-empty) shape.
+    const db = openDatabase(dbPath);
+    try {
+      db.exec("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+      db.prepare("INSERT INTO index_meta (key, value) VALUES ('version', '25')").run();
+      db.exec(`
+        CREATE TABLE utility_scores_scoped (
+          entry_id     INTEGER NOT NULL,
+          scope_key    TEXT NOT NULL,
+          utility      REAL NOT NULL DEFAULT 0,
+          last_used_at INTEGER NOT NULL,
+          PRIMARY KEY (entry_id, scope_key)
+        );
+        CREATE INDEX idx_utility_scores_scoped_entry_id ON utility_scores_scoped(entry_id);
+      `);
+      db.prepare(
+        "INSERT INTO utility_scores_scoped (entry_id, scope_key, utility, last_used_at) VALUES (1, 'dir:/repo', 0.5, 1234)",
+      ).run();
+    } finally {
+      db.close();
+    }
+  });
+
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  test("a writable open drops the table and keeps layout 25 — no version bump, no VACUUM flag", () => {
+    const db = openIndexDatabase(dbPath);
+    try {
+      expect(tableNames(db)).not.toContain("utility_scores_scoped");
+      // Layout 25 is still this release's layout: retiring a table already at
+      // the current version must not look like a migration.
+      expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+      expect(getMeta(db, VACUUM_PENDING_META)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});

@@ -11,7 +11,7 @@
  * for columns added after a table first shipped, drops of retired derived
  * tables and columns, and one in-place rebuild of the (derived, cheap) FTS
  * table when its layout is older than this release's. It never drops
- * `entries`, `embeddings`, `utility_scores*`, `graph_*`, or
+ * `entries`, `embeddings`, `utility_scores`, `graph_*`, or
  * `llm_enrichment_cache` to cross a version boundary; the only from-scratch
  * rebuild is the SQLITE_CORRUPT path in `index-connection.ts`. A layout newer
  * than this release's is refused, naming the upgrade
@@ -313,12 +313,15 @@ export function ensureSchema(db: Database): void {
 
   // Retired derived tables: the workflow IR cache, the pre-v22 FTS dirty
   // queue, the #955 embedding salvage staging table (embeddings now carry
-  // their model per row, so nothing is copied aside and reused), and the
-  // fragment FTS table search stopped reading (layout 24 and earlier).
+  // their model per row, so nothing is copied aside and reused), the
+  // fragment FTS table search stopped reading (layout 24 and earlier), and
+  // the per-project scoped utility table (IR-7a): it shipped in alpha.5 but
+  // no code ever read or wrote a row, so there is nothing to preserve.
   db.exec("DROP TABLE IF EXISTS workflow_documents");
   db.exec("DROP TABLE IF EXISTS entries_fts_dirty");
   db.exec("DROP TABLE IF EXISTS embedding_salvage");
   db.exec("DROP TABLE IF EXISTS entry_fragments_fts");
+  db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
 
   // One float32 BLOB per entry, searched by an exact scan
   // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
@@ -354,20 +357,6 @@ export function ensureSchema(db: Database): void {
       updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
     );
-  `);
-
-  // Per-project scoped utility scores — tracks usage per (entry, cwd-anchor)
-  // so assets useful in project A don't pollute rankings in project B.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS utility_scores_scoped (
-      entry_id     INTEGER NOT NULL,
-      scope_key    TEXT NOT NULL,
-      utility      REAL NOT NULL DEFAULT 0,
-      last_used_at INTEGER NOT NULL,
-      PRIMARY KEY (entry_id, scope_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_utility_scores_scoped_entry_id
-      ON utility_scores_scoped(entry_id);
   `);
 
   db.exec(`
