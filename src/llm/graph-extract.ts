@@ -264,6 +264,30 @@ function bumpTelemetry(
   telemetry[key] = (telemetry[key] ?? 0) + amount;
 }
 
+/**
+ * `Promise.all(items.map(fn))` with at most `limit` calls in flight, so the
+ * per-asset calls of one batch never outnumber the chunk pool's concurrency
+ * (GR-D14). The first rejection rejects the map and stops further calls.
+ */
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try {
+        results[index] = await fn(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker));
+  return results;
+}
+
 function normalizeBatchState(state?: GraphBatchState): GraphBatchState | undefined {
   if (!state) return undefined;
   state.batchingDisabled = state.batchingDisabled === true;
@@ -692,6 +716,13 @@ export async function extractGraphFromBodies(
     return [result];
   }
 
+  const concurrency = llmRunner.connection.concurrency ?? 1;
+  const extractOne = (body: string): Promise<GraphExtraction> =>
+    extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options);
+
+  // With batching disabled every body takes the single-asset path, once.
+  if (batchState?.batchingDisabled) return mapWithConcurrency(bodies, concurrency, extractOne);
+
   // Filter out bodies that are empty so we don't waste tokens, but keep
   // index correspondence by tracking which indices were non-empty.
   const results: GraphExtraction[] = bodies.map(empty);
@@ -710,28 +741,11 @@ export async function extractGraphFromBodies(
     }
   }
 
-  if (oversizedIndices.length > 0) {
-    await Promise.all(
-      oversizedIndices.map(async (index) => {
-        results[index] = await extractGraphFromBody(
-          llmRunner,
-          bodies[index] ?? "",
-          signal,
-          akmConfig,
-          onFallback,
-          options,
-        );
-      }),
-    );
-  }
+  await mapWithConcurrency(oversizedIndices, concurrency, async (index) => {
+    results[index] = await extractOne(bodies[index] ?? "");
+  });
 
   if (nonEmptyBodies.length === 0) return results;
-
-  if (batchState?.batchingDisabled) {
-    return Promise.all(
-      bodies.map((body) => extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options)),
-    );
-  }
 
   const systemPrompt = buildBatchSystemPrompt();
   const userPrompt = buildBatchUserPrompt(nonEmptyBodies);
@@ -923,12 +937,9 @@ export async function extractGraphFromBodies(
           `falling back to individual calls for ${fallbackIndices.length} missing asset(s).`,
       );
     }
-    await Promise.all(
-      fallbackIndices.map(async (origIdx) => {
-        const body = bodies[origIdx] ?? "";
-        results[origIdx] = await extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options);
-      }),
-    );
+    await mapWithConcurrency(fallbackIndices, concurrency, async (origIdx) => {
+      results[origIdx] = await extractOne(bodies[origIdx] ?? "");
+    });
   } else if (batchContextError) {
     warn(
       `graph extraction (batch): skipped ${nonEmptyBodies.length} asset(s) due to context size error; ` +

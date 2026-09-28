@@ -53,14 +53,26 @@ let malformedJsonNext = false;
  * takes a later test's queued response.
  */
 const delayQueue: number[] = [];
+/** Extra ms every response is held, so overlapping requests are observable. */
+let holdMs = 0;
+/** This test's requests in flight; a new set per test, so a late request from an earlier test is not counted. */
+let inFlight = new Set<Request>();
+let maxInFlight = 0;
 
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
-    const delayMs = delayQueue.shift() ?? 0;
-    const response = await respond(request);
-    if (delayMs > 0) await Bun.sleep(delayMs);
-    return response;
+    const tracked = inFlight;
+    tracked.add(request);
+    maxInFlight = Math.max(maxInFlight, inFlight.size);
+    try {
+      const delayMs = (delayQueue.shift() ?? 0) + holdMs;
+      const response = await respond(request);
+      if (delayMs > 0) await Bun.sleep(delayMs);
+      return response;
+    } finally {
+      tracked.delete(request);
+    }
   },
 });
 
@@ -162,12 +174,20 @@ beforeEach(() => {
   malformedJsonNext = false;
   deadConnAttempts = 0;
   delayQueue.length = 0;
+  holdMs = 0;
+  inFlight = new Set();
+  maxInFlight = 0;
 });
 
 afterAll(() => {
   llmServer.stop(true);
   deadServer.stop(true);
 });
+
+/** A body longer than one batch slot that splits into exactly two chunks. */
+function longBody(first: string, second: string): string {
+  return `# One\n\n${`${first} detail `.repeat(120)}\n\n# Two\n\n${`${second} detail `.repeat(120)}`;
+}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -489,6 +509,79 @@ describe("extractGraphFromBodies — unit", () => {
     expect(results[1]?.entities).toEqual(["Beta"]);
     // 1 batch call + 2 per-asset fallback calls = 3.
     expect(chatCallCount).toBe(3);
+  });
+
+  test("with batching disabled, an oversized body is extracted once", async () => {
+    singleRawQueue.push(
+      JSON.stringify({ entities: ["Alpha"], relations: [] }),
+      JSON.stringify({ entities: ["Gamma"], relations: [] }),
+      JSON.stringify({ entities: ["Small"], relations: [] }),
+    );
+
+    const results = await extractGraphFromBodies(
+      SAMPLE_LLM,
+      [longBody("Alpha", "Gamma"), "Small body."],
+      undefined,
+      AKM_CFG_WITH_GATE,
+      undefined,
+      { batchState: { batchingDisabled: true, nonArrayBatchFailures: 2 } },
+    );
+
+    // Two chunk calls for the long body and one for the small one.
+    expect(chatCallCount).toBe(3);
+    expect(results.map((r) => r.entities)).toEqual([["Alpha", "Gamma"], ["Small"]]);
+  });
+
+  test("per-asset fallback calls stay within the runner's concurrency", async () => {
+    holdMs = 30;
+    batchRawQueue.push(JSON.stringify({ oops: true }), JSON.stringify({ still: "broken" }));
+    for (const name of ["Alpha", "Beta", "Gamma"]) {
+      singleRawQueue.push(JSON.stringify({ entities: [name], relations: [] }));
+    }
+
+    const results = await extractGraphFromBodies(
+      SAMPLE_LLM,
+      ["Alpha body.", "Beta body.", "Gamma body."],
+      undefined,
+      AKM_CFG_WITH_GATE,
+    );
+
+    expect(results.map((r) => r.entities)).toEqual([["Alpha"], ["Beta"], ["Gamma"]]);
+    expect(maxInFlight).toBe(1);
+  });
+
+  test("oversized bodies are extracted within the runner's concurrency", async () => {
+    holdMs = 30;
+    for (let i = 0; i < 4; i++) singleRawQueue.push(JSON.stringify({ entities: [`E${i}`], relations: [] }));
+    batchRawQueue.push(JSON.stringify([{ entities: ["Small"], relations: [] }]));
+
+    await extractGraphFromBodies(
+      SAMPLE_LLM,
+      [longBody("Alpha", "Gamma"), longBody("Beta", "Delta"), "Small body."],
+      undefined,
+      AKM_CFG_WITH_GATE,
+    );
+
+    expect(chatCallCount).toBe(5);
+    expect(maxInFlight).toBe(1);
+  });
+
+  test("a runner concurrency of 2 lets two per-asset calls run at once, not more", async () => {
+    holdMs = 30;
+    batchRawQueue.push(JSON.stringify({ oops: true }), JSON.stringify({ still: "broken" }));
+    for (const name of ["Alpha", "Beta", "Gamma"]) {
+      singleRawQueue.push(JSON.stringify({ entities: [name], relations: [] }));
+    }
+
+    await extractGraphFromBodies(
+      testLlmRunner({ ...SAMPLE_CONNECTION, concurrency: 2 }, "test-graph-extraction"),
+      ["Alpha body.", "Beta body.", "Gamma body."],
+      undefined,
+      AKM_CFG_WITH_GATE,
+    );
+
+    expect(chatCallCount).toBe(5);
+    expect(maxInFlight).toBe(2);
   });
 
   test("normalizes entities/relation types and keeps confidence when provided", async () => {
