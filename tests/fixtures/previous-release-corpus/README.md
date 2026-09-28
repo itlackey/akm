@@ -30,6 +30,12 @@ retired-0.8-source-keys fixture (#863) are both built programmatically
 inside the test (a `config.json` with a specific `bundles` shape, and a raw
 JSON config, respectively) — there is nothing to check in here for them.
 
+- `index-v25.sql` — a layout-25 index as `akm index --full` in 0.9.17-alpha.7
+  wrote it over a small stash (memories with `xrefs`, `contradictedBy` and a
+  `.derived` child, a superseded guide, a wiki page citing its raw source, a
+  task targeting a workflow that targets a command), trimmed to the tables the
+  layout-26 migration reads. Paths are rebased to `/fixture/stash`.
+
 - `openpalm-consumer/` — downstream-consumer fixtures (#880) standing in for
   the shapes OpenPalm (a real, if unofficial, integration point) writes and
   schedules against: `config.json` (a `bundles` entry as its `akm-sources.ts`

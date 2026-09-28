@@ -574,7 +574,9 @@ describe("extractGraphFromBodies — unit", () => {
     expect(maxInFlight).toBe(1);
   });
 
-  test("a runner concurrency of 2 lets two per-asset calls run at once, not more", async () => {
+  test("a batch makes its per-asset calls one at a time, whatever the runner's concurrency", async () => {
+    // The pass runs batches side by side up to the runner's concurrency, so a
+    // batch fanning out on its own would multiply it (GR-D14 follow-up).
     holdMs = 30;
     batchRawQueue.push(JSON.stringify({ oops: true }), JSON.stringify({ still: "broken" }));
     for (const name of ["Alpha", "Beta", "Gamma"]) {
@@ -589,7 +591,7 @@ describe("extractGraphFromBodies — unit", () => {
     );
 
     expect(chatCallCount).toBe(5);
-    expect(maxInFlight).toBe(2);
+    expect(maxInFlight).toBe(1);
   });
 
   test("normalizes entities/relation types and keeps confidence when provided", async () => {
@@ -608,6 +610,19 @@ describe("extractGraphFromBodies — unit", () => {
     expect(result?.relations).toHaveLength(1);
     expect(result?.relations[0]).toMatchObject({ from: "ServiceA", to: "serviceb", type: "uses", confidence: 1 });
     expect(result?.confidence).toBe(0);
+  });
+
+  test("a long body with a failed chunk is failed, keeping what the other chunks found", async () => {
+    // The second chunk's empty response is a failure; the body must be
+    // retried, so the merge may not report it as extracted (and cacheable).
+    singleRawQueue.push(JSON.stringify({ entities: ["Alpha"], relations: [] }), "");
+
+    const result = await extractGraphFromBody(SAMPLE_LLM, longBody("Alpha", "Gamma"), undefined, AKM_CFG_WITH_GATE);
+
+    expect(chatCallCount).toBe(2);
+    expect(result.status).toBe("failed");
+    expect(result.reason).toBe("invalid_json");
+    expect(result.entities).toEqual(["Alpha"]);
   });
 
   test("long bodies are chunked and merged instead of truncating to a fixed prefix", async () => {

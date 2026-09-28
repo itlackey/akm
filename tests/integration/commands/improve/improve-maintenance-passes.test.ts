@@ -166,6 +166,23 @@ describe("runGraphExtractionMaintenancePass", () => {
     expect(out.warnings).toEqual([]);
   });
 
+  test("index.graph.enabled: false skips the pass under a resolved improve plan too", async () => {
+    const stash = freshStash();
+    // A strategy that enables graph extraction resolves a plan; the index
+    // switch still turns the stage off (makeCtx's seam throws if called).
+    const ctx = makeCtx(stash, {
+      config: { index: { graph: { enabled: false } } } as AkmConfig,
+      resolvedPlan: {
+        processes: { graphExtraction: { runner: null }, memoryInference: { runner: null } },
+      } as unknown as MaintenanceCtx["resolvedPlan"],
+    });
+
+    const out = await runGraphExtractionMaintenancePass(ctx, { current: fakeDb }, baseArgs);
+
+    expect(out.graphExtraction).toBeUndefined();
+    expect(out.warnings).toEqual([]);
+  });
+
   // D9: the post-consolidation reindex this pass used to run
   // (`consolidationRan && !reindexedAfterInference` → `reindexWithIndexDbReleased`)
   // is deleted along with the seam it called — consolidation's only executed op

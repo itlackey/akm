@@ -279,6 +279,12 @@ describe("pure task v3 to v4 migration planner", () => {
     expect(outcome.detail).toMatch(/github|action/i);
   });
 
+  // The typed v3 pre-check (this planner's first gate for any v3-versioned
+  // document) rejects "exactly one scheduling source" ambiguity itself
+  // (task-source-v3-frozen.ts's compileTriggers), before the raw-record
+  // hoist logic below ever runs its own equivalent check — so this reports
+  // the pre-check's generic reason, exactly like the production chain
+  // already did end to end before this planner existed as one function.
   test("blocks a v3 document authoring both akm.schedule and on: at once, without touching its bytes", () => {
     const yaml = [
       "version: 3",
@@ -291,7 +297,7 @@ describe("pure task v3 to v4 migration planner", () => {
     ].join("\n");
     const outcome = planTaskToV4File(memoryInput(yaml));
     expect(outcome.status).toBe("blocked");
-    expect(outcome.reason).toMatch(/schedul/i);
+    expect(outcome.reason).toBe("invalid-v3-task");
     expect(outcome.before.toString("utf8")).toBe(yaml);
   });
 

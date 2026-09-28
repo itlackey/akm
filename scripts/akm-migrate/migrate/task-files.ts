@@ -6,9 +6,9 @@
  * Filesystem boundary for the task-source migration: every task file under a
  * bundle's task directory, whatever version it declares, planned to task
  * source v4 and written back under one backup. The version-specific work is
- * the pure planners `src/tasks/source/task-to-v3.ts` and `task-to-v4.ts`,
- * which only this migration runs — the runtime reads only task source v4;
- * this module only walks directories, snapshots bytes, and replaces files.
+ * the pure planner `src/tasks/source/task-to-v4.ts`, which only this
+ * migration runs — the runtime reads only task source v4; this module only
+ * walks directories, snapshots bytes, and replaces files.
  */
 
 import crypto from "node:crypto";
@@ -16,12 +16,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../../src/core/errors";
 import { parseTaskSourceV4 } from "../../../src/tasks/source/task-source-v4";
-import { planTaskToV3File } from "../../../src/tasks/source/task-to-v3";
 import {
   planTaskToV4File,
   type TaskToV4Changed,
   type TaskToV4FileInput,
-  type TaskToV4FileOutcome,
   type TaskToV4MigrationPlan,
   taskToV4PlanFromOutcomes,
 } from "../../../src/tasks/source/task-to-v4";
@@ -115,25 +113,9 @@ export function inspectTaskFiles(roots: readonly TaskFileRoot[]): TaskToV4FileIn
   return files.sort((a, b) => a.filePath.localeCompare(b.filePath));
 }
 
-/**
- * Plan one file to task source v4 whatever version it declares: a v2 file
- * goes through the v2->v3 planner and its v3 bytes on through the v3->v4
- * planner; a v3 or v4 file goes straight to the v3->v4 planner, which also
- * strips the retired `schedule[].enabled` key from a v4 file. `before` is
- * always the bytes on disk, so the backup and a rollback see the original.
- */
-export function planTaskFileToV4(input: TaskToV4FileInput): TaskToV4FileOutcome {
-  const v3 = planTaskToV3File(input);
-  if (v3.status === "blocked") return v3;
-  if (v3.status === "skipped") return planTaskToV4File(input);
-  const v4 = planTaskToV4File({ ...input, bytes: v3.after });
-  if (v4.status !== "changed") return { ...v4, before: v3.before, beforeHash: v3.beforeHash };
-  return { ...v4, reason: "task-converted", before: v3.before, beforeHash: v3.beforeHash };
-}
-
 /** Plan a complete, stable file set; input order cannot change the result. */
 export function planTaskFilesMigration(inputs: readonly TaskToV4FileInput[]): TaskToV4MigrationPlan {
-  return taskToV4PlanFromOutcomes(inputs.map(planTaskFileToV4));
+  return taskToV4PlanFromOutcomes(inputs.map(planTaskToV4File));
 }
 
 export function taskFileBackupPath(backupRoot: string, filePath: string): string {

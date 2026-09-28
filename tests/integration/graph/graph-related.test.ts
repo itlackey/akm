@@ -1,6 +1,6 @@
 /**
  * Integration tests for the graph's read side: `listRelatedPathsForFile`
- * (`akm show`'s related list and curate's support refs), and that the stored
+ * (`akm show`'s related list), and that the stored
  * graph plays no part in search ranking. No LLM calls are made — the graph
  * snapshot is written directly to the fixture DB, simulating what the
  * extraction pass would produce.

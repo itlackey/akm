@@ -21,6 +21,7 @@ import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { GraphExtraction } from "../../../src/llm/graph-extract";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
+import { testLlmRunner } from "../../_helpers/llm-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
@@ -29,6 +30,10 @@ let batchExtractorStub: ((bodies: string[]) => Promise<GraphExtraction[]>) | nul
 let singleExtractorStub: ((body: string) => Promise<GraphExtraction>) | null = null;
 let batchCallCount = 0;
 let singleCallCount = 0;
+/** Extra ms every response is held, so overlapping requests are observable. */
+let holdMs = 0;
+let inFlight = 0;
+let maxInFlight = 0;
 
 function parseBatchBodies(userContent: string): string[] {
   const marker = "=== ASSET ";
@@ -43,39 +48,51 @@ function parseBatchBodies(userContent: string): string[] {
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
-    const payload = (await request.json()) as {
-      messages?: Array<{ role?: string; content?: string }>;
-    };
-    const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
-
-    if (userContent.includes("N=")) {
-      batchCallCount++;
-      const bodies = parseBatchBodies(userContent);
-      let result: GraphExtraction[];
-      try {
-        result = batchExtractorStub
-          ? await batchExtractorStub(bodies)
-          : bodies.map(() => ({ entities: [], relations: [] }));
-      } catch (err) {
-        return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
-      }
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    singleCallCount++;
-    let result: GraphExtraction;
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
     try {
-      result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+      const response = await respond(request);
+      if (holdMs > 0) await Bun.sleep(holdMs);
+      return response;
+    } finally {
+      inFlight--;
+    }
+  },
+});
+
+async function respond(request: Request): Promise<Response> {
+  const payload = (await request.json()) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
+
+  if (userContent.includes("N=")) {
+    batchCallCount++;
+    const bodies = parseBatchBodies(userContent);
+    let result: GraphExtraction[];
+    try {
+      result = batchExtractorStub
+        ? await batchExtractorStub(bodies)
+        : bodies.map(() => ({ entities: [], relations: [] }));
     } catch (err) {
       return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
     }
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
       headers: { "Content-Type": "application/json" },
     });
-  },
-});
+  }
+
+  singleCallCount++;
+  let result: GraphExtraction;
+  try {
+    result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+  } catch (err) {
+    return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
+  }
+  return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 const { runGraphExtractionPass } = await import("../../../src/indexer/graph/graph-extraction");
 
@@ -118,6 +135,9 @@ beforeEach(() => {
   singleExtractorStub = null;
   batchCallCount = 0;
   singleCallCount = 0;
+  holdMs = 0;
+  inFlight = 0;
+  maxInFlight = 0;
 });
 
 afterEach(() => {
@@ -406,5 +426,36 @@ describe("runGraphExtractionPass — batch path", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+
+  test("the run's concurrency bounds every model call, across batches and their per-file calls", async () => {
+    // Four bodies that each split into two chunks, two per batch: both batches
+    // run at once, and each extracts its long bodies one call at a time, so
+    // at most `concurrency` calls are ever in flight (not concurrency²).
+    for (let i = 1; i <= 4; i++) {
+      writeMemory(
+        `long${i}`,
+        `# One\n\n${`Alpha${i} detail `.repeat(110)}\n\n# Two\n\n${`Gamma${i} detail `.repeat(110)}`,
+      );
+    }
+    holdMs = 40;
+    singleExtractorStub = async () => ({ entities: ["Shared"], relations: [] });
+
+    const db = openIndexDatabase(path.join(tmpStash, "graph-fanout.db"));
+    try {
+      const result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
+        llmRunner: testLlmRunner({ ...SAMPLE_LLM, concurrency: 2 }, "test"),
+        sources: sources(),
+        db,
+      });
+      expect(result.extracted).toBe(4);
+    } finally {
+      closeDatabase(db);
+    }
+
+    expect(singleCallCount).toBe(8);
+    expect(batchCallCount).toBe(0);
+    expect(maxInFlight).toBe(2);
   });
 });

@@ -10,13 +10,16 @@
  * needed to act (ref, run, parameters, follow-up command).
  *
  * Curation is one search with the fused ranking, the top `limit` hits, and
- * per-hit enrichment (preview, run and parameters, graph support refs). An
- * optional reranker reorders the top fused candidates first.
+ * per-hit enrichment (preview, run and parameters, support refs from the
+ * hit's declared links). An optional reranker reorders the top fused
+ * candidates first.
  *
  * The exported `akmCurate()` API is the single entry point; tests can also
  * drive `curateSearchResults` with a fixture search response.
  */
 
+import { parseBundleRef } from "../../core/asset/asset-ref";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -356,7 +359,7 @@ async function enrichCuratedStashHit(
 
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
-  const supportRefs = buildCurateSupportRefs(shown?.related?.hits, selectedRefs, hit.ref);
+  const supportRefs = buildCurateSupportRefs(shown?.links, selectedRefs, hit.ref);
 
   const item: CuratedStashItem = {
     source: "local",
@@ -483,20 +486,43 @@ function rerankDocumentTexts(hits: SourceSearchHit[]): string[] {
   );
 }
 
-/** Up to {@link MAX_CURATE_SUPPORT_REFS} graph-related assets not already selected. */
+/**
+ * Up to {@link MAX_CURATE_SUPPORT_REFS} assets the hit's declared links (#935)
+ * name, not already selected: what the hit links to first, then what links to
+ * it, in the order `akm show` lists them. The LLM entity graph's `related`
+ * list no longer feeds them.
+ */
 function buildCurateSupportRefs(
-  relatedHits:
-    | Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>
-    | undefined,
+  links: ShowResponse["links"],
   selectedRefs: Set<string>,
   ownerRef: string,
 ): CurateSupportRef[] {
   const supportRefs: CurateSupportRef[] = [];
-  for (const hit of relatedHits ?? []) {
-    if (!hit.ref || hit.ref === ownerRef || selectedRefs.has(hit.ref)) continue;
-    if (supportRefs.some((existing) => existing.ref === hit.ref)) continue;
-    supportRefs.push({ ref: hit.ref, type: hit.type, reason: "Related asset via shared entities." });
-    if (supportRefs.length >= MAX_CURATE_SUPPORT_REFS) break;
+  for (const [part, direction] of [
+    ["outgoing", "from"],
+    ["incoming", "to"],
+  ] as const) {
+    for (const [kind, group] of Object.entries(links?.[part] ?? {})) {
+      for (const ref of group.refs) {
+        if (ref === ownerRef || selectedRefs.has(ref) || supportRefs.some((existing) => existing.ref === ref)) continue;
+        const type = supportRefType(ref);
+        supportRefs.push({
+          ref,
+          ...(type ? { type } : {}),
+          reason: `Declared link (${kind}) ${direction} this asset.`,
+        });
+        if (supportRefs.length >= MAX_CURATE_SUPPORT_REFS) return supportRefs;
+      }
+    }
   }
   return supportRefs;
+}
+
+/** The asset type a ref's conceptId names (`memories/x` → `memory`), when it names one. */
+function supportRefType(ref: string): string | undefined {
+  try {
+    return typeNameFromConceptId(parseBundleRef(ref).conceptId)?.type;
+  } catch {
+    return undefined;
+  }
 }

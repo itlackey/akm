@@ -360,57 +360,6 @@ export function deleteStoredGraph(db: Database, stashPath: string): void {
   })();
 }
 
-/**
- * Scoped loader — graph_files rows without entities/relations. Used for
- * orphan detection and entity overview commands.
- */
-export function loadGraphFilesOnly(
-  stashPath: string,
-  db?: Database,
-): Array<{
-  path: string;
-  type: string;
-  bodyHash: string;
-  confidence?: number;
-  status?: GraphFileNode["status"];
-  reason?: GraphFileNode["reason"];
-}> {
-  try {
-    return withReadableGraphDb(db, (readDb) => {
-      const rows = readDb
-        .prepare(
-          `SELECT file_path, file_type, body_hash, confidence, status, reason
-              FROM graph_files
-              WHERE stash_root = ?
-              ORDER BY file_order`,
-        )
-        .all(stashPath) as Array<{
-        file_path: string;
-        file_type: string;
-        body_hash: string;
-        confidence: number | null;
-        status: string | null;
-        reason: string | null;
-      }>;
-      return rows.map((row) => ({
-        path: row.file_path,
-        type: row.file_type,
-        bodyHash: row.body_hash,
-        ...(typeof row.confidence === "number" ? { confidence: row.confidence } : {}),
-        ...(row.status ? { status: row.status as GraphFileNode["status"] } : {}),
-        ...(row.reason ? { reason: row.reason as GraphFileNode["reason"] } : {}),
-      }));
-    });
-  } catch (err) {
-    // Never mask the bun-test isolation guard as "no stored graph files",
-    // and never mask an index we are not allowed to read as one with no
-    // graph in it (#791) — `GRAPH_DB_MISSING` above is the only "absent".
-    rethrowIfTestIsolationError(err);
-    rethrowIfDataDirUnreadable(err);
-    return [];
-  }
-}
-
 export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGraphMeta | null {
   try {
     return withReadableGraphDb(db, (readDb) => {

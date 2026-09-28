@@ -8,7 +8,7 @@
  * Walks the primary stash for `memory:` and `knowledge:` assets, asks the
  * configured LLM to extract entities and relations from each one, and
  * persists the result to stash-local SQLite graph tables keyed by stash root.
- * The artifact backs `akm show`'s `related` list and curate's support refs
+ * The artifact backs `akm show`'s `related` list
  * (`src/indexer/graph/graph-related.ts`); it plays no part in search ranking.
  *
  * Disabling — three preconditions must ALL hold for the pass to run:
@@ -475,6 +475,8 @@ function extractionRecord(candidate: EligibleFile, bodyHash: string, shape: Grap
  * Run the planned extractions in chunks of `batchSize`: cache hits are taken
  * as-is, and each chunk's model plans go to the provider in one
  * `extractGraphFromBodies` call (a one-body call is the per-asset path).
+ * Up to the runner's concurrency of chunks run at once, and each makes one
+ * call at a time, so that is also the most calls the run has in flight.
  */
 async function extractGraphBatches(args: {
   plans: EligibleGraphPlan[];

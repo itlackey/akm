@@ -418,6 +418,7 @@ export function shapeShowOutput(
       "steps",
       "keys",
       "related",
+      "links",
       ...FRAGMENT_PROVENANCE_FIELDS,
       ...FRAGMENT_CONTEXT_FIELDS,
     ]);
@@ -441,6 +442,7 @@ export function shapeShowOutput(
       "origin",
       "keys",
       "related",
+      "links",
       ...FRAGMENT_PROVENANCE_FIELDS,
       ...FRAGMENT_CONTEXT_FIELDS,
     ]);
@@ -471,6 +473,7 @@ export function shapeShowOutput(
     "activeRun",
     "keys",
     "related",
+    "links",
     ...FRAGMENT_PROVENANCE_FIELDS,
     ...FRAGMENT_CONTEXT_FIELDS,
     // ref, path, and editable are always projected — at every --detail level,

@@ -20,6 +20,7 @@
  */
 
 import { createRequire } from "node:module";
+import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { sha256Hex } from "../../runtime";
@@ -35,6 +36,7 @@ import {
   tableExists,
 } from "./index-entry-schema";
 import { rebuildFts } from "./index-fts-repository";
+import { rebuildAllEntryLinks } from "./index-links-repository";
 import { getMeta, setMeta } from "./index-meta-repository";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -48,6 +50,9 @@ export const VACUUM_PENDING_META = "vacuumPending";
  * compares it; the index layout version gates the graph tables' shape.
  */
 export const GRAPH_SCHEMA_VERSION = 4;
+
+/** The layout that added declared links (`asset_links`, #935). */
+const DECLARED_LINKS_LAYOUT = 26;
 
 /**
  * The refusal for an index a newer akm wrote. Readers and the writable opener
@@ -193,6 +198,7 @@ function ensureEntriesLayout(db: Database): void {
     for (const table of [
       "entries_fts",
       "entry_fragments",
+      "asset_links",
       "embeddings",
       "utility_scores_scoped",
       "utility_scores",
@@ -269,6 +275,27 @@ function ensureFtsLayout(db: Database): void {
     db.exec("DROP TABLE IF EXISTS entries_fts");
     db.exec(entriesFtsDdl(contentless));
     rebuildFts(db);
+  })();
+}
+
+/**
+ * Layout 26 stores declared links (#935). Every relation an older layout
+ * indexed already sits in `document_json`, so the links are derived from there
+ * in place, with no file read. The exception is a workflow's step targets and
+ * a task's target, which no earlier layout stored: the directories holding
+ * workflows and tasks lose their incremental cursor, so the next `akm index`
+ * re-reads those and nothing else. One transaction.
+ */
+function migrateToDeclaredLinks(db: Database): void {
+  db.transaction(() => {
+    rebuildAllEntryLinks(db);
+    const rows = db
+      .prepare("SELECT DISTINCT file_path FROM entries WHERE type IN ('workflow', 'task')")
+      .all() as Array<{
+      file_path: string;
+    }>;
+    const forget = db.prepare("DELETE FROM index_dir_state WHERE dir_path = ?");
+    for (const dir of new Set(rows.map((row) => path.dirname(row.file_path)))) forget.run(dir);
   })();
 }
 
@@ -402,6 +429,10 @@ export function ensureSchema(db: Database): void {
   // stay put.
   if (!hadFragmentSource && tableExists(db, "entries")) {
     db.exec("DELETE FROM index_dir_state");
+  }
+
+  if (storedVersion > 0 && storedVersion < DECLARED_LINKS_LAYOUT && tableExists(db, "entries")) {
+    migrateToDeclaredLinks(db);
   }
 
   // Migrating an existing layout drops tables and columns; the next `akm index`

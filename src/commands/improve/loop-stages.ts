@@ -647,14 +647,15 @@ export async function runGraphExtractionMaintenancePass(
 }> {
   const { config, sources, primaryStashDir, resolvedPlan } = ctx;
   const settings = ctx.improveProfile?.processes?.graphExtraction;
-  const graphEnabled = resolvedPlan ? true : isProcessEnabled("index", "graph_extraction", config);
   if (settings?.enabled === false) {
     info("[improve] graph extraction skipped (disabled by improve profile)");
     return { durationMs: 0, warnings: [] };
   }
   if (sources.length === 0) return { durationMs: 0, warnings: [] };
-  if (!graphEnabled) {
-    info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
+  // `index.graph.enabled: false` turns graph extraction off everywhere,
+  // whatever the strategy enables.
+  if (!isProcessEnabled("index", "graph_extraction", config)) {
+    info("[improve] graph extraction skipped (index.graph.enabled is false)");
     return { durationMs: 0, warnings: [] };
   }
   const fullScan = settings?.fullScan === true;

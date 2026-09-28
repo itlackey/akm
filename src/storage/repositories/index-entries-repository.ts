@@ -29,6 +29,7 @@ import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
+import { deleteEntryLinks, replaceEntryLinks } from "./index-links-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 import { deleteEntryVectors } from "./index-vec-repository";
 
@@ -47,9 +48,9 @@ function embedHash(entry: IndexDocument): string {
  * Insert or update one canonical entry and all synchronously derived search
  * state. Returns the stable row id.
  *
- * The entries row, FTS projection, and stale-vector invalidation commit as one
- * SQLite transaction. Callers therefore cannot publish an entry and forget a
- * second FTS maintenance step.
+ * The entries row, FTS projection, declared links, and stale-vector
+ * invalidation commit as one SQLite transaction. Callers therefore cannot
+ * publish an entry and forget a second FTS or links maintenance step.
  */
 export function upsertEntry(
   db: Database,
@@ -93,6 +94,7 @@ export function upsertEntry(
       entry,
       hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : undefined,
     );
+    replaceEntryLinks(db, result.id, entry, provenance);
     return result.id;
   };
   // Always enter the driver's transaction wrapper. Both supported SQLite
@@ -319,14 +321,15 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
     }
     if (row.embed_hash !== hash) deleteEntryVectors(db, row.id);
-    if (document)
+    if (document) {
       replaceFtsEntry(
         db,
         row.id,
         document,
         hasMarkdownFragmentContent(document) ? (getMarkdownFragmentContent(document) ?? null) : undefined,
       );
-    else deleteFtsEntries(db, [row.id]);
+      replaceEntryLinks(db, row.id, document, { bundleId: opts.sourceName, conceptId: opts.newRef });
+    } else deleteFtsEntries(db, [row.id]);
   })();
 
   // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
@@ -501,9 +504,11 @@ function deleteRelatedRows(
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
 
-  // FTS is part of the canonical mutation boundary, not a caller-maintained
-  // dirty queue. Delete it before the parent row inside this transaction.
+  // FTS and declared links are part of the canonical mutation boundary, not a
+  // caller-maintained dirty queue. Delete them before the parent row inside
+  // this transaction.
   deleteFtsEntries(db, numericIds);
+  deleteEntryLinks(db, numericIds);
 
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {

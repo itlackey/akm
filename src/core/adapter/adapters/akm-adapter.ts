@@ -217,6 +217,8 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "wikiRole",
   "sources",
   "evidenceSources",
+  // #935: a workflow's step targets and a task's target, read as declared links.
+  "uses",
   // D2 (#730): the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native
   // writes (generated/verified/sources, namespaced — see `types.ts`'s
   // `OkfProvenance` doc). Carried so the akm adapter rereads what it wrote and

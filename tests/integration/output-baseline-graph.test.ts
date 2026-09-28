@@ -235,6 +235,33 @@ describe("output baseline", () => {
     expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));
   });
 
+  test("show prints declared links in JSON, agent shape and text", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    const envDirs = envDirsForStash(stashDir);
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    writeFile(
+      path.join(stashDir, "memories", "incident.md"),
+      "---\ndescription: An incident\nxrefs:\n  - knowledge/guide\n  - knowledge/missing\n---\n\nFollow guide.\n",
+    );
+    const config = { configVersion: "0.9.0", semanticSearchMode: "off" };
+    runCli(stashDir, ["index"], config, envDirs);
+
+    const human = JSON.parse(runCli(stashDir, ["show", "memories/incident", "--format=json"], config, envDirs));
+    expect(human.links).toEqual({
+      outgoing: { xref: { total: 1, refs: ["knowledge/guide"] } },
+      unresolved: { xref: { total: 1, refs: ["knowledge/missing"] } },
+    });
+    const agent = JSON.parse(
+      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--shape=agent"], config, envDirs),
+    );
+    expect(agent.links).toEqual({ incoming: { xref: { total: 1, refs: ["memories/incident"] } } });
+
+    const text = runCli(stashDir, ["show", "memories/incident", "--format=text"], config, envDirs);
+    expect(text).toContain(
+      "links:\n  outgoing:\n    xref: knowledge/guide\n  unresolved:\n    xref: knowledge/missing",
+    );
+  });
+
   test("config defaults drive output mode and CLI flags override them", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");

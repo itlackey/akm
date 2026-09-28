@@ -107,7 +107,7 @@ journal mode. Foreign-key policy is called out per database below.
 ### `$DATA/index.db` — Main Search Index
 
 Schema managed by `ensureSchema()` (`src/storage/repositories/index-schema.ts`).
-The current layout is 25 (`index_meta.version`, a layout marker, not a
+The current layout is 26 (`index_meta.version`, a layout marker, not a
 compatibility gate). It uses the shared opening pragma policy above with
 foreign keys ON. Vector search is an exact scan of the `embeddings` table.
 
@@ -116,7 +116,8 @@ Opened by:
   and other index writers. Schema changes are applied in place: `CREATE ... IF
   NOT EXISTS`, `ALTER TABLE ... ADD COLUMN` / `DROP COLUMN`, drops of retired
   derived tables, and a one-time rebuild of the FTS table from `entries` when
-  it still carries the layout-23 content copies. `embeddings`,
+  it still carries the layout-23 content copies. Crossing to layout 26
+  derives `asset_links` from the stored `document_json`. `embeddings`,
   `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are never dropped
   to cross a layout change. A newer layout is refused, naming the upgrade.
 - `openExistingDatabase()` / `openReadonlyExistingDatabase()` — no schema
@@ -199,6 +200,25 @@ selector (#937); nothing searches it. It is derived state and is replaced or
 removed in the same transaction as the parent's FTS row. Layout 24 and
 earlier also indexed each fragment in a second FTS5 table,
 `entry_fragments_fts`; the writable opener drops it.
+
+#### Table: `asset_links`
+
+Declared links (#935), layout 26. `WITHOUT ROWID`, keyed by `(entry_id, ord)`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `entry_id` | INTEGER NOT NULL | FK → `entries(id)` ON DELETE CASCADE; the entry whose content declares the link |
+| `ord` | INTEGER NOT NULL | Position in that entry's link list |
+| `kind` | TEXT NOT NULL | `xref`, `superseded_by`, `contradicted_by`, `belief_peer`, `derived_from`, `cites`, `links_to` or `uses` |
+| `raw` | TEXT NOT NULL | The token as authored, legacy spellings included |
+| `dst_bundle` | TEXT | Target bundle when the token names one; NULL means the declaring entry's own bundle |
+| `dst_concept` | TEXT NOT NULL | Target conceptId (`idx_asset_links_dst`) |
+
+Derived from the entry's `document_json` (`src/indexer/links/declared-links.ts`)
+and replaced in the same transaction as its `entries` upsert; deletes remove
+the rows before the parent. Whether a target exists is a join on
+`entries.item_ref` at read time; a memory target whose own entry is gone
+resolves to its `.derived` child. Separate from the LLM graph (`graph_*`) tables.
 
 #### Table: `embeddings`
 

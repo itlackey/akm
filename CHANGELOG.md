@@ -6,6 +6,140 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.8] - 2026-09-28
+
+`akm index` now records the links a bundle already declares (`xrefs`,
+`supersededBy`, a `.derived` memory's parent, wiki sources, page links, and
+workflow and task targets) as typed links, with no model. `akm show` lists
+them, and curate's support refs come from them instead of the LLM entity
+graph. The index moves to layout 26 in place on its first writable open;
+0.9.17-alpha.4 through alpha.7 cannot open it. `index.graph.enabled: false`
+now stops graph extraction in `akm improve`, and a partly failed extraction is
+retried. `akm migrate` converts a v2 or v3 task file to v4 in one pass, and
+the launchers no longer lose a signal that arrives before their child starts.
+
+### Added
+
+- **Declared links (#935).** The relations a bundle already declares are now
+  stored as typed links: `xrefs:` (`xref`), `supersededBy:`
+  (`superseded_by`), `contradictedBy:` (`contradicted_by`),
+  `currentBeliefRefs:` (`belief_peer`), a `.derived` memory's parent
+  (`derived_from`), wiki `sources:` that name an asset (`cites`), the page
+  links an llm-wiki or OKF bundle resolves (`links_to`), and a workflow step's
+  or a task's target (`uses`). `akm index` reads them from what it already
+  parses, with no model, so an install without an LLM engine gets them. They
+  live in their own table (`asset_links`), apart from the LLM entity graph:
+  each link belongs to the entry that declares it and is written, replaced
+  and deleted with it, including on incremental and write-path (`akm
+  remember`) indexing. A target resolves when it is indexed, not when its
+  citer was, so a note that cites something added later links to it without
+  being reindexed. Retired spellings convert in memory (`memory:<name>`,
+  `wiki:<wiki>/<page>`, a `.md` suffix), and, as lint already allows (#882),
+  a memory whose own file is gone resolves to its `.derived` child.
+  `akm show` lists an asset's links grouped by kind: `outgoing`, `incoming`
+  and the `unresolved` tokens it names, at most 10 per kind with a `total`.
+  `akm info` reports links per kind with how many are unresolved. Links do
+  not change search ranking, and `related` is unchanged: on the retrieval
+  suite, against 0.9.17-alpha.7 on the same index with two runs per arm,
+  search nDCG@10 moved +0.002 [−0.005, +0.009] (a rerun of alpha.7 alone
+  moved +0.006) and curate P@5 +0.000 [−0.001, +0.001].
+  On the retrieval snapshot of the maintainer's 21 bundles (23,979 entries)
+  there are 14,917 links: 7,393 `contradicted_by`, 4,401 `xref`, 2,577
+  `derived_from`, 540 `cites` and 6 `superseded_by`. 1,801 are unresolved;
+  1,744 of those are `.derived` memories whose parent memory no longer
+  exists. (`src/indexer/links/declared-links.ts`,
+  `src/storage/repositories/index-links-repository.ts`,
+  `src/commands/read/show.ts`, `src/commands/sources/info.ts`)
+
+### Changed
+
+- **`akm migrate` converts a v2 or v3 task file straight to v4 in one pass.**
+  The chain that read every file as v2, converted it to an intermediate v3
+  shape, then converted that to v4 (`src/tasks/source/task-to-v3.ts` ->
+  `task-to-v4.ts`, composed by `scripts/akm-migrate/migrate/task-files.ts`)
+  is now one planner: `task-to-v4.ts` reads a file once and, for v2, builds
+  the v3-shape record in memory — never written to disk or reported as its
+  own outcome — before hoisting it to v4 through the same code path a real
+  v3 file goes through. `akm migrate status`/`apply` output shapes, and
+  every blocked/changed reason code, are unchanged, checked fixture by
+  fixture against the prior two-hop chain's actual output (one exception:
+  a v3 document that fails only the typed pre-check's own "exactly one
+  scheduling source" rule — unreachable through the real chain, which
+  always ran that same pre-check first — now reports `invalid-v3-task`
+  instead of the raw hoist stage's own `ambiguous-scheduling-source`,
+  matching what `akm migrate apply` already returned end to end). The
+  `already-v3` and `pending-v2-to-v3-migration` intermediate states are
+  gone with the generation split that produced them.
+  `src/tasks/source/task-to-v3.ts` (500 lines) is deleted; its logic moved
+  into `task-to-v4.ts`, which also drops the duplicate raw-YAML reader and
+  outcome-base helpers the two files each carried their own copy of.
+  (`src/tasks/source/task-to-v4.ts`, `scripts/akm-migrate/migrate/task-files.ts`)
+- **Curate's support refs come from declared links.** Each curated item's
+  support refs (at most two) are now assets its declared links name: what
+  it links to, then what links to it, in the order `akm show` lists them,
+  skipping assets curate already selected. They no longer come from the LLM
+  entity graph's `related` list. On the retrieval snapshot, `related` offered
+  support refs for 47 of 867 curate items (5.4%) and declared links for 257
+  (29.6%). The retrieval judge graded 157 of those items, asking whether each
+  support ref is worth opening next: 56% of declared support refs were useful
+  against 68% of `related`'s, so curate attaches about 24 useful support refs
+  per 100 items instead of 7. Curate's items are unchanged.
+  (`src/commands/read/curate.ts`)
+- **Index layout 26.** The first writable open of an older index derives
+  every entry's links from its stored `document_json` in place, reading no
+  file: on the 23,979-entry snapshot index that takes 0.8 s and adds 3.5 MB.
+  Earlier layouts never stored a workflow's or a task's targets, so only the
+  directories holding workflows and tasks re-read on the next `akm index`.
+  The open leaves `index_meta.vacuumPending` like every layout migration.
+  0.9.17-alpha.4 through alpha.7 refuse an index at layout 26
+  (`INDEX_SCHEMA_INCOMPATIBLE`, naming the upgrade), for writing as well as
+  reading, so going back to one of them needs a new index: move `index.db`
+  aside and run `akm index` under that release (the LLM graph and enrichment
+  cache it held are not rebuilt by `akm index`).
+  (`src/storage/repositories/index-schema.ts`,
+  `src/storage/repositories/index-entry-schema.ts`)
+
+### Fixed
+
+- **`index.graph.enabled: false` stops graph extraction in `akm improve`.**
+  The switch was read only when improve had no strategy plan, which is never
+  the case in a real run, so the nightly and weekly graph tasks kept
+  extracting with it set. Improve now skips its graph extraction stage
+  whenever `index.graph.enabled` is `false`, whatever the strategy enables.
+  This also makes the graph ablation harness's "graph off" arm, which sets
+  exactly this key, turn extraction off. Improve still does not read
+  `index.defaults` when it picks the engine for graph extraction.
+  (`src/commands/improve/loop-stages.ts`)
+- **Graph extraction never has more calls in flight than the run's
+  concurrency.** Batches run side by side up to the runner's concurrency, and
+  each batch also sent its per-file calls (long bodies, a non-array response)
+  up to that limit at once, so at a concurrency of 2 four calls could be in
+  flight. A batch now makes its per-file calls one at a time. At the default
+  concurrency of 1 nothing changes. (`src/llm/graph-extract.ts`)
+- **A long document whose extraction partly failed is extracted again.** A
+  body over 1,600 characters is extracted in chunks. When some chunks failed
+  (a timeout, an error, an empty response) and others found entities, the
+  file was recorded and cached as extracted, so the failed chunks were never
+  retried. Such a file is now recorded as failed and not cached, and the next
+  run extracts it again, every chunk: partial failures are rare outside
+  provider outages, and keeping per-chunk results to skip the chunks that
+  succeeded would need a second cache. Until then the entities the other
+  chunks found are stored when the file had no graph rows yet; a file with
+  rows keeps them. (`src/llm/graph-extract.ts`)
+- **`scripts/node-runtime/akm` could die from a raw signal instead of
+  forwarding it to its child.** The launcher registered its
+  SIGTERM/SIGINT/SIGHUP forwarding listeners only after spawning the child;
+  under load, a signal could arrive in that window and fall through to the
+  runtime's default (process-terminating) disposition, killing the launcher
+  before the child ever saw it (`tests/integration/launcher-signal-forwarding.test.ts`,
+  intermittent). The listeners now go up before anything else runs, with a
+  small queue for a signal that arrives before the child exists.
+- **`scripts/node-runtime/akm-migrate` carried the same pre-spawn signal
+  race** as `scripts/node-runtime/akm` above, for the same reason (listeners
+  registered only after `spawn()`), with no test covering it. Fixed the same
+  way, and added `tests/integration/akm-migrate-signal-forwarding.test.ts`
+  (modelled on `launcher-signal-forwarding.test.ts`) to cover it.
+
 ## [0.9.17-alpha.7] - 2026-09-28
 
 A scheduled task is now just a command and a schedule. Each native row

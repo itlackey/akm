@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Graph navigation for `akm show`'s `related` list (and, through it, curate's
- * support refs): the files that share extracted entities with a given file.
- * The graph plays no part in search ranking.
+ * Graph navigation for `akm show`'s `related` list: the files that share
+ * extracted entities with a given file. The graph plays no part in search
+ * ranking, and curate's support refs come from declared links instead.
  */
 
 import type { Database } from "../../storage/database";
