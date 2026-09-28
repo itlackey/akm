@@ -17,7 +17,7 @@ describe("scheduled task invocation", () => {
     ).toEqual(["/opt/akm/bin/akm", "task", "run", "ping", "--bundle", "work", "--scheduled"]);
   });
 
-  test("parses the current argv, a --scheduler-context argv (0.9.2 – 0.9.17-alpha.6), and a pre-0.9.2 argv", () => {
+  test("parses the current argv, a --scheduler-context argv (0.9.0 – 0.9.17-alpha.6), and an older argv with neither", () => {
     const tail = ["task", "run", "sub/deep/nightly", "--bundle", "team", "--scheduled"];
     expect(parseScheduledInvocationArgv(["/usr/bin/bun", "/opt/akm", ...tail])).toEqual({
       binding: ["/usr/bin/bun", "/opt/akm"],

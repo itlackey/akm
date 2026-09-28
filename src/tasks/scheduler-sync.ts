@@ -321,7 +321,7 @@ export interface SchedulerBundleScope {
   readonly bundlePath?: string;
   /**
    * This installation's primary (working) stash. A row that names no bundle
-   * (pre-0.9.2) runs it, and a row written before 0.9.17-alpha.7 names it
+   * (before 0.9.2) runs it, and a row written before 0.9.17-alpha.7 names it
    * in its descriptor, which must be this bundle's path.
    */
   readonly primary?: boolean;
@@ -403,13 +403,15 @@ export function scheduledInvocationBundle(invocation: readonly string[] | undefi
 /**
  * The scope that owns an installed row, or none (#846).
  *
- *   - A row that names no bundle (pre-0.9.2) runs the primary stash.
+ *   - A row that names no bundle (before 0.9.2) runs the primary stash.
  *   - A row written before 0.9.17-alpha.7 names, in its descriptor, the
  *     primary stash of the installation that wrote it: the primary bundle
  *     owns it only when that is its own path. Any other bundle owns it by
  *     name, as it always has.
- *   - A current row that sets `AKM_BUNDLE_DIR` belongs to the bundle at that
- *     path; one that does not names a configured bundle by its config name.
+ *   - A current row belongs to the installation whose config it reads: its
+ *     inline `AKM_CONFIG_DIR`, or none for the default config, must be this
+ *     sync's. Then a row that sets `AKM_BUNDLE_DIR` belongs to the bundle at
+ *     that path, and one that does not names a configured bundle.
  */
 export function installedRowScope(
   row: InstalledSchedulerBinding,
@@ -427,6 +429,7 @@ export function installedRowScope(
       if (!scope.primary || owner === scope.bundlePath) return scope;
       continue;
     }
+    if (row.environment?.AKM_CONFIG_DIR !== scope.environment?.AKM_CONFIG_DIR) continue;
     if (owner !== undefined ? owner === scope.bundlePath : scope.environment?.AKM_BUNDLE_DIR === undefined) {
       return scope;
     }
@@ -583,7 +586,9 @@ function installedRowRef(row: InstalledSchedulerBinding, scope: SchedulerBundleS
 /** Where an installed row was scheduled from, for messages. */
 export function installedRowOwner(row: InstalledSchedulerBinding): string {
   const bundle = row.target ?? scheduledInvocationBundle(row.invocation);
+  const config = row.environment?.AKM_CONFIG_DIR;
   if (row.ownerBundlePath) return `the bundle at ${JSON.stringify(row.ownerBundlePath)}`;
+  if (bundle && config) return `bundle ${JSON.stringify(bundle)} of the config in ${JSON.stringify(config)}`;
   return bundle ? `bundle ${JSON.stringify(bundle)}` : "an installation this sync cannot attribute";
 }
 

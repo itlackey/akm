@@ -242,7 +242,7 @@ export function buildPlistXml(
     .replace("{{LABEL}}", LAUNCHD_LABEL_PREFIX + escapeXml(nativeId))
     .replace("{{PROGRAM_ARGS}}", programArgs)
     .replaceAll("{{LOG_PATH}}", escapeXml(logPath))
-    .replace("{{ENV_VARS}}", renderPlistEnvironment(envPath, environment))
+    .replace("{{ENV_VARS}}", () => renderPlistEnvironment(envPath, environment))
     .replace("{{TRIGGER_XML}}", renderLaunchdTrigger(trigger));
   for (const char of xml) {
     const code = char.codePointAt(0) ?? 0;

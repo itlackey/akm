@@ -434,7 +434,7 @@ describe("akmTasksSync — schedule drift", () => {
 // An enabled website/npm bundle must not crash unscoped `akm task sync`, and
 // a scoped sync naming one must fail with a clear usage error rather than
 // the write-target ConfigError that used to escape from resolveWriteTarget.
-// Rows written by 0.9.2 – 0.9.17-alpha.6 name a `--scheduler-context`
+// Rows written by 0.9.0 – 0.9.17-alpha.6 name a `--scheduler-context`
 // descriptor. The first sync after upgrading rewrites each one in place — an
 // update that keeps its launcher and schedule — and never adds or removes a
 // row: the task set and its times do not change.
@@ -544,6 +544,72 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
       },
     ]);
     expect((await akmTasksSync({ backend })).unchanged.sort()).toEqual(["alpha", "beta"]);
+  });
+});
+
+// A second installation (another config dir) sharing this crontab writes rows
+// that name a bundle of the same name; they are its rows, not this one's (#846).
+describe("akmTasksSync — rows another installation wrote", () => {
+  test("a row that reads another config (inline AKM_CONFIG_DIR) is left alone, and its id is reported as taken", async () => {
+    writeTask("backup", "0 3 * * *");
+    writeTask("nightly", "0 4 * * *", false);
+    const foreignRow =
+      "0 3 * * * AKM_CONFIG_DIR=/opt/b/config /usr/local/bin/akm task run nightly --bundle stash --scheduled > /var/log/akm/nightly.log 2>&1";
+    const exec = memoryExec(["# akm:task nightly BEGIN", foreignRow, "# akm:task nightly END", ""].join("\n"));
+    const backend = CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath: false,
+    });
+
+    const preview = await akmTasksSyncPlan({ backend });
+    expect(preview.removes).toEqual([]);
+    expect(preview.adds.map((add) => add.id)).toEqual(["backup"]);
+    await akmTasksSync({ backend });
+    expect(exec.current()).toContain(foreignRow);
+
+    // Enabling a task with that id here collides instead of taking the row over.
+    setSchedulerRefEnabled("stash//tasks/nightly", true);
+    const collision = await akmTasksSync({ backend });
+    expect(collision.failures).toEqual([
+      expect.objectContaining({ ref: "stash//tasks/nightly", reason: expect.stringContaining("already scheduled") }),
+    ]);
+    expect(exec.current()).toContain(foreignRow);
+  });
+
+  test("a flat bundle whose task files are all v2/v3 keeps its row until `akm migrate apply` converts them", async () => {
+    const flat = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sync-flat-"));
+    try {
+      fs.writeFileSync(path.join(flat, "weekly.yml"), "version: 3\nrun: echo weekly\nakm:\n  schedule: '0 5 * * 0'\n");
+      writeSandboxConfig({ bundles: { flat: { path: flat, writable: true } }, defaultBundle: "flat" });
+      resetConfigCache();
+      setSchedulerRefEnabled("flat//weekly", true);
+      const row = [
+        "# akm:task weekly BEGIN",
+        "0 5 * * 0 /usr/local/bin/akm task run weekly --bundle flat --scheduled > /var/log/akm/weekly.log 2>&1",
+        "# akm:task weekly END",
+        "",
+      ].join("\n");
+      const exec = memoryExec(row);
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+
+      const result = await akmTasksSync({ backend });
+      expect(result.removed).toEqual([]);
+      expect(result.failures).toEqual([
+        expect.objectContaining({ ref: "flat//weekly", reason: expect.stringContaining("akm migrate apply") }),
+      ]);
+      expect(exec.current()).toBe(row);
+    } finally {
+      fs.rmSync(flat, { recursive: true, force: true });
+    }
   });
 });
 

@@ -74,7 +74,7 @@
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates `--bundle` and the
- *     `--scheduler-context` marker 0.9.2 – 0.9.17-alpha.6 wrote — read via
+ *     `--scheduler-context` marker 0.9.0 – 0.9.17-alpha.6 wrote — read via
  *     `CRON_BACKEND().list()`/`akmTasksSync` (`src/tasks/backends/cron.ts`),
  *     which recognizes the row from inside its own sentinel and reconciles
  *     it instead of treating it as absent and colliding with the

@@ -435,7 +435,7 @@ for full before/after examples and recovery guidance.
   other row still applies. A source that fails to parse is reported the same
   way, and its installed row is left exactly as it is. Rows akm cannot attribute to a bundle this sync covers —
   another bundle's, another installation's (the row names a different
-  bundle path), or anything outside akm's `# akm:task` markers,
+  bundle path, or reads a different `AKM_CONFIG_DIR`), or anything outside akm's `# akm:task` markers,
   `com.akm.task.` labels, or `\akm\` task folder — are never touched. A
   Task Scheduler row is compared by the fingerprint akm writes into its
   `<Source>` plus its enabled state, so an edit made in Task Scheduler that
@@ -468,11 +468,11 @@ for full before/after examples and recovery guidance.
   last akm block; cron applies it to every row below it.
 - A task's row is its command plus its schedule:
   `<launcher> task run <id> --bundle <bundle> --scheduled`. A configured
-  bundle needs nothing else, since config names it. The env-selected working
-  stash (`AKM_BUNDLE_DIR` naming no configured bundle) is named by nothing
-  else, so its rows set `AKM_BUNDLE_DIR` themselves, as do rows synced from
-  a shell that set `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or
-  `AKM_STATE_DIR` explicitly: a `VAR=value` prefix in the crontab, an
+  bundle needs nothing else, since config names it. No config names the
+  env-selected working stash (`AKM_BUNDLE_DIR` naming no configured bundle),
+  so its rows set `AKM_BUNDLE_DIR` themselves. Rows synced from a shell that
+  set `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or `AKM_STATE_DIR`
+  explicitly set those too. Each backend does it its own way: a `VAR=value` prefix in the crontab, an
   `EnvironmentVariables` entry in the plist, a `$env:VAR='value';`
   assignment ahead of the command in Task Scheduler. Defaults resolve at fire
   time, so a scheduled run uses the same state, data and cache directories an
@@ -484,13 +484,15 @@ for full before/after examples and recovery guidance.
   15 2 * * * AKM_BUNDLE_DIR=/srv/stash /usr/local/bin/akm task run nightly --bundle stash --scheduled > /home/u/.cache/akm/tasks/logs/nightly.log 2>&1
   ```
 
-  Releases 0.9.2 through 0.9.17-alpha.6 wrote a `--scheduler-context
+  Releases 0.9.0 through 0.9.17-alpha.6 wrote a `--scheduler-context
   <file>` argument into each row instead, naming a descriptor file under
   `$DATA/tasks/context/`. akm still applies that file when such a row fires,
   and the first `akm task sync` after upgrading rewrites each row in place: it
   shows as an update, keeps the row's launcher and schedule, and drops the
-  argument. The old descriptor files are no longer read after that and can be
-  deleted.
+  argument. A row the sync leaves as it is (its task file failed to load, or
+  a `--bundle` sync did not cover it) still names its file; once
+  `akm task doctor` lists no binding with a `contextPath`, the old descriptor
+  files are not read and can be deleted.
 
 Scheduler execution is at least once. Backends provide a stable invocation
 identity and AKM fences stale attempts, but an ambiguous process crash can be

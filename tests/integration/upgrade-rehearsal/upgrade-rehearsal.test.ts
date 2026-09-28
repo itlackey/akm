@@ -312,7 +312,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     // Prove the row that just ran was the CANDIDATE, not the previous
     // release still installed at `previous-readback`: the generated command
     // is the resolved invocation argv (one token per element — see
-    // buildScheduledBindingInvocation/resolveAkmInvocation in
+    // buildScheduledInvocation/resolveAkmInvocation in
     // src/tasks/backends/cron.ts and src/tasks/resolve-akm-bin.ts, unquoted
     // via quoteForCron since fixture paths never contain shell-special
     // characters) followed by `task run <ref>`. Strip the `task run …` tail

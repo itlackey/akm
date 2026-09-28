@@ -63,7 +63,13 @@ describe("cron backend helpers", () => {
     });
   });
 
-  test("extractCronInvocation reads the row 0.9.2 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
+  test("a backslash inside a quoted value is literal, as in sh", () => {
+    const environment = { AKM_BUNDLE_DIR: "/srv/a\\b c" };
+    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", environment);
+    expect(extractCronInvocation(line)?.environment).toEqual(environment);
+  });
+
+  test("extractCronInvocation reads the row 0.9.0 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
     const line =
       "30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm --scheduler-context /home/u/.local/share/akm/tasks/context/e898.json task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1";
     expect(extractCronInvocation(line)).toEqual({

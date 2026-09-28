@@ -1201,6 +1201,36 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     expect(plan.removed).toEqual(["by-name", "inline-same-dir"]);
   });
 
+  test("a row that reads another config (inline AKM_CONFIG_DIR) is another installation's, in both directions", async () => {
+    const componentRoot = root();
+    const bundlePath = "/home/user/akm";
+    const row = (id: string, environment?: Record<string, string>) => ({
+      id,
+      nativeId: id,
+      binding: ["/opt/akm"],
+      target: "stash",
+      invocation: ["task", "run", id, "--bundle", "stash", "--scheduled"],
+      signature: `sig-${id}`,
+      ...(environment ? { environment } : {}),
+    });
+    const installed = [row("default-config"), row("other-config", { AKM_CONFIG_DIR: "/opt/b/config" })];
+    const plan = (environment?: Record<string, string>) =>
+      planSchedulerSync({
+        sourceRoot: componentRoot,
+        adapterId: "akm-task",
+        bundleName: "stash",
+        bundlePath,
+        ...(environment ? { environment } : {}),
+        backend: "cron",
+        installed,
+      });
+
+    // No source is desired, so each sync removes exactly the rows it owns.
+    expect((await plan()).removed).toEqual(["default-config"]);
+    expect((await plan({ AKM_CONFIG_DIR: "/opt/b/config" })).removed).toEqual(["other-config"]);
+    expect((await plan({ AKM_CONFIG_DIR: "/opt/c/config" })).removed).toEqual([]);
+  });
+
   test("an orphaned row without a listed signature is removed like any other", async () => {
     const componentRoot = root();
     const bundlePath = "/home/user/work/akm";

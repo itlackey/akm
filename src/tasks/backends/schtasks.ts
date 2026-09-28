@@ -289,7 +289,7 @@ export function buildSchtasksXml(
     .replace('<Principal id="Author">', `<Principal id="Author">\n      <UserId>${escapeXml(options.userSid)}</UserId>`)
     .replace("{{ENABLED}}", task.enabled ? "true" : "false")
     .replace("{{COMMAND}}", escapeXml(command))
-    .replace("{{ARGS}}", escapeXml(args))
+    .replace("{{ARGS}}", () => escapeXml(args))
     .replace("{{LOG_PATH}}", escapeXml(logPath));
 }
 

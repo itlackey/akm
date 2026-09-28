@@ -205,4 +205,41 @@ describe("the migrator step over configured bundles", () => {
       storage.cleanup();
     }
   });
+
+  // The runtime reads only v4 (#987) and tells the user to run the migrator,
+  // so the migrator must reach every stash the runtime reads tasks from.
+  test("the env-selected working stash (AKM_BUNDLE_DIR, named by no config) is migrated too", () => {
+    const storage = withIsolatedAkmStorage();
+    resetConfigCache();
+    try {
+      const tasksDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "three.yml"), V3, { mode: 0o640 });
+      writeSandboxConfig({});
+
+      expect(inspectTaskFilesMigration()).toMatchObject({ status: "ready", taskFiles: { changed: 1, blocked: 0 } });
+      expect(applyTaskFilesMigration()).toMatchObject({ status: "current", applied: 1 });
+      const file = path.join(tasksDir, "three.yml");
+      expect(parseTaskSourceV4({ yaml: fs.readFileSync(file, "utf8"), filePath: file }).version).toBe(4);
+    } finally {
+      resetConfigCache();
+      storage.cleanup();
+    }
+  });
+
+  test("a configured flat bundle with no recorded adapter whose top-level task files are all v2/v3 is migrated", () => {
+    const storage = withIsolatedAkmStorage();
+    resetConfigCache();
+    const flat = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-files-flat-bundle-"));
+    roots.push(flat);
+    try {
+      fs.writeFileSync(path.join(flat, "weekly.yml"), V3, { mode: 0o640 });
+      writeSandboxConfig({ bundles: { flat: { path: flat, writable: true } } });
+
+      expect(inspectTaskFilesMigration()).toMatchObject({ status: "ready", taskFiles: { changed: 1, blocked: 0 } });
+    } finally {
+      resetConfigCache();
+      storage.cleanup();
+    }
+  });
 });

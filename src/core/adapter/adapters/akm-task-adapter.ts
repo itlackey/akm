@@ -34,7 +34,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { parseTaskSource } from "../../../tasks/source/parse-task-source";
+import { readBoundedTaskSourceYaml } from "../../../tasks/source/bounded-document";
+import { parseTaskSource, peekTaskSourceVersion } from "../../../tasks/source/parse-task-source";
 import {
   TASK_EXTENSION,
   TASK_NEAR_MISS_EXTENSION,
@@ -140,7 +141,10 @@ export const akmTaskAdapter: BundleAdapter = {
 
   /**
    * Install-time probe (§1.2): a root holding a top-level, valid task source
-   * v4 `.yml` file. The full parser keeps this disjoint from unrelated YAML and
+   * v4 `.yml` file, or a task v2/v3 file that `akm migrate apply` has yet to
+   * convert (the runtime refuses those, so without this the migrator and
+   * `akm task sync` would not find them in a bundle whose adapter config does
+   * not record). The full parser keeps this disjoint from unrelated YAML and
    * prevents probe semantics from drifting from validation semantics.
    */
   looksLikeRoot(root: string): boolean {
@@ -162,9 +166,28 @@ export const akmTaskAdapter: BundleAdapter = {
         parseTaskSource({ yaml: raw, filePath: entry.name, workspaceRoot: root });
         return true;
       } catch {
+        if (isLegacyTaskDocument(raw, entry.name)) return true;
         // Continue probing the remaining top-level .yml files.
       }
     }
     return false;
   },
 };
+
+/** The executable keys each retired task schema version required one of. */
+const LEGACY_TASK_TARGET_KEYS: Readonly<Record<number, readonly string[]>> = {
+  2: ["workflow", "prompt", "command"],
+  3: ["uses", "run"],
+};
+
+/** A task v2/v3 document: its schema version, plus a target key that version used. */
+function isLegacyTaskDocument(yaml: string, filePath: string): boolean {
+  let root: unknown;
+  try {
+    root = readBoundedTaskSourceYaml({ yaml, filePath }, { sourceLabel: "task source" }).root;
+  } catch {
+    return false;
+  }
+  const keys = LEGACY_TASK_TARGET_KEYS[peekTaskSourceVersion(root) ?? 0];
+  return keys !== undefined && keys.some((key) => Object.hasOwn(root as object, key));
+}

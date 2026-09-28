@@ -17,11 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   row as it is, and keeps reconciling every other task; `akm task run`,
   `akm lint` and `akm task validate` report it the same way, and
   `akm task validate`'s `converts` outcome is gone (such a file is
-  `blocked`). A host whose task files are all v4 (`akm migrate status`
-  reports `current`) sees no difference. A root whose only top-level task
-  files are v2/v3 is no longer detected as an `akm-task` bundle; a bundle
-  whose adapter is recorded in config is unaffected.
-  (`src/tasks/source/parse-task-source.ts`, `src/commands/tasks/validate.ts`)
+  `blocked`). `akm migrate apply` now also converts the tasks of the stash
+  `AKM_BUNDLE_DIR` selects when no configured bundle names it, since the
+  runtime reads those too, and a root whose top-level task files are all
+  v2/v3 is still detected as an `akm-task` bundle, so they are found and
+  converted. A host whose task files are all v4 (`akm migrate status`
+  reports `current`) sees no difference.
+  (`src/tasks/source/parse-task-source.ts`, `src/commands/tasks/validate.ts`,
+  `scripts/akm-migrate/task-migrate.ts`,
+  `src/core/adapter/adapters/akm-task-adapter.ts`)
 - **A scheduled row is its command plus its schedule, and carries its own
   context.** Rows no longer name a `--scheduler-context` descriptor file. A
   configured bundle's row is `<launcher> task run <id> --bundle <bundle>
@@ -31,7 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `AKM_CACHE_DIR` or `AKM_STATE_DIR` the syncing shell set explicitly: a
   `VAR=value` prefix in the crontab, an `EnvironmentVariables` entry in a
   launchd plist, a `$env:VAR='value';` assignment ahead of the command in
-  Task Scheduler (its action has no environment of its own).
+  Task Scheduler (its action has no environment of its own). A row belongs
+  to the installation whose config it reads: `akm task sync` leaves alone a
+  row that carries a different `AKM_CONFIG_DIR` (another installation
+  sharing the crontab) and reports its id as taken (#846).
   **What hosts see:** the first `akm task sync` after upgrading rewrites
   every akm row once. `akm task sync --dry-run` lists each one as an update,
   never an add or a remove; each keeps its launcher and its schedule, and
@@ -48,18 +55,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
   ```
 
-  Rows written by 0.9.2 through 0.9.17-alpha.6 keep firing until that sync:
+  Rows written by 0.9.0 through 0.9.17-alpha.6 keep firing until that sync:
   the CLI still accepts `--scheduler-context <file>` and applies the file's
   environment (PATH included, for a 0.9.16 row). The files under
   `$DATA/tasks/context/` are no longer written, and the uid, mode, symlink
-  and content-hash checks made on every scheduled run are gone; once the sync
-  has run, nothing reads them and they can be deleted. `akm task prune` now
+  and content-hash checks made on every scheduled run are gone. A sync
+  leaves some rows as they are (one whose task file failed to load, one a
+  `--bundle` sync did not cover), and those still name their file: once
+  `akm task doctor` lists no binding with a `contextPath`, nothing reads
+  them and they can be deleted. `akm task prune` now
   finds rows whose `AKM_BUNDLE_DIR` names a directory that is gone, and older
   rows whose descriptor cannot be read; `akm task doctor` lists `contextPath`
   only for an older row. (`src/tasks/scheduler-invocation.ts`,
   `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
   `src/tasks/backends/schtasks.ts`, `src/tasks/scheduler-sync.ts`,
   `src/commands/tasks/tasks.ts`)
+
+### Fixed
+
+- **A `$` or a backslash in a scheduled row's value is kept.** launchd and
+  Task Scheduler rows passed their values through a string replacement that
+  read `$'`, `$&` and `$$` as patterns, so a path such as a Windows admin
+  share (`\\nas\share\akm$`) came out corrupted; reading a crontab row
+  back dropped a backslash inside a single-quoted value.
+  (`src/tasks/backends/launchd.ts`, `src/tasks/backends/schtasks.ts`,
+  `src/tasks/backends/cron.ts`)
 
 ## [0.9.17-alpha.6] - 2026-09-27
 

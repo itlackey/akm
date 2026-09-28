@@ -70,7 +70,7 @@ export interface InstalledSchedulerBinding {
   readonly binding: readonly string[];
   /** The environment the row sets inline. Absent when it sets none. */
   readonly environment?: ScheduledRowEnvironment;
-  /** A row written by 0.9.2 – 0.9.17-alpha.6: the `--scheduler-context` descriptor it names. */
+  /** A row written by 0.9.0 – 0.9.17-alpha.6: the `--scheduler-context` descriptor it names. */
   readonly contextPath?: string;
   /** Normalized rendering of the installed row, compared against `expectedSignature` to detect drift. */
   readonly signature?: string;

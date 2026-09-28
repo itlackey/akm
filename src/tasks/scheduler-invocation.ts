@@ -23,7 +23,7 @@
  * `PATH` is the scheduler's own: the crontab's `# akm:env` block, the plist's
  * `EnvironmentVariables`.
  *
- * Rows written by 0.9.2 through 0.9.17-alpha.6 name a
+ * Rows written by 0.9.0 through 0.9.17-alpha.6 name a
  * `--scheduler-context <descriptor>` file instead. The CLI still accepts that
  * argument and applies the file's environment, so such a row keeps firing
  * until the next `akm task sync` rewrites it.
@@ -120,13 +120,13 @@ export interface ParsedScheduledInvocation {
   invocation: string[];
   /** Bundle the tail names: `--bundle <x>`, or a workflow ref's bundle. */
   target?: string;
-  /** A row written by 0.9.2 – 0.9.17-alpha.6: the descriptor it names. */
+  /** A row written by 0.9.0 – 0.9.17-alpha.6: the descriptor it names. */
   contextPath?: string;
   /** The row's inline environment (current rows only). */
   environment?: ScheduledRowEnvironment;
 }
 
-export const SCHEDULER_CONTEXT_ARG = "--scheduler-context";
+const SCHEDULER_CONTEXT_ARG = "--scheduler-context";
 
 /** The installed argv: the launcher, then one already-validated public scheduler tail. */
 export function buildScheduledInvocation(akmArgv: readonly string[], invocation: readonly string[]): string[] {
@@ -137,7 +137,7 @@ export function buildScheduledInvocation(akmArgv: readonly string[], invocation:
 
 /**
  * Parse an installed row's argv (after any inline environment): the current
- * shape, the `--scheduler-context <descriptor>` shape 0.9.2 – 0.9.17-alpha.6
+ * shape, the `--scheduler-context <descriptor>` shape 0.9.0 – 0.9.17-alpha.6
  * wrote, or the bare shape before that. A row that carries
  * `--scheduler-context` but does not parse around it is never reread as
  * another shape.
@@ -190,7 +190,7 @@ export function readLegacySchedulerContext(file: string): Record<string, string>
 
 /**
  * Apply and remove a row's `--scheduler-context <descriptor>` before citty
- * parses argv. Only a row written by 0.9.2 – 0.9.17-alpha.6 passes it.
+ * parses argv. Only a row written by 0.9.0 – 0.9.17-alpha.6 passes it.
  */
 export function consumeSchedulerContextArg(argv: string[], env: NodeJS.ProcessEnv = process.env): string[] {
   const separator = argv.indexOf("--");
@@ -208,7 +208,7 @@ export function consumeSchedulerContextArg(argv: string[], env: NodeJS.ProcessEn
  * Parse just the public `task run …` / `workflow run …` tail, the part of a
  * row that names what it runs.
  */
-export function parsePublicSchedulerInvocation(
+function parsePublicSchedulerInvocation(
   invocation: readonly string[],
 ): { invocation: string[]; target?: string } | undefined {
   if (invocation[0] === "task" && invocation[1] === "run" && invocation[2]) {

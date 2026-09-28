@@ -105,7 +105,13 @@ describe("buildPlistXml", () => {
     });
   });
 
-  test("reads the plist 0.9.2 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
+  test("a `$` in a value is written and read back as is", () => {
+    const environment = { AKM_BUNDLE_DIR: "/srv/a$'b$$c$&d" };
+    const xml = buildPlistXml(makeTask("0 9 * * *"), ["/abs/akm"], "/var/log/akm", environment);
+    expect(extractPlistInvocation(xml)?.environment).toEqual(environment);
+  });
+
+  test("reads the plist 0.9.0 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
     const legacy = buildPlistXml(makeTask("0 9 * * *"), ["/abs/bun", "/abs/akm"], "/var/log/akm").replace(
       "<string>/abs/akm</string>",
       "<string>/abs/akm</string>\n      <string>--scheduler-context</string>\n      <string>/Users/u/.local/share/akm/tasks/context/e898.json</string>",

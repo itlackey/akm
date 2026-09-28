@@ -754,6 +754,8 @@ function classifyPruneCandidate(entry: InstalledSchedulerBinding): TasksPruneRea
     } catch {
       return "invalid-context";
     }
+    // Every descriptor akm wrote names the bundle; one that does not cannot be attributed.
+    if (bundleDir === undefined) return "invalid-context";
   } else {
     bundleDir = entry.environment?.AKM_BUNDLE_DIR;
   }

@@ -464,7 +464,7 @@ manual-success`
 **Expected result (verified live, exact, both commands identical):** exit
 `2`;
 ```json
-{"ok":false,"error":"TASK_SCHEMA_VERSION_UNSUPPORTED: Task at <path> uses task schema version 2, which this release does not accept.","code":"TASK_SCHEMA_VERSION_UNSUPPORTED","hint":"Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`."}
+{"ok":false,"error":"TASK_SCHEMA_VERSION_UNSUPPORTED: Task at <path> uses task schema version 2; this release reads only version 4. Run `akm migrate apply` to convert it.","code":"TASK_SCHEMA_VERSION_UNSUPPORTED","hint":"Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`."}
 ```
 The hint says "task-v3 to task-source-v4" even for a v2 file — that's the
 shipped wording (the v2→v3→v4 chain is one hint), not a bug.
@@ -1534,7 +1534,7 @@ existing real entries):
 # akm:task <TID> END
 ```
 (`AKM_BUNDLE_DIR=` appears only for a stash selected by that variable that no
-config names. Rows written by 0.9.2 – 0.9.17-alpha.6 carry
+config names. Rows written by 0.9.0 – 0.9.17-alpha.6 carry
 `--scheduler-context <path>` after the launcher instead.)
 A disabled binding's line is prefixed `# akm:disabled ` instead of being a
 live cron line.

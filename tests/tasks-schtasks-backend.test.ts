@@ -112,7 +112,15 @@ describe("buildSchtasksXml", () => {
     });
   });
 
-  test("reads the task 0.9.2 – 0.9.17-alpha.6 registered, naming its descriptor", () => {
+  test("a `$` in a value (an admin share, say) is written and read back as is", () => {
+    for (const value of ["\\\\nas\\share\\akm$", "C:\\a$'b$$c$&d"]) {
+      const environment = { AKM_BUNDLE_DIR: value };
+      const xml = buildSchtasksXml(makeTask("0 9 * * *"), ["C:\\akm.exe"], "C:/log", xmlOptions({ environment }));
+      expect(extractSchtasksInvocation(xml)?.environment).toEqual(environment);
+    }
+  });
+
+  test("reads the task 0.9.0 – 0.9.17-alpha.6 registered, naming its descriptor", () => {
     const task = makeTask("0 9 * * *");
     const script =
       "& 'C:\\bun.exe' 'C:\\akm' '--scheduler-context' 'C:\\Users\\u\\AppData\\akm\\tasks\\context\\e898.json' 'task' 'run' 'ping' '--bundle' 'akm' '--scheduled'; exit $LASTEXITCODE";

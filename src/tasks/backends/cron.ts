@@ -282,7 +282,7 @@ export function extractInstalledTarget(body: string): string | undefined {
 /**
  * Parse an installed cron body: its inline `VAR=value` environment, its
  * launcher, and its public tail — a current row, a row naming a
- * `--scheduler-context` descriptor (0.9.2 – 0.9.17-alpha.6), or a pre-0.9.2
+ * `--scheduler-context` descriptor (0.9.0 – 0.9.17-alpha.6), or an older
  * row with neither (#881). This only ever runs on a body already isolated
  * between akm's own BEGIN/END markers, so no trust extends to unmarked lines.
  */
@@ -307,7 +307,7 @@ export function extractCronInvocation(body: string): ParsedScheduledInvocation |
   return environment ? { ...parsed, environment } : parsed;
 }
 
-/** Reverse {@link quoteForCron} for a single whitespace-free token. */
+/** Reverse {@link quoteForCron}: sh word splitting, where a backslash is literal inside single quotes. */
 function splitCronShellWords(value: string): string[] {
   const words: string[] = [];
   let current = "";
@@ -318,7 +318,7 @@ function splitCronShellWords(value: string): string[] {
       quoted = !quoted;
       continue;
     }
-    if (char === "\\" && index + 1 < value.length) {
+    if (!quoted && char === "\\" && index + 1 < value.length) {
       current += value[index + 1];
       index += 1;
       continue;

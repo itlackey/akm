@@ -720,7 +720,7 @@ No files written. User crontab edited in-place via `crontab -l` / `crontab -`. E
 ```
 
 (`AKM_BUNDLE_DIR=` appears only for a stash selected by that variable that no
-config names. Releases 0.9.2 – 0.9.17-alpha.6 also wrote a
+config names. Releases 0.9.0 – 0.9.17-alpha.6 also wrote a
 `$DATA/tasks/context/<sha256>.json` descriptor per sync and named it in each
 row with `--scheduler-context`; nothing writes those files now.)
 

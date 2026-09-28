@@ -61,7 +61,7 @@ describe("package scheduler context launcher", () => {
   test("passes --scheduler-context through to the CLI, which applies it", () => {
     const sandbox = makeSandboxDir("akm-scheduler-launcher-");
     try {
-      // A row written by 0.9.2 – 0.9.17-alpha.6 names a descriptor. The launcher
+      // A row written by 0.9.0 – 0.9.17-alpha.6 names a descriptor. The launcher
       // used to re-validate it against the old five-directory schema and refuse
       // every descriptor 0.9.17 writes; it leaves applying it to the CLI.
       const file = writeDescriptor(path.join(sandbox.dir, "context"), {
