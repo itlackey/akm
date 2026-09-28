@@ -64,7 +64,6 @@ function buildIndex(dbName: string, fileOrder: string[], conceptOrder: string[])
     upsertEntry(db, knowledge(fileName), entry, provenance);
   }
   replaceStoredGraph(db, {
-    schemaVersion: 4,
     generatedAt: "2026-09-27T00:00:00.000Z",
     stashRoot: storage.stashDir,
     files: fileOrder.map((name) => node(name, entities[name] ?? [])),
@@ -102,7 +101,6 @@ describe("related order", () => {
     opened.push(db);
     // Rows an older extractor wrote: two case forms of one entity in one file.
     replaceStoredGraph(db, {
-      schemaVersion: 4,
       generatedAt: "2026-09-27T00:00:00.000Z",
       stashRoot: storage.stashDir,
       files: [
@@ -123,7 +121,6 @@ describe("related order", () => {
     const db = openIndexDatabase(path.join(storage.dataDir, "normalized.db"));
     opened.push(db);
     replaceStoredGraph(db, {
-      schemaVersion: 4,
       generatedAt: "2026-09-27T00:00:00.000Z",
       stashRoot: storage.stashDir,
       files: [node("target", ["`Redis`"]), node("plain", ["Redis"])],

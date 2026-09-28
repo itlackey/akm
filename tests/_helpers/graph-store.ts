@@ -110,7 +110,6 @@ export function loadStoredGraph(db: Database, stashPath: string): GraphFile | un
   const snapshot = loadStoredGraphSnapshot(stashPath, db);
   if (!snapshot) return undefined;
   return {
-    schemaVersion: snapshot.schemaVersion,
     generatedAt: snapshot.generatedAt,
     stashRoot: snapshot.stashPath,
     files: snapshot.files,

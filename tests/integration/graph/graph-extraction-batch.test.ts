@@ -77,9 +77,7 @@ const llmServer = Bun.serve({
   },
 });
 
-const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import(
-  "../../../src/indexer/graph/graph-extraction"
-);
+const { runGraphExtractionPass } = await import("../../../src/indexer/graph/graph-extraction");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -187,7 +185,6 @@ describe("runGraphExtractionPass — batch path", () => {
     const db = openIndexDatabase(path.join(tmpStash, "graph-batch.db"));
     let parsed:
       | {
-          schemaVersion: number;
           files: Array<{ path: string; entities: string[]; relations: unknown[]; status?: string; reason?: string }>;
         }
       | undefined;
@@ -211,10 +208,8 @@ describe("runGraphExtractionPass — batch path", () => {
       expect(result.totalRelations).toBe(1);
 
       parsed = loadStoredGraphSnapshot(tmpStash, db) as {
-        schemaVersion: number;
         files: Array<{ path: string; entities: string[]; relations: unknown[]; status?: string; reason?: string }>;
       };
-      expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
       expect(parsed.files).toHaveLength(3);
       expect(
         parsed.files.some((file) => file.entities.includes("ServiceA") && file.entities.includes("ServiceB")),

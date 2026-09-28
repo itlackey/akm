@@ -8,12 +8,12 @@ import { getDbPath } from "../../core/paths";
 import { type GraphRelation, normalizeEntityKey } from "../../llm/graph-extract";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "../graph/graph-types";
 
 export interface StoredGraphSnapshot {
   stashPath: string;
   graphPath: string;
-  schemaVersion: number;
   generatedAt: string;
   quality?: GraphQualityTelemetry;
   telemetry?: GraphExtractionTelemetry;
@@ -25,7 +25,6 @@ export interface StoredGraphSnapshot {
 export interface StoredGraphMeta {
   stashPath: string;
   graphPath: string;
-  schemaVersion: number;
   generatedAt: string;
   quality?: GraphQualityTelemetry;
   telemetry?: GraphExtractionTelemetry;
@@ -158,9 +157,9 @@ function readStoredGraphQuality(db: Database, stashRoot: string): GraphQualityTe
  * no entry_id resolution and no orphan-skip — a graph file no longer needs a
  * matching entries row.
  *
- * graph_meta records the snapshot's schema version, time and run telemetry;
- * its counts are derived from the rows as stored after the write, never from
- * the caller's in-memory graph.
+ * graph_meta records the snapshot's time and run telemetry; its counts are
+ * derived from the rows as stored after the write, never from the caller's
+ * in-memory graph.
  */
 export function replaceStoredGraph(db: Database, graph: GraphFile): void {
   const upsertMeta = db.prepare(
@@ -330,7 +329,7 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
     const quality = readStoredGraphQuality(db, graph.stashRoot);
     upsertMeta.run(
       graph.stashRoot,
-      graph.schemaVersion,
+      GRAPH_SCHEMA_VERSION,
       graph.generatedAt,
       quality.consideredFiles,
       quality.extractedFiles,
@@ -419,7 +418,6 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
         .prepare(
           `SELECT
              stash_root,
-             schema_version,
              generated_at,
              considered_files,
              extracted_files,
@@ -442,7 +440,6 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
         .get(stashPath) as
         | {
             stash_root: string;
-            schema_version: number;
             generated_at: string;
             considered_files: number;
             extracted_files: number;
@@ -465,7 +462,6 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
       return {
         stashPath: row.stash_root,
         graphPath: getDbPath(),
-        schemaVersion: row.schema_version,
         generatedAt: row.generated_at,
         quality: {
           consideredFiles: row.considered_files,
@@ -594,7 +590,6 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
       return {
         stashPath: meta.stashPath,
         graphPath: meta.graphPath,
-        schemaVersion: meta.schemaVersion,
         generatedAt: meta.generatedAt,
         ...(meta.quality ? { quality: meta.quality } : {}),
         ...(meta.telemetry ? { telemetry: meta.telemetry } : {}),

@@ -61,14 +61,10 @@ import {
   getLlmCacheEntriesByRefs,
   upsertLlmCacheEntry,
 } from "../../storage/repositories/index-llm-cache-repository";
-import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
 import { loadStoredGraphMeta, loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-types";
-
-/** Schema version for the persisted artifact — bumps trigger a full rebuild. */
-export const GRAPH_FILE_SCHEMA_VERSION = GRAPH_SCHEMA_VERSION;
 
 /** Telemetry — useful for tests and progress events. */
 export interface GraphExtractionResult {
@@ -872,7 +868,6 @@ function toGraphNode(record: ExtractionRecord, extractionRunId: string): GraphFi
 /** The graph snapshot to store for `files`; its counts are derived from the stored rows on write. */
 function buildGraphFile(stashRoot: string, files: GraphFileNode[], telemetry?: GraphExtractionTelemetry): GraphFile {
   return {
-    schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot,
     files,

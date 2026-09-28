@@ -42,7 +42,11 @@ import { getMeta, setMeta } from "./index-meta-repository";
 export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
 /** `index_meta` key set when the writable opener migrated the layout; cleared once `akm index` VACUUMs. */
 export const VACUUM_PENDING_META = "vacuumPending";
-// #624-P1: graph_files is keyed to (stash_root, file_path, body_hash).
+/**
+ * The value written to `graph_meta.schema_version`, a NOT NULL column in every
+ * released layout. Releases up to 0.9.17-alpha.5 write 4 and nothing ever
+ * compares it; the index layout version gates the graph tables' shape.
+ */
 export const GRAPH_SCHEMA_VERSION = 4;
 
 /**

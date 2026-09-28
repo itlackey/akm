@@ -21,7 +21,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { loadStoredGraphSnapshot, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
+import { loadStoredGraphMeta, loadStoredGraphSnapshot, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import type { GraphFile, GraphFileNode } from "../../../src/indexer/graph/graph-types";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { Database } from "../../../src/storage/database";
@@ -94,7 +94,6 @@ function fileNode(
 
 function graphFor(files: GraphFileNode[]): GraphFile {
   return {
-    schemaVersion: GRAPH_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot: STASH,
     files,
@@ -343,6 +342,23 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
       expect(joined).toMatch(/PRIMARY KEY \(stash_root, file_path, body_hash\)/);
       expect(joined).toMatch(/REFERENCES graph_files\(stash_root, file_path, body_hash\)/);
       expect(joined).toMatch(/ON DELETE CASCADE/);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  // AC#8 — GR-D11: no graph schema version is carried or compared; the
+  // index layout version gates the table shapes. graph_meta.schema_version is
+  // NOT NULL in every released layout, so it keeps the value older releases
+  // wrote, for their sake.
+  test("AC#8: graph_meta.schema_version keeps 4 for older releases and is not read back", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      replaceStoredGraph(db, graphFor([fileNode(path.join(STASH, "a.md"), "a-hash", ["alpha"])]));
+      const row = db.prepare("SELECT schema_version FROM graph_meta WHERE stash_root = ?").get(STASH);
+      expect(row).toEqual({ schema_version: 4 });
+      expect(loadStoredGraphSnapshot(STASH, db)).not.toHaveProperty("schemaVersion");
+      expect(loadStoredGraphMeta(STASH, db)).not.toHaveProperty("schemaVersion");
     } finally {
       closeDatabase(db);
     }

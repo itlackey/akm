@@ -83,7 +83,6 @@ export interface GraphExtractionTelemetry {
 
 /** Persisted graph shape loaded from SQLite. */
 export interface GraphFile {
-  schemaVersion: number;
   /** ISO-8601 timestamp of the last refresh. */
   generatedAt: string;
   /** Stash root the file was extracted from (canonicalised). */

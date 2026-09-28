@@ -117,8 +117,9 @@ async function respond(request: Request): Promise<Response> {
   );
 }
 
-const { runGraphExtractionPass, collectEligibleFiles, GRAPH_FILE_SCHEMA_VERSION, getGraphExtractionIncludeTypes } =
-  await import("../../../src/indexer/graph/graph-extraction");
+const { runGraphExtractionPass, collectEligibleFiles, getGraphExtractionIncludeTypes } = await import(
+  "../../../src/indexer/graph/graph-extraction"
+);
 const { GRAPH_EXTRACT_PROMPT_VERSION: graphExtractPromptVersion } = await import("../../../src/llm/graph-extract");
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
@@ -703,7 +704,6 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(result.telemetry?.batchSize).toBeGreaterThanOrEqual(1);
 
     if (!parsed) throw new Error("expected stored graph snapshot");
-    expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
     expect(parsed.stashPath).toBe(tmpStash);
     expect(parsed.files).toHaveLength(2);
     expect(parsed.quality).toEqual({
@@ -854,7 +854,6 @@ describe("runGraphExtractionPass — enabled", () => {
     const m1Path = path.join(tmpStash, "memories", "m1.md");
     await withGraphDb("existing-graph-sentinel", (db) =>
       replaceStoredGraph(db, {
-        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
         generatedAt: "2026-05-01T00:00:00.000Z",
         stashRoot: tmpStash,
         files: [

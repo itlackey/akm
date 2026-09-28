@@ -194,7 +194,6 @@ describe("N1: an unchanged body's stored rows follow its latest extraction", () 
   test("replaceStoredGraph rewrites the child rows of an unchanged body when its extraction differs", () => {
     const filePath = path.join(storage.stashDir, "memories", "direct.md");
     const snapshot = (entities: string[], relations: GraphFileNode["relations"]) => ({
-      schemaVersion: 4,
       generatedAt: new Date().toISOString(),
       stashRoot: storage.stashDir,
       files: [{ path: filePath, type: "memory", bodyHash: "same-body", entities, relations }],
@@ -321,7 +320,6 @@ describe("graph_meta counts are derived from the stored rows", () => {
   test("files, case-folded entities and relations are counted from the rows, whatever the snapshot claims", () => {
     const file = (name: string) => path.join(storage.stashDir, "knowledge", `${name}.md`);
     replaceStoredGraph(db, {
-      schemaVersion: 4,
       generatedAt: new Date().toISOString(),
       stashRoot: storage.stashDir,
       files: [
