@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`index.graph.enabled: false` stops graph extraction in `akm improve`.**
+  The switch was read only when improve had no strategy plan, which is never
+  the case in a real run, so the nightly and weekly graph tasks kept
+  extracting with it set. Improve now skips its graph extraction stage
+  whenever `index.graph.enabled` is `false`, whatever the strategy enables.
+  This also makes the graph ablation harness's "graph off" arm, which sets
+  exactly this key, turn extraction off. Improve still does not read
+  `index.defaults` when it picks the engine for graph extraction.
+  (`src/commands/improve/loop-stages.ts`)
+
 ## [0.9.17-alpha.7] - 2026-09-28
 
 A scheduled task is now just a command and a schedule. Each native row
