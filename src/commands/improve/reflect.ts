@@ -69,6 +69,7 @@ import { findAssetFilePath } from "./eligibility";
 import { resolveImproveLlmExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
 import { classifyReflectChange, splitFrontmatter } from "./reflect-noise";
+import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
 import {
   callStage,
   type LlmRunner,
@@ -1225,6 +1226,30 @@ async function finalizeReflectProposal(args: {
 
   const flagged = Boolean(sanitized.sizeGuardRatio || sanitized.truncationMarkerLeaked);
   const judged = judge.enabled && !flagged;
+  /** A judge refused the revision: record it for the ledger's rejection window and stop. */
+  const refuse = (detail: string, metadata: Record<string, unknown>, message: string): AkmReflectResult => {
+    if (options.ref) {
+      recordLedgerAttempt(
+        { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx },
+        {
+          stashDir: run.stash,
+          ref: options.itemRef ?? options.ref,
+          source: "reflect",
+          outcome: "quality_rejected",
+          detail,
+        },
+      );
+    }
+    appendEvent(
+      {
+        eventType: "reflect_completed",
+        ref: payload.ref,
+        metadata: { source: "reflect", qualityRejected: true, ...metadata, ...telemetry },
+      },
+      options.eventsCtx,
+    );
+    return reflectFailure(run, result, "quality_rejected", message, false);
+  };
   if (judged) {
     const verdict = await runReflectQualityJudge(
       run.config,
@@ -1241,39 +1266,40 @@ async function finalizeReflectProposal(args: {
       },
     );
     if (!verdict.pass) {
-      if (options.ref) {
-        recordLedgerAttempt(
-          { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx },
-          {
-            stashDir: run.stash,
-            ref: options.itemRef ?? options.ref,
-            source: "reflect",
-            outcome: "quality_rejected",
-            detail: verdict.reason,
-          },
-        );
-      }
-      appendEvent(
+      return refuse(
+        verdict.reason,
         {
-          eventType: "reflect_completed",
-          ref: payload.ref,
-          metadata: {
-            source: "reflect",
-            qualityRejected: true,
-            qualityScore: verdict.score,
-            qualityReason: verdict.reason,
-            ...(verdict.criteria ? { qualityCriteria: verdict.criteria } : {}),
-            ...telemetry,
-          },
+          qualityScore: verdict.score,
+          qualityReason: verdict.reason,
+          ...(verdict.criteria ? { qualityCriteria: verdict.criteria } : {}),
         },
-        options.eventsCtx,
-      );
-      return reflectFailure(
-        run,
-        result,
-        "quality_rejected",
         `Reflect proposal quality gate rejected: score=${verdict.score}, reason="${verdict.reason}"`,
-        false,
+      );
+    }
+  }
+  // #722: a rewrite of an existing asset must not grade lower on its own retrieval queries.
+  if (judged && judge.runner && assetContent !== undefined) {
+    const retrieval = await runRetrievalRegressionGate({
+      ref: payload.ref,
+      before: assetContent,
+      after: payload.content,
+      queries: loadRetrievalQueries({ proposalsCtx: options.ctx, eventsCtx: options.eventsCtx }, payload.ref),
+      runner: judge.runner,
+      ...(options.chat ? { chat: options.chat } : {}),
+      ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      onNotices: run.notices.add,
+    });
+    if (!retrieval.pass) {
+      return refuse(
+        retrieval.reason,
+        {
+          retrievalRegression: true,
+          retrievalQueries: retrieval.queries,
+          ...(retrieval.oldMean !== undefined ? { retrievalGradeBefore: retrieval.oldMean } : {}),
+          ...(retrieval.newMean !== undefined ? { retrievalGradeAfter: retrieval.newMean } : {}),
+        },
+        `Reflect proposal refused: ${retrieval.reason}`,
       );
     }
   }

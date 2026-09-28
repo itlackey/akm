@@ -140,6 +140,27 @@ consolidation reports them in its warnings. A bulk rewrite of old files
 (a rename, a lint fix, a fresh clone) makes them look new until improve has
 processed each once.
 
+### Retrieval regression gate
+
+Reflect refuses a rewrite of an existing asset that grades lower on the
+asset's own retrieval queries (#722, `src/commands/improve/retrieval-gate.ts`).
+After the quality judge passes, up to five distinct user `search`/`curate`
+queries that returned the asset (envelopes, the stash README line and inputs
+over 2,000 characters dropped) are each graded 0–3 against the old and the new
+content with the retrieval eval's prompt, `retrieval-relevance-judge.md`, and
+its document shape: type, ref, name, description and the first 1,500 body
+characters. A lower mean for the new content is a `quality_rejected` refusal
+with the reflect rejection window. A grade that cannot be obtained refuses the
+rewrite, as the quality judge fails closed. An asset with no such queries is
+not graded.
+
+The gate exists because it was measured first. Of 60 accepted reflect rewrites
+(since 2026-07-01, stratified by lane) judged this way, 14 graded lower (23%,
+95% CI 14–35%) and 12 higher. Grading the same content twice flipped 11 of 174
+query grades, which puts 3 of 60 rewrites in the "lower" bucket by noise
+alone. The threshold for building it was fixed before judging: a lower bound of
+at least 10%.
+
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,

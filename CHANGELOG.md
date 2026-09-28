@@ -85,6 +85,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/tasks/backends/launchd.ts`, `src/tasks/backends/schtasks.ts`,
   `src/tasks/backends/cron.ts`)
 
+- **Reflect refuses a rewrite that makes an asset worse for its own searches
+  (#722).** Before reflect proposes a rewrite of an existing asset, it grades
+  the old and the new content on up to five of the queries that actually
+  retrieved the asset (user `search` and `curate`). It uses the retrieval
+  eval's relevance prompt, which agrees with human grades at kappa 0.83. When
+  the new content grades lower on average, the rewrite is refused the same way
+  a quality-judge rejection is: `quality_rejected`, with the 14-day reflect
+  window. An asset without retrieval queries is not graded.
+
+  This was measured before it was built. Of 60 accepted rewrites since July,
+  judged this way, 14 graded lower (23%, 95% CI 14–35%) and 12 graded higher.
+  The gate was built because the lower bound cleared the 10% threshold set
+  before any judging. It costs two judge calls per query on the engine that
+  already runs the quality judge. On the maintainer's 2026-09-28 nightly run,
+  whose 30 rewrites had 102 usable queries, that is 204 calls, about 6 more
+  minutes on a 73-minute run. (`src/commands/improve/retrieval-gate.ts`,
+  `src/commands/improve/reflect.ts`)
+
 ## [0.9.17-alpha.6] - 2026-09-27
 
 Graph extraction stops losing and wasting work. A timed-out extraction is

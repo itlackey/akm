@@ -169,6 +169,26 @@ export function listUsedEntryRefs(db: Database, sinceIso: string): string[] {
   return rows.map((row) => row.entry_ref);
 }
 
+/**
+ * The distinct query texts of user `search` and `curate` events that returned
+ * `conceptId` (any bundle prefix), most recent first.
+ */
+export function listRetrievalQueries(db: Database, conceptId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT query, MAX(created_at) AS last_at FROM usage_events
+       WHERE event_type IN ('search', 'curate')
+         AND source = 'user'
+         AND query IS NOT NULL AND trim(query) != ''
+         AND instr(entry_ref, '//') > 0
+         AND substr(entry_ref, instr(entry_ref, '//') + 2) = ?
+       GROUP BY query
+       ORDER BY last_at DESC`,
+    )
+    .all(conceptId) as Array<{ query: string }>;
+  return rows.map((row) => row.query);
+}
+
 /** Usage events older than this many days are purged on every `akm index`. */
 export const USAGE_EVENT_RETENTION_DAYS = 90;
 
