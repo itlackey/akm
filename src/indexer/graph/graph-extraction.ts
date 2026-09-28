@@ -475,6 +475,8 @@ function extractionRecord(candidate: EligibleFile, bodyHash: string, shape: Grap
  * Run the planned extractions in chunks of `batchSize`: cache hits are taken
  * as-is, and each chunk's model plans go to the provider in one
  * `extractGraphFromBodies` call (a one-body call is the per-asset path).
+ * Up to the runner's concurrency of chunks run at once, and each makes one
+ * call at a time, so that is also the most calls the run has in flight.
  */
 async function extractGraphBatches(args: {
   plans: EligibleGraphPlan[];

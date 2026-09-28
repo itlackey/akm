@@ -574,7 +574,9 @@ describe("extractGraphFromBodies — unit", () => {
     expect(maxInFlight).toBe(1);
   });
 
-  test("a runner concurrency of 2 lets two per-asset calls run at once, not more", async () => {
+  test("a batch makes its per-asset calls one at a time, whatever the runner's concurrency", async () => {
+    // The pass runs batches side by side up to the runner's concurrency, so a
+    // batch fanning out on its own would multiply it (GR-D14 follow-up).
     holdMs = 30;
     batchRawQueue.push(JSON.stringify({ oops: true }), JSON.stringify({ still: "broken" }));
     for (const name of ["Alpha", "Beta", "Gamma"]) {
@@ -589,7 +591,7 @@ describe("extractGraphFromBodies — unit", () => {
     );
 
     expect(chatCallCount).toBe(5);
-    expect(maxInFlight).toBe(2);
+    expect(maxInFlight).toBe(1);
   });
 
   test("normalizes entities/relation types and keeps confidence when provided", async () => {

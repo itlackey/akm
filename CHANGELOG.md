@@ -17,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exactly this key, turn extraction off. Improve still does not read
   `index.defaults` when it picks the engine for graph extraction.
   (`src/commands/improve/loop-stages.ts`)
+- **Graph extraction never has more calls in flight than the run's
+  concurrency.** Batches run side by side up to the runner's concurrency, and
+  each batch also sent its per-file calls (long bodies, a non-array response)
+  up to that limit at once, so at a concurrency of 2 four calls could be in
+  flight. A batch now makes its per-file calls one at a time. At the default
+  concurrency of 1 nothing changes. (`src/llm/graph-extract.ts`)
 
 ## [0.9.17-alpha.7] - 2026-09-28
 

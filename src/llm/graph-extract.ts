@@ -274,30 +274,6 @@ function bumpTelemetry(
   telemetry[key] = (telemetry[key] ?? 0) + amount;
 }
 
-/**
- * `Promise.all(items.map(fn))` with at most `limit` calls in flight, so the
- * per-asset calls of one batch never outnumber the chunk pool's concurrency
- * (GR-D14). The first rejection rejects the map and stops further calls.
- */
-async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  let failed = false;
-  const worker = async (): Promise<void> => {
-    while (!failed && next < items.length) {
-      const index = next++;
-      try {
-        results[index] = await fn(items[index] as T);
-      } catch (error) {
-        failed = true;
-        throw error;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker));
-  return results;
-}
-
 /** Count what the parser dropped from one parsed extraction (single-asset or batch item). */
 function bumpFilterTelemetry(telemetry: GraphRuntimeTelemetry | undefined, extraction: GraphExtraction): void {
   bumpTelemetry(telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
@@ -737,12 +713,21 @@ export async function extractGraphFromBodies(
     return [result];
   }
 
-  const concurrency = llmRunner.connection.concurrency ?? 1;
+  // A batch makes its per-asset calls one at a time: the caller's pool runs
+  // batches side by side and is the run's only concurrency, so the calls in
+  // flight never exceed it (not the pool's width squared).
   const extractOne = (body: string): Promise<GraphExtraction> =>
     extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options);
+  const extractEach = async (indices: readonly number[], into: GraphExtraction[]): Promise<void> => {
+    for (const index of indices) into[index] = await extractOne(bodies[index] ?? "");
+  };
 
   // With batching disabled every body takes the single-asset path, once.
-  if (batchState?.batchingDisabled) return mapWithConcurrency(bodies, concurrency, extractOne);
+  if (batchState?.batchingDisabled) {
+    const results: GraphExtraction[] = [];
+    for (const body of bodies) results.push(await extractOne(body));
+    return results;
+  }
 
   // Filter out bodies that are empty so we don't waste tokens, but keep
   // index correspondence by tracking which indices were non-empty.
@@ -762,9 +747,7 @@ export async function extractGraphFromBodies(
     }
   }
 
-  await mapWithConcurrency(oversizedIndices, concurrency, async (index) => {
-    results[index] = await extractOne(bodies[index] ?? "");
-  });
+  await extractEach(oversizedIndices, results);
 
   if (nonEmptyBodies.length === 0) return results;
 
@@ -950,9 +933,7 @@ export async function extractGraphFromBodies(
           `falling back to individual calls for ${fallbackIndices.length} missing asset(s).`,
       );
     }
-    await mapWithConcurrency(fallbackIndices, concurrency, async (origIdx) => {
-      results[origIdx] = await extractOne(bodies[origIdx] ?? "");
-    });
+    await extractEach(fallbackIndices, results);
   } else if (batchContextError) {
     warn(
       `graph extraction (batch): skipped ${nonEmptyBodies.length} asset(s) due to context size error; ` +
