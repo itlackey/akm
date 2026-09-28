@@ -5,7 +5,7 @@
 import { rethrowIfDataDirUnreadable, rethrowIfTestIsolationError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
-import type { GraphRelation } from "../../llm/graph-extract";
+import { type GraphRelation, normalizeEntityKey } from "../../llm/graph-extract";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "../graph/graph-types";
@@ -49,10 +49,6 @@ function withReadableGraphDb<T>(db: Database | undefined, fn: (db: Database) => 
 
 function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-}
-
-function normalizeEntity(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 interface ExistingGraphFileRow {
@@ -303,7 +299,7 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
       }
 
       for (const [entityOrder, entity] of node.entities.entries()) {
-        insertEntity.run(graph.stashRoot, node.path, bodyHash, entityOrder, normalizeEntity(entity), entity);
+        insertEntity.run(graph.stashRoot, node.path, bodyHash, entityOrder, normalizeEntityKey(entity), entity);
       }
       for (const [relationOrder, relation] of node.relations.entries()) {
         insertRelation.run(
@@ -311,9 +307,9 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
           node.path,
           bodyHash,
           relationOrder,
-          normalizeEntity(relation.from),
+          normalizeEntityKey(relation.from),
           relation.from,
-          normalizeEntity(relation.to),
+          normalizeEntityKey(relation.to),
           relation.to,
           relation.type ?? null,
           relation.confidence ?? null,

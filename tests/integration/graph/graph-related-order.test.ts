@@ -96,4 +96,40 @@ describe("related order", () => {
     expect(listRelatedPathsForFile(storage.stashDir, knowledge("target"), 5, first)).toEqual(related);
     expect(listRelatedPathsForFile(storage.stashDir, knowledge("target"), 5, second)).toEqual(related);
   });
+
+  test("a shared entity counts once, however many forms of it a file holds", () => {
+    const db = openIndexDatabase(path.join(storage.dataDir, "variants.db"));
+    opened.push(db);
+    // Rows an older extractor wrote: two case forms of one entity in one file.
+    replaceStoredGraph(db, {
+      schemaVersion: 4,
+      generatedAt: "2026-09-27T00:00:00.000Z",
+      stashRoot: storage.stashDir,
+      files: [
+        node("target", ["Redis", "redis", "Kafka", "Zookeeper"]),
+        node("x", ["Redis"]),
+        node("y", ["Kafka", "Zookeeper"]),
+      ],
+    });
+
+    const related = listRelatedPathsForFile(storage.stashDir, knowledge("target"), 5, db);
+    expect(related.map((hit) => [path.basename(hit.path), hit.sharedEntities])).toEqual([
+      ["y.md", ["Kafka", "Zookeeper"]],
+      ["x.md", ["Redis"]],
+    ]);
+  });
+
+  test("related matches entities by the key extraction deduplicates on", () => {
+    const db = openIndexDatabase(path.join(storage.dataDir, "normalized.db"));
+    opened.push(db);
+    replaceStoredGraph(db, {
+      schemaVersion: 4,
+      generatedAt: "2026-09-27T00:00:00.000Z",
+      stashRoot: storage.stashDir,
+      files: [node("target", ["`Redis`"]), node("plain", ["Redis"])],
+    });
+
+    const related = listRelatedPathsForFile(storage.stashDir, knowledge("target"), 5, db);
+    expect(related.map((hit) => path.basename(hit.path))).toEqual(["plain.md"]);
+  });
 });

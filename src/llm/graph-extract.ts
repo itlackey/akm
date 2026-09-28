@@ -251,7 +251,13 @@ function normalizeRelationType(raw: string): string | undefined {
   return normalized;
 }
 
-function normalizeEntityKey(raw: string): string {
+/**
+ * The key under which two entity names are the same entity: the display
+ * clean-up above, case-folded. The one normalization for graph entities:
+ * extraction deduplicates on it, the pass deduplicates on it before writing,
+ * and it is the stored `entity_norm` that `related` joins on (GR-D17).
+ */
+export function normalizeEntityKey(raw: string): string {
   return normalizeEntityName(raw).toLowerCase();
 }
 

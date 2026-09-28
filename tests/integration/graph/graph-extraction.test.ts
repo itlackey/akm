@@ -1158,6 +1158,35 @@ describe("runGraphExtractionPass — enabled", () => {
     };
     expect(repaired.files[0]?.entities).toContain("ServiceC");
   });
+  test("a cached extraction holding two forms of one entity stores it once", async () => {
+    const filePath = writeFile("memories/m1.md", {}, "Body about Redis and Kafka.");
+    extractor = () => ({ entities: ["Redis", "Kafka"], relations: [] });
+    await withGraphDb("forms-prime", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
+    // A cache row an older extractor wrote, before it folded case variants.
+    await withGraphDb("forms-legacy-cache", (db) => {
+      db.prepare("UPDATE llm_enrichment_cache SET result_json = ? WHERE asset_ref = ?").run(
+        JSON.stringify({ entities: ["Redis", "redis", " Kafka "], relations: [], status: "extracted", reason: "none" }),
+        filePath,
+      );
+    });
+
+    await withGraphDb("forms-rerun", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
+
+    expect(extractorCallCount).toBe(1);
+    await withGraphDb("forms-read", (db) => {
+      const rows = db
+        .prepare("SELECT entity, entity_norm FROM graph_file_entities WHERE file_path = ? ORDER BY entity_order")
+        .all(filePath);
+      expect(rows).toEqual([
+        { entity: "Redis", entity_norm: "redis" },
+        { entity: "Kafka", entity_norm: "kafka" },
+      ]);
+    });
+  });
 });
 
 // ── runGraphExtractionPass — R2: failed extractions must not become

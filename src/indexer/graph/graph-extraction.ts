@@ -933,14 +933,27 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   };
 }
 
-/** The persisted node for one extraction outcome (entities and relations trimmed, deduplicated). */
+/**
+ * The persisted node for one extraction outcome: entities trimmed and kept
+ * once per {@link graphExtract.normalizeEntityKey} (the first form wins),
+ * relations trimmed.
+ */
 function toGraphNode(record: ExtractionRecord, extractionRunId: string): GraphFileNode {
   const confidence = normalizeConfidence(record.confidence);
+  const entityKeys = new Set<string>();
+  const entities = record.entities
+    .map((entity) => entity.trim())
+    .filter((entity) => {
+      const key = graphExtract.normalizeEntityKey(entity);
+      if (!key || entityKeys.has(key)) return false;
+      entityKeys.add(key);
+      return true;
+    });
   return {
     path: record.absPath,
     type: record.type,
     bodyHash: record.bodyHash,
-    entities: [...new Set(record.entities.map((entity) => entity.trim()).filter(Boolean))],
+    entities,
     relations: record.relations
       .map((r) => ({
         from: r.from.trim(),

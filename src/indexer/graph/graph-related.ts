@@ -53,14 +53,15 @@ export function listRelatedPathsForFile(
 
   const effectiveLimit = Math.max(1, limit);
 
-  // Shared-entity count per candidate file_path. The target's entities are the
-  // rows for `filePath`; candidates are any OTHER file_path in the stash that
-  // shares a normalized entity.
+  // Distinct shared entities per candidate file_path. The target's entities
+  // are the rows for `filePath`; candidates are any OTHER file_path in the
+  // stash that shares a normalized entity. Counting distinct keys keeps two
+  // stored forms of one entity (rows older extractors wrote) from counting twice.
   const candidateRows = db
     .prepare(
       `SELECT gf.file_path   AS file_path,
               gf.file_type   AS file_type,
-              COUNT(*)       AS shared
+              COUNT(DISTINCT e.entity_norm) AS shared
           FROM graph_file_entities target
           JOIN graph_file_entities e
             ON e.stash_root = target.stash_root
