@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.6] - 2026-09-27
+
+Graph extraction stops losing and wasting work. A timed-out extraction is
+retried instead of cached as empty. Long documents are extracted once, and
+per-file calls respect the run's concurrency. `akm improve` honors
+`index.graph`. `akm curate` returns nothing for harness and tool envelopes,
+and search and curate show identical content once. Lazy graph extraction,
+which never ran under Bun, is removed.
+
 ### Changed
 
 - **`akm curate` returns nothing, on purpose, for input that is not a task.**
