@@ -199,17 +199,6 @@ describe("indexer/graph-db — loadStoredGraph* surface guard violations", () =>
     }
     expect(isTestIsolationError(caught)).toBe(true);
   });
-
-  test("loadGraphFilesOnly re-throws TEST_ISOLATION_MISSING instead of returning []", async () => {
-    const { loadGraphFilesOnly } = await import("../src/indexer/db/graph-db");
-    let caught: unknown;
-    try {
-      loadGraphFilesOnly("/no/such/stash");
-    } catch (err) {
-      caught = err;
-    }
-    expect(isTestIsolationError(caught)).toBe(true);
-  });
 });
 
 describe("integrations/lockfile — readLockfile surfaces guard violations", () => {

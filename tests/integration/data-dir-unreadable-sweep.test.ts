@@ -34,7 +34,7 @@ import { ConfigError } from "../../src/core/errors";
 import { getDataDir, getDbPath } from "../../src/core/paths";
 import { getStateDbPath } from "../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { loadGraphFilesOnly, loadStoredGraphMeta } from "../../src/indexer/db/graph-db";
+import { loadStoredGraphMeta } from "../../src/indexer/db/graph-db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../../src/integrations/lockfile";
@@ -136,14 +136,8 @@ describe("the graph loaders separate 'no graph' from 'no access' (#791)", () => 
     expect((raised as ConfigError).code).toBe("DATA_DIR_UNREADABLE");
   });
 
-  test("loadGraphFilesOnly raises instead of returning []", () => {
-    unreadableIndexDb();
-    expect(() => loadGraphFilesOnly("/some/stash")).toThrow(ConfigError);
-  });
-
   test("a genuinely absent index still reads as 'nothing extracted yet'", () => {
     expect(loadStoredGraphMeta("/some/stash")).toBeNull();
-    expect(loadGraphFilesOnly("/some/stash")).toEqual([]);
   });
 });
 
