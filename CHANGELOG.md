@@ -13,6 +13,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or wrote a row. An index database drops it on its next writable open, the
   same way other retired derived tables are dropped, with no layout-version
   change. (`src/storage/repositories/index-schema.ts`)
+- **Lazy graph extraction in `akm show` and `akm curate`.** With
+  `index.graph.lazyGraphExtraction: true`, `show` extracted an asset's graph
+  after building its response, so only the next `show` saw it. `curate`
+  queued assets for a later pass, which drained only the working bundle's
+  queue, and extractions made this way wrote no cache entry. Under Bun neither
+  path ever ran: the "already has a graph" check read a missing row as
+  present. Graph extraction now runs only in `akm improve`. The
+  `graph_extraction_queue` table is dropped the next time the index is opened
+  for writing. A config that still sets the key loads, and the key is named
+  once as unknown. (`src/commands/read/show.ts`,
+  `src/commands/read/curate.ts`, `src/indexer/graph/graph-extraction.ts`,
+  `src/storage/repositories/index-schema.ts`)
 
 ### Fixed
 
@@ -33,6 +45,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Updated `scripts/akm-eval/README.md` and `docs/maintainers/eval.md` to
   match, and corrected stale `docs/architecture/architecture.md` references
   to `db-backup`, `staleness-detect`, and `src/commands/graph/`.
+- **Scheduled graph extraction reads `index.graph`.** `akm improve` passed
+  graph extraction a batch size of 4 and the `memory` and `knowledge` types
+  whenever the strategy's `processes.graphExtraction` did not set them, so
+  `index.graph.graphExtractionBatchSize` and `graphExtractionIncludeTypes`
+  never applied. It did not read `index.graph`'s `engine`, `model`,
+  `timeoutMs` or `llm` either, so a setting such as
+  `index.graph.llm.enableThinking: false` had no effect on improve runs. A
+  value in the strategy's `processes.graphExtraction` still wins. A setting it
+  leaves unset now comes from `index.graph`, then from the built-in default.
+  Where `index.graph` asks for something improve did not use before, the
+  extractor changes and cached extractions stop applying, so those files are
+  extracted again. (`src/commands/improve/loop-stages.ts`,
+  `src/commands/improve/execution.ts`,
+  `src/commands/improve/improve-strategies.ts`)
+- **A graph extraction that times out is retried, not cached as empty.** A
+  call that ran past the engine's `timeoutMs` was recorded as "no entities"
+  and cached, so the file was never extracted again. It is now recorded as
+  failed, and the next run retries it; timeouts also count toward the run's
+  failure-rate abort. A batch that times out fails its files without then
+  calling the model once per file. An empty response is likewise recorded as
+  failed. (`src/llm/graph-extract.ts`)
+- **Long bodies are extracted once after batching turns itself off.** Two
+  non-array batch responses turn batching off for the rest of a run. From
+  then on, a body over 1,600 characters was extracted on its own and then
+  again with the rest of its batch. Each body is now extracted once.
+  (`src/llm/graph-extract.ts`)
+- **A batch's per-file calls respect the run's concurrency.** When a batch
+  fell back to one call per file (long bodies, a non-array response, batching
+  turned off), those calls all went out at once, up to the batch size. Local
+  endpoints serve one or two requests at a time. The calls now run within the
+  limit the run applies to its batches, one at a time by default.
+  (`src/llm/graph-extract.ts`)
+- **`related` counts a shared entity once.** `akm show`'s `related` list,
+  and curate's support refs taken from it, ranked files by the number of
+  matching entity rows. A file holding two case forms of one entity, as rows
+  from older extractors can, counted it twice and could outrank a file that
+  shared two entities. `related` now counts distinct entities. Extraction also
+  keeps one form of each entity before writing. The stored key `related`
+  matches on is now the one extraction deduplicates on, which also drops
+  surrounding quotes and backticks.
+  (`src/indexer/graph/graph-related.ts`,
+  `src/indexer/graph/graph-extraction.ts`, `src/indexer/db/graph-db.ts`)
+- **A config change that re-extracts the graph says so.** Cached graph
+  extractions are keyed by extractor: model, batch size, included asset types
+  and prompt version. Changing any of them made every cached file extract
+  again without a word. The first run after such a change now warns once,
+  naming the change and the number of cached files it will extract again, and
+  records the warning in the run's result.
+  (`src/indexer/graph/graph-extraction.ts`)
+- **Graph extraction reports what its parser filtered.** A run's graph
+  telemetry, part of `akm improve`'s result, now carries
+  `filteredGenericEntities`, `filteredInvalidRelations`,
+  `filteredLowConfidenceRelations` and `contextBatchRetries`. The pass
+  computed them and dropped them, and did not count batch responses at all.
+  (`src/indexer/graph/graph-extraction.ts`, `src/llm/graph-extract.ts`)
+- **An unknown key under `index.<pass>` is kept and named once.** It was
+  dropped from the loaded config and named twice. It is now handled like an
+  unknown key anywhere else in config. (`src/core/config/schema/index-config.ts`)
 
 ## [0.9.17-alpha.5] - 2026-09-27
 
