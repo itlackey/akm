@@ -705,8 +705,8 @@ function applySuccessfulBatchResults(
  * `bodies.length`, missing indices are filled by falling back to individual
  * `extractGraphFromBody` calls — ensuring every input always has a result.
  *
- * Returns an array of the same length as `bodies` (never shorter).
- * Individual elements default to `{entities:[], relations:[]}` on failure.
+ * Returns an array of the same length as `bodies` (never shorter). A body
+ * whose extraction failed gets no entities and `status: "failed"`.
  *
  * Routes through `tryLlmFeature("graph_extraction", ...)` so the feature gate
  * and onFallback hook are honoured uniformly.
@@ -966,9 +966,10 @@ export async function extractGraphFromBodies(
 /**
  * Extract entities and relations from a single asset body via the configured LLM.
  *
- * Returns `{entities: [], relations: []}` on any failure (timeout, invalid
- * JSON, empty response). Errors are logged via `warn()` but never thrown — a
- * failed extraction for one asset must not abort the rest of the index pass.
+ * Any failure (timeout, invalid JSON, empty response, provider error) returns
+ * no entities with `status: "failed"`, which is never cached, so the next run
+ * retries it. Errors are logged via `warn()` but never thrown — a failed
+ * extraction for one asset must not abort the rest of the index pass.
  *
  * Routes through `tryLlmFeature("graph_extraction", ...)` so the feature gate
  * and onFallback hook are honoured uniformly (Fix C5).
@@ -1048,8 +1049,8 @@ export async function extractGraphFromBody(
     },
     onNotices: options.onNotices,
     parse: (raw) => {
-      if (!raw) return empty();
-      const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
+      // An empty response is not JSON either; "nothing to extract" is `{"entities": []}`.
+      const parsed = raw ? parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw) : undefined;
       if (!parsed) {
         warn("graph extraction: invalid JSON response from LLM; skipping asset.");
         bumpTelemetry(options.telemetry, "failureCount");

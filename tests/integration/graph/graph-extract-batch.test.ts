@@ -240,6 +240,14 @@ describe("extractGraphFromBodies — unit", () => {
     expect(fallbackReasons).toEqual(["timeout"]);
   });
 
+  test("an empty single-asset response is a failure, not an empty result", async () => {
+    singleRawQueue.push("");
+
+    const result = await extractGraphFromBody(SAMPLE_LLM, "Alpha references Beta.", undefined, AKM_CFG_WITH_GATE);
+
+    expect(result).toEqual({ entities: [], relations: [], status: "failed", reason: "invalid_json" });
+  });
+
   test("a batch call that times out fails every asset and makes no per-asset calls", async () => {
     const telemetry: Record<string, number> = {};
     delayQueue.push(400);
