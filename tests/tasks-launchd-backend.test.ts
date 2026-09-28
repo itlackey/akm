@@ -4,29 +4,13 @@ import path from "node:path";
 import { akmTasksSync } from "../src/commands/tasks/tasks";
 import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import type { LaunchdExec, LaunchdFs } from "../src/tasks/backends/launchd";
-import { buildPlistXml, LAUNCHD_BACKEND } from "../src/tasks/backends/launchd";
+import { buildPlistXml, extractPlistInvocation, LAUNCHD_BACKEND } from "../src/tasks/backends/launchd";
 import type { SchedulerBinding } from "../src/tasks/scheduler-binding";
-import {
-  resolveScheduledTaskContext,
-  type ScheduledTaskContext,
-  schedulerContextDescriptor,
-  schedulerContextPath,
-  writeSchedulerContextDescriptor,
-} from "../src/tasks/scheduler-invocation";
 import { sandboxStashDir } from "./_helpers/sandbox";
 import {
   type SchedulerBackendContractDriver,
   schedulerBackendConformance,
 } from "./_helpers/scheduler-backend-conformance";
-
-const SCHEDULED_CONTEXT: ScheduledTaskContext = {
-  AKM_BUNDLE_DIR: "/Users/Akm User/stash & notes",
-  AKM_CONFIG_DIR: "/Users/Akm User/config",
-  AKM_DATA_DIR: "/Users/Akm User/data",
-  AKM_CACHE_DIR: "/Users/Akm User/cache",
-  AKM_STATE_DIR: "/Users/Akm User/state",
-};
-const contextPath = () => schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT));
 
 function makeTask(schedule: string, id = "ping"): SchedulerBinding {
   return {
@@ -46,7 +30,7 @@ function activateTask(stashDir: string, id = "ping"): void {
 
 describe("buildPlistXml", () => {
   test("step minutes -> wall-clock StartCalendarInterval array", () => {
-    const xml = buildPlistXml(makeTask("*/15 * * * *"), ["/abs/akm"], "/var/log/akm", contextPath());
+    const xml = buildPlistXml(makeTask("*/15 * * * *"), ["/abs/akm"], "/var/log/akm");
     expect(xml).toContain("<key>Label</key>");
     expect(xml).toContain("<string>com.akm.task.ping</string>");
     expect(xml).toContain("<key>StartCalendarInterval</key>");
@@ -61,8 +45,7 @@ describe("buildPlistXml", () => {
     expect(xml).toContain("<string>run</string>");
     expect(xml).toContain("<string>ping</string>");
     expect(xml).toContain("<string>--scheduled</string>");
-    expect(xml).toContain("<string>--scheduler-context</string>");
-    expect(xml).toContain("/tasks/context/");
+    expect(xml).not.toContain("--scheduler-context");
     expect(xml).not.toContain("<key>AKM_BUNDLE_DIR</key>");
     expect(xml).not.toContain("AKM_LLM_API_KEY");
     expect(xml).toContain("<string>/var/log/akm/ping.log</string>");
@@ -75,38 +58,69 @@ describe("buildPlistXml", () => {
       source: "workflows/release.yml:on.schedule[0]",
       invocation: ["workflow", "run", "team//workflows/release"],
     };
-    const xml = buildPlistXml(workflow, ["/abs/akm"], "/var/log/akm", contextPath());
+    const xml = buildPlistXml(workflow, ["/abs/akm"], "/var/log/akm");
     expect(xml).toContain("<string>workflow</string>");
     expect(xml).toContain("<string>team//workflows/release</string>");
     expect(xml).not.toContain("<string>--scheduled</string>");
   });
 
   test("daily at HH:MM -> StartCalendarInterval", () => {
-    const xml = buildPlistXml(makeTask("30 9 * * *"), ["/abs/akm"], "/var/log/akm", contextPath());
+    const xml = buildPlistXml(makeTask("30 9 * * *"), ["/abs/akm"], "/var/log/akm");
     expect(xml).toContain("<key>StartCalendarInterval</key>");
     expect(xml).toContain("<key>Hour</key><integer>9</integer>");
     expect(xml).toContain("<key>Minute</key><integer>30</integer>");
   });
 
   test("weekly on Mon -> Weekday=1", () => {
-    const xml = buildPlistXml(makeTask("0 8 * * 1"), ["/abs/akm"], "/var/log/akm", contextPath());
+    const xml = buildPlistXml(makeTask("0 8 * * 1"), ["/abs/akm"], "/var/log/akm");
     expect(xml).toContain("<key>Weekday</key><integer>1</integer>");
   });
 
   // ── PATH environment injection ───────────────────────────────────────────
 
-  test("PATH goes into EnvironmentVariables, never into the descriptor argv", () => {
+  test("PATH and the row's environment go into EnvironmentVariables, never into ProgramArguments", () => {
     const xml = buildPlistXml(
       makeTask("*/15 * * * *"),
       ["/abs/akm"],
       "/var/log/akm",
-      contextPath(),
+      { AKM_BUNDLE_DIR: "/Users/Akm User/stash & notes" },
       "/usr/local/bin:/usr/bin:/bin",
     );
-    expect(xml).toContain("<key>EnvironmentVariables</key>");
-    expect(xml).toContain("<key>PATH</key>");
-    expect(xml).toContain("<string>/usr/local/bin:/usr/bin:/bin</string>");
-    expect(xml).toContain("<string>--scheduler-context</string>");
+    expect(xml).toContain(
+      [
+        "  <key>EnvironmentVariables</key>",
+        "  <dict>",
+        "    <key>PATH</key>",
+        "    <string>/usr/local/bin:/usr/bin:/bin</string>",
+        "    <key>AKM_BUNDLE_DIR</key>",
+        "    <string>/Users/Akm User/stash &amp; notes</string>",
+        "  </dict>",
+      ].join("\n"),
+    );
+    expect(xml).not.toContain("--scheduler-context");
+    expect(extractPlistInvocation(xml)).toEqual({
+      binding: ["/abs/akm"],
+      environment: { AKM_BUNDLE_DIR: "/Users/Akm User/stash & notes" },
+      invocation: ["task", "run", "ping", "--scheduled"],
+    });
+  });
+
+  test("a `$` in a value is written and read back as is", () => {
+    const environment = { AKM_BUNDLE_DIR: "/srv/a$'b$$c$&d" };
+    const xml = buildPlistXml(makeTask("0 9 * * *"), ["/abs/akm"], "/var/log/akm", environment);
+    expect(extractPlistInvocation(xml)?.environment).toEqual(environment);
+  });
+
+  test("reads the plist 0.9.0 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
+    const legacy = buildPlistXml(makeTask("0 9 * * *"), ["/abs/bun", "/abs/akm"], "/var/log/akm").replace(
+      "<string>/abs/akm</string>",
+      "<string>/abs/akm</string>\n      <string>--scheduler-context</string>\n      <string>/Users/u/.local/share/akm/tasks/context/e898.json</string>",
+    );
+    expect(extractPlistInvocation(legacy)).toEqual({
+      binding: ["/abs/bun", "/abs/akm"],
+      contextPath: "/Users/u/.local/share/akm/tasks/context/e898.json",
+      invocation: ["task", "run", "ping", "--scheduled"],
+    });
   });
 
   test("PATH contents are XML-escaped inside the plist", () => {
@@ -114,16 +128,15 @@ describe("buildPlistXml", () => {
       makeTask("*/15 * * * *"),
       ["/abs/akm"],
       "/var/log/akm",
-      contextPath(),
+      undefined,
       "/usr/local/bin&special<>bin",
     );
     expect(xml).toContain("<string>/usr/local/bin&amp;special&lt;&gt;bin</string>");
     expect(xml).not.toContain("&special<>bin");
   });
 
-  test("no PATH: no EnvironmentVariables block, the descriptor is still referenced", () => {
-    const xml = buildPlistXml(makeTask("*/15 * * * *"), ["/abs/akm"], "/var/log/akm", contextPath());
-    expect(xml).toContain("--scheduler-context");
+  test("no PATH and no row environment: no EnvironmentVariables block", () => {
+    const xml = buildPlistXml(makeTask("*/15 * * * *"), ["/abs/akm"], "/var/log/akm");
     expect(xml).not.toContain("EnvironmentVariables");
     expect(xml).not.toContain("<key>PATH</key>");
   });
@@ -240,11 +253,7 @@ function makeFakeFs(events?: string[]): FakeLaunchdFs {
   };
 }
 
-function makeBackend(
-  exec = makeFakeExec(),
-  fs = makeFakeFs(),
-  scheduledContext: ScheduledTaskContext = SCHEDULED_CONTEXT,
-) {
+function makeBackend(exec = makeFakeExec(), fs = makeFakeFs()) {
   return {
     backend: LAUNCHD_BACKEND({
       exec,
@@ -253,15 +262,14 @@ function makeBackend(
       logDir: "/tmp/logs",
       akmArgv: ["/abs/akm"],
       envPath: false,
-      scheduledContext,
     }),
     exec,
     fs,
   };
 }
 
-function launchdContractDriver(scheduledContext = SCHEDULED_CONTEXT): SchedulerBackendContractDriver {
-  const { backend, exec, fs } = makeBackend(makeFakeExec(), makeFakeFs(), scheduledContext);
+function launchdContractDriver(): SchedulerBackendContractDriver {
+  const { backend, exec, fs } = makeBackend(makeFakeExec(), makeFakeFs());
   return {
     backend,
     captureState: () => ({
@@ -279,15 +287,10 @@ function launchdContractDriver(scheduledContext = SCHEDULED_CONTEXT): SchedulerB
   };
 }
 
-schedulerBackendConformance({
-  name: "launchd",
-  scheduledContext: SCHEDULED_CONTEXT,
-  movedContext: { ...SCHEDULED_CONTEXT, AKM_STATE_DIR: "/Users/Akm User/moved-state" },
-  create: launchdContractDriver,
-});
+schedulerBackendConformance({ name: "launchd", create: launchdContractDriver });
 
 describe("LAUNCHD_BACKEND — envPath option", () => {
-  test("envPath string: PATH lands in the plist's EnvironmentVariables, the descriptor holds directories only", () => {
+  test("envPath string: PATH lands in the plist's EnvironmentVariables", () => {
     const fakeFs = makeFakeFs();
     const backend = LAUNCHD_BACKEND({
       exec: makeFakeExec(),
@@ -296,7 +299,6 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
       logDir: "/tmp/logs",
       akmArgv: ["/abs/akm"],
       envPath: "/custom/bin:/usr/bin:/bin",
-      scheduledContext: SCHEDULED_CONTEXT,
     });
     backend.install(makeTask("*/5 * * * *"));
     const entries = [...fakeFs.written.values()];
@@ -305,13 +307,13 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
     expect(plist).toContain("<key>EnvironmentVariables</key>");
     expect(plist).toContain("<key>PATH</key>");
     expect(plist).toContain("<string>/custom/bin:/usr/bin:/bin</string>");
-    expect(plist).toContain("<string>--scheduler-context</string>");
+    expect(plist).not.toContain("--scheduler-context");
     expect(backend.expectedSignature?.(makeTask("*/5 * * * *"))).toBe(
       (backend.list() as Array<{ signature: string }>)[0]?.signature,
     );
   });
 
-  test("envPath false: plist still uses a descriptor without native environment", () => {
+  test("envPath false: no EnvironmentVariables block", () => {
     const fakeFs = makeFakeFs();
     const backend = LAUNCHD_BACKEND({
       exec: makeFakeExec(),
@@ -320,13 +322,11 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
       logDir: "/tmp/logs",
       akmArgv: ["/abs/akm"],
       envPath: false,
-      scheduledContext: SCHEDULED_CONTEXT,
     });
     backend.install(makeTask("*/5 * * * *"));
     const entries = [...fakeFs.written.values()];
     expect(entries.length).toBe(1);
     const plist = entries[0];
-    expect(plist).toContain("--scheduler-context");
     expect(plist).not.toContain("EnvironmentVariables");
     expect(plist).not.toContain("<key>PATH</key>");
   });
@@ -342,7 +342,6 @@ describe("LAUNCHD_BACKEND — envPath option", () => {
         agentsDir: "/tmp/agents",
         logDir: "/tmp/logs",
         akmArgv: ["/abs/akm"],
-        scheduledContext: SCHEDULED_CONTEXT,
       });
       backend.install(makeTask("*/5 * * * *"));
       const entries = [...fakeFs.written.values()];
@@ -368,7 +367,6 @@ describe("LAUNCHD_BACKEND lifecycle", () => {
         logDir: "/tmp/logs",
         akmArgv: ["/abs/akm"],
         envPath: `/usr/bin${String.fromCharCode(1)}/bin`,
-        scheduledContext: SCHEDULED_CONTEXT,
       }).install(makeTask("0 9 * * *")),
     ).toThrow("XML-forbidden control characters");
     expect(fakeFs.written.size).toBe(0);
@@ -476,7 +474,6 @@ describe("LAUNCHD_BACKEND lifecycle", () => {
       logDir: "/tmp/logs",
       akmArgv: ["/abs/akm"],
       envPath: false,
-      scheduledContext: SCHEDULED_CONTEXT,
     });
 
     expect(() => backend.install(makeTask("0 9 * * *"))).toThrow("injected log directory failure");
@@ -490,14 +487,11 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
   // longer parses is an orphan of its marker id, not a hard failure —
   // `list()` omits it so `akmTasksSync` treats the id as "not present" and
   // reinstalls it from the task file.
-  test("omits an installed plist without the current context descriptor", () => {
+  test("omits an installed plist whose invocation does not parse (the pre-rename `tasks run` spelling)", () => {
     const { backend, fs } = makeBackend();
     backend.install(makeTask("0 9 * * *"));
     const file = "/tmp/agents/com.akm.task.ping.plist";
-    fs.written.set(
-      file,
-      fs.readFile(file).replace(/\s*<string>--scheduler-context<\/string>\s*<string>[^<]+<\/string>/, ""),
-    );
+    fs.written.set(file, fs.readFile(file).replace("<string>task</string>", "<string>tasks</string>"));
 
     expect(backend.list()).toEqual([]);
   });
@@ -525,9 +519,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
     exec.loadedLabels.delete("com.akm.task.ping");
     exec.calls.length = 0;
 
-    expect(backend.list()).toMatchObject([
-      { id: "ping", enabled: false, nativeId: "ping", binding: ["/abs/akm"], contextPath: expect.any(String) },
-    ]);
+    expect(backend.list()).toMatchObject([{ id: "ping", enabled: false, nativeId: "ping", binding: ["/abs/akm"] }]);
     expect(exec.calls).toEqual([
       ["launchctl", "print", "gui/501"],
       ["launchctl", "print-disabled", "gui/501"],
@@ -541,17 +533,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(path.join(tasksDir, "ping.yml"), 'version: 4\nrun: echo ping\nschedule: "0 9 * * *"\n', "utf8");
       activateTask(stash.dir);
-      // #846: this describe block's default SCHEDULED_CONTEXT points at an
-      // intentionally unwritable fake path (exercising special-character
-      // handling), so belongsToBundle's owning-path check could never
-      // resolve it. Use the real, writable sandboxed context instead, so
-      // the backend's own default scheduler-context descriptor is one this
-      // test can actually write and read back.
-      const { backend, exec } = makeBackend(undefined, undefined, resolveScheduledTaskContext());
-      // The backend falls back to its own default context descriptor path
-      // (no `schedulerRuntime` deps here) — write it for real so the
-      // second sync's owning-path lookup can read it back.
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
+      const { backend, exec } = makeBackend();
       expect((await akmTasksSync({ backend })).installed).toEqual(["ping"]);
       exec.loadedLabels.delete("com.akm.task.ping");
       exec.calls.length = 0;
@@ -575,11 +557,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(path.join(tasksDir, "ping.yml"), 'version: 4\nrun: echo ping\nschedule: "0 9 * * *"\n', "utf8");
       activateTask(stash.dir);
-      // #846: same rationale as the previous test — this describe block's
-      // default SCHEDULED_CONTEXT can't back a resolvable owning path, so
-      // use the real, writable sandboxed context instead.
-      const { backend, exec } = makeBackend(undefined, undefined, resolveScheduledTaskContext());
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
+      const { backend, exec } = makeBackend();
       expect((await akmTasksSync({ backend })).installed).toEqual(["ping"]);
 
       exec.disabledLabels.add("com.akm.task.ping");
@@ -590,6 +568,9 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
         logicalSource: { kind: "task", ref: `${bundleName}//tasks/ping` },
         invocation: ["task", "run", "ping", "--bundle", bundleName, "--scheduled"],
       };
+      // The sandbox stash is the env-selected working stash (AKM_BUNDLE_DIR,
+      // no configured bundle), so its row carries the path in the plist.
+      const rowOptions = { environment: { AKM_BUNDLE_DIR: path.resolve(stash.dir) } };
       const drifted = backend.list() as Array<{
         id: string;
         enabled?: boolean;
@@ -597,7 +578,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
         signature?: string;
         target?: string;
         binding?: string[];
-        contextPath?: string;
+        environment?: Record<string, string>;
       }>;
 
       expect(drifted).toMatchObject([
@@ -605,13 +586,13 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
           id: "ping",
           enabled: false,
           nativeId: "ping",
-          signature: backend.expectedSignature?.({ ...qualifiedTask, enabled: false }),
+          signature: backend.expectedSignature?.({ ...qualifiedTask, enabled: false }, rowOptions),
           target: bundleName,
           binding: ["/abs/akm"],
-          contextPath: expect.any(String),
+          environment: rowOptions.environment,
         },
       ]);
-      expect(drifted[0]!.signature).not.toBe(backend.expectedSignature?.(qualifiedTask));
+      expect(drifted[0]!.signature).not.toBe(backend.expectedSignature?.(qualifiedTask, rowOptions));
 
       const result = await akmTasksSync({ backend });
 
@@ -619,7 +600,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       expect(result.unchanged).toEqual([]);
       expect(exec.disabledLabels.has("com.akm.task.ping")).toBe(false);
       expect((backend.list() as Array<{ signature?: string }>)[0]!.signature).toBe(
-        backend.expectedSignature?.(qualifiedTask),
+        backend.expectedSignature?.(qualifiedTask, rowOptions),
       );
       expect(exec.calls).toContainEqual(["launchctl", "print-disabled", "gui/501"]);
     } finally {
@@ -652,7 +633,6 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
           nativeId: "ping",
           signature: backend.expectedSignature?.(task),
           binding: ["/abs/akm"],
-          contextPath: expect.any(String),
         },
       ]);
       expect(exec.calls).toEqual([
@@ -683,7 +663,6 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
         nativeId: "ping",
         signature: backend.expectedSignature?.({ ...task, enabled: false }),
         binding: ["/abs/akm"],
-        contextPath: expect.any(String),
       },
     ]);
   });
@@ -706,7 +685,6 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
         nativeId: "ping",
         signature: backend.expectedSignature?.({ ...task, enabled: false }),
         binding: ["/abs/akm"],
-        contextPath: expect.any(String),
       },
     ]);
   });

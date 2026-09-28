@@ -78,11 +78,16 @@ akm improve --limit 10                # Base cap; configured replay slots are ad
 
 Selection defaults to assets with recent feedback signals first, with a
 retrieval-count fallback for high-traffic assets that have no feedback yet.
+Improve reworks only what gets read: without fresh feedback, an asset is
+picked (and a memory is judged for consolidation) only if `search`, `curate`
+or `show` returned it, or feedback named it, in the last 90 days — the usage
+log's retention — or if it is new material no improve stage has processed
+yet. An explicit ref (`akm improve skills/code-review`) is always reworked.
 Full flag reference: [CLI Reference — improve](../reference/cli.md#improve).
 
 `--dry-run` is an execution-plan preview, not a raw scope listing. Its
-`plannedRefs` are the final ranked refs after validation, signal, disk, and
-limit gates. The accompanying `plan` keeps the pre-gate `rawInScope` count,
+`plannedRefs` are the final ranked refs after validation, retrieval, signal,
+disk, and limit gates. The accompanying `plan` keeps the pre-gate `rawInScope` count,
 per-gate removal counts and reasons, configured versus effective limits, and
 the selection lane for each final ref. `plan.snapshot` explains whether the
 existing index was readable; a missing or incompatible index produces an

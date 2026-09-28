@@ -18,7 +18,7 @@ function fakeBackend(binding: string[]) {
     install: () => {},
     uninstall: () => {},
     setEnabled: () => {},
-    list: () => [{ id: "improve-nightly", binding, contextPath: "/ctx" }],
+    list: () => [{ id: "improve-nightly", binding }],
   };
 }
 

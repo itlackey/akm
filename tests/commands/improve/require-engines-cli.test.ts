@@ -13,7 +13,11 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { akmImprove } from "../../../src/commands/improve/improve";
-import { _setAkmImproveForTests, assertRequiredEnginesReachable } from "../../../src/commands/improve/improve-cli";
+import {
+  _setAkmImproveForTests,
+  assertRequiredEnginesReachable,
+  requiredEngineProbeTimeoutMs,
+} from "../../../src/commands/improve/improve-cli";
 import type { ResolvedImprovePlan } from "../../../src/commands/improve/improve-strategies";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -185,6 +189,57 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     await expect(assertRequiredEnginesReachable(plan, probeReachable)).rejects.toThrow(
       /completion path is not reachable/,
     );
+  });
+
+  test("the default probe waits as long as the connection's own timeout, so a busy endpoint is reachable", async () => {
+    // A local server busy with another job queues the probe behind it; a fixed
+    // 3s bound skipped every scheduled improve run on 2026-09-27 against a
+    // reachable endpoint.
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        await Bun.sleep(3_500);
+        return Response.json({ choices: [{ message: { role: "assistant", content: "ok" } }] });
+      },
+    });
+    try {
+      const endpoint = `http://127.0.0.1:${server.port}/v1/chat/completions`;
+      const plan = {
+        processes: {
+          reflect: {
+            enabled: true,
+            config: {},
+            runner: {
+              kind: "llm",
+              engine: "busy",
+              connection: { provider: "openai", endpoint, model: "busy-model", timeoutMs: 10_000 },
+            },
+          },
+        },
+        triageJudgment: null,
+      } as unknown as ResolvedImprovePlan;
+
+      const outcomes = await assertRequiredEnginesReachable(plan);
+
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]?.reachable).toBe(true);
+      expect(outcomes[0]?.latencyMs).toBeGreaterThanOrEqual(3_000);
+    } finally {
+      server.stop(true);
+    }
+  }, 20_000);
+
+  test("the probe bound is the engine's own timeout, at most two minutes", () => {
+    const connection = (timeoutMs?: number | null) =>
+      ({
+        endpoint: "https://x.example.test/v1",
+        model: "m",
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      }) as never;
+    expect(requiredEngineProbeTimeoutMs(connection(10_000))).toBe(10_000);
+    expect(requiredEngineProbeTimeoutMs(connection(900_000))).toBe(120_000);
+    expect(requiredEngineProbeTimeoutMs(connection(null))).toBe(120_000);
+    expect(requiredEngineProbeTimeoutMs(connection())).toBe(120_000);
   });
 
   test("returns an empty array when there are no required-engine targets", async () => {

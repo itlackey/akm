@@ -398,7 +398,7 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
       // `uses: workflows/` it was equally inert there — nothing ever consumed
       // it. Hoisting it unconditionally would therefore emit bytes the real
       // parseTaskSourceV4 below rejects, blocking a valid, previously-runnable
-      // v3 file from both the in-memory read shim and `akm migrate apply`
+      // v3 file from `akm migrate apply`
       // (scripts/akm-migrate/migrate/task-files.ts). Dropping an
       // already-inert field and SAYING SO is the faithful translation, and
       // keeps spec row B-66 / §5.3's `changed` guarantee intact.
@@ -559,19 +559,4 @@ export function taskToV4PlanFromOutcomes(outcomes: readonly TaskToV4FileOutcome[
     }
   }
   return Object.freeze({ schemaVersion: 1 as const, generation: generationFor(files), files: Object.freeze(files) });
-}
-
-/** Plan a complete, stable file set. Input order cannot change the result. */
-export function planTaskToV4Migration(inputs: readonly TaskToV4FileInput[]): TaskToV4MigrationPlan {
-  const sorted = [...inputs].sort((left, right) =>
-    left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0,
-  );
-  let previous: TaskToV4FileInput | undefined;
-  for (const current of sorted) {
-    if (previous && path.resolve(previous.filePath) === path.resolve(current.filePath)) {
-      throw new Error(`duplicate task migration file path: ${current.filePath}`);
-    }
-    previous = current;
-  }
-  return taskToV4PlanFromOutcomes(sorted.map(planTaskToV4File));
 }

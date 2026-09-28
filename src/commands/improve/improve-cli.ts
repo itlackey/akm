@@ -16,6 +16,7 @@ import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
@@ -114,29 +115,51 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
     ResolvedImproveProcess,
   ][]) {
     if (process.runner) {
-      targets.push({ process: processName, engine: process.runner.engine, connection: process.runner.connection });
+      targets.push({
+        process: processName,
+        engine: process.runner.engine,
+        connection: probeConnection(process.runner),
+      });
     }
   }
   if (plan.triageJudgment?.kind === "llm") {
     targets.push({
       process: "triage.judgment",
       engine: plan.triageJudgment.engine,
-      connection: plan.triageJudgment.connection,
+      connection: probeConnection(plan.triageJudgment),
     });
   }
   return targets;
 }
 
+/** The resolved engine keeps its request timeout beside the connection (the runtime merges it in); the probe needs it on the connection. */
+function probeConnection(runner: { connection: LlmConnectionConfig; timeoutMs?: number | null }): LlmConnectionConfig {
+  return runner.timeoutMs !== undefined ? { ...runner.connection, timeoutMs: runner.timeoutMs } : runner.connection;
+}
+
+/**
+ * The bound on `--require-engines`' probe: the connection's own request
+ * timeout, at most two minutes. A local server busy with another job queues
+ * the probe behind that job, and a fixed 3s bound failed every scheduled
+ * improve run on 2026-09-27 against a reachable endpoint; the cap still ends a
+ * hung endpoint (#957) long before a run's own multi-minute calls would.
+ */
+export function requiredEngineProbeTimeoutMs(connection: LlmConnectionConfig): number {
+  return Math.min(connection.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS, REQUIRED_ENGINE_PROBE_MAX_MS);
+}
+
+const REQUIRED_ENGINE_PROBE_MAX_MS = 120_000;
+
 /**
  * `--require-engines`, live: probe each connection's real completion path
- * (a gateway can list a model whose completion route is dead, #980) with a 3s
- * bound, once per endpoint + model. Returns each target's latency for the run
- * result (R17); an unreachable one fails the run.
+ * (a gateway can list a model whose completion route is dead, #980), once per
+ * endpoint + model, within {@link requiredEngineProbeTimeoutMs}. Returns each
+ * target's latency for the run result (R17); an unreachable one fails the run.
  */
 export async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
   probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
-    probeLlmReachable(connection, 3_000),
+    probeLlmReachable(connection, requiredEngineProbeTimeoutMs(connection)),
 ): Promise<EngineProbeOutcome[]> {
   const targets = collectRequiredEngineTargets(plan);
   if (targets.length === 0) return [];
@@ -169,6 +192,7 @@ export async function assertRequiredEnginesReachable(
     throw new ConfigError(
       `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
       "LLM_NOT_CONFIGURED",
+      "Check that each listed endpoint is up and serves its model. The probe is one short completion, bounded by the engine's timeoutMs (at most two minutes).",
     );
   }
   return probed.map((item) => ({

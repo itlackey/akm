@@ -60,8 +60,9 @@ everything else routes through `akm proposal accept`.
    score is updated immediately via the bounded-step formula (below) — no
    reindex required.
 3. `akm improve` selects assets (recent feedback first, retrieval-count
-   fallback for high-traffic assets with no feedback yet), then runs whichever
-   processes the selected strategy enables against each one.
+   fallback for high-traffic assets with no feedback yet) inside the
+   retrieval scope below, then runs whichever processes the selected strategy
+   enables against each one.
 4. Reflect and distill each emit at most one proposal per asset per run;
    consolidate emits proposals for memory `promote` operations and returns
    `merge`/`delete`/`contradict` operations as advisory (non-writing) output.
@@ -114,6 +115,51 @@ explicit `enabled: true`/`false` in the more specific layer always wins. This
 is why, for example, `proactiveMaintenance` stays off in `default` and
 `reflect-distill`, but a preset that doesn't mention it at all still inherits
 that "off" rather than defaulting to on.
+
+### Retrieval scope
+
+Improve reworks only what gets read (#986). Fresh feedback and an explicit
+`--scope <ref>` are usage evidence of their own. Every other pick — the
+proactive-maintenance, high-salience and forgetting-safety lanes, and the
+memories consolidation judges — must be in the retrieval scope
+(`src/commands/improve/retrieval-scope.ts`):
+
+- **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
+  asset, or user `feedback` named it, inside the window. A hit on a
+  `.derived` memory counts for its parent. Machine traffic (`improve`, `task`,
+  `audit`) does not count.
+- **New material:** the file was written inside the window and no improve
+  stage has processed the asset — no `improve_ledger` row and no proposal from
+  any source but a capture (`extract`, `propose`, `remember`, `import`).
+
+The window is the usage log's retention (`USAGE_EVENT_RETENTION_DAYS`, 90
+days): the log keeps nothing older, and a shorter window would drop assets
+read less often than it. There is no config key. Refs left out are counted by
+the plan's `retrieval` gate and reported as the `not_retrieved` skip reason;
+consolidation reports them in its warnings. A bulk rewrite of old files
+(a rename, a lint fix, a fresh clone) makes them look new until improve has
+processed each once.
+
+### Retrieval regression gate
+
+Reflect refuses a rewrite of an existing asset that grades lower on the
+asset's own retrieval queries (#722, `src/commands/improve/retrieval-gate.ts`).
+After the quality judge passes, up to five distinct user `search`/`curate`
+queries that returned the asset (envelopes, the stash README line and inputs
+over 2,000 characters dropped) are each graded 0–3 against the old and the new
+content with the retrieval eval's prompt, `retrieval-relevance-judge.md`, and
+its document shape: type, ref, name, description and the first 1,500 body
+characters. A lower mean for the new content is a `quality_rejected` refusal
+with the reflect rejection window. A grade that cannot be obtained refuses the
+rewrite, as the quality judge fails closed. An asset with no such queries is
+not graded.
+
+The gate exists because it was measured first. Of 60 accepted reflect rewrites
+(since 2026-07-01, stratified by lane) judged this way, 14 graded lower (23%,
+95% CI 14–35%) and 12 higher. Grading the same content twice flipped 11 of 174
+query grades, which puts 3 of 60 rewrites in the "lower" bucket by noise
+alone. The threshold for building it was fixed before judging: a lower bound of
+at least 10%.
 
 ### Dry-run planning boundary
 

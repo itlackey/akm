@@ -61,6 +61,36 @@ function candidatePackageVersion(): string {
   return version;
 }
 
+/** Each akm row's id with its five cron fields. */
+function cronSchedules(crontab: string): string[] {
+  const lines = crontab.split(/\r?\n/);
+  return lines.flatMap((line, index) => {
+    const id = /^# akm:task (.+) BEGIN$/.exec(line)?.[1];
+    const fields = (lines[index + 1] ?? "").split(/\s+/).slice(0, 5).join(" ");
+    return id ? [`${id} ${fields}`] : [];
+  });
+}
+
+/** Each akm row's id with its launcher: the words after its `NAME=value` environment, up to `--scheduler-context` or `task run`. */
+function cronLaunchers(crontab: string): string[] {
+  const lines = crontab.split(/\r?\n/);
+  return lines.flatMap((line, index) => {
+    const id = /^# akm:task (.+) BEGIN$/.exec(line)?.[1];
+    if (!id) return [];
+    const words = withoutAssignments((lines[index + 1] ?? "").split(/\s+/).slice(5));
+    const end = words.findIndex(
+      (word, at) => word === "--scheduler-context" || (word === "task" && words[at + 1] === "run"),
+    );
+    return [`${id} ${words.slice(0, end).join(" ")}`];
+  });
+}
+
+/** A row's command without the leading `NAME=value` assignments it sets for itself. */
+function withoutAssignments(words: string[]): string[] {
+  const start = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+  return start === -1 ? [] : words.slice(start);
+}
+
 /** Extract a scheduled task's generated `akm task run …` command tail from the fake crontab. */
 function extractCronCommandContaining(crontab: string, needle: string): string {
   const lines = crontab.split(/\r?\n/);
@@ -218,14 +248,22 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(taskList.status, taskList.stderr).toBe(0);
   });
 
-  test("5. task sync --dry-run is clean: no removals, no failures, a/b preserved", async () => {
+  test("5. task sync --dry-run shows each previous-release row as an update: no adds, no removals, no failures", async () => {
+    // The previous release's rows name a `--scheduler-context` descriptor; the
+    // candidate rewrites each one in place, never adding or removing a row.
+    expect(fs.readFileSync(home.fakeCrontab, "utf8")).toContain("--scheduler-context");
     const result = await runLauncher(candidateLauncher, ["task", "sync", "--dry-run"], home.env);
     expect(result.status, result.stderr).toBe(0);
-    const preview = JSON.parse(result.stdout) as { removed?: string[]; failures?: unknown[] };
+    const preview = JSON.parse(result.stdout) as {
+      adds?: { id: string }[];
+      updates?: { id: string }[];
+      removes?: { id: string }[];
+      failures?: unknown[];
+    };
     expect(preview.failures ?? []).toEqual([]);
-    const removed = preview.removed ?? [];
-    expect(removed.some((entry) => entry.includes(home.taskIds.a))).toBe(false);
-    expect(removed.some((entry) => entry.includes(home.taskIds.b))).toBe(false);
+    expect(preview.adds ?? []).toEqual([]);
+    expect(preview.removes ?? []).toEqual([]);
+    expect((preview.updates ?? []).map((update) => update.id).sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
   });
 
   test("6. task sync (plain, no --rebind) keeps a/b scheduled inside `live`; c stays absent", async () => {
@@ -238,8 +276,13 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     // flag; see tasks-cli.ts) — there is nothing here for it to fix: the
     // candidate was installed OVER `live` in place, so the launcher path a/b
     // already embed still resolves inside `live` unchanged.
+    const before = fs.readFileSync(home.fakeCrontab, "utf8");
     const result = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
     expect(result.status, result.stderr).toBe(0);
+    const synced = JSON.parse(result.stdout) as { installed?: string[]; updated?: string[]; removed?: string[] };
+    expect(synced.installed ?? []).toEqual([]);
+    expect(synced.removed ?? []).toEqual([]);
+    expect([...(synced.updated ?? [])].sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
 
     const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
     const commandA = extractCronCommandContaining(crontab, home.taskIds.a);
@@ -247,6 +290,13 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(commandA).toContain(livePrefix);
     expect(commandB).toContain(livePrefix);
     expect(crontab.includes(home.taskIds.c)).toBe(false);
+    // Each row is its command plus its schedule: the descriptor argument is
+    // gone, its one value (the working stash) is set inline, and every row
+    // keeps its launcher and its time.
+    expect(crontab).not.toContain("--scheduler-context");
+    expect(commandA.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `)).toBe(true);
+    expect(cronSchedules(crontab)).toEqual(cronSchedules(before));
+    expect(cronLaunchers(crontab)).toEqual(cronLaunchers(before));
   });
 
   test("7. the generated cron command for scheduled-a runs the CANDIDATE and writes a task log", async () => {
@@ -270,12 +320,12 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     // Prove the row that just ran was the CANDIDATE, not the previous
     // release still installed at `previous-readback`: the generated command
     // is the resolved invocation argv (one token per element — see
-    // buildScheduledBindingInvocation/resolveAkmInvocation in
+    // buildScheduledInvocation/resolveAkmInvocation in
     // src/tasks/backends/cron.ts and src/tasks/resolve-akm-bin.ts, unquoted
     // via quoteForCron since fixture paths never contain shell-special
     // characters) followed by `task run <ref>`. Strip the `task run …` tail
     // and re-invoke the same resolved argv with `--version` instead.
-    const tokens = command.split(/\s+/);
+    const tokens = withoutAssignments(command.split(/\s+/));
     const taskIndex = tokens.indexOf("task");
     if (taskIndex <= 0) throw new Error(`Could not find the "task" subcommand in generated command: ${command}`);
     const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, taskIndex);
@@ -398,14 +448,26 @@ describe.skipIf(skipOrigin("0.9.15"))(
       const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
       expect(executed.status, executed.stderr).toBe(0);
 
-      // A plain `task sync` afterward must not remove the now-granted,
-      // still-installed row.
+      // A plain `task sync` afterward rewrites the now-granted row in place:
+      // an update, never an add or a removal, at the same time.
       const sync = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
       expect(sync.status, sync.stderr).toBe(0);
-      const syncResult = JSON.parse(sync.stdout) as { removed?: string[] };
-      expect(syncResult.removed ?? []).not.toContain(home.taskId);
+      const syncResult = JSON.parse(sync.stdout) as { installed?: string[]; updated?: string[]; removed?: string[] };
+      expect(syncResult.removed ?? []).toEqual([]);
+      expect(syncResult.installed ?? []).toEqual([]);
+      expect(syncResult.updated ?? []).toEqual([home.taskId]);
       const crontabAfter = fs.readFileSync(home.fakeCrontab, "utf8");
       expect(crontabAfter).toContain(home.taskId);
+      expect(crontabAfter).not.toContain("--scheduler-context");
+      expect(cronSchedules(crontabAfter)).toEqual(cronSchedules(crontabBefore));
+
+      // The rewritten row fires the candidate too.
+      const rewritten = await runLauncher(
+        "/bin/sh",
+        ["-c", extractCronCommandContaining(crontabAfter, home.taskId)],
+        home.env,
+      );
+      expect(rewritten.status, rewritten.stderr).toBe(0);
 
       // The sync took the installed row as this host's choice: the list now names it.
       const configGet = await runLauncher(candidateLauncher, ["config", "get", "scheduler.enabled"], home.env);

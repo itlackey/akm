@@ -215,9 +215,9 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.hint).toBe(new UsageError("x", "TASK_SOURCE_INVALID").hint());
   });
 
-  // P4 (spec §3.2.2, rows B-14/B-15, F-A2.35): task source v3 AND v2 are
-  // both retired from `src` now, with the SAME TASK_SCHEMA_VERSION_UNSUPPORTED
-  // code and migrate hint (the migrator runs both generations in sequence).
+  // The runtime reads only task source v4 (#987): v3 AND v2 fail with the
+  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED code, naming `akm migrate apply`
+  // (the migrator runs both generations in sequence).
   test.each([
     ["v3", "version: 3\nrun: echo hi\nschedule: '@daily'\n"],
     ["v2", "version: 2\nschedule: '@daily'\ncommand: echo hi\n"],
@@ -236,12 +236,8 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
-    // Both fixtures are unmigratable shapes (issue #869): the message names
-    // the blocked reason and tells the operator a human decision is needed,
-    // rather than pointing at `akm migrate apply`, which would just report
-    // the same block.
-    expect(parsed.error).toContain("needs a human decision");
-    expect(parsed.hint).toContain("Review the file and resolve the ambiguity by hand");
+    expect(parsed.error).toContain("akm migrate apply");
+    expect(parsed.hint).toContain("akm migrate apply --dry-run");
   });
 
   test("akm workflow run of a step passing with: to a task target emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {

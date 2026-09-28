@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
+import { deriveBundleId } from "../../src/core/bundle-id";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/config/config-sources";
@@ -106,28 +107,10 @@ function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileR
     }
     if (!existingDirectory(componentRoot)) continue;
 
-    const adapter = component?.adapter ?? detectAdapterId(componentRoot, "");
-    if (!component?.adapter && adapter === "") {
-      const flatTasks = fs
-        .readdirSync(componentRoot, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".yml"))
-        .map((entry) => entry.name)
-        .sort();
-      if (flatTasks.length > 0) {
-        throw new ConfigError(
-          `Task migration cannot classify top-level task file(s) ${flatTasks.join(", ")} in bundle ${bundleId}; configure adapter "akm-task" or move them under tasks/.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-    }
-    if (adapter !== "akm" && adapter !== "akm-task") continue;
-    const candidate: TaskFileRoot = {
-      bundleId,
-      root: componentRoot,
-      bundleRoot,
-      writable: component?.writable ?? resolveWritable(source),
-      layout: adapter === "akm-task" ? "akm-task" : "akm-stash",
-    };
+    const candidate = taskRoot(bundleId, bundleRoot, componentRoot, component?.adapter, () =>
+      component?.writable ?? resolveWritable(source),
+    );
+    if (!candidate) continue;
     const existing = rootsByPath.get(componentRoot);
     if (existing) {
       reconcileDuplicateRoot(existing, candidate, componentRoot);
@@ -135,7 +118,52 @@ function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileR
     }
     rootsByPath.set(componentRoot, candidate);
   }
+
+  // The working stash `AKM_BUNDLE_DIR` selects when no bundle names it: the
+  // runtime reads its tasks too, so its v2/v3 files must convert here.
+  const envStash = process.env.AKM_BUNDLE_DIR?.trim();
+  if (envStash && existingDirectory(envStash)) {
+    const stashRoot = path.resolve(envStash);
+    if (!rootsByPath.has(stashRoot)) {
+      const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
+      // The runtime reads this stash with the adapter it detects, or `akm`.
+      const candidate = taskRoot(bundleId, stashRoot, stashRoot, detectAdapterId(stashRoot), () => true);
+      if (candidate) rootsByPath.set(stashRoot, candidate);
+    }
+  }
   return [...rootsByPath.values()];
+}
+
+/** One task root, or none when its adapter holds no tasks. */
+function taskRoot(
+  bundleId: string,
+  bundleRoot: string,
+  componentRoot: string,
+  configuredAdapter: string | undefined,
+  writable: () => boolean,
+): TaskFileRoot | undefined {
+  const adapter = configuredAdapter ?? detectAdapterId(componentRoot, "");
+  if (!configuredAdapter && adapter === "") {
+    const flatTasks = fs
+      .readdirSync(componentRoot, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".yml"))
+      .map((entry) => entry.name)
+      .sort();
+    if (flatTasks.length > 0) {
+      throw new ConfigError(
+        `Task migration cannot classify top-level task file(s) ${flatTasks.join(", ")} in bundle ${bundleId}; configure adapter "akm-task" or move them under tasks/.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+  }
+  if (adapter !== "akm" && adapter !== "akm-task") return undefined;
+  return {
+    bundleId,
+    root: componentRoot,
+    bundleRoot,
+    writable: writable(),
+    layout: adapter === "akm-task" ? "akm-task" : "akm-stash",
+  };
 }
 
 function summarize(plan: TaskToV4MigrationPlan): TaskFilesSummary {

@@ -1,31 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { decodeCommandOutput, escapeXml } from "../src/tasks/backends/exec-utils";
 import type { SchtasksExec, SchtasksFs } from "../src/tasks/backends/schtasks";
-import { buildSchtasksXml, extractSchtasksTarget, SCHTASKS_BACKEND } from "../src/tasks/backends/schtasks";
+import {
+  buildSchtasksXml,
+  extractSchtasksInvocation,
+  extractSchtasksTarget,
+  SCHTASKS_BACKEND,
+} from "../src/tasks/backends/schtasks";
 import type { InstalledSchedulerBinding } from "../src/tasks/backends/types";
 import type { SchedulerBinding } from "../src/tasks/scheduler-binding";
-import {
-  type ScheduledTaskContext,
-  schedulerContextDescriptor,
-  schedulerContextPath,
-} from "../src/tasks/scheduler-invocation";
 import {
   type SchedulerBackendContractDriver,
   schedulerBackendConformance,
 } from "./_helpers/scheduler-backend-conformance";
 
-const SCHEDULED_CONTEXT: ScheduledTaskContext = {
-  AKM_BUNDLE_DIR: "C:\\Users\\Akm User\\O'Brien & notes",
-  AKM_CONFIG_DIR: "C:\\Users\\Akm User\\config",
-  AKM_DATA_DIR: "C:\\Users\\Akm User\\data",
-  AKM_CACHE_DIR: "C:\\Users\\Akm User\\cache",
-  AKM_STATE_DIR: "C:\\Users\\Akm User\\state",
-};
 const USER_SID = "S-1-5-21-1000-2000-3000-1001";
 
 const xmlOptions = <T extends Record<string, unknown>>(options?: T) => ({
   ...options,
-  contextPath: schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT)),
   userSid: USER_SID,
 });
 
@@ -91,11 +83,57 @@ describe("buildSchtasksXml", () => {
     expect(xml).toContain(`<UserId>${USER_SID}</UserId>`);
     expect(xml).toContain("<Command>powershell.exe</Command>");
     expect(xml).not.toContain("$env:AKM_BUNDLE_DIR=");
-    expect(xml).toContain("&apos;--scheduler-context&apos;");
-    expect(xml).toContain("&apos;task&apos; &apos;run&apos; &apos;ping&apos; &apos;--scheduled&apos;");
+    expect(xml).not.toContain("--scheduler-context");
+    expect(xml).toContain(
+      "&apos;C:/akm/akm.exe&apos; &apos;task&apos; &apos;run&apos; &apos;ping&apos; &apos;--scheduled&apos;",
+    );
     expect(xml).not.toContain("AKM_LLM_API_KEY");
     expect(xml).toContain("<Enabled>true</Enabled>");
     expect(xml).not.toContain("<WorkingDirectory>");
+  });
+
+  test("the row's environment is set in PowerShell before the call operator, and read back", () => {
+    const environment = { AKM_BUNDLE_DIR: "C:\\Users\\Akm User\\O'Brien & notes", AKM_STATE_DIR: "C:\\state" };
+    const xml = buildSchtasksXml(
+      makeTask("0 9 * * *"),
+      ["C:\\Program Files\\akm\\akm.exe"],
+      "C:/log",
+      xmlOptions({ environment }),
+    );
+    expect(xml).toContain(
+      escapeXml(
+        "$env:AKM_BUNDLE_DIR='C:\\Users\\Akm User\\O''Brien & notes'; $env:AKM_STATE_DIR='C:\\state'; & 'C:\\Program Files\\akm\\akm.exe' 'task'",
+      ),
+    );
+    expect(extractSchtasksInvocation(xml)).toEqual({
+      binding: ["C:\\Program Files\\akm\\akm.exe"],
+      environment,
+      invocation: ["task", "run", "ping", "--scheduled"],
+    });
+  });
+
+  test("a `$` in a value (an admin share, say) is written and read back as is", () => {
+    for (const value of ["\\\\nas\\share\\akm$", "C:\\a$'b$$c$&d"]) {
+      const environment = { AKM_BUNDLE_DIR: value };
+      const xml = buildSchtasksXml(makeTask("0 9 * * *"), ["C:\\akm.exe"], "C:/log", xmlOptions({ environment }));
+      expect(extractSchtasksInvocation(xml)?.environment).toEqual(environment);
+    }
+  });
+
+  test("reads the task 0.9.0 – 0.9.17-alpha.6 registered, naming its descriptor", () => {
+    const task = makeTask("0 9 * * *");
+    const script =
+      "& 'C:\\bun.exe' 'C:\\akm' '--scheduler-context' 'C:\\Users\\u\\AppData\\akm\\tasks\\context\\e898.json' 'task' 'run' 'ping' '--bundle' 'akm' '--scheduled'; exit $LASTEXITCODE";
+    const legacy = buildSchtasksXml(task, ["C:\\bun.exe"], "C:/log", xmlOptions()).replace(
+      /<Arguments>[\s\S]*?<\/Arguments>/,
+      `<Arguments>${escapeXml(`-NoLogo -NoProfile -NonInteractive -Command "${script}"`)}</Arguments>`,
+    );
+    expect(extractSchtasksInvocation(legacy)).toEqual({
+      binding: ["C:\\bun.exe", "C:\\akm"],
+      contextPath: "C:\\Users\\u\\AppData\\akm\\tasks\\context\\e898.json",
+      invocation: ["task", "run", "ping", "--bundle", "akm", "--scheduled"],
+      target: "akm",
+    });
   });
 
   test("renders a qualified workflow binding without task-only arguments", () => {
@@ -370,7 +408,7 @@ describe("buildSchtasksXml", () => {
 });
 
 describe("schtasks bundle attribution", () => {
-  test("parses --bundle from the current descriptor-bearing invocation", () => {
+  test("parses --bundle from the installed invocation", () => {
     const task = makeTask("0 9 * * *");
     const targeted: SchedulerBinding = {
       ...task,
@@ -385,7 +423,7 @@ describe("schtasks bundle attribution", () => {
   // longer parses is an orphan of its marker id, not a hard failure —
   // `list()` omits it so `akmTasksSync` treats the id as "not present" and
   // reinstalls it from the task file.
-  test("omits a descriptor-less installed entry", () => {
+  test("omits an entry whose invocation does not parse (a pre-rename `tasks run … --target` row)", () => {
     const xml = descriptorlessTargetXml();
     const backend = SCHTASKS_BACKEND({
       exec: {
@@ -397,7 +435,6 @@ describe("schtasks bundle attribution", () => {
       },
       akmArgv: ["C:/current/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -442,7 +479,6 @@ describe("schtasks backend signatures", () => {
       exec,
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -453,7 +489,6 @@ describe("schtasks backend signatures", () => {
         enabled: true,
         signature: backend.expectedSignature?.(task),
         binding: ["C:/akm.exe"],
-        contextPath: expect.any(String),
         invocation: task.invocation,
       },
     ]);
@@ -477,7 +512,6 @@ describe("schtasks backend signatures", () => {
       exec: queryExec(installedXml),
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -494,7 +528,6 @@ describe("schtasks backend signatures", () => {
         exec: queryExec(xml),
         akmArgv: ["C:/akm.exe"],
         logDir: "C:/log",
-        scheduledContext: SCHEDULED_CONTEXT,
         userSid: USER_SID,
       });
     const expected = backendFor(installedXml).expectedSignature?.(task);
@@ -520,7 +553,6 @@ describe("schtasks backend signatures", () => {
       exec: queryExec(installedXml),
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -553,7 +585,6 @@ describe("schtasks backend signatures", () => {
       exec: queryExec(installedXml),
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -566,7 +597,6 @@ describe("schtasks backend signatures", () => {
       exec: queryExec(""),
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -580,7 +610,6 @@ describe("schtasks backend signatures", () => {
       },
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -597,7 +626,6 @@ describe("schtasks backend signatures", () => {
       },
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -618,13 +646,11 @@ describe("schtasks backend signatures", () => {
       },
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
     });
     const injected = SCHTASKS_BACKEND({
       exec: queryExec(""),
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -665,7 +691,6 @@ describe("schtasks backend install validation", () => {
       fs,
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -703,7 +728,6 @@ describe("schtasks backend install validation", () => {
       },
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
 
@@ -714,7 +738,7 @@ describe("schtasks backend install validation", () => {
 });
 
 /** An in-memory Task Scheduler: task name → XML, plus the temp files `/Create /XML` reads. */
-function fakeTaskScheduler(scheduledContext: ScheduledTaskContext = SCHEDULED_CONTEXT) {
+function fakeTaskScheduler() {
   const files = new Map<string, string>();
   const tasks = new Map<string, string>();
   const calls: string[][] = [];
@@ -768,7 +792,6 @@ function fakeTaskScheduler(scheduledContext: ScheduledTaskContext = SCHEDULED_CO
       fs,
       akmArgv: ["C:/akm.exe"],
       logDir: "C:/log",
-      scheduledContext,
       userSid: USER_SID,
     }),
     calls,
@@ -780,8 +803,8 @@ function fakeTaskScheduler(scheduledContext: ScheduledTaskContext = SCHEDULED_CO
   };
 }
 
-function schtasksContractDriver(scheduledContext = SCHEDULED_CONTEXT): SchedulerBackendContractDriver {
-  const scheduler = fakeTaskScheduler(scheduledContext);
+function schtasksContractDriver(): SchedulerBackendContractDriver {
+  const scheduler = fakeTaskScheduler();
   const sorted = (map: Map<string, string>) => [...map.entries()].sort(([left], [right]) => left.localeCompare(right));
   return {
     backend: scheduler.backend,
@@ -797,12 +820,7 @@ function schtasksContractDriver(scheduledContext = SCHEDULED_CONTEXT): Scheduler
   };
 }
 
-schedulerBackendConformance({
-  name: "schtasks",
-  scheduledContext: SCHEDULED_CONTEXT,
-  movedContext: { ...SCHEDULED_CONTEXT, AKM_STATE_DIR: "C:\\Users\\Akm User\\moved-state" },
-  create: schtasksContractDriver,
-});
+schedulerBackendConformance({ name: "schtasks", create: schtasksContractDriver });
 
 describe("schtasks backend install", () => {
   test("registers the XML through /Create /XML <temp> /F and removes the temp file", () => {

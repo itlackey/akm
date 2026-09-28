@@ -5,7 +5,6 @@ import {
   type SchedulerBinding,
   schedulerNativeBindingId,
 } from "../../src/tasks/scheduler-binding";
-import type { ScheduledTaskContext } from "../../src/tasks/scheduler-invocation";
 
 /**
  * One backend under the shared scheduler contract, plus a view of its native
@@ -27,9 +26,7 @@ export interface SchedulerBackendContractDriver {
 
 export interface SchedulerBackendContractAdapter {
   readonly name: string;
-  readonly scheduledContext: ScheduledTaskContext;
-  readonly movedContext: ScheduledTaskContext;
-  create(scheduledContext?: ScheduledTaskContext): SchedulerBackendContractDriver;
+  create(): SchedulerBackendContractDriver;
 }
 
 export function qualifiedSchedulerTask(schedule: string, id = "ping", enabled = true): SchedulerBinding {
@@ -70,7 +67,8 @@ export function schedulerBackendConformance(adapter: SchedulerBackendContractAda
       await backend.install(binding);
 
       const text = rowText(nativeIdOf(binding));
-      expect(text).toContain("--scheduler-context");
+      expect(text).not.toContain("--scheduler-context");
+      expect(text).not.toContain("AKM_BUNDLE_DIR");
       expect(text).toContain("--scheduled");
       const rows = await backend.list();
       expect(rows).toHaveLength(1);
@@ -82,7 +80,27 @@ export function schedulerBackendConformance(adapter: SchedulerBackendContractAda
         signature: backend.expectedSignature?.(binding),
       });
       expect(rows[0]?.binding.length).toBeGreaterThan(0);
-      expect(rows[0]?.contextPath).toMatch(/\.json$/);
+      expect(rows[0]?.contextPath).toBeUndefined();
+      expect(rows[0]?.environment).toBeUndefined();
+    });
+
+    test("a row carries its environment inline, lists it back, and the expected signature follows it", async () => {
+      const { backend, rowText } = adapter.create();
+      const binding = qualifiedSchedulerTask("0 9 * * *");
+      const environment = { AKM_BUNDLE_DIR: "/srv/akm stash", AKM_STATE_DIR: "/srv/akm state" };
+
+      await backend.install(binding, { environment });
+
+      expect(rowText(nativeIdOf(binding))).toContain("AKM_BUNDLE_DIR");
+      expect(rowText(nativeIdOf(binding))).not.toContain("--scheduler-context");
+      const rows = await backend.list();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.environment).toEqual(environment);
+      expect(rows[0]?.signature).toBe(backend.expectedSignature?.(binding, { environment }));
+      expect(backend.expectedSignature?.(binding, { environment })).not.toBe(backend.expectedSignature?.(binding));
+      expect(
+        backend.expectedSignature?.(binding, { environment: { ...environment, AKM_BUNDLE_DIR: "/srv/moved" } }),
+      ).not.toBe(backend.expectedSignature?.(binding, { environment }));
     });
 
     test("re-installing the same binding is idempotent", async () => {
@@ -176,14 +194,6 @@ export function schedulerBackendConformance(adapter: SchedulerBackendContractAda
       expect(await backend.list()).toEqual([
         expect.objectContaining({ id: binding.id, nativeId: nativeIdOf(binding), invocation: binding.invocation }),
       ]);
-    });
-
-    test("the expected signature follows the scheduler context the row references", () => {
-      const binding = qualifiedSchedulerTask("0 9 * * *");
-      const original = adapter.create(adapter.scheduledContext);
-      const moved = adapter.create(adapter.movedContext);
-
-      expect(original.backend.expectedSignature?.(binding)).not.toBe(moved.backend.expectedSignature?.(binding));
     });
 
     test("an akm-marked row akm cannot parse is refused, not rewritten", async () => {

@@ -593,6 +593,7 @@ describe("#800 effective dry-run planner", () => {
         profile: 0,
         cleanup: 0,
         validation: 0,
+        retrieval: 0,
         signal: 1,
         disk: 0,
         limit: 0,

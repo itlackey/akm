@@ -107,10 +107,7 @@ describe("scheduled workflows under task sync", () => {
     setSchedulerRefEnabled("team//workflows/z-invalid", true);
     const { backend, calls } = recordingBackend();
 
-    const result = await akmTasksSync(
-      { backend, schedulerRuntime: () => ({ binding: ["/test/akm"], contextPath: "/test/context.json" }) },
-      "team",
-    );
+    const result = await akmTasksSync({ backend, schedulerRuntime: () => ({ binding: ["/test/akm"] }) }, "team");
 
     expect(result.installed).toHaveLength(1);
     expect(result.failures).toHaveLength(1);
@@ -126,10 +123,7 @@ describe("scheduled workflows under task sync", () => {
     );
     setSchedulerRefEnabled("team//workflows/release", true);
     const { backend } = recordingBackend();
-    await akmTasksSync(
-      { backend, schedulerRuntime: () => ({ binding: ["/test/akm"], contextPath: "/test/context.json" }) },
-      "team",
-    );
+    await akmTasksSync({ backend, schedulerRuntime: () => ({ binding: ["/test/akm"] }) }, "team");
 
     fs.writeFileSync(file, workflow("release", ["      - id: ship", "        run: echo after-sync"]));
     const started = await startWorkflowRun("team//workflows/release", {}, { force: true });

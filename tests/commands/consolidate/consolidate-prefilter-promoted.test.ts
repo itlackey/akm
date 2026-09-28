@@ -43,6 +43,11 @@ function writeMemory(name: string, body: string, mtime?: Date): void {
   if (mtime) fs.utimesSync(filePath, mtime, mtime);
 }
 
+/** Distinct, ordered mtimes inside the usage window: older memories are not new material (#986). */
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 86_400_000);
+}
+
 function writeKnowledge(name: string, body: string): void {
   const filePath = path.join(stashDir, "knowledge", `${name}.md`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -92,13 +97,9 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     // Oldest two memories are already promoted verbatim into knowledge/; a
     // limit-1 run must reach the one fresh memory instead of re-selecting and
     // dropping an already-promoted one every time.
-    writeMemory("dup-oldest", "Oldest duplicate body content that is long enough to matter.", new Date(2020, 0, 1));
-    writeMemory(
-      "dup-second-oldest",
-      "Second oldest duplicate body content that is long enough to matter.",
-      new Date(2020, 0, 2),
-    );
-    writeMemory("fresh-newest", "Fresh newest body content that is long enough to matter.", new Date(2020, 0, 3));
+    writeMemory("dup-oldest", "Oldest duplicate body content that is long enough to matter.", daysAgo(3));
+    writeMemory("dup-second-oldest", "Second oldest duplicate body content that is long enough to matter.", daysAgo(2));
+    writeMemory("fresh-newest", "Fresh newest body content that is long enough to matter.", daysAgo(1));
     writeKnowledge(
       "already-promoted-1",
       "---\ndescription: already promoted copy\ntags: [x]\n---\n\nOldest duplicate body content that is long enough to matter.\n",
@@ -118,8 +119,8 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
   });
 
   test("the preview/eligibility pool (inspectConsolidationPool) excludes already-promoted memories the same way", () => {
-    writeMemory("dup-oldest", "Oldest duplicate body content that is long enough to matter.", new Date(2020, 0, 1));
-    writeMemory("fresh-newest", "Fresh newest body content that is long enough to matter.", new Date(2020, 0, 2));
+    writeMemory("dup-oldest", "Oldest duplicate body content that is long enough to matter.", daysAgo(3));
+    writeMemory("fresh-newest", "Fresh newest body content that is long enough to matter.", daysAgo(2));
     writeKnowledge(
       "already-promoted",
       "---\ndescription: already promoted copy\ntags: [x]\n---\n\nOldest duplicate body content that is long enough to matter.\n",

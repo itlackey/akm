@@ -152,6 +152,47 @@ export function countUsageEventsByType(db: Database, eventType: string): number 
 }
 
 /**
+ * Durable refs a user-attributed `search`, `curate` or `show` returned, or a
+ * user `feedback` named, at or after `sinceIso`. Machine traffic (`improve`,
+ * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignals}.
+ */
+export function listUsedEntryRefs(db: Database, sinceIso: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT entry_ref FROM usage_events
+       WHERE event_type IN ('search', 'curate', 'show', 'feedback')
+         AND source = 'user'
+         AND entry_ref IS NOT NULL
+         AND julianday(created_at) >= julianday(?)`,
+    )
+    .all(sinceIso) as Array<{ entry_ref: string }>;
+  return rows.map((row) => row.entry_ref);
+}
+
+/**
+ * The distinct query texts of user `search` and `curate` events that returned
+ * `conceptId` (any bundle prefix), most recent first.
+ */
+export function listRetrievalQueries(db: Database, conceptId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT query, MAX(created_at) AS last_at FROM usage_events
+       WHERE event_type IN ('search', 'curate')
+         AND source = 'user'
+         AND query IS NOT NULL AND trim(query) != ''
+         AND instr(entry_ref, '//') > 0
+         AND substr(entry_ref, instr(entry_ref, '//') + 2) = ?
+       GROUP BY query
+       ORDER BY last_at DESC`,
+    )
+    .all(conceptId) as Array<{ query: string }>;
+  return rows.map((row) => row.query);
+}
+
+/** Usage events older than this many days are purged on every `akm index`. */
+export const USAGE_EVENT_RETENTION_DAYS = 90;
+
+/**
  * Delete usage events older than the given number of days.
  */
 export function purgeOldUsageEvents(db: Database, retentionDays: number): void {

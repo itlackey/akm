@@ -69,33 +69,16 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved.bundleName).toBeUndefined();
   });
 
-  test("a task v2 file the deterministic migrator converts -> outcome 'converts', exit 0, no engine required", async () => {
+  // The runtime reads only task source v4 (#987): a v2/v3 file is what
+  // `akm migrate apply` converts, and validate reports it as sync does — a
+  // failure that names that command — whether or not the migrator can convert it.
+  test.each([
+    ["a task v2 file the migrator converts", 'version: 2\nschedule: "@daily"\nprompt: Say hello\n'],
+    ["a task v2 file the migrator cannot convert", "version: 2\nschedule: '@daily'\ncommand: echo no\n"],
+  ])("%s -> outcome 'blocked', exit 1, reason names `akm migrate apply`", async (_label, yaml) => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
-    // Same v2 fixture proven convertible by tests/migrate-format.test.ts. A
-    // `prompt:` task converts to a command-kind (`uses: akm/command`) target
-    // — #907 review: validate must not require a configured engine to
-    // report this `valid`/`converts` (no execution lowering runs at all), so
-    // this test deliberately configures NO engine.
-    const filePath = writeFixture(scratch, "legacy.yml", 'version: 2\nschedule: "@daily"\nprompt: Say hello\n');
-
-    const { stdout, status } = await runCli(["task", "validate", filePath], stash);
-    expect(status).toBe(0);
-    const env = JSON.parse(stdout);
-    expect(env.ok).toBe(true);
-    expect(env.outcome).toBe("converts");
-    expect(env.sourceVersion).toBe(2);
-    expect(env.resolved).toBeDefined();
-    expect(env.resolved.target.kind).toBe("uses");
-  });
-
-  test("a task v2 file the migrator cannot convert -> outcome 'blocked', exit 1, reason names the human-decision case", async () => {
-    const stash = makeStashDir();
-    const scratch = makeScratchDir();
-    // Same unmigratable v2 fixture as tests/tasks-scheduler-sync-v4.test.ts's
-    // #867 "one invalid desired task degrades" case (a schedule/command pair
-    // task v2 never accepted, so the v2 -> v3 planner refuses it).
-    const filePath = writeFixture(scratch, "b-invalid.yml", "version: 2\nschedule: '@daily'\ncommand: echo no\n");
+    const filePath = writeFixture(scratch, "legacy.yml", yaml);
 
     const { stdout, status } = await runCli(["task", "validate", filePath], stash);
     expect(status).toBe(1);
@@ -103,7 +86,7 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.ok).toBe(false);
     expect(env.outcome).toBe("blocked");
     expect(env.sourceVersion).toBe(2);
-    expect(env.reason).toContain("needs a human decision");
+    expect(env.reason).toContain("akm migrate apply");
     expect(env.resolved).toBeUndefined();
   });
 
@@ -208,27 +191,22 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved).toBeUndefined();
   });
 
-  test("a v4 file with a retired schedule[].enabled AND an ordinary grammar defect -> outcome 'invalid', exit 1, not the unmigratable-version wording", async () => {
+  test("a v4 file with a retired schedule[].enabled -> outcome 'blocked', exit 1, reason names `akm migrate apply`", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
-    // Version 4 is supported; the unknown `bogus` field is an ordinary
-    // grammar defect and must be reported as such, even though the file
-    // also carries the retired schedule[].enabled shape the in-memory shim
-    // otherwise tolerates.
     const filePath = writeFixture(
       scratch,
-      "bogus-with-enabled.yml",
-      "version: 4\nrun: echo hi\nshell: sh\nbogus: 1\nschedule:\n  - cron: '0 4 * * *'\n    enabled: true\n",
+      "retired-enabled.yml",
+      "version: 4\nrun: echo hi\nshell: sh\nschedule:\n  - cron: '0 4 * * *'\n    enabled: true\n",
     );
 
     const { stdout, status } = await runCli(["task", "validate", filePath], stash);
     expect(status).toBe(1);
     const env = JSON.parse(stdout);
     expect(env.ok).toBe(false);
-    expect(env.outcome).toBe("invalid");
+    expect(env.outcome).toBe("blocked");
     expect(env.sourceVersion).toBe(4);
-    expect(env.reason).toContain("bogus is an unsupported field");
-    expect(env.reason).not.toContain("needs a human decision");
+    expect(env.reason).toContain("akm migrate apply");
     expect(env.resolved).toBeUndefined();
   });
 

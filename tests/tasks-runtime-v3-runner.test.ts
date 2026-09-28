@@ -72,12 +72,10 @@ function outputSpawn(stdout: string, stderr = ""): ReturnType<SpawnFn> {
 
 describe("task runner mutation boundary", () => {
   for (const [label, yaml, message] of [
-    ["v2", 'version: 2\nschedule: "@daily"\ncommand: echo legacy\n', "TASK_SCHEMA_VERSION_UNSUPPORTED"],
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-14, F-A2.5):
-    // task source v3 is retired from `src` — a version: 3 document now fails
-    // the SAME way a version: 2 document does, with the SAME migrate hint
-    // (row B-15).
-    ["v3", 'version: 3\nrun: echo legacy\nschedule: "@daily"\n', "TASK_SCHEMA_VERSION_UNSUPPORTED"],
+    // The runtime reads only task source v4 (#987): a v2 or v3 document
+    // fails naming `akm migrate apply`, the one place it is converted.
+    ["v2", 'version: 2\nschedule: "@daily"\ncommand: echo legacy\n', "akm migrate apply"],
+    ["v3", 'version: 3\nrun: echo legacy\nschedule: "@daily"\n', "akm migrate apply"],
     // P4 (spec §3.2.2, row B-17): the bounded YAML front end's sourceLabel is
     // "task source" now, not "task v3 source".
     ["malformed", 'version: 4\nrun: [unterminated\nschedule: "@daily"\n', "Invalid task source"],
@@ -118,11 +116,6 @@ describe("task runner mutation boundary", () => {
       }
       expect(failure).toBeInstanceOf(Error);
       expect((failure as Error).message).toContain(message);
-      if (label === "v2" || label === "v3") {
-        expect((failure as Error & { hint(): string }).hint()).toContain(
-          "Review the file and resolve the ambiguity by hand",
-        );
-      }
       expect(readTaskHistory({ id: "blocked" })).toEqual([]);
       expect(logFiles()).toEqual([]);
     });

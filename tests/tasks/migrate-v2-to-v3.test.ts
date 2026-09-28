@@ -7,8 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";
 import { parseTaskV3Yaml } from "../../src/tasks/source/task-source-v3-frozen";
-import { planTaskToV3File, planTaskToV3Migration, type TaskToV3FileInput } from "../../src/tasks/source/task-to-v3";
+import { planTaskToV3File, type TaskToV3FileInput } from "../../src/tasks/source/task-to-v3";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,
@@ -219,21 +220,17 @@ describe("pure task v2 to v3 migration planner", () => {
     expect(parsed.target).toEqual({ kind: "run", run: "echo runs-on ${{ matrix.os }}" });
   });
 
-  test("classifies changed, skipped, and blocked files in stable path order with a deterministic generation", () => {
+  test("classifies each file as changed, skipped, or blocked", () => {
     const alreadyV3 = Buffer.from("version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n");
     const files = [
       input("deterministic/command-string.yml"),
       { filePath: "/z/already.yml", bytes: alreadyV3, mode: 0o600, writable: true },
       input("blocked/command-argv.yml"),
     ];
-    const first = planTaskToV3Migration(files);
-    const second = planTaskToV3Migration([...files].reverse());
-    expect(first.generation).toMatch(/^[a-f0-9]{64}$/);
-    expect(second).toEqual(first);
-    expect(first.files.map(({ status, reason }) => [status, reason])).toEqual([
-      ["blocked", "argv-array-has-no-portable-shell-string"],
+    expect(files.map((file) => planTaskToV3File(file)).map(({ status, reason }) => [status, reason])).toEqual([
       ["changed", "task-converted"],
       ["skipped", "already-v3"],
+      ["blocked", "argv-array-has-no-portable-shell-string"],
     ]);
   });
 
@@ -303,15 +300,15 @@ describe("pure task v2 to v3 migration planner", () => {
     }
   });
 
-  test("generation commits to mode/configured and on-disk writability while duplicate paths fail closed", () => {
+  test("migrate's plan generation commits to mode/configured and on-disk writability while duplicate paths fail closed", () => {
     const source = memoryInput("version: 2\nschedule: '@daily'\ncommand: akm index\n");
-    const normal = planTaskToV3Migration([source]);
-    const differentMode = planTaskToV3Migration([{ ...source, mode: 0o600 }]);
-    const readOnly = planTaskToV3Migration([{ ...source, writable: false }]);
-    const diskReadOnly = planTaskToV3Migration([{ ...source, onDiskWritable: false }]);
+    const normal = planTaskFilesMigration([source]);
+    const differentMode = planTaskFilesMigration([{ ...source, mode: 0o600 }]);
+    const readOnly = planTaskFilesMigration([{ ...source, writable: false }]);
+    const diskReadOnly = planTaskFilesMigration([{ ...source, onDiskWritable: false }]);
     expect(differentMode.generation).not.toBe(normal.generation);
     expect(readOnly.generation).not.toBe(normal.generation);
     expect(diskReadOnly.generation).not.toBe(normal.generation);
-    expect(() => planTaskToV3Migration([source, { ...source }])).toThrow(/duplicate|file path/i);
+    expect(() => planTaskFilesMigration([source, { ...source }])).toThrow(/duplicate|file path/i);
   });
 });

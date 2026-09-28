@@ -312,12 +312,16 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   }
 
   const gateNames = new Set(["profile", "cleanup", "validation", "signal", "disk", "limit"]);
+  // Plans stored before 0.9.17-alpha.7 (#986) have no retrieval gate.
+  const optionalGateNames = new Set(["retrieval"]);
   if (!Array.isArray(value.gates)) fail("plan.gates must be an array");
   const gateRemovedByName = new Map<string, number>();
   for (const gate of value.gates) {
     if (!isRecord(gate)) fail("plan.gates entries must be objects");
     requireExactFields(gate, new Set(["name", "removed", "reason"]));
-    if (typeof gate.name !== "string" || !gateNames.has(gate.name)) fail("plan.gates.name is invalid");
+    if (typeof gate.name !== "string" || !(gateNames.has(gate.name) || optionalGateNames.has(gate.name))) {
+      fail("plan.gates.name is invalid");
+    }
     requireCount(gate, "removed", "plan.gates entry");
     if (typeof gate.reason !== "string") fail("plan.gates.reason must be a string");
     if (gateRemovedByName.has(gate.name)) fail(`plan.gates must contain exactly one ${gate.name} gate`);

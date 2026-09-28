@@ -24,7 +24,11 @@
  *     `TaskName,Next Run Time,Status` — so the regex anchors on the task
  *     name as the leading quoted field.
  *   • Task Scheduler runs a task with the account's own environment, so
- *     PATH is not carried anywhere; the descriptor holds directories only.
+ *     PATH is not carried anywhere. The Exec action has no environment of
+ *     its own: the AKM directory environment a row sets (see
+ *     `src/tasks/scheduler-invocation.ts`) is a `$env:NAME='value';`
+ *     assignment ahead of the call operator in the PowerShell command,
+ *     inherited by the akm process it starts.
  *
  * Tests inject a fake exec + filesystem.
  */
@@ -40,13 +44,12 @@ import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../schedule";
 import { type SchedulerBinding, schedulerBindingNativeId, schedulerLogicalBindingId } from "../scheduler-binding";
 import {
-  buildScheduledBindingInvocation,
-  type ParsedScheduledBindingInvocation,
-  parseScheduledBindingArgv,
-  resolveScheduledTaskContext,
-  type ScheduledTaskContext,
-  schedulerContextDescriptor,
-  schedulerContextPath,
+  buildScheduledInvocation,
+  type ParsedScheduledInvocation,
+  parseScheduledInvocationArgv,
+  type ScheduledRowEnvironment,
+  scheduledRowEnvironmentEntries,
+  scheduledRowEnvironmentFrom,
 } from "../scheduler-invocation";
 import {
   type BackendExec,
@@ -57,7 +60,7 @@ import {
   normalizeXmlForUtf16File,
   runOrThrow,
 } from "./exec-utils";
-import type { InstalledSchedulerBinding, SchedulerBackend } from "./types";
+import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "./types";
 
 export type SchtasksExec = BackendExec;
 
@@ -75,8 +78,6 @@ export interface SchtasksBackendOptions {
   logDir?: string;
   /** Folder prefix for task names. Default `\akm\`. */
   folderPrefix?: string;
-  /** Override the resolved non-secret AKM directory context. */
-  scheduledContext?: ScheduledTaskContext;
   /** Override the current Windows user SID (tests). */
   userSid?: string;
 }
@@ -90,16 +91,14 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): Schedule
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
   const logDir = options.logDir ?? getTaskLogDir();
   const folder = options.folderPrefix ?? DEFAULT_FOLDER_PREFIX;
-  const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
-  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext));
   const userSid = options.userSid ?? resolveCurrentUserSid(exec);
   const taskName = (nativeId: string) => `${folder}${nativeId}`;
-  const xmlFor = (task: SchedulerBinding, opts?: { binding?: readonly string[]; contextPath?: string }) =>
+  const xmlFor = (task: SchedulerBinding, opts?: SchedulerInstallOptions) =>
     buildSchtasksXml(task, akmArgv, logDir, {
       folderPrefix: folder,
-      contextPath: opts?.contextPath ?? defaultContextPath,
       userSid,
       binding: [...(opts?.binding ?? akmArgv)],
+      ...(opts?.environment ? { environment: opts.environment } : {}),
     });
   const queryXml = (nativeId: string) =>
     runOrThrow(exec, ["schtasks", "/Query", "/TN", taskName(nativeId), "/XML"], {
@@ -161,7 +160,8 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): Schedule
           signature: taskXmlSignature(xml),
           ...(parsed.target !== undefined ? { target: parsed.target } : {}),
           binding: parsed.binding,
-          contextPath: parsed.contextPath,
+          ...(parsed.contextPath !== undefined ? { contextPath: parsed.contextPath } : {}),
+          ...(parsed.environment !== undefined ? { environment: parsed.environment } : {}),
           invocation: parsed.invocation,
         });
       }
@@ -178,13 +178,21 @@ export function extractSchtasksTarget(xml: string): string | undefined {
   return extractSchtasksInvocation(xml)?.target;
 }
 
-export function extractSchtasksInvocation(xml: string): ParsedScheduledBindingInvocation | undefined {
+export function extractSchtasksInvocation(xml: string): ParsedScheduledInvocation | undefined {
   const argsElement = xml.match(/<(?:[\w.-]+:)?Arguments>([\s\S]*?)<\/(?:[\w.-]+:)?Arguments>/i);
   if (!argsElement) return undefined;
   const commandLine = decodeXml(argsElement[1]!);
   const invocationStart = findPowerShellInvocationOperator(commandLine);
   if (invocationStart === undefined) return undefined;
-  return parseScheduledBindingArgv(parsePowerShellSingleQuotedArgs(commandLine, invocationStart + 1));
+  const parsed = parseScheduledInvocationArgv(parsePowerShellSingleQuotedArgs(commandLine, invocationStart + 1));
+  if (!parsed) return undefined;
+  const variables: Record<string, string> = {};
+  const assignments = commandLine.slice(0, invocationStart);
+  for (const assignment of assignments.matchAll(/\$env:([A-Za-z_][A-Za-z0-9_]*)='((?:[^']|'')*)'\s*;/g)) {
+    variables[assignment[1]!] = assignment[2]!.replaceAll("''", "'");
+  }
+  const environment = scheduledRowEnvironmentFrom(variables);
+  return environment ? { ...parsed, environment } : parsed;
 }
 
 function findPowerShellInvocationOperator(script: string): number | undefined {
@@ -240,10 +248,10 @@ export interface BuildSchtasksXmlOptions {
   folderPrefix?: string;
   /** Override the clock used to find the next StartBoundary (tests). */
   now?: () => Date;
-  /** Immutable runtime context descriptor loaded by the launcher. */
-  contextPath: string;
   /** Bootstrap argv. Defaults to the positional akmArgv. */
   binding?: string[];
+  /** The environment the row sets, as `$env:` assignments ahead of the call operator. */
+  environment?: ScheduledRowEnvironment;
   /** Current Windows user SID embedded in the principal. */
   userSid: string;
 }
@@ -257,8 +265,11 @@ export function buildSchtasksXml(
   const folder = options.folderPrefix ?? DEFAULT_FOLDER_PREFIX;
   const now = options.now ? options.now() : new Date();
   const trigger = translateToSchtasks(parseSchedule(task.cron, "schtasks"));
-  const invocation = buildScheduledBindingInvocation(options.binding ?? akmArgv, options.contextPath, task.invocation);
-  const script = `& ${invocation.argv.map((arg) => quotePowerShell(arg)).join(" ")}; exit $LASTEXITCODE`;
+  const argv = buildScheduledInvocation(options.binding ?? akmArgv, task.invocation);
+  const assignments = scheduledRowEnvironmentEntries(options.environment)
+    .map(([name, value]) => `$env:${name}=${quotePowerShell(value)}; `)
+    .join("");
+  const script = `${assignments}& ${argv.map((arg) => quotePowerShell(arg)).join(" ")}; exit $LASTEXITCODE`;
   const command = "powershell.exe";
   const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script].map(quoteArg).join(" ");
   const nativeId = schedulerBindingNativeId(task);
@@ -278,7 +289,7 @@ export function buildSchtasksXml(
     .replace('<Principal id="Author">', `<Principal id="Author">\n      <UserId>${escapeXml(options.userSid)}</UserId>`)
     .replace("{{ENABLED}}", task.enabled ? "true" : "false")
     .replace("{{COMMAND}}", escapeXml(command))
-    .replace("{{ARGS}}", escapeXml(args))
+    .replace("{{ARGS}}", () => escapeXml(args))
     .replace("{{LOG_PATH}}", escapeXml(logPath));
 }
 

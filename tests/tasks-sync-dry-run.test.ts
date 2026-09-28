@@ -29,11 +29,6 @@ import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/con
 import { shapeForCommand } from "../src/output/shapes";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../src/tasks/scheduler-invocation";
 import type { Cleanup } from "./_helpers/sandbox";
 import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome, writeSandboxConfig } from "./_helpers/sandbox";
 
@@ -88,10 +83,6 @@ afterEach(() => {
 });
 
 const backendFor = (exec: CronExec) => {
-  // Mirrors tests/integration/tasks-sync.test.ts's `backendFor`: write a
-  // real scheduler-context descriptor matching CRON_BACKEND's default
-  // context so belongsToBundle can resolve the installed entries' owner.
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },

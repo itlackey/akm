@@ -159,6 +159,35 @@ describe("decodeImproveResult", () => {
     ).toThrow(/limit removal.*selected.*effective|effectiveRefs.length/);
   });
 
+  test("decodes a plan with the retrieval gate and one written before it existed (#986)", () => {
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan,
+    };
+    const withRetrieval = {
+      ...plan,
+      candidates: { ...plan.candidates, rawInScope: 5 },
+      gates: [...plan.gates, { name: "retrieval" as const, removed: 3, reason: "not retrieved" }],
+    };
+    expect(decodeImproveResult({ ...envelope, plan: withRetrieval }).envelope.plan).toEqual(withRetrieval);
+    // The gate is optional on read: an envelope an older release stored has none.
+    expect(decodeImproveResult(envelope).envelope.plan).toEqual(plan);
+    // Its removals count toward the pre-limit accounting like every other gate.
+    expect(() => decodeImproveResult({ ...envelope, plan: { ...withRetrieval, candidates: plan.candidates } })).toThrow(
+      /pre-limit gate removals/,
+    );
+    expect(() =>
+      decodeImproveResult({
+        ...envelope,
+        plan: { ...withRetrieval, gates: [...withRetrieval.gates, { name: "retrieval", removed: 0, reason: "x" }] },
+      }),
+    ).toThrow(/exactly one retrieval/);
+  });
+
   test("rejects contradictory modes, counts, ordered refs, and replay caps", () => {
     const envelope = {
       schemaVersion: 2,

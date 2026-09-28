@@ -6,6 +6,152 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.7] - 2026-09-28
+
+A scheduled task is now just a command and a schedule. Each native row
+carries its own `AKM_BUNDLE_DIR` instead of pointing at a descriptor file,
+and the runtime reads only v4 task files; older files convert once with
+`akm migrate apply`. The first `akm task sync` after upgrading rewrites each
+row once, keeping every task and schedule. `akm improve` reworks only assets
+that retrieval returned or that are new, and reflect refuses a rewrite that
+grades worse on the asset's own searches. `--require-engines` no longer
+skips a run because the LLM endpoint is busy.
+
+### Changed
+
+- **akm reads only task source v4.** A `version: 2` or `version: 3` task
+  file, or a `version: 4` file that still carries 0.9.15's retired
+  `schedule[].enabled`, now fails on its own with a message naming
+  `akm migrate apply`, which converts it once, under a backup (`akm upgrade`
+  runs it after an install). Until now every read converted such a file in
+  memory. `akm task sync` reports each one as a failure, leaves its installed
+  row as it is, and keeps reconciling every other task; `akm task run`,
+  `akm lint` and `akm task validate` report it the same way, and
+  `akm task validate`'s `converts` outcome is gone (such a file is
+  `blocked`). `akm migrate apply` now also converts the tasks of the stash
+  `AKM_BUNDLE_DIR` selects when no configured bundle names it, since the
+  runtime reads those too, and a root whose top-level task files are all
+  v2/v3 is still detected as an `akm-task` bundle, so they are found and
+  converted. A host whose task files are all v4 (`akm migrate status`
+  reports `current`) sees no difference.
+  (`src/tasks/source/parse-task-source.ts`, `src/commands/tasks/validate.ts`,
+  `scripts/akm-migrate/task-migrate.ts`,
+  `src/core/adapter/adapters/akm-task-adapter.ts`)
+- **A scheduled row is its command plus its schedule, and carries its own
+  context.** Rows no longer name a `--scheduler-context` descriptor file;
+  they set what it held themselves. Every row sets `AKM_BUNDLE_DIR` to the
+  working stash of the shell that ran `akm task sync`, plus any
+  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or `AKM_STATE_DIR` that
+  shell set explicitly: a `VAR=value` prefix in the crontab, an
+  `EnvironmentVariables` entry in a launchd plist, a `$env:VAR='value';`
+  assignment ahead of the command in Task Scheduler (its action has no
+  environment of its own). Scheduled runs see the same environment as
+  before, and sync still tells installations sharing a crontab apart by
+  that path (#846).
+  **What hosts see:** the first `akm task sync` after upgrading rewrites
+  every akm row once. `akm task sync --dry-run` lists each one as an update,
+  never an add or a remove; each keeps its launcher and its schedule, and
+  the `--scheduler-context <file>` argument becomes an inline
+  `AKM_BUNDLE_DIR=<working stash>`. On a host whose working stash is
+  `/home/u/akm` a row changes from
+
+  ```text
+  30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm --scheduler-context /home/u/.local/share/akm/tasks/context/e898….json task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
+  ```
+
+  to
+
+  ```text
+  30 8 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
+  ```
+
+  Rows written by 0.9.0 through 0.9.17-alpha.6 keep firing until that sync:
+  the CLI still accepts `--scheduler-context <file>` and applies the file's
+  environment (PATH included, for a 0.9.16 row). The files under
+  `$DATA/tasks/context/` are no longer written, and the uid, mode, symlink
+  and content-hash checks made on every scheduled run are gone. A sync
+  leaves some rows as they are (one whose task file failed to load, one a
+  `--bundle` sync did not cover), and those still name their file: once
+  `akm task doctor` lists no binding with a `contextPath`, nothing reads
+  them and they can be deleted. `akm task prune` now
+  finds rows whose `AKM_BUNDLE_DIR` names a directory that is gone, and older
+  rows whose descriptor cannot be read; `akm task doctor` lists `contextPath`
+  only for an older row. (`src/tasks/scheduler-invocation.ts`,
+  `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
+  `src/tasks/backends/schtasks.ts`, `src/tasks/scheduler-sync.ts`,
+  `src/commands/tasks/tasks.ts`)
+- **`akm improve` reworks only what gets read (#986).** An asset with fresh
+  feedback, or one you name (`akm improve skills/x`), is handled as before.
+  Every other pick must now be in the retrieval scope. That covers the
+  proactive-maintenance, high-salience and forgetting-safety lanes, and the
+  memories consolidation judges. An asset is in scope if a user `search`,
+  `curate` or `show` returned it, or user `feedback` named it, in the last 90
+  days, which is the usage log's retention. A hit on a `.derived` memory counts
+  for its parent. New material that no improve stage has processed yet is also
+  in scope. There is no new config key.
+
+  Measured with `akm improve --dry-run` on a copy of the maintainer's bundle
+  (19,870 assets), against 0.9.17-alpha.6:
+  - The fallback lanes pick from 6,450 assets instead of 15,686, and 9,236
+    refs are left out. No lane setting can reach the unread tail any more. In
+    July the proactive lane rewrote 3,069 assets, and 3,059 of them had not
+    been retrieved since the usage log began on 1 July.
+  - Consolidation judges 59 memories instead of 69.
+  - The high-salience lane no longer admits distill outputs nobody has read (2
+    today).
+  - Under the scheduled caps, today's nightly work is unchanged. The default
+    strategy selects the same 50 feedback-driven refs, and weekly proactive
+    maintenance selects the same 25, because salience ranking already puts
+    retrieved assets first.
+
+  `akm improve --dry-run` and the run result report the left-out refs as a new
+  `retrieval` gate. Health reports them under the skip reason `not_retrieved`.
+  Improve results stored by earlier releases, which have no such gate, still
+  decode. (`src/commands/improve/retrieval-scope.ts`,
+  `src/commands/improve/preparation.ts`, `src/commands/improve/consolidate.ts`)
+
+- **Reflect refuses a rewrite that makes an asset worse for its own searches
+  (#722).** Before reflect proposes a rewrite of an existing asset, it grades
+  the old and the new content on up to five of the queries that actually
+  retrieved the asset (user `search` and `curate`). It uses the retrieval
+  eval's relevance prompt, which agrees with human grades at kappa 0.83. When
+  the new content grades lower on average, the rewrite is refused the same way
+  a quality-judge rejection is: `quality_rejected`, with the 14-day reflect
+  window. An asset without retrieval queries is not graded.
+
+  This was measured before it was built. Of 60 accepted rewrites since July,
+  judged this way, 14 graded lower (23%, 95% CI 14–35%) and 12 graded higher.
+  The gate was built because the lower bound cleared the 10% threshold set
+  before any judging. It costs two judge calls per query on the engine that
+  already runs the quality judge. On the maintainer's 2026-09-28 nightly run,
+  whose 30 rewrites had 102 usable queries, that is 204 calls, about 6 more
+  minutes on a 73-minute run. (`src/commands/improve/retrieval-gate.ts`,
+  `src/commands/improve/reflect.ts`)
+
+### Fixed
+
+- **A cron row too long for one line is seen by `akm task sync` again.** A
+  command over 1,000 bytes runs from a wrapper script, and sync could not
+  read which task such a row ran: every sync, and every `--dry-run`, showed
+  it as an add and wrote it again. Sync now reads the script, so the row is
+  unchanged or an update like any other. (`src/tasks/backends/cron.ts`)
+- **A `$` or a backslash in a scheduled row's value is kept.** launchd and
+  Task Scheduler rows passed their values through a string replacement that
+  read `$'`, `$&` and `$$` as patterns, so a path such as a Windows admin
+  share (`\\nas\share\akm$`) came out corrupted; reading a crontab row
+  back dropped a backslash inside a single-quoted value.
+  (`src/tasks/backends/launchd.ts`, `src/tasks/backends/schtasks.ts`,
+  `src/tasks/backends/cron.ts`)
+- **`akm improve --require-engines` no longer skips a run because the LLM
+  endpoint is busy.** Its reachability probe, one short completion, gave up
+  after 3 seconds, so a local server busy with another job looked
+  unreachable and the whole scheduled run failed (all four scheduled runs on
+  2026-09-27). The probe now waits up to the engine's own `timeoutMs`, at
+  most two minutes, so a busy server can answer while a hung one still fails
+  fast. The error's hint now says to check the endpoint rather than to run
+  `akm setup`.
+  (`src/commands/improve/improve-cli.ts`)
+
 ## [0.9.17-alpha.6] - 2026-09-27
 
 Graph extraction stops losing and wasting work. A timed-out extraction is

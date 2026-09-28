@@ -479,17 +479,15 @@ const tasksDoctorCommand = defineJsonCommand({
 });
 
 /**
- * #907: `akm task validate`'s exit-code contract — `valid` and `converts`
- * (a v2/v3 document the in-memory shim converted successfully) are both
- * successful (exit 0); `blocked`/`invalid`/`not-a-task` are diagnosed
- * defects the caller must act on (exit 1, mirroring `task sync`'s own
- * `failures.length > 0 -> EXIT_CODES.GENERAL`). A missing path or an
- * unreadable file never reaches this function at all — `akmTaskValidate`
- * throws a `UsageError` for those, which `defineJsonCommand`'s wrapping
- * already maps to exit 2.
+ * #907: `akm task validate`'s exit-code contract — `valid` succeeds (exit
+ * 0); `blocked`/`invalid`/`not-a-task` are diagnosed defects the caller must
+ * act on (exit 1, mirroring `task sync`'s own `failures.length > 0 ->
+ * EXIT_CODES.GENERAL`). A missing path or an unreadable file never reaches
+ * this function at all — `akmTaskValidate` throws a `UsageError` for those,
+ * which `defineJsonCommand`'s wrapping already maps to exit 2.
  */
 export function taskValidateExitCode(result: { outcome: string }): number | undefined {
-  return result.outcome === "valid" || result.outcome === "converts" ? undefined : EXIT_CODES.GENERAL;
+  return result.outcome === "valid" ? undefined : EXIT_CODES.GENERAL;
 }
 
 const tasksValidateCommand = defineJsonCommand({
@@ -526,9 +524,9 @@ const tasksPruneCommand = defineJsonCommand({
   meta: {
     name: "prune",
     description:
-      "Remove installed scheduler entries `sync` can never reclaim because their own descriptor no longer " +
-      "resolves to a live bundle (corrupt/missing --scheduler-context, or the owning bundle directory is " +
-      "gone). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
+      "Remove installed scheduler entries `sync` can never reclaim because they no longer resolve to a live " +
+      "bundle (the bundle directory a row names is gone, or an older row's --scheduler-context descriptor " +
+      "cannot be read). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
       "--id narrows removal to specific binding ids (comma-separated).",
   },
   args: {

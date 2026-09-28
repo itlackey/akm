@@ -314,9 +314,11 @@ export interface SchedulerBundleScope {
   readonly bundleName: string;
   /**
    * Resolved bundle path. Set for the primary bundle, whose rows must also
-   * prove their owning path through their descriptor (#846): a display name
-   * derived from a directory basename is not an identity two installations
-   * cannot share. A `--bundle <target>` scope matches by config name only.
+   * prove their owning path (#846) through the `AKM_BUNDLE_DIR` they carry —
+   * inline, or in the descriptor a row written before 0.9.17-alpha.7 names:
+   * a display name derived from a directory basename is not an identity two
+   * installations cannot share. A `--bundle <target>` scope matches by
+   * config name only.
    */
   readonly bundlePath?: string;
   /** The bundle's adapter; `akm-task` names a task row's ref by its bare concept id. */
@@ -328,7 +330,7 @@ export interface SchedulerSyncPlanInput {
   readonly installed: readonly InstalledSchedulerBinding[];
   readonly scopes: readonly SchedulerBundleScope[];
   readonly expectedSignature?: (binding: SchedulerBinding, options?: SchedulerInstallOptions) => string;
-  /** Launcher and descriptor for rows that are installed fresh (or every row under `rebind`). */
+  /** Launcher and environment for rows that are installed fresh (or every row under `rebind`). */
   readonly installOptions?: SchedulerInstallOptions;
   /** Repoint every row to `installOptions.binding`; without it an installed row keeps its own launcher. */
   readonly rebind?: boolean;
@@ -391,9 +393,10 @@ export function scheduledInvocationBundle(invocation: readonly string[] | undefi
 /**
  * The scope that owns an installed row, or none. A row written before
  * `--bundle` existed names no bundle and belongs to the primary scope
- * unless its descriptor says otherwise; a row that names a bundle belongs
- * to the scope of that name — for the primary scope only when its
- * descriptor also proves the path.
+ * unless the bundle path it carries says otherwise; a row that names a
+ * bundle belongs to the scope of that name — for the primary scope only
+ * when its `AKM_BUNDLE_DIR` (inline, or in an older row's descriptor) also
+ * proves the path.
  */
 export function installedRowScope(
   row: InstalledSchedulerBinding,
@@ -528,15 +531,16 @@ export function planSchedulerSync(input: SchedulerSyncPlanInput): SchedulerSyncP
   });
 }
 
-/** An installed row keeps its own launcher unless `rebind`; the descriptor always follows the current policy. */
+/** An installed row keeps its own launcher unless `rebind`; its environment always follows the current policy. */
 function installOptionsFor(
   input: SchedulerSyncPlanInput,
   current: InstalledSchedulerBinding | undefined,
 ): SchedulerInstallOptions | undefined {
   if (current && !input.rebind) {
+    const environment = input.installOptions?.environment ?? current.environment;
     return Object.freeze({
       binding: Object.freeze([...current.binding]),
-      contextPath: input.installOptions?.contextPath ?? current.contextPath,
+      ...(environment !== undefined ? { environment } : {}),
     });
   }
   return input.installOptions ? Object.freeze({ ...input.installOptions }) : undefined;
@@ -554,8 +558,12 @@ function installedRowRef(row: InstalledSchedulerBinding, scope: SchedulerBundleS
 /** Where an installed row was scheduled from, for messages. */
 export function installedRowOwner(row: InstalledSchedulerBinding): string {
   const bundle = row.target ?? scheduledInvocationBundle(row.invocation);
-  if (row.ownerBundlePath) return `the bundle at ${JSON.stringify(row.ownerBundlePath)}`;
-  return bundle ? `bundle ${JSON.stringify(bundle)}` : "an installation this sync cannot attribute";
+  const installation = row.ownerBundlePath
+    ? `the installation whose working stash is ${JSON.stringify(row.ownerBundlePath)}`
+    : undefined;
+  if (bundle)
+    return installation ? `bundle ${JSON.stringify(bundle)} of ${installation}` : `bundle ${JSON.stringify(bundle)}`;
+  return installation ?? "an installation this sync cannot attribute";
 }
 
 function foreignRowMessage(nativeId: string, row: InstalledSchedulerBinding): string {

@@ -125,6 +125,12 @@ export function ledgerKey(source: string, ref: string): string {
   return `${source}\0${ref}`;
 }
 
+/** Read state.db through `fn` without creating it: `undefined` when there is none yet. */
+export function readLedgerDb<T>(access: LedgerAccess | undefined, fn: (db: Database) => T): T | undefined {
+  if (!access?.eventsCtx?.db && !fs.existsSync(ledgerDbPath(access) ?? getStateDbPath())) return undefined;
+  return withLedgerDb(access, fn);
+}
+
 /** Every ledger row for `sources` in one query; no state.db yet means nothing was attempted. */
 export function loadLedgerSnapshot(
   access: LedgerAccess | undefined,
@@ -132,9 +138,8 @@ export function loadLedgerSnapshot(
   sources: readonly string[],
 ): LedgerSnapshot {
   const out = new Map<string, ImproveLedgerRow>();
-  if (!access?.eventsCtx?.db && !fs.existsSync(ledgerDbPath(access) ?? getStateDbPath())) return out;
   try {
-    withLedgerDb(access, (db) => {
+    readLedgerDb(access, (db) => {
       for (const row of listImproveLedgerRows(db, stashDir, sources)) out.set(ledgerKey(row.source, row.ref), row);
     });
   } catch (error) {
