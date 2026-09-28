@@ -327,6 +327,13 @@ incompatible engine never falls back to another engine. Built-in strategies
 are complete presets. User-defined strategies inherit omitted fields from the
 built-in `default` strategy before applying their own overrides.
 
+Graph extraction also reads `index.graph`. Its `engine`, `model`, `timeoutMs`
+and `llm` apply over the strategy-wide values, and `processes.graphExtraction`
+overrides them. `processes.graphExtraction.batchSize` and `includeTypes` win
+over `index.graph.graphExtractionBatchSize` and `graphExtractionIncludeTypes`;
+with neither set, the batch size is 4 and the types are `memory` and
+`knowledge`.
+
 `processes.triage.judgment` explicitly controls the optional judgment tier.
 Use `true` to enable it, `false` to disable it, or an object with `enabled`,
 `engine`, `model`, `timeoutMs`, and/or `llm` overrides. Existing object values

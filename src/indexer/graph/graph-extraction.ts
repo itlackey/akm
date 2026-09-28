@@ -101,9 +101,9 @@ export interface GraphExtractionResult {
 
 export interface GraphExtractionPassOptions {
   candidatePaths?: ReadonlySet<string>;
-  /** Invocation-owned asset types. Falls back to index.graph only for standalone index calls. */
+  /** The strategy's asset types; unset reads `index.graph.graphExtractionIncludeTypes`, then memory and knowledge. */
   includeTypes?: string[];
-  /** Invocation-owned batch size. Falls back to index.graph only for standalone index calls. */
+  /** The strategy's batch size; unset reads `index.graph.graphExtractionBatchSize`, then 4. */
   batchSize?: number;
   /**
    * When set (>= 0) and a DB is available, rank eligible files by
@@ -183,7 +183,7 @@ const EMPTY_RESULT: GraphExtractionResult = {
   warnings: [],
 };
 
-export const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
+const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
 
 /**
  * Max number of lazy-extraction queue rows drained per pass (#624-P3). Bounds

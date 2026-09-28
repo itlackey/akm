@@ -206,9 +206,10 @@ const MEMORY_INFERENCE_PROCESS_FIELDS = {
 };
 
 /**
- * GraphExtraction process fields: improve-owned graph extraction scope and
- * batching. Passed to the invocation directly and never inherited from
- * standalone index.graph.
+ * GraphExtraction process fields: one strategy's graph extraction scope and
+ * batching. `includeTypes` and `batchSize` override `index.graph`'s
+ * `graphExtractionIncludeTypes` and `graphExtractionBatchSize`; unset, the
+ * pass reads those.
  */
 const GRAPH_EXTRACTION_PROCESS_FIELDS = {
   // #624 P2: when set, rank eligible files by utility_scores DESC and process

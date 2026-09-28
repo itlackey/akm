@@ -11,7 +11,12 @@ import quick from "../../assets/improve-strategies/quick.json" with { type: "jso
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
+import {
+  type AkmConfig,
+  getIndexPassConfig,
+  type ImproveProcessConfig,
+  type ImproveProfileConfig,
+} from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -376,6 +381,8 @@ function buildImprovePlan(
         profile: strategy.config,
         process: sourceProcessConfig,
         processName,
+        // Graph extraction's standing engine, model, timeout and llm settings (GR-D15).
+        ...(processName === "graphExtraction" ? { index: getIndexPassConfig(config.index, "graph") } : {}),
       });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
