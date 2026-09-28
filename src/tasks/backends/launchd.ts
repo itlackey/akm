@@ -18,7 +18,9 @@
  *     when the user is logged out should be installed as system Daemons,
  *     which is out of scope.
  *   • launchd strips the environment; the syncing shell's PATH goes into the
- *     plist's `EnvironmentVariables` so task bodies find the same binaries.
+ *     plist's `EnvironmentVariables` so task bodies find the same binaries,
+ *     next to the AKM directory environment the row sets (see
+ *     `src/tasks/scheduler-invocation.ts`).
  *
  * Tests inject a fake exec + filesystem so the backend can be unit-tested
  * without touching the host launchctl.
@@ -36,16 +38,15 @@ import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../schedule";
 import { type SchedulerBinding, schedulerBindingNativeId, schedulerLogicalBindingId } from "../scheduler-binding";
 import {
-  buildScheduledBindingInvocation,
-  type ParsedScheduledBindingInvocation,
-  parseScheduledBindingArgv,
-  resolveScheduledTaskContext,
-  type ScheduledTaskContext,
-  schedulerContextDescriptor,
-  schedulerContextPath,
+  buildScheduledInvocation,
+  type ParsedScheduledInvocation,
+  parseScheduledInvocationArgv,
+  type ScheduledRowEnvironment,
+  scheduledRowEnvironmentEntries,
+  scheduledRowEnvironmentFrom,
 } from "../scheduler-invocation";
 import { type BackendExec, escapeXml, type NodeFs, nodeExec, nodeFs, runOrThrow } from "./exec-utils";
-import type { InstalledSchedulerBinding, SchedulerBackend } from "./types";
+import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "./types";
 
 export type LaunchdExec = BackendExec<{ uid(): number }>;
 
@@ -68,8 +69,6 @@ export interface LaunchdBackendOptions {
   akmArgv?: string[];
   /** Override the PATH written to the plist's `EnvironmentVariables`; `false` omits it. */
   envPath?: string | false;
-  /** Override the resolved non-secret AKM directory context. */
-  scheduledContext?: ScheduledTaskContext;
 }
 
 export const LAUNCHD_LABEL_PREFIX = "com.akm.task.";
@@ -81,10 +80,8 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
   const agentsDir = options.agentsDir ?? defaultAgentsDir();
   const logDir = options.logDir ?? getTaskLogDir();
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
-  const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
   const envPath =
     options.envPath === false ? undefined : typeof options.envPath === "string" ? options.envPath : process.env.PATH;
-  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext));
 
   const plistPath = (nativeId: string) => path.join(agentsDir, `${LAUNCHD_LABEL_PREFIX}${nativeId}.plist`);
   const label = (nativeId: string) => `${LAUNCHD_LABEL_PREFIX}${nativeId}`;
@@ -100,8 +97,8 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
       isOk: (r) => r.status === 0 || isServiceNotFoundResult(r),
       message: (r) => `launchctl bootout failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
     });
-  const xmlFor = (task: SchedulerBinding, opts?: { binding?: readonly string[]; contextPath?: string }) =>
-    buildPlistXml(task, [...(opts?.binding ?? akmArgv)], logDir, opts?.contextPath ?? defaultContextPath, envPath);
+  const xmlFor = (task: SchedulerBinding, opts?: SchedulerInstallOptions) =>
+    buildPlistXml(task, [...(opts?.binding ?? akmArgv)], logDir, opts?.environment, envPath);
 
   return {
     name: "launchd",
@@ -169,7 +166,8 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
           signature: launchdFingerprint(raw, enabled, loaded),
           ...(parsed.target !== undefined ? { target: parsed.target } : {}),
           binding: parsed.binding,
-          contextPath: parsed.contextPath,
+          ...(parsed.contextPath !== undefined ? { contextPath: parsed.contextPath } : {}),
+          ...(parsed.environment !== undefined ? { environment: parsed.environment } : {}),
           invocation: parsed.invocation,
         });
       }
@@ -186,11 +184,19 @@ function launchdFingerprint(raw: string, enabled: boolean, loaded: boolean): str
   return `${signed.replace(/\r\n/g, "\n").trim()}:loaded=${loaded}`;
 }
 
-export function extractPlistInvocation(xml: string): ParsedScheduledBindingInvocation | undefined {
+export function extractPlistInvocation(xml: string): ParsedScheduledInvocation | undefined {
   const block = xml.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/);
   if (!block) return undefined;
   const args = [...block[1]!.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => decodeXmlEntities(m[1]!));
-  return parseScheduledBindingArgv(args);
+  const parsed = parseScheduledInvocationArgv(args);
+  if (!parsed) return undefined;
+  const variables: Record<string, string> = {};
+  const dict = xml.match(/<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/)?.[1] ?? "";
+  for (const entry of dict.matchAll(/<key>([^<]*)<\/key>\s*<string>([\s\S]*?)<\/string>/g)) {
+    variables[decodeXmlEntities(entry[1]!)] = decodeXmlEntities(entry[2]!);
+  }
+  const environment = scheduledRowEnvironmentFrom(variables);
+  return environment ? { ...parsed, environment } : parsed;
 }
 
 function decodeXmlEntities(value: string): string {
@@ -204,13 +210,16 @@ function decodeXmlEntities(value: string): string {
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
 
-function renderPlistEnvironment(envPath: string | undefined): string {
-  if (!envPath) return "";
+function renderPlistEnvironment(envPath: string | undefined, environment: ScheduledRowEnvironment | undefined): string {
+  const variables: [string, string][] = [
+    ...(envPath ? [["PATH", envPath] as [string, string]] : []),
+    ...scheduledRowEnvironmentEntries(environment),
+  ];
+  if (variables.length === 0) return "";
   return [
     "  <key>EnvironmentVariables</key>",
     "  <dict>",
-    "    <key>PATH</key>",
-    `    <string>${escapeXml(envPath)}</string>`,
+    ...variables.flatMap(([name, value]) => [`    <key>${name}</key>`, `    <string>${escapeXml(value)}</string>`]),
     "  </dict>",
     "",
   ].join("\n");
@@ -220,12 +229,12 @@ export function buildPlistXml(
   task: SchedulerBinding,
   akmArgv: string[],
   logDir: string,
-  contextPath: string,
+  environment?: ScheduledRowEnvironment,
   envPath?: string,
 ): string {
   const trigger = translateToLaunchd(parseSchedule(task.cron, "launchd"));
-  const invocation = buildScheduledBindingInvocation(akmArgv, contextPath, task.invocation);
-  const programArgs = invocation.argv.map((a) => `      <string>${escapeXml(a)}</string>`).join("\n");
+  const argv = buildScheduledInvocation(akmArgv, task.invocation);
+  const programArgs = argv.map((a) => `      <string>${escapeXml(a)}</string>`).join("\n");
   const nativeId = schedulerBindingNativeId(task);
   const logPath = path.join(logDir, `${nativeId}.log`);
   const xml = launchdTemplate
@@ -233,7 +242,7 @@ export function buildPlistXml(
     .replace("{{LABEL}}", LAUNCHD_LABEL_PREFIX + escapeXml(nativeId))
     .replace("{{PROGRAM_ARGS}}", programArgs)
     .replaceAll("{{LOG_PATH}}", escapeXml(logPath))
-    .replace("{{ENV_VARS}}", renderPlistEnvironment(envPath))
+    .replace("{{ENV_VARS}}", renderPlistEnvironment(envPath, environment))
     .replace("{{TRIGGER_XML}}", renderLaunchdTrigger(trigger));
   for (const char of xml) {
     const code = char.codePointAt(0) ?? 0;

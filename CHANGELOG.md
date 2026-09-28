@@ -22,6 +22,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   files are v2/v3 is no longer detected as an `akm-task` bundle; a bundle
   whose adapter is recorded in config is unaffected.
   (`src/tasks/source/parse-task-source.ts`, `src/commands/tasks/validate.ts`)
+- **A scheduled row is its command plus its schedule, and carries its own
+  context.** Rows no longer name a `--scheduler-context` descriptor file. A
+  configured bundle's row is `<launcher> task run <id> --bundle <bundle>
+  --scheduled`, which config resolves at fire time. The env-selected working
+  stash (`AKM_BUNDLE_DIR` naming no configured bundle) sets that variable in
+  the row itself, as does any `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+  `AKM_CACHE_DIR` or `AKM_STATE_DIR` the syncing shell set explicitly: a
+  `VAR=value` prefix in the crontab, an `EnvironmentVariables` entry in a
+  launchd plist, a `$env:VAR='value';` assignment ahead of the command in
+  Task Scheduler (its action has no environment of its own).
+  **What hosts see:** the first `akm task sync` after upgrading rewrites
+  every akm row once. `akm task sync --dry-run` lists each one as an update,
+  never an add or a remove; each keeps its launcher and its schedule, and
+  only the `--scheduler-context <file>` argument goes. On a host with a
+  configured `akm` bundle a row changes from
+
+  ```text
+  30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm --scheduler-context /home/u/.local/share/akm/tasks/context/e898….json task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
+  ```
+
+  to
+
+  ```text
+  30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
+  ```
+
+  Rows written by 0.9.2 through 0.9.17-alpha.6 keep firing until that sync:
+  the CLI still accepts `--scheduler-context <file>` and applies the file's
+  environment (PATH included, for a 0.9.16 row). The files under
+  `$DATA/tasks/context/` are no longer written, and the uid, mode, symlink
+  and content-hash checks made on every scheduled run are gone; once the sync
+  has run, nothing reads them and they can be deleted. `akm task prune` now
+  finds rows whose `AKM_BUNDLE_DIR` names a directory that is gone, and older
+  rows whose descriptor cannot be read; `akm task doctor` lists `contextPath`
+  only for an older row. (`src/tasks/scheduler-invocation.ts`,
+  `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
+  `src/tasks/backends/schtasks.ts`, `src/tasks/scheduler-sync.ts`,
+  `src/commands/tasks/tasks.ts`)
 
 ## [0.9.17-alpha.6] - 2026-09-27
 

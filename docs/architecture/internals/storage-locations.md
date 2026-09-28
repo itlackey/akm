@@ -705,19 +705,24 @@ indexed like a local filesystem bundle.
 
 ### macOS (launchd)
 
-**Plist:** `~/Library/LaunchAgents/com.akm.task.<id>.plist` — XML plist. Contains label, `ProgramArguments` (`akm task run <id>`), `StandardOutPath`, `StandardErrorPath`, trigger (`StartInterval` or `StartCalendarInterval`), and `EnvironmentVariables` (PATH captured at install time).
+**Plist:** `~/Library/LaunchAgents/com.akm.task.<id>.plist` — XML plist. Contains label, `ProgramArguments` (`akm task run <id> --bundle <bundle> --scheduled`), `StandardOutPath`, `StandardErrorPath`, trigger (`StartInterval` or `StartCalendarInterval`), and `EnvironmentVariables` (PATH captured at install time, plus `AKM_BUNDLE_DIR` for a stash selected by that variable and any `AKM_*_DIR` the syncing shell set explicitly).
 
 Registered via `launchctl bootstrap gui/<uid> <plist>`.
 
 ### Linux (cron)
 
-No files written. User crontab edited in-place via `crontab -l` / `crontab -`. Each task is bracketed with sentinels:
+No files written. User crontab edited in-place via `crontab -l` / `crontab -`. Each task is bracketed with sentinels, below one `# akm:env` block holding the PATH:
 
 ```
 # akm:task <id> BEGIN
-<cronexpr> /abs/akm task run <id> >> ~/.cache/akm/tasks/logs/<id>.log 2>&1
+<cronexpr> [AKM_BUNDLE_DIR=<stash>] /abs/akm task run <id> --bundle <bundle> --scheduled > ~/.cache/akm/tasks/logs/<id>.log 2>&1
 # akm:task <id> END
 ```
+
+(`AKM_BUNDLE_DIR=` appears only for a stash selected by that variable that no
+config names. Releases 0.9.2 – 0.9.17-alpha.6 also wrote a
+`$DATA/tasks/context/<sha256>.json` descriptor per sync and named it in each
+row with `--scheduler-context`; nothing writes those files now.)
 
 Disabled tasks get `# akm:disabled ` prepended to the cron line.
 

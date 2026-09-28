@@ -524,9 +524,9 @@ const tasksPruneCommand = defineJsonCommand({
   meta: {
     name: "prune",
     description:
-      "Remove installed scheduler entries `sync` can never reclaim because their own descriptor no longer " +
-      "resolves to a live bundle (corrupt/missing --scheduler-context, or the owning bundle directory is " +
-      "gone). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
+      "Remove installed scheduler entries `sync` can never reclaim because they no longer resolve to a live " +
+      "bundle (the bundle directory a row names is gone, or an older row's --scheduler-context descriptor " +
+      "cannot be read). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
       "--id narrows removal to specific binding ids (comma-separated).",
   },
   args: {

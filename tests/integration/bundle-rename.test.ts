@@ -35,11 +35,6 @@ import { upsertTaskHistory } from "../../src/storage/repositories/task-history-r
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../../src/tasks/scheduler-invocation";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 /** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/tasks-sync.test.ts. */
@@ -57,7 +52,6 @@ function memoryExec(initial = ""): CronExec & { current: () => string } {
 
 /** A real CRON_BACKEND wired to an in-memory crontab, so the rename's `akmTasksSync` call never touches the host's real crontab. */
 function fakeCronBackend(exec: CronExec): SchedulerBackend {
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },

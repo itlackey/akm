@@ -58,12 +58,12 @@ function runLauncher(launcher: string, descriptor: string, output: string) {
 }
 
 describe("package scheduler context launcher", () => {
-  test("passes --scheduler-context through to the CLI, which loads and validates it", () => {
+  test("passes --scheduler-context through to the CLI, which applies it", () => {
     const sandbox = makeSandboxDir("akm-scheduler-launcher-");
     try {
-      // A current descriptor carries only the bundle path. The launcher used to
-      // re-validate it against the old five-directory schema and refuse every
-      // descriptor 0.9.17 writes; it now leaves loading to the CLI.
+      // A row written by 0.9.2 – 0.9.17-alpha.6 names a descriptor. The launcher
+      // used to re-validate it against the old five-directory schema and refuse
+      // every descriptor 0.9.17 writes; it leaves applying it to the CLI.
       const file = writeDescriptor(path.join(sandbox.dir, "context"), {
         version: 1,
         environment: { AKM_BUNDLE_DIR: path.join(sandbox.dir, "stash") },
@@ -86,7 +86,7 @@ describe("package scheduler context launcher", () => {
   });
 });
 
-test("standalone/direct CLI bootstrap applies scheduler context before config resolution", () => {
+test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its descriptor before config resolution", () => {
   const sandbox = makeSandboxDir("akm-scheduler-direct-cli-");
   try {
     const descriptor = contextFor(sandbox.dir);
@@ -121,8 +121,8 @@ test("standalone/direct CLI bootstrap applies scheduler context before config re
       "Native scheduler inspection is skipped inside the bun test harness.",
     );
 
-    // A current descriptor (bundle path only) bootstraps too; directories it
-    // does not carry resolve from the fire-time environment.
+    // A descriptor 0.9.17-alpha.1 – alpha.6 wrote (bundle path only) bootstraps
+    // too; directories it does not carry resolve from the fire-time environment.
     const minimal = writeDescriptor(path.join(sandbox.dir, "minimal-context"), {
       version: 1,
       environment: { AKM_BUNDLE_DIR: descriptor.environment.AKM_BUNDLE_DIR },
@@ -137,23 +137,36 @@ test("standalone/direct CLI bootstrap applies scheduler context before config re
     );
     expect(minimalResult.status, minimalResult.stderr).toBe(0);
 
-    const tampered = writeDescriptor(path.join(sandbox.dir, "tampered-context"), descriptor);
-    fs.writeFileSync(tampered, fs.readFileSync(tampered, "utf8").replace('"PATH":"', '"PATH":"/tampered:'), {
-      mode: 0o600,
-    });
-    const invalidResult = spawnSync(
+    // Read as plain JSON: a hand-edited, group-readable descriptor whose name
+    // is not its hash still applies — nothing is checked at fire time.
+    const edited = writeDescriptor(path.join(sandbox.dir, "edited-context"), descriptor);
+    fs.writeFileSync(edited, fs.readFileSync(edited, "utf8").replace('"PATH":"', '"PATH":"/edited:'));
+    fs.chmodSync(edited, 0o644);
+    const editedResult = spawnSync(
       process.execPath,
-      [path.resolve("src/cli.ts"), "--scheduler-context", tampered, "task", "doctor", "--format=json"],
+      [path.resolve("src/cli.ts"), "--scheduler-context", edited, "task", "doctor", "--format=json"],
       {
         encoding: "utf8",
         env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: ambientConfig },
       },
     );
-    expect(invalidResult.status).toBe(78);
-    expect(JSON.parse(invalidResult.stderr)).toMatchObject({
+    expect(editedResult.status, editedResult.stderr).toBe(0);
+
+    // A descriptor that is gone fails the run, naming the sync that rewrites the row.
+    const missing = path.join(sandbox.dir, "gone.json");
+    const missingResult = spawnSync(
+      process.execPath,
+      [path.resolve("src/cli.ts"), "--scheduler-context", missing, "task", "doctor", "--format=json"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: ambientConfig },
+      },
+    );
+    expect(missingResult.status).toBe(78);
+    expect(JSON.parse(missingResult.stderr)).toMatchObject({
       ok: false,
       code: "INVALID_CONFIG_FILE",
-      error: expect.stringContaining("content SHA-256"),
+      error: expect.stringContaining("akm task sync"),
     });
   } finally {
     sandbox.cleanup();

@@ -6,13 +6,13 @@
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-// `--scheduler-context <descriptor>` passes through untouched: the CLI loads
-// and validates it before anything else (`consumeSchedulerContextArg` in
-// src/cli.ts). The scheduler supplies PATH itself (the crontab's `# akm:env`
-// line, a launchd plist's EnvironmentVariables), so runtime selection below
-// needs nothing from the descriptor. This launcher used to re-validate the
-// descriptor with its own copy of the schema, and that copy rejected every
-// descriptor the CLI writes since 0.9.17.
+// A scheduled row sets its environment itself (a cron `VAR=value` prefix, a
+// launchd plist's EnvironmentVariables), and the scheduler supplies PATH, so
+// runtime selection below needs nothing from it. A row written by 0.9.2 –
+// 0.9.17-alpha.6 passes `--scheduler-context <descriptor>` instead; it passes
+// through untouched, and the CLI applies it (`consumeSchedulerContextArg` in
+// src/cli.ts). This launcher used to re-validate the descriptor with its own
+// copy of the schema, and that copy rejected every descriptor 0.9.17 wrote.
 
 process.env.AKM_LAUNCHER_NODE = process.execPath;
 process.env.AKM_LAUNCHER_PATH = fileURLToPath(import.meta.url);

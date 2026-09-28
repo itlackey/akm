@@ -12,7 +12,6 @@ import { isSchedulerRefEnabled, setSchedulerRefEnabled } from "../../src/tasks/a
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
 import type { ScheduleBackend } from "../../src/tasks/schedule";
 import { compileTaskSchedulerBindings, type SchedulerBinding } from "../../src/tasks/scheduler-binding";
-import { writeSchedulerContextDescriptor } from "../../src/tasks/scheduler-invocation";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -21,7 +20,6 @@ let installed: Map<string, SchedulerBinding | undefined>;
 let installCalls: SchedulerBinding[];
 let uninstallCalls: string[];
 let failInstall: ((task: SchedulerBinding) => boolean) | undefined;
-let installedContextPath: string;
 
 function nativeBinding(id: string, cron: string, enabled = true): SchedulerBinding {
   return {
@@ -62,7 +60,6 @@ const backend: SchedulerBackend = {
       return {
         id,
         binding: ["/test/akm"],
-        contextPath: installedContextPath,
         ...(stored?.invocation.includes("--bundle")
           ? { target: stored.invocation[stored.invocation.indexOf("--bundle") + 1] }
           : {}),
@@ -100,7 +97,6 @@ beforeEach(() => {
   installCalls = [];
   uninstallCalls = [];
   failInstall = undefined;
-  installedContextPath = "/test/context.json";
 });
 
 afterEach(() => {
@@ -129,7 +125,6 @@ describe("task lifecycle failure handling", () => {
   });
 
   test("add --disabled writes source, leaves activation absent, and removes an orphaned binding", async () => {
-    installedContextPath = writeSchedulerContextDescriptor();
     installed.set("quiet", nativeBinding("quiet", "0 2 * * *"));
 
     const result = await akmTasksAdd(
@@ -148,7 +143,6 @@ describe("task lifecycle failure handling", () => {
   test("add --disabled revokes an existing grant before publishing replacement source", async () => {
     writeTask("quiet-force", taskYaml("echo old", "0 2 * * *"));
     setSchedulerRefEnabled("stash//tasks/quiet-force", true);
-    installedContextPath = writeSchedulerContextDescriptor();
     installed.set("quiet-force", nativeBinding("quiet-force", "0 2 * * *"));
     let commits = 0;
 
@@ -248,7 +242,6 @@ describe("task lifecycle failure handling", () => {
 
   test("a source the backend cannot schedule is reported and its installed row left as it is", async () => {
     backendName = "schtasks";
-    installedContextPath = writeSchedulerContextDescriptor();
     writeTask("busy", taskYaml("echo busy", "1-59/1 * * * *"));
     setSchedulerRefEnabled("stash//tasks/busy", true);
     installed.set("busy", nativeBinding("busy", "0 * * * *"));
@@ -281,7 +274,7 @@ describe("task lifecycle failure handling", () => {
       backend,
       schedulerRuntime() {
         runtimeCalls += 1;
-        return { binding: ["/test/akm"], contextPath: "/test/context.json" };
+        return { binding: ["/test/akm"] };
       },
     });
 
@@ -313,7 +306,6 @@ describe("task lifecycle failure handling", () => {
       ],
     });
     for (const binding of priorBindings) installed.set(binding.id, binding);
-    installedContextPath = writeSchedulerContextDescriptor();
 
     await akmTasksAdd({ id: "multi", schedule: "0 4 * * *", command: "echo replacement", force: true }, { backend });
 

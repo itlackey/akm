@@ -5,18 +5,10 @@ import { akmTasksAdd, akmTasksDoctor, akmTasksSync } from "../src/commands/tasks
 import { bundleSourceId } from "../src/core/config/config-sources";
 import type { AkmConfig } from "../src/core/config/config-types";
 import type { SchedulerBackend, SchedulerInstallOptions } from "../src/tasks/backends/types";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
 function completeSchedulerBackend(options: {
   binding: readonly string[];
-  contextPath: string;
-  /** #846: resolved path of the "stash" bundle this fixture's entry belongs to. */
-  ownerBundlePath?: string;
   onInstall?: (installOptions: SchedulerInstallOptions | undefined) => void;
 }): SchedulerBackend {
   const invocation = ["task", "run", "ping", "--bundle", "stash", "--scheduled"] as const;
@@ -26,8 +18,6 @@ function completeSchedulerBackend(options: {
     signature: "installed",
     target: "stash",
     binding: [...options.binding],
-    contextPath: options.contextPath,
-    ...(options.ownerBundlePath !== undefined ? { ownerBundlePath: options.ownerBundlePath } : {}),
     invocation,
   };
   return {
@@ -69,29 +59,18 @@ describe("scheduler runtime binding", () => {
       const installs: Array<SchedulerInstallOptions | undefined> = [];
       const backend = completeSchedulerBackend({
         binding: ["/old/node", "/old/dist/akm"],
-        contextPath: "/old/context.json",
-        ownerBundlePath: path.resolve(storage.stashDir),
         onInstall: (options) => installs.push(options),
       });
 
       await akmTasksSync({ backend });
-      expect(installs[0]).toMatchObject({
-        binding: ["/old/node", "/old/dist/akm"],
-        contextPath: "/old/context.json",
-      });
+      expect(installs[0]).toEqual({ binding: ["/old/node", "/old/dist/akm"] });
 
       await akmTasksSync(
-        {
-          backend,
-          schedulerRuntime: () => ({ binding: ["/new/node", "/new/dist/akm"], contextPath: "/new/context.json" }),
-        },
+        { backend, schedulerRuntime: () => ({ binding: ["/new/node", "/new/dist/akm"] }) },
         undefined,
         { rebind: true },
       );
-      expect(installs[1]).toMatchObject({
-        binding: ["/new/node", "/new/dist/akm"],
-        contextPath: "/new/context.json",
-      });
+      expect(installs[1]).toEqual({ binding: ["/new/node", "/new/dist/akm"] });
     } finally {
       storage.cleanup();
     }
@@ -104,8 +83,6 @@ describe("scheduler runtime binding", () => {
       writeTask(storage.stashDir);
       const backend = completeSchedulerBackend({
         binding: ["/old/node", "/old/dist/akm"],
-        contextPath: "/old/context.json",
-        ownerBundlePath: path.resolve(storage.stashDir),
       });
 
       const result = await akmTasksSync(
@@ -113,7 +90,6 @@ describe("scheduler runtime binding", () => {
           backend,
           schedulerRuntime: () => ({
             binding: ["/repo/bun", "/repo/src/cli.ts"],
-            contextPath: "/new/context.json",
             via: "checkout",
           }),
         },
@@ -135,13 +111,9 @@ describe("scheduler runtime binding", () => {
     try {
       configureStash(storage.stashDir);
       writeTask(storage.stashDir);
-      const ownerBundlePath = path.resolve(storage.stashDir);
       const invocation = ["task", "run", "ping", "--bundle", "stash", "--scheduled"] as const;
-      const sign = (options?: SchedulerInstallOptions) => JSON.stringify([options?.binding, options?.contextPath]);
-      let bound: SchedulerInstallOptions = {
-        binding: ["/old/node", "/old/dist/akm"],
-        contextPath: "/old/context.json",
-      };
+      const sign = (options?: SchedulerInstallOptions) => JSON.stringify([options?.binding, options?.environment]);
+      let bound: SchedulerInstallOptions = { binding: ["/old/node", "/old/dist/akm"] };
       const backend: SchedulerBackend = {
         name: "cron",
         install(_task, installOptions) {
@@ -156,18 +128,12 @@ describe("scheduler runtime binding", () => {
             signature: sign(bound),
             target: "stash",
             binding: [...(bound.binding ?? [])],
-            contextPath: bound.contextPath ?? "",
-            ownerBundlePath,
             invocation,
           },
         ],
         expectedSignature: (_binding, options) => sign(options),
       };
-      const checkoutRuntime = () => ({
-        binding: ["/repo/bun", "/repo/src/cli.ts"],
-        contextPath: "/new/context.json",
-        via: "checkout" as const,
-      });
+      const checkoutRuntime = () => ({ binding: ["/repo/bun", "/repo/src/cli.ts"], via: "checkout" as const });
 
       const first = await akmTasksSync({ backend, schedulerRuntime: checkoutRuntime }, undefined, { rebind: true });
       expect(first.updated).toEqual(["ping"]);
@@ -180,11 +146,7 @@ describe("scheduler runtime binding", () => {
       const third = await akmTasksSync(
         {
           backend,
-          schedulerRuntime: () => ({
-            binding: ["/other/bun", "/other/src/cli.ts"],
-            contextPath: "/other/context.json",
-            via: "checkout" as const,
-          }),
+          schedulerRuntime: () => ({ binding: ["/other/bun", "/other/src/cli.ts"], via: "checkout" as const }),
         },
         undefined,
         { rebind: true },
@@ -203,8 +165,6 @@ describe("scheduler runtime binding", () => {
       writeTask(storage.stashDir);
       const backend = completeSchedulerBackend({
         binding: ["/old/node", "/old/dist/akm"],
-        contextPath: "/old/context.json",
-        ownerBundlePath: path.resolve(storage.stashDir),
       });
 
       const result = await akmTasksSync(
@@ -212,7 +172,6 @@ describe("scheduler runtime binding", () => {
           backend,
           schedulerRuntime: () => ({
             binding: ["/usr/local/bin/node", "/usr/local/lib/node_modules/akm-cli/dist/akm"],
-            contextPath: "/new/context.json",
             via: "npm",
           }),
         },
@@ -234,29 +193,21 @@ describe("scheduler runtime binding", () => {
       const installs: Array<SchedulerInstallOptions | undefined> = [];
       const backend = completeSchedulerBackend({
         binding: ["/old/node", "/old/dist/akm"],
-        contextPath: "/old/context.json",
-        ownerBundlePath: path.resolve(storage.stashDir),
         onInstall: (options) => installs.push(options),
       });
 
       await akmTasksAdd(
         { id: "ping", schedule: "@daily", command: "echo ping", force: true, rebind: true },
-        {
-          backend,
-          schedulerRuntime: () => ({ binding: ["/new/node", "/new/dist/akm"], contextPath: "/new/context.json" }),
-        },
+        { backend, schedulerRuntime: () => ({ binding: ["/new/node", "/new/dist/akm"] }) },
       );
 
-      expect(installs[0]).toMatchObject({
-        binding: ["/new/node", "/new/dist/akm"],
-        contextPath: "/new/context.json",
-      });
+      expect(installs[0]).toEqual({ binding: ["/new/node", "/new/dist/akm"] });
     } finally {
       storage.cleanup();
     }
   });
 
-  test("a schedule edit keeps the installed launcher and writes the current descriptor", async () => {
+  test("a schedule edit keeps the installed launcher", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       configureStash(storage.stashDir);
@@ -268,16 +219,11 @@ describe("scheduler runtime binding", () => {
       const installs: Array<SchedulerInstallOptions | undefined> = [];
       const backend = completeSchedulerBackend({
         binding: ["/current/akm"],
-        contextPath: "/current/context.json",
-        ownerBundlePath: path.resolve(storage.stashDir),
         onInstall: (options) => installs.push(options),
       });
 
-      await akmTasksSync({
-        backend,
-        schedulerRuntime: () => ({ binding: ["/new/akm"], contextPath: "/new/context.json" }),
-      });
-      expect(installs).toEqual([{ binding: ["/current/akm"], contextPath: "/new/context.json" }]);
+      await akmTasksSync({ backend, schedulerRuntime: () => ({ binding: ["/new/akm"] }) });
+      expect(installs).toEqual([{ binding: ["/current/akm"] }]);
     } finally {
       storage.cleanup();
     }
@@ -287,27 +233,20 @@ describe("scheduler runtime binding", () => {
     const storage = withIsolatedAkmStorage();
     try {
       fs.mkdirSync(storage.stashDir, { recursive: true });
-      const contextPath = writeSchedulerContextDescriptor(schedulerContextDescriptor());
-      const tamperedContextPath = writeSchedulerContextDescriptor(
-        schedulerContextDescriptor({
-          ...resolveScheduledTaskContext(),
-          AKM_CACHE_DIR: path.join(storage.stashDir, "cache-tampered"),
-        }),
-      );
-      fs.writeFileSync(
-        tamperedContextPath,
-        fs.readFileSync(tamperedContextPath, "utf8").replace("cache-tampered", "cache-modified"),
-        { mode: 0o600 },
-      );
+      // Rows written before 0.9.17-alpha.7 name a descriptor; one that cannot be read is flagged.
+      const contextPath = path.join(storage.stashDir, "legacy-context.json");
+      fs.writeFileSync(contextPath, JSON.stringify({ version: 1, environment: { AKM_BUNDLE_DIR: storage.stashDir } }));
+      const missingContextPath = path.join(storage.stashDir, "gone-context.json");
       const backend: SchedulerBackend = {
         name: "cron",
         install() {},
         uninstall() {},
         setEnabled() {},
         list: () => [
-          { id: "alpha", binding: [process.execPath], contextPath },
-          { id: "beta", binding: [process.execPath], contextPath },
-          { id: "tampered", binding: [process.execPath], contextPath: tamperedContextPath },
+          { id: "alpha", binding: [process.execPath] },
+          { id: "beta", binding: [process.execPath] },
+          { id: "legacy", binding: [process.execPath], contextPath },
+          { id: "orphaned", binding: [process.execPath], contextPath: missingContextPath },
         ],
       };
       const result = await akmTasksDoctor({
@@ -315,16 +254,17 @@ describe("scheduler runtime binding", () => {
         resolveInvocation: () => ({ argv: [process.execPath], via: "standalone" }),
       });
 
+      expect(result.bindings).toContainEqual({ argv: [process.execPath], taskIds: ["alpha", "beta"], status: ["ok"] });
       expect(result.bindings).toContainEqual({
         argv: [process.execPath],
         contextPath,
-        taskIds: ["alpha", "beta"],
+        taskIds: ["legacy"],
         status: ["ok"],
       });
       expect(result.bindings).toContainEqual({
         argv: [process.execPath],
-        contextPath: tamperedContextPath,
-        taskIds: ["tampered"],
+        contextPath: missingContextPath,
+        taskIds: ["orphaned"],
         status: ["invalid-context"],
       });
       expect(result.caller.via).toBe("standalone");
@@ -338,7 +278,6 @@ describe("scheduler runtime binding", () => {
     const storage = withIsolatedAkmStorage();
     try {
       fs.mkdirSync(storage.stashDir, { recursive: true });
-      const contextPath = writeSchedulerContextDescriptor(schedulerContextDescriptor());
       const checkout = [process.execPath, path.join(process.cwd(), "src", "cli.ts")];
       // Inside this repository's work tree, but not an akm entry point.
       const other = [process.execPath, path.join(process.cwd(), "tests", "tasks-runtime-binding.test.ts")];
@@ -348,15 +287,15 @@ describe("scheduler runtime binding", () => {
         uninstall() {},
         setEnabled() {},
         list: () => [
-          { id: "dev", binding: checkout, contextPath },
-          { id: "stable", binding: other, contextPath },
+          { id: "dev", binding: checkout },
+          { id: "stable", binding: other },
         ],
       };
 
       const result = await akmTasksDoctor({ backend, resolveInvocation: () => ({ argv: other, via: "npm" }) });
 
-      expect(result.bindings).toContainEqual({ argv: checkout, contextPath, taskIds: ["dev"], status: ["checkout"] });
-      expect(result.bindings).toContainEqual({ argv: other, contextPath, taskIds: ["stable"], status: ["ok"] });
+      expect(result.bindings).toContainEqual({ argv: checkout, taskIds: ["dev"], status: ["checkout"] });
+      expect(result.bindings).toContainEqual({ argv: other, taskIds: ["stable"], status: ["ok"] });
       expect(result.remediation).toBe("akm task sync --rebind");
     } finally {
       storage.cleanup();

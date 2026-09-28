@@ -30,7 +30,7 @@
  *     so the "sorted tail" test below observes the OLD fixed tail instead.
  *   - `parsePublicSchedulerInvocation` (`src/tasks/scheduler-invocation.ts`)
  *     still requires `--scheduled` to be the LAST token — so
- *     `buildScheduledBindingInvocation` rejects ANY tail carrying input
+ *     `buildScheduledInvocation` rejects ANY tail carrying input
  *     flags, and the round-trip test's "no throw" expectation fails.
  *
  * No `@ts-expect-error` type-suppression pins: sync-time coverage goes
@@ -39,7 +39,7 @@
  * / `finalizeSchedulerSyncPlan` seam
  * tests/integration/tasks-scheduler-sync-v4.test.ts already uses; the
  * round-trip/malformed-tail coverage drives the ALREADY-EXPORTED
- * `buildScheduledBindingInvocation` / `parseScheduledBindingArgv` with plain
+ * `buildScheduledInvocation` / `parseScheduledInvocationArgv` with plain
  * `string[]` argv literals; the end-to-end delivery proof drives the REAL
  * `akm task run` CLI with the exact argv the scheduler would install. No
  * not-yet-existing TypeScript export is referenced directly anywhere below.
@@ -52,7 +52,7 @@ import path from "node:path";
 import { bundleSourceId } from "../src/core/config/config-sources";
 import type { AkmConfig } from "../src/core/config/config-types";
 import { ConfigError } from "../src/core/errors";
-import { buildScheduledBindingInvocation, parseScheduledBindingArgv } from "../src/tasks/scheduler-invocation";
+import { buildScheduledInvocation, parseScheduledInvocationArgv } from "../src/tasks/scheduler-invocation";
 import { compileSchedulerSources } from "../src/tasks/scheduler-sync";
 import { listWorkflowRuns } from "../src/workflows/runtime/runs";
 import { runCliCapture } from "./_helpers/cli";
@@ -221,7 +221,7 @@ describe("schedule[].inputs is validated against the declared contract, never si
 // ── Part 2: the compiled tail round-trips; a malformed one is refused ──────
 
 describe("a compiled input-flag tail round-trips through the public scheduler invocation parser (B-46)", () => {
-  test("buildScheduledBindingInvocation accepts the sorted tail, and parseScheduledBindingArgv recovers the identical public invocation plus target", () => {
+  test("buildScheduledInvocation accepts the sorted tail, and parseScheduledInvocationArgv recovers the identical public invocation plus target", () => {
     const invocation = [
       "task",
       "run",
@@ -235,12 +235,11 @@ describe("a compiled input-flag tail round-trips through the public scheduler in
       "west",
     ];
 
-    const built = buildScheduledBindingInvocation(["/usr/bin/akm"], "/abs/scheduler-context.json", invocation);
-    const parsed = parseScheduledBindingArgv(built.argv);
+    const parsed = parseScheduledInvocationArgv(buildScheduledInvocation(["/usr/bin/akm"], invocation));
 
     expect(parsed?.invocation).toEqual(invocation);
     expect(parsed?.target).toBe("team");
-    expect(parsed?.contextPath).toBe("/abs/scheduler-context.json");
+    expect(parsed?.binding).toEqual(["/usr/bin/akm"]);
   });
 });
 
@@ -260,9 +259,7 @@ describe("a malformed input-flag tail is refused by the existing invalidSchedule
       ["task", "run", "x", "--bundle", "team", "--scheduled", "--alpha", "true", "--zone"],
     ],
   ] as const)("%s is refused", (_label, invocation) => {
-    expect(() => buildScheduledBindingInvocation(["/usr/bin/akm"], "/abs/scheduler-context.json", invocation)).toThrow(
-      ConfigError,
-    );
+    expect(() => buildScheduledInvocation(["/usr/bin/akm"], invocation)).toThrow(ConfigError);
   });
 });
 

@@ -107,7 +107,7 @@ export interface PrepareTaskV3ExecutionContext {
   readonly bundleRoot: string;
   readonly config: AkmConfig;
   /**
-   * Scheduler-restored directory values to freeze into nested agent dispatch.
+   * The scheduled process's AKM directory values (the row sets them) to freeze into nested agent dispatch.
    * Only the closed AKM directory-key set is accepted; arbitrary operational
    * environment overrides remain outside the immutable command request.
    */

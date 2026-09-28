@@ -21,11 +21,6 @@ import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activ
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
 import type { InstalledSchedulerBinding } from "../src/tasks/scheduler-binding";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../src/tasks/scheduler-invocation";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -478,7 +473,6 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       setSchedulerRefEnabled("stash//tasks/orphan", true);
 
       const exec = memoryExec();
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
       const backend = CRON_BACKEND({
         exec,
         fs: { ensureDir() {} },
@@ -523,7 +517,6 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
 
       const exec = memoryExec();
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
       const backend = CRON_BACKEND({
         exec,
         fs: { ensureDir() {} },

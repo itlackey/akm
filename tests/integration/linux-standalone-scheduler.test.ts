@@ -172,6 +172,9 @@ test.skipIf(!ENABLED)(
       expect(crontab).toContain(binary);
       expect(crontab).not.toContain("/$bunfs/");
       expect(crontab).not.toContain("src/cli.ts");
+      // The row carries its own context: no descriptor argument, no descriptor file.
+      expect(crontab).not.toContain("--scheduler-context");
+      expect(fs.existsSync(path.join(dataHome, "akm", "tasks", "context"))).toBe(false);
 
       const scheduledCommand = generatedCronCommand(crontab, id);
       const scheduled = run(["/bin/sh", "-c", scheduledCommand], { ...env, PATH: "/usr/bin:/bin" });

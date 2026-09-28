@@ -73,12 +73,13 @@
  *     embedding pass (`generateEmbeddingsForDb`) makes zero provider calls.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
- *     BEGIN/END` sentinels but predates the `--scheduler-context` marker
- *     `extractCronInvocation` otherwise requires — read via
- *     `CRON_BACKEND().inspectBindings()`/`akmTasksSync`
- *     (`src/tasks/backends/cron.ts`), which recognizes the row from inside
- *     its own sentinel and reconciles it instead of treating it as absent
- *     and colliding with the still-present artifact.
+ *     BEGIN/END` sentinels but predates `--bundle` and the
+ *     `--scheduler-context` marker 0.9.2 – 0.9.17-alpha.6 wrote — read via
+ *     `CRON_BACKEND().list()`/`akmTasksSync` (`src/tasks/backends/cron.ts`),
+ *     which recognizes the row from inside its own sentinel and reconciles
+ *     it instead of treating it as absent and colliding with the
+ *     still-present artifact. (The `--scheduler-context` rows themselves are
+ *     covered in `tests/tasks-sync.test.ts` and the upgrade rehearsal.)
  */
 
 import { Database } from "bun:sqlite";
@@ -111,11 +112,6 @@ import { upsertTaskHistory } from "../../src/storage/repositories/task-history-r
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import { readTaskHistory } from "../../src/tasks/run/task-history";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../../src/tasks/scheduler-invocation";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { planTaskToV3File } from "../../src/tasks/source/task-to-v3";
 import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
@@ -848,12 +844,6 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       setSchedulerRefEnabled(`${defaultBundle}//tasks/ping`, true);
       expect(loadConfig().scheduler?.enabled).toEqual([`${defaultBundle}//tasks/ping`]);
 
-      // Matches the `backendFor` setup in tasks-sync.test.ts: this backend
-      // never routes through the real launcher-eligibility path, so install
-      // operations fall back to CRON_BACKEND's own default context — write
-      // that descriptor for real so it resolves on sync.
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext()));
-
       // The real pre-0.9.2 shape: akm's own sentinels wrap a scheduled
       // invocation with no `--scheduler-context <path>` marker at all.
       const exec = memoryExec(
@@ -887,9 +877,13 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       expect(result.updated).toEqual(["ping"]);
       expect(result.failures).toEqual([]);
       // The crontab now carries a current row for the same task, not a
-      // second, colliding one.
+      // second, colliding one: the sandbox stash is configured nowhere, so the
+      // row names it inline.
       expect((exec.current().match(/# akm:task ping BEGIN/g) ?? []).length).toBe(1);
-      expect(exec.current()).toContain("--scheduler-context");
+      expect(exec.current()).toContain(
+        `AKM_BUNDLE_DIR=${path.resolve(stash.dir)} /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`,
+      );
+      expect(exec.current()).not.toContain("--scheduler-context");
     } finally {
       stash.cleanup();
     }

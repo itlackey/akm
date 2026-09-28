@@ -2952,7 +2952,7 @@ Use an installed npm or standalone candidate and a disposable OS account. Do
 not hide an ineligible checkout behind `--rebind` in release acceptance.
 
 - [ ] **[PLATFORM]** Doctor reports eligible `npm`/`standalone` binding with
-      absolute candidate paths and no credentials in context descriptor.
+      absolute candidate paths and no credentials in the row.
 - [ ] **[PLATFORM]** Add disabled task, inspect native definition, enable/edit +
       sync, trigger, verify candidate version/history/log, delete YAML + sync,
       and prove native removal.

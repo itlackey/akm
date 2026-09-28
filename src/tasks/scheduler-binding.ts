@@ -7,8 +7,10 @@
  * contract itself.
  *
  * A binding carries only stable source identity, trigger identity, and the
- * public CLI tail. Source content, action inputs, environment values, and
- * credentials never cross this boundary or reach an OS scheduler.
+ * public CLI tail; its install options add the launcher and the AKM
+ * directory environment the row sets inline. Source content, action inputs,
+ * task environment values, and credentials never cross this boundary or
+ * reach an OS scheduler.
  */
 
 import { createHash } from "node:crypto";
@@ -16,6 +18,7 @@ import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
 import { canonicalInputJson } from "../execution/input-contract";
 import type { ScheduleBackend } from "./schedule";
+import type { ScheduledRowEnvironment } from "./scheduler-invocation";
 import { normaliseTaskConceptId } from "./task-id";
 
 export type SchedulerLogicalSource = Readonly<{
@@ -33,7 +36,7 @@ export interface SchedulerBinding {
   readonly source: string;
   readonly ordinal: number;
   readonly enabled: boolean;
-  /** Public CLI tail, excluding the resolved launcher and context descriptor. */
+  /** Public CLI tail, excluding the resolved launcher and the row's inline environment. */
   readonly invocation: readonly string[];
 }
 
@@ -63,10 +66,12 @@ export interface InstalledSchedulerBinding {
   readonly nativeId?: string;
   /** Whether the native scheduler will fire it; absent when the backend cannot tell. */
   readonly enabled?: boolean;
-  /** Launcher argv installed in the row (everything before `--scheduler-context`). */
+  /** Launcher argv installed in the row (everything before the public tail). */
   readonly binding: readonly string[];
-  /** Descriptor path the row references; `""` for a row written before descriptors existed. */
-  readonly contextPath: string;
+  /** The environment the row sets inline. Absent when it sets none. */
+  readonly environment?: ScheduledRowEnvironment;
+  /** A row written by 0.9.2 – 0.9.17-alpha.6: the `--scheduler-context` descriptor it names. */
+  readonly contextPath?: string;
   /** Normalized rendering of the installed row, compared against `expectedSignature` to detect drift. */
   readonly signature?: string;
   /** Bundle named by the row's own invocation (`--bundle <x>`, or a workflow ref's bundle). */
@@ -74,9 +79,9 @@ export interface InstalledSchedulerBinding {
   /** Parsed public CLI tail. */
   readonly invocation?: readonly string[];
   /**
-   * Resolved `AKM_BUNDLE_DIR` recovered from the row's scheduler-context
-   * descriptor (#846). Filled in by the command layer; absent whenever the
-   * descriptor is missing or unreadable, which never means "mine".
+   * The `AKM_BUNDLE_DIR` the row names (#846): its inline one, or the one
+   * in the descriptor an older row references. Filled in by the command
+   * layer; absent when the row names none, or its descriptor cannot be read.
    */
   readonly ownerBundlePath?: string;
 }
@@ -84,8 +89,8 @@ export interface InstalledSchedulerBinding {
 export interface SchedulerInstallOptions {
   /** Launcher argv to install; the backend's own resolved launcher when absent. */
   readonly binding?: readonly string[];
-  /** Descriptor path to reference; the backend's own current descriptor when absent. */
-  readonly contextPath?: string;
+  /** The environment the row sets inline; none when absent. */
+  readonly environment?: ScheduledRowEnvironment;
 }
 
 /**

@@ -49,7 +49,7 @@ import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
-import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
+import type { InstalledSchedulerBinding, SchedulerBackend } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
@@ -63,12 +63,7 @@ import {
   type SchedulerBinding,
   schedulerBindingNativeId,
 } from "../../tasks/scheduler-binding";
-import {
-  schedulerContextDescriptor,
-  schedulerContextPath,
-  validateSchedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../../tasks/scheduler-invocation";
+import { readLegacySchedulerContext, scheduledRowEnvironment } from "../../tasks/scheduler-invocation";
 import { withSchedulerLock } from "../../tasks/scheduler-lock";
 import {
   compileSchedulerSources,
@@ -139,10 +134,9 @@ export interface TaskMutationDeps {
   schedulerRuntime?: () => PreparedSchedulerRuntime;
 }
 
-/** The launcher and descriptor path rows are written with. Tests inject one. */
+/** The launcher rows are written with. Tests inject one. */
 export interface PreparedSchedulerRuntime {
   binding: string[];
-  contextPath: string;
   via?: ResolvedAkmInvocation["via"];
 }
 
@@ -215,7 +209,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     }
     // Native ids are shared by every bundle and installation: refuse before
     // writing anything when another one already schedules this id.
-    const scope = bundleScope(bundle.bundleName, stashDir);
+    const scope = bundleScope(bundle.config, bundle.bundleName, stashDir);
     const installed = await listInstalledRows(sched);
     for (const binding of bindings) {
       const row = installed.find((candidate) => installedRowNativeId(candidate) === schedulerBindingNativeId(binding));
@@ -507,8 +501,7 @@ export async function akmTasksSync(
   options: { rebind?: boolean } = {},
 ): Promise<TasksSyncResult> {
   return withSchedulerLock(async () => {
-    const { sched, plan, publish, warnings } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
-    if (publish && plan.operations.some((operation) => operation.kind !== "remove")) publish();
+    const { sched, plan, warnings } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
     const failed = new Set<string>();
     const failures = [...plan.failures];
     for (const operation of plan.operations) {
@@ -545,7 +538,7 @@ export async function akmTasksSync(
 
 /**
  * `akm task sync --dry-run` (#849): the exact plan `akmTasksSync` would
- * apply, previewed. It writes nothing: no config, no descriptor, no row.
+ * apply, previewed. It writes nothing: no config, no row.
  */
 export async function akmTasksSyncPlan(
   deps: SchedulerDeps = {},
@@ -560,7 +553,7 @@ async function buildSchedulerSyncPlan(
   deps: SchedulerDeps,
   bundleTarget: string | undefined,
   options: { rebind?: boolean; dryRun?: boolean },
-): Promise<{ sched: SchedulerBackend; plan: SchedulerSyncPlan; publish?: () => void; warnings: string[] }> {
+): Promise<{ sched: SchedulerBackend; plan: SchedulerSyncPlan; warnings: string[] }> {
   let config = loadConfig();
   const sched = deps.backend ?? selectBackend();
   const installed = await listInstalledRows(sched);
@@ -622,7 +615,7 @@ async function buildSchedulerSyncPlan(
       desired.push(...compiled.desired);
       failures.push(...compiled.failures);
       for (const failure of compiled.failures) if (failure.ref) keepRefs.add(failure.ref);
-      scopes.push({ ...bundleScope(resolved.source.name, stashDir), adapterId });
+      scopes.push({ ...bundleScope(config, resolved.source.name, stashDir), adapterId });
     } catch (cause) {
       if (bundleTarget) throw cause;
       failures.push({ path: name ?? "(default bundle)", reason: errorMessage(cause) });
@@ -655,7 +648,7 @@ async function buildSchedulerSyncPlan(
     installed,
     scopes,
     ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
-    ...(runtime.options ? { installOptions: runtime.options } : {}),
+    ...(runtime.launcher ? { launcher: runtime.launcher } : {}),
     rebind: options.rebind === true,
     extraRemovals,
     keepRefs,
@@ -667,68 +660,68 @@ async function buildSchedulerSyncPlan(
       : plan.installed.length > 0;
   if (runtime.via === "checkout" && writesLauncher) {
     warnings.push(
-      `Scheduled tasks now run akm from a source checkout (${runtime.options?.binding?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
+      `Scheduled tasks now run akm from a source checkout (${runtime.launcher?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
     );
   }
-  return {
-    sched,
-    plan: { ...plan, failures: [...failures, ...plan.failures] },
-    ...(runtime.publish ? { publish: runtime.publish } : {}),
-    warnings,
-  };
+  return { sched, plan: { ...plan, failures: [...failures, ...plan.failures] }, warnings };
 }
 
 /**
- * The launcher and descriptor rows are written with. The descriptor follows
- * the current policy on every sync; a row that is already installed keeps its
- * launcher unless `--rebind` (see `installOptionsFor`). An injected backend
- * (tests) renders with its own defaults.
+ * The launcher rows are written with. A row that is already installed keeps
+ * its launcher unless `--rebind` (see `installOptionsFor`). An injected
+ * backend (tests) renders with its own launcher.
  */
 function prepareSchedulerRuntime(deps: SchedulerDeps): {
-  options?: SchedulerInstallOptions;
-  publish?: () => void;
+  launcher?: readonly string[];
   via?: ResolvedAkmInvocation["via"];
 } {
   if (deps.schedulerRuntime) {
     const runtime = deps.schedulerRuntime();
-    return {
-      options: { binding: runtime.binding, contextPath: runtime.contextPath },
-      ...(runtime.via ? { via: runtime.via } : {}),
-    };
+    return { launcher: runtime.binding, ...(runtime.via ? { via: runtime.via } : {}) };
   }
   if (deps.backend) return {};
-  const descriptor = schedulerContextDescriptor();
   const invocation = resolveAkmInvocation();
-  return {
-    options: { binding: invocation.argv, contextPath: schedulerContextPath(descriptor) },
-    // The content-addressed descriptor is written once, before the first row that references it.
-    publish: () => {
-      writeSchedulerContextDescriptor(descriptor);
-    },
-    via: invocation.via,
-  };
+  return { launcher: invocation.argv, via: invocation.via };
 }
 
-/** One read of the akm-owned rows, each attributed to the bundle path its own descriptor names (#846). */
+/** One read of the akm-owned rows, each attributed to the bundle path it names (#846). */
 async function listInstalledRows(sched: SchedulerBackend): Promise<InstalledSchedulerBinding[]> {
   return (await sched.list()).map((row) => {
-    const ownerBundlePath = row.contextPath ? resolveInstalledOwnerPath(row.contextPath) : undefined;
+    const ownerBundlePath = installedRowBundleDir(row);
     return ownerBundlePath !== undefined ? { ...row, ownerBundlePath } : row;
   });
 }
 
-/** Best-effort recovery of an installed binding's owning bundle path (#846). */
-function resolveInstalledOwnerPath(contextPath: string): string | undefined {
+/**
+ * The `AKM_BUNDLE_DIR` an installed row names: its inline one, or the one in
+ * the descriptor a row written before 0.9.17-alpha.7 references. Undefined
+ * when it names none, or its descriptor cannot be read — which never means
+ * "mine".
+ */
+function installedRowBundleDir(row: InstalledSchedulerBinding): string | undefined {
+  if (row.contextPath === undefined) return row.environment?.AKM_BUNDLE_DIR;
   try {
-    return validateSchedulerContextDescriptor(contextPath).environment.AKM_BUNDLE_DIR;
+    return readLegacySchedulerContext(row.contextPath).AKM_BUNDLE_DIR;
   } catch {
     return undefined;
   }
 }
 
-/** The primary bundle proves its rows by path (#846); any other bundle by its config name. */
-function bundleScope(bundleName: string, stashDir: string): SchedulerBundleScope {
-  return isPrimaryStashPath(stashDir) ? { bundleName, bundlePath: path.resolve(stashDir) } : { bundleName };
+/**
+ * The rows one bundle's sync owns (#846), and the environment they set
+ * inline: `AKM_BUNDLE_DIR` only for the env-selected working stash, which no
+ * config names.
+ */
+function bundleScope(config: AkmConfig, bundleName: string, stashDir: string): SchedulerBundleScope {
+  const bundlePath = path.resolve(stashDir);
+  const configured = resolveActiveConfiguredSources(config).some((source) => source.name === bundleName);
+  const environment = scheduledRowEnvironment(configured ? undefined : bundlePath);
+  return {
+    bundleName,
+    bundlePath,
+    ...(isPrimaryStashPath(bundlePath) ? { primary: true } : {}),
+    ...(Object.keys(environment).length > 0 ? { environment } : {}),
+  };
 }
 
 function installedSchedulerBundle(config: AkmConfig, row: InstalledSchedulerBinding): string | undefined {
@@ -748,25 +741,29 @@ export interface TasksPruneResult {
 }
 
 /**
- * Why `akm task prune` (#851) would remove an installed row: its own
- * descriptor does not load (`invalid-context`) or names a bundle directory
- * that is gone (`dead-bundle-path`). A row that still resolves to a live
- * bundle is never a candidate.
+ * Why `akm task prune` (#851) would remove an installed row: a row written
+ * before 0.9.17-alpha.7 whose descriptor cannot be read (`invalid-context`),
+ * or one naming a bundle directory that is gone (`dead-bundle-path`). A row
+ * that still resolves to a live bundle is never a candidate.
  */
 function classifyPruneCandidate(entry: InstalledSchedulerBinding): TasksPruneReason | undefined {
-  let ownerBundlePath: string | undefined;
-  try {
-    ownerBundlePath = validateSchedulerContextDescriptor(entry.contextPath).environment.AKM_BUNDLE_DIR;
-  } catch {
-    return "invalid-context";
+  let bundleDir: string | undefined;
+  if (entry.contextPath !== undefined) {
+    try {
+      bundleDir = readLegacySchedulerContext(entry.contextPath).AKM_BUNDLE_DIR;
+    } catch {
+      return "invalid-context";
+    }
+  } else {
+    bundleDir = entry.environment?.AKM_BUNDLE_DIR;
   }
-  if (ownerBundlePath !== undefined && !fs.existsSync(ownerBundlePath)) return "dead-bundle-path";
+  if (bundleDir !== undefined && !fs.existsSync(bundleDir)) return "dead-bundle-path";
   return undefined;
 }
 
 /**
  * `akm task prune` (#851): remove installed rows `sync` can never reclaim
- * because their descriptor no longer resolves to a live bundle. It scans
+ * because they no longer resolve to a live bundle. It scans
  * every installed row, not one bundle's. Without `--yes` it only previews and
  * writes nothing; `--id` narrows it to named candidates.
  */
@@ -814,7 +811,8 @@ export interface TasksDoctorResult {
   caller: { argv: string[]; via: string };
   bindings: Array<{
     argv: string[];
-    contextPath: string;
+    /** A row written before 0.9.17-alpha.7: the descriptor it names. The next `akm task sync` rewrites it. */
+    contextPath?: string;
     taskIds: string[];
     status: string[];
   }>;
@@ -939,7 +937,7 @@ function groupInstalledBindings(entries: readonly InstalledSchedulerBinding[]): 
     }
     groups.set(key, {
       argv,
-      contextPath: entry.contextPath,
+      ...(entry.contextPath !== undefined ? { contextPath: entry.contextPath } : {}),
       taskIds: [entry.id],
       status,
     });
@@ -952,12 +950,14 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding): string[] {
   const binding = entry.binding;
   if (isCheckoutInvocation(binding)) status.push("checkout");
   if (binding.some((part) => part === "akm" || part === "bun" || part === "node")) status.push("path-selected");
-  try {
-    validateSchedulerContextDescriptor(entry.contextPath);
-  } catch {
-    status.push("invalid-context");
+  if (entry.contextPath !== undefined) {
+    try {
+      readLegacySchedulerContext(entry.contextPath);
+    } catch {
+      status.push("invalid-context");
+    }
   }
-  const absolutePaths = [...binding.filter((part) => path.isAbsolute(part)), entry.contextPath];
+  const absolutePaths = binding.filter((part) => path.isAbsolute(part));
   if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
   if (status.length === 0) status.push("ok");
   return status;
@@ -1031,8 +1031,8 @@ export function resolveTaskReadBundle(
  * New scheduler bindings always carry a canonical `--bundle <owner>` token,
  * including an env-selected working stash. That stash need not be persisted in
  * config (CI, one-shot tools, and fresh installs commonly use only
- * AKM_BUNDLE_DIR), so its scheduled child must accept precisely its derived
- * owner name after the scheduler context restores the environment.
+ * AKM_BUNDLE_DIR), so its scheduled child — whose row sets AKM_BUNDLE_DIR —
+ * must accept precisely its derived owner name.
  *
  * This is intentionally narrower than an unknown-bundle fallback: a configured
  * source always wins, and an unconfigured selector is accepted only when it is
