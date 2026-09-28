@@ -433,6 +433,12 @@ export interface UpdateResponse {
  */
 export type ShowDetailLevel = "brief" | "summary" | "normal" | "full";
 
+/** One kind of declared link on `akm show`: how many there are, and the first few refs. */
+export interface ShowLinkGroup {
+  total: number;
+  refs: string[];
+}
+
 export interface ShowResponse extends FragmentProvenance {
   schemaVersion?: number;
   type: string;
@@ -484,6 +490,18 @@ export interface ShowResponse extends FragmentProvenance {
   related?: {
     total: number;
     hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+  };
+  /**
+   * Declared links (#935), grouped by kind (`xref`, `superseded_by`, `uses`, …):
+   * what this asset names (`outgoing`), what names it (`incoming`), and the
+   * tokens it names that resolve to no indexed asset (`unresolved`, as
+   * authored). `total` counts every link of the kind; `refs` lists the first
+   * few. Each part is omitted when empty, and the field when all are.
+   */
+  links?: {
+    outgoing?: Record<string, ShowLinkGroup>;
+    incoming?: Record<string, ShowLinkGroup>;
+    unresolved?: Record<string, ShowLinkGroup>;
   };
   /** Fragment presentation requested by the caller; absent for whole assets. */
   contextMode?: FragmentContextMode;
@@ -557,6 +575,11 @@ export interface InfoResponse {
     entryCount: number;
     /** Per-asset-type breakdown of `entryCount`, keyed by asset type (e.g. "skill", "knowledge") (R-057). */
     byType: Record<string, number>;
+    /**
+     * Declared links (#935) per kind, with how many name a target that is not
+     * indexed. Absent when the index holds none.
+     */
+    links?: Record<string, { total: number; unresolved: number }>;
     lastBuiltAt: string | null;
     hasEmbeddings: boolean;
     /**

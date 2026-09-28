@@ -3,7 +3,7 @@ type: fact
 category: convention
 description: How to cross-link assets so retrieval compounds — a provenance xref when derived, sparse real associative xrefs, corrections as new assets, and canonical entity naming.
 when_to_use: Surfaced to authoring agents when they create or revise any asset that derives from, corrects, or relates to another asset.
-updated: 2026-07-28
+updated: 2026-09-28
 ---
 
 <!--
@@ -19,8 +19,10 @@ updated: 2026-07-28
 
 Cross-references are how knowledge compounds instead of being re-derived every
 session. In AKM they are also **indexed**: the strings in an asset's `xrefs:`
-frontmatter fold into its search-hint text, and knowledge/memory bodies feed an
-LLM-extracted entity/relation graph that boosts ranking. So links are a retrieval
+frontmatter fold into its search-hint text and are stored as links that
+`akm show` lists on both assets (with `supersededBy:`, `contradictedBy:` and a
+`.derived` memory's parent), and knowledge/memory bodies feed an LLM-extracted
+entity/relation graph that boosts ranking. So links are a retrieval
 lever — which means both too few and too many hurt.
 
 ```yaml

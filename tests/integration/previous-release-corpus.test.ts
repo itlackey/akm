@@ -71,6 +71,10 @@
  *     `index-schema.ts`) migrates it in place, keeping the entry and its
  *     vector (labelled with the model it was generated under), so the next
  *     embedding pass (`generateEmbeddingsForDb`) makes zero provider calls.
+ *   - a layout-25 derived index as 0.9.17-alpha.7 wrote it (`index-v25.sql`),
+ *     whose relations sat only in `document_json` — a reader serves it as-is,
+ *     and the writable opener derives its declared links (#935) in place,
+ *     re-reading only the directories that hold workflows and tasks.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates `--bundle` and the
@@ -102,10 +106,16 @@ import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
-import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import {
+  closeDatabase,
+  openIndexDatabase,
+  openReadonlyExistingDatabase,
+} from "../../src/storage/repositories/index-connection";
 import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../src/storage/repositories/index-fts-repository";
+import { countLinksByKind, readEntryLinks } from "../../src/storage/repositories/index-links-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { VACUUM_PENDING_META } from "../../src/storage/repositories/index-schema";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
@@ -195,6 +205,77 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         if (!row) throw new Error("expected an embedding row");
         const vec = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, 3);
         expect(Array.from(vec)).toEqual([1, 2, 3]);
+      } finally {
+        closeDatabase(upgraded);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a layout-25 index (0.9.17-alpha.7) migrates in place: its stored relations become links, with no reparse", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v25-index-"));
+    try {
+      const dbPath = path.join(root, "index.db");
+      const legacy = new Database(dbPath);
+      legacy.exec(readFixture("index-v25.sql"));
+      legacy.close();
+
+      // A reader serves the older layout as-is: no links yet, and no failure.
+      const reader = openReadonlyExistingDatabase(dbPath);
+      if (!reader) throw new Error("expected a read handle");
+      try {
+        expect(readEntryLinks(reader, "stash//memories/deploy-window")).toEqual({ outgoing: [], incoming: [] });
+        expect(countLinksByKind(reader)).toEqual({});
+      } finally {
+        closeDatabase(reader);
+      }
+
+      const upgraded = openIndexDatabase(dbPath);
+      try {
+        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+        expect(getMeta(upgraded, VACUUM_PENDING_META)).toBe("1");
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 10 });
+
+        // Every relation alpha.7 kept in document_json is now a link; targets
+        // resolve against the index, and legacy spellings convert in memory.
+        const links = (
+          upgraded
+            .prepare(
+              `SELECT o.item_ref AS owner, l.kind AS kind, l.raw AS raw, t.item_ref AS target
+                 FROM asset_links l
+                 JOIN entries o ON o.id = l.entry_id
+                 LEFT JOIN entries t ON t.item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || l.dst_concept
+                ORDER BY owner, l.ord`,
+            )
+            .all() as Array<{ owner: string; kind: string; raw: string; target: string | null }>
+        ).map((row) => `${row.owner} ${row.kind} ${row.raw} -> ${row.target}`);
+        expect(links).toEqual([
+          "stash//knowledge/release-guide xref knowledge/missing-page -> null",
+          "stash//knowledge/release-guide superseded_by stash//knowledge/release-guide-v2 -> stash//knowledge/release-guide-v2",
+          "stash//knowledge/wikis/notes/pages/release-train xref wiki:notes/raw/train-source -> stash//knowledge/wikis/notes/raw/train-source",
+          "stash//knowledge/wikis/notes/pages/release-train cites raw/train-source.md -> stash//knowledge/wikis/notes/raw/train-source",
+          "stash//memories/deploy-window xref memories/release-checklist -> null",
+          "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//knowledge/wikis/notes/pages/release-train",
+          "stash//memories/deploy-window contradicted_by memory:deploy-window-moved -> stash//memories/deploy-window-moved",
+          "stash//memories/deploy-window-moved.derived derived_from memories/deploy-window-moved -> stash//memories/deploy-window-moved",
+        ]);
+
+        // alpha.7 never stored workflow and task targets, so only their
+        // directories re-drain on the next `akm index`; every other directory
+        // keeps its cursor.
+        const dirs = (
+          upgraded.prepare("SELECT dir_path FROM index_dir_state ORDER BY dir_path").all() as Array<{
+            dir_path: string;
+          }>
+        ).map((row) => row.dir_path);
+        expect(dirs).toEqual([
+          "/fixture/stash/commands",
+          "/fixture/stash/knowledge",
+          "/fixture/stash/memories",
+          "/fixture/stash/wikis/notes/pages",
+          "/fixture/stash/wikis/notes/raw",
+        ]);
       } finally {
         closeDatabase(upgraded);
       }

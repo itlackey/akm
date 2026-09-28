@@ -284,6 +284,8 @@ export interface IndexDocument {
   updated?: string;
   /** Resolved native links = relationships (§9); navigation/lint, NOT graph boost. */
   links?: string[];
+  /** The assets a workflow's steps or a task target (`uses:` refs, stored `akm/command` refs), in authored order. */
+  uses?: string[];
   /**
    * OKF v0.2 trust/provenance family ← frontmatter `generated`/`verified`/`sources`.
    * This TypeScript field is NAMESPACED to avoid colliding with the

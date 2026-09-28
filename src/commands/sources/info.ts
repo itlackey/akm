@@ -13,6 +13,7 @@ import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryCount, getEntryCountByType } from "../../storage/repositories/index-entries-repository";
+import { countLinksByKind } from "../../storage/repositories/index-links-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { pkgVersion } from "../../version";
 
@@ -113,9 +114,11 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
   let db: Database | undefined;
   try {
     db = openExistingDatabase(resolvedPath);
+    const links = countLinksByKind(db);
     return {
       entryCount: getEntryCount(db),
       byType: getEntryCountByType(db),
+      ...(Object.keys(links).length > 0 ? { links } : {}),
       lastBuiltAt: getMeta(db, "builtAt") ?? null,
       hasEmbeddings: getMeta(db, "hasEmbeddings") === "1",
     };

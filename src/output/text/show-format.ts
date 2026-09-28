@@ -65,6 +65,21 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
       lines.push(`    relationCount: ${String(hit.relationCount ?? 0)}`);
     }
   }
+  const links = typeof r.links === "object" && r.links !== null ? (r.links as Record<string, unknown>) : undefined;
+  if (links) {
+    lines.push("");
+    lines.push("links:");
+    for (const part of ["outgoing", "incoming", "unresolved"]) {
+      const groups = links[part];
+      if (typeof groups !== "object" || groups === null) continue;
+      lines.push(`  ${part}:`);
+      for (const [kind, group] of Object.entries(groups as Record<string, { total?: number; refs?: unknown[] }>)) {
+        const refs = Array.isArray(group.refs) ? group.refs.map(String) : [];
+        const more = (group.total ?? refs.length) > refs.length ? ` (+${(group.total ?? 0) - refs.length} more)` : "";
+        lines.push(`    ${kind}: ${refs.join(", ")}${more}`);
+      }
+    }
+  }
   const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
   if (Array.isArray(r.steps) && r.steps.length > 0) {
     if (lines.length > 0) lines.push("");

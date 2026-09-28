@@ -104,7 +104,7 @@ with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rathe
 than a silent fallback. It returns a compact view suitable for capability
 discovery:
 
-- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `related`
+- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `related`, `links`
 
 ## Exit Codes and Error Envelope
 
@@ -331,7 +331,7 @@ Returns a JSON object with:
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
-| `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings` |
+| `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings` |
 
 `semanticSearch.status` values:
 - `"ready-js"` — every entry has a vector; semantic search is active (the name is historical: `"ready-vec"`, the sqlite-vec variant, is gone)
@@ -690,6 +690,17 @@ including `ref`/`path`/`editable`; `--shape summary`
 returns a compact view with `type`, `name`, `ref`, `description`, `tags`,
 `parameters`, `workflowTitle`, `action`, `run`, `origin`, and `keys`, plus the
 optional fragment metadata described below.
+
+`links` lists the asset's declared links, grouped by kind: `outgoing` (the
+assets its own `xrefs:`, `supersededBy:`, `contradictedBy:`,
+`currentBeliefRefs:`, wiki `sources:`, `.derived` parent, page links, or
+workflow and task targets name), `incoming` (the assets that name it), and
+`unresolved` (tokens it names that match no indexed asset, as written). Each
+kind is `{ "total": n, "refs": [...] }` with at most 10 refs; `total` counts
+them all. The field is omitted when nothing links either way. Links are read
+from frontmatter and parsed structure at index time, with no model; they do
+not affect search ranking. `related` is separate: the LLM entity graph's
+shared-entity neighbours.
 
 Opaque fragment shows and `--context lead` keep `ref` as the canonical parent
 identity and add

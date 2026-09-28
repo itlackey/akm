@@ -13,6 +13,10 @@
  * cache. A newer layout is refused, naming the upgrade.
  */
 
+// 26: declared links (#935) live in `asset_links`, one row per link, owned by
+// the entry that declares it. The writable opener derives them in place from
+// each entry's stored `document_json` (`migrateToDeclaredLinks`,
+// index-schema.ts); releases before 26 did not store them.
 // 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`
 // is dropped (`dropVecMirror`, index-schema.ts), and so is the fragment FTS
 // table `entry_fragments_fts`, which search no longer reads. `entries` keeps
@@ -23,7 +27,7 @@
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
 // content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
 // tables from the stored entries when it finds the older layout.
-export const CANONICAL_INDEX_DB_VERSION = 25;
+export const CANONICAL_INDEX_DB_VERSION = 26;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
@@ -50,6 +54,19 @@ export const CANONICAL_ENTRY_SCHEMA_SQL = `
     entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
     safe_markdown TEXT NOT NULL
   );
+
+  -- Declared links (#935). dst_bundle NULL: the declaring entry's own bundle.
+  CREATE TABLE IF NOT EXISTS asset_links (
+    entry_id    INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    ord         INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    raw         TEXT NOT NULL,
+    dst_bundle  TEXT,
+    dst_concept TEXT NOT NULL,
+    PRIMARY KEY (entry_id, ord)
+  ) WITHOUT ROWID;
+
+  CREATE INDEX IF NOT EXISTS idx_asset_links_dst ON asset_links(dst_concept);
 `;
 
 // The FTS table is contentless: FTS5 keeps only the inverted index, and a row

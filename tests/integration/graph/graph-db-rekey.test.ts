@@ -316,10 +316,10 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   });
 
   // AC#5 — version + graph-schema lock --------------------------------------
-  // DB_VERSION 25 keeps vectors in `embeddings` alone; graph schema version 4
-  // remains the current independently keyed graph shape.
-  test("AC#5: DB_VERSION is 25, GRAPH_SCHEMA_VERSION is 4, graph DDL is the current shape", () => {
-    expect(DB_VERSION).toBe(25);
+  // DB_VERSION 26 adds the declared-links table beside the graph; graph schema
+  // version 4 remains the current independently keyed graph shape.
+  test("AC#5: DB_VERSION is 26, GRAPH_SCHEMA_VERSION is 4, graph DDL is the current shape", () => {
+    expect(DB_VERSION).toBe(26);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
 
     const db = openIndexDatabase(tmpDbPath());

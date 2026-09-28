@@ -30,7 +30,7 @@ import {
   fragmentForSelector,
   MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
 } from "../../core/asset/markdown-fragments";
-import { displayRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
+import { displayRef, displayRefForConceptId, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -61,9 +61,10 @@ import {
   type MatchResult,
 } from "../../indexer/walk/file-context";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import type { FragmentContextMode, ShowDetailLevel, ShowResponse } from "../../sources/types";
+import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
+import { readEntryLinks } from "../../storage/repositories/index-links-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
 import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
@@ -410,6 +411,7 @@ export async function showLocal(input: {
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
   const isPrimaryStash = source?.isDefault === true;
+  const displayDefaultBundle = config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined);
   const canonicalRef = displayRef(
     {
       type: indexedEntry.type,
@@ -417,7 +419,7 @@ export async function showLocal(input: {
       conceptId: indexedEntry.conceptId,
       bundleId: indexedEntry.bundleId,
     },
-    config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined),
+    displayDefaultBundle,
   );
   if (parsed.fragment && indexedFragment) {
     const selectedFragmentId = indexedFragment.fragments[indexedFragment.ordinal]!.fragmentId;
@@ -489,6 +491,7 @@ export async function showLocal(input: {
         return { total: 0, hits: [] };
       }
     })(),
+    ...showLinks(indexedEntry.itemRef, displayDefaultBundle),
   };
 
   const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
@@ -505,6 +508,56 @@ export async function showLocal(input: {
   }
 
   return fullResponse;
+}
+
+/** Refs listed per kind of declared link; `total` still counts them all (one memory is named by 1,437 others). */
+const LINKS_PER_KIND = 10;
+
+/**
+ * The declared links (#935) of an indexed asset, grouped by kind: outgoing in
+ * authored order, incoming by ref, and unresolved tokens as authored. Empty
+ * parts are omitted, and the field when nothing links either way.
+ */
+function showLinks(itemRef: string, defaultBundle: string | undefined): Pick<ShowResponse, "links"> {
+  let rows: ReturnType<typeof readEntryLinks>;
+  try {
+    rows = withIndexDb((db) => readEntryLinks(db, itemRef));
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    rethrowIfDataDirUnreadable(err);
+    return {};
+  }
+  const outgoing: Array<{ kind: string; ref: string }> = [];
+  const unresolved: Array<{ kind: string; ref: string }> = [];
+  for (const row of rows.outgoing) {
+    if (row.conceptId === undefined) unresolved.push({ kind: row.kind, ref: row.raw ?? "" });
+    else outgoing.push({ kind: row.kind, ref: displayRefForConceptId(row.conceptId, row.bundleId, defaultBundle) });
+  }
+  const incoming = rows.incoming.map((row) => ({
+    kind: row.kind,
+    ref: displayRefForConceptId(row.conceptId ?? "", row.bundleId, defaultBundle),
+  }));
+  const links = {
+    ...groupLinks("outgoing", outgoing),
+    ...groupLinks("incoming", incoming),
+    ...groupLinks("unresolved", unresolved),
+  };
+  return Object.keys(links).length > 0 ? { links } : {};
+}
+
+function groupLinks(
+  part: "outgoing" | "incoming" | "unresolved",
+  rows: Array<{ kind: string; ref: string }>,
+): Partial<Record<typeof part, Record<string, ShowLinkGroup>>> {
+  if (rows.length === 0) return {};
+  const groups: Record<string, ShowLinkGroup> = {};
+  for (const kind of [...new Set(rows.map((row) => row.kind))].sort()) groups[kind] = { total: 0, refs: [] };
+  for (const { kind, ref } of rows) {
+    const group = groups[kind]!;
+    group.total++;
+    if (group.refs.length < LINKS_PER_KIND) group.refs.push(ref);
+  }
+  return { [part]: groups };
 }
 
 /**

@@ -475,7 +475,7 @@ describe("index.db layout 24 → 25", () => {
   });
 });
 
-describe("index.db layout 25 (0.9.17-alpha.5 shape): retired utility_scores_scoped", () => {
+describe("index.db at the current layout still carrying the retired utility_scores_scoped", () => {
   let storage: IsolatedAkmStorage;
   let dbPath = "";
 
@@ -485,11 +485,13 @@ describe("index.db layout 25 (0.9.17-alpha.5 shape): retired utility_scores_scop
     // alpha.5 shipped `utility_scores_scoped` at layout 25 (IR-7a), but no
     // code ever read or wrote a row. Build the table exactly as alpha.5's
     // ensureSchema created it, with a row present, to prove the retirement
-    // drop tolerates non-empty (as well as the real, always-empty) shape.
+    // drop tolerates non-empty (as well as the real, always-empty) shape. The
+    // index is marked with this release's layout so the drop is seen on its
+    // own, apart from any layout migration.
     const db = openDatabase(dbPath);
     try {
       db.exec("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
-      db.prepare("INSERT INTO index_meta (key, value) VALUES ('version', '25')").run();
+      db.prepare("INSERT INTO index_meta (key, value) VALUES ('version', ?)").run(String(CANONICAL_INDEX_DB_VERSION));
       db.exec(`
         CREATE TABLE utility_scores_scoped (
           entry_id     INTEGER NOT NULL,
@@ -512,12 +514,12 @@ describe("index.db layout 25 (0.9.17-alpha.5 shape): retired utility_scores_scop
     storage.cleanup();
   });
 
-  test("a writable open drops the table and keeps layout 25 — no version bump, no VACUUM flag", () => {
+  test("a writable open drops the table and keeps the layout — no version bump, no VACUUM flag", () => {
     const db = openIndexDatabase(dbPath);
     try {
       expect(tableNames(db)).not.toContain("utility_scores_scoped");
-      // Layout 25 is still this release's layout: retiring a table already at
-      // the current version must not look like a migration.
+      // Retiring a table already at the current version must not look like a
+      // migration.
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
       expect(getMeta(db, VACUUM_PENDING_META)).toBeUndefined();
     } finally {
