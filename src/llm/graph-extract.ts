@@ -328,6 +328,7 @@ function mergeGraphExtractions(extractions: GraphExtraction[]): GraphExtraction 
   let filteredGenericEntities = 0;
   let filteredInvalidRelations = 0;
   let filteredLowConfidenceRelations = 0;
+  let anyChunkFailed = false;
   let firstFailureReason: GraphExtractionReason | undefined;
 
   for (const extraction of extractions) {
@@ -336,7 +337,10 @@ function mergeGraphExtractions(extractions: GraphExtraction[]): GraphExtraction 
     filteredGenericEntities += extraction.filteredGenericEntities ?? 0;
     filteredInvalidRelations += extraction.filteredInvalidRelations ?? 0;
     filteredLowConfidenceRelations += extraction.filteredLowConfidenceRelations ?? 0;
-    if (extraction.status === "failed" && !firstFailureReason) firstFailureReason = extraction.reason;
+    if (extraction.status === "failed") {
+      anyChunkFailed = true;
+      firstFailureReason ??= extraction.reason;
+    }
     const nextConfidence = parseConfidence(extraction.confidence);
     if (nextConfidence !== undefined)
       confidence = confidence === undefined ? nextConfidence : Math.max(confidence, nextConfidence);
@@ -395,8 +399,13 @@ function mergeGraphExtractions(extractions: GraphExtraction[]): GraphExtraction 
     relation.confidence = blendConsistency(relation.confidence, chunkCount);
   }
 
-  const status: GraphExtractionStatus = entities.length > 0 ? "extracted" : firstFailureReason ? "failed" : "empty";
-  const reason: GraphExtractionReason = status === "extracted" ? "none" : (firstFailureReason ?? "no_graph_content");
+  // One failed chunk fails the body, whatever the others found: a failed
+  // extraction is never cached, so the next run extracts the body again
+  // (every chunk: partial failures are rare outside provider outages, which
+  // the run's failure-rate abort stops). The entities found are kept.
+  const status: GraphExtractionStatus = anyChunkFailed ? "failed" : entities.length > 0 ? "extracted" : "empty";
+  const reason: GraphExtractionReason =
+    status === "extracted" ? "none" : status === "failed" ? (firstFailureReason ?? "llm_error") : "no_graph_content";
   const mergedConfidence =
     confidence !== undefined ? blendConsistency(confidence, totalChunks) : totalChunks > 1 ? 1 : undefined;
 

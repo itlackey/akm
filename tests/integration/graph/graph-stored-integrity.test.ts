@@ -30,6 +30,8 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/
 
 let requestCount = 0;
 let failRequests = false;
+/** Fail only the requests whose prompt contains this text (one chunk of a long body). */
+let failIfContains: string | undefined;
 let onRequest: (() => void) | undefined;
 
 /** The note number a prompt (or one batch section of it) carries. */
@@ -53,7 +55,9 @@ const llmServer = Bun.serve({
     onRequest?.();
     const payload = (await request.json()) as { model?: string; messages?: Array<{ role?: string; content?: string }> };
     const user = payload.messages?.find((message) => message.role === "user")?.content ?? "";
-    if (failRequests) return new Response("stub: provider down", { status: 500 });
+    if (failRequests || (failIfContains && user.includes(failIfContains))) {
+      return new Response("stub: provider down", { status: 500 });
+    }
     const model = payload.model ?? "unknown";
     const sections = /\bN=\d+/.test(user) ? user.split(/=== ASSET \d+ ===\n/g).slice(1) : [];
     const content =
@@ -78,6 +82,7 @@ beforeEach(() => {
   db = openIndexDatabase(path.join(storage.dataDir, "graph-integrity.db"));
   requestCount = 0;
   failRequests = false;
+  failIfContains = undefined;
   onRequest = undefined;
 });
 
@@ -204,6 +209,34 @@ describe("N1: an unchanged body's stored rows follow its latest extraction", () 
 
     expect(storedEntities().get(filePath)).toEqual(["New A", "New B"]);
     expect(relationCount(filePath)).toBe(1);
+  });
+});
+
+// ── A long body with a failed chunk ──────────────────────────────────────────
+
+describe("a long body one of whose chunks fails", () => {
+  test("is not cached, keeps what the other chunks found, and is extracted again by the next run", async () => {
+    const filePath = path.join(storage.stashDir, "memories", "long.md");
+    const padding = "padding words ".repeat(80);
+    fs.writeFileSync(
+      filePath,
+      `---\ndescription: long\n---\n\n# Part one\n\nA note about Topic-1-end. ${padding}\n\n# Part two\n\nPoison: a note about Topic-2-end. ${padding}\n`,
+    );
+
+    failIfContains = "Poison";
+    await run();
+    // Chunk one's entities are stored, since the file had no rows yet.
+    expect(storedEntities().get(filePath)).toContain("Topic 1");
+    expect(storedEntities().get(filePath)).not.toContain("Topic 2");
+    const cached = db.prepare("SELECT COUNT(*) AS n FROM llm_enrichment_cache WHERE asset_ref = ?").get(filePath);
+    expect(cached).toEqual({ n: 0 });
+
+    failIfContains = undefined;
+    requestCount = 0;
+    await run();
+
+    expect(requestCount).toBe(2);
+    expect(storedEntities().get(filePath)).toEqual(expect.arrayContaining(["Topic 1", "Topic 2"]));
   });
 });
 

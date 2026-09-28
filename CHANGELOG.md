@@ -23,6 +23,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   up to that limit at once, so at a concurrency of 2 four calls could be in
   flight. A batch now makes its per-file calls one at a time. At the default
   concurrency of 1 nothing changes. (`src/llm/graph-extract.ts`)
+- **A long document whose extraction partly failed is extracted again.** A
+  body over 1,600 characters is extracted in chunks. When some chunks failed
+  (a timeout, an error, an empty response) and others found entities, the
+  file was recorded and cached as extracted, so the failed chunks were never
+  retried. Such a file is now recorded as failed and not cached, and the next
+  run extracts it again, every chunk: partial failures are rare outside
+  provider outages, and keeping per-chunk results to skip the chunks that
+  succeeded would need a second cache. Until then the entities the other
+  chunks found are stored when the file had no graph rows yet; a file with
+  rows keeps them. (`src/llm/graph-extract.ts`)
 
 ## [0.9.17-alpha.7] - 2026-09-28
 

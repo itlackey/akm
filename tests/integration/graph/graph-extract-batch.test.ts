@@ -612,6 +612,19 @@ describe("extractGraphFromBodies — unit", () => {
     expect(result?.confidence).toBe(0);
   });
 
+  test("a long body with a failed chunk is failed, keeping what the other chunks found", async () => {
+    // The second chunk's empty response is a failure; the body must be
+    // retried, so the merge may not report it as extracted (and cacheable).
+    singleRawQueue.push(JSON.stringify({ entities: ["Alpha"], relations: [] }), "");
+
+    const result = await extractGraphFromBody(SAMPLE_LLM, longBody("Alpha", "Gamma"), undefined, AKM_CFG_WITH_GATE);
+
+    expect(chatCallCount).toBe(2);
+    expect(result.status).toBe("failed");
+    expect(result.reason).toBe("invalid_json");
+    expect(result.entities).toEqual(["Alpha"]);
+  });
+
   test("long bodies are chunked and merged instead of truncating to a fixed prefix", async () => {
     const longBody = `# One\n\n${"Alpha detail ".repeat(120)}\n\n# Two\n\n${"Gamma detail ".repeat(120)}`;
     singleRawQueue.push(
