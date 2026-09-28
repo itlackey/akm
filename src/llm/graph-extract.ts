@@ -39,6 +39,12 @@ import { type CallStructuredRequest, callStructured, type StructuredLlmRunner } 
  */
 const BATCH_ASSET_SEPARATOR = "=== ASSET";
 
+/**
+ * Part of the extractor id that keys cached extractions; the prompt text is
+ * not. Bump it with any change to either prompt, and expect every cached file
+ * to be extracted again. Pending for the next bump (GR-D12): the batch prompt
+ * still asks for "file/dir names", which the single-asset prompt rules out.
+ */
 export const GRAPH_EXTRACT_PROMPT_VERSION = "v3";
 
 /** Asset bodies longer than this are chunked instead of truncated. */
