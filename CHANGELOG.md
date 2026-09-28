@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`akm curate` returns nothing, on purpose, for input that is not a task.**
+  A harness or tool envelope (input that starts with an XML-style tag and
+  contains a closing tag, such as `<task-notification>…</task-notification>`,
+  `<system-reminder>…` or `<cross-session-message …>…`) and the stash README
+  line each used to get `--limit` unrelated assets. Every caller of
+  `akm curate` (the CLI, the OpenCode plugin, other harnesses) now gets an
+  empty `items` list with a `summary` that starts with `Curate abstained` and
+  names the reason, and a `tip`. On the retrieval suite curate abstains on 57
+  of 60 recorded non-task inputs and on none of the 221 real queries (nor on
+  any of 5,725 mined task queries). Length is not a reason to abstain: the
+  other 3 are task prompts of 2,431–5,531 characters, and in a judged sample
+  of 30 inputs over 2,000 characters the top 5 held a relevant asset for 24
+  of them (P@5 0.42, against 0.46 for prompts of 400–2,000 characters).
+  (`src/commands/read/curate.ts`)
+- **Search and curate return identical content once.** Of entries whose
+  indexed content is identical (the same body saved under another name, as
+  both a memory and a knowledge doc, or in another bundle), only the
+  highest-ranked is kept, and the next candidate takes the freed slot. On the
+  retrieval suite such copies filled 7.5% of curate's top 5. Unique
+  precision@5, where a copy of a higher-ranked result earns nothing, rises
+  from 0.467 to 0.514 (+0.046, 95% CI [+0.028, +0.067]), and the share of
+  top-5 slots that repeat a higher-ranked result falls from 0.131 to 0.055.
+  Plain P@5 (0.553 → 0.551) and nDCG@10 stay within noise: they counted each
+  copy as another relevant result. Latency is unchanged.
+  (`src/indexer/search/db-search.ts`)
+
 ### Removed
 
 - **The unused `utility_scores_scoped` index table is gone.** It shipped in
