@@ -124,6 +124,8 @@ export interface CurateOptions {
 
 const DEFAULT_CURATE_LIMIT = 4;
 const MAX_CURATE_SUPPORT_REFS = 2;
+/** The line of `src/assets/stash-skeleton/README.md` that reaches curate verbatim as a query. */
+const STASH_README_LINE = "This is an **AKM stash** — a structured knowledge repository that stores reusable";
 /** Fused candidates the reranker reorders when `search.curateRerank.topN` is unset. */
 const DEFAULT_CURATE_RERANK_TOP_N = 30;
 /** Characters of name, description and content sent to the reranker per candidate. */
@@ -203,6 +205,20 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     );
   }
 
+  const nonTask = nonTaskInput(trimmedQuery);
+  if (nonTask) {
+    const abstained: CurateResponse = {
+      query: options.query,
+      summary: `Curate abstained: the input is ${nonTask}, not a task.`,
+      items: [],
+      tip: 'Nothing was selected on purpose. To curate for it, pass the task itself: akm curate "<what you are trying to do>".',
+    };
+    if (!options.skipLogging) {
+      logCurateEvent(options.query, abstained, options.eventSource, options.attributionProjection);
+    }
+    return abstained;
+  }
+
   const limit = options.limit && options.limit > 0 ? options.limit : DEFAULT_CURATE_LIMIT;
   const source = options.source ?? parseSearchSource("local");
   const searchResponse =
@@ -220,6 +236,20 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
   }
   return result;
+}
+
+/**
+ * What the (trimmed) curate input is when it is not a task, else undefined.
+ * Harness and tool envelopes (`<task-notification>…`, `<system-reminder>…`,
+ * `<cross-session-message …>…`) start with a tag and close one, and the stash
+ * README line arrives verbatim; on the retrieval suite neither shape occurs in
+ * a real query. Length is not a signal: prompts over 2,000 characters found
+ * relevant assets at about the rate of shorter long prompts.
+ */
+function nonTaskInput(query: string): string | undefined {
+  if (query.startsWith("<") && query.includes("</")) return "a harness or tool envelope";
+  if (query === STASH_README_LINE) return "the akm stash README boilerplate";
+  return undefined;
 }
 
 export async function curateSearchResults(
