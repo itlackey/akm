@@ -165,9 +165,6 @@ export function isProcessEnabled(section: string, processName: string, config: A
   if (!config) return false;
   // Index passes are first-class 0.9 entries.
   if (section === "index") {
-    if (processName === "metadata_enhance" || processName === "metadataEnhance") {
-      return config.index?.metadataEnhance?.enabled ?? true;
-    }
     if (processName === "memory_inference" || processName === "memoryInference") {
       return isLlmFeatureEnabled(config, "memory_inference");
     }

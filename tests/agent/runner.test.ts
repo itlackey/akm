@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
-import { isProcessEnabled } from "../../src/llm/feature-gate";
+import { isLlmFeatureEnabled, isProcessEnabled } from "../../src/llm/feature-gate";
 
 function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
   return {
@@ -81,8 +81,21 @@ describe("isProcessEnabled", () => {
 
   test("reflects the configured enabled flag on improve processes", () => {
     const config = makeEngineConfig();
-    expect(isProcessEnabled("index", "metadataEnhance", config)).toBe(true);
-    const off: AkmConfig = { ...config, index: { metadataEnhance: { enabled: false } } };
-    expect(isProcessEnabled("index", "metadataEnhance", off)).toBe(false);
+    expect(isProcessEnabled("index", "graphExtraction", config)).toBe(true);
+    const off: AkmConfig = { ...config, index: { graph: { enabled: false } } };
+    expect(isProcessEnabled("index", "graphExtraction", off)).toBe(false);
+  });
+
+  test("metadataEnhance is not a recognized isProcessEnabled process name (IR-7c: gated only via isLlmFeatureEnabled)", () => {
+    const config = makeEngineConfig();
+    expect(isProcessEnabled("index", "metadataEnhance", config)).toBe(false);
+    expect(isProcessEnabled("index", "metadata_enhance", config)).toBe(false);
+  });
+
+  test("metadata_enhance defaults off and follows index.metadataEnhance.enabled", () => {
+    const config = makeEngineConfig();
+    expect(isLlmFeatureEnabled(config, "metadata_enhance")).toBe(false);
+    const on: AkmConfig = { ...config, index: { metadataEnhance: { enabled: true } } };
+    expect(isLlmFeatureEnabled(on, "metadata_enhance")).toBe(true);
   });
 });
