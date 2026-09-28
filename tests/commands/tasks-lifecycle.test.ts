@@ -60,6 +60,8 @@ const backend: SchedulerBackend = {
       return {
         id,
         binding: ["/test/akm"],
+        // Every row in this suite was written by this sandbox's installation.
+        environment: { AKM_BUNDLE_DIR: storage.stashDir },
         ...(stored?.invocation.includes("--bundle")
           ? { target: stored.invocation[stored.invocation.indexOf("--bundle") + 1] }
           : {}),

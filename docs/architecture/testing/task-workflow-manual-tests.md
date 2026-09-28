@@ -1530,12 +1530,11 @@ Expected format (pattern only, confirmed live against this machine's
 existing real entries):
 ```
 # akm:task <TID> BEGIN
-<cron-expr> [AKM_BUNDLE_DIR=<stash>] <absolute-node-or-bun-path> <absolute-akm-launcher> task run <TID> --bundle <bundle> --scheduled > <logDir>/<TID>.log 2>&1
+<cron-expr> AKM_BUNDLE_DIR=<working stash> <absolute-node-or-bun-path> <absolute-akm-launcher> task run <TID> --bundle <bundle> --scheduled > <logDir>/<TID>.log 2>&1
 # akm:task <TID> END
 ```
-(`AKM_BUNDLE_DIR=` appears only for a stash selected by that variable that no
-config names. Rows written by 0.9.0 – 0.9.17-alpha.6 carry
-`--scheduler-context <path>` after the launcher instead.)
+(Rows written by 0.9.0 – 0.9.17-alpha.6 carry `--scheduler-context <path>`
+after the launcher instead of the inline `AKM_BUNDLE_DIR=`.)
 A disabled binding's line is prefixed `# akm:disabled ` instead of being a
 live cron line.
 
@@ -1660,9 +1659,9 @@ restore the mandatory backup and verify with `crontab -l`.
 entry when two primary bundles derived the same basename. Stable 0.9.2
 requires a name match *and* a resolved owner-path match before an entry is in
 scope, and refuses ownership when the path cannot be established. (Since
-0.9.17-alpha.7 an env-selected stash's rows name the path inline as
-`AKM_BUNDLE_DIR=`; an older row names it in its `--scheduler-context`
-descriptor, and is refused when that file is missing or unreadable.) This test reproduces the
+0.9.17-alpha.7 every row names the path inline as `AKM_BUNDLE_DIR=`; an
+older row names it in its `--scheduler-context` descriptor, and is refused
+when that file is missing or unreadable.) This test reproduces the
 original collision safely and proves task A survives bundle B's sync.
 
 **`UNVERIFIED` — even this fully self-contained, two-throwaway-bundle

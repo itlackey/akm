@@ -33,8 +33,6 @@ interface PlanInput extends CompileSchedulerSourcesInput {
   readonly installed: readonly InstalledSchedulerBinding[];
   /** Set for the primary bundle, which proves its rows by resolved path (#846). */
   readonly bundlePath?: string;
-  /** The inline environment of the bundle's rows; `AKM_BUNDLE_DIR` marks the env-selected working stash. */
-  readonly environment?: Readonly<Record<string, string>>;
   readonly expectedSignature?: (binding: SchedulerBinding, options?: SchedulerInstallOptions) => string;
 }
 
@@ -48,8 +46,7 @@ async function planSchedulerSync(input: PlanInput) {
       {
         bundleName: input.bundleName,
         adapterId: input.adapterId,
-        ...(input.bundlePath ? { bundlePath: input.bundlePath, primary: true } : {}),
-        ...(input.environment ? { environment: input.environment } : {}),
+        ...(input.bundlePath ? { bundlePath: input.bundlePath } : {}),
       },
     ],
     ...(input.expectedSignature ? { expectedSignature: input.expectedSignature } : {}),
@@ -1137,9 +1134,9 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     expect(plan.operations).toEqual([{ kind: "remove", id: "sub/nightly", nativeId, ownerBundlePath: bundlePath }]);
   });
 
-  test("the env-selected stash owns the current rows whose inline AKM_BUNDLE_DIR names it, and the older rows whose descriptor does", async () => {
+  test("the primary bundle owns the rows whose AKM_BUNDLE_DIR is its path, inline or in an older row's descriptor; any other bundle owns rows by name", async () => {
     const componentRoot = root();
-    const stash = "/home/user/stash";
+    const bundlePath = "/home/user/stash";
     const row = (id: string, extra: Partial<InstalledSchedulerBinding>) => ({
       id,
       nativeId: id,
@@ -1149,86 +1146,32 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       signature: `sig-${id}`,
       ...extra,
     });
-
-    const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
-      adapterId: "akm-task",
-      bundleName: "stash",
-      bundlePath: stash,
-      environment: { AKM_BUNDLE_DIR: stash },
-      backend: "cron",
-      installed: [
-        row("inline-mine", { environment: { AKM_BUNDLE_DIR: stash }, ownerBundlePath: stash }),
-        row("inline-other", { environment: { AKM_BUNDLE_DIR: "/other/stash" }, ownerBundlePath: "/other/stash" }),
-        row("configured-elsewhere", {}),
-        row("legacy-mine", { contextPath: "/data/ctx-a.json", ownerBundlePath: stash }),
-        row("legacy-other", { contextPath: "/data/ctx-b.json", ownerBundlePath: "/other/stash" }),
-      ],
-    });
-
-    // No source is desired, so every row this stash owns is drift; the rest are another installation's.
-    expect(plan.removed).toEqual(["inline-mine", "legacy-mine"]);
-  });
-
-  test("a configured bundle owns its rows by name, and a row carrying AKM_BUNDLE_DIR inline only when it names its path", async () => {
-    const componentRoot = root();
-    const bundlePath = "/home/user/work/akm";
-    const row = (id: string, extra: Partial<InstalledSchedulerBinding>) => ({
-      id,
-      nativeId: id,
-      binding: ["/opt/akm"],
-      target: "team",
-      invocation: ["task", "run", id, "--bundle", "team", "--scheduled"],
-      signature: `sig-${id}`,
-      ...extra,
-    });
-
-    const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
-      adapterId: "akm-task",
-      bundleName: "team",
-      bundlePath,
-      backend: "cron",
-      installed: [
-        row("by-name", {}),
-        // An env-selected stash at this path that has since been configured.
-        row("inline-same-dir", { environment: { AKM_BUNDLE_DIR: bundlePath }, ownerBundlePath: bundlePath }),
-        // Another installation's env-selected stash that happens to share the name.
-        row("inline-other-dir", { environment: { AKM_BUNDLE_DIR: "/tmp/x/team" }, ownerBundlePath: "/tmp/x/team" }),
-      ],
-    });
-
-    expect(plan.removed).toEqual(["by-name", "inline-same-dir"]);
-  });
-
-  test("a row that reads another config (inline AKM_CONFIG_DIR) is another installation's, in both directions", async () => {
-    const componentRoot = root();
-    const bundlePath = "/home/user/akm";
-    const row = (id: string, environment?: Record<string, string>) => ({
-      id,
-      nativeId: id,
-      binding: ["/opt/akm"],
-      target: "stash",
-      invocation: ["task", "run", id, "--bundle", "stash", "--scheduled"],
-      signature: `sig-${id}`,
-      ...(environment ? { environment } : {}),
-    });
-    const installed = [row("default-config"), row("other-config", { AKM_CONFIG_DIR: "/opt/b/config" })];
-    const plan = (environment?: Record<string, string>) =>
+    const installed = [
+      row("inline-mine", { environment: { AKM_BUNDLE_DIR: bundlePath }, ownerBundlePath: bundlePath }),
+      row("inline-other", { environment: { AKM_BUNDLE_DIR: "/other/stash" }, ownerBundlePath: "/other/stash" }),
+      row("legacy-mine", { contextPath: "/data/ctx-a.json", ownerBundlePath: bundlePath }),
+      row("legacy-other", { contextPath: "/data/ctx-b.json", ownerBundlePath: "/other/stash" }),
+      row("unattributed", {}),
+    ];
+    const plan = (primary: boolean) =>
       planSchedulerSync({
         sourceRoot: componentRoot,
         adapterId: "akm-task",
         bundleName: "stash",
-        bundlePath,
-        ...(environment ? { environment } : {}),
+        ...(primary ? { bundlePath } : {}),
         backend: "cron",
         installed,
       });
 
     // No source is desired, so each sync removes exactly the rows it owns.
-    expect((await plan()).removed).toEqual(["default-config"]);
-    expect((await plan({ AKM_CONFIG_DIR: "/opt/b/config" })).removed).toEqual(["other-config"]);
-    expect((await plan({ AKM_CONFIG_DIR: "/opt/c/config" })).removed).toEqual([]);
+    expect((await plan(true)).removed).toEqual(["inline-mine", "legacy-mine"]);
+    expect((await plan(false)).removed).toEqual([
+      "inline-mine",
+      "inline-other",
+      "legacy-mine",
+      "legacy-other",
+      "unattributed",
+    ]);
   });
 
   test("an orphaned row without a listed signature is removed like any other", async () => {

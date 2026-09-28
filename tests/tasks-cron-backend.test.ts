@@ -695,6 +695,72 @@ describe("cron backend drift detection", () => {
     expect(wrapperContent).toStartWith("#!/bin/sh\nexport AKM_BUNDLE_DIR='/srv/akm stash'\nexec ");
   });
 
+  // A spilled row names its wrapper script, not akm: list() reads the script
+  // to know which task the row runs, so a sync sees the row it already has.
+  test("a spilled row is listed from its wrapper script, with the signature install renders", () => {
+    const files = new Map<string, string>();
+    const backend = CRON_BACKEND({
+      ...opts(memoryExec()),
+      fs: {
+        ensureDir() {},
+        writeFile(file, content) {
+          files.set(file, content);
+        },
+        readFile(file) {
+          const content = files.get(file);
+          if (content === undefined) throw new Error(`ENOENT: ${file}`);
+          return content;
+        },
+      },
+      akmArgv: [`/${"x".repeat(1100)}`, "/opt/akm's cli.js"],
+    });
+    const binding = targeted(SYNC_TASK, "stash");
+    const environment = { AKM_BUNDLE_DIR: "/srv/akm stash" };
+
+    backend.install(binding, { environment });
+
+    expect(listSync(backend)).toEqual([
+      {
+        id: "ping",
+        nativeId: "ping",
+        enabled: true,
+        signature: backend.expectedSignature?.(binding, { environment }),
+        target: "stash",
+        binding: [`/${"x".repeat(1100)}`, "/opt/akm's cli.js"],
+        environment,
+        invocation: binding.invocation,
+      },
+    ]);
+  });
+
+  test("a spilled row 0.9.0 – 0.9.17-alpha.6 wrote is listed with the descriptor its script names", () => {
+    const wrapper = "/var/log/akm/.akm-cron-wrapper-ping-0123456789abcdef.sh";
+    const script = `#!/bin/sh\nexec /${"x".repeat(1100)} --scheduler-context /data/ctx.json task run ping --bundle stash --scheduled\n`;
+    const backend = CRON_BACKEND({
+      ...opts(
+        memoryExec(
+          `# akm:task ping BEGIN\n*/15 * * * * sh ${wrapper} > /var/log/akm/ping.log 2>&1\n# akm:task ping END\n`,
+        ),
+      ),
+      fs: {
+        ensureDir() {},
+        readFile: (file) => {
+          if (file !== wrapper) throw new Error(`ENOENT: ${file}`);
+          return script;
+        },
+      },
+    });
+
+    expect(listSync(backend)).toEqual([
+      expect.objectContaining({
+        id: "ping",
+        binding: [`/${"x".repeat(1100)}`],
+        contextPath: "/data/ctx.json",
+        invocation: ["task", "run", "ping", "--bundle", "stash", "--scheduled"],
+      }),
+    ]);
+  });
+
   test("changing a too-long invocation changes the wrapper script's path (drift detection survives the spill)", () => {
     const written = new Map<string, string>();
     const fs = {

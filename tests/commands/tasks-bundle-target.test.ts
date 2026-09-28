@@ -284,8 +284,10 @@ describe("bundle-targeted tasks via --bundle", () => {
       enabled: true,
       invocation: ["task", "run", "baz", "--bundle", "stash", "--scheduled"],
     };
-    // A configured bundle's row sets no environment: its config names it.
-    const expectedLine = buildCronLine(task, ["/usr/local/bin/akm"], "/var/log/akm");
+    // Every row carries the working stash it was synced from, as the old descriptor did.
+    const expectedLine = buildCronLine(task, ["/usr/local/bin/akm"], "/var/log/akm", {
+      AKM_BUNDLE_DIR: path.resolve(iso.stashDir),
+    });
     expect(body).toBe(expectedLine);
 
     // Adding with --bundle stash (the DEFAULT bundle by name) is byte-identical.
@@ -300,7 +302,7 @@ describe("bundle-targeted tasks via --bundle", () => {
     resetConfigCache();
 
     await akmTasksAdd({ id: "implicit-owner", schedule: "@daily", command: "true" }, { backend: cron() });
-    // No config names this stash, so its row carries the path inline.
+    // No config names this stash: the row's AKM_BUNDLE_DIR is how `--bundle stash` finds it.
     expect(cronBody(exec.current(), "implicit-owner")).toContain(
       `AKM_BUNDLE_DIR=${path.resolve(iso.stashDir)} /usr/local/bin/akm task run implicit-owner --bundle stash --scheduled`,
     );

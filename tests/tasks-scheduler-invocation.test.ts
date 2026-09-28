@@ -89,32 +89,39 @@ describe("scheduled task invocation", () => {
     ).toBeUndefined();
   });
 
-  test("a row sets AKM_BUNDLE_DIR only for the env-selected stash, plus only the AKM_*_DIR overrides set explicitly", () => {
-    const env = {
-      HOME: "/home/user",
-      PATH: "/opt/bin:/usr/bin",
-      XDG_STATE_HOME: "/home/user/some-desktop-app",
-      AKM_BUNDLE_DIR: "/srv/stash",
-      AKM_LLM_API_KEY: "must-not-be-serialized",
-    };
-    // A configured bundle: `--bundle <name>` finds it at fire time.
-    expect(scheduledRowEnvironment(undefined, env)).toEqual({});
-    // The env-selected stash: no config names it, so the row carries its path.
-    expect(scheduledRowEnvironment("/srv/stash", env)).toEqual({ AKM_BUNDLE_DIR: "/srv/stash" });
-
-    const explicit = scheduledRowEnvironment(undefined, {
-      ...env,
-      AKM_CONFIG_DIR: "/srv/config",
-      AKM_DATA_DIR: "/srv/data",
-      AKM_CACHE_DIR: "/srv/cache",
-      AKM_STATE_DIR: "/srv/state",
-    });
-    expect(explicit).toEqual({
-      AKM_CONFIG_DIR: "/srv/config",
-      AKM_DATA_DIR: "/srv/data",
-      AKM_CACHE_DIR: "/srv/cache",
-      AKM_STATE_DIR: "/srv/state",
-    });
+  test("every row sets AKM_BUNDLE_DIR to the working stash, plus only the AKM_*_DIR overrides set explicitly", () => {
+    const sandbox = makeSandboxDir("akm-row-environment-");
+    try {
+      const stash = path.join(sandbox.dir, "stash");
+      fs.mkdirSync(stash);
+      const env = {
+        HOME: sandbox.dir,
+        PATH: "/opt/bin:/usr/bin",
+        // Resolved defaults, including an XDG directory some other application
+        // set for this shell, resolve at fire time and are never frozen in.
+        XDG_STATE_HOME: path.join(sandbox.dir, "some-desktop-app"),
+        AKM_BUNDLE_DIR: stash,
+        AKM_LLM_API_KEY: "must-not-be-serialized",
+      };
+      expect(scheduledRowEnvironment(env)).toEqual({ AKM_BUNDLE_DIR: stash });
+      expect(
+        scheduledRowEnvironment({
+          ...env,
+          AKM_CONFIG_DIR: "/srv/config",
+          AKM_DATA_DIR: "/srv/data",
+          AKM_CACHE_DIR: "/srv/cache",
+          AKM_STATE_DIR: "/srv/state",
+        }),
+      ).toEqual({
+        AKM_BUNDLE_DIR: stash,
+        AKM_CONFIG_DIR: "/srv/config",
+        AKM_DATA_DIR: "/srv/data",
+        AKM_CACHE_DIR: "/srv/cache",
+        AKM_STATE_DIR: "/srv/state",
+      });
+    } finally {
+      sandbox.cleanup();
+    }
   });
 });
 

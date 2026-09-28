@@ -8,11 +8,13 @@
 // its other lines untouched:
 //
 //     # akm:task <id> BEGIN
-//     [SCHED] [AKM_BUNDLE_DIR=<stash>] /abs/akm task run <id> ... > <log> 2>&1
+//     [SCHED] AKM_BUNDLE_DIR=<working stash> /abs/akm task run <id> ... > <log> 2>&1
 //     # akm:task <id> END
 //
 // The row sets its own environment inline, as a `VAR=value` prefix (see
-// `src/tasks/scheduler-invocation.ts`); PATH is the `# akm:env` block.
+// `src/tasks/scheduler-invocation.ts`); PATH is the `# akm:env` block. A
+// command over the portable line limit runs `sh <wrapper script>` instead,
+// and the script holds the same environment and argv.
 //
 // The backend reads/writes the user's crontab via `crontab -l` and
 // `crontab -`. Every mutation is one read → modify the akm blocks (and the
@@ -37,6 +39,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
@@ -69,7 +72,11 @@ export interface CronExec {
   write(content: string): CronExecResult;
 }
 
-export type CronFs = Pick<NodeFs, "ensureDir"> & Partial<Pick<NodeFs, "writeFile">>;
+export type CronFs = Pick<NodeFs, "ensureDir"> &
+  Partial<Pick<NodeFs, "writeFile">> & {
+    /** Read a spilled row's wrapper script back; the real filesystem when absent. */
+    readFile?(file: string): string;
+  };
 
 export interface CronBackendOptions {
   exec?: CronExec;
@@ -98,6 +105,7 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
   const logDir = options.logDir ?? getTaskLogDir();
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
   const envPath = options.envPath === false ? undefined : (options.envPath ?? process.env.PATH);
+  const readFile = options.fs?.readFile ?? ((file: string) => fs.readFileSync(file, "utf8"));
   const lineFor = (task: SchedulerBinding, opts?: SchedulerInstallOptions) =>
     buildCronLineParts(task, [...(opts?.binding ?? akmArgv)], logDir, opts?.environment);
 
@@ -136,7 +144,7 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
     list() {
       const rows: InstalledSchedulerBinding[] = [];
       for (const { id, body } of listBlocks(readCrontab(exec))) {
-        const parsed = extractCronInvocation(body);
+        const parsed = extractCronInvocation(body) ?? extractCronWrapperInvocation(body, readFile);
         if (!parsed) continue;
         rows.push({
           id: schedulerLogicalBindingId(id, parsed.invocation),
@@ -302,6 +310,40 @@ export function extractCronInvocation(body: string): ParsedScheduledInvocation |
   const redirectIndex = fields.findIndex((field, index) => index >= commandStart && (field === ">" || field === ">>"));
   if (redirectIndex === -1) return undefined;
   const parsed = parseScheduledInvocationArgv(fields.slice(commandStart, redirectIndex));
+  if (!parsed) return undefined;
+  const environment = scheduledRowEnvironmentFrom(variables);
+  return environment ? { ...parsed, environment } : parsed;
+}
+
+/**
+ * Parse a row spilled into a wrapper script (`sh <script> > <log> 2>&1`):
+ * the script's `export NAME=value` lines and its `exec` argv. Only akm's own
+ * wrapper scripts are read; one that is gone or does not parse leaves the
+ * row unlisted, as any unparsable row is.
+ */
+export function extractCronWrapperInvocation(
+  body: string,
+  readFile: (file: string) => string,
+): ParsedScheduledInvocation | undefined {
+  const line = body.startsWith(DISABLED_PREFIX) ? body.slice(DISABLED_PREFIX.length) : body;
+  const fields = splitCronShellWords(line);
+  const script = fields[6];
+  if (fields[5] !== "sh" || !script || !path.basename(script).startsWith(CRON_WRAPPER_PREFIX)) return undefined;
+  if (fields[7] !== ">" && fields[7] !== ">>") return undefined;
+  let content: string;
+  try {
+    content = readFile(script);
+  } catch {
+    return undefined;
+  }
+  const variables: Record<string, string> = {};
+  let parsed: ParsedScheduledInvocation | undefined;
+  for (const scriptLine of content.split("\n")) {
+    const words = splitCronShellWords(scriptLine);
+    const assignment = words[0] === "export" ? /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(words[1] ?? "") : null;
+    if (assignment) variables[assignment[1]!] = assignment[2]!;
+    else if (words[0] === "exec") parsed = parseScheduledInvocationArgv(words.slice(1));
+  }
   if (!parsed) return undefined;
   const environment = scheduledRowEnvironmentFrom(variables);
   return environment ? { ...parsed, environment } : parsed;

@@ -71,18 +71,24 @@ function cronSchedules(crontab: string): string[] {
   });
 }
 
-/** Each akm row's id with its launcher: the words between the cron fields and `--scheduler-context` or `task run`. */
+/** Each akm row's id with its launcher: the words after its `NAME=value` environment, up to `--scheduler-context` or `task run`. */
 function cronLaunchers(crontab: string): string[] {
   const lines = crontab.split(/\r?\n/);
   return lines.flatMap((line, index) => {
     const id = /^# akm:task (.+) BEGIN$/.exec(line)?.[1];
     if (!id) return [];
-    const words = (lines[index + 1] ?? "").split(/\s+/).slice(5);
+    const words = withoutAssignments((lines[index + 1] ?? "").split(/\s+/).slice(5));
     const end = words.findIndex(
       (word, at) => word === "--scheduler-context" || (word === "task" && words[at + 1] === "run"),
     );
     return [`${id} ${words.slice(0, end).join(" ")}`];
   });
+}
+
+/** A row's command without the leading `NAME=value` assignments it sets for itself. */
+function withoutAssignments(words: string[]): string[] {
+  const start = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+  return start === -1 ? [] : words.slice(start);
 }
 
 /** Extract a scheduled task's generated `akm task run …` command tail from the fake crontab. */
@@ -285,8 +291,10 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(commandB).toContain(livePrefix);
     expect(crontab.includes(home.taskIds.c)).toBe(false);
     // Each row is its command plus its schedule: the descriptor argument is
-    // gone, and every row keeps its launcher and its time.
+    // gone, its one value (the working stash) is set inline, and every row
+    // keeps its launcher and its time.
     expect(crontab).not.toContain("--scheduler-context");
+    expect(commandA.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `)).toBe(true);
     expect(cronSchedules(crontab)).toEqual(cronSchedules(before));
     expect(cronLaunchers(crontab)).toEqual(cronLaunchers(before));
   });
@@ -317,7 +325,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     // via quoteForCron since fixture paths never contain shell-special
     // characters) followed by `task run <ref>`. Strip the `task run …` tail
     // and re-invoke the same resolved argv with `--version` instead.
-    const tokens = command.split(/\s+/);
+    const tokens = withoutAssignments(command.split(/\s+/));
     const taskIndex = tokens.indexOf("task");
     if (taskIndex <= 0) throw new Error(`Could not find the "task" subcommand in generated command: ${command}`);
     const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, taskIndex);

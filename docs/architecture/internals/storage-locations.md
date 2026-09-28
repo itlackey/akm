@@ -705,7 +705,7 @@ indexed like a local filesystem bundle.
 
 ### macOS (launchd)
 
-**Plist:** `~/Library/LaunchAgents/com.akm.task.<id>.plist` — XML plist. Contains label, `ProgramArguments` (`akm task run <id> --bundle <bundle> --scheduled`), `StandardOutPath`, `StandardErrorPath`, trigger (`StartInterval` or `StartCalendarInterval`), and `EnvironmentVariables` (PATH captured at install time, plus `AKM_BUNDLE_DIR` for a stash selected by that variable and any `AKM_*_DIR` the syncing shell set explicitly).
+**Plist:** `~/Library/LaunchAgents/com.akm.task.<id>.plist` — XML plist. Contains label, `ProgramArguments` (`akm task run <id> --bundle <bundle> --scheduled`), `StandardOutPath`, `StandardErrorPath`, trigger (`StartInterval` or `StartCalendarInterval`), and `EnvironmentVariables` (PATH captured at install time, `AKM_BUNDLE_DIR` naming the syncing shell's working stash, and any other `AKM_*_DIR` that shell set explicitly).
 
 Registered via `launchctl bootstrap gui/<uid> <plist>`.
 
@@ -715,12 +715,12 @@ No files written. User crontab edited in-place via `crontab -l` / `crontab -`. E
 
 ```
 # akm:task <id> BEGIN
-<cronexpr> [AKM_BUNDLE_DIR=<stash>] /abs/akm task run <id> --bundle <bundle> --scheduled > ~/.cache/akm/tasks/logs/<id>.log 2>&1
+<cronexpr> AKM_BUNDLE_DIR=<working stash> /abs/akm task run <id> --bundle <bundle> --scheduled > ~/.cache/akm/tasks/logs/<id>.log 2>&1
 # akm:task <id> END
 ```
 
-(`AKM_BUNDLE_DIR=` appears only for a stash selected by that variable that no
-config names. Releases 0.9.0 – 0.9.17-alpha.6 also wrote a
+(A command over 1,000 bytes runs `sh <log dir>/.akm-cron-wrapper-<id>-<hash>.sh`
+instead. Releases 0.9.0 – 0.9.17-alpha.6 wrote the same values into a
 `$DATA/tasks/context/<sha256>.json` descriptor per sync and named it in each
 row with `--scheduler-context`; nothing writes those files now.)
 

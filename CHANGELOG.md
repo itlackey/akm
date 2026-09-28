@@ -27,23 +27,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `scripts/akm-migrate/task-migrate.ts`,
   `src/core/adapter/adapters/akm-task-adapter.ts`)
 - **A scheduled row is its command plus its schedule, and carries its own
-  context.** Rows no longer name a `--scheduler-context` descriptor file. A
-  configured bundle's row is `<launcher> task run <id> --bundle <bundle>
-  --scheduled`, which config resolves at fire time. The env-selected working
-  stash (`AKM_BUNDLE_DIR` naming no configured bundle) sets that variable in
-  the row itself, as does any `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
-  `AKM_CACHE_DIR` or `AKM_STATE_DIR` the syncing shell set explicitly: a
-  `VAR=value` prefix in the crontab, an `EnvironmentVariables` entry in a
-  launchd plist, a `$env:VAR='value';` assignment ahead of the command in
-  Task Scheduler (its action has no environment of its own). A row belongs
-  to the installation whose config it reads: `akm task sync` leaves alone a
-  row that carries a different `AKM_CONFIG_DIR` (another installation
-  sharing the crontab) and reports its id as taken (#846).
+  context.** Rows no longer name a `--scheduler-context` descriptor file;
+  they set what it held themselves. Every row sets `AKM_BUNDLE_DIR` to the
+  working stash of the shell that ran `akm task sync`, plus any
+  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or `AKM_STATE_DIR` that
+  shell set explicitly: a `VAR=value` prefix in the crontab, an
+  `EnvironmentVariables` entry in a launchd plist, a `$env:VAR='value';`
+  assignment ahead of the command in Task Scheduler (its action has no
+  environment of its own). Scheduled runs see the same environment as
+  before, and sync still tells installations sharing a crontab apart by
+  that path (#846).
   **What hosts see:** the first `akm task sync` after upgrading rewrites
   every akm row once. `akm task sync --dry-run` lists each one as an update,
   never an add or a remove; each keeps its launcher and its schedule, and
-  only the `--scheduler-context <file>` argument goes. On a host with a
-  configured `akm` bundle a row changes from
+  the `--scheduler-context <file>` argument becomes an inline
+  `AKM_BUNDLE_DIR=<working stash>`. On a host whose working stash is
+  `/home/u/akm` a row changes from
 
   ```text
   30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm --scheduler-context /home/u/.local/share/akm/tasks/context/e898….json task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
@@ -52,7 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   to
 
   ```text
-  30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
+  30 8 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
   ```
 
   Rows written by 0.9.0 through 0.9.17-alpha.6 keep firing until that sync:
@@ -73,6 +72,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A cron row too long for one line is seen by `akm task sync` again.** A
+  command over 1,000 bytes runs from a wrapper script, and sync could not
+  read which task such a row ran: every sync, and every `--dry-run`, showed
+  it as an add and wrote it again. Sync now reads the script, so the row is
+  unchanged or an update like any other. (`src/tasks/backends/cron.ts`)
 - **A `$` or a backslash in a scheduled row's value is kept.** launchd and
   Task Scheduler rows passed their values through a string replacement that
   read `$'`, `$&` and `$$` as patterns, so a path such as a Windows admin

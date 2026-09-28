@@ -156,9 +156,10 @@ describe("akmTasksSync — schedule drift", () => {
     expect(result.unchanged).toEqual(["alpha"]);
     expect(result.installed).toEqual([]);
     // The crontab now carries the new schedule, not the stale one.
-    expect(exec.current()).toContain("45 */6 * * * /usr/local/bin/akm task run beta --bundle stash --scheduled");
-    expect(exec.current()).toContain("task run beta --bundle");
-    expect(exec.current()).not.toContain("0 2 * * * /usr/local/bin/akm");
+    expect(exec.current()).toContain(
+      `45 */6 * * * AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm task run beta --bundle stash --scheduled`,
+    );
+    expect(exec.current()).not.toContain("0 2 * * * ");
   });
 
   test("removing local activation unschedules the task without editing source", async () => {
@@ -398,7 +399,7 @@ describe("akmTasksSync — schedule drift", () => {
     );
 
     expect(exec.current().match(/# akm:task \S+ BEGIN/g)).toEqual(["# akm:task alpha BEGIN"]);
-    expect(exec.current()).toContain("0 3 * * * /usr/local/bin/akm");
+    expect(exec.current()).toContain(`0 3 * * * AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm`);
   });
 
   test("symlinks in a bundle are followed, never refused", async () => {
@@ -469,7 +470,7 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
 
   const byId = (rows: Array<{ id: string; body: string }>) => [...rows].sort((a, b) => a.id.localeCompare(b.id));
 
-  test("a configured bundle's rows are updates that keep each launcher and schedule and drop the descriptor", async () => {
+  test("a configured bundle's rows are updates that keep each launcher and schedule and carry AKM_BUNDLE_DIR inline", async () => {
     writeTask("alpha", "*/15 * * * *");
     writeTask("beta", "0 2 * * *");
     const context = writeLegacyDescriptor(stashDir);
@@ -490,14 +491,16 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
     expect(result.removed).toEqual([]);
     expect(result.failures).toEqual([]);
     expect(result.updated.sort()).toEqual(["alpha", "beta"]);
+    // The descriptor's one value, the working stash, moves into the row.
+    const inline = `AKM_BUNDLE_DIR=${path.resolve(stashDir)}`;
     expect(byId(listBlocks(exec.current()))).toEqual([
       {
         id: "alpha",
-        body: `*/15 * * * * ${LAUNCHER} task run alpha --bundle stash --scheduled > /var/log/akm/alpha.log 2>&1`,
+        body: `*/15 * * * * ${inline} ${LAUNCHER} task run alpha --bundle stash --scheduled > /var/log/akm/alpha.log 2>&1`,
       },
       {
         id: "beta",
-        body: `0 2 * * * ${LAUNCHER} task run beta --bundle stash --scheduled > /var/log/akm/beta.log 2>&1`,
+        body: `0 2 * * * ${inline} ${LAUNCHER} task run beta --bundle stash --scheduled > /var/log/akm/beta.log 2>&1`,
       },
     ]);
     expect((await akmTasksSync({ backend })).unchanged.sort()).toEqual(["alpha", "beta"]);
@@ -547,14 +550,18 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
   });
 });
 
-// A second installation (another config dir) sharing this crontab writes rows
-// that name a bundle of the same name; they are its rows, not this one's (#846).
+// Another installation sharing this crontab (another config dir, HOME or
+// XDG_CONFIG_HOME) writes rows naming a bundle of the same name. Every row
+// carries its installation's working stash as AKM_BUNDLE_DIR, so they are its
+// rows, not this one's (#846).
 describe("akmTasksSync — rows another installation wrote", () => {
-  test("a row that reads another config (inline AKM_CONFIG_DIR) is left alone, and its id is reported as taken", async () => {
+  test.each([
+    ["another config dir", "AKM_BUNDLE_DIR=/opt/b/stash AKM_CONFIG_DIR=/opt/b/config"],
+    ["another HOME or XDG_CONFIG_HOME", "AKM_BUNDLE_DIR=/opt/b/stash"],
+  ])("a row from %s is left alone, and its id is reported as taken", async (_label, environment) => {
     writeTask("backup", "0 3 * * *");
     writeTask("nightly", "0 4 * * *", false);
-    const foreignRow =
-      "0 3 * * * AKM_CONFIG_DIR=/opt/b/config /usr/local/bin/akm task run nightly --bundle stash --scheduled > /var/log/akm/nightly.log 2>&1";
+    const foreignRow = `0 3 * * * ${environment} /usr/local/bin/akm task run nightly --bundle stash --scheduled > /var/log/akm/nightly.log 2>&1`;
     const exec = memoryExec(["# akm:task nightly BEGIN", foreignRow, "# akm:task nightly END", ""].join("\n"));
     const backend = CRON_BACKEND({
       exec,
@@ -588,7 +595,7 @@ describe("akmTasksSync — rows another installation wrote", () => {
       setSchedulerRefEnabled("flat//weekly", true);
       const row = [
         "# akm:task weekly BEGIN",
-        "0 5 * * 0 /usr/local/bin/akm task run weekly --bundle flat --scheduled > /var/log/akm/weekly.log 2>&1",
+        `0 5 * * 0 AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm task run weekly --bundle flat --scheduled > /var/log/akm/weekly.log 2>&1`,
         "# akm:task weekly END",
         "",
       ].join("\n");
@@ -610,6 +617,64 @@ describe("akmTasksSync — rows another installation wrote", () => {
     } finally {
       fs.rmSync(flat, { recursive: true, force: true });
     }
+  });
+});
+
+// A cron row over 1000 bytes runs a wrapper script (`sh <script>`). Sync must
+// see it as the row it already has: unchanged, or an update, never an add.
+describe("akmTasksSync — rows spilled into a wrapper script", () => {
+  function spillingBackend(exec: CronExec, files: Map<string, string>) {
+    return CRON_BACKEND({
+      exec,
+      fs: {
+        ensureDir() {},
+        writeFile(file, content) {
+          files.set(file, content);
+        },
+        readFile(file) {
+          const content = files.get(file);
+          if (content === undefined) throw new Error(`ENOENT: ${file}`);
+          return content;
+        },
+      },
+      logDir: "/var/log/akm",
+      akmArgv: [`/${"x".repeat(1100)}`],
+      envPath: false,
+    });
+  }
+
+  test("a spilled row is unchanged on the next sync and its dry-run", async () => {
+    writeTask("alpha", "*/15 * * * *");
+    const files = new Map<string, string>();
+    const exec = memoryExec();
+    const backend = spillingBackend(exec, files);
+
+    expect((await akmTasksSync({ backend })).installed).toEqual(["alpha"]);
+    expect(exec.current()).toContain("sh /var/log/akm/.akm-cron-wrapper-alpha-");
+
+    const preview = await akmTasksSyncPlan({ backend });
+    expect(preview).toMatchObject({ adds: [], updates: [], removes: [], unchanged: ["alpha"], failures: [] });
+    expect((await akmTasksSync({ backend })).unchanged).toEqual(["alpha"]);
+  });
+
+  test("a spilled row 0.9.0 – 0.9.17-alpha.6 wrote is an update", async () => {
+    writeTask("alpha", "*/15 * * * *");
+    const context = path.join(stashDir, "legacy-context.json");
+    fs.writeFileSync(context, JSON.stringify({ version: 1, environment: { AKM_BUNDLE_DIR: stashDir } }));
+    const wrapper = "/var/log/akm/.akm-cron-wrapper-alpha-0123456789abcdef.sh";
+    const files = new Map([
+      [
+        wrapper,
+        `#!/bin/sh\nexec /${"x".repeat(1100)} --scheduler-context ${context} task run alpha --bundle stash --scheduled\n`,
+      ],
+    ]);
+    const exec = memoryExec(
+      `# akm:task alpha BEGIN\n*/15 * * * * sh ${wrapper} > /var/log/akm/alpha.log 2>&1\n# akm:task alpha END\n`,
+    );
+
+    const preview = await akmTasksSyncPlan({ backend: spillingBackend(exec, files) });
+    expect(preview).toMatchObject({ adds: [], removes: [], failures: [] });
+    expect(preview.updates.map((update) => update.id)).toEqual(["alpha"]);
   });
 });
 

@@ -49,7 +49,7 @@ import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
-import type { InstalledSchedulerBinding, SchedulerBackend } from "../../tasks/backends/types";
+import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
@@ -209,7 +209,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     }
     // Native ids are shared by every bundle and installation: refuse before
     // writing anything when another one already schedules this id.
-    const scope = bundleScope(bundle.config, bundle.bundleName, stashDir);
+    const scope = bundleScope(bundle.bundleName, stashDir);
     const installed = await listInstalledRows(sched);
     for (const binding of bindings) {
       const row = installed.find((candidate) => installedRowNativeId(candidate) === schedulerBindingNativeId(binding));
@@ -615,7 +615,7 @@ async function buildSchedulerSyncPlan(
       desired.push(...compiled.desired);
       failures.push(...compiled.failures);
       for (const failure of compiled.failures) if (failure.ref) keepRefs.add(failure.ref);
-      scopes.push({ ...bundleScope(config, resolved.source.name, stashDir), adapterId });
+      scopes.push({ ...bundleScope(resolved.source.name, stashDir), adapterId });
     } catch (cause) {
       if (bundleTarget) throw cause;
       failures.push({ path: name ?? "(default bundle)", reason: errorMessage(cause) });
@@ -648,7 +648,7 @@ async function buildSchedulerSyncPlan(
     installed,
     scopes,
     ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
-    ...(runtime.launcher ? { launcher: runtime.launcher } : {}),
+    installOptions: runtime.options,
     rebind: options.rebind === true,
     extraRemovals,
     keepRefs,
@@ -660,28 +660,30 @@ async function buildSchedulerSyncPlan(
       : plan.installed.length > 0;
   if (runtime.via === "checkout" && writesLauncher) {
     warnings.push(
-      `Scheduled tasks now run akm from a source checkout (${runtime.launcher?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
+      `Scheduled tasks now run akm from a source checkout (${runtime.options.binding?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
     );
   }
   return { sched, plan: { ...plan, failures: [...failures, ...plan.failures] }, warnings };
 }
 
 /**
- * The launcher rows are written with. A row that is already installed keeps
- * its launcher unless `--rebind` (see `installOptionsFor`). An injected
+ * The launcher and environment rows are written with. The environment
+ * follows the current policy on every sync; a row that is already installed
+ * keeps its launcher unless `--rebind` (see `installOptionsFor`). An injected
  * backend (tests) renders with its own launcher.
  */
 function prepareSchedulerRuntime(deps: SchedulerDeps): {
-  launcher?: readonly string[];
+  options: SchedulerInstallOptions;
   via?: ResolvedAkmInvocation["via"];
 } {
+  const environment = scheduledRowEnvironment();
   if (deps.schedulerRuntime) {
     const runtime = deps.schedulerRuntime();
-    return { launcher: runtime.binding, ...(runtime.via ? { via: runtime.via } : {}) };
+    return { options: { binding: runtime.binding, environment }, ...(runtime.via ? { via: runtime.via } : {}) };
   }
-  if (deps.backend) return {};
+  if (deps.backend) return { options: { environment } };
   const invocation = resolveAkmInvocation();
-  return { launcher: invocation.argv, via: invocation.via };
+  return { options: { binding: invocation.argv, environment }, via: invocation.via };
 }
 
 /** One read of the akm-owned rows, each attributed to the bundle path it names (#846). */
@@ -707,21 +709,9 @@ function installedRowBundleDir(row: InstalledSchedulerBinding): string | undefin
   }
 }
 
-/**
- * The rows one bundle's sync owns (#846), and the environment they set
- * inline: `AKM_BUNDLE_DIR` only for the env-selected working stash, which no
- * config names.
- */
-function bundleScope(config: AkmConfig, bundleName: string, stashDir: string): SchedulerBundleScope {
-  const bundlePath = path.resolve(stashDir);
-  const configured = resolveActiveConfiguredSources(config).some((source) => source.name === bundleName);
-  const environment = scheduledRowEnvironment(configured ? undefined : bundlePath);
-  return {
-    bundleName,
-    bundlePath,
-    ...(isPrimaryStashPath(bundlePath) ? { primary: true } : {}),
-    ...(Object.keys(environment).length > 0 ? { environment } : {}),
-  };
+/** The primary bundle proves its rows by path (#846); any other bundle by its config name. */
+function bundleScope(bundleName: string, stashDir: string): SchedulerBundleScope {
+  return isPrimaryStashPath(stashDir) ? { bundleName, bundlePath: path.resolve(stashDir) } : { bundleName };
 }
 
 function installedSchedulerBundle(config: AkmConfig, row: InstalledSchedulerBinding): string | undefined {
@@ -1033,8 +1023,9 @@ export function resolveTaskReadBundle(
  * New scheduler bindings always carry a canonical `--bundle <owner>` token,
  * including an env-selected working stash. That stash need not be persisted in
  * config (CI, one-shot tools, and fresh installs commonly use only
- * AKM_BUNDLE_DIR), so its scheduled child — whose row sets AKM_BUNDLE_DIR —
- * must accept precisely its derived owner name.
+ * AKM_BUNDLE_DIR), so its scheduled child — every row sets AKM_BUNDLE_DIR to
+ * the working stash it was synced from — must accept precisely its derived
+ * owner name.
  *
  * This is intentionally narrower than an unknown-bundle fallback: a configured
  * source always wins, and an unconfigured selector is accepted only when it is

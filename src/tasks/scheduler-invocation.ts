@@ -11,14 +11,16 @@
  * set inline by the row itself (a cron `VAR=value` prefix, a launchd
  * `EnvironmentVariables` entry, a PowerShell `$env:` assignment).
  *
- *   - `AKM_BUNDLE_DIR` only for the env-selected working stash, a bundle no
- *     config names: `--bundle <name>` cannot find it at fire time without it.
- *     Sync also attributes the row to that stash by it (#846). A configured
- *     bundle's row needs nothing: its config names it.
+ *   - `AKM_BUNDLE_DIR`: the working stash of the process that ran
+ *     `akm task sync`, on every row. The scheduled run uses the same working
+ *     stash, `--bundle <name>` finds a stash no config names, and sync
+ *     attributes the row to the installation that wrote it (#846).
  *   - `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR`
  *     only when the process that ran `akm task sync` set them explicitly. A
  *     default resolves at fire time exactly as it does for an interactive
  *     command.
+ *
+ * That is exactly what the `--scheduler-context` descriptor held.
  *
  * `PATH` is the scheduler's own: the crontab's `# akm:env` block, the plist's
  * `EnvironmentVariables`.
@@ -32,6 +34,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
+import { resolveStashDir } from "../core/common";
 import { ConfigError } from "../core/errors";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
 import { normaliseTaskConceptId } from "./task-id";
@@ -74,16 +77,18 @@ export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): R
 }
 
 /**
- * The environment one bundle's rows set inline: `AKM_BUNDLE_DIR` when
- * `envBundleDir` names the env-selected working stash, plus whichever
- * `AKM_*_DIR` overrides the syncing process set explicitly.
+ * The environment every row a sync writes sets inline: `AKM_BUNDLE_DIR`,
+ * the syncing process's working stash, plus whichever `AKM_*_DIR` overrides
+ * it set explicitly. With no working stash to resolve (no default bundle, no
+ * `AKM_BUNDLE_DIR`), rows name their bundle by `--bundle` alone.
  */
-export function scheduledRowEnvironment(
-  envBundleDir: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-): ScheduledRowEnvironment {
+export function scheduledRowEnvironment(env: NodeJS.ProcessEnv = process.env): ScheduledRowEnvironment {
   const out: Partial<Record<ScheduledTaskContextKey, string>> = {};
-  if (envBundleDir) out.AKM_BUNDLE_DIR = path.resolve(envBundleDir);
+  try {
+    out.AKM_BUNDLE_DIR = path.resolve(resolveStashDir(env));
+  } catch {
+    // No working stash: there is no primary bundle to attribute rows to either.
+  }
   for (const key of EXPLICIT_CONTEXT_KEYS) {
     const value = env[key]?.trim();
     if (value) out[key] = path.resolve(value);
