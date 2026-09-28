@@ -6,17 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- **`akm improve --require-engines` no longer skips a run because the LLM
-  endpoint is busy.** Its reachability probe, one short completion, gave up
-  after 3 seconds, so a local server busy with another job looked
-  unreachable and the whole scheduled run failed (all four scheduled runs on
-  2026-09-27). The probe now waits as long as the engine's own `timeoutMs`,
-  like any other request on that connection, and the error's hint says to
-  check the endpoint rather than to run `akm setup`.
-  (`src/commands/improve/improve-cli.ts`)
-
 ### Changed
 
 - **akm reads only task source v4.** A `version: 2` or `version: 3` task
@@ -80,21 +69,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
   `src/tasks/backends/schtasks.ts`, `src/tasks/scheduler-sync.ts`,
   `src/commands/tasks/tasks.ts`)
+- **`akm improve` reworks only what gets read (#986).** An asset with fresh
+  feedback, or one you name (`akm improve skills/x`), is handled as before.
+  Every other pick must now be in the retrieval scope. That covers the
+  proactive-maintenance, high-salience and forgetting-safety lanes, and the
+  memories consolidation judges. An asset is in scope if a user `search`,
+  `curate` or `show` returned it, or user `feedback` named it, in the last 90
+  days, which is the usage log's retention. A hit on a `.derived` memory counts
+  for its parent. New material that no improve stage has processed yet is also
+  in scope. There is no new config key.
 
-### Fixed
+  Measured with `akm improve --dry-run` on a copy of the maintainer's bundle
+  (19,870 assets), against 0.9.17-alpha.6:
+  - The fallback lanes pick from 6,450 assets instead of 15,686, and 9,236
+    refs are left out. No lane setting can reach the unread tail any more. In
+    July the proactive lane rewrote 3,069 assets, and 3,059 of them had not
+    been retrieved since the usage log began on 1 July.
+  - Consolidation judges 59 memories instead of 69.
+  - The high-salience lane no longer admits distill outputs nobody has read (2
+    today).
+  - Under the scheduled caps, today's nightly work is unchanged. The default
+    strategy selects the same 50 feedback-driven refs, and weekly proactive
+    maintenance selects the same 25, because salience ranking already puts
+    retrieved assets first.
 
-- **A cron row too long for one line is seen by `akm task sync` again.** A
-  command over 1,000 bytes runs from a wrapper script, and sync could not
-  read which task such a row ran: every sync, and every `--dry-run`, showed
-  it as an add and wrote it again. Sync now reads the script, so the row is
-  unchanged or an update like any other. (`src/tasks/backends/cron.ts`)
-- **A `$` or a backslash in a scheduled row's value is kept.** launchd and
-  Task Scheduler rows passed their values through a string replacement that
-  read `$'`, `$&` and `$$` as patterns, so a path such as a Windows admin
-  share (`\\nas\share\akm$`) came out corrupted; reading a crontab row
-  back dropped a backslash inside a single-quoted value.
-  (`src/tasks/backends/launchd.ts`, `src/tasks/backends/schtasks.ts`,
-  `src/tasks/backends/cron.ts`)
+  `akm improve --dry-run` and the run result report the left-out refs as a new
+  `retrieval` gate. Health reports them under the skip reason `not_retrieved`.
+  Improve results stored by earlier releases, which have no such gate, still
+  decode. (`src/commands/improve/retrieval-scope.ts`,
+  `src/commands/improve/preparation.ts`, `src/commands/improve/consolidate.ts`)
 
 - **Reflect refuses a rewrite that makes an asset worse for its own searches
   (#722).** Before reflect proposes a rewrite of an existing asset, it grades
@@ -113,6 +116,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   whose 30 rewrites had 102 usable queries, that is 204 calls, about 6 more
   minutes on a 73-minute run. (`src/commands/improve/retrieval-gate.ts`,
   `src/commands/improve/reflect.ts`)
+
+### Fixed
+
+- **A cron row too long for one line is seen by `akm task sync` again.** A
+  command over 1,000 bytes runs from a wrapper script, and sync could not
+  read which task such a row ran: every sync, and every `--dry-run`, showed
+  it as an add and wrote it again. Sync now reads the script, so the row is
+  unchanged or an update like any other. (`src/tasks/backends/cron.ts`)
+- **A `$` or a backslash in a scheduled row's value is kept.** launchd and
+  Task Scheduler rows passed their values through a string replacement that
+  read `$'`, `$&` and `$$` as patterns, so a path such as a Windows admin
+  share (`\\nas\share\akm$`) came out corrupted; reading a crontab row
+  back dropped a backslash inside a single-quoted value.
+  (`src/tasks/backends/launchd.ts`, `src/tasks/backends/schtasks.ts`,
+  `src/tasks/backends/cron.ts`)
+- **`akm improve --require-engines` no longer skips a run because the LLM
+  endpoint is busy.** Its reachability probe, one short completion, gave up
+  after 3 seconds, so a local server busy with another job looked
+  unreachable and the whole scheduled run failed (all four scheduled runs on
+  2026-09-27). The probe now waits as long as the engine's own `timeoutMs`,
+  like any other request on that connection, and the error's hint says to
+  check the endpoint rather than to run `akm setup`.
+  (`src/commands/improve/improve-cli.ts`)
 
 ## [0.9.17-alpha.6] - 2026-09-27
 
