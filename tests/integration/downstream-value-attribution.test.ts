@@ -113,7 +113,6 @@ function installGraphFixture(): void {
   const db = openExistingDatabase(getDbPath());
   try {
     replaceStoredGraph(db, {
-      schemaVersion: 2,
       generatedAt: "2026-07-22T00:00:00.000Z",
       stashRoot: storage.stashDir,
       files: [

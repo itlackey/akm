@@ -15,7 +15,6 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { deleteStoredGraph, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
-import { GRAPH_FILE_SCHEMA_VERSION } from "../../../src/indexer/graph/graph-extraction";
 import { listRelatedPathsForFile } from "../../../src/indexer/graph/graph-related";
 import type { GraphFile } from "../../../src/indexer/graph/graph-types";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
@@ -218,7 +217,6 @@ function uninstallGraph(): void {
 
 function installGraph(): void {
   const graph: GraphFile = {
-    schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot: stashDir,
     files: [
@@ -385,7 +383,6 @@ describe("listRelatedPathsForFile (SQL-backed)", () => {
         },
       );
       replaceStoredGraph(db, {
-        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
         generatedAt: new Date().toISOString(),
         stashRoot: root,
         files: [

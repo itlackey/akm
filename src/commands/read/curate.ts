@@ -17,14 +17,11 @@
  * drive `curateSearchResults` with a fixture search response.
  */
 
-import fs from "node:fs";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { getIndexPassConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import { searchHitContent } from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
@@ -32,7 +29,6 @@ import {
   getSearchHitAttribution,
   usageEventAttributionMetadata,
 } from "../../indexer/search/search-attribution";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
@@ -47,7 +43,6 @@ import type {
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
-import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -129,6 +124,8 @@ export interface CurateOptions {
 
 const DEFAULT_CURATE_LIMIT = 4;
 const MAX_CURATE_SUPPORT_REFS = 2;
+/** The line of `src/assets/stash-skeleton/README.md` that reaches curate verbatim as a query. */
+const STASH_README_LINE = "This is an **AKM stash** — a structured knowledge repository that stores reusable";
 /** Fused candidates the reranker reorders when `search.curateRerank.topN` is unset. */
 const DEFAULT_CURATE_RERANK_TOP_N = 30;
 /** Characters of name, description and content sent to the reranker per candidate. */
@@ -208,6 +205,20 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     );
   }
 
+  const nonTask = nonTaskInput(trimmedQuery);
+  if (nonTask) {
+    const abstained: CurateResponse = {
+      query: options.query,
+      summary: `Curate abstained: the input is ${nonTask}, not a task.`,
+      items: [],
+      tip: 'Nothing was selected on purpose. To curate for it, pass the task itself: akm curate "<what you are trying to do>".',
+    };
+    if (!options.skipLogging) {
+      logCurateEvent(options.query, abstained, options.eventSource, options.attributionProjection);
+    }
+    return abstained;
+  }
+
   const limit = options.limit && options.limit > 0 ? options.limit : DEFAULT_CURATE_LIMIT;
   const source = options.source ?? parseSearchSource("local");
   const searchResponse =
@@ -225,6 +236,20 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
   }
   return result;
+}
+
+/**
+ * What the (trimmed) curate input is when it is not a task, else undefined.
+ * Harness and tool envelopes (`<task-notification>…`, `<system-reminder>…`,
+ * `<cross-session-message …>…`) start with a tag and close one, and the stash
+ * README line arrives verbatim; on the retrieval suite neither shape occurs in
+ * a real query. Length is not a signal: prompts over 2,000 characters found
+ * relevant assets at about the rate of shorter long prompts.
+ */
+function nonTaskInput(query: string): string | undefined {
+  if (query.startsWith("<") && query.includes("</")) return "a harness or tool envelope";
+  if (query === STASH_README_LINE) return "the akm stash README boilerplate";
+  return undefined;
 }
 
 export async function curateSearchResults(
@@ -344,11 +369,6 @@ async function enrichCuratedStashHit(
     shown = undefined;
   }
 
-  // #624-P3: when lazy graph extraction is opted in, enqueue an ungraphed
-  // asset for a later pass to extract. Fire-and-forget, non-blocking, NO inline
-  // extraction and NO LLM call here. Default-off (flag unset) = byte-identical.
-  if (shown?.path) maybeEnqueueLazyGraph(shown.path);
-
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
   const supportRefs = buildCurateSupportRefs(shown?.related?.hits, selectedRefs, hit.ref);
@@ -375,46 +395,6 @@ async function enrichCuratedStashHit(
   };
   copySearchHitAttribution(hit, item, item.description);
   return item;
-}
-
-/**
- * #624-P3 — enqueue an ungraphed asset for lazy graph extraction when the
- * `index.graph.lazyGraphExtraction` flag is on. Pure side-effect, fully
- * best-effort: any failure (config, fs, db) is swallowed so curate never fails
- * on it. NO LLM call and NO inline extraction — only a cheap queue insert.
- * Default-off (flag unset) returns immediately = byte-identical behavior.
- */
-function maybeEnqueueLazyGraph(assetPath: string): void {
-  try {
-    const config = loadConfig();
-    if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction !== true) return;
-
-    const sources = resolveSourceEntries();
-    const source = findSourceForPath(assetPath, sources);
-    const stashRoot = source?.path;
-    if (!stashRoot) return;
-
-    let raw: string;
-    try {
-      raw = fs.readFileSync(assetPath, "utf8");
-    } catch {
-      return;
-    }
-    const body = parseFrontmatter(raw).content.trim();
-    if (!body) return;
-    const bodyHash = computeBodyHash(body);
-
-    withIndexDb(
-      (db) => {
-        if (!hasGraphData(db, stashRoot, assetPath)) {
-          enqueueGraphExtraction(db, stashRoot, assetPath, bodyHash, 0);
-        }
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-  }
 }
 
 function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {

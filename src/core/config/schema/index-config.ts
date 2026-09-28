@@ -36,23 +36,11 @@ const INDEX_PASS_RETIRED_KEYS = new Set([
   "capabilities",
 ]);
 
-const INDEX_PASS_KNOWN_KEYS = new Set([
-  "engine",
-  "model",
-  "timeoutMs",
-  "enabled",
-  "llm",
-  "graphExtractionBatchSize",
-  "graphExtractionIncludeTypes",
-  "lazyGraphExtraction",
-]);
-
 /**
- * Per-pass `index.<pass>` entry. Uses preprocess + manual validation so we can
- * emit targeted error messages ("Retired or misplaced engine setting",
- * "Unknown key `index.<pass>.<key>`")
- * instead of Zod's generic `Unrecognized key` / `Expected boolean, received
- * string` strings — keeps `akm` startup errors actionable.
+ * Per-pass `index.<pass>` entry. The preprocess names and drops the retired
+ * engine settings above with a targeted message. Any other unknown key is kept
+ * and named once by the config loader's schema walk, like an unknown key
+ * anywhere else in config.
  */
 export const IndexPassConfigSchema = z.preprocess(
   (raw, ctx) => {
@@ -70,15 +58,6 @@ export const IndexPassConfigSchema = z.preprocess(
         );
         cleaned ??= { ...obj };
         delete cleaned[key];
-      } else if (!INDEX_PASS_KNOWN_KEYS.has(key)) {
-        warnOnce(
-          `index-pass:unknown:${dotted}`,
-          `Unknown key \`${dotted}\` ignored. Per-pass entries support ` +
-            "`engine`, `model`, `timeoutMs`, `enabled`, `llm`, `graphExtractionBatchSize`, " +
-            "`graphExtractionIncludeTypes`, and `lazyGraphExtraction`.",
-        );
-        cleaned ??= { ...obj };
-        delete cleaned[key];
       }
     }
     return cleaned ?? raw;
@@ -93,7 +72,6 @@ export const IndexPassConfigSchema = z.preprocess(
       graphExtractionBatchSize: positiveInt.optional(),
       // Accept-any until Chunk 2 (WI-9.6c) — no longer enum-restricted.
       graphExtractionIncludeTypes: z.array(z.string().min(1)).nonempty().optional(),
-      lazyGraphExtraction: z.boolean().optional(),
     })
     .passthrough(),
 );

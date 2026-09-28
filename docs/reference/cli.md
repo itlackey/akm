@@ -503,7 +503,9 @@ embedded with the model's query template (see `embedding.queryTemplate` in
 keyword ranking alone with `fts-fallback` and a warning. Filters (`--type`,
 `--from`, `--filter`, `--belief`, the default session exclusion, proposed
 quality) and one-hit-per-file deduplication narrow the fused list without
-reordering it.
+reordering it. Of entries with identical indexed content (the same body
+saved under another name or in another bundle), only the highest-ranked is
+kept.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
@@ -607,6 +609,12 @@ only for read-only items. Their `followUp` remains `akm show <ref>` rather than
 being replaced by clone guidance.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
+Curate returns no items, on purpose, when the input is not a task: a harness
+or tool envelope (input that starts with an XML-style tag and contains a
+closing tag, such as `<task-notification>…</task-notification>`) or the stash
+README boilerplate. The `summary` then starts with `Curate abstained` and
+names the reason, and `tip` says how to curate the task instead. Long input is
+curated like any other.
 `akm curate` is safe to call frequently, including from a hook that fires on
 every prompt: it only ever reads the index as it currently stands (the same
 non-blocking `ensureIndex()` path `search` uses) and never waits on or

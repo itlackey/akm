@@ -129,7 +129,6 @@ describe("output baseline", () => {
     writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
     seedStoredGraph(
       {
-        schemaVersion: 1,
         generatedAt: "2026-05-01T00:00:00.000Z",
         stashRoot: stashDir,
         files: [
@@ -167,7 +166,6 @@ describe("output baseline", () => {
     writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
     seedStoredGraph(
       {
-        schemaVersion: 1,
         generatedAt: "2026-05-01T00:00:00.000Z",
         stashRoot: stashDir,
         files: [
@@ -200,7 +198,6 @@ describe("output baseline", () => {
     writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
     seedStoredGraph(
       {
-        schemaVersion: 1,
         generatedAt: "2026-05-01T00:00:00.000Z",
         stashRoot: stashDir,
         files: [

@@ -33,15 +33,12 @@ import {
 import { displayRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isWithin } from "../../core/common";
-import { getIndexPassConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
-import type { LoweringNotice } from "../../execution/resolved-request";
-import { hasGraphData } from "../../indexer/db/graph-db";
-import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-related";
 import { lookupBundleRef, lookupBundleRefWithResolution } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
@@ -63,12 +60,9 @@ import {
   getRenderer,
   type MatchResult,
 } from "../../indexer/walk/file-context";
-import { resolveIndexPassExecution } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import type { FragmentContextMode, ShowDetailLevel, ShowResponse } from "../../sources/types";
-import { resolveStorageLocations } from "../../storage/locations";
-import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
-import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { withIndexDb } from "../../storage/repositories/index-db";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
@@ -502,16 +496,6 @@ export async function showLocal(input: {
     (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
   }
 
-  // #624-P3: opt-in inline graph extraction. Default OFF — when the flag is
-  // unset this whole block is skipped (no hasGraphData check, no LLM call), so
-  // behavior is byte-identical to today. When ON, it extracts graph data for an
-  // ungraphed asset, but ONLY when a model is configured (model-available
-  // guard) and ALWAYS bounded by a 30s timeout so `show` can never hang. Any
-  // timeout/model-unavailable/error path returns the response unchanged.
-  if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction === true) {
-    await maybeExtractGraphInline(config, sourceStashDir, assetPath);
-  }
-
   if (input.detail === "brief") {
     return buildBriefResponse(fullResponse, assetPath);
   }
@@ -580,75 +564,6 @@ function findUnrecognizedScriptSource(
     }
   }
   return undefined;
-}
-
-/**
- * #624-P3 — opt-in inline graph extraction for `akm show`. Best-effort and
- * timeout-bounded: never throws, never hangs, never mutates the response.
- *
- * Preconditions (caller already checked the flag): a model must be configured
- * (model-available guard via {@link resolveIndexPassExecution}) and the asset
- * must be ungraphed ({@link hasGraphData}). Extraction races a 30s timeout so
- * `show` cannot block on a slow provider; any timeout/error/missing-model path
- * is swallowed and `show` returns its already-assembled response unchanged.
- */
-async function maybeExtractGraphInline(
-  config: ReturnType<typeof loadConfig>,
-  sourceStashDir: string,
-  assetPath: string,
-): Promise<void> {
-  try {
-    // Resolve readiness and the symbolic runner once. The inline dispatch must
-    // consume this same snapshot even if models.json changes while show runs.
-    const graphExecution = resolveIndexPassExecution("graph", config);
-    if (!graphExecution.runner) return;
-    const emittedNoticeKeys = new Set<string>();
-    const reportNotices = (notices: readonly Readonly<LoweringNotice>[]): void => {
-      for (const notice of notices) {
-        const key = JSON.stringify(notice);
-        if (emittedNoticeKeys.has(key)) continue;
-        emittedNoticeKeys.add(key);
-        const field = typeof notice.field === "string" ? ` field=${notice.field}` : "";
-        warn(`[akm] lazy graph extraction notice ${notice.code} adapter=${notice.adapter}${field}: ${notice.message}`);
-      }
-    };
-    reportNotices(graphExecution.notices);
-
-    let alreadyGraphed = false;
-    withIndexDb(
-      (db) => {
-        alreadyGraphed = hasGraphData(db, sourceStashDir, assetPath);
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
-    if (alreadyGraphed) return;
-
-    // Open the db for the async extraction ourselves: `withIndexDb` is
-    // synchronous and would close the connection the instant the async fn
-    // returns its Promise (before extraction completes). Close it explicitly
-    // after the race settles instead.
-    const db = openExistingDatabase(resolveStorageLocations().indexDb);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, 30_000);
-    });
-    try {
-      await Promise.race([
-        extractGraphForSingleFile(db, sourceStashDir, assetPath, {
-          config,
-          llmRunner: graphExecution.runner,
-          onNotices: reportNotices,
-        }),
-        timeout,
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-      closeDatabase(db);
-    }
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    // Any other failure: silently return the unchanged show response.
-  }
 }
 
 /**

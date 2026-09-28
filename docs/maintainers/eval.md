@@ -393,9 +393,10 @@ always write schema v2 and require the fingerprint.
 two-sandbox ablation against the same source bundle — graph extraction on
 vs. off — and reports per-metric deltas (retrieval hit@K, precision@K,
 contradiction precision/recall, latency, and a proxy token-cost). The off
-side is gated via a planted `config.json` that sets both
-`improve.strategies.default.processes.graphExtraction.enabled: false` and
-`index.graph.enabled: false`.
+side is gated via a `config.json` planted at `<sandbox-stash>/.akm/` (the
+`AKM_CONFIG_DIR` the sandboxed `akm` resolves config from) that sets
+`index.graph.enabled: false` — the key `isProcessEnabled("index",
+"graph_extraction", config)` reads.
 
 Outputs land under `<stash>/.akm/evals/ablations/<eval-run-id>/` so they
 never collide with the main `runs/` namespace. See

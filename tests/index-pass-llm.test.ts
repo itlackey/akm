@@ -387,11 +387,13 @@ describe("config loader: `index` block parsing", () => {
     expect(resolved?.connection).toMatchObject({ temperature: 0.2, maxTokens: 64 });
   });
 
-  test("warns and drops an unknown key under a pass entry instead of failing config load", () => {
+  test("keeps an unknown key under a pass entry and names it once instead of failing config load", () => {
     writeUserConfig({
       configVersion: "0.9.0",
       index: { enrichment: { enabled: true, foo: true } },
     });
+    resetConfigCache();
+    _resetWarnOnceForTests();
     const warnings: string[] = [];
     _setWarnSinkForTests((level, args) => {
       if (level === "warn") warnings.push(args.map(String).join(" "));
@@ -399,8 +401,8 @@ describe("config loader: `index` block parsing", () => {
     try {
       const config = loadUserConfig();
       expect(config.index?.enrichment?.enabled).toBe(true);
-      expect((config.index?.enrichment as Record<string, unknown> | undefined)?.foo).toBeUndefined();
-      expect(warnings.some((w) => w.includes("Unknown key `index.enrichment.foo`"))).toBe(true);
+      expect((config.index?.enrichment as Record<string, unknown> | undefined)?.foo).toBe(true);
+      expect(warnings.filter((w) => w.includes("index.enrichment.foo"))).toHaveLength(1);
     } finally {
       _setWarnSinkForTests(undefined);
     }

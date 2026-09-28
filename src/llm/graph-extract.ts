@@ -39,6 +39,12 @@ import { type CallStructuredRequest, callStructured, type StructuredLlmRunner } 
  */
 const BATCH_ASSET_SEPARATOR = "=== ASSET";
 
+/**
+ * Part of the extractor id that keys cached extractions; the prompt text is
+ * not. Bump it with any change to either prompt, and expect every cached file
+ * to be extracted again. Pending for the next bump (GR-D12): the batch prompt
+ * still asks for "file/dir names", which the single-asset prompt rules out.
+ */
 export const GRAPH_EXTRACT_PROMPT_VERSION = "v3";
 
 /** Asset bodies longer than this are chunked instead of truncated. */
@@ -160,9 +166,7 @@ export type GraphExtractionReason =
   | "invalid_json"
   | "context_limit"
   | "llm_error"
-  | "low_confidence"
-  | "generic_entities_only"
-  | "filtered_low_quality";
+  | "generic_entities_only";
 
 export interface GraphBatchState {
   batchingDisabled: boolean;
@@ -251,7 +255,13 @@ function normalizeRelationType(raw: string): string | undefined {
   return normalized;
 }
 
-function normalizeEntityKey(raw: string): string {
+/**
+ * The key under which two entity names are the same entity: the display
+ * clean-up above, case-folded. The one normalization for graph entities:
+ * extraction deduplicates on it, the pass deduplicates on it before writing,
+ * and it is the stored `entity_norm` that `related` joins on (GR-D17).
+ */
+export function normalizeEntityKey(raw: string): string {
   return normalizeEntityName(raw).toLowerCase();
 }
 
@@ -262,6 +272,37 @@ function bumpTelemetry(
 ): void {
   if (!telemetry) return;
   telemetry[key] = (telemetry[key] ?? 0) + amount;
+}
+
+/**
+ * `Promise.all(items.map(fn))` with at most `limit` calls in flight, so the
+ * per-asset calls of one batch never outnumber the chunk pool's concurrency
+ * (GR-D14). The first rejection rejects the map and stops further calls.
+ */
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try {
+        results[index] = await fn(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker));
+  return results;
+}
+
+/** Count what the parser dropped from one parsed extraction (single-asset or batch item). */
+function bumpFilterTelemetry(telemetry: GraphRuntimeTelemetry | undefined, extraction: GraphExtraction): void {
+  bumpTelemetry(telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
+  bumpTelemetry(telemetry, "filteredInvalidRelations", extraction.filteredInvalidRelations ?? 0);
+  bumpTelemetry(telemetry, "filteredLowConfidenceRelations", extraction.filteredLowConfidenceRelations ?? 0);
 }
 
 function normalizeBatchState(state?: GraphBatchState): GraphBatchState | undefined {
@@ -634,6 +675,7 @@ function applySuccessfulBatchResults(
   nonEmptyBodies: string[],
   nonEmptyIndices: number[],
   batchState: GraphBatchState | undefined,
+  telemetry: GraphRuntimeTelemetry | undefined,
 ): void {
   if (batchState) batchState.nonArrayBatchFailures = 0;
   if (batchResult.length > nonEmptyBodies.length) {
@@ -645,7 +687,10 @@ function applySuccessfulBatchResults(
   for (let j = 0; j < nonEmptyBodies.length; j++) {
     const originalIndex = nonEmptyIndices[j];
     if (originalIndex === undefined) continue;
-    if (j < batchResult.length) results[originalIndex] = parseBatchItem(batchResult[j]);
+    if (j >= batchResult.length) continue;
+    const extraction = parseBatchItem(batchResult[j]);
+    bumpFilterTelemetry(telemetry, extraction);
+    results[originalIndex] = extraction;
   }
 }
 
@@ -660,8 +705,8 @@ function applySuccessfulBatchResults(
  * `bodies.length`, missing indices are filled by falling back to individual
  * `extractGraphFromBody` calls — ensuring every input always has a result.
  *
- * Returns an array of the same length as `bodies` (never shorter).
- * Individual elements default to `{entities:[], relations:[]}` on failure.
+ * Returns an array of the same length as `bodies` (never shorter). A body
+ * whose extraction failed gets no entities and `status: "failed"`.
  *
  * Routes through `tryLlmFeature("graph_extraction", ...)` so the feature gate
  * and onFallback hook are honoured uniformly.
@@ -692,6 +737,13 @@ export async function extractGraphFromBodies(
     return [result];
   }
 
+  const concurrency = llmRunner.connection.concurrency ?? 1;
+  const extractOne = (body: string): Promise<GraphExtraction> =>
+    extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options);
+
+  // With batching disabled every body takes the single-asset path, once.
+  if (batchState?.batchingDisabled) return mapWithConcurrency(bodies, concurrency, extractOne);
+
   // Filter out bodies that are empty so we don't waste tokens, but keep
   // index correspondence by tracking which indices were non-empty.
   const results: GraphExtraction[] = bodies.map(empty);
@@ -710,28 +762,11 @@ export async function extractGraphFromBodies(
     }
   }
 
-  if (oversizedIndices.length > 0) {
-    await Promise.all(
-      oversizedIndices.map(async (index) => {
-        results[index] = await extractGraphFromBody(
-          llmRunner,
-          bodies[index] ?? "",
-          signal,
-          akmConfig,
-          onFallback,
-          options,
-        );
-      }),
-    );
-  }
+  await mapWithConcurrency(oversizedIndices, concurrency, async (index) => {
+    results[index] = await extractOne(bodies[index] ?? "");
+  });
 
   if (nonEmptyBodies.length === 0) return results;
-
-  if (batchState?.batchingDisabled) {
-    return Promise.all(
-      bodies.map((body) => extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options)),
-    );
-  }
 
   const systemPrompt = buildBatchSystemPrompt();
   const userPrompt = buildBatchUserPrompt(nonEmptyBodies);
@@ -739,14 +774,7 @@ export async function extractGraphFromBodies(
   // batch's asset count so a compliant provider bounds every element's
   // entities/relations by the same maxItems as the single-asset path.
   const batchResponseSchema = buildBatchResponseSchema(nonEmptyBodies.length);
-  const truncatedBodies = nonEmptyBodies.filter((body) => body.length > MAX_BATCH_BODY_CHARS).length;
-  if (truncatedBodies > 0) {
-    warnVerbose(
-      `graph extraction (batch): ${truncatedBodies}/${nonEmptyBodies.length} asset body/bodies exceed the batch body threshold of ${MAX_BATCH_BODY_CHARS} chars.`,
-    );
-  }
   let batchContextError = false;
-  let nonArrayResponse = false;
   // R2: a dead/erroring provider must not be hammered with a per-asset
   // fallback retry for every body in the batch — that is what turned one
   // outage into 15,453 additional retry attempts. `isTransportFailure`
@@ -755,11 +783,12 @@ export async function extractGraphFromBodies(
   // provider itself is failing (a dead endpoint more often raises
   // `network_error` or `provider_html_error` than a plain 5xx), not that this
   // particular response was malformed; skip the fallback and record every
-  // asset as failed instead.
+  // asset as failed instead. A batch that got no answer at all (the gate's
+  // timeout, or a closed gate) is handled the same way.
   let batchProviderError = false;
 
   const batchOutcome = await tryLlmFeature<
-    { kind: "value"; value: unknown[] | null } | { kind: "config-error"; error: ConfigError }
+    { kind: "value"; value: unknown[] | null } | { kind: "config-error"; error: ConfigError } | { kind: "no-answer" }
   >(
     "graph_extraction",
     akmConfig,
@@ -807,7 +836,6 @@ export async function extractGraphFromBodies(
           parsed = retryRaw ? parseEmbeddedJsonResponse<unknown[]>(retryRaw, { expect: "array" }) : undefined;
         }
         if (!Array.isArray(parsed)) {
-          nonArrayResponse = true;
           bumpTelemetry(options.telemetry, "nonArrayBatchFailures");
           if (batchState) {
             batchState.nonArrayBatchFailures += 1;
@@ -849,18 +877,22 @@ export async function extractGraphFromBodies(
         return { kind: "value", value: null };
       }
     },
-    { kind: "value", value: null },
+    { kind: "no-answer" },
     {
       timeoutMs: llmRunner.timeoutMs,
       onFallback,
     },
   );
   if (batchOutcome.kind === "config-error") throw batchOutcome.error;
-  const batchResult = batchOutcome.value;
+  if (batchOutcome.kind === "no-answer") {
+    batchProviderError = true;
+    bumpTelemetry(options.telemetry, "failureCount", nonEmptyBodies.length);
+  }
+  const batchResult = batchOutcome.kind === "value" ? batchOutcome.value : null;
 
   // Map successful batch results back to their original indices.
   if (batchResult !== null) {
-    applySuccessfulBatchResults(results, batchResult, nonEmptyBodies, nonEmptyIndices, batchState);
+    applySuccessfulBatchResults(results, batchResult, nonEmptyBodies, nonEmptyIndices, batchState, options.telemetry);
   } else if (batchProviderError) {
     // No per-asset fallback against a failing provider — record every asset
     // in this batch as a genuine failure so it is neither silently empty nor
@@ -918,19 +950,14 @@ export async function extractGraphFromBodies(
           `falling back to individual calls for ${fallbackIndices.length} missing asset(s).`,
       );
     }
-    await Promise.all(
-      fallbackIndices.map(async (origIdx) => {
-        const body = bodies[origIdx] ?? "";
-        results[origIdx] = await extractGraphFromBody(llmRunner, body, signal, akmConfig, onFallback, options);
-      }),
-    );
+    await mapWithConcurrency(fallbackIndices, concurrency, async (origIdx) => {
+      results[origIdx] = await extractOne(bodies[origIdx] ?? "");
+    });
   } else if (batchContextError) {
     warn(
       `graph extraction (batch): skipped ${nonEmptyBodies.length} asset(s) due to context size error; ` +
         `consider increasing llm.contextLength or reducing index.graph.graphExtractionBatchSize to 1.`,
     );
-  } else if (nonArrayResponse && batchState?.batchingDisabled) {
-    warn("graph extraction (batch): disabling batching for the rest of this run after repeated non-array responses.");
   }
 
   return results;
@@ -939,9 +966,10 @@ export async function extractGraphFromBodies(
 /**
  * Extract entities and relations from a single asset body via the configured LLM.
  *
- * Returns `{entities: [], relations: []}` on any failure (timeout, invalid
- * JSON, empty response). Errors are logged via `warn()` but never thrown — a
- * failed extraction for one asset must not abort the rest of the index pass.
+ * Any failure (timeout, invalid JSON, empty response, provider error) returns
+ * no entities with `status: "failed"`, which is never cached, so the next run
+ * retries it. Errors are logged via `warn()` but never thrown — a failed
+ * extraction for one asset must not abort the rest of the index pass.
  *
  * Routes through `tryLlmFeature("graph_extraction", ...)` so the feature gate
  * and onFallback hook are honoured uniformly (Fix C5).
@@ -1021,8 +1049,8 @@ export async function extractGraphFromBody(
     },
     onNotices: options.onNotices,
     parse: (raw) => {
-      if (!raw) return empty();
-      const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
+      // An empty response is not JSON either; "nothing to extract" is `{"entities": []}`.
+      const parsed = raw ? parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw) : undefined;
       if (!parsed) {
         warn("graph extraction: invalid JSON response from LLM; skipping asset.");
         bumpTelemetry(options.telemetry, "failureCount");
@@ -1030,13 +1058,7 @@ export async function extractGraphFromBody(
       }
 
       const extraction = parseGraphExtraction(parsed);
-      bumpTelemetry(options.telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
-      bumpTelemetry(options.telemetry, "filteredInvalidRelations", extraction.filteredInvalidRelations ?? 0);
-      bumpTelemetry(
-        options.telemetry,
-        "filteredLowConfidenceRelations",
-        extraction.filteredLowConfidenceRelations ?? 0,
-      );
+      bumpFilterTelemetry(options.telemetry, extraction);
       if (extraction.status === "failed") bumpTelemetry(options.telemetry, "failureCount");
       return extraction;
     },
@@ -1063,7 +1085,9 @@ export async function extractGraphFromBody(
         return empty("llm_error", "failed");
       }
     },
-    fallback: empty(),
+    // No answer from the model (the gate's timeout, or a closed gate) is a
+    // failure the next run retries, never a cacheable "no entities".
+    fallback: empty("llm_error", "failed"),
     onFallback,
   });
   if (truncatedChunkCount > 0) result.truncatedChunks = (result.truncatedChunks ?? 0) + truncatedChunkCount;

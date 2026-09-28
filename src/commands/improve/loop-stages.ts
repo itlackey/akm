@@ -8,12 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
-import {
-  type AkmConfig,
-  DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE,
-  type ImproveProfileConfig,
-  loadConfig,
-} from "../../core/config/config";
+import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { AkmDistillResult, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
@@ -21,11 +16,7 @@ import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
-import {
-  DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
-  type GraphExtractionResult,
-  runGraphExtractionPass,
-} from "../../indexer/graph/graph-extraction";
+import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveWritableBundleIds } from "../../indexer/installations";
 import {
@@ -697,8 +688,9 @@ export async function runGraphExtractionMaintenancePass(
         },
         options: {
           candidatePaths,
-          includeTypes: settings?.includeTypes ?? [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES],
-          batchSize: settings?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE,
+          // Only what the strategy sets: the pass falls back to index.graph, then its defaults (GR-D15).
+          ...(settings?.includeTypes ? { includeTypes: settings.includeTypes } : {}),
+          ...(settings?.batchSize != null ? { batchSize: settings.batchSize } : {}),
           ...(settings?.topN != null ? { topN: settings.topN } : {}),
           ...(settings?.maxChunksPerAsset != null ? { maxChunksPerAsset: settings.maxChunksPerAsset } : {}),
         },

@@ -352,7 +352,9 @@ type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number
 
 /**
  * Walk the fused list in order, loading entries a batch at a time, and keep
- * the first `limit` that survive path deduplication and the filters.
+ * the first `limit` that survive path deduplication and the filters. An entry
+ * whose indexed content is identical to a kept one's (the same body saved
+ * under another name or in another bundle) is a duplicate and is skipped.
  */
 function selectFusedEntries(
   db: Database,
@@ -362,6 +364,7 @@ function selectFusedEntries(
 ): Array<{ candidate: FusedCandidate; row: HydratedEntry }> {
   const selected: Array<{ candidate: FusedCandidate; row: HydratedEntry }> = [];
   const seenPaths = new Set<string>();
+  const seenContent = new Set<string>();
   const batchSize = Math.max(limit * 2, 20);
   for (let offset = 0; offset < fused.length && selected.length < limit; offset += batchSize) {
     const batch: Array<HydratedEntry & { candidate: FusedCandidate }> = [];
@@ -373,6 +376,11 @@ function selectFusedEntries(
     }
     for (const kept of applyEntryFilters(batch, filterOptions)) {
       const { candidate, ...row } = kept;
+      const content = row.entry.content?.replace(/\s+/g, " ").trim();
+      if (content) {
+        if (seenContent.has(content)) continue;
+        seenContent.add(content);
+      }
       selected.push({ candidate, row });
     }
   }

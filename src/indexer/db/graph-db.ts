@@ -5,15 +5,15 @@
 import { rethrowIfDataDirUnreadable, rethrowIfTestIsolationError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
-import type { GraphRelation } from "../../llm/graph-extract";
+import { type GraphRelation, normalizeEntityKey } from "../../llm/graph-extract";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "../graph/graph-types";
 
 export interface StoredGraphSnapshot {
   stashPath: string;
   graphPath: string;
-  schemaVersion: number;
   generatedAt: string;
   quality?: GraphQualityTelemetry;
   telemetry?: GraphExtractionTelemetry;
@@ -25,7 +25,6 @@ export interface StoredGraphSnapshot {
 export interface StoredGraphMeta {
   stashPath: string;
   graphPath: string;
-  schemaVersion: number;
   generatedAt: string;
   quality?: GraphQualityTelemetry;
   telemetry?: GraphExtractionTelemetry;
@@ -49,10 +48,6 @@ function withReadableGraphDb<T>(db: Database | undefined, fn: (db: Database) => 
 
 function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-}
-
-function normalizeEntity(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 interface ExistingGraphFileRow {
@@ -162,9 +157,9 @@ function readStoredGraphQuality(db: Database, stashRoot: string): GraphQualityTe
  * no entry_id resolution and no orphan-skip — a graph file no longer needs a
  * matching entries row.
  *
- * graph_meta records the snapshot's schema version, time and run telemetry;
- * its counts are derived from the rows as stored after the write, never from
- * the caller's in-memory graph.
+ * graph_meta records the snapshot's time and run telemetry; its counts are
+ * derived from the rows as stored after the write, never from the caller's
+ * in-memory graph.
  */
 export function replaceStoredGraph(db: Database, graph: GraphFile): void {
   const upsertMeta = db.prepare(
@@ -303,7 +298,7 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
       }
 
       for (const [entityOrder, entity] of node.entities.entries()) {
-        insertEntity.run(graph.stashRoot, node.path, bodyHash, entityOrder, normalizeEntity(entity), entity);
+        insertEntity.run(graph.stashRoot, node.path, bodyHash, entityOrder, normalizeEntityKey(entity), entity);
       }
       for (const [relationOrder, relation] of node.relations.entries()) {
         insertRelation.run(
@@ -311,9 +306,9 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
           node.path,
           bodyHash,
           relationOrder,
-          normalizeEntity(relation.from),
+          normalizeEntityKey(relation.from),
           relation.from,
-          normalizeEntity(relation.to),
+          normalizeEntityKey(relation.to),
           relation.to,
           relation.type ?? null,
           relation.confidence ?? null,
@@ -334,7 +329,7 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
     const quality = readStoredGraphQuality(db, graph.stashRoot);
     upsertMeta.run(
       graph.stashRoot,
-      graph.schemaVersion,
+      GRAPH_SCHEMA_VERSION,
       graph.generatedAt,
       quality.consideredFiles,
       quality.extractedFiles,
@@ -363,94 +358,6 @@ export function deleteStoredGraph(db: Database, stashPath: string): void {
     db.prepare("DELETE FROM graph_files WHERE stash_root = ?").run(stashPath);
     db.prepare("DELETE FROM graph_meta WHERE stash_root = ?").run(stashPath);
   })();
-}
-
-/**
- * #624-P1 — does any graph data exist for a file_path under a stash root?
- * Consumed by show/curate flows (P3) but defined here so the schema and its
- * accessors land together.
- */
-export function hasGraphData(db: Database, stashRoot: string, filePath: string): boolean {
-  try {
-    const row = db
-      .prepare("SELECT 1 AS present FROM graph_files WHERE stash_root = ? AND file_path = ? LIMIT 1")
-      .get(stashRoot, filePath) as { present: number } | undefined;
-    return row !== undefined;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * #624-P3 — enqueue a file for lazy graph extraction. Idempotent on the
- * (stash_root, file_path) PK: a second enqueue refreshes body_hash + queued_at
- * and keeps the HIGHER priority. Non-blocking, no LLM call — the queued row is
- * drained later by the graph-extraction pass. Tolerant of a missing table /
- * db error (best-effort), but never masks the bun-test isolation guard.
- */
-export function enqueueGraphExtraction(
-  db: Database,
-  stashRoot: string,
-  filePath: string,
-  bodyHash: string,
-  priority = 0,
-): void {
-  try {
-    db.prepare(
-      `INSERT INTO graph_extraction_queue (stash_root, file_path, body_hash, priority)
-         VALUES (?, ?, ?, ?)
-       ON CONFLICT(stash_root, file_path) DO UPDATE SET
-         body_hash = excluded.body_hash,
-         priority  = MAX(graph_extraction_queue.priority, excluded.priority),
-         queued_at = datetime('now')`,
-    ).run(stashRoot, filePath, bodyHash, priority);
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-  }
-}
-
-/** Read queued graph work without claiming or deleting it. */
-export function peekExtractionQueue(
-  db: Database,
-  stashRoot: string,
-  limit: number,
-): Array<{ filePath: string; bodyHash: string; priority: number }> {
-  try {
-    const rows = db
-      .prepare(
-        `SELECT file_path, body_hash, priority
-           FROM graph_extraction_queue
-           WHERE stash_root = ?
-           ORDER BY priority DESC, queued_at ASC
-           LIMIT ?`,
-      )
-      .all(stashRoot, limit) as Array<{ file_path: string; body_hash: string; priority: number }>;
-    return rows.map((row) => ({ filePath: row.file_path, bodyHash: row.body_hash, priority: row.priority }));
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    return [];
-  }
-}
-
-/**
- * Acknowledge the exact queued revision that was classified and handled.
- * A concurrent re-enqueue with a new body hash therefore survives.
- */
-export function acknowledgeExtractionQueueEntry(
-  db: Database,
-  stashRoot: string,
-  filePath: string,
-  bodyHash: string,
-): boolean {
-  try {
-    const result = db
-      .prepare("DELETE FROM graph_extraction_queue WHERE stash_root = ? AND file_path = ? AND body_hash = ?")
-      .run(stashRoot, filePath, bodyHash);
-    return result.changes > 0;
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    return false;
-  }
 }
 
 /**
@@ -511,7 +418,6 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
         .prepare(
           `SELECT
              stash_root,
-             schema_version,
              generated_at,
              considered_files,
              extracted_files,
@@ -534,7 +440,6 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
         .get(stashPath) as
         | {
             stash_root: string;
-            schema_version: number;
             generated_at: string;
             considered_files: number;
             extracted_files: number;
@@ -557,7 +462,6 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
       return {
         stashPath: row.stash_root,
         graphPath: getDbPath(),
-        schemaVersion: row.schema_version,
         generatedAt: row.generated_at,
         quality: {
           consideredFiles: row.considered_files,
@@ -686,7 +590,6 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
       return {
         stashPath: meta.stashPath,
         graphPath: meta.graphPath,
-        schemaVersion: meta.schemaVersion,
         generatedAt: meta.generatedAt,
         ...(meta.quality ? { quality: meta.quality } : {}),
         ...(meta.telemetry ? { telemetry: meta.telemetry } : {}),

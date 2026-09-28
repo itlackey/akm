@@ -413,9 +413,6 @@
               "minLength": 1
             },
             "minItems": 1
-          },
-          "lazyGraphExtraction": {
-            "type": "boolean"
           }
         },
         "additionalProperties": true
@@ -2077,9 +2074,6 @@
                   "minLength": 1
                 },
                 "minItems": 1
-              },
-              "lazyGraphExtraction": {
-                "type": "boolean"
               }
             },
             "additionalProperties": true

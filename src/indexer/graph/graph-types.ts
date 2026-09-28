@@ -8,7 +8,7 @@
  *
  * Split out of `graph-extraction.ts` so that `indexer/db/graph-db.ts` — the
  * SQLite-backed store, which `graph-extraction.ts` imports
- * `peekExtractionQueue`/`loadStoredGraphSnapshot`/`replaceStoredGraph` from
+ * `loadStoredGraphSnapshot`/`replaceStoredGraph` from
  * by value — does not need to import back into `graph-extraction.ts` (the
  * orchestrator) just for these shapes. That back-edge was a static-graph
  * cycle even though it was type-only (chunk 9 WI-9.8 KILL 5 sever): the
@@ -66,6 +66,14 @@ export interface GraphExtractionTelemetry {
    * observable instead of silent (#635).
    */
   nonArrayBatchFailures?: number;
+  /** Entities the parser dropped: generic, path-like, or with no letter or digit. */
+  filteredGenericEntities?: number;
+  /** Relations the parser dropped: malformed, self-referencing, generic, or naming an unlisted entity. */
+  filteredInvalidRelations?: number;
+  /** Relations the parser dropped for a confidence under the minimum. */
+  filteredLowConfidenceRelations?: number;
+  /** Batches split in half after a context-size error. */
+  contextBatchRetries?: number;
   /**
    * Chunks skipped because an asset's body exceeded
    * `processes.graphExtraction.maxChunksPerAsset` (R12b + R20) — coverage
@@ -83,7 +91,6 @@ export interface GraphExtractionTelemetry {
 
 /** Persisted graph shape loaded from SQLite. */
 export interface GraphFile {
-  schemaVersion: number;
   /** ISO-8601 timestamp of the last refresh. */
   generatedAt: string;
   /** Stash root the file was extracted from (canonicalised). */

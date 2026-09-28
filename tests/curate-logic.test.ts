@@ -148,3 +148,37 @@ describe("akmCurate", () => {
     expect(result.items.length).toBeLessThanOrEqual(4);
   });
 });
+
+describe("akmCurate abstains on input that is not a task", () => {
+  const matching = searchResponse({
+    hits: [stashHit({ type: "knowledge", name: "deploy-guide", ref: "knowledge/deploy-guide", path: "/tmp/1" })],
+  });
+
+  test.each([
+    [
+      "a harness envelope",
+      "<task-notification> <task-id>b1</task-id> <status>completed</status> <summary>Build passed</summary> </task-notification>",
+    ],
+    [
+      "an XML payload after leading whitespace",
+      '  <cross-session-message from="akm-45">REPORT.md is free</cross-session-message>',
+    ],
+    ["the stash README line", "This is an **AKM stash** — a structured knowledge repository that stores reusable"],
+  ])("returns no items for %s and says it abstained", async (_label, query) => {
+    const result = await akmCurate({ query, searchResponse: matching, skipLogging: true });
+
+    expect(result.items).toEqual([]);
+    expect(result.summary).toStartWith("Curate abstained");
+    expect(result.tip).toContain("on purpose");
+  });
+
+  test("still curates a task that mentions a tag, and a task over 2,000 characters", async () => {
+    const longTask = `Fix the failing deploy check. ${"The step that uploads the bundle times out after the retry. ".repeat(40)}`;
+    expect(longTask.length).toBeGreaterThan(2000);
+    for (const query of ["why does <system-reminder> text show up in my hook output?", longTask]) {
+      const result = await akmCurate({ query, searchResponse: matching, skipLogging: true });
+      expect(result.items.map((item) => ("ref" in item ? item.ref : item.id))).toEqual(["knowledge/deploy-guide"]);
+      expect(result.tip).toBeUndefined();
+    }
+  });
+});

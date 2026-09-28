@@ -160,6 +160,20 @@ describe("fused search", () => {
     const result = await search("gizmo");
     expect(result.hits.map((hit) => hit.name)).toEqual(["first"]);
   });
+
+  // No word matches "gizmo", so the order below is the vector order alone.
+  test("keeps only the higher-ranked of entries with the same indexed content", async () => {
+    put("original", { description: "first copy", content: "The widget turns left." }, [1, 0, 0, 0]);
+    put("copy", { description: "second copy", content: " The widget  turns left.\n" }, [0.9, 0.436, 0, 0]);
+    put("other", { description: "another fact", content: "The widget turns right." }, [0.5, 0.866, 0, 0]);
+    put("blank-a", { description: "no body" }, [0, 1, 0, 0]);
+    put("blank-b", { description: "no body either" }, [0, 0, 1, 0]);
+    overrideSeam(_setEmbedderForTests, { embed: async () => [1, 0, 0, 0] });
+
+    const result = await search("gizmo");
+    // Entries without content are never duplicates of each other.
+    expect(result.hits.map((hit) => hit.name)).toEqual(["original", "other", "blank-a", "blank-b"]);
+  });
 });
 
 describe("curate over fused search", () => {

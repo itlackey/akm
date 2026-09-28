@@ -398,7 +398,7 @@ re-embed "canary" and a full rebuild copied vectors aside into
 ## Database Tables
 
 `index.db`'s schema (`ensureSchema()`,
-`src/storage/repositories/index-schema.ts`) creates 15 logical
+`src/storage/repositories/index-schema.ts`) creates 14 logical
 tables, including one FTS5 virtual table. Full column-level detail lives in
 [Storage Locations](storage-locations.md#dataindexdb--main-search-index);
 this is a purpose summary:
@@ -410,7 +410,6 @@ this is a purpose summary:
 | `entry_fragments` | safe Markdown projection retained per parent entry for fragment resolution |
 | `embeddings` | stored embedding vectors, each tagged with its model; vector search scans them |
 | `utility_scores` | recomputed utility boost state (global) |
-| `utility_scores_scoped` | same EMA per `(entry, project-anchor)` pair |
 | `index_meta` | schema/version/runtime metadata |
 | `index_dir_state` | incremental-indexing cache (per-directory hash + mtime) |
 | `llm_enrichment_cache` | cached LLM enrichment/graph-extraction/memory-inference results |
@@ -419,7 +418,6 @@ this is a purpose summary:
 | `graph_files` | per-file graph-extraction status |
 | `graph_file_entities` | extracted entities per file |
 | `graph_file_relations` | extracted entity relations per file |
-| `graph_extraction_queue` | lazy, priority-ordered backlog of files awaiting graph extraction |
 
 `usage_events` (search/show/feedback telemetry) and workflow runtime state
 both live in `state.db`, not `index.db`, so rebuildable search state remains

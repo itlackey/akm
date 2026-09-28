@@ -413,11 +413,11 @@ scripts/akm-eval/bin/akm-eval-graph-ablation \
   --improve-args "--dry-run"
 ```
 
-How the off side is gated: the harness plants `<sandbox>/.config/akm/config.json`
-under the sandbox `HOME` carve-out with both `llm.features.graph_extraction:
-false` and `index.graph.llm: false` set. This is the dual gate documented in
-`src/indexer/graph-extraction.ts`; together they block extraction at both the
-v1 feature-gate layer and the per-pass opt-out.
+How the off side is gated: the harness plants `<sandbox-stash>/.akm/config.json`
+— the path the sandboxed `akm` actually resolves config from (`AKM_CONFIG_DIR`,
+set by `createSandbox()`) — with `index.graph.enabled: false` set. That's the
+one gate `isProcessEnabled("index", "graph_extraction", config)`
+(`src/llm/feature-gate.ts`) reads.
 
 Reports (per side; median + range when `--seeds > 1`):
 

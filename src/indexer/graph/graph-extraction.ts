@@ -44,13 +44,13 @@ import path from "node:path";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
-import { type AkmConfig, getIndexPassConfig, loadConfig, resolveBatchSize } from "../../core/config/config";
-import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
+import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../../core/config/config";
+import { ConfigError } from "../../core/errors";
 import { warn, warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { isProcessEnabled } from "../../llm/feature-gate";
-import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../../llm/graph-extract";
+import type { GraphExtractionReason, GraphExtractionStatus } from "../../llm/graph-extract";
 import * as graphExtract from "../../llm/graph-extract";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
 import type { StructuredLlmRunner } from "../../llm/structured-call";
@@ -61,21 +61,10 @@ import {
   getLlmCacheEntriesByRefs,
   upsertLlmCacheEntry,
 } from "../../storage/repositories/index-llm-cache-repository";
-import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
-import {
-  acknowledgeExtractionQueueEntry,
-  enqueueGraphExtraction,
-  loadStoredGraphMeta,
-  loadStoredGraphSnapshot,
-  peekExtractionQueue,
-  replaceStoredGraph,
-} from "../db/graph-db";
+import { loadStoredGraphMeta, loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-types";
-
-/** Schema version for the persisted artifact — bumps trigger a full rebuild. */
-export const GRAPH_FILE_SCHEMA_VERSION = GRAPH_SCHEMA_VERSION;
 
 /** Telemetry — useful for tests and progress events. */
 export interface GraphExtractionResult {
@@ -101,9 +90,9 @@ export interface GraphExtractionResult {
 
 export interface GraphExtractionPassOptions {
   candidatePaths?: ReadonlySet<string>;
-  /** Invocation-owned asset types. Falls back to index.graph only for standalone index calls. */
+  /** The strategy's asset types; unset reads `index.graph.graphExtractionIncludeTypes`, then memory and knowledge. */
   includeTypes?: string[];
-  /** Invocation-owned batch size. Falls back to index.graph only for standalone index calls. */
+  /** The strategy's batch size; unset reads `index.graph.graphExtractionBatchSize`, then 4. */
   batchSize?: number;
   /**
    * When set (>= 0) and a DB is available, rank eligible files by
@@ -183,14 +172,7 @@ const EMPTY_RESULT: GraphExtractionResult = {
   warnings: [],
 };
 
-export const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
-
-/**
- * Max number of lazy-extraction queue rows drained per pass (#624-P3). Bounds
- * per-run work so a large backlog is spread across runs rather than processed
- * all at once. Generous default — the queue is normally near-empty.
- */
-const GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT = 100;
+const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
 
 const SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES = new Set([
   "memory",
@@ -236,6 +218,41 @@ export function getGraphExtractorId(config: { model: string; batchSize: number; 
     }),
   ).slice(0, 16);
   return `${GRAPH_CACHE_VARIANT_PREFIX}:${graphExtract.GRAPH_EXTRACT_PROMPT_VERSION}:${config.model}:${fingerprint}`;
+}
+
+/**
+ * GR-D16: one notice when this run's extractor differs from the one that last
+ * wrote the graph. Cached extractions are keyed by extractor, so a config
+ * change that alters it (model, batch size, included types, prompt version)
+ * re-extracts every cached file; the notice says which change and how many.
+ */
+function extractorChangeNotice(args: {
+  previous: GraphExtractionTelemetry | undefined;
+  current: { extractorId: string; model: string; batchSize: number; promptVersion: string };
+  files: EligibleFile[];
+  db: Database;
+}): string | undefined {
+  const { previous, current, files, db } = args;
+  if (!previous?.extractorId || previous.extractorId === current.extractorId) return undefined;
+  const cachedUnder = (cacheVariant: string) =>
+    new Set(
+      planEligibleGraphExtractions({ eligible: files, db, reEnrich: false, cacheVariant })
+        .filter((plan) => plan.kind === "cache-hit")
+        .map((plan) => plan.candidate.absPath),
+    );
+  const stillCached = cachedUnder(current.extractorId);
+  const reextracted = [...cachedUnder(previous.extractorId)].filter((file) => !stillCached.has(file)).length;
+  const changes = [
+    previous.model !== current.model ? `model ${previous.model} -> ${current.model}` : undefined,
+    previous.batchSize !== current.batchSize ? `batch size ${previous.batchSize} -> ${current.batchSize}` : undefined,
+    previous.promptVersion !== current.promptVersion
+      ? `prompt ${previous.promptVersion} -> ${current.promptVersion}`
+      : undefined,
+  ].filter((change) => change !== undefined);
+  return (
+    `graph extraction: the extractor changed (${changes.join(", ") || "included asset types"}), ` +
+    `so ${reextracted} file(s) with a cached extraction will be extracted again.`
+  );
 }
 
 function buildLowQualityWarnings(quality: GraphQualityTelemetry, telemetry: GraphExtractionTelemetry): string[] {
@@ -400,24 +417,6 @@ function mergeGraphNodes(
   }
   merged.push(...refreshedByPath.values());
   return merged;
-}
-
-/** A previous node (validated by {@link loadGraphFile}) for this exact body, unless it failed. */
-function reuseGraphNode(
-  previousNodes: Map<string, GraphFileNode>,
-  candidate: { absPath: string; type: string },
-  bodyHash: string,
-): GraphCacheShape | undefined {
-  const node = previousNodes.get(candidate.absPath);
-  if (!node || node.type !== candidate.type || node.bodyHash !== bodyHash) return undefined;
-  if (isFailedExtractionStatus(node.status)) return undefined;
-  return {
-    entities: node.entities,
-    relations: node.relations,
-    confidence: node.confidence,
-    ...(node.status ? { status: node.status } : {}),
-    ...(node.reason ? { reason: node.reason } : {}),
-  };
 }
 
 /**
@@ -596,91 +595,6 @@ async function extractGraphBatches(args: {
   return { results, ...(configFailure ? { configFailure } : {}) };
 }
 
-type QueuedGraphPlan =
-  | { kind: "deferred"; filePath: string; queuedBodyHash: string; priority: number }
-  | { kind: "discard"; filePath: string; queuedBodyHash: string; priority: number }
-  | { kind: "hit"; filePath: string; queuedBodyHash: string; currentBodyHash: string; priority: number }
-  | { kind: "model"; filePath: string; queuedBodyHash: string; currentBodyHash: string; priority: number };
-
-function readCurrentGraphBodyHash(filePath: string): string | undefined {
-  try {
-    const body = parseFrontmatter(fs.readFileSync(filePath, "utf8")).content.trim();
-    return body ? computeBodyHash(body) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function planQueuedGraphExtractions(args: {
-  db: Database;
-  stashRoot: string;
-  previousNodes: Map<string, GraphFileNode>;
-  signal: AbortSignal | undefined;
-  reEnrich: boolean | undefined;
-}): QueuedGraphPlan[] {
-  const { db, stashRoot, previousNodes, signal, reEnrich } = args;
-  return peekExtractionQueue(db, stashRoot, GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT).map((queued): QueuedGraphPlan => {
-    const base = { filePath: queued.filePath, queuedBodyHash: queued.bodyHash, priority: queued.priority };
-    if (signal?.aborted) return { kind: "deferred", ...base };
-    const currentBodyHash = readCurrentGraphBodyHash(queued.filePath);
-    if (!currentBodyHash) return { kind: "discard", ...base };
-    const type = inferGraphTypeForPath(stashRoot, queued.filePath) ?? "memory";
-    const hit = !reEnrich && reuseGraphNode(previousNodes, { absPath: queued.filePath, type }, currentBodyHash);
-    return { kind: hit ? "hit" : "model", ...base, currentBodyHash };
-  });
-}
-
-interface QueuedGraphExecution {
-  graphChanged: boolean;
-  acknowledgements: Array<{ filePath: string; queuedBodyHash: string }>;
-}
-
-async function executeQueuedGraphPlans(args: {
-  plans: QueuedGraphPlan[];
-  db: Database;
-  stashRoot: string;
-  featureConfig: AkmConfig;
-  signal: AbortSignal | undefined;
-  llmRunner: StructuredLlmRunner;
-  onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
-}): Promise<QueuedGraphExecution> {
-  const { plans, db, stashRoot, featureConfig, signal, llmRunner, onNotices } = args;
-  let graphChanged = false;
-  const acknowledgements: QueuedGraphExecution["acknowledgements"] = [];
-  for (const plan of plans) {
-    if (signal?.aborted || plan.kind === "deferred") break;
-    // The body this plan settled: none for a discard (the file was gone or empty).
-    let settledBodyHash: string | undefined;
-    if (plan.kind === "model") {
-      const outcome = await extractGraphForSingleFileRevision(db, stashRoot, plan.filePath, {
-        config: featureConfig,
-        signal,
-        llmRunner,
-        onNotices,
-      });
-      if (!outcome.written) continue;
-      graphChanged = true;
-      settledBodyHash = outcome.bodyHash;
-    } else if (plan.kind === "hit") {
-      settledBodyHash = plan.currentBodyHash;
-    }
-    // A body that changed since it was planned goes back on the queue.
-    const currentBodyHash = readCurrentGraphBodyHash(plan.filePath);
-    if (currentBodyHash !== settledBodyHash) {
-      if (currentBodyHash) enqueueGraphExtraction(db, stashRoot, plan.filePath, currentBodyHash, plan.priority);
-      continue;
-    }
-    acknowledgements.push({ filePath: plan.filePath, queuedBodyHash: plan.queuedBodyHash });
-  }
-  return { graphChanged, acknowledgements };
-}
-
-function acknowledgeQueuedGraphPlans(db: Database, stashRoot: string, execution: QueuedGraphExecution): void {
-  for (const intent of execution.acknowledgements) {
-    acknowledgeExtractionQueueEntry(db, stashRoot, intent.filePath, intent.queuedBodyHash);
-  }
-}
-
 /**
  * Top-level entry point. Returns a no-op result when the pass is disabled.
  *
@@ -745,36 +659,20 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   }
 
   const includeTypes = options.includeTypes ?? getGraphExtractionIncludeTypes(config);
-  let previousGraph = loadGraphFile(primary.path, db);
-  const previousNodes = new Map(previousGraph.files.map((node) => [node.path, node]));
+  const previousGraph = loadGraphFile(primary.path, db);
   const batchSize = resolveBatchSize(
     options.batchSize ?? getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
     llmRunner.connection.contextLength,
   );
   const extractorId = getGraphExtractorId({ model: llmRunner.connection.model, batchSize, includeTypes });
-  const queuePlans = planQueuedGraphExtractions({
-    db,
-    stashRoot: primary.path,
-    previousNodes,
-    signal,
-    reEnrich,
-  });
-  const queuedPaths = new Set(queuePlans.map((plan) => plan.filePath));
   const scan = collectEligibleFiles(primary.path, includeTypes);
   // The stored nodes this run keeps without touching them: every eligible file
-  // (outside candidatePaths or topN, or never reached before an abort) and every
-  // file the queue handled. Only a node whose file left the eligible set — gone,
-  // emptied, inferred, or of a type no longer included — is dropped, and an
-  // incomplete scan drops nothing.
-  const keptPaths = scan.complete
-    ? new Set([
-        ...scan.files.map((file) => file.absPath),
-        ...queuePlans.filter((plan) => plan.kind !== "discard").map((plan) => plan.filePath),
-      ])
-    : undefined;
+  // (outside candidatePaths or topN, or never reached before an abort). Only a
+  // node whose file left the eligible set — gone, emptied, inferred, or of a
+  // type no longer included — is dropped, and an incomplete scan drops nothing.
+  const keptPaths = scan.complete ? new Set(scan.files.map((file) => file.absPath)) : undefined;
   let eligible = scan.files.filter(
-    (candidate) =>
-      (!options.candidatePaths || options.candidatePaths.has(candidate.absPath)) && !queuedPaths.has(candidate.absPath),
+    (candidate) => !options.candidatePaths || options.candidatePaths.has(candidate.absPath),
   );
   // P2 (#624): when topN is set, rank the (already candidate-filtered)
   // eligible set by utility_scores DESC and keep only the top-N. Unset issues
@@ -788,26 +686,12 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
 
   if (signal?.aborted) return emptyResult();
 
-  // Validate exactly once iff classification found real model work. Queue
-  // acknowledgements, cache writes, and graph replacement all happen after
-  // this boundary, so a missing credential cannot partially mutate a batch.
-  if ([...queuePlans, ...eligiblePlans].some((plan) => plan.kind === "model")) assertRunnerCredentials(llmRunner);
-
-  const queueExecution = await executeQueuedGraphPlans({
-    plans: queuePlans,
-    db,
-    stashRoot: primary.path,
-    featureConfig,
-    signal,
-    llmRunner,
-    onNotices,
-  });
-  if (queueExecution.graphChanged) {
-    previousGraph = loadGraphFile(primary.path, db);
-  }
+  // Validate exactly once iff classification found real model work. Cache
+  // writes and graph replacement happen after this boundary, so a missing
+  // credential cannot partially mutate a batch.
+  if (eligiblePlans.some((plan) => plan.kind === "model")) assertRunnerCredentials(llmRunner);
 
   if (considered === 0) {
-    acknowledgeQueuedGraphPlans(db, primary.path, queueExecution);
     const scoped = options.candidatePaths ? ` matching ${options.candidatePaths.size} candidate path(s)` : "";
     warnVerbose(
       `graph extraction: skipped because no eligible files${scoped} were found under ${primary.path}. ` +
@@ -866,6 +750,18 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     nonArrayBatchFailures: 0,
   };
   const abortState: GraphExtractionAbortState = { attempts: 0, failures: 0, aborted: false };
+  const extractorNotice = extractorChangeNotice({
+    previous: previousGraph.telemetry,
+    current: {
+      extractorId,
+      model: llmRunner.connection.model,
+      batchSize,
+      promptVersion: graphExtract.GRAPH_EXTRACT_PROMPT_VERSION,
+    },
+    files: scan.files,
+    db,
+  });
+  if (extractorNotice) warn(extractorNotice);
   warnVerbose(
     `graph extraction: starting for ${considered} eligible file(s) under ${primary.path}; ` +
       `includeTypes=${includeTypes.join(",")}, batchSize=${batchSize}, concurrency=${llmRunner.connection.concurrency ?? 1}, ` +
@@ -890,7 +786,6 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     ...(options.maxChunksPerAsset != null ? { maxChunksPerAsset: options.maxChunksPerAsset } : {}),
   });
   if (configFailure) throw configFailure;
-  acknowledgeQueuedGraphPlans(db, primary.path, queueExecution);
 
   // A failed attempt says nothing about the file, so a stored node for it stays
   // as it was; only a file with no stored node records the failure.
@@ -906,12 +801,17 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
   telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
   telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
+  telemetry.filteredGenericEntities = runtimeTelemetry.filteredGenericEntities ?? 0;
+  telemetry.filteredInvalidRelations = runtimeTelemetry.filteredInvalidRelations ?? 0;
+  telemetry.filteredLowConfidenceRelations = runtimeTelemetry.filteredLowConfidenceRelations ?? 0;
+  telemetry.contextBatchRetries = runtimeTelemetry.contextBatchRetries ?? 0;
   telemetry.aborted = abortState.aborted;
 
   const graph = buildGraphFile(primary.path, mergeGraphNodes(previousGraph.files, nodes, keptPaths), telemetry);
   const written = writeGraphFile(db, graph);
   const quality = loadStoredGraphMeta(primary.path, db)?.quality ?? EMPTY_RESULT.quality;
   const warnings = buildLowQualityWarnings(quality, telemetry);
+  if (extractorNotice) warnings.push(extractorNotice);
   if (abortState.message) warnings.push(abortState.message);
   for (const warning of warnings) warnVerbose(`graph extraction quality: ${warning}`);
   warnVerbose(
@@ -933,14 +833,27 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   };
 }
 
-/** The persisted node for one extraction outcome (entities and relations trimmed, deduplicated). */
+/**
+ * The persisted node for one extraction outcome: entities trimmed and kept
+ * once per {@link graphExtract.normalizeEntityKey} (the first form wins),
+ * relations trimmed.
+ */
 function toGraphNode(record: ExtractionRecord, extractionRunId: string): GraphFileNode {
   const confidence = normalizeConfidence(record.confidence);
+  const entityKeys = new Set<string>();
+  const entities = record.entities
+    .map((entity) => entity.trim())
+    .filter((entity) => {
+      const key = graphExtract.normalizeEntityKey(entity);
+      if (!key || entityKeys.has(key)) return false;
+      entityKeys.add(key);
+      return true;
+    });
   return {
     path: record.absPath,
     type: record.type,
     bodyHash: record.bodyHash,
-    entities: [...new Set(record.entities.map((entity) => entity.trim()).filter(Boolean))],
+    entities,
     relations: record.relations
       .map((r) => ({
         from: r.from.trim(),
@@ -959,147 +872,11 @@ function toGraphNode(record: ExtractionRecord, extractionRunId: string): GraphFi
 /** The graph snapshot to store for `files`; its counts are derived from the stored rows on write. */
 function buildGraphFile(stashRoot: string, files: GraphFileNode[], telemetry?: GraphExtractionTelemetry): GraphFile {
   return {
-    schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot,
     files,
     ...(telemetry ? { telemetry } : {}),
   };
-}
-
-/**
- * Injected LLM seam for {@link extractGraphForSingleFile}. Mirrors the shape of
- * a single {@link graphExtract.extractGraphFromBody} result. Tests supply this
- * directly so the per-file extractor can be exercised without a real provider.
- */
-export type SingleFileLlmOverride = (body: string) => Promise<{
-  entities: string[];
-  relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
-  confidence?: number;
-}>;
-
-interface SingleFileGraphOptions {
-  llmOverride?: SingleFileLlmOverride;
-  llmRunner?: StructuredLlmRunner | null;
-  onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void;
-  signal?: AbortSignal;
-  config?: AkmConfig;
-}
-
-type SingleFileGraphRevision = { written: false } | { written: true; bodyHash: string };
-
-/**
- * Infer the asset type (`memory`, `knowledge`, …) for a path from the stash
- * directory segment it lives under. Returns the matching include-type, or
- * `undefined` when the path is not under a known graph-eligible type dir.
- */
-function inferGraphTypeForPath(stashRoot: string, absPath: string): string | undefined {
-  const rel = path.relative(stashRoot, absPath);
-  const firstSeg = rel.split(path.sep)[0];
-  if (!firstSeg) return undefined;
-  for (const type of SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES) {
-    if (stashDirFor(type) === firstSeg) return type;
-  }
-  return undefined;
-}
-
-/**
- * #624-P3 — extract graph data for a SINGLE file and merge it into the stored
- * graph WITHOUT clobbering other files' rows.
- *
- * Re-reads the body from disk at call time (the queued body_hash is NOT trusted
- * blindly — the file may have been deleted or changed since enqueue) and skips
- * silently (returns `false`) when the file is gone or empty. Resolves a frozen
- * LLM execution via {@link resolveIndexPassExecution} (model-available guard:
- * returns `false` when no provider is configured) UNLESS a caller supplies
- * `opts.llmRunner` or `opts.llmOverride`. Those seams let a command reuse an
- * invocation-owned selection or provide a test extractor without re-resolving.
- *
- * Returns `true` when a graph row was written for the file, `false` on any
- * skip (missing file, empty body, unknown type, no model, or extraction error).
- */
-async function extractGraphForSingleFileRevision(
-  db: Database,
-  stashRoot: string,
-  filePath: string,
-  opts?: SingleFileGraphOptions,
-): Promise<SingleFileGraphRevision> {
-  try {
-    // Re-read from disk — never trust a stale queued body.
-    let raw: string;
-    try {
-      raw = fs.readFileSync(filePath, "utf8");
-    } catch {
-      return { written: false }; // file gone / unreadable → silent skip
-    }
-    const parsed = parseFrontmatter(raw);
-    const body = parsed.content.trim();
-    if (!body) return { written: false };
-
-    const type = inferGraphTypeForPath(stashRoot, filePath) ?? "memory";
-    const effectiveHash = computeBodyHash(body);
-
-    // Extract — via the injected seam, or the real per-asset path.
-    let extraction: { entities: string[]; relations: GraphRelation[]; confidence?: number };
-    if (opts?.llmOverride) {
-      extraction = await opts.llmOverride(body);
-    } else {
-      const selection = selectGraphExecution(opts ?? {}, opts?.config ?? loadConfig());
-      if (!selection) return { written: false };
-      opts?.onNotices?.(selection.execution.notices);
-      const llmRunner = selection.execution.runner;
-      if (!llmRunner) return { written: false }; // model-available guard
-      extraction = await graphExtract.extractGraphFromBody(
-        llmRunner,
-        body,
-        opts?.signal,
-        selection.featureConfig,
-        undefined,
-        { ...(opts?.onNotices ? { onNotices: opts.onNotices } : {}) },
-      );
-    }
-
-    // A single-file refresh records only entities, relations and confidence;
-    // its status follows from the entities that survive trimming.
-    const entities = [...new Set(extraction.entities.map((e) => e.trim()).filter(Boolean))];
-    const node = toGraphNode(
-      {
-        absPath: filePath,
-        type,
-        bodyHash: effectiveHash,
-        entities,
-        relations: extraction.relations,
-        ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
-      },
-      crypto.randomUUID(),
-    );
-
-    // Merge with the previously-stored nodes, replacing JUST this path so other
-    // files' rows are preserved (and graph_meta counts refresh).
-    const previousGraph = loadGraphFile(stashRoot, db);
-    const graph = buildGraphFile(stashRoot, mergeGraphNodes(previousGraph.files, [node]), previousGraph.telemetry);
-    return writeGraphFile(db, graph) ? { written: true, bodyHash: effectiveHash } : { written: false };
-  } catch (err) {
-    if (err instanceof ConfigError) throw err;
-    rethrowIfTestIsolationError(err);
-    // A genuine extraction/write failure, distinct from the deliberate
-    // "nothing to do" skips above (missing file, empty body, no model). Warn
-    // so it is visible instead of looking identical to a no-op skip; the
-    // entry stays queued and is retried on the next pass.
-    warn(
-      `graph extraction: failed to extract graph for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return { written: false };
-  }
-}
-
-export async function extractGraphForSingleFile(
-  db: Database,
-  stashRoot: string,
-  filePath: string,
-  opts?: SingleFileGraphOptions,
-): Promise<boolean> {
-  return (await extractGraphForSingleFileRevision(db, stashRoot, filePath, opts)).written;
 }
 
 // ── Eligible-file detection ─────────────────────────────────────────────────

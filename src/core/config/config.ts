@@ -87,7 +87,7 @@ export { FEEDBACK_FAILURE_MODES, type FeedbackFailureMode } from "./config-schem
  * combined prompt size well under common 8K/16K context windows (each body is
  * sliced to ~500 chars in the graph-extract prompt builder).
  */
-export const DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE = 4;
+const DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE = 4;
 
 /**
  * Approximate character budget per asset body inside a batched

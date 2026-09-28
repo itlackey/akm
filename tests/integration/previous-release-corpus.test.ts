@@ -746,6 +746,41 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
   });
 });
 
+describe("previous-release corpus — retired index.graph.lazyGraphExtraction key", () => {
+  beforeEach(() => {
+    resetConfigCache();
+    _resetWarnOnceForTests();
+  });
+
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+  });
+
+  test("a 0.9.17-alpha.5 config that sets it still loads; the key is named once and kept", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true, graphExtractionBatchSize: 2 } },
+      }),
+    );
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+
+    const config = loadConfig();
+
+    expect(warnings.filter((w) => w.includes("lazyGraphExtraction"))).toHaveLength(1);
+    const graph = config.index?.graph as Record<string, unknown> | undefined;
+    expect(graph?.graphExtractionBatchSize).toBe(2);
+    expect(graph?.lazyGraphExtraction).toBe(true);
+  });
+});
+
 // ── Downstream consumer: OpenPalm (#880) ────────────────────────────────────
 //
 // OpenPalm is a real, if unofficial, integration point (see #870/#867's
