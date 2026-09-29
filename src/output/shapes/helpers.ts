@@ -77,6 +77,10 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
   if (detail === "normal") {
     // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
     // so they are projected at `normal` for `akm proposal list/show` when present.
+    // `retirement` (alpha.9) is the same kind of field for a consolidate
+    // `retire` proposal: without it, "list/show" carries no reason a reviewer
+    // could act on (its `payload.content` is empty by design — a retire
+    // proposal deletes, it does not write).
     return pickFields(entry, [
       "id",
       "ref",
@@ -88,6 +92,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
       "confidence",
       "gateDecision",
       "review",
+      "retirement",
     ]);
   }
   // full: project everything including the payload.
@@ -103,6 +108,9 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "gateDecision",
     "payload",
     "review",
+    "retirement",
+    "retiredArchive",
+    "promotionSource",
   ]);
 }
 

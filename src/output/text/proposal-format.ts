@@ -137,6 +137,15 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     if (review.reason) lines.push(`review.reason: ${String(review.reason)}`);
     if (review.decidedAt) lines.push(`review.decidedAt: ${String(review.decidedAt)}`);
   }
+  // alpha.9: a consolidate retire proposal writes no content (`payload.content`
+  // is empty by design) — this is the reason a reviewer needs instead. `diff`
+  // shows the body being retired.
+  const retirement = p.retirement as Record<string, unknown> | undefined;
+  if (retirement) {
+    lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
+    lines.push(`retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`);
+    lines.push(`retire.reason: ${String(retirement.judgeReason)}`);
+  }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {
     const findings = Array.isArray(validation.findings) ? (validation.findings as Array<Record<string, unknown>>) : [];

@@ -3,7 +3,7 @@
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: default 1`] = `
 {
   "config": {
-    "description": "Standard improve pass — reflect, distill, advisory consolidation, graph extraction, and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
+    "description": "Standard improve pass — reflect, distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), graph extraction, and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
     "processes": {
       "consolidate": {
         "allowedTypes": [

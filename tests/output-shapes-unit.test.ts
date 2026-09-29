@@ -706,6 +706,46 @@ describe("shapeProposal* — proposal commands", () => {
     expect((out.payload as Record<string, unknown>).content).toBe("BODY");
   });
 
+  // alpha.9: a consolidate retire proposal's payload.content is empty by
+  // design (it deletes, it does not write) — `retirement` is the field a
+  // reviewer needs instead, so it must survive shaping at normal AND full,
+  // the same way confidence/gateDecision already do.
+  const retireProposal: Record<string, unknown> = {
+    ...fullProposal,
+    source: "consolidate",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      cosine: 0.94,
+      judgeLabel: "duplicate",
+      judgeReason: "same durable facts",
+      retiredContentHash: "a".repeat(64),
+      successorContentHash: "b".repeat(64),
+      reason: "duplicate",
+    },
+    retiredArchive: { dirs: [".akm/memory-cleanup/archive/x"] },
+    promotionSource: "memories/some-source",
+  };
+
+  test("shapeProposalEntry normal keeps retirement; drops retiredArchive/promotionSource", () => {
+    const out = shapeProposalEntry(retireProposal, "normal");
+    expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
+    expect(out).not.toHaveProperty("retiredArchive");
+    expect(out).not.toHaveProperty("promotionSource");
+  });
+
+  test("shapeProposalEntry full keeps retirement, retiredArchive and promotionSource", () => {
+    const out = shapeProposalEntry(retireProposal, "full");
+    expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
+    expect(out.retiredArchive).toEqual(retireProposal.retiredArchive as Record<string, unknown>);
+    expect(out.promotionSource).toBe("memories/some-source");
+  });
+
+  test("shapeProposalEntry brief drops retirement — brief is id/ref/status/source/createdAt only", () => {
+    const out = shapeProposalEntry(retireProposal, "brief");
+    expect(out).not.toHaveProperty("retirement");
+  });
+
   test("shapeProposalListOutput shapes nested proposals + carries totalCount", () => {
     const result = { schemaVersion: 1, totalCount: 2, proposals: [fullProposal, fullProposal] };
     const brief = shapeProposalListOutput(result, "brief");
