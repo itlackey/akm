@@ -652,33 +652,6 @@ describe("consolidate ledger eligibility", () => {
 // ── Layer 3: high-salience admission gate (#608) ──────────────────────────────
 
 describe("high-salience admission gate (#608)", () => {
-  // Consolidate (including its alpha.9 pair pass) is irrelevant to this gate
-  // and must be fully disabled, not just pool-guarded: the pair pass now
-  // records a ledger row for an initiator even with zero candidates (S1,
-  // post-review) — a single-memory fixture always has zero candidates — and
-  // ANY non-capture-source ledger row marks the ref "processed"
-  // (retrieval-scope.ts), which would drop it out of the high-salience
-  // lane's own eligibility within the same akmImprove() run. Same isolation
-  // intent as disabling proactiveMaintenance below, just for a mechanism
-  // that did not exist when this suite was written.
-  function configForHighSalienceGate(stashDir: string): import("../../../../src/core/config/config").AkmConfig {
-    return withImproveAutonomy(
-      withTestImproveLlm({
-        semanticSearchMode: "off",
-        bundles: { stash: { path: stashDir, writable: true } },
-        defaultBundle: "stash",
-        defaultWriteTarget: "stash",
-        improve: {
-          strategies: {
-            default: {
-              processes: { consolidate: { enabled: false }, proactiveMaintenance: { enabled: false } },
-            },
-          },
-        },
-      } as import("../../../../src/core/config/config").AkmConfig),
-    );
-  }
-
   // #644 follow-up: the high-salience lane requires a CONTENT-derived encoding
   // score (`encoding_source = 'content'`), not the per-type weight stub. Default
   // to "content" here so existing #608 cases model genuinely distilled assets
@@ -728,7 +701,6 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configForHighSalienceGate(stash),
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -757,7 +729,6 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configForHighSalienceGate(stash),
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -786,7 +757,7 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configForHighSalienceGate(stash), // isolate the high-salience gate from proactive selection and consolidate
+      config: configWithoutPoolGuard(stash), // isolate the high-salience gate from proactive selection
       limit: 10, // cap = floor(10 × 0.1) = 1 → exactly one high-salience slot
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -819,7 +790,7 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configForHighSalienceGate(stash), // isolate the high-salience gate from proactive selection and consolidate
+      config: configWithoutPoolGuard(stash), // isolate the high-salience gate from proactive selection
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -842,7 +813,6 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configForHighSalienceGate(stash),
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
