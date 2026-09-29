@@ -14,55 +14,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory, base or `.derived`; a flat `knowledge/` asset; or a lesson) in the
   retrieval scope that are new to the pass or whose body has changed since
   their last full attempt — tracked by content hash, not a time window, so
-  a run the cap or a pending-proposal collision cuts short leaves an
-  initiator eligible again rather than marking it settled — takes each
-  one's nearest neighbours by stored vector (fetching 20, keeping the
-  first 5 that clear every filter; same bundle, memory tier only —
-  structured knowledge in subfolders is excluded), and judges every pair at
-  cosine >= `T_pair` (0.93) with one LLM call using the calibrated relation
-  prompt (`src/assets/prompts/consolidate-pair.md`, six labels: `duplicate`,
-  `subsumed`, `supersedes`, `contradicts`, `overlap`, `unrelated`). An
-  initiator with no prior attempt is held to a higher `T_pair` >= 0.95,
-  unless it is new material (git first-added within the last 7 days), which
-  judges at the ordinary 0.93. "Older"/"newer" for the judge's own A/B
-  labelling comes from one `git log` per run over the bundle (first-add
-  time), not frontmatter or file mtime — mtime is only the fallback for a
-  file git does not know, or a bundle with no `.git` at all. At most 300
-  pairs are judged a night, highest cosine first. `duplicate`, `subsumed`
-  and `supersedes` mint a reviewed `retire` proposal for the losing side
-  (owner-calibrated precision 20/22 = 0.91 [0.72, 0.97] against a
-  second-rater baseline of 0.17 for `supersedes` alone); `contradicts` is
-  counted but stays a human decision, and `overlap`/`unrelated` get no
-  proposal. Guards: never a `captureMode: hot` memory, never a `.derived`
-  memory whose parent still exists, never a pair where either side already
-  has a pending retire proposal (as the retired ref or its successor), and
-  never retiring or reusing as a successor an asset already spent earlier in
-  the same run. (`src/commands/improve/consolidate/pair-pass.ts`,
+  an initiator the nightly cap or a pending-proposal collision leaves out
+  stays eligible rather than being marked settled, and the pass's own
+  ledger rows are never retrieval-scope evidence for the other improve
+  lanes — takes each one's nearest neighbours by stored vector (fetching 20,
+  keeping the first 5 that clear every filter; same bundle, memory tier
+  only — structured knowledge in subfolders is excluded), and judges every
+  pair at cosine >= `T_pair` (0.93) with one LLM call using the calibrated
+  relation prompt (`src/assets/prompts/consolidate-pair.md`, six labels:
+  `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap`,
+  `unrelated`). An initiator with no prior attempt is held to a higher
+  `T_pair` >= 0.95, unless it is new material (git first-added within the
+  last 7 days), which judges at the ordinary 0.93. "Older"/"newer" for the
+  judge's own A/B labelling comes from one `git log` per run over the
+  bundle (first-add time, following renames so a moved or renamed file
+  keeps its original date), not frontmatter or file mtime — mtime is only
+  the fallback for a file git does not know, or a bundle with no `.git` at
+  all. At most 300 pairs are judged a night, admitted a whole initiator at
+  a time rather than by flat cosine rank: new-or-changed initiators first,
+  then the existing backlog by its own best cosine, each admitted only if
+  every one of its candidate pairs fits in what remains of the 300 — so an
+  initiator blocked on another pending decision never spends a slot doing
+  nothing, and a smaller initiator further down still fits when a larger
+  one ahead of it does not. `duplicate`, `subsumed` and `supersedes` mint a
+  reviewed `retire` proposal for the losing side (owner-calibrated
+  precision 20/22 = 0.91 [0.72, 0.97] against a second-rater baseline of
+  0.17 for `supersedes` alone); `contradicts` is counted but stays a human
+  decision, and `overlap`/`unrelated` get no proposal. Guards: never a
+  `captureMode: hot` memory, never a `.derived` memory whose parent still
+  exists, never a pair where either side already has a pending retire
+  proposal (as the retired ref or its successor), and never retiring or
+  reusing as a successor an asset already spent earlier in the same run.
+  (`src/commands/improve/consolidate/pair-pass.ts`,
+  `src/commands/improve/retrieval-scope.ts`,
+  `src/storage/repositories/improve-ledger-repository.ts`,
   `src/assets/prompts/consolidate-pair.md`)
 - **Retire proposals.** A pair-pass retire proposal mints under its own
   source, `consolidate-pair` — kept apart from the promote pass's
   `consolidate` proposals, so a bulk `accept`/`reject --generator
-  consolidate` never sweeps a retirement, and the reverse. Its primary
+  consolidate` never sweeps a retirement, and the reverse; a bare `akm
+  proposal accept <ref>` never resolves to one either (it matches the
+  newest non-retire proposal for the ref, if any — a retire is reached by
+  its own proposal id, or the bulk `--generator consolidate-pair` form),
+  and retention expiry never drops a pending one for age alone. Its primary
   change deletes its target instead of writing content. Accepting one first
   confirms the decision is still fresh — the successor still exists, and
   both sides' recorded body hashes still match their current files, not
-  just the retired side's — then archives the asset (and its `.derived`
-  twin, if one exists) through a generalized `archiveCleanupCandidate` (now
-  usable on any memory, knowledge or lesson file, not only `.derived`
-  memories): the same `.akm/memory-cleanup/archive/` encoding memory cleanup
-  already used, never the dead `.akm/archive/`. A `supersedes` judgement
-  first writes the `supersededBy` edge on the older asset, then archives it.
-  Triage never auto-accepts a retire proposal, whatever `applyMode` says —
-  it waits for a direct `akm proposal accept`, reviewed the same way as any
-  other proposal (`akm proposal list`, `show`, `diff`, bulk `accept
-  --generator consolidate-pair`; `--max-diff-lines` counts a retire by its
-  target's own line count). `akm proposal revert` restores the archived
-  file(s) byte-for-byte from the bytes recorded at accept — YAML comments,
-  key order and any human-written edge all survive the round trip. A ref to
-  a retired asset keeps resolving to its tombstone (`isArchivedRelPath`) —
-  fixed along the way: that resolver assumed only memories are ever
-  archived, so an xref to a retired knowledge or lesson asset was wrongly
-  reported `missing-ref` by `akm lint` until now.
+  just the retired side's, so a decision a later accept elsewhere made
+  stale (an A->B/B->C chain, or A->B/B->A both minted) is refused cleanly
+  rather than partially applied — then archives the asset (and its
+  `.derived` twin, if one exists) through a generalized
+  `archiveCleanupCandidate` (now usable on any memory, knowledge or lesson
+  file, not only `.derived` memories): the same
+  `.akm/memory-cleanup/archive/` encoding memory cleanup already used,
+  never the dead `.akm/archive/`. A `supersedes` judgement first writes the
+  `supersededBy` edge on the older asset, then archives it. Triage never
+  auto-accepts a retire proposal, whatever `applyMode` says — it waits for
+  a direct `akm proposal accept`, reviewed the same way as any other
+  proposal (`akm proposal list`, `show`, `diff`, bulk `accept --generator
+  consolidate-pair`; `--max-diff-lines` counts a retire by its target's own
+  line count). Both `accept` and `revert` record their full intent durably
+  before moving any file, so a crash partway through — including between a
+  primary and its `.derived` twin — resumes and finishes from what was
+  recorded next time, rather than leaving an asset stranded or the decision
+  unrecorded; `revert` restores the archived file(s) byte-for-byte from the
+  bytes recorded at accept, even a file that had no trailing newline — YAML
+  comments, key order and any human-written edge all survive the round
+  trip. A ref to a retired asset keeps resolving to its tombstone
+  (`isArchivedRelPath`) — fixed along the way: that resolver assumed only
+  memories are ever archived, so an xref to a retired knowledge or lesson
+  asset was wrongly reported `missing-ref` by `akm lint` until now. Pending
+  retire proposals must be accepted or rejected before downgrading to
+  0.9.17-alpha.8 or earlier — that release predates the retire shape
+  entirely and exits 70 on one in `show`/`diff`/`drain`, and drain's own
+  nightly pre-pass failing on the first one it meets stops that run's
+  auto-promotion for the whole stash
+  (`docs/architecture/persisted-data-compat.md`).
   (`src/commands/proposal/repository.ts`,
   `src/commands/improve/memory/memory-improve.ts`,
   `src/commands/lint/base-linter.ts`)
@@ -95,38 +122,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   architecture decision history. Deleted the unused
   `src/assets/prompts/contradiction-judge.md` (no reader since
   `e82eec811`).
-- **Consolidate pair pass and retire proposals: review-round correctness
-  fixes.** Dating pairs by frontmatter/mtime instead of git history
-  disagreed with the owner's own calibration ordering often enough that
-  `duplicate`/`supersedes` sometimes retired the newer copy — now dated from
-  one `git log` per run. Accepting a retire proposal checked only the
-  retired side's freshness — now the successor's existence and both sides'
-  body hashes, refusing cleanly (not partially applying) a decision a later
-  accept elsewhere made stale, including an A→B/B→C chain. An accepted
-  promotion's O1 source-retirement archived the source memory as it stood at
-  accept, not at mint — now hash-gated (above). The pair-pass ledger's
-  per-initiator eligibility is now purely content-driven (no row, or the
-  body changed since the last full attempt — not a timer), written only once
-  every one of an initiator's own candidates was judged, so a cap-cut or
-  pending-proposal-blocked initiator is picked back up next run instead of
-  being treated as settled. A `.derived` memory in a subfolder could be
-  retired out from under its still-live parent — the parent-path check
-  joined a name that already carried the subfolder onto a dirname that also
-  carried it, doubling the segment. `akm proposal revert` on a retire now
-  restores the exact pre-retire bytes instead of re-deriving them, and
-  validates every archived file it needs before moving any of them, so a
-  `.derived` twin missing its own destination no longer leaves a partial
-  revert. Accepting a retire proposal whose target was already moved (by an
-  interrupted earlier accept) now finishes recording the decision instead of
-  refusing it as stale. `docs/architecture/persisted-data-compat.md`:
-  pending retire proposals must be accepted or rejected before downgrading
-  to 0.9.17-alpha.8 or earlier — that release predates the retire shape
-  entirely and exits 70 on one in `show`/`diff`/`drain`, and drain's own
-  nightly pre-pass failing on the first one it meets stops that run's
-  auto-promotion for the whole stash.
-  (`src/commands/improve/consolidate/pair-pass.ts`,
-  `src/commands/proposal/repository.ts`,
-  `src/storage/repositories/improve-ledger-repository.ts`)
 
 ## [0.9.17-alpha.8] - 2026-09-28
 
