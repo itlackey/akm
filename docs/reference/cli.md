@@ -2730,7 +2730,7 @@ akm proposal list --generator consolidate-pair
 | `--status` | Filter by `pending`, `accepted`, `rejected`, or `reverted` |
 | `--ref` | Filter by asset ref. A qualified ref preserves bundle identity; a short ref matches that concept in the selected queue |
 | `--type` | Reserved type filter |
-| `--generator <name>` | Filter by generator/source (e.g. `reflect`, `distill`, `consolidate-pair`) — the same value `accept`/`reject --generator` take (S4) |
+| `--generator <name>` | Filter by generator/source (e.g. `reflect`, `distill`, `consolidate-pair`) — the same value `accept`/`reject --generator` take |
 
 Each retire proposal's `retirement.continuityRisk`, when present, also shows
 in the default listing (`⚠ continuity-risk` inline) and in `proposal show`'s

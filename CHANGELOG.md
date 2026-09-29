@@ -116,8 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `retire` proposal, it replays up to five of the retired asset's own past
   `search`/`curate` queries through akm's own search, in-process — the
   ranking a user actually gets, no LLM. For every query where the retired
-  asset ranked in the top 10, the successor must too; compared directly
-  (N2), since search itself returns at most the top 10 hits. A failing
+  asset ranked in the top 10, the successor must too; compared directly,
+  since search itself returns at most the top 10 hits. A failing
   query never blocks the mint — the
   proposal's `retirement.continuityRisk` records the failing query count
   and, per failing query, the retired asset's rank and the successor's
@@ -128,13 +128,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   always accept one by id. An asset with no recorded queries is not checked
   at all. A query that never ran (the search call threw) or that fell back
   to keyword-only ranking (an unreachable embedding endpoint, most often)
-  is never silently trusted or silently dropped either (S2): it counts as
+  is never silently trusted or silently dropped either: it counts as
   "unverified" and, on its own, is enough to flag `continuityRisk` — an
-  endpoint outage reads as "risk unknown," never as "no risk found." The
+  endpoint outage reads as "risk unknown," never as "no risk found," for
+  every proposal checked while it stays down, not just the first. The
   first fallback in a pair-pass run forces every later query in that same
   run to skip the semantic attempt entirely, so a dead endpoint costs one
   failed attempt total, not one per remaining query. Two fixes against false
-  flags (S3), measured on a real night-1 admission (300 pairs, 6 flags, 3
+  flags, measured on a real night-1 admission (300 pairs, 6 flags, 3
   spurious): replayed queries are the same cleaned set the retrieval
   regression gate uses (`loadRetrievalQueries`) — stash-README boilerplate,
   harness/tool envelopes, pastes over 2,000 characters, and near-duplicate
@@ -148,7 +149,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `src/commands/proposal/proposal-types.ts`,
   `src/commands/proposal/proposal.ts`)
 - **Continuity-risk visibility, and a `--generator` filter for `proposal
-  list` (S4).** A retire proposal carrying `retirement.continuityRisk` now
+  list`.** A retire proposal carrying `retirement.continuityRisk` now
   shows `⚠ continuity-risk` inline in the default `akm proposal list`
   output (and `--format text`), not just in `proposal show`. `proposal
   show`'s text output now lists the actual failing query text and rank per
@@ -162,32 +163,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   --generator` already take, so the (potentially large) backlog of one
   generator's retire proposals can be reviewed as its own list.
   (`src/commands/proposal/proposal.ts`, `src/commands/proposal/proposal-cli.ts`,
-  `src/output/text/proposal-format.ts`)
+  `src/output/text/proposal-format.ts`, `src/output/shapes/helpers.ts`)
 - **Archive purge sweep.** Deterministic, no LLM, run once at the very start
   of every `akm improve` invocation, ahead of index bootstrap and triage.
   For a git-backed bundle, deletes the archived asset file(s) of a
   retirement — never its `cleanup.md` tombstone — once `retiredAt` is more
   than 30 days old (`RETIRE_GRACE_DAYS`) AND every file under that
-  retirement's archive directory is git-tracked and clean (`git ls-files`
-  plus `git status --porcelain -uall`, checked once per sweep); git history
-  keeps the bytes. `.git` presence alone is not enough: `proposal accept`
-  only commits for a `kind: "git"` write target, and improve's own
-  auto-sync stages only the paths its own run wrote, so a filesystem-kind
-  bundle can carry archived retirements that were never committed — the
-  tracked-and-clean check is what keeps the sweep from deleting the only
-  surviving copy of those. A directory with even one untracked or modified
-  file (tombstone included) is left whole for a later sweep. A
-  memory-cleanup family-prune archive carries no `retiredAt`, so this sweep
-  never touches that older archive class. Every deleted file is journaled
-  individually, so the end-of-run auto-sync commits the removal the same
-  way it commits the archive move itself. A bundle with no `.git` of its
-  own is left untouched — there is no history to fall back on — and `akm
-  health` reports its archive's size and file count instead
-  (`memory-cleanup-archive` advisory), silent whenever the bundle is
-  git-backed or the archive is empty or absent.
+  retirement's archive directory is git-tracked, clean (`git ls-files` plus
+  `git status --porcelain -uall`), and verifiable (`git ls-files -v`: a
+  file marked `assume-unchanged` or `skip-worktree` hides its own edits
+  from `git status`, so it is never trusted as clean either) — each checked
+  once per sweep; git history keeps the bytes. `.git` presence alone is not
+  enough: `proposal accept` only commits for a `kind: "git"` write target,
+  and improve's own auto-sync stages only the paths its own run wrote, so a
+  filesystem-kind bundle can carry archived retirements that were never
+  committed — the tracked/clean/verifiable check is what keeps the sweep
+  from deleting the only surviving copy of those. A directory with even one
+  untracked, modified, or unverifiable file (tombstone included) is left
+  whole for a later sweep — and so is the ENTIRE archive for that sweep if
+  the underlying `git status` or `git ls-files` call itself fails (a broken
+  submodule, for instance, can fail `git status` while `git ls-files`
+  still succeeds): an empty result from a failed check is never treated as
+  "nothing to protect", and the sweep warns once rather than silently
+  purging nothing. A memory-cleanup family-prune archive carries no
+  `retiredAt`, so this sweep never touches that older archive class. Every
+  deleted file is journaled individually, so the end-of-run auto-sync
+  commits the removal the same way it commits the archive move itself.
   (`src/commands/improve/memory/memory-improve.ts`,
-  `src/sources/providers/git-stash.ts`, `src/commands/improve/improve.ts`,
-  `src/commands/health/archive-usage.ts`)
+  `src/sources/providers/git-stash.ts`, `src/commands/improve/improve.ts`)
+- **`akm health`'s `memory-cleanup-archive` advisory now covers every
+  bundle**, not just one with no `.git` at all. A bundle with no `.git` of
+  its own keeps every retirement's archived bytes forever (there is no
+  history to fall back on, so the purge sweep never runs there), and its
+  size and file count are reported as before. A git-backed bundle can ALSO
+  carry archived bytes the purge sweep will never remove — `.git` presence
+  alone never proved a retirement was committed — so this now runs the same
+  tracked/clean/verifiable check the purge sweep itself uses and reports
+  how many files and bytes of the archive cannot currently be purged
+  (untracked, modified, or unverifiable), alongside the total. Silent
+  whenever there is nothing to say: the archive is empty or absent, or (for
+  a git-backed bundle) every byte in it is purgeable once it ages out.
+  (`src/commands/health/archive-usage.ts`, `src/commands/health/data-dir-usage.ts`)
 
 ### Removed
 
@@ -210,7 +226,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   It also protected
   `asset_salience.rank_score`, which only improve itself ever read — a rank
   drop could not hide anything from search. `buildRankChangeReport` (its
-  comparator) is also gone (N2): the new retirement continuity check (see
+  comparator) is also gone: the new retirement continuity check (see
   Added) compares ranks directly instead, and nothing else called it.
   `forgetting-safety` stays a valid `eligibilitySource`/event-type
   value so old proposals and events still decode, but nothing assigns or
