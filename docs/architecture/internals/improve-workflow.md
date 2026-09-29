@@ -286,11 +286,20 @@ duplicate, subsumed and superseding retirement, review-gated.
    `NEW_MATERIAL_DAYS` (7) — which judges at the ordinary `T_PAIR`: new
    content earns the same scrutiny as an edit, not the backlog's higher bar.
    "Older"/"newer" for the judge's own A/B labelling comes from one
-   `git log --diff-filter=A --no-renames --name-only --format=@%ct` per run
-   over the whole bundle (first-add time per path), not frontmatter or file
-   mtime; mtime is only the fallback for a path git does not track, or a
-   bundle with no `.git` directly inside it. At most `MAX_PAIRS_PER_RUN`
-   (300) pairs a run, highest cosine first, each unordered pair judged once.
+   `git log --reverse -M --diff-filter=AR --name-status --format=@%ct` per
+   run over the whole bundle (first-add time per path, following renames —
+   an `A` sets a path's first-add, an `R` carries the old path's first-add
+   to the new one, so a rename never misdates a file as newly added), not
+   frontmatter or file mtime; mtime is only the fallback for a path git does
+   not track, or a bundle with no `.git` directly inside it. At most
+   `MAX_PAIRS_PER_RUN` (300) pairs a run, admitted a whole initiator at a
+   time rather than by flat cosine rank across all of them: new-or-changed
+   initiators first, then the existing backlog by its own best cosine, each
+   admitted only if every one of its own candidate pairs fits in what
+   remains of the 300 (first-fit, so a smaller initiator further down still
+   fits when a larger one ahead of it does not) — an initiator with a
+   pending-blocked pair is skipped entirely rather than spending any of the
+   budget on a pair that cannot be judged yet.
 3. **Judge:** one LLM call per pair (`src/assets/prompts/consolidate-pair.md`,
    the calibrated relation prompt, unchanged) through the consolidate
    process's own engine and concurrency, labelling the pair one of
@@ -307,16 +316,19 @@ duplicate, subsumed and superseding retirement, review-gated.
    `overlap` and `unrelated` are recorded `judged_no_action` with no
    proposal; `contradicts` is counted in the run report and stays a human
    decision.
-5. **Ledger:** a row is written for an initiator once ALL of its own
-   candidates (before the run cap or the pending-proposal skip in step 4)
-   were actually judged this run — including an initiator with zero
-   candidates, which trivially satisfies "all of them" — recording its
-   current body hash and an outcome of `proposed` or `judged_no_action`.
-   Neither outcome carries a timer for this source: only a later body-hash
-   mismatch (step 1) makes the initiator eligible again. An initiator the
-   run cap or a pending-proposal collision left with some candidates
-   unjudged gets NO row at all, so the next run reconsiders it rather than
-   treating it as settled.
+5. **Ledger:** a row is written for an initiator only once every one of its
+   own candidates was admitted this run (whole-initiator admission in step 2
+   makes this an all-or-nothing membership check) AND actually resolved to a
+   verdict — a same-run guard dropping a retire-worthy verdict (the chain
+   guard in step 4), a failed mint, a failed or never-sent judge call, all
+   count as unresolved, not judged — recording its current body hash and an
+   outcome of `proposed` or `judged_no_action`. Neither outcome carries a
+   timer for this source: only a later body-hash mismatch (step 1) makes the
+   initiator eligible again. An initiator left with any candidate not
+   admitted, not judged, or dropped gets NO row at all, so the next run
+   reconsiders it rather than treating it as settled — real data: night 1
+   alone judged 177 `duplicate` verdicts into only 59 proposals before this,
+   the other 118 silently abandoned by the same-run chain guard.
 
 **Retire proposals (`akm proposal accept`/`revert`):** minted under their own
 source, `consolidate-pair` — kept apart from the promote pass's
@@ -336,9 +348,18 @@ revert` restores the archived file(s), and for the primary asset restores
 the EXACT pre-retire bytes recorded at accept (`backupContent`) rather than
 re-deriving "undo the edge" from the archived copy — so a pre-existing
 human-written edge, YAML comments and key order all survive the round trip.
-An accept whose target is already gone but whose own tombstone is on disk
-(an earlier attempt crashed between moving the file and recording the
-decision) finishes recording the decision instead of refusing it as stale.
+Accept records its full intent — `backupContent` and which file is about to
+move — on the still-pending proposal before moving anything; a crash at any
+point after resumes from that recorded intent (skipping whichever file a
+tombstone scan shows an earlier, crashed attempt already archived under this
+proposal's own id) rather than refusing it as stale or re-deriving
+`backupContent` by guessing at what the archived copy would have been.
+Revert works the other way for the same reason: each archive dir's own
+tombstone already names its original and archived paths, so "original
+present, archived copy missing" resumes as an earlier, crashed revert's own
+work — UNLESS that original path's current content does not match the
+`retirement.retiredContentHash` recorded at accept, meaning the path was
+reused by an unrelated file since, which refuses instead of overwriting it.
 Triage never auto-accepts a `retire` proposal, whatever `applyMode` says —
 review reuses `akm proposal list`, `show`, `diff`, and bulk
 `accept --generator consolidate-pair` / `reject --generator

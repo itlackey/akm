@@ -73,14 +73,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a direct `akm proposal accept`, reviewed the same way as any other
   proposal (`akm proposal list`, `show`, `diff`, bulk `accept --generator
   consolidate-pair`; `--max-diff-lines` counts a retire by its target's own
-  line count). Both `accept` and `revert` record their full intent durably
-  before moving any file, so a crash partway through — including between a
-  primary and its `.derived` twin — resumes and finishes from what was
-  recorded next time, rather than leaving an asset stranded or the decision
-  unrecorded; `revert` restores the archived file(s) byte-for-byte from the
-  bytes recorded at accept, even a file that had no trailing newline — YAML
-  comments, key order and any human-written edge all survive the round
-  trip. A ref to a retired asset keeps resolving to its tombstone
+  line count). `accept` is crash-safe: it records its full intent —
+  `backupContent` and which file is about to move — durably before moving
+  anything, so a crash partway through, including between a primary and its
+  `.derived` twin, resumes and finishes from what was recorded rather than
+  leaving an asset stranded or the decision unrecorded. `revert` needs no
+  intent of its own — it resumes from what `accept` already recorded, and
+  refuses instead of overwriting a path that was reused by an unrelated file
+  since (its current content no longer matching what was retired). `revert`
+  restores the archived file(s) byte-for-byte from the bytes recorded at
+  accept, even a file that had no trailing newline — YAML comments, key
+  order and any human-written edge all survive the round trip. A ref to a retired asset keeps resolving to its tombstone
   (`isArchivedRelPath`) — fixed along the way: that resolver assumed only
   memories are ever archived, so an xref to a retired knowledge or lesson
   asset was wrongly reported `missing-ref` by `akm lint` until now. Pending
@@ -88,7 +91,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   0.9.17-alpha.8 or earlier — that release predates the retire shape
   entirely and exits 70 on one in `show`/`diff`/`drain`, and drain's own
   nightly pre-pass failing on the first one it meets stops that run's
-  auto-promotion for the whole stash
+  auto-promotion for the whole stash. Downgrading also revives the
+  new-material starvation this same branch fixed forward-only: 0.9.17-alpha.8
+  counts a pair-pass ledger row as retrieval-scope evidence again, so its own
+  nightly attempts crowd new material back out of every other improve lane —
+  measured, two nights left only 341 of 2,183 new-only assets still in scope
+  once read under alpha.8
   (`docs/architecture/persisted-data-compat.md`).
   (`src/commands/proposal/repository.ts`,
   `src/commands/improve/memory/memory-improve.ts`,
