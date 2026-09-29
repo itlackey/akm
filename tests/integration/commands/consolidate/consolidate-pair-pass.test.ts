@@ -403,6 +403,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       reason: "duplicate",
     });
     expect(proposal.retirement?.cosine).toBeGreaterThan(0.96);
+    // Item 1: no recorded query for old-note means no continuity check ran.
+    expect(proposal.retirement?.continuityRisk).toBeUndefined();
 
     // Ledger: consolidate-pair source, distinguishable from the promote pass's own "consolidate" rows.
     const stateDb = openStateDatabase();
@@ -414,6 +416,52 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     } finally {
       stateDb.close();
     }
+  });
+
+  test("item 1: a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
+    // Distinct bodies (S3b gives an identical pair no check at all — this
+    // test is about the rank-based flag, so the two sides must differ).
+    const oldPath = writeAsset("memories/old-note.md", "description: old", "Old body text.\n");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new", "New body text.\n");
+    dateAsset(newPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "old-note", oldPath, 0);
+      indexAsset(db, "memory", "new-note", newPath, angleForCosine(BACKFILL_FLOOR + 0.02));
+    } finally {
+      closeDatabase(db);
+    }
+    // A past user query that returned old-note — the continuity check's own
+    // input (listRetrievalQueries). Without this, there is nothing to replay
+    // and no check runs at all (see the plain "duplicate" test above, which
+    // records no queries and mints with no continuityRisk field).
+    const stateDb = openStateDatabase();
+    try {
+      insertUsageEvent(stateDb, {
+        event_type: "search",
+        entry_ref: "stash//memories/old-note",
+        query: "how do I do X",
+        source: "user",
+      });
+    } finally {
+      stateDb.close();
+    }
+
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      // old-note ranks #1 for its own past query; new-note never shows up —
+      // a real continuity failure.
+      continuitySearch: async () => ({ hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" }),
+    });
+
+    expect(result.retired).toHaveLength(1); // flagged, but still minted — never blocked
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.retirement?.continuityRisk).toEqual({
+      failingQueries: 1,
+      ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }],
+    });
   });
 
   test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (B2 chain guard)", async () => {
@@ -806,6 +854,208 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       chat: fixedChat({ relation: "duplicate", redundant: null }),
     });
     expect(r3.retired).toHaveLength(1); // content changed since the last attempt: judged again, and re-proposed
+  });
+
+  test("item 0: a rejected pair stays rejected even when a sibling verdict drops the initiator's own ledger row", async () => {
+    // I is the initiator both Y and Z pair against — indexed first, so it
+    // claims both pairs (same "claims every pair it's nearest to" setup as
+    // the B2 chain-guard test above). Y and Z sit on OPPOSITE sides of I
+    // (angles of opposite sign) so they are not each other's neighbour too —
+    // only (I,Y) and (I,Z) clear T_PAIR, never (Y,Z) — keeping I the sole
+    // initiator of both pairs in both runs below. I is dated inside
+    // NEW_MATERIAL_DAYS so both runs judge at T_PAIR, not the higher
+    // BACKFILL_FLOOR, regardless of I's own backlog status.
+    const iPath = writeAsset("memories/i-note.md", "description: i");
+    dateAsset(iPath, 1);
+    const yPath = writeAsset("memories/y-note.md", "description: y");
+    const zPath = writeAsset("memories/z-note.md", "description: z");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "i-note", iPath, 0);
+      indexAsset(db, "memory", "y-note", yPath, angleForCosine(0.95)); // judged first (higher cosine)
+      indexAsset(db, "memory", "z-note", zPath, -angleForCosine(0.94)); // opposite side: cosine(Y,Z) well under T_PAIR
+    } finally {
+      closeDatabase(db);
+    }
+
+    // Run 1: the (I,Y) pair judges cleanly and mints a retire proposal; the
+    // (I,Z) pair's judge call fails — a dropped verdict unrelated to Y. I is
+    // the initiator of BOTH, so should-fix 3's rule (a row only once ALL of
+    // an initiator's own candidates succeeded) leaves I with no row at all,
+    // even though the Y pair minted fine.
+    const warnings: string[] = [];
+    const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(r1.retired).toHaveLength(1);
+    const rejectedId = r1.retired[0]!;
+    expect(getProposal(storage.stashDir, rejectedId).retirement?.successorRef).toBe("memories/y-note");
+
+    const stateDbAfterRun1 = openStateDatabase();
+    try {
+      // I had a genuine "duplicate" verdict on Y AND a dropped one on Z —
+      // should-fix 3 means no row at all, so I is reconsidered next run.
+      expect(
+        getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
+      ).toBeUndefined();
+      // Minting (even a proposal later rejected) marks i-note "processed" in
+      // the retrieval scope (Blocker 1's exemption covers only the pair
+      // pass's OWN ledger source, not the proposal it wrote) — seed a search
+      // so scope isn't what keeps run 2 from reconsidering it, the same
+      // reason the "unchanged content" test above seeds one.
+      insertUsageEvent(stateDbAfterRun1, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
+    } finally {
+      stateDbAfterRun1.close();
+    }
+
+    const { akmProposalReject, akmProposalAccept } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    await akmProposalReject({
+      stashDir: storage.stashDir,
+      id: rejectedId,
+      reason: "owner says keep both",
+      config: makeConfig(storage.stashDir),
+    });
+
+    // Run 2: nothing about I or Y changed. I is re-selected (still no row),
+    // regenerating BOTH pairs. S1: the (I,Y) pair is now skipped BEFORE the
+    // judge call (both orientations of its ref pair + content hashes match
+    // the rejected record), so it costs no LLM call at all and must NOT mint
+    // a second time. The (I,Z) pair still succeeds and mints normally —
+    // proving the fix does not block unrelated pairs sharing the initiator.
+    let chatCalls2 = 0;
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        chatCalls2++;
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/y-note")) {
+          throw new Error("(I,Y) must not reach the judge — it was already rejected, unchanged (S1)");
+        }
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
+    expect(r2.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
+
+    // The rejected pair is still exactly one proposal, still rejected.
+    const allForY = listProposals(storage.stashDir, { includeArchive: true }).filter(
+      (p) => p.retirement?.successorRef === "memories/y-note",
+    );
+    expect(allForY).toHaveLength(1);
+    expect(allForY[0]!.status).toBe("rejected");
+    expect(fs.existsSync(yPath)).toBe(true); // never touched — only accepting a retire proposal moves a file
+
+    // I now has a row: every one of its candidates resolved cleanly this run.
+    const stateDbAfterRun2 = openStateDatabase();
+    try {
+      const row = getImproveLedgerRow(stateDbAfterRun2, storage.stashDir, "memories/i-note", "consolidate-pair");
+      expect(row?.outcome).toBe("proposed");
+    } finally {
+      stateDbAfterRun2.close();
+    }
+
+    // Accept the Z proposal (the "accept one pair" half of the scenario) and
+    // confirm it behaves like any other retire accept.
+    await akmProposalAccept({ stashDir: storage.stashDir, id: r2.retired[0]!, config: makeConfig(storage.stashDir) });
+    expect(fs.existsSync(iPath)).toBe(false); // I (older) archived; Z (newer) survives
+    expect(fs.existsSync(zPath)).toBe(true);
+  });
+
+  test("S1: a reverted pair (accepted, then undone) stays settled too — not just a rejected one", async () => {
+    // Same I/Y/Z shape as item 0's test above: I claims both (I,Y) and
+    // (I,Z); Y and Z sit on opposite sides of I so (Y,Z) itself never pairs.
+    const iPath = writeAsset("memories/i-note.md", "description: i");
+    dateAsset(iPath, 1);
+    const yPath = writeAsset("memories/y-note.md", "description: y");
+    const zPath = writeAsset("memories/z-note.md", "description: z");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "i-note", iPath, 0);
+      indexAsset(db, "memory", "y-note", yPath, angleForCosine(0.95));
+      indexAsset(db, "memory", "z-note", zPath, -angleForCosine(0.94));
+    } finally {
+      closeDatabase(db);
+    }
+
+    // Run 1: (I,Y) mints and is ACCEPTED then REVERTED — the owner's other
+    // way of saying "no, not this" besides an outright reject. (I,Z)'s judge
+    // call fails, so I gets no ledger row at all (should-fix 3), forcing a
+    // full re-selection of I (and both its pairs) next run.
+    const warnings: string[] = [];
+    const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(r1.retired).toHaveLength(1);
+    const revertedId = r1.retired[0]!;
+    expect(getProposal(storage.stashDir, revertedId).retirement?.successorRef).toBe("memories/y-note");
+
+    const { akmProposalAccept, akmProposalRevert } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    await akmProposalAccept({ stashDir: storage.stashDir, id: revertedId, config: makeConfig(storage.stashDir) });
+    expect(fs.existsSync(iPath)).toBe(false); // I (older) archived; Y (newer, the successor) survives
+    await akmProposalRevert({ stashDir: storage.stashDir, id: revertedId, config: makeConfig(storage.stashDir) });
+    expect(fs.existsSync(iPath)).toBe(true); // restored, exact pre-retire bytes
+    // Revert's restore-write resets iPath's mtime to "now" — reapply the
+    // same age used at setup so (I,Z)'s older/newer ordering (and so which
+    // side judge-time "duplicate" retires) stays exactly as before, the same
+    // way run 1 saw it.
+    dateAsset(iPath, 1);
+
+    // The archive/restore round trip invalidates I's embedding row (its
+    // entry survives with the same id, but the write path that restores the
+    // file also drops the now-possibly-stale vector) — a real `akm improve`
+    // run re-embeds it during index bootstrap, ahead of consolidate; this
+    // test drives the pair pass directly, so it does that one step by hand.
+    const dbReindex = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(dbReindex, "memory", "i-note", iPath, 0);
+    } finally {
+      closeDatabase(dbReindex);
+    }
+
+    const stateDbAfterRun1 = openStateDatabase();
+    try {
+      expect(
+        getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
+      ).toBeUndefined();
+      insertUsageEvent(stateDbAfterRun1, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
+    } finally {
+      stateDbAfterRun1.close();
+    }
+
+    // Run 2: I is re-selected, regenerating both pairs. (I,Y) must be
+    // skipped BEFORE the judge — reverted, unchanged since, counts the same
+    // as a rejected pair (S1).
+    let chatCalls2 = 0;
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        chatCalls2++;
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/y-note")) {
+          throw new Error("(I,Y) must not reach the judge — it was already reverted, unchanged (S1)");
+        }
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
+    expect(r2.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
+
+    // Exactly one proposal ever existed for Y, and it stays reverted — not re-minted.
+    const allForY = listProposals(storage.stashDir, { includeArchive: true }).filter(
+      (p) => p.retirement?.successorRef === "memories/y-note",
+    );
+    expect(allForY).toHaveLength(1);
+    expect(allForY[0]!.status).toBe("reverted");
   });
 
   test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {

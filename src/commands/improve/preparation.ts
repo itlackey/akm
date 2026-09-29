@@ -10,10 +10,9 @@
  * Candidate selection reads the improve ledger plus one set of signals: a ref
  * is eligible for a source when feedback newer than its last attempt landed and
  * no ledger window holds it. Refs without recent feedback can still be picked
- * by the fallback lanes (proactive maintenance, high salience, forgetting
- * safety); the survivors are ranked by salience, checked on disk and capped.
- * A plan-only run evaluates the same selectors against read snapshots and
- * writes nothing.
+ * by the fallback lanes (proactive maintenance, high salience); the survivors
+ * are ranked by salience, checked on disk and capped. A plan-only run
+ * evaluates the same selectors against read snapshots and writes nothing.
  */
 
 import fs from "node:fs";
@@ -78,7 +77,6 @@ import {
   ledgerRowFor,
   loadLedgerSnapshot,
   stateKey,
-  stripBundle,
 } from "./ledger";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
@@ -94,9 +92,7 @@ import { projectMemoryCleanup, selectEffectiveImproveRefs } from "./planner";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import {
-  buildRankChangeReport,
   computeSalience,
-  getAllRankScores,
   getAssetSalience,
   getLastUseMsByRef,
   isContentEncodingRow,
@@ -149,13 +145,7 @@ export function pickDefined<T extends object, K extends keyof T>(
   return out;
 }
 
-export const CONSOLIDATION_CONFIG_KEYS = [
-  "enabled",
-  "minPoolSize",
-  "limit",
-  "maxChunkSize",
-  "incrementalSince",
-] as const;
+export const CONSOLIDATION_CONFIG_KEYS = ["enabled", "minPoolSize", "limit", "maxChunkSize"] as const;
 
 /** Emit an aggregate `improve_skipped` row (never one per ref). */
 export function recordImproveSkip(
@@ -211,8 +201,6 @@ function planConsolidationPass(args: {
           writeTarget: options.writeTarget,
           target: options.target,
           limit: processConfig?.limit,
-          incrementalSince: processConfig?.incrementalSince,
-          neighborsPerChanged: processConfig?.neighborsPerChanged,
           maxChunkSize: processConfig?.maxChunkSize,
         },
         primaryStashDir,
@@ -314,8 +302,6 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
         existingKnowledgeBodyHashes,
         sourceRun: `consolidate-${Date.now()}`,
         limit: processConfig?.limit,
-        incrementalSince: processConfig?.incrementalSince,
-        neighborsPerChanged: processConfig?.neighborsPerChanged,
         maxChunkSize: processConfig?.maxChunkSize,
         signal: args.budgetSignal,
         p90ChunkSecondsDefault: processConfig?.p90ChunkSecondsDefault,
@@ -846,8 +832,8 @@ export function partitionBySignalDelta(args: {
 
 /**
  * Pick the loop's refs: signal delta, the fallback lanes (unless
- * `--require-feedback-signal`), lane attribution, salience and forgetting
- * safety, the no-op-dampened ranking, the disk check and the limit.
+ * `--require-feedback-signal`), lane attribution, salience, the
+ * no-op-dampened ranking, the disk check and the limit.
  */
 async function selectLoopCandidates(
   args: ImprovePreparationStageArgs,
@@ -868,9 +854,9 @@ async function selectLoopCandidates(
   const processableRefs = [...partition.eligibleRefs, ...partition.distillOnlyRefs];
   const signalFiltered = processableRefs.filter((c) => snapshot.feedback.get(c.ref)?.hasSignal === true);
   const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
-  // The fallback lanes (proactive, high salience, forgetting safety) have no
-  // usage evidence of their own: they pick only what retrieval returned or new
-  // material improve never processed (#986). Evaluated once per candidate.
+  // The fallback lanes (proactive, high salience) have no usage evidence of
+  // their own: they pick only what retrieval returned or new material improve
+  // never processed (#986). Evaluated once per candidate.
   const fallbackEligible = postCleanupRefs.filter((c) => !validationFailureRefs.has(c.ref));
   const allowFallbacks = options.requireFeedbackSignal !== true;
   const retrievalScope =
@@ -903,7 +889,7 @@ async function selectLoopCandidates(
     : [];
   // An explicit ref scope always acts on its ref; otherwise usage signals gate the pool.
   const signalAndRetrievalRefs = dedupeRefs([...signalFiltered, ...proactive.proactiveRefs, ...highSalienceRefs]);
-  let mergedRefs =
+  const mergedRefs =
     scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
 
   // Lane attribution, weakest first so the strongest wins: high-salience <
@@ -915,25 +901,7 @@ async function selectLoopCandidates(
   if (scope.mode === "ref") for (const r of processableRefs) sourceByRef.set(r.ref, "scope");
   for (const r of mergedRefs) r.eligibilitySource = sourceByRef.get(r.ref) ?? "unknown";
 
-  // Forgetting safety may only reuse this plan's own surviving objects inside
-  // the retrieval scope, and never a ref whose reflect window is still open.
-  const forgettingEligible = fallbackEligible.filter(
-    (c) =>
-      !unscoped.has(c.ref) &&
-      !isLedgerBlocked(ledgerRowFor(snapshot.ledger, "reflect", c.ref, c.itemRef), snapshot.nowIso),
-  );
-  const scored = scoreSalience(args, mergedRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
-  mergedRefs = applyForgettingSafety({
-    pendingForgettingRefs: scored.pendingForgettingRefs,
-    scope,
-    mergedRefs,
-    eligibleRefs: forgettingEligible,
-    allowFallbacks,
-    eligibilitySourceByRef: sourceByRef,
-    highSalienceRefs,
-    proactiveRefs: proactive.proactiveRefs,
-    signalFiltered,
-  });
+  const salienceMap = scoreSalience(args, mergedRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
 
   // Rank by salience; a ref skipped as a no-op repeatedly sorts lower (its stored rank is untouched).
   const noOps = new Map<string, number>();
@@ -941,7 +909,7 @@ async function selectLoopCandidates(
     for (const r of mergedRefs) noOps.set(r.ref, getAssetSalience(db, keyOf(r))?.consecutive_no_ops ?? 0);
   });
   const effectiveScore = (ref: string): number => {
-    const rank = scored.salienceMap.get(ref)?.rankScore ?? 0;
+    const rank = salienceMap.get(ref)?.rankScore ?? 0;
     return (noOps.get(ref) ?? 0) >= SALIENCE_NO_OP_DAMPEN_THRESHOLD ? rank * SALIENCE_NO_OP_DAMPEN_FACTOR : rank;
   };
   const sorted = [...mergedRefs].sort(
@@ -1168,8 +1136,7 @@ function selectHighSalienceLane(
 /**
  * Score the merged refs: update `asset_outcome` (projected on a plan-only
  * run), compute each salience vector (keeping a stored content-derived
- * encoding score), then persist and compare the stash-wide ranking. A ref that
- * falls from the top 200 to below 500 becomes a forgetting-safety candidate.
+ * encoding score), then persist it.
  */
 function scoreSalience(
   args: ImprovePreparationStageArgs,
@@ -1177,7 +1144,7 @@ function scoreSalience(
   feedback: Map<string, FeedbackSignal>,
   retrievalCounts: Map<string, number>,
   persist: boolean,
-): { salienceMap: Map<string, Salience>; pendingForgettingRefs: string[] } {
+): Map<string, Salience> {
   const { options, eventsCtx } = args;
   const utilityMap = buildUtilityMap(mergedRefs, !persist);
   const lastUseMsByRef = withIndexDb(!persist, (db) => getLastUseMsByRef(db, mergedRefs)) ?? new Map<string, number>();
@@ -1219,64 +1186,12 @@ function scoreSalience(
       }),
     );
   }
-  const refByKey = new Map(mergedRefs.map((r) => [keyOf(r), r.ref]));
-  const pendingForgettingRefs =
+  if (persist) {
     withRunState(eventsCtx, persist, (db) => {
-      // Positions are stash-wide: every stored row of this source, with this
-      // run's scores overlaid under the same keys.
-      const before = new Map<string, number>();
-      for (const [ref, score] of getAllRankScores(db)) {
-        const boundary = ref.indexOf("//");
-        if (options.sourceName && (boundary >= 0 ? ref.slice(0, boundary) : undefined) !== options.sourceName) continue;
-        before.set(ref, score);
-      }
-      let forgetting: string[] = [];
-      if (before.size > 0) {
-        const after = new Map(before);
-        for (const r of mergedRefs) after.set(keyOf(r), salienceMap.get(r.ref)?.rankScore ?? 0);
-        const report = buildRankChangeReport(toRankPositions(before), toRankPositions(after));
-        if (report.forgettingCandidates.length > 0) {
-          const drops = report.forgettingCandidates
-            .slice(0, 5)
-            .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
-            .join(", ");
-          warn(
-            `[improve/salience] WS-1 rank-change report: ${report.forgettingCandidates.length} asset(s) fell from top-200 to below position 500. Top drops: ${drops}`,
-          );
-          forgetting = report.forgettingCandidates.map((e) => refByKey.get(e.ref) ?? e.ref);
-        }
-        if (persist) {
-          appendEvent(
-            {
-              eventType: "improve_salience_rank_change",
-              ref: undefined,
-              metadata: {
-                stashSize: before.size,
-                totalChanged: report.allChanges.length,
-                forgettingCandidates: report.forgettingCandidates.length,
-                topDrops: report.forgettingCandidates
-                  .slice(0, 10)
-                  .map((e) => ({ ref: e.ref, oldRank: e.oldRank, newRank: e.newRank })),
-              },
-            },
-            eventsCtx,
-          );
-        }
-      }
-      if (persist) {
-        for (const r of mergedRefs) upsertAssetSalience(db, keyOf(r), salienceMap.get(r.ref) as Salience, now);
-      }
-      return forgetting;
-    }) ?? [];
-  return { salienceMap, pendingForgettingRefs };
-}
-
-/** 1-indexed positions by score desc (ref asc on ties). */
-function toRankPositions(scores: Map<string, number>): Map<string, number> {
-  const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
-    b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
-  );
-  return new Map(sorted.map(([ref], i) => [ref, i + 1]));
+      for (const r of mergedRefs) upsertAssetSalience(db, keyOf(r), salienceMap.get(r.ref) as Salience, now);
+    });
+  }
+  return salienceMap;
 }
 
 /**
@@ -1363,52 +1278,6 @@ function updateOutcomeScores(args: {
     }
   });
   return out;
-}
-
-/**
- * Forgetting safety: inject this plan's own candidates that fell out of the
- * top ranks, past the signal gate (never for a ref scope or with
- * `--require-feedback-signal`). Attribution afterwards: high-salience <
- * proactive < forgetting-safety < signal-delta.
- */
-export function applyForgettingSafety(args: {
-  pendingForgettingRefs: string[];
-  scope: ImproveScope;
-  mergedRefs: ImproveEligibleRef[];
-  /** This invocation's post-cleanup, post-validation candidates. */
-  eligibleRefs: ImproveEligibleRef[];
-  allowFallbacks: boolean;
-  eligibilitySourceByRef: Map<string, EligibilitySource>;
-  highSalienceRefs: ImproveEligibleRef[];
-  proactiveRefs: ImproveEligibleRef[];
-  signalFiltered: ImproveEligibleRef[];
-}): ImproveEligibleRef[] {
-  const { eligibilitySourceByRef } = args;
-  let mergedRefs = args.mergedRefs;
-  if (args.pendingForgettingRefs.length === 0 || args.scope.mode === "ref" || !args.allowFallbacks) return mergedRefs;
-  const present = new Set(mergedRefs.map((r) => r.ref));
-  const byRef = new Map(args.eligibleRefs.map((c) => [c.ref, c]));
-  const byItemRef = new Map(args.eligibleRefs.flatMap((c) => (c.itemRef ? [[c.itemRef, c] as const] : [])));
-  const added: ImproveEligibleRef[] = [];
-  const forgetting = new Set<string>();
-  for (const stored of args.pendingForgettingRefs) {
-    // A qualified spelling must match this plan's exact item_ref.
-    const candidate = byItemRef.get(stored) ?? (stored.includes("//") ? undefined : byRef.get(stripBundle(stored)));
-    if (!candidate || forgetting.has(candidate.ref)) continue;
-    forgetting.add(candidate.ref);
-    if (!present.has(candidate.ref)) {
-      added.push(candidate);
-      present.add(candidate.ref);
-    }
-  }
-  if (added.length > 0) mergedRefs = dedupeRefs([...mergedRefs, ...added]);
-  if (forgetting.size === 0) return mergedRefs;
-  for (const r of args.highSalienceRefs) eligibilitySourceByRef.set(r.ref, "high-salience");
-  for (const r of args.proactiveRefs) eligibilitySourceByRef.set(r.ref, "proactive");
-  for (const ref of forgetting) eligibilitySourceByRef.set(ref, "forgetting-safety");
-  for (const r of args.signalFiltered) eligibilitySourceByRef.set(r.ref, "signal-delta");
-  for (const r of mergedRefs) r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
-  return mergedRefs;
 }
 
 /** Drop candidates whose file vanished since planning, with one aggregate event. */

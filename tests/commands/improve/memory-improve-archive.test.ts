@@ -13,15 +13,46 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { archiveCleanupCandidate, derivedTwinPath } from "../../../src/commands/improve/memory/memory-improve";
+import {
+  archiveCleanupCandidate,
+  derivedTwinPath,
+  purgeGracedArchive,
+  RETIRE_GRACE_DAYS,
+} from "../../../src/commands/improve/memory/memory-improve";
 import type { MemoryPruneCandidate } from "../../../src/core/improve-types";
+
+const MS_PER_DAY = 86_400_000;
 
 function sandbox(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-archive-candidate-"));
   return dir;
+}
+
+/** `isGitBackedStash` is a plain `.git`-presence check — no real repo needed. */
+function markGitBacked(stashDir: string): void {
+  fs.mkdirSync(path.join(stashDir, ".git"), { recursive: true });
+}
+
+/** A REAL git repo (B1): the purge sweep now checks `git ls-files`/`git status` for real, so tests that expect a purge to actually happen need a real repo, not just a `.git` directory. */
+function git(stashDir: string, ...args: string[]): string {
+  const result = spawnSync("git", ["-C", stashDir, ...args], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  return result.stdout;
+}
+
+function initGitRepo(stashDir: string): void {
+  expect(spawnSync("git", ["init", "--initial-branch=main", stashDir], { encoding: "utf8" }).status).toBe(0);
+  git(stashDir, "config", "user.email", "test@example.com");
+  git(stashDir, "config", "user.name", "test");
+}
+
+function commitAll(stashDir: string, message: string): void {
+  git(stashDir, "add", "-A");
+  git(stashDir, "commit", "-m", message);
 }
 
 function writeAsset(stashDir: string, relPath: string, frontmatter: string, body = "Body text.\n"): string {
@@ -138,5 +169,187 @@ describe("derivedTwinPath", () => {
 
     const derivedPath = writeAsset(stashDir, "memories/bar.derived.md", "description: already derived");
     expect(derivedTwinPath(derivedPath, "memory")).toBeUndefined();
+  });
+});
+
+describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)", () => {
+  /** A retire-shaped archive (proposalId set), via the real production path so `retiredAt` matches reality. Returns the tombstone's own `retiredAt`. */
+  function archiveRetirement(stashDir: string, relPath: string, ref: string): string {
+    const filePath = writeAsset(stashDir, relPath, "description: a retired asset");
+    const candidate: MemoryPruneCandidate = {
+      ref,
+      reason: "duplicate",
+      proposalId: `p-${ref}`,
+      successorRefs: ["memories/keeper"],
+    };
+    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
+    if (!record.retiredAt) throw new Error("expected a retiredAt on a retire-shaped archive record");
+    return record.retiredAt;
+  }
+
+  function daysFromNow(days: number): Date {
+    return new Date(Date.now() + days * MS_PER_DAY);
+  }
+
+  test("not git-backed: the archive is left untouched", () => {
+    const stashDir = sandbox();
+    archiveRetirement(stashDir, "memories/old.md", "memories/old");
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "old.md"))).toBe(true);
+  });
+
+  test("no archive directory at all: a clean no-op", () => {
+    const stashDir = sandbox();
+    markGitBacked(stashDir);
+    expect(purgeGracedArchive(stashDir)).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+  });
+
+  test("within the grace period: nothing purged", () => {
+    const stashDir = sandbox();
+    markGitBacked(stashDir);
+    archiveRetirement(stashDir, "memories/recent.md", "memories/recent");
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS - 1));
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "recent.md"))).toBe(true);
+  });
+
+  test("exactly at the grace boundary is not enough — only strictly more than RETIRE_GRACE_DAYS is purged", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    const retiredAt = archiveRetirement(stashDir, "memories/boundary.md", "memories/boundary");
+    commitAll(stashDir, "archive retirement"); // committed and clean (B1) — grace-period date is the only remaining gate
+    // now - retiredAt == exactly RETIRE_GRACE_DAYS (computed from the tombstone's
+    // own timestamp, not two independent Date.now() calls, which would drift by
+    // the test's own execution time and make this boundary check flaky).
+    const exactlyAtBoundary = new Date(Date.parse(retiredAt) + RETIRE_GRACE_DAYS * MS_PER_DAY);
+    expect(purgeGracedArchive(stashDir, exactlyAtBoundary)).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(purgeGracedArchive(stashDir, new Date(exactlyAtBoundary.getTime() + 1))).toEqual({
+      purgedDirs: 1,
+      purgedFiles: 1,
+    });
+  });
+
+  test("past the grace period AND committed-clean in git: the archived file is deleted, cleanup.md is not (B1)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    commitAll(stashDir, "archive retirement");
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    expect(result).toEqual({ purgedDirs: 1, purgedFiles: 1 });
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "stale.md"))).toBe(false);
+    expect(fs.existsSync(path.join(archiveRoot, dir, "cleanup.md"))).toBe(true);
+    // The directory tree the file lived under is cleaned up too, not left empty.
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories"))).toBe(false);
+  });
+
+  test("a second, independently-timed retirement in the same archive is judged on its own retiredAt", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    archiveRetirement(stashDir, "memories/twin.derived.md", "memories/twin.derived");
+    commitAll(stashDir, "archive both retirements");
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    // Both were archived "now" in this test, so both are past grace by the same future `now`.
+    expect(result).toEqual({ purgedDirs: 2, purgedFiles: 2 });
+  });
+
+  test("a memory-cleanup family-prune archive (no retiredAt) is never touched, whatever its age", () => {
+    const stashDir = sandbox();
+    markGitBacked(stashDir);
+    const filePath = writeAsset(stashDir, "memories/child.derived.md", "description: derived child");
+    const candidate: MemoryPruneCandidate = {
+      ref: "memory:child.derived",
+      parentRef: "memories/child",
+      reason: "superseded-derived",
+      survivorRef: "memory:child.derived.v2",
+    };
+    archiveCleanupCandidate(stashDir, candidate, filePath);
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS * 10));
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "child.derived.md"))).toBe(true);
+  });
+
+  test("an untracked archived file (never committed) is kept — git has no other copy of it (B1)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    // A `kind: "filesystem"` bundle's `proposal accept` never commits
+    // (`commitWriteTargetBoundary` only fires for `kind: "git"`), so this
+    // reproduces exactly that: the archive move happened on disk, but
+    // nothing was ever `git add`ed, let alone committed.
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "stale.md"))).toBe(true);
+    expect(fs.existsSync(path.join(archiveRoot, dir, "cleanup.md"))).toBe(true);
+  });
+
+  test("a modified archived file (committed, then edited on disk with no new commit) is kept (B1)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    commitAll(stashDir, "archive retirement");
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+    // Edited after the commit, without a follow-up commit — git sees this
+    // file as dirty, so the committed copy no longer matches the worktree
+    // copy purge would delete.
+    fs.appendFileSync(path.join(archiveRoot, dir, "memories", "stale.md"), "Unsynced edit.\n");
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "stale.md"))).toBe(true);
+  });
+
+  test("a symlinked archive/<dir> is never followed — nothing outside the archive is touched (N1)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    fs.mkdirSync(archiveRoot, { recursive: true });
+
+    // A directory OUTSIDE the archive, shaped exactly like a purgeable
+    // retirement (tombstone with a stale retiredAt, tracked and clean in
+    // git) — if the symlink below were ever followed, this is what the old
+    // code would delete.
+    const victimDir = path.join(stashDir, "outside-the-archive");
+    fs.mkdirSync(victimDir, { recursive: true });
+    const retiredAt = new Date(Date.now() - (RETIRE_GRACE_DAYS + 1) * MS_PER_DAY).toISOString();
+    fs.writeFileSync(
+      path.join(victimDir, "cleanup.md"),
+      `---\nkind: memory-cleanup-archive\nref: memories/victim\nretiredAt: "${retiredAt}"\noriginalPath: memories/victim.md\n---\n\nArchived.\n`,
+      "utf8",
+    );
+    fs.writeFileSync(path.join(victimDir, "victim.md"), "Should never be touched.\n", "utf8");
+    commitAll(stashDir, "seed a victim directory outside the archive");
+
+    // A symlink INSIDE the archive root pointing at the victim directory —
+    // `entry.name` alone can't distinguish this from a real archive dir;
+    // only `lstat`/`Dirent.isDirectory()` can.
+    fs.symlinkSync(victimDir, path.join(archiveRoot, "2020-01-01-symlinked-elsewhere"));
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(path.join(victimDir, "victim.md"))).toBe(true);
+    expect(fs.existsSync(path.join(victimDir, "cleanup.md"))).toBe(true);
   });
 });

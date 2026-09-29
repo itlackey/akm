@@ -104,7 +104,12 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
     // #577: surface the gate verdict inline so the queue explains itself.
     const gate = formatGateDecisionSummary(p.gateDecision);
     const gateSuffix = gate ? `  ${gate}` : "";
-    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}`);
+    // S4: a retire proposal's continuityRisk excludes it from bulk accept —
+    // visible in the default list, not just `proposal show`, since the owner
+    // reviews the backlog list-first.
+    const retirement = p.retirement as Record<string, unknown> | undefined;
+    const continuitySuffix = retirement?.continuityRisk ? "  ⚠ continuity-risk" : "";
+    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}${continuitySuffix}`);
   }
   return lines.join("\n").trimEnd();
 }
@@ -145,6 +150,40 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
     lines.push(`retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`);
     lines.push(`retire.reason: ${String(retirement.judgeReason)}`);
+    // Item 1 (continuity check): flagged, but still minted — never swept by a
+    // bulk accept, only acceptable by id, so a reviewer must see it here.
+    const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
+    if (continuityRisk) {
+      const failingQueries = typeof continuityRisk.failingQueries === "number" ? continuityRisk.failingQueries : 0;
+      const unverifiedQueries =
+        typeof continuityRisk.unverifiedQueries === "number" ? continuityRisk.unverifiedQueries : 0;
+      const summary: string[] = [];
+      if (failingQueries > 0) {
+        summary.push(
+          `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
+        );
+      }
+      // S2: a query the search call never ran, or that fell back to
+      // keyword-only ranking, is never silently trusted OR silently
+      // dropped — it excludes the proposal from bulk accept on its own.
+      if (unverifiedQueries > 0) {
+        summary.push(
+          `${unverifiedQueries} quer${unverifiedQueries === 1 ? "y" : "ies"} unverified (search failed or used the keyword-only fallback)`,
+        );
+      }
+      lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
+      // N3 / S4: the actual failing query text, not just the count — a
+      // reviewer deciding whether to accept by id needs to see what would
+      // stop resolving, not just how many queries.
+      const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
+      for (const rank of ranks) {
+        const successorRank =
+          rank.successorRank === null || rank.successorRank === undefined
+            ? "absent from top 10"
+            : `#${String(rank.successorRank)}`;
+        lines.push(`  - "${String(rank.query)}": retired #${String(rank.retiredRank)}, successor ${successorRank}`);
+      }
+    }
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {

@@ -58,6 +58,7 @@ import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage, type LlmRunner } from "../stage";
+import { type ContinuitySearch, checkRetirementContinuity, createContinuitySearch } from "./continuity-check";
 
 export { PAIR_PASS_LEDGER_SOURCE };
 
@@ -322,6 +323,17 @@ function pairKey(a: string, b: string): string {
 }
 
 /**
+ * A rejected retirement's dedup key (item 0): the exact ref pair plus both
+ * content hashes at judge time, so a re-selected initiator (its own ledger
+ * row missing because a sibling candidate was dropped or failed, not because
+ * this pair changed) does not get this same, already-rejected pair re-judged
+ * into a new proposal.
+ */
+function rejectedPairKey(retiredRef: string, successorRef: string, retiredHash: string, successorHash: string): string {
+  return [retiredRef, successorRef, retiredHash, successorHash].join("\u0000");
+}
+
+/**
  * Initiators (plan §5.2 step 1, S1 post-review): the pool, in the retrieval
  * scope, and content-eligible — no prior `consolidate-pair` ledger row, or a
  * row whose recorded body hash differs from the asset's current one. A row's
@@ -526,6 +538,22 @@ interface PairPassContext {
   warnings: string[];
   chat?: PairJudgeChat;
   /**
+   * The continuity check's search call (item 1) — one shared instance for
+   * the whole run (S2), production or test. `runConsolidatePairPass` builds
+   * the real one via {@link createContinuitySearch} unless a test seam
+   * overrides it.
+   */
+  continuitySearch: ContinuitySearch;
+  /**
+   * {@link rejectedPairKey} of every rejected OR reverted `consolidate-pair`
+   * retirement on record (item 0, S1), so a pair the owner already declined
+   * — by rejecting it, or by accepting then reverting it — is never
+   * re-proposed just because its initiator's OWN ledger row went missing (a
+   * sibling candidate dropped or failed this run — see the ledger-write step
+   * in {@link runConsolidatePairPass}).
+   */
+  rejectedPairKeys: ReadonlySet<string>;
+  /**
    * ConceptIds (stripped of bundle) already given a retire decision earlier
    * in THIS run — by an earlier pair, not a prior run (`pendingRetireRefs`
    * covers that) — as EITHER the retired side or the successor (B2's
@@ -546,6 +574,22 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const initiatorSide = loadSide(candidate.initiator, ctx.gitFirstAdded, ctx.stashDir);
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
   if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
+
+  // Item 0 / S1: this exact pair (same two refs, same two content hashes,
+  // EITHER orientation) was already judged and rejected OR reverted. Checked
+  // HERE, before the judge call, not after — the judge (not yet run) is what
+  // decides which side would be "retired" this time, so both orientations
+  // are checked against the current content hashes rather than waiting for
+  // a verdict to pick one. A settled pair therefore costs no LLM call.
+  const initiatorHash = contentHash(initiatorSide.raw, "body");
+  const otherHash = contentHash(otherSide.raw, "body");
+  if (
+    ctx.rejectedPairKeys.has(rejectedPairKey(initiatorSide.asset.ref, otherSide.asset.ref, initiatorHash, otherHash)) ||
+    ctx.rejectedPairKeys.has(rejectedPairKey(otherSide.asset.ref, initiatorSide.asset.ref, otherHash, initiatorHash))
+  ) {
+    return { failed: false };
+  }
+
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
   const outcome = await callStage({
@@ -587,6 +631,8 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
     if (fs.existsSync(parentPath)) return { failed: false }; // never retire a .derived memory whose parent still exists
   }
+  const retiredHash = contentHash(retired.raw, "body");
+  const successorHash = contentHash(successor.raw, "body");
   // B2: an asset retired (or already spent as a successor) earlier in this
   // run cannot be retired or reused as a successor again — the same-run half
   // of the chain guard (the accept-time hash/existence check is the other,
@@ -603,21 +649,35 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   ctx.retiredThisRun.add(successorKey);
 
   const reason = tombstoneReason(verdict.relation);
+  if (ctx.opts.dryRun) {
+    ctx.retired.push(`${retired.asset.ref} -> ${successor.asset.ref}`);
+    ctx.perInitiatorProposed.add(candidate.initiator.ref);
+    return { failed: false };
+  }
+  // Continuity check (plan §5.4, rule R3): replay the retired asset's own
+  // past queries and flag, but do not block, a pair where the successor
+  // would not have shown up where the retired asset did.
+  const continuityRisk = await checkRetirementContinuity({
+    stashDir: ctx.stashDir,
+    config: ctx.config,
+    retiredRef: retired.asset.ref,
+    successorRef: successor.asset.ref,
+    retiredRaw: retired.raw,
+    successorRaw: successor.raw,
+    ledgerAccess: { proposalsCtx: ctx.opts.proposalsCtx },
+    search: ctx.continuitySearch,
+  });
   const retirement: RetirementMetadata = {
     retiredRef: retired.asset.ref,
     successorRef: successor.asset.ref,
     cosine: candidate.cosine,
     judgeLabel: verdict.relation,
     judgeReason: verdict.reason,
-    retiredContentHash: contentHash(retired.raw, "body"),
-    successorContentHash: contentHash(successor.raw, "body"),
+    retiredContentHash: retiredHash,
+    successorContentHash: successorHash,
     reason,
+    ...(continuityRisk ? { continuityRisk } : {}),
   };
-  if (ctx.opts.dryRun) {
-    ctx.retired.push(`${retired.asset.ref} -> ${successor.asset.ref}`);
-    ctx.perInitiatorProposed.add(candidate.initiator.ref);
-    return { failed: false };
-  }
   try {
     const proposal = createRetireProposal(
       ctx.stashDir,
@@ -672,8 +732,8 @@ export async function runConsolidatePairPass(
   stashDir: string,
   bundleId: string | undefined,
   warnings: string[],
-  /** Test seam: a transport override for the judge call. Production callers omit it. */
-  seams: { chat?: PairJudgeChat } = {},
+  /** Test seams: a transport override for the judge call, and for the continuity check's search call. Production callers omit both. */
+  seams: { chat?: PairJudgeChat; continuitySearch?: ContinuitySearch } = {},
 ): Promise<ConsolidatePairPassResult> {
   const empty: ConsolidatePairPassResult = {
     initiators: 0,
@@ -724,6 +784,32 @@ export async function runConsolidatePairPass(
   const isPendingBlocked = (c: PairCandidate): boolean =>
     pendingRetireRefs.has(stripBundle(c.initiator.ref)) || pendingRetireRefs.has(stripBundle(c.other.ref));
 
+  // Item 0 / S1: every rejected OR reverted consolidate-pair retirement on
+  // record, keyed by its exact ref pair and both content hashes — read once
+  // per run, the same shape as pendingRetireRefs above. `reverted` is
+  // included alongside `rejected`: a person undoing an accept via `akm
+  // proposal revert` is the same "no, not this" signal as a reject — without
+  // it, the next run would re-mint the identical retirement, and a bulk
+  // accept could re-apply a decision the person just undid.
+  const rejectedPairKeys = new Set<string>();
+  try {
+    for (const status of ["rejected", "reverted"] as const) {
+      for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true })) {
+        if (!isRetireProposal(p) || !p.retirement) continue;
+        rejectedPairKeys.add(
+          rejectedPairKey(
+            p.retirement.retiredRef,
+            p.retirement.successorRef,
+            p.retirement.retiredContentHash,
+            p.retirement.successorContentHash,
+          ),
+        );
+      }
+    }
+  } catch {
+    // Best-effort de-dup only; a failed read never blocks judging.
+  }
+
   // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
   // individual pairs — the old flat "top 300 candidates by cosine" cap let a
   // pending-blocked pair spend a budget slot doing nothing, and left
@@ -770,8 +856,13 @@ export async function runConsolidatePairPass(
     perInitiatorProposed: new Set(),
     retired: [],
     warnings,
+    rejectedPairKeys,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
+    // S2: one instance for the whole run (not one per proposal), so its
+    // "fell back once, go keyword-only from here" throttle actually covers
+    // every remaining query in this run, not just one proposal's own five.
+    continuitySearch: seams.continuitySearch ?? createContinuitySearch(stashDir, config),
   };
 
   let failedJudgments = 0;

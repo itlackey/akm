@@ -32,7 +32,6 @@ import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
-import { parseSinceToIsoLenient } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { deriveInstallations } from "../../indexer/installations";
@@ -47,8 +46,7 @@ import {
   openExistingDatabase,
   openReadonlyExistingDatabase,
 } from "../../storage/repositories/index-connection";
-import { findEntryIdByRef, getAllEntries, getEntryById } from "../../storage/repositories/index-entries-repository";
-import { getNeighborsByEntryId } from "../../storage/repositories/index-vec-repository";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { listProposals, listProposalsReadOnly, type ProposalsContext, proposalContent } from "../proposal/repository";
 import {
   hasHotCaptureMode,
@@ -133,17 +131,10 @@ export interface AkmConsolidateOptions {
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
   llmRunner?: LlmRunner | null;
   onNotices?: NoticeSink;
-  /**
-   * Consider only memories modified after this ISO time plus their nearest
-   * indexed neighbours; falls back to the full pool when the index cannot answer.
-   */
-  incrementalSince?: string;
   /** Chunk size cap (1–50). */
   maxChunkSize?: number;
-  /** Memories processed per pass, after incremental narrowing. */
+  /** Memories processed per pass. */
   limit?: number;
-  /** Neighbours per changed memory in incremental mode (default 5). */
-  neighborsPerChanged?: number;
   /** Stamped on every proposal (default `consolidate-<startMs>`). */
   sourceRun?: string;
   proposalsCtx?: ProposalsContext;
@@ -582,15 +573,6 @@ export function inspectConsolidationPool(
     isInRetrievalScope(retrievalScope, conceptIdFromTypeName("memory", memory.name), memory.filePath),
   );
   const outsideRetrievalScope = beforeScope - memories.length;
-  if (opts.incrementalSince && memories.length > 0) {
-    memories = narrowToIncrementalCandidates(
-      memories,
-      opts.incrementalSince,
-      warnings,
-      opts.neighborsPerChanged,
-      readOnly,
-    );
-  }
   const dedupPoolSize = memories.length;
   if (opts.limit === undefined && memories.length > 150) {
     warnings.push(
@@ -1136,56 +1118,6 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     ctx.promotionFailures.count++;
     skip("promote_create_failed", `Promote: createProposal failed for ${op.ref}: ${String(e)}`);
   }
-}
-
-/**
- * {changed} ∪ {top-k indexed neighbours of each changed memory}, within the
- * pool: nothing changed → []; everything changed or no index → the full pool.
- */
-export function narrowToIncrementalCandidates(
-  memories: MemoryEntry[],
-  since: string,
-  warnings: string[],
-  neighborsPerChanged = 5,
-  readOnly = false,
-): MemoryEntry[] {
-  // Lenient: a garbage `since` passes through and selects nothing.
-  const sinceIso = parseSinceToIsoLenient(since);
-  const changed = memories.filter((m) => {
-    try {
-      return fs.statSync(m.filePath).mtime.toISOString() > sinceIso;
-    } catch {
-      return true; // never silently drop a memory we cannot stat
-    }
-  });
-  if (changed.length === 0) return [];
-  if (changed.length === memories.length) return memories;
-  const inPool = new Set(memories.map((m) => m.name));
-  const keep = new Set(changed.map((m) => m.name));
-  let db: ReturnType<typeof openExistingDatabase> | undefined;
-  try {
-    db = readOnly ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
-    if (!db) return memories;
-    for (const m of changed) {
-      const id = findEntryIdByRef(db, conceptIdFromTypeName("memory", m.name));
-      if (id === undefined) continue;
-      for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged + 1)) {
-        if (hit.id === id) continue;
-        const name = getEntryById(db, hit.id)?.entry.name;
-        if (name && inPool.has(name)) keep.add(name);
-      }
-    }
-  } catch {
-    warnings.push("Incremental consolidation: index unavailable — processing full pool.");
-    return memories;
-  } finally {
-    if (db) closeDatabase(db);
-  }
-  const candidates = memories.filter((m) => keep.has(m.name));
-  warnings.push(
-    `Incremental consolidation: ${changed.length} changed + neighbours → ${candidates.length}/${memories.length} memories considered (since ${since}${sinceIso !== since ? ` = ${sinceIso}` : ""}).`,
-  );
-  return candidates;
 }
 
 /** The target bundle's eligible memories from the index, else walked from disk. */

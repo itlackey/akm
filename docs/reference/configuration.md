@@ -854,3 +854,10 @@ leftover override from customizing the built-in (the message names it;
 custom strategy, which would silently run a full, unplanned improve pass).
 `defaults.improveStrategy: "graph-refresh"` still loads config successfully;
 the refusal happens lazily, when the strategy is actually resolved.
+
+`improve.strategies.<name>.processes.consolidate.incrementalSince` and
+`.neighborsPerChanged` are retired in 0.9.17-alpha.9: the consolidate pair
+pass is now the candidate generator, narrowing per initiator through the
+improve ledger rather than a global time window. A config that still sets
+either key loads; each is named once as unknown, and `akm migrate apply`
+removes it.

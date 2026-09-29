@@ -27,6 +27,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { akmImprove, resolveSyncPathSet } from "../../../../src/commands/improve/improve";
+import { RETIRE_GRACE_DAYS } from "../../../../src/commands/improve/memory/memory-improve";
 import { parseRefInput } from "../../../../src/core/asset/resolve-ref";
 import type { AkmConfig, SourceConfigEntry } from "../../../../src/core/config/config";
 import { getStateDir } from "../../../../src/core/paths";
@@ -264,6 +265,33 @@ test("auto-sync stages a deletion the run performed", async () => {
   expect(git("show", "--name-status", "--format=", "HEAD").trim().startsWith("D")).toBe(true);
   expect(fs.existsSync(path.join(stashDir, "memories", "human.md"))).toBe(false);
   expect(result.writtenPaths).toEqual(["memories/human.md"]);
+});
+
+test("item 4: the purge sweep deletes an archived retirement past its grace period, and the deletion is committed by the auto-sync", async () => {
+  initRepo();
+  // A retirement archived well past RETIRE_GRACE_DAYS, seeded and committed
+  // BEFORE the run starts — the purge sweep runs at improve-run start, ahead
+  // of every other pass, so it must find and delete this on its own.
+  const archiveDir = path.join(stashDir, ".akm", "memory-cleanup", "archive", "2026-01-01-memories-stale");
+  fs.mkdirSync(path.join(archiveDir, "memories"), { recursive: true });
+  const retiredAt = new Date(Date.now() - (RETIRE_GRACE_DAYS + 1) * 86_400_000).toISOString();
+  fs.writeFileSync(
+    path.join(archiveDir, "cleanup.md"),
+    `---\nkind: memory-cleanup-archive\nref: memories/stale\nretiredAt: "${retiredAt}"\noriginalPath: memories/stale.md\n---\n\nArchived.\n`,
+    "utf8",
+  );
+  fs.writeFileSync(path.join(archiveDir, "memories", "stale.md"), "---\ndescription: old\n---\n\nOld body.\n", "utf8");
+  git("add", "-A");
+  git("commit", "-m", "seed an old archived retirement");
+
+  const result = await runImprove(async () => {});
+
+  expect(result.ok).toBe(true);
+  expect(fs.existsSync(path.join(archiveDir, "memories", "stale.md"))).toBe(false);
+  expect(fs.existsSync(path.join(archiveDir, "cleanup.md"))).toBe(true); // the tombstone survives
+  expect(result.sync?.committed).toBe(true);
+  expect(lastCommitPaths()).toEqual([".akm/memory-cleanup/archive/2026-01-01-memories-stale/memories/stale.md"]);
+  expect(statusPaths()).toEqual([]); // nothing left dirty
 });
 
 test("a journaled write under $STATE, outside the stash, is still reported as written and is never auto-synced (itlackey/akm#890)", async () => {

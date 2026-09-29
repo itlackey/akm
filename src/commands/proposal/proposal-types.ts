@@ -14,9 +14,11 @@ import type { FileChange } from "../../core/file-change";
  * The eligibility lane that selected an asset for an improve run, carried on
  * the invoked/promoted events and the proposal so outcomes can be sliced by
  * lane. When several lanes qualify, the most specific reactive one wins:
- * `scope` > `signal-delta` > `proactive` > `high-salience` >
- * `forgetting-safety` > `replay`. `unknown` is only for a lane that genuinely
- * cannot be attributed; `replay` appears on rows older releases wrote.
+ * `scope` > `signal-delta` > `proactive` > `high-salience`. `unknown` is only
+ * for a lane that genuinely cannot be attributed; `forgetting-safety` and
+ * `replay` are retired (0.9.17-alpha.9, R5, and earlier respectively) —
+ * neither is assigned by anything any more, both appear on rows older
+ * releases wrote.
  */
 export type EligibilitySource =
   | "signal-delta"
@@ -138,6 +140,36 @@ export interface RetirementMetadata {
   successorContentHash: string;
   /** Tombstone-vocabulary reason (`judgeLabel` translated: supersedes -> superseded). */
   reason: Exclude<RetireReason, "promoted">;
+  /**
+   * Set at mint by the retirement continuity check (alpha.9 plan §5.4, rule
+   * R3) when the retired asset ranked top 10 for one of its own past queries
+   * but the successor did not. The proposal still mints — a person can still
+   * accept it by id — but it is excluded from every bulk accept path.
+   */
+  continuityRisk?: RetirementContinuityRisk;
+}
+
+/** One query where the retired asset ranked top 10 but the successor did not. */
+export interface ContinuityRiskRank {
+  query: string;
+  retiredRank: number;
+  /** `null`: the successor did not rank in the top 10 at all for this query. */
+  successorRank: number | null;
+}
+
+/** The retirement continuity check's failure report (see {@link RetirementMetadata.continuityRisk}). */
+export interface RetirementContinuityRisk {
+  /** Of the replayed queries, how many the successor failed to also rank top 10 for. */
+  failingQueries: number;
+  ranks: ContinuityRiskRank[];
+  /**
+   * Of the replayed queries, how many could not be verified (S2): the
+   * search call threw, or fell back to keyword-only ranking instead of the
+   * real one. Omitted when every query was verified. A proposal carrying
+   * this is excluded from bulk accept the same as a `failingQueries` one —
+   * an unverified query must never read as "no risk found".
+   */
+  unverifiedQueries?: number;
 }
 
 /**

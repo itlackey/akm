@@ -8,7 +8,7 @@ import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { MEMORY_ARCHIVE_REL } from "../../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
-import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
+import { asNonEmptyString, groupBy, stringArray, toPosix } from "../../../core/common";
 import type {
   ArchivedMemoryCleanupRecord,
   MemoryBeliefState,
@@ -23,6 +23,7 @@ import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
 import { walkMarkdownFiles } from "../../../indexer/walk/walker";
+import { isGitBackedStash, listGitChangedPaths, listGitTrackedPaths } from "../../../sources/providers/git-stash";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -697,6 +698,149 @@ export function archiveCleanupCandidate(
       ? { successorRefs: candidate.successorRefs }
       : {}),
   };
+}
+
+/**
+ * How long a retirement's archived bytes stay on disk after `retiredAt`
+ * before the purge sweep deletes them. Git history keeps the bytes (D27;
+ * plan §5.4 "Purge").
+ */
+export const RETIRE_GRACE_DAYS = 30;
+
+const RETIRE_GRACE_MS = RETIRE_GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+/** The one file every archive dir keeps forever — never deleted by the purge sweep. */
+const TOMBSTONE_FILENAME = "cleanup.md";
+
+export interface ArchivePurgeResult {
+  /** Archive directories whose bytes were purged this run. */
+  purgedDirs: number;
+  /** Individual files deleted (a retirement may archive more than one, e.g. a `.derived` twin). */
+  purgedFiles: number;
+}
+
+const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFiles: 0 };
+
+/**
+ * The purge sweep (0.9.17-alpha.9 plan §5.4, §8 step 8): deterministic, no
+ * LLM, run once at improve-run start. Deletes the archived asset bytes —
+ * never `cleanup.md` — of every retirement whose tombstone `retiredAt` is
+ * more than {@link RETIRE_GRACE_DAYS} old AND whose archived files are all
+ * git-tracked and clean at the time of the sweep (see below). Git history
+ * keeps the bytes (D27); the tombstone, and ref resolution through it
+ * (`core/asset/memory-archive.ts`), are unaffected — only the tombstone's
+ * own `originalPath` file(s) are removed.
+ *
+ * Git-backed bundles only: a bundle with no `.git` of its own has no history
+ * to fall back on, so its archive is left untouched (`akm health` reports
+ * its size instead — see `health/archive-usage.ts`). Every deleted path is
+ * journaled (`recordWrittenPath`) so the end-of-run sync commits the
+ * removal, the same way it commits the archive move itself (#652).
+ *
+ * `.git` presence is necessary but NOT sufficient: `proposal accept` only
+ * commits for a `kind: "git"` write target (`core/write-source.ts`
+ * `commitWriteTargetBoundary`), and improve's own auto-sync stages only the
+ * paths its own run wrote. A filesystem-kind bundle that merely happens to
+ * have a `.git` directory (e.g. the owner committing by hand, or an old
+ * repo that was never configured as a git source) can carry retirements
+ * that were archived but never committed — deleting those would lose the
+ * only surviving copy. So every archived file under a directory past grace
+ * is checked against `git ls-files` (tracked) and `git status --porcelain
+ * -uall` (clean) — computed ONCE per sweep, not per directory — before that
+ * directory's bytes are purged; a directory with even one untracked or
+ * modified file (tombstone included) is left whole for a later sweep.
+ *
+ * A memory-cleanup family-prune archive (not a retire proposal's) carries no
+ * `retiredAt` in its tombstone at all, so it is never a candidate here —
+ * this sweep only ever touches retirements, never that older archive class.
+ */
+export function purgeGracedArchive(stashDir: string, now: Date = new Date()): ArchivePurgeResult {
+  if (!isGitBackedStash(stashDir)) return EMPTY_ARCHIVE_PURGE_RESULT;
+  const archiveRoot = path.join(stashDir, MEMORY_ARCHIVE_REL);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(archiveRoot, { withFileTypes: true });
+  } catch {
+    return EMPTY_ARCHIVE_PURGE_RESULT; // no archive yet
+  }
+  const cutoffMs = now.getTime() - RETIRE_GRACE_MS;
+  // One git inspection per sweep, not per directory. Both sets are
+  // repo-relative POSIX paths, matched below against each archived file's
+  // own repo-relative path — a file is safe to delete only if it is in
+  // `tracked` and NOT in `dirty`.
+  const dirty = new Set(listGitChangedPaths(stashDir));
+  const tracked = new Set(listGitTrackedPaths(stashDir, MEMORY_ARCHIVE_REL));
+  let purgedDirs = 0;
+  let purgedFiles = 0;
+  for (const entry of entries) {
+    // `Dirent.isDirectory()` reflects `lstat`, so it is false for a symlink
+    // even when the symlink points at a directory — a symlinked
+    // `archive/<name>` is skipped here, never followed (N1). Everything
+    // below only ever joins path components onto `archiveRoot` through
+    // `entry.name`/`readdirSync` results, so a purge can never reach
+    // outside `.akm/memory-cleanup/archive/`.
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(archiveRoot, entry.name);
+    let data: Record<string, unknown>;
+    try {
+      data = parseFrontmatter(fs.readFileSync(path.join(dir, TOMBSTONE_FILENAME), "utf8")).data;
+    } catch {
+      continue; // not a tombstone dir, or unreadable — never guess
+    }
+    const retiredAt = data.retiredAt;
+    if (typeof retiredAt !== "string") continue; // family-prune archive, not a retirement — out of scope
+    const retiredMs = Date.parse(retiredAt);
+    if (!Number.isFinite(retiredMs) || retiredMs >= cutoffMs) continue; // "more than" the grace period — exactly at it is not enough
+    const allFiles = listFilesRecursive(dir); // tombstone included — the whole entry must be a clean, committed unit
+    const isSafeToPurge = allFiles.every((filePath) => {
+      const key = toPosix(path.relative(stashDir, filePath));
+      return tracked.has(key) && !dirty.has(key);
+    });
+    if (!isSafeToPurge) continue; // untracked or modified entry — skip the whole directory this sweep (B1)
+    let children: string[];
+    try {
+      children = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    let purgedAnyInThisDir = false;
+    for (const child of children) {
+      if (child === TOMBSTONE_FILENAME) continue;
+      const childPath = path.join(dir, child);
+      // The archived original path may be nested (e.g. `memories/sub/foo.md`
+      // under this dir) — the journal (like git) tracks FILES, so every leaf
+      // under childPath is recorded individually, not the directory itself.
+      const filesUnderChild = listFilesRecursive(childPath);
+      try {
+        fs.rmSync(childPath, { recursive: true, force: true });
+        for (const filePath of filesUnderChild) recordWrittenPath(filePath);
+        purgedFiles += filesUnderChild.length;
+        purgedAnyInThisDir = purgedAnyInThisDir || filesUnderChild.length > 0;
+      } catch {
+        // Best-effort: a locked or already-gone entry is skipped, not fatal to the run.
+      }
+    }
+    if (purgedAnyInThisDir) purgedDirs++;
+  }
+  return { purgedDirs, purgedFiles };
+}
+
+/** Every file under `target` (itself included if it's a file), for individual journaling before a recursive delete. */
+function listFilesRecursive(target: string): string[] {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return [];
+  }
+  if (!stat.isDirectory()) return stat.isFile() ? [target] : [];
+  let children: string[];
+  try {
+    children = fs.readdirSync(target);
+  } catch {
+    return [];
+  }
+  return children.flatMap((child) => listFilesRecursive(path.join(target, child)));
 }
 
 function persistBeliefStateTransition(filePath: string, transition: MemoryBeliefStateTransition): void {

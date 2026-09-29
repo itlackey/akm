@@ -48,6 +48,15 @@ export function listGitChangedPaths(repoDir: string): string[] {
   return paths;
 }
 
+/** Return repo-relative paths git tracks at HEAD/index under `pathspec` (or the whole repo when omitted). */
+export function listGitTrackedPaths(repoDir: string, pathspec?: string): string[] {
+  const args = ["-C", repoDir, "ls-files", "-z"];
+  if (pathspec) args.push("--", pathspec);
+  const result = runGit(args);
+  if (result.status !== 0) return [];
+  return result.stdout.split("\0").filter((record) => record.length > 0);
+}
+
 export interface SaveGitStashResult {
   committed: boolean;
   pushed: boolean;

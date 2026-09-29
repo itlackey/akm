@@ -186,12 +186,6 @@ const CONSOLIDATE_PROCESS_FIELDS = {
   // entirely (emits `pool_below_min_size`). 0 disables the guard. Default 500.
   minPoolSize: z.number().int().min(0).optional(),
   maxChunkSize: z.number().int().min(1).max(50).optional(),
-  // Narrow candidate pool to memories modified within this duration window
-  // plus their graph neighbours. Absent = full-pool sweep.
-  incrementalSince: z.string().optional(),
-  // Graph neighbours per changed memory during incremental consolidation.
-  // Default 5. Only meaningful with incrementalSince.
-  neighborsPerChanged: z.number().int().min(1).optional(),
   // Fallback p90 wall-clock time per consolidation chunk in seconds, used for
   // cold-start budget estimation when no telemetry history exists. The actual
   // p90 is derived from observed run durations once sufficient history
