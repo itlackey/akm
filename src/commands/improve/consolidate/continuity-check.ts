@@ -37,6 +37,17 @@ export interface ContinuityHit {
 export interface ContinuitySearchResult {
   hits: readonly ContinuityHit[];
   mode: SearchExecutionMode;
+  /**
+   * True when THIS call ran after the same `ContinuitySearch` instance had
+   * already switched to forced keyword-only because an earlier query in the
+   * same run hit `mode: "fts-fallback"`. Such a call reports `mode:
+   * "keyword"` on its own — `semanticSearchMode` was deliberately forced
+   * off, so nothing failed THIS time — but the ranking is still degraded
+   * for the same reason (a presumed-down endpoint), not because the bundle
+   * is genuinely configured for keyword-only search. Omitted (falsy) for a
+   * call made with the endpoint still believed reachable.
+   */
+  forcedKeywordOnly?: boolean;
 }
 
 /** Test seam: replaces the real `searchLocal` call. Production callers get {@link createContinuitySearch}. */
@@ -52,7 +63,13 @@ export type ContinuitySearch = (query: string) => Promise<ContinuitySearchResult
  * remaining query (a hanging endpoint at ~3s/query, 300 proposals x 5
  * queries, would otherwise cost on the order of an hour). Construct exactly
  * one instance per pair-pass run and reuse it for every proposal judged, so
- * the throttle covers the whole run, not just one proposal's own queries.
+ * the throttle covers the whole run, not just one proposal's own queries —
+ * and every call made once it has switched, across every remaining proposal
+ * in the run, reports `forcedKeywordOnly: true`, not just the one call that
+ * discovered the fallback (round-3 review: the first fix only marked THAT
+ * call unverified, so a second proposal checked while the endpoint was
+ * still down came back with a clean, `mode: "keyword"` — and therefore
+ * bulk-acceptable — result).
  */
 export function createContinuitySearch(stashDir: string, config: AkmConfig): ContinuitySearch {
   const base: Omit<SearchLocalInput, "query" | "config"> = {
@@ -63,10 +80,11 @@ export function createContinuitySearch(stashDir: string, config: AkmConfig): Con
   };
   let keywordOnly = false;
   return async (query) => {
+    const forcedKeywordOnly = keywordOnly;
     const callConfig: AkmConfig = keywordOnly ? { ...config, semanticSearchMode: "off" } : config;
     const result = await searchLocal({ ...base, query, config: callConfig });
     if (result.mode === "fts-fallback") keywordOnly = true;
-    return { hits: result.hits, mode: result.mode };
+    return { hits: result.hits, mode: result.mode, forcedKeywordOnly };
   };
 }
 
@@ -101,15 +119,18 @@ function normalizedBody(raw: string): string {
  *    "successor missing from the top 10" finding here would not be a real
  *    risk, just that dedupe working as designed.
  *
- * S2: a query that never ran (the search call threw) or ran on the
+ * S2: a query that never ran (the search call threw), ran on the
  * keyword-only fallback (`mode: "fts-fallback"` — the real ranking was
  * attempted and failed, most often a down or unreachable embedding
- * endpoint) is "unverified" — it is dropped from the rank comparison below
- * (its hits cannot be trusted as "the ranking a user actually gets"), but
- * unlike a query the retired asset simply did not rank for, it can never by
- * itself lead to a silent `undefined` — at least one unverified query
- * always produces a `continuityRisk`, so a dead endpoint reads as "risk
- * unknown", never as "no risk found".
+ * endpoint), or ran after the shared search instance had already switched
+ * to forced keyword-only because an EARLIER query in the same run fell back
+ * (`forcedKeywordOnly`) is "unverified" — it is dropped from the rank
+ * comparison below (its hits cannot be trusted as "the ranking a user
+ * actually gets"), but unlike a query the retired asset simply did not rank
+ * for, it can never by itself lead to a silent `undefined` — at least one
+ * unverified query always produces a `continuityRisk`, so a dead endpoint
+ * reads as "risk unknown" for every proposal it touches that run, never as
+ * "no risk found" for the ones checked after the first failure.
  */
 export async function checkRetirementContinuity(args: {
   stashDir: string;
@@ -145,7 +166,7 @@ export async function checkRetirementContinuity(args: {
     let hits: readonly ContinuityHit[];
     try {
       const result = await search(query);
-      if (result.mode === "fts-fallback") {
+      if (result.mode === "fts-fallback" || result.forcedKeywordOnly) {
         unverifiedQueries++; // S2: never silently compare keyword-only ranks
         continue;
       }
