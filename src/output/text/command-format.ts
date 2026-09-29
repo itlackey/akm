@@ -24,10 +24,16 @@ import type { DetailLevel } from "../context";
 export function formatInfoPlain(r: Record<string, unknown>): string {
   const lines: string[] = [];
   if (r.version) lines.push(`version: ${String(r.version)}`);
+  // Only present in infoCommand's own last-resort fallback (stash-cli.ts),
+  // when assembleInfo() itself threw — every field below it belongs to the
+  // normal shape and is absent there.
+  if (typeof r.error === "string") lines.push(`error: ${r.error}`);
   if (r.bundleDir) lines.push(`bundleDir: ${String(r.bundleDir)}`);
   if (r.defaultBundle !== undefined) {
     lines.push(`defaultBundle: ${r.defaultBundle === null ? "(none)" : String(r.defaultBundle)}`);
   }
+  if (typeof r.configError === "string") lines.push(`configError: ${r.configError}`);
+  if (typeof r.bundleDirError === "string") lines.push(`bundleDirError: ${r.bundleDirError}`);
   if (Array.isArray(r.assetTypes) && r.assetTypes.length > 0) {
     lines.push(`assetTypes: ${(r.assetTypes as unknown[]).join(", ")}`);
   }

@@ -35,6 +35,7 @@ import * as p from "../../cli/clack";
 import { getParsedInvocation } from "../../cli/invocation";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
+import { placementTypes } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -47,6 +48,7 @@ import { resolveWriteTarget } from "../../core/write-source";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
+import { pkgVersion } from "../../version";
 import {
   inferAssetName,
   mergeXrefsIntoContent,
@@ -199,7 +201,24 @@ export const indexCommand = defineCommand({
 export const infoCommand = defineJsonCommand({
   meta: { name: "info", description: "Show system capabilities, configuration, and index stats" },
   run() {
-    const result = assembleInfo();
+    // `akm info` must behave like a help command: always exit 0 with a
+    // report. `assembleInfo()` already degrades what it reasonably can
+    // per-section; this is the final backstop for whatever it can't (e.g.
+    // every path resolver needs an environment variable, such as `HOME`,
+    // that this process genuinely does not have) — still a report, with
+    // whatever is cheap and safe enough to never itself throw.
+    let result: unknown;
+    try {
+      result = assembleInfo();
+    } catch (err) {
+      result = {
+        schemaVersion: 1,
+        version: pkgVersion,
+        error: err instanceof Error ? err.message : String(err),
+        assetTypes: [...placementTypes()],
+        searchModes: ["fts"],
+      };
+    }
     output("info", result);
   },
 });

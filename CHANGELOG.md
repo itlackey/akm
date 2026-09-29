@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.10] - 2026-09-29
+
+`akm info` now behaves like a help command. It always prints a report and
+exits 0, naming whatever it could not read: a broken config, a missing
+bundle directory, or an index that another akm process holds or that has a
+newer layout. `akm health` again counts every improve run: 11 of the
+owner's last 55 runs, recorded before `plan.processes` existed, had been
+silently dropped from the health report. A hung test shard now fails within
+10 minutes and names itself, instead of stalling CI until the job times out.
+
+### Changed
+
+- **`scripts/test-unit.sh`/`test-integration.sh` shards fail fast and name
+  themselves on a hang.** Each process shard now runs under its own process
+  group (`exec setsid`) with a 600s ceiling — well above the ~3-minute CI
+  norm for a full shard. A shard still alive past it is killed by process
+  group (so a child process it spawned dies too, not just `bun test`
+  itself), its log tail is printed so the last test file header shows where
+  it hung, and the script fails with a clear message. Previously a hung
+  shard blocked `wait` forever, so the only thing that ever stopped it was
+  the CI job's own timeout — which kills the whole job and keeps no logs,
+  as happened during the alpha.9 release.
+
+### Fixed
+
+- **`akm health` silently excluded every improve run recorded before #947
+  added `plan.processes`.** `decodeImproveResult` called
+  `validateProcessRoutingRows` unconditionally, so a `plan` object with no
+  `processes` key — legitimately written by every release before
+  2026-09-09T09:03:19Z — failed decode with "plan.processes must be an
+  array" and dropped the run from `--window-compare`, `--group-by run`, and
+  the HTML/MD reports. On a real owner `state.db`, 11 of 55 improve runs in
+  a 30-day window were affected; all 11 decode cleanly now. `plan.processes`
+  is validated only when present, the same guard already used for
+  `plan.proactive` and the `retrieval` gate (AGENTS.md "Reading persisted
+  data"). Also: a row `akm health` cannot decode — corrupt or otherwise —
+  now logs a warning naming the row id and the decode error, instead of
+  only incrementing `improve.resultRows.skipped.invalid` with no way to
+  tell why.
+- **`akm info` now always reports and exits 0, like a help command.**
+  Whatever else is running, and whatever state the config and databases
+  are in, it prints its report in every format (and with `--quiet`) and
+  names what it could not read:
+  - an invalid or unreadable `config.json` is reported in a new
+    `configError` field. Every other command still refuses at startup
+    (exit 78) before any side effect;
+  - a missing or unresolvable bundle directory is reported in
+    `bundleDirError`, and a fresh install reports the default location;
+  - `index.db` is opened read-only with a bound of about 1.5 s. A
+    concurrent `akm index` or `akm improve` writer (which under the DELETE
+    journal mode could make `info` wait the full 30 s busy timeout), a
+    newer layout, or a corrupt index is reported in
+    `indexStats.unavailable` instead of as unexplained zeros. An older
+    layout is served as-is, never migrated;
+  - each path field degrades on its own, with a last-resort report for
+    anything unexpected;
+  - an unrecognized flag warns instead of exiting 2, as `akm help` does.
+
 ## [0.9.17-alpha.9] - 2026-09-29
 
 `akm improve` now forgets, reversibly and under review. A consolidation pair

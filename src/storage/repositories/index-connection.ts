@@ -174,7 +174,7 @@ function openIsolatedSnapshotOrFallBack(resolvedPath: string): Database | undefi
  */
 export function openReadonlyExistingDatabase(
   dbPath?: string,
-  options?: { isolatedSnapshot?: boolean },
+  options?: { isolatedSnapshot?: boolean; busyTimeoutMs?: number },
 ): Database | undefined {
   const resolvedPath = dbPath ?? getDbPath();
   // `undefined` means "no index" — reserve it for a genuinely absent one, and
@@ -189,9 +189,12 @@ export function openReadonlyExistingDatabase(
   // never block — but in the DELETE/TRUNCATE modes the network-FS fallback and
   // AKM_SQLITE_JOURNAL_MODE can select, a concurrent writer makes every read
   // fail instantly with SQLITE_BUSY. busy_timeout is legal on a read-only
-  // connection, so apply just that one.
+  // connection, so apply just that one. `busyTimeoutMs` defaults to the
+  // shared 30s constant; a caller that must never sit behind another akm
+  // process's write lock for long (e.g. `akm info`) can pass a much shorter
+  // bound instead.
   try {
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    db.exec(`PRAGMA busy_timeout = ${options?.busyTimeoutMs ?? SQLITE_BUSY_TIMEOUT_MS}`);
     checkIndexLayout(db, resolvedPath);
     return db;
   } catch (error) {

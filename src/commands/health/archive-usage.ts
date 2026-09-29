@@ -27,12 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { toPosix } from "../../core/common";
-import {
-  isGitBackedStash,
-  tryListGitChangedPaths,
-  tryListGitTrackedPaths,
-  tryListGitUnverifiablePaths,
-} from "../../sources/providers/git-stash";
+import { checkGitPathSafety, isGitBackedStash } from "../../sources/providers/git-stash";
 import { MAX_WALK_ENTRIES, sizeOfPath } from "./data-dir-usage";
 import type { HealthCheckResult } from "./types";
 
@@ -62,24 +57,18 @@ export function collectArchiveUsageAdvisory(stashDir: string): HealthCheckResult
 
   // Git-backed: the SAME three checks purgeGracedArchive runs (B1, G10) —
   // computed once here, not per file, and reused via `onFile` below instead
-  // of a second walk of the same tree.
-  const dirtyQuery = tryListGitChangedPaths(stashDir);
-  const trackedQuery = tryListGitTrackedPaths(stashDir, MEMORY_ARCHIVE_REL);
-  const unverifiableQuery = tryListGitUnverifiablePaths(stashDir, MEMORY_ARCHIVE_REL);
-  // A failed git check here fails the same way purgeGracedArchive's own
-  // sweep would: nothing in the archive can be proven purgeable, so every
-  // byte counts as unpurgeable rather than guessing.
-  const gitStateKnown = dirtyQuery.ok && trackedQuery.ok && unverifiableQuery.ok;
-  const dirty = new Set(dirtyQuery.paths);
-  const tracked = new Set(trackedQuery.paths);
-  const unverifiable = new Set(unverifiableQuery.paths);
+  // of a second walk of the same tree. A failed git check here fails the
+  // same way purgeGracedArchive's own sweep would: nothing in the archive
+  // can be proven purgeable, so every byte counts as unpurgeable rather
+  // than guessing (`checkGitPathSafety`'s `isSafe` is always `false` when
+  // `ok` is `false`).
+  const gitSafety = checkGitPathSafety(stashDir, MEMORY_ARCHIVE_REL);
 
   let unpurgeableFiles = 0;
   let unpurgeableBytes = 0;
   const usage = sizeOfPath(archiveRoot, { remaining: MAX_WALK_ENTRIES }, (filePath, bytes) => {
     const key = toPosix(path.relative(stashDir, filePath));
-    const safe = gitStateKnown && tracked.has(key) && !dirty.has(key) && !unverifiable.has(key);
-    if (!safe) {
+    if (!gitSafety.isSafe(key)) {
       unpurgeableFiles++;
       unpurgeableBytes += bytes;
     }
@@ -103,7 +92,7 @@ export function collectArchiveUsageAdvisory(stashDir: string): HealthCheckResult
       truncated: usage.truncated,
       unpurgeableFiles,
       unpurgeableBytes,
-      gitStateKnown,
+      gitStateKnown: gitSafety.ok,
     },
   };
 }

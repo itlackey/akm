@@ -704,6 +704,25 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   return subcommand === "path";
 }
 
+/**
+ * Whether `argv` resolves to the top-level `info` command — used by
+ * `runCli` (and mirrored in `tests/_helpers/cli.ts`) to scope the startup
+ * config read's best-effort fallback to `info` alone. `info` is NOT on
+ * {@link shouldBypassConfigStartup}'s allowlist: unlike a bare bypass, it
+ * still reads a valid config's `output.format`/`output.detail` like any
+ * other command, it just must not be aborted by one it cannot read (see
+ * `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why).
+ * Every other command reads config exactly as before — a broken config
+ * throws here and the command never runs.
+ */
+export function isInfoCommand(argv: readonly string[]): boolean {
+  const userArgs = argv.slice(2);
+  const separator = userArgs.indexOf("--");
+  const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
+  const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
+  return (commandIndex >= 0 ? args[commandIndex] : undefined) === "info";
+}
+
 // ── Exit codes ──────────────────────────────────────────────────────────────
 // Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
 // the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
@@ -1053,7 +1072,32 @@ async function runCli(): Promise<void> {
   try {
     applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
-    initOutputMode(process.argv, bypassConfig ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}));
+    // Off the bypass allowlist, every command reads config here exactly as
+    // it always has: an invalid config.json throws, `emitJsonError` reports
+    // it, and the command never runs — no side effect of its own body ever
+    // happens (a lock taken, a network call made, a database opened
+    // read-write). `akm info` is the ONE exception (see `assembleInfo`'s
+    // doc comment, src/commands/sources/info.ts): only ITS read is
+    // best-effort, falling back to `DEFAULT_CONFIG.output` instead of
+    // throwing. Scoped narrowly on purpose — an earlier version of this fix
+    // made the read best-effort for every command, which silently changed
+    // outcomes across the CLI (some commands that should refuse at exit 78
+    // ran anyway; `health`/`index`/`config set`/`feedback` still failed,
+    // but only after already taking a lock, opening a database read-write,
+    // or making a network call).
+    let outputDefaults = DEFAULT_CONFIG.output ?? {};
+    if (!bypassConfig) {
+      if (isInfoCommand(process.argv)) {
+        try {
+          outputDefaults = loadConfig().output ?? {};
+        } catch {
+          outputDefaults = DEFAULT_CONFIG.output ?? {};
+        }
+      } else {
+        outputDefaults = loadConfig().output ?? {};
+      }
+    }
+    initOutputMode(process.argv, outputDefaults);
   } catch (error: unknown) {
     emitJsonError(error);
     return;

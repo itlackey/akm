@@ -23,12 +23,7 @@ import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
 import { walkMarkdownFiles } from "../../../indexer/walk/walker";
-import {
-  isGitBackedStash,
-  tryListGitChangedPaths,
-  tryListGitTrackedPaths,
-  tryListGitUnverifiablePaths,
-} from "../../../sources/providers/git-stash";
+import { checkGitPathSafety, isGitBackedStash } from "../../../sources/providers/git-stash";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -789,22 +784,18 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
   // sweep rather than silently trusting whichever check happened to
   // succeed — a `dirty`/`unverifiable` set that came back empty ONLY
   // because the call failed must never read as "nothing to protect".
-  const dirtyQuery = tryListGitChangedPaths(stashDir);
-  const trackedQuery = tryListGitTrackedPaths(stashDir, MEMORY_ARCHIVE_REL);
-  const unverifiableQuery = tryListGitUnverifiablePaths(stashDir, MEMORY_ARCHIVE_REL);
-  if (!dirtyQuery.ok || !trackedQuery.ok || !unverifiableQuery.ok) {
+  // G10: assume-unchanged / skip-worktree files never show up as dirty even
+  // when genuinely modified — `checkGitPathSafety` treats them the same as
+  // "not tracked" below, so such a file (and its whole retirement) is left
+  // for a later sweep.
+  const gitSafety = checkGitPathSafety(stashDir, MEMORY_ARCHIVE_REL);
+  if (!gitSafety.ok) {
     warn(
       `[improve] archive purge: skipped this sweep — could not determine the archive's git state at ${stashDir} ` +
         "(git status/ls-files failed); nothing was purged.",
     );
     return EMPTY_ARCHIVE_PURGE_RESULT;
   }
-  const dirty = new Set(dirtyQuery.paths);
-  const tracked = new Set(trackedQuery.paths);
-  // G10: assume-unchanged / skip-worktree files never show up as dirty even
-  // when genuinely modified — treated the same as "not tracked" below, so
-  // such a file (and its whole retirement) is left for a later sweep.
-  const unverifiable = new Set(unverifiableQuery.paths);
   let purgedDirs = 0;
   let purgedFiles = 0;
   for (const entry of entries) {
@@ -827,10 +818,7 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
     const retiredMs = Date.parse(retiredAt);
     if (!Number.isFinite(retiredMs) || retiredMs >= cutoffMs) continue; // "more than" the grace period — exactly at it is not enough
     const allFiles = listFilesRecursive(dir); // tombstone included — the whole entry must be a clean, committed unit
-    const isSafeToPurge = allFiles.every((filePath) => {
-      const key = toPosix(path.relative(stashDir, filePath));
-      return tracked.has(key) && !dirty.has(key) && !unverifiable.has(key);
-    });
+    const isSafeToPurge = allFiles.every((filePath) => gitSafety.isSafe(toPosix(path.relative(stashDir, filePath))));
     if (!isSafeToPurge) continue; // untracked, modified, or unverifiable entry — skip the whole directory this sweep (B1, G10)
     let children: string[];
     try {
