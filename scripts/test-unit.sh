@@ -55,6 +55,16 @@ fi
 logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-unit-shards.XXXXXX")"
 echo "── unit: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
 
+# A shard's own --timeout=120000 catches a slow TEST, not a stuck PROCESS —
+# e.g. a child process a test spawned that never exits. That is exactly how
+# the alpha.9 release was lost: one shard hung with no ceiling on `wait`
+# below, was killed at the 20-minute CI job timeout, and GitHub kept no
+# logs. 600s is well above the observed norm — a full `bun run check`
+# (lint, tsc, and BOTH shard runs together) takes ~2m15s locally — and
+# leaves ample margin under the job timeout for this script to notice,
+# kill, and report before GitHub does.
+shard_timeout_secs=600
+
 declare -a pids tmps
 for k in $(seq 0 $((N - 1))); do
   slice=()
@@ -68,8 +78,37 @@ for k in $(seq 0 $((N - 1))); do
   # 120s per-test (matches the integration runner): under N-way process
   # contention the heaviest property/goldens suites legitimately run 3-4x
   # their solo duration; the timeout exists to catch HANGS.
-  ( HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  # `exec setsid` gives this shard its own process group (pgid == its pid,
+  # distinct from every sibling shard's), so the timeout below can kill it
+  # — and anything it spawned — without touching the others.
+  ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
   pids+=($!)
+done
+
+# A shard still alive at the deadline is a hang: kill its whole process
+# group (TERM, then KILL after a short grace period) and print its log tail
+# — the last test file header shows where it hung — before falling through
+# to the ordinary wait loop below, which then reaps it immediately.
+deadline=$(( $(date +%s) + shard_timeout_secs ))
+alive=("${pids[@]}")
+while [ "${#alive[@]}" -gt 0 ] && [ "$(date +%s)" -lt "$deadline" ]; do
+  next=()
+  for p in "${alive[@]}"; do
+    kill -0 "$p" 2>/dev/null && next+=("$p")
+  done
+  alive=("${next[@]}")
+  [ "${#alive[@]}" -gt 0 ] && sleep 1
+done
+for idx in "${!pids[@]}"; do
+  p="${pids[$idx]}"
+  kill -0 "$p" 2>/dev/null || continue
+  t="${tmps[$idx]}"
+  echo "── unit: shard $((idx + 1)) (pid ${p}) exceeded ${shard_timeout_secs}s — killing its process group (HANG)" >&2
+  kill -TERM -"$p" 2>/dev/null || true
+  sleep 2
+  kill -KILL -"$p" 2>/dev/null || true
+  echo "── shard $((idx + 1)) log tail (last 80 lines, TIMED OUT): ${t} ──"
+  tail -80 "$t"
 done
 
 # Wait for every shard; a non-zero shard exit fails the run.

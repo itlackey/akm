@@ -6,22 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
-- **`akm health` silently excluded every improve run recorded before #947
-  added `plan.processes`.** `decodeImproveResult` called
-  `validateProcessRoutingRows` unconditionally, so a `plan` object with no
-  `processes` key — legitimately written by every release before
-  2026-09-09T09:03:19Z — failed decode with "plan.processes must be an
-  array" and dropped the run from `--window-compare`, `--group-by run`, and
-  the HTML/MD reports. On a real owner `state.db`, 11 of 55 improve runs in
-  a 30-day window were affected; all 11 decode cleanly now. `plan.processes`
-  is validated only when present, the same guard already used for
-  `plan.proactive` and the `retrieval` gate (AGENTS.md "Reading persisted
-  data"). Also: a row `akm health` cannot decode — corrupt or otherwise —
-  now logs a warning naming the row id and the decode error, instead of
-  only incrementing `improve.resultRows.skipped.invalid` with no way to
-  tell why.
+- **`scripts/test-unit.sh`/`test-integration.sh` shards fail fast and name
+  themselves on a hang.** Each process shard now runs under its own process
+  group (`exec setsid`) with a 600s ceiling — well above the ~3-minute CI
+  norm for a full shard. A shard still alive past it is killed by process
+  group (so a child process it spawned dies too, not just `bun test`
+  itself), its log tail is printed so the last test file header shows where
+  it hung, and the script fails with a clear message. Previously a hung
+  shard blocked `wait` forever, so the only thing that ever stopped it was
+  the CI job's own timeout — which kills the whole job and keeps no logs,
+  as happened during the alpha.9 release.
 
 ## [0.9.17-alpha.9] - 2026-09-29
 
