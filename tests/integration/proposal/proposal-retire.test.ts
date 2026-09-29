@@ -22,10 +22,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { contentHash } from "../../../src/commands/improve/content-hash";
-import { archiveCleanupCandidate } from "../../../src/commands/improve/memory/memory-improve";
+import {
+  archiveCleanupCandidate,
+  purgeGracedArchive,
+  RETIRE_GRACE_DAYS,
+} from "../../../src/commands/improve/memory/memory-improve";
 import { drainProposals } from "../../../src/commands/proposal/drain";
 import {
   akmProposalAccept,
@@ -119,6 +124,24 @@ function findArchiveEntry(originalRel: string): { dirAbs: string; originalAbs: s
     }
   }
   throw new Error(`no archive entry found for ${originalRel}`);
+}
+
+/** Real git plumbing (S5): `purgeGracedArchive` requires the archive to be git-tracked and clean (B1) — `withIsolatedAkmStorage` sets up no `.git` on its own. */
+function git(...args: string[]): string {
+  const result = spawnSync("git", ["-C", storage.stashDir, ...args], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  return result.stdout;
+}
+
+function initGitRepo(): void {
+  expect(spawnSync("git", ["init", "--initial-branch=main", storage.stashDir], { encoding: "utf8" }).status).toBe(0);
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "test");
+}
+
+function commitAll(message: string): void {
+  git("add", "-A");
+  git("commit", "-m", message);
 }
 
 describe("createRetireProposal — mint", () => {
@@ -800,8 +823,9 @@ describe("akm proposal revert on a retire proposal", () => {
       await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
       expect(fs.existsSync(parentPath)).toBe(false);
 
-      // A purge (not built yet) deletes the archived bytes; later, an
-      // unrelated new memory happens to reuse the exact same original path.
+      // Simulates the archived bytes having been purged (see the real
+      // purgeGracedArchive sweep test below); an unrelated new memory then
+      // happens to reuse the exact same original path.
       const primaryEntry = findArchiveEntry("memories/parent.md");
       fs.rmSync(primaryEntry.archivedAbs);
       const reusedContent = "---\ndescription: an unrelated new memory\n---\nCompletely different content.\n";
@@ -814,6 +838,56 @@ describe("akm proposal revert on a retire proposal", () => {
       // The unrelated new file survives untouched — not overwritten with the old retired bytes.
       expect(fs.readFileSync(parentPath, "utf8")).toBe(reusedContent);
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
+    });
+
+    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op (S5)", async () => {
+      const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/parent",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: parentPath,
+          retiredRef: "memories/parent",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(fs.existsSync(parentPath)).toBe(false);
+
+      const entry = findArchiveEntry("memories/parent.md");
+      const tombstonePath = path.join(entry.dirAbs, "cleanup.md");
+      // The REAL retiredAt string the accept path actually wrote (S5: "every
+      // retiredAt string form the code actually writes" — there is exactly
+      // one, `new Date().toISOString()`, read back here rather than
+      // hand-typed, so this test fails if that round-trip ever changes).
+      const retiredAt = parseFrontmatter(fs.readFileSync(tombstonePath, "utf8")).data.retiredAt;
+      expect(typeof retiredAt).toBe("string");
+
+      // B1: purgeGracedArchive only purges a git-tracked, clean archive —
+      // `withIsolatedAkmStorage` has no `.git` of its own, so this test
+      // makes one and commits the archive exactly as a real accept + sync
+      // (or an owner's own commit) would.
+      initGitRepo();
+      commitAll("commit the archived retirement");
+
+      const pastGrace = new Date(Date.parse(retiredAt as string) + (RETIRE_GRACE_DAYS + 1) * 86_400_000);
+      const sweep1 = purgeGracedArchive(storage.stashDir, pastGrace);
+      expect(sweep1).toEqual({ purgedDirs: 1, purgedFiles: 1 });
+      expect(fs.existsSync(entry.archivedAbs)).toBe(false);
+      expect(fs.existsSync(tombstonePath)).toBe(true); // the tombstone is never purged
+
+      await expect(akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+        /archived copy .* is missing/,
+      );
+      expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted"); // the failed revert changed nothing
+      expect(fs.existsSync(tombstonePath)).toBe(true); // still kept after the failed revert attempt
+
+      // A second sweep finds nothing left under this retirement to purge.
+      const sweep2 = purgeGracedArchive(storage.stashDir, pastGrace);
+      expect(sweep2).toEqual({ purgedDirs: 0, purgedFiles: 0 });
     });
   });
 });
