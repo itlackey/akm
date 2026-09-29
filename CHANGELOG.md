@@ -112,9 +112,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Best-effort: a failure to archive the source only warns; the promotion
   itself is not undone. (`src/commands/improve/consolidate.ts`,
   `src/commands/proposal/repository.ts`)
+- **Retirement continuity check (rule R3).** Before the pair pass mints a
+  `retire` proposal, it replays up to five of the retired asset's own past
+  `search`/`curate` queries through akm's own search, in-process — the
+  ranking a user actually gets, no LLM. For every query where the retired
+  asset ranked in the top 10, the successor must too; ranks are compared
+  with `buildRankChangeReport`. A failing query never blocks the mint — the
+  proposal's `retirement.continuityRisk` records the failing query count
+  and, per failing query, the retired asset's rank and the successor's
+  (`null` when the successor did not rank in the top 10 at all). A proposal
+  carrying `continuityRisk` is excluded from every bulk accept path (`accept
+  --generator …`, with or without `--yes`) but not from bulk reject —
+  declining a flagged proposal is always the safe direction; a person can
+  always accept one by id. An asset with no recorded queries is not checked
+  at all. (`src/commands/improve/consolidate/continuity-check.ts`,
+  `src/commands/proposal/proposal-types.ts`,
+  `src/commands/proposal/proposal.ts`)
+- **Archive purge sweep.** Deterministic, no LLM, run once at the very start
+  of every `akm improve` invocation, ahead of index bootstrap and triage.
+  For a git-backed bundle, deletes the archived asset file(s) of a
+  retirement — never its `cleanup.md` tombstone — once `retiredAt` is more
+  than 30 days old (`RETIRE_GRACE_DAYS`); git history keeps the bytes. A
+  memory-cleanup family-prune archive carries no `retiredAt`, so this sweep
+  never touches that older archive class. Every deleted file is journaled
+  individually, so the end-of-run auto-sync commits the removal the same
+  way it commits the archive move itself. A bundle with no `.git` of its
+  own is left untouched — there is no history to fall back on — and `akm
+  health` reports its archive's size and file count instead
+  (`memory-cleanup-archive` advisory), silent whenever the bundle is
+  git-backed or the archive is empty or absent.
+  (`src/commands/improve/memory/memory-improve.ts`,
+  `src/commands/improve/improve.ts`, `src/commands/health/archive-usage.ts`)
+
+### Removed
+
+- **The per-run forgetting-safety lane.** `scoreSalience`'s stash-wide
+  salience-rank comparison, `applyForgettingSafety`, and the
+  `improve_salience_rank_change` event are gone. It was a one-time WS-1
+  cutover guard from the June 2026 ranking-formula change that had kept
+  running on every improve run since; the last 30 days of events
+  (2026-08-30 to 2026-09-29: 47 `improve_salience_rank_change` events, 5
+  refs flagged across 4 runs — 09-05, 09-08 x2, 09-19, 09-28) showed no
+  marginal pick over the signal-delta lane and the retrieval scope: 4 of
+  the 5 flagged refs were also picked that same run by signal-delta
+  (adjacent event ids/timestamps, 2–26 minutes after the rank-change
+  event), and the 5th (`workflows/create-github-issues-from-spec`, flagged
+  09-05) has no `reflect_invoked` or `distill_invoked` event anywhere in
+  the retained history — it was flagged but never actually processed by
+  anything, forgetting-safety included. It also protected
+  `asset_salience.rank_score`, which only improve itself ever read — a rank
+  drop could not hide anything from search. `buildRankChangeReport`
+  survives as the new retirement continuity check's comparator (see
+  Added); `forgetting-safety` stays a valid `eligibilitySource`/event-type
+  value so old proposals and events still decode, but nothing assigns or
+  emits it any more. (`src/commands/improve/preparation.ts`,
+  `src/commands/improve/salience.ts`, `src/core/events.ts`,
+  `src/storage/repositories/salience-repository.ts`)
+- **`improve.strategies.<name>.processes.consolidate.incrementalSince` and
+  `.neighborsPerChanged`.** The consolidate pair pass is now the candidate
+  generator, narrowing per initiator through the improve ledger rather than
+  a global time window; neither key was set anywhere in the owner's config.
+  `narrowToIncrementalCandidates` goes with them, along with its
+  now-orphaned `parseSinceToIsoLenient` helper. A config that still sets
+  either key keeps loading under the retired-key contract: named once as
+  unknown, it survives an ordinary config write, and only `akm migrate
+  apply` drops it. (`src/core/config/schema/improve-processes.ts`,
+  `src/commands/improve/consolidate.ts`, `src/core/time.ts`,
+  `docs/reference/configuration.md`)
 
 ### Fixed
 
+- **A rejected consolidate-pair retirement could be re-proposed.** The pair
+  pass's re-eligibility check is hash-based per initiator, not per pair: an
+  initiator with no ledger row — because one of its OTHER candidates was
+  dropped or failed this run, not because this pair changed — became
+  eligible again in full, regenerating every one of its candidate pairs,
+  including one the owner had already reviewed and rejected with neither
+  side changed since. Before minting, a pair is now skipped when a rejected
+  `consolidate-pair` proposal already exists for the same retired/successor
+  refs and the same two content hashes, and counted as a settled no-action
+  so the initiator's row still gets written this run.
+  (`src/commands/improve/consolidate/pair-pass.ts`)
 - **Stale "advisory merge/delete/contradict" documentation.** Consolidation
   removed its merge/delete/contradict operations in 0.9.17-alpha.1 at
   `e82eec811` (the schema has offered `promote` only since — they had run in

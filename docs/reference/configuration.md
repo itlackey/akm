@@ -852,3 +852,10 @@ and without warning.
 `akm curate` no longer extract or queue graph work, and graph extraction runs
 only in `akm improve`. A config that still sets it loads; the key is named
 once as unknown, and `akm migrate apply` removes it.
+
+`improve.strategies.<name>.processes.consolidate.incrementalSince` and
+`.neighborsPerChanged` are retired in 0.9.17-alpha.9: the consolidate pair
+pass is now the candidate generator, narrowing per initiator through the
+improve ledger rather than a global time window. A config that still sets
+either key loads; each is named once as unknown, and `akm migrate apply`
+removes it.

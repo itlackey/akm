@@ -28,7 +28,8 @@ flowchart TD
     E --> E1{lock file held?}
     E1 -- yes, skip-if-locked --> SKIP[Return exit-0 no-op\nno triage, index, events, or sync]
     E1 -- yes, no flag --> ERR([throw ConfigError: already running])
-    E1 -- no / stale reclaimed --> TRIAGE[Triage pending proposal backlog]
+    E1 -- no / stale reclaimed --> PURGE[purgeGracedArchive\ngit-backed bundles only: delete archived\nretirement bytes past RETIRE_GRACE_DAYS]
+    PURGE --> TRIAGE[Triage pending proposal backlog]
     TRIAGE --> ENSURE[ensureIndex primaryStashDir\nshared deadline signal]
     ENSURE --> COLLECT
     COLLECT --> CLEANUP_ANALYZE{memoryCleanup eligible?}
@@ -138,7 +139,9 @@ flowchart TD
             PAIR_INIT --> PAIR_CAND[Candidates: k=5 nearest by stored vector,\nsame bundle + memory tier, cosine >= T_pair]
             PAIR_CAND --> PAIR_JUDGE[One LLM call per pair:\nconsolidate-pair.md, 6-label schema]
             PAIR_JUDGE --> PAIR_OUT{judge label}
-            PAIR_OUT -- duplicate / subsumed / supersedes --> PAIR_PROPOSE[emitProposal: retire,\nsource: consolidate]
+            PAIR_OUT -- duplicate / subsumed / supersedes --> PAIR_GUARDS[Guards: hot capture, derived parent,\nrejected-pair match, same-run chain]
+            PAIR_GUARDS --> PAIR_CONTINUITY[Continuity check R3:\nreplay retired asset's own queries,\nflag continuityRisk, never block]
+            PAIR_CONTINUITY --> PAIR_PROPOSE[emitProposal: retire,\nsource: consolidate-pair]
             PAIR_OUT -- overlap / unrelated / contradicts --> PAIR_NOACTION[judged_no_action\nno 7-day timer — content change only]
         end
 
@@ -330,6 +333,14 @@ duplicate, subsumed and superseding retirement, review-gated.
    alone judged 177 `duplicate` verdicts into only 59 proposals before this,
    the other 118 silently abandoned by the same-run chain guard.
 
+   Because that "no row" case regenerates ALL of an initiator's candidate
+   pairs next run — including ones already decided — a pair the owner
+   already rejected is never re-minted while both sides are unchanged: before
+   minting, the same ref pair and the same two content hashes are checked
+   against every rejected `consolidate-pair` proposal on record, and a match
+   is counted as a settled no-action (so the initiator's row still gets
+   written this run) rather than sent back through the judge.
+
 **Retire proposals (`akm proposal accept`/`revert`):** minted under their own
 source, `consolidate-pair` — kept apart from the promote pass's
 `consolidate` proposals so a bulk `accept`/`reject --generator consolidate`
@@ -363,7 +374,69 @@ reused by an unrelated file since, which refuses instead of overwriting it.
 Triage never auto-accepts a `retire` proposal, whatever `applyMode` says —
 review reuses `akm proposal list`, `show`, `diff`, and bulk
 `accept --generator consolidate-pair` / `reject --generator
-consolidate-pair`.
+consolidate-pair`. A proposal carrying `continuityRisk` (below) is excluded
+from that bulk accept, whatever the generator or `--yes`; bulk reject is
+unaffected, and a person can always accept one by id.
+
+### Retirement continuity check (rule R3)
+
+Before the pair pass mints a `retire` proposal, it replays up to five of the
+retired asset's own past `search`/`curate` queries
+(`listRetrievalQueries`, `src/indexer/usage/usage-events.ts`) through akm's
+own search, in-process — the same ranking a user gets, no LLM
+(`src/commands/improve/consolidate/continuity-check.ts`). For every query
+where the retired asset ranked in the top 10, the successor must rank in the
+top 10 too; positions are compared with `buildRankChangeReport`
+(`src/commands/improve/salience.ts`). No recorded queries means no check and
+no flag.
+
+A failing query does not block the mint — it flags. The proposal's
+`retirement.continuityRisk` records the failing query count and, per failing
+query, the retired asset's rank and the successor's (`null` when the
+successor did not rank in the top 10 at all). This is the forgetting-safety
+lane's old purpose (see below), now measured against search rank instead of
+a stash-wide salience rank, and only at the moment an asset would actually
+stop resolving.
+
+**The retired forgetting-safety lane.** Before alpha.9, `scoreSalience`
+compared the whole stash's salience ranking before and after every improve
+run, and a ref that fell from the top 200 to below 500 was injected into that
+run's work set under `eligibilitySource: forgetting-safety`
+(`applyForgettingSafety`, `improve_salience_rank_change` event). It was a
+one-time cutover guard from the June 2026 ranking-formula change, running on
+every run since. R5's 30-day event window (2026-08-30 to 2026-09-29, 47
+`improve_salience_rank_change` events, 5 refs flagged across 4 runs) found no
+marginal pick over the simpler baseline: 4 of the 5 flagged refs were also
+picked that same run by the signal-delta lane, and the 5th was never
+processed by anything, forgetting-safety included, in the retained history.
+It also protected `asset_salience.rank_score`, which only improve itself ever
+read. Both the per-run comparison and the injection are gone;
+`buildRankChangeReport` survives as the continuity check's comparator, and
+`forgetting-safety` stays a valid `eligibilitySource`/event-type value so old
+proposals and events still decode.
+
+### Archive purge sweep (step 8)
+
+A retirement's archived bytes are not deleted when it is accepted — only the
+tombstone (`cleanup.md`) resolves the ref from then on. `purgeGracedArchive`
+(`src/commands/improve/memory/memory-improve.ts`) deletes them later,
+deterministically and with no LLM, once at the very start of every
+`akm improve` run — before index bootstrap, before triage. For a git-backed
+bundle it walks `.akm/memory-cleanup/archive/`, and for every tombstone whose
+`retiredAt` is more than `RETIRE_GRACE_DAYS` (30) days old, deletes the
+archived asset file(s) under that tombstone's own directory — never
+`cleanup.md` itself; git history keeps the bytes (D27). A memory-cleanup
+family-prune archive (not a pair-pass retirement) has no `retiredAt` in its
+tombstone at all, so this sweep never touches that older archive class.
+
+Every deleted file is journaled individually
+(`src/core/write-provenance.ts`), the same mechanism the archive move itself
+uses, so the end-of-run auto-sync commits the deletion in the run's own
+commit. A bundle with no `.git` of its own is left untouched — there is
+nothing to fall back on if a delete turns out to be wrong — and `akm health`
+reports its archive's size and file count instead (`memory-cleanup-archive`
+advisory, `src/commands/health/archive-usage.ts`), silent whenever the bundle
+is git-backed or the archive is empty or absent.
 
 ### improve-owned maintenance
 
