@@ -72,6 +72,14 @@ describe("shouldBypassConfigStartup allowlists help and hints", () => {
   test("a command that needs config is NOT bypassed", async () => {
     const { shouldBypassConfigStartup } = await import("../../src/cli");
     expect(shouldBypassConfigStartup(["bun", "cli.ts", "search", "anything"])).toBe(false);
+    // `akm info` deliberately reads config the same way every other command
+    // does (a10-info follow-up): bypassing it here would also skip a user's
+    // configured `output.format`/`output.detail` for it specifically. It
+    // still can't error on a config it can't load — assembleInfo() and
+    // infoCommand's own try/catch (stash-cli.ts) degrade that instead of
+    // throwing, so this is NOT a blanket "info always succeeds" claim, only
+    // "info does not get special startup treatment".
+    expect(shouldBypassConfigStartup(["bun", "cli.ts", "info"])).toBe(false);
   });
 });
 

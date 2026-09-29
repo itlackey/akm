@@ -28,6 +28,7 @@
  */
 
 import { UsageError } from "../core/errors";
+import { warn } from "../core/warn";
 import {
   type CittyArgsDefinitionForScan,
   cittyComparableName,
@@ -35,6 +36,15 @@ import {
   toAliasArray,
 } from "./invocation";
 import { retiredFlagHint } from "./retired-commands";
+
+/**
+ * Commands that must never refuse on an unrecognized flag — `akm info` warns
+ * and continues instead of exiting 2, the same tolerance a bare `akm help
+ * --whatever` already gets for free from its group-command fallback (no
+ * resolved subcommand, so this gate stands down entirely). `info` is a leaf
+ * command, so it needs an explicit opt-in here instead.
+ */
+const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
@@ -214,6 +224,11 @@ function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): n
   );
 }
 
+/** The {@link UNKNOWN_FLAG_TOLERANT_COMMANDS} counterpart to {@link throwUnknownFlag}: report, don't refuse. */
+function warnUnknownFlag(shown: string, known: KnownArgs): void {
+  warn(`[akm ${known.path.join(" ")}] ignoring unknown flag "${shown}" — run with --help to see its accepted flags.`);
+}
+
 /**
  * Throw a {@link UsageError} naming the first flag the resolved command does
  * not declare. Returns silently when every flag is known.
@@ -236,6 +251,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const selfDiagnosed = SELF_DIAGNOSED_FLAGS.get(known.path.join(" "));
+  const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 
   for (let i = 0; i < ownArgs.length; i += 1) {
     const token = ownArgs[i] as string;
@@ -251,7 +267,13 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
       for (let offset = 0; offset < shortFlags.length; offset += 1) {
         const rawName = shortFlags[offset] as string;
         const candidate = cittyComparableName(rawName);
-        if (!known.names.has(candidate)) throwUnknownFlag(token, `-${rawName}`, known);
+        if (!known.names.has(candidate)) {
+          if (tolerant) {
+            warnUnknownFlag(token, known);
+            break;
+          }
+          throwUnknownFlag(token, `-${rawName}`, known);
+        }
         if (known.valueFlags.has(candidate)) {
           if (offset === shortFlags.length - 1) i += 1;
           break;
@@ -280,6 +302,10 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
       // become exact-name workflow parameters and are checked against the
       // frozen plan before a run is inserted. Short flags remain strict.
       if (dynamicWorkflowParams) continue;
+      if (tolerant) {
+        warnUnknownFlag(token.split("=")[0] as string, known);
+        continue;
+      }
       throwUnknownFlag(token.split("=")[0] as string, `--${rawName}`, known);
     }
 

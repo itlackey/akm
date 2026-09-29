@@ -318,8 +318,10 @@ Returns a JSON object with:
 | Field | Description |
 | --- | --- |
 | `version` | Current akm version |
-| `bundleDir` | Primary bundle directory — same resolution `akm bundle list` uses |
+| `bundleDir` | Primary bundle directory — same resolution `akm bundle list` uses. Falls back to the platform-default location when no bundle resolves. |
 | `defaultBundle` | Name of the primary bundle from config, or `null` when none is configured |
+| `configError` | Present only when `config.json` exists but could not be loaded (parse or schema failure); every config-derived field falls back to the same defaults a fresh install reports |
+| `bundleDirError` | Present only when a bundle IS configured (an env override or `bundles.*` in config) but its path doesn't resolve — absent for the ordinary "no bundle created yet" state, where `bundleDir` needs no explanation |
 | `dataDir` | Resolved data directory (`getDataDir()`) |
 | `configDir` | Resolved config directory (`getConfigDir()`) |
 | `cacheDir` | Resolved cache directory (`getCacheDir()`) |
@@ -329,7 +331,14 @@ Returns a JSON object with:
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
-| `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings` |
+| `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
+
+`akm info` never refuses: an unreadable config, an unresolvable bundle
+directory, or an index.db that's locked, newer, older, corrupt, missing, or
+empty each degrade the relevant field(s) above instead of failing the
+command. It also never waits more than about 1.5s on a locked index.db,
+regardless of the shared 30s lock-wait every write command otherwise uses,
+and warns rather than refusing on an unrecognized flag.
 
 `semanticSearch.status` values:
 - `"ready-js"` — every entry has a vector; semantic search is active (the name is historical: `"ready-vec"`, the sqlite-vec variant, is gone)

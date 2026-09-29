@@ -697,12 +697,6 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   // `setup`/`migrate` do, or the recovery instructions are themselves
   // unreachable.
   if (command === "help" || command === "hints") return true;
-  // `akm info` must behave like a help command (owner ruling): it always
-  // prints a report and exits 0, even against a config.json this akm cannot
-  // load. `assembleInfo()` already reads config for itself and degrades that
-  // read the same way (reports the failure as a field instead of throwing),
-  // so startup's own load must not throw first and pre-empt that.
-  if (command === "info") return true;
   if (isTaskRunWithId(argv)) return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");
@@ -1059,7 +1053,23 @@ async function runCli(): Promise<void> {
   try {
     applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
-    initOutputMode(process.argv, bypassConfig ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}));
+    // Even off the bypass allowlist, a command must not be blocked from
+    // running just because ITS output-mode default can't be read — `akm
+    // info` needs its own `loadConfig()` call at startup to be resilient,
+    // not bypassed outright: bypassing also skips a user's configured
+    // `output.format`/`output.detail` for it specifically. A command that
+    // genuinely needs a working config still fails, from its own body's
+    // `loadConfig()` call, same as before — this only protects the shared
+    // output-mode read.
+    let outputDefaults = DEFAULT_CONFIG.output ?? {};
+    if (!bypassConfig) {
+      try {
+        outputDefaults = loadConfig().output ?? {};
+      } catch {
+        outputDefaults = DEFAULT_CONFIG.output ?? {};
+      }
+    }
+    initOutputMode(process.argv, outputDefaults);
   } catch (error: unknown) {
     emitJsonError(error);
     return;

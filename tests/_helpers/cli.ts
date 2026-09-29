@@ -257,10 +257,19 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       // some OTHER exit code that clobbers the one `emitJsonError` just set.
       let initFailed = false;
       try {
-        initOutputMode(
-          argv,
-          shouldBypassConfigStartup(argv) ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}),
-        );
+        // Mirrors src/cli.ts's own startup resolution: off the bypass
+        // allowlist, the config read for output-mode defaults is best-effort
+        // (never throws) rather than a hard bypass/no-bypass split — see that
+        // file's matching comment for why.
+        let outputDefaults = DEFAULT_CONFIG.output ?? {};
+        if (!shouldBypassConfigStartup(argv)) {
+          try {
+            outputDefaults = loadConfig().output ?? {};
+          } catch {
+            outputDefaults = DEFAULT_CONFIG.output ?? {};
+          }
+        }
+        initOutputMode(argv, outputDefaults);
       } catch (initError) {
         emitJsonError(initError);
         initFailed = true;

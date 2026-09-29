@@ -490,6 +490,33 @@ describe("assembleInfo — config degrade (a10-info)", () => {
     const info = assembleInfo();
     expect(info.configError).toBeUndefined();
   });
+
+  // R-057/a10-info follow-up: a bundle path that IS configured but doesn't
+  // resolve (STASH_DIR_UNREADABLE) is a genuine misconfiguration, not a
+  // fresh install — bundleDir still falls back to the platform default (a
+  // courtesy), but the real reason must not be silently dropped.
+  test("a configured bundle path that does not resolve reports bundleDirError, not silently", () => {
+    const config = loadConfig();
+    config.bundles = { main: { path: "/nonexistent/definitely-not-here" } };
+    config.defaultBundle = "main";
+    saveConfig(config);
+    resetConfigCache();
+
+    // The outer beforeEach's sandboxed AKM_BUNDLE_DIR would otherwise win
+    // resolveStashDir()'s step 1 and mask the configured-path failure this
+    // test targets (step 2).
+    const previousBundleDir = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      const info = assembleInfo();
+      expect(info.bundleDirError).toBeDefined();
+      expect(info.bundleDirError).toContain("/nonexistent/definitely-not-here");
+      expect(info.defaultBundle).toBe("main");
+      expect(info.bundleDir).not.toBe("/nonexistent/definitely-not-here");
+    } finally {
+      if (previousBundleDir !== undefined) process.env.AKM_BUNDLE_DIR = previousBundleDir;
+    }
+  });
 });
 
 // ── WS2: info honors --format (already supported; regression guard) ───────────
