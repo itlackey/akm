@@ -146,6 +146,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/commands/improve/consolidate/continuity-check.ts`,
   `src/commands/proposal/proposal-types.ts`,
   `src/commands/proposal/proposal.ts`)
+- **Continuity-risk visibility, and a `--generator` filter for `proposal
+  list` (S4).** A retire proposal carrying `retirement.continuityRisk` now
+  shows `⚠ continuity-risk` inline in the default `akm proposal list`
+  output (and `--format text`), not just in `proposal show`. `proposal
+  show`'s text output now lists the actual failing query text and rank per
+  query, not just a count, and separately reports `unverifiedQueries` when
+  the risk is (also, or only) an unverified query rather than a rank
+  failure. `akm proposal accept --generator … --dry-run` (and a real bulk
+  run) now reports `skippedForContinuityRisk`, the count of otherwise
+  matching proposals excluded specifically for this reason, apart from an
+  ordinary `--max-diff-lines`/`--older-than` miss. `akm proposal list` gains
+  a `--generator <name>` filter, the same value `accept`/`reject
+  --generator` already take, so the (potentially large) backlog of one
+  generator's retire proposals can be reviewed as its own list.
+  (`src/commands/proposal/proposal.ts`, `src/commands/proposal/proposal-cli.ts`,
+  `src/output/text/proposal-format.ts`)
 - **Archive purge sweep.** Deterministic, no LLM, run once at the very start
   of every `akm improve` invocation, ahead of index bootstrap and triage.
   For a git-backed bundle, deletes the archived asset file(s) of a

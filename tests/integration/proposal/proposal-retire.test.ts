@@ -950,6 +950,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
       generator: "consolidate-pair",
     });
     expect(sweep.count).toBe(0); // flagged: never swept, whatever the generator
+    expect(sweep.skippedForContinuityRisk).toBe(1); // S4: reported apart from an ordinary filter miss
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("pending");
 
     // A person can still accept it directly, by id.
@@ -981,6 +982,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
       reason: "bulk reject sweep",
     });
     expect(rejectSweep.count).toBe(1);
+    expect(rejectSweep.skippedForContinuityRisk).toBe(0); // S4: only accept excludes for continuityRisk
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("rejected");
   });
 

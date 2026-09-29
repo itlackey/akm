@@ -109,6 +109,11 @@ const proposalListCommand = defineJsonCommand({
     },
     ref: { type: "string", description: "Filter by asset ref ([bundle//]conceptId, e.g. knowledge/guide.md)" },
     type: { type: "string", description: "Filter by asset type" },
+    generator: {
+      type: "string",
+      description:
+        "Filter by generator/source (e.g. reflect, distill, consolidate-pair) — same value accept/reject --generator take.",
+    },
   },
   run({ args }) {
     const status = parseProposalStatus(args.status);
@@ -117,6 +122,7 @@ const proposalListCommand = defineJsonCommand({
       status,
       ref: args.ref,
       type: args.type,
+      generator: args.generator,
       includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
     });
     output("proposal-list", result);
@@ -177,7 +183,7 @@ const proposalAcceptCommand = defineJsonCommand({
         return;
       }
       const { maxDiffLines, olderThanMs } = parseBulkFilterFlags(args);
-      const { count, results } = await bulkAdjudicateProposals({
+      const { count, results, skippedForContinuityRisk } = await bulkAdjudicateProposals({
         action: "accept",
         generator,
         maxDiffLines,
@@ -186,7 +192,16 @@ const proposalAcceptCommand = defineJsonCommand({
         queue: args.queue as string | undefined,
         target: args.target as string | undefined,
       });
-      output("proposal-accept-batch", { accepted: count, results, dryRun: args["dry-run"] as boolean });
+      output("proposal-accept-batch", {
+        accepted: count,
+        results,
+        // S4: how many otherwise-matching proposals were skipped specifically
+        // because they carry retirement.continuityRisk — visible under
+        // --dry-run and on a real run alike, distinct from an ordinary
+        // --max-diff-lines/--older-than miss.
+        skippedForContinuityRisk,
+        dryRun: args["dry-run"] as boolean,
+      });
       return;
     }
     if (!args.id) {

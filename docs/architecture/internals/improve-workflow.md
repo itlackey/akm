@@ -375,11 +375,15 @@ work — UNLESS that original path's current content does not match the
 `retirement.retiredContentHash` recorded at accept, meaning the path was
 reused by an unrelated file since, which refuses instead of overwriting it.
 Triage never auto-accepts a `retire` proposal, whatever `applyMode` says —
-review reuses `akm proposal list`, `show`, `diff`, and bulk
+review reuses `akm proposal list --generator consolidate-pair` (S4: the
+backlog is reviewed as its own list, not mixed in with every other
+generator's proposals), `show`, `diff`, and bulk
 `accept --generator consolidate-pair` / `reject --generator
 consolidate-pair`. A proposal carrying `continuityRisk` (below) is excluded
-from that bulk accept, whatever the generator or `--yes`; bulk reject is
-unaffected, and a person can always accept one by id.
+from that bulk accept, whatever the generator or `--yes` — visible inline in
+`list`'s default output and in `show`'s text output (the specific
+failing/unverified queries, not just a count) — bulk reject is unaffected,
+and a person can always accept one by id.
 
 ### Retirement continuity check (rule R3)
 

@@ -2721,6 +2721,7 @@ akm proposal list
 akm proposal list --queue team-bundle
 akm proposal list --status pending|accepted|rejected|reverted
 akm proposal list --ref skills/deploy
+akm proposal list --generator consolidate-pair
 ```
 
 | Flag | Description |
@@ -2729,6 +2730,12 @@ akm proposal list --ref skills/deploy
 | `--status` | Filter by `pending`, `accepted`, `rejected`, or `reverted` |
 | `--ref` | Filter by asset ref. A qualified ref preserves bundle identity; a short ref matches that concept in the selected queue |
 | `--type` | Reserved type filter |
+| `--generator <name>` | Filter by generator/source (e.g. `reflect`, `distill`, `consolidate-pair`) — the same value `accept`/`reject --generator` take (S4) |
+
+Each retire proposal's `retirement.continuityRisk`, when present, also shows
+in the default listing (`⚠ continuity-risk` inline) and in `proposal show`'s
+text output (the specific failing/unverified queries) — see
+[Retirement continuity](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retirement-continuity).
 
 Each proposal record carries an optional `confidence` field (0..1) emitted by
 reflect/propose runs. It is recorded for triage and ranking only — there is no

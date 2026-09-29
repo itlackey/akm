@@ -157,6 +157,26 @@ describe("createProposal / listProposals / getProposal", () => {
     expect((events.events[0]?.metadata as Record<string, unknown> | undefined)?.proposalId).toBe(created.id);
   });
 
+  test("akmProposalList --generator filters by source (S4), matching accept/reject --generator", () => {
+    const stash = makeStashDir();
+    createProposal(stash, { ref: "lessons/from-reflect", source: "reflect", payload: { content: VALID_LESSON } });
+    createProposal(stash, { ref: "lessons/from-distill", source: "distill", payload: { content: VALID_LESSON } });
+
+    const reflectOnly = akmProposalList({ stashDir: stash, generator: "reflect" });
+    expect(reflectOnly.totalCount).toBe(1);
+    expect(reflectOnly.proposals[0]?.source).toBe("reflect");
+
+    const distillOnly = akmProposalList({ stashDir: stash, generator: "distill" });
+    expect(distillOnly.totalCount).toBe(1);
+    expect(distillOnly.proposals[0]?.source).toBe("distill");
+
+    const unfiltered = akmProposalList({ stashDir: stash });
+    expect(unfiltered.totalCount).toBe(2);
+
+    const noMatch = akmProposalList({ stashDir: stash, generator: "consolidate-pair" });
+    expect(noMatch.totalCount).toBe(0);
+  });
+
   test.each([
     {
       issue: "unquoted-colon",
