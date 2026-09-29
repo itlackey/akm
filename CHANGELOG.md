@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Consolidate pair pass: duplicate, subsumed and superseding memories are
+  now retired, review-gated.** A second pass inside `akmConsolidate`,
+  alongside the existing promote pass. It walks new and changed memory-tier
+  assets (a memory, base or `.derived`; a flat `knowledge/` asset; or a
+  lesson) in the retrieval scope, takes each one's 5 nearest neighbours by
+  stored vector (same bundle, memory tier only — structured knowledge in
+  subfolders is excluded), and judges every pair at cosine >= `T_pair`
+  (0.93) with one LLM call using the calibrated relation prompt
+  (`src/assets/prompts/consolidate-pair.md`, six labels: `duplicate`,
+  `subsumed`, `supersedes`, `contradicts`, `overlap`, `unrelated`). A
+  never-before-attempted initiator (the one-time backlog) is held to a
+  higher `T_pair` >= 0.95, and at most 300 pairs are judged a night, highest
+  cosine first. `duplicate`, `subsumed` and `supersedes` mint a reviewed
+  `retire` proposal for the losing side (owner-calibrated precision 20/22 =
+  0.91 [0.72, 0.97] against a second-rater baseline of 0.17 for
+  `supersedes` alone); `contradicts` is counted but stays a human decision,
+  and `overlap`/`unrelated` get no proposal. Guards: never a
+  `captureMode: hot` memory, never a `.derived` memory whose parent still
+  exists, never a pair where either side already has a pending retire
+  proposal. Pair-pass ledger attempts use their own source
+  (`consolidate-pair`), distinguishable from the promote pass's `consolidate`
+  rows, and a `judged_no_action` pair-pass row carries no 7-day revisit
+  timer — only a content change on the initiator makes it eligible again.
+  (`src/commands/improve/consolidate/pair-pass.ts`,
+  `src/assets/prompts/consolidate-pair.md`)
+- **Retire proposals.** A pair-pass retire proposal's primary change deletes
+  its target instead of writing content. Accepting one archives the asset —
+  and its `.derived` twin, if one exists — through a generalized
+  `archiveCleanupCandidate` (now usable on any memory, knowledge or lesson
+  file, not only `.derived` memories): the same `.akm/memory-cleanup/archive/`
+  encoding memory cleanup already used, never the dead `.akm/archive/`. A
+  `supersedes` judgement first writes the `supersededBy` edge on the older
+  asset, then archives it. Triage never auto-accepts a retire proposal,
+  whatever `applyMode` says — it waits for a direct `akm proposal accept`,
+  reviewed the same way as any other proposal
+  (`akm proposal list --queue consolidate`, `show`, `diff`, bulk
+  `accept --generator consolidate`). `akm proposal revert` restores the
+  archived file(s) and undoes any supersede edge it wrote. A ref to a
+  retired asset keeps resolving to its tombstone (`isArchivedRelPath`) —
+  fixed along the way: that resolver assumed only memories are ever
+  archived, so an xref to a retired knowledge or lesson asset was wrongly
+  reported `missing-ref` by `akm lint` until now.
+  (`src/commands/proposal/repository.ts`,
+  `src/commands/improve/memory/memory-improve.ts`,
+  `src/commands/lint/base-linter.ts`)
+- **A promotion retires its source memory (O1).** When `akm proposal accept`
+  promotes a consolidate `promote` proposal — by a person or by triage
+  auto-promotion — it now archives the source memory (and its `.derived`
+  twin) through the same retire-archive path, tombstoned `reason: promoted`.
+  A promotion no longer leaves a memory/knowledge duplicate behind.
+  Best-effort: a failure to archive the source only warns; the promotion
+  itself is not undone. (`src/commands/improve/consolidate.ts`,
+  `src/commands/proposal/repository.ts`)
+
+### Fixed
+
+- **Stale "advisory merge/delete/contradict" documentation.** Consolidation
+  dropped its merge/delete/contradict operations back in 0.9.17-alpha.1 (the
+  schema has offered `promote` only since), but `docs/architecture/
+  improvement.md`, `STABILITY.md` and `docs/architecture/internals/
+  improve-workflow.md` still described them as advisory planned output.
+  Corrected, and `improve-workflow.md` gains a section documenting the pair
+  pass, retire proposals and O1. Also corrected: the `default` strategy's
+  "advisory consolidation" description, two comments that still credited a
+  `beliefState` ranking boost alpha.4 removed (`memory-belief.ts`,
+  `knowledge.ts`), and D27's stale `archiveMemory` naming in the
+  architecture decision history. Deleted the unused
+  `src/assets/prompts/contradiction-judge.md` (no reader since
+  `e82eec811`).
+
 ## [0.9.17-alpha.8] - 2026-09-28
 
 `akm index` now records the links a bundle already declares (`xrefs`,
