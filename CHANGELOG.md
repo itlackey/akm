@@ -265,7 +265,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   transaction journals used by proposal accept/revert, the maintenance
   barrier and its per-process activity registry, the SQLite lock-operation
   mutex, the strict per-key config schemas and the retired-key registry, and
-  the health advisories tied to all of the above.
+  the health advisories tied to all of the above. `akm migrate apply` deletes
+  the files they left behind: `$DATA/txn/`, `$DATA/txn-quarantine/`,
+  `maintenance.barrier.lock`, and the `maintenance-activities/` registry,
+  which leaked an entry per process (one host had 229,943 entries, 927 MB).
 
 ### Fixed
 
