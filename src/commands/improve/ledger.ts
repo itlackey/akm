@@ -18,13 +18,14 @@ import {
   type ImproveLedgerRow,
   isLedgerBlocked,
   listImproveLedgerRows,
+  PAIR_PASS_LEDGER_SOURCE,
   recordImproveLedger,
 } from "../../storage/repositories/improve-ledger-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
 
 export type { ImproveLedgerOutcome, ImproveLedgerRow };
-export { isLedgerBlocked };
+export { isLedgerBlocked, PAIR_PASS_LEDGER_SOURCE };
 
 /** An improve candidate's durable state key: its index item_ref, else its conceptId. */
 export function stateKey(ref: string, itemRef?: string): string {
@@ -78,6 +79,8 @@ export interface LedgerAttemptInput {
   outcome: ImproveLedgerOutcome;
   detail?: string;
   proposalId?: string;
+  /** Body content hash at this attempt (the pair pass's own eligibility signal). */
+  contentHash?: string;
 }
 
 /**
@@ -105,6 +108,7 @@ export function recordLedgerAttempt(
             at,
             ...(input.proposalId !== undefined ? { proposalId: input.proposalId } : {}),
             ...(input.detail !== undefined ? { detail: input.detail } : {}),
+            ...(input.contentHash !== undefined ? { contentHash: input.contentHash } : {}),
           });
         }
       }),

@@ -41,9 +41,9 @@ export interface ResolveImproveExecutionOptions {
   profile?: ImproveProfileConfig;
   process?: ImproveProcessConfig;
   /**
-   * The process's standing `index.<pass>` settings (`index.graph` for graph
-   * extraction): nearer than the strategy-wide layer, farther than the
-   * strategy's own process settings.
+   * The process's standing `index.<pass>` settings, when the process has one:
+   * nearer than the strategy-wide layer, farther than the strategy's own
+   * process settings.
    */
   index?: ImproveExecutionLayer;
   /** Nearer one-shot selection, such as an explicit CLI engine/timeout. */

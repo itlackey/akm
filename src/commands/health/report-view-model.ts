@@ -122,7 +122,6 @@ export interface ReportRun {
   ok: boolean;
   consDurationMs: number;
   miDurationMs: number;
-  geDurationMs: number;
   otherMs: number;
   promoted: number;
   merged: number;
@@ -130,8 +129,6 @@ export interface ReportRun {
   contradicted: number;
   judgedNoAction: number;
   miWritten: number;
-  geEntities: number;
-  geRelations: number;
   distillByReason: Record<string, number>;
   reflectOk: number;
   reflectFailed: number;
@@ -144,11 +141,9 @@ export interface ReportRun {
 function reshapeRun(r: ImproveRunSummary): ReportRun {
   const cons = r.consolidation;
   const mi = r.memoryInference;
-  const ge = r.graphExtraction;
   const wall = r.wallTimeMs || 0;
   const consMs = cons.durationMs || 0;
   const miMs = mi.durationMs || 0;
-  const geMs = ge.durationMs || 0;
   return {
     id: r.id,
     resultStatus: r.resultStatus ?? "valid",
@@ -161,16 +156,13 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
     ok: r.ok,
     consDurationMs: consMs,
     miDurationMs: miMs,
-    geDurationMs: geMs,
-    otherMs: Math.max(0, wall - consMs - miMs - geMs),
+    otherMs: Math.max(0, wall - consMs - miMs),
     promoted: cons.promoted,
     merged: cons.merged,
     deleted: cons.deleted,
     contradicted: cons.contradicted,
     judgedNoAction: cons.judgedNoAction,
     miWritten: mi.written,
-    geEntities: ge.entities,
-    geRelations: ge.relations,
     distillByReason: r.actions.distill.skippedByReason,
     reflectOk: r.actions.reflect.ok,
     reflectFailed: r.actions.reflect.failed,
@@ -204,7 +196,6 @@ function classify(deltas: Record<string, DeltaEntry>, metricKeys: string[], lowe
 export interface TrendBlock {
   decisionQuality: TrendDirection;
   outputVolume: TrendDirection;
-  failures: TrendDirection;
   latency: TrendDirection;
   overall: "improving" | "degrading" | "mixed";
 }
@@ -212,14 +203,13 @@ export interface TrendBlock {
 function buildTrend(deltas: Record<string, DeltaEntry>): TrendBlock {
   const decisionQuality = classify(deltas, ["improve.memoryInference.yieldRate", "improve.consolidation.promoted"]);
   const outputVolume = classify(deltas, ["improve.consolidation.promoted", "improve.memoryInference.written"]);
-  const failures = classify(deltas, ["improve.graphExtraction.failures"], true);
   const latency = classify(deltas, ["improve.wallTime.medianMs", "improve.wallTime.p95Ms"], true);
-  const score = [decisionQuality, outputVolume, failures, latency].reduce(
+  const score = [decisionQuality, outputVolume, latency].reduce(
     (acc, d) => acc + (d === "up" ? 1 : d === "down" ? -1 : 0),
     0,
   );
   const overall = score >= 1 ? "improving" : score <= -1 ? "degrading" : "mixed";
-  return { decisionQuality, outputVolume, failures, latency, overall };
+  return { decisionQuality, outputVolume, latency, overall };
 }
 
 // ── Semantic-search status ───────────────────────────────────────────────────
@@ -317,7 +307,6 @@ export interface HealthReportViewModel {
   // Improve aggregates (defaults already applied, matching the pre-split code)
   consolidation: AkmHealthResult["improve"]["consolidation"];
   memoryInference: AkmHealthResult["improve"]["memoryInference"];
-  graphExtraction: AkmHealthResult["improve"]["graphExtraction"];
   wallTime: AkmHealthResult["improve"]["wallTime"];
   coverage: AkmHealthResult["improve"]["coverage"];
   llm: AkmHealthResult["metrics"]["llmUsage"];
@@ -392,7 +381,6 @@ type AggregatesPhase = Pick<
   HealthReportViewModel,
   | "consolidation"
   | "memoryInference"
-  | "graphExtraction"
   | "wallTime"
   | "coverage"
   | "llm"
@@ -422,7 +410,6 @@ function buildAggregatesPhase(result: AkmHealthResult, runsPhase: RunsPhase): Ag
   const improve = result.improve;
   const cons = improve.consolidation;
   const mi = improve.memoryInference;
-  const ge = improve.graphExtraction;
   const wallTime = improve.wallTime;
   const coverage = improve.coverage;
   // #576: real per-stage LLM token/time accounting (replaces the GPU-time
@@ -448,7 +435,6 @@ function buildAggregatesPhase(result: AkmHealthResult, runsPhase: RunsPhase): Ag
   return {
     consolidation: cons,
     memoryInference: mi,
-    graphExtraction: ge,
     wallTime,
     coverage,
     llm,
@@ -569,7 +555,7 @@ function groupProposalsBySource(proposals: PendingProposalLike[]): Array<[string
 
 /** Summary table rows: the base metric set + the WS-5 coverage/minting/perf/degradation extensions, when present. */
 function buildSummaryRows(aggregates: AggregatesPhase, trend: TrendBlock): SummaryRow[] {
-  const { consolidation: cons, graphExtraction: ge, wallTime, llm, coverage } = aggregates;
+  const { consolidation: cons, wallTime, llm, coverage } = aggregates;
 
   const summaryRows: SummaryRow[] = [
     ["Task fail rate", aggregates.taskFailRate, "flat"],
@@ -593,8 +579,6 @@ function buildSummaryRows(aggregates: AggregatesPhase, trend: TrendBlock): Summa
       "Candidates reviewed but intentionally left unchanged (the 'judgedNoAction' field).",
     ],
     ["Chunk failure", aggregates.chunkFail, "flat"],
-    ["Graph entities", num(ge.entities), "up"],
-    ["Graph relations", num(ge.relations), "up"],
     [
       "Stash derived",
       num(aggregates.memorySummary.derived),

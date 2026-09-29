@@ -33,7 +33,6 @@ function quietConfig(): AkmConfig {
             distill: { enabled: false },
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             validation: { enabled: false },
             triage: { enabled: true },

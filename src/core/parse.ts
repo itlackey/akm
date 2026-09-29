@@ -101,47 +101,30 @@ export function parseJsonResponse<T = unknown>(raw: string): T | undefined {
   }
 }
 
-/** Options for {@link parseEmbeddedJsonResponse}. */
-export interface ParseEmbeddedJsonOptions {
-  /**
-   * Which top-level shape the caller expects.
-   *
-   * - `"any"` (default): object-preferring. A `{…}` object found first is
-   *   returned immediately; arrays are only a fallback. Preserves the
-   *   historical behaviour for the many object-expecting callers.
-   * - `"array"`: array-preferring. Only top-level `[…]` arrays are returned;
-   *   leading/example `{…}` objects are ignored. Use this for callers that
-   *   expect a JSON array (e.g. batched graph extraction, #635) so a stray
-   *   object before the array no longer masks a valid array as "non-array".
-   */
-  expect?: "any" | "array";
-}
-
 /**
  * Attempts `parseJsonResponse` first. On failure, scans for the first
  * balanced `{ }` or `[ ]` structure in the text and attempts to parse that
  * substring. Returns `undefined` if no valid JSON structure is found.
  *
- * Shape preference is controlled by {@link ParseEmbeddedJsonOptions.expect}:
- * - `"any"` (default): non-array results are preferred — a `{…}` object found
- *   first is returned immediately; arrays (`[…]`) are a fallback.
- * - `"array"`: only top-level arrays are returned. The direct parse is
- *   accepted only if it is an array, and the scanner returns the first
- *   balanced `[…]` while skipping `{…}` openers entirely.
+ * Object-preferring: a `{…}` object found first is returned immediately;
+ * a top-level array (`[…]`) is only a fallback, returned if no object is
+ * found. Preserves the historical behaviour every current caller (all in
+ * `src/`) relies on.
+ *
+ * An array-preferring mode (`expect: "array"`, for callers that specifically
+ * expect a JSON array) existed here for batched LLM entity-graph extraction
+ * (#635) and was removed with it in 0.9.17-alpha.9 — every remaining caller
+ * calls this with no options, so it was dead weight, not a live choice.
  */
-export function parseEmbeddedJsonResponse<T = unknown>(raw: string, options?: ParseEmbeddedJsonOptions): T | undefined {
-  const expectArray = options?.expect === "array";
-
+export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefined {
   const direct = parseJsonResponse<T>(raw);
-  if (direct !== undefined && (!expectArray || Array.isArray(direct))) return direct;
+  if (direct !== undefined) return direct;
 
   const text = escapeJsonStringControls(stripCodeFences(stripThinkBlocks(raw)));
   let arrayFallback: T | undefined;
 
   // Scan only *top-level* balanced structures: once a `{…}`/`[…]` is matched we
   // jump `start` past its closing bracket rather than re-scanning its interior.
-  // This keeps array mode from salvaging an array *nested inside* a leading
-  // object (e.g. the `entities` array of a bare `{entities,relations}` object).
   for (let start = 0; start < text.length; start++) {
     const opener = text[start];
     if (opener !== "{" && opener !== "[") continue;
@@ -183,11 +166,9 @@ export function parseEmbeddedJsonResponse<T = unknown>(raw: string, options?: Pa
     try {
       const parsed = JSON.parse(text.slice(start, end + 1)) as T;
       if (Array.isArray(parsed)) {
-        // First valid array wins in array mode; in "any" mode it is the
-        // fallback returned only if no object is found.
-        if (expectArray) return parsed;
+        // Fallback, returned only if no object is found.
         arrayFallback ??= parsed;
-      } else if (!expectArray) {
+      } else {
         return parsed;
       }
       // Skip past this balanced structure so we don't descend into it.

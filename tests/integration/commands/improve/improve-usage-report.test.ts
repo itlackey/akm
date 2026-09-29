@@ -103,9 +103,9 @@ describe("akm improve report (#944)", () => {
     expect(usageReport.noCalls).toEqual(
       expect.arrayContaining([{ process: "memoryInference", reason: "autonomy_gated" }]),
     );
-    // reflect/distill/consolidate/graphExtraction/validation are enabled by the
+    // reflect/distill/consolidate/validation are enabled by the
     // default strategy but made no calls on an empty stash — no fabricated reason.
-    for (const process of ["reflect", "distill", "consolidate", "graphExtraction"]) {
+    for (const process of ["reflect", "distill", "consolidate"]) {
       expect(usageReport.noCalls.some((row) => row.process === process && row.reason === "no_signal")).toBe(true);
     }
     // extract/proactiveMaintenance/triage are disabled by the default strategy — never listed.

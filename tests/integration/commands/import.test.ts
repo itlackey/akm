@@ -48,7 +48,7 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
 /**
  * In-process CLI runner. Pins the test's isolated stash + config dirs for the
  * duration of the call (via the allowlisted withEnv helper) and resets the
- * embedder/graph singletons so the run reads the pinned env, matching what a
+ * embedder singletons so the run reads the pinned env, matching what a
  * fresh subprocess got for free. runCliCapture resets the config and
  * output-mode singletons itself.
  */

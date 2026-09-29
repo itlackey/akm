@@ -48,7 +48,6 @@ describe("decodeImproveResult", () => {
       { process: "distill", enabled: false, notices: [] },
       { process: "consolidate", enabled: false, notices: [] },
       { process: "memoryInference", enabled: false, notices: [] },
-      { process: "graphExtraction", enabled: false, notices: [] },
       { process: "extract", enabled: false, notices: [] },
       { process: "validation", enabled: false, notices: [] },
       { process: "triage", enabled: false, notices: [] },
@@ -80,7 +79,6 @@ describe("decodeImproveResult", () => {
     stages: [
       { name: "consolidation", wouldRun: true, reason: "all gates pass" },
       { name: "extract", wouldRun: false, reason: "disabled" },
-      { name: "graph-extraction", wouldRun: false, reason: "disabled" },
       { name: "memory-inference", wouldRun: false, reason: "disabled" },
     ],
     triage: {
@@ -186,6 +184,61 @@ describe("decodeImproveResult", () => {
         plan: { ...withRetrieval, gates: [...withRetrieval.gates, { name: "retrieval", removed: 0, reason: "x" }] },
       }),
     ).toThrow(/exactly one retrieval/);
+  });
+
+  // A real 0.9.17-alpha.8 run record: the LLM entity-graph extraction pass
+  // routed as a `plan.processes` row and ran as a `plan.stages` entry, and
+  // the top-level result carried its `graphExtraction`/
+  // `graphExtractionDurationMs` fields. Retired in 0.9.17-alpha.9 (nothing
+  // routes or runs it anymore), but every pre-alpha.9 run stored this shape,
+  // and `akm health` decodes those rows on every read — this must not throw
+  // or silently drop the row (AGENTS.md "Reading persisted data").
+  test("decodes a real 0.9.17-alpha.8 run record naming the retired graphExtraction process (health must still count it)", () => {
+    // `process: "graphExtraction"` / `name: "graph-extraction"` are
+    // deliberately outside the fresh-plan `ProcessRoutingRow`/stage-name
+    // unions (a plan built today can never route or run them) — this models
+    // a historical envelope `decodeImproveResult` (typed `unknown`) must
+    // still accept at runtime, not a plan fresh code builds, so the fixture
+    // is built as plain untyped data rather than `satisfies ImproveExecutionPlan`.
+    const alpha8Plan: Record<string, unknown> = {
+      ...plan,
+      processes: [
+        ...plan.processes,
+        { process: "graphExtraction", enabled: true, engine: "default", model: "base", engineKind: "llm", notices: [] },
+      ],
+      stages: [...plan.stages, { name: "graph-extraction", wouldRun: true, reason: "enabled" }],
+    };
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan: alpha8Plan,
+      graphExtraction: {
+        considered: 12,
+        extracted: 9,
+        totalEntities: 27,
+        totalRelations: 14,
+        written: true,
+        quality: { files: 9, entities: 27, relations: 14 },
+        telemetry: { failureCount: 0 },
+      },
+      graphExtractionDurationMs: 4200,
+    };
+
+    const decoded = decodeImproveResult(envelope);
+
+    expect(decoded.envelope.plan as unknown).toEqual(alpha8Plan);
+    // The row is kept, not stripped — it still "counts" in the array health
+    // aggregation reads (src/commands/health/improve-metrics.ts).
+    const decodedProcesses = (decoded.envelope.plan as unknown as Record<string, unknown>).processes as Record<
+      string,
+      unknown
+    >[];
+    expect(decodedProcesses.some((row) => row.process === "graphExtraction")).toBe(true);
+    expect((decoded.envelope as unknown as Record<string, unknown>).graphExtraction).toEqual(envelope.graphExtraction);
+    expect((decoded.envelope as unknown as Record<string, unknown>).graphExtractionDurationMs).toBe(4200);
   });
 
   test("rejects contradictory modes, counts, ordered refs, and replay caps", () => {

@@ -68,8 +68,8 @@ export function upsertEntry(
   const derivedFrom =
     typeof entry.derivedFrom === "string" && entry.derivedFrom.trim() ? entry.derivedFrom.trim() : null;
   const hash = embedHash(entry);
-  // `content_hash` is optional on the LLM-enrichment re-upsert; a missing hash
-  // preserves the scan writer's current value.
+  // `content_hash` is optional; an upsert that omits it preserves the scan
+  // writer's current value.
   const apply = (): number => {
     const previous = stmts.findByItemRef.get(provenance.itemRef) as ExistingUpsertRow | undefined;
     const result = stmts.upsert.get(
@@ -116,8 +116,8 @@ interface ExistingUpsertRow {
 
 const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
 
-// item_ref is the sole durable conflict target. `content_hash` COALESCEs so a
-// metadata-only enrichment pass cannot wipe a scan hash.
+// item_ref is the sole durable conflict target. `content_hash` COALESCEs so
+// an upsert that omits it (`contentHash` is optional) cannot wipe a scan hash.
 const UPSERT_SET_CLAUSE = `SET
         bundle_id = excluded.bundle_id,
         component_id = excluded.component_id,
@@ -529,10 +529,6 @@ function deleteRelatedRows(
   // disables this cleanup and runs it only after its index.db transaction
   // commits; standalone delete callers retain the immediate behavior.
   if (options.cleanupUsageEvents !== false) deleteUsageEventsByEntryIds(numericIds);
-
-  // graph_files is keyed by its own stash_root/file_path/body_hash identity,
-  // so deleting an entry row intentionally leaves extracted graph data intact,
-  // and with it the graph_meta counts the graph writer derives from those rows.
 }
 
 export function deleteUsageEventsByEntryIds(entryIds: number[]): void {

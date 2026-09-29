@@ -5,18 +5,12 @@
 import catchup from "../../assets/improve-strategies/catchup.json" with { type: "json" };
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import graphRefresh from "../../assets/improve-strategies/graph-refresh.json" with { type: "json" };
 import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import {
-  type AkmConfig,
-  getIndexPassConfig,
-  type ImproveProcessConfig,
-  type ImproveProfileConfig,
-} from "../../core/config/config";
+import { type AkmConfig, type ImproveProcessConfig, type ImproveProfileConfig } from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -109,7 +103,6 @@ const BUILTIN_STRATEGIES: Record<string, Record<string, unknown>> = {
   default: defaultStrategy,
   quick,
   thorough,
-  "graph-refresh": graphRefresh,
   consolidate,
   catchup,
   "reflect-distill": reflectDistill,
@@ -123,6 +116,32 @@ if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))
 export function resolveImproveStrategy(name: string | undefined, config: AkmConfig): SelectedStrategy {
   const selectedName = name ?? config.defaults?.improveStrategy ?? "default";
   const userStrategies = config.improve?.strategies ?? {};
+  // graph-refresh named a specific, common retirement — refuse it
+  // unconditionally, even when `improve.strategies["graph-refresh"]` still
+  // has an override block from when it customized the (now-deleted) built-in
+  // strategy of the same name. That override is a partial patch (e.g. just
+  // `processes.graphExtraction.mode`), not a full strategy definition —
+  // falling through to the generic "resolve as a user strategy" path below
+  // would silently merge it onto `default` and run a full, unplanned improve
+  // pass instead of refusing. `akm migrate apply` drops the leftover block
+  // (src/core/config/config.ts, normalizeConfigFile) since it can never
+  // apply again.
+  if (selectedName === "graph-refresh") {
+    const hasLeftoverOverride = Boolean(userStrategies["graph-refresh"]);
+    throw new ConfigError(
+      `Improve strategy "graph-refresh" was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it ran.` +
+        (hasLeftoverOverride
+          ? ' Your config still has a leftover `improve.strategies["graph-refresh"]` override for it — `akm migrate apply` removes it.'
+          : ""),
+      "UNKNOWN_IMPROVE_STRATEGY",
+      // Override CONFIG_HINTS.UNKNOWN_IMPROVE_STRATEGY (src/core/errors.ts):
+      // its "listed strategy names" phrase does not apply here (this message
+      // names no strategies), and its "define it under improve.strategies"
+      // suggestion is actively wrong — that is exactly the leftover-override
+      // shape this refusal exists to reject, not a way around it.
+      "Choose a different strategy. `graph-refresh` cannot be redefined under `improve.strategies` — it always refuses.",
+    );
+  }
   if (!(selectedName in BUILTIN_STRATEGIES) && !userStrategies[selectedName]) {
     const valid = [...new Set([...Object.keys(BUILTIN_STRATEGIES), ...Object.keys(userStrategies)])].sort();
     throw new ConfigError(
@@ -381,8 +400,6 @@ function buildImprovePlan(
         profile: strategy.config,
         process: sourceProcessConfig,
         processName,
-        // Graph extraction's standing engine, model, timeout and llm settings (GR-D15).
-        ...(processName === "graphExtraction" ? { index: getIndexPassConfig(config.index, "graph") } : {}),
       });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];

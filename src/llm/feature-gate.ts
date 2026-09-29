@@ -36,8 +36,6 @@ export type LlmFeatureKey =
   | "memory_consolidation"
   | "distill"
   | "memory_inference"
-  | "graph_extraction"
-  | "metadata_enhance"
   | "lesson_quality_gate"
   | "proposal_quality_gate"
   | "session_extraction"
@@ -52,8 +50,6 @@ export type LlmFeatureKey =
  */
 const FEATURE_LOCATION: Partial<Record<LlmFeatureKey, (cfg: AkmConfig) => boolean>> = {
   memory_inference: (cfg) => cfg.index?.memory?.enabled ?? true,
-  graph_extraction: (cfg) => cfg.index?.graph?.enabled ?? true,
-  metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
   // #951: a real implementation of the dead `curate_rerank` key removed in
   // 0.8.0. Off by default — it requires a `search.curateRerank.endpoint` a
   // caller must explicitly configure.
@@ -167,9 +163,6 @@ export function isProcessEnabled(section: string, processName: string, config: A
   if (section === "index") {
     if (processName === "memory_inference" || processName === "memoryInference") {
       return isLlmFeatureEnabled(config, "memory_inference");
-    }
-    if (processName === "graph_extraction" || processName === "graphExtraction") {
-      return isLlmFeatureEnabled(config, "graph_extraction");
     }
   }
   return false;

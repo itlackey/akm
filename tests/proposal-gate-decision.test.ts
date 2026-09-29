@@ -26,7 +26,7 @@ import {
   type ProposalRejectResult,
 } from "../src/commands/proposal/proposal";
 import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";
-import { shapeProposalEntry } from "../src/output/shapes/helpers";
+import { shapeProposalEntry, shapeProposalListOutput } from "../src/output/shapes/helpers";
 import { formatProposalListPlain, formatProposalShowPlain } from "../src/output/text/helpers";
 
 // ── Setup ─────────────────────────────────────────────────────────────────
@@ -308,5 +308,100 @@ describe("proposal show / list expose the gate decision (#577)", () => {
     const ungatedLine = out.split("\n").find((l) => l.includes("uuid-ungated")) ?? "";
     expect(ungatedLine).not.toContain("gate=");
     expect(ungatedLine).not.toContain("undefined");
+  });
+});
+
+describe("proposal show / list expose retirement.continuityRisk (S4)", () => {
+  const flagged = {
+    id: "uuid-flagged",
+    ref: "memories/old-note",
+    status: "pending",
+    source: "consolidate-pair",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      judgeLabel: "duplicate",
+      judgeReason: "same content",
+      cosine: 0.98,
+      continuityRisk: {
+        failingQueries: 1,
+        ranks: [{ query: "how do I configure X", retiredRank: 1, successorRank: null }],
+      },
+    },
+  };
+  const unverified = {
+    id: "uuid-unverified",
+    ref: "memories/other-note",
+    status: "pending",
+    source: "consolidate-pair",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    retirement: {
+      retiredRef: "memories/other-note",
+      successorRef: "memories/other-new",
+      judgeLabel: "duplicate",
+      judgeReason: "same content",
+      cosine: 0.97,
+      // S2: unverified-only risk — no rank failures at all, only an
+      // endpoint outage or fallback, so `ranks` is empty.
+      continuityRisk: { failingQueries: 0, ranks: [], unverifiedQueries: 1 },
+    },
+  };
+  const clean = {
+    id: "uuid-clean",
+    ref: "memories/clean-note",
+    status: "pending",
+    source: "consolidate-pair",
+    createdAt: "2026-09-03T00:00:00.000Z",
+    retirement: {
+      retiredRef: "memories/clean-note",
+      successorRef: "memories/clean-new",
+      judgeLabel: "duplicate",
+      judgeReason: "same content",
+      cosine: 0.99,
+    },
+  };
+
+  test("formatProposalListPlain marks a flagged retire proposal inline, and omits it for a clean one (S4)", () => {
+    const out = formatProposalListPlain({ totalCount: 2, proposals: [flagged, clean] });
+    const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
+    const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
+    expect(flaggedLine).toContain("continuity-risk");
+    expect(cleanLine).not.toContain("continuity-risk");
+  });
+
+  test("the marker survives `akm proposal list`'s DEFAULT (brief) shape, not just a hand-built fixture (round 3)", () => {
+    // The test above feeds formatProposalListPlain a raw fixture with
+    // `retirement` already attached, as if shaped at "normal" — but
+    // `proposal list` with no --detail flag shapes at "brief", which drops
+    // `retirement` entirely. Round through the REAL shape function first,
+    // at the REAL default detail level, to prove the marker still reaches
+    // the formatter when nothing else does.
+    const shaped = shapeProposalListOutput({ totalCount: 2, proposals: [flagged, clean] }, "brief");
+    expect((shaped.proposals as Record<string, unknown>[])[0]).not.toHaveProperty("retirement");
+    const out = formatProposalListPlain(shaped);
+    const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
+    const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
+    expect(flaggedLine).toContain("continuity-risk");
+    expect(cleanLine).not.toContain("continuity-risk");
+  });
+
+  test("formatProposalShowPlain lists the actual failing query text, not just a count (N3)", () => {
+    const out = formatProposalShowPlain({ proposal: flagged });
+    expect(out).toContain("retire.continuityRisk:");
+    expect(out).toContain("excluded from bulk accept");
+    expect(out).toContain('"how do I configure X": retired #1, successor absent from top 10');
+  });
+
+  test("formatProposalShowPlain reports unverifiedQueries even with zero rank failures (S2)", () => {
+    const out = formatProposalShowPlain({ proposal: unverified });
+    expect(out).toContain("retire.continuityRisk:");
+    expect(out).toContain("1 query unverified (search failed or used the keyword-only fallback)");
+    expect(out).not.toContain("of the retired asset's own quer"); // no rank-based failures to report
+  });
+
+  test("formatProposalShowPlain omits continuityRisk entirely for a clean retire proposal", () => {
+    const out = formatProposalShowPlain({ proposal: clean });
+    expect(out).not.toContain("continuityRisk");
   });
 });

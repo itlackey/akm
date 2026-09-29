@@ -328,7 +328,7 @@ export const improveCommand = defineCommand({
     strategy: {
       type: "string",
       description:
-        "Named improve strategy from improve.strategies or built-in strategies (catchup, consolidate, default, graph-refresh, proactive-maintenance, quick, reflect-distill, thorough). Controls which sub-processes run and which asset types are processed.",
+        "Named improve strategy from improve.strategies or built-in strategies (catchup, consolidate, default, proactive-maintenance, quick, reflect-distill, thorough). Controls which sub-processes run and which asset types are processed.",
     },
     sync: {
       type: "boolean",

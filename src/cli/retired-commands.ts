@@ -44,7 +44,7 @@ const RETIRED_COMMAND_HINTS: Record<string, string> = {
   // Removed observability surfaces.
   history: "`akm history` was removed in 0.9 — use `akm log --ref <ref>` for an asset's event trail.",
   graph:
-    "`akm graph` was removed in 0.9 — graph counts appear in `akm health`; refresh extraction with `akm improve --strategy graph-refresh`.",
+    "`akm graph` was removed in 0.9. The LLM entity graph it inspected was itself retired in 0.9.17-alpha.9 — use `akm show <ref>` for an asset's declared links.",
   lessons: "`akm lessons` was removed in 0.9 — lesson strength is indexed; use `akm search --type lesson`.",
   lesson: "`akm lesson` was removed in 0.9 — lesson strength is indexed; use `akm search --type lesson`.",
 

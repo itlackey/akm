@@ -35,8 +35,6 @@ import type {
   BundleConfigEntry,
   ImproveProcessConfig,
   ImproveProfileConfig,
-  IndexConfig,
-  IndexPassConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
@@ -80,38 +78,6 @@ export { VALID_HARNESS_IDS } from "./config-types";
 // Canonical taxonomy lives in the schema/validator layer; re-exported here so
 // existing `../core/config/config` import sites keep working.
 export { FEEDBACK_FAILURE_MODES, type FeedbackFailureMode } from "./config-schema";
-
-/**
- * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
- * empirically: 4 amortises the per-call HTTP overhead 4× while keeping the
- * combined prompt size well under common 8K/16K context windows (each body is
- * sliced to ~500 chars in the graph-extract prompt builder).
- */
-const DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE = 4;
-
-/**
- * Approximate character budget per asset body inside a batched
- * graph-extraction prompt — used by {@link resolveBatchSize} to derive a
- * context-window ceiling when `llm.contextLength` is configured. This accounts
- * for the actual `MAX_BODY_CHARS` (500) in graph-extract.ts plus the system
- * prompt, user prompt wrapper, and expected JSON response overhead.
- */
-const GRAPH_EXTRACTION_CHARS_PER_BODY = 1500;
-
-/**
- * Clamp a configured batch size against the model's known context window.
- *
- * `configured` defaults to {@link DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE} when
- * `undefined`. When `contextLength` is provided, the result is the smaller of
- * `configured` and `floor(contextLength / GRAPH_EXTRACTION_CHARS_PER_BODY)`,
- * with a floor of 1 so the batched path always processes at least one body.
- */
-export function resolveBatchSize(configured: number | undefined, contextLength?: number): number {
-  const base = configured && configured > 0 ? configured : DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
-  if (!contextLength || contextLength <= 0) return base;
-  const ceiling = Math.max(1, Math.floor(contextLength / GRAPH_EXTRACTION_CHARS_PER_BODY));
-  return Math.max(1, Math.min(base, ceiling));
-}
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -302,6 +268,19 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
 }
 
 /**
+ * Retired `index.<passName>` keys that still validate against the generic
+ * per-pass catchall schema (`IndexPassConfigSchema`), so `resolveSchemaAt`
+ * below never returns `undefined` for them and the walk would otherwise
+ * treat them as a live, ordinary pass. Named here so the same three
+ * guarantees apply as any other retired config key (AGENTS.md "Reading
+ * persisted data"): a config setting one keeps loading, is named once by
+ * the unknown-key warning, and is dropped only by `akm migrate apply`.
+ * Both were retired in 0.9.17-alpha.9: `index.graph` (the LLM entity-graph
+ * extraction pass) and `index.metadataEnhance` (LLM metadata enrichment).
+ */
+const RETIRED_CATCHALL_KEY_PATHS = new Set(["index.graph", "index.metadataEnhance"]);
+
+/**
  * Every dotted key in `raw` the schema does not know, at any depth (arrays
  * are not descended). Unknown keys are never an error: they are a typo, or a
  * key another release used. Reads keep them (they round-trip through
@@ -316,7 +295,7 @@ export function unknownConfigKeyPaths(
   const found: string[][] = [];
   for (const key of Object.keys(node).sort()) {
     const keyPath = [...prefix, key];
-    if (resolveSchemaAt(keyPath, root) === undefined) {
+    if (RETIRED_CATCHALL_KEY_PATHS.has(keyPath.join(".")) || resolveSchemaAt(keyPath, root) === undefined) {
       found.push(keyPath);
       continue;
     }
@@ -925,6 +904,17 @@ export function normalizeConfigFile(configPath: string, options: { apply: boolea
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = withSchedulerOnDisk(configWriteBody(localRaw, current, next) as Record<string, unknown>, next);
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
+    // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
+    // legal custom-strategy key), so it never reaches the unknown-key sweep
+    // above. It can only be a leftover override of the deleted graph-refresh
+    // built-in (0.9.17-alpha.9) — resolveImproveStrategy now refuses that
+    // name unconditionally, so the override can never apply again. Drop it
+    // the same way any other retired key is dropped: only by `akm migrate
+    // apply`, never by an ordinary write.
+    const strategies = (body.improve as Record<string, unknown> | undefined)?.strategies as
+      | Record<string, unknown>
+      | undefined;
+    if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
     const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
       .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
       .sort();
@@ -1179,22 +1169,6 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
     }
     return resolved ?? "";
   });
-}
-
-/**
- * Read a per-pass {@link IndexPassConfig} entry from {@link IndexConfig},
- * filtering out the reserved feature-section keys so callers don't mistake
- * `metadataEnhance` for a pass.
- */
-/** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */
-const INDEX_RESERVED_KEYS = new Set(["metadataEnhance"]);
-
-export function getIndexPassConfig(config: IndexConfig | undefined, passName: string): IndexPassConfig | undefined {
-  if (!config) return undefined;
-  if (INDEX_RESERVED_KEYS.has(passName)) return undefined;
-  const entry = config[passName];
-  if (!entry || typeof entry !== "object") return undefined;
-  return entry as IndexPassConfig;
 }
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.

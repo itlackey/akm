@@ -48,8 +48,8 @@ volume justifies it.
 ## Canonical entity spellings
 
 Pick ONE name per entity and use it everywhere in asset **bodies** — retrieval
-is case-insensitive but treats aliases as different entities, so alias variants
-fragment the entity graph. Extend as your stash grows.
+is case-insensitive but treats aliases as different terms, so alias variants
+fragment search matches. Extend as your stash grows.
 
 - Postgres (not postgresql / pg)
 - Kubernetes (not k8s)

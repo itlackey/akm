@@ -19,6 +19,7 @@ import { loadConfig } from "../../core/config/config";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { isRetireProposal } from "./proposal-types";
 import {
   diffProposal,
   listProposals,
@@ -67,6 +68,8 @@ export interface ProposalListOptions {
   ref?: string;
   type?: string;
   includeArchive?: boolean;
+  /** Match proposals whose `source` equals this generator (e.g. reflect, distill, consolidate-pair) — same filter `accept`/`reject --generator` already apply. */
+  generator?: string;
 }
 
 export interface ProposalListResult {
@@ -101,7 +104,7 @@ export function akmProposalList(options: ProposalListOptions = {}): ProposalList
     status: options.status,
     ref: options.ref,
     type: options.type,
-  });
+  }).filter((p) => options.generator === undefined || p.source === options.generator);
   return { schemaVersion: 1, totalCount: proposals.length, proposals };
 }
 
@@ -126,10 +129,14 @@ export function akmProposalShow(options: ProposalShowOptions): ProposalShowResul
   const proposal = resolveProposalId(stash, options.id);
   let validation = validateProposal(proposal);
   // An explicit stashDir without config is an in-process storage test seam; it
-  // has no authenticated write-target context to preflight against.
+  // has no authenticated write-target context to preflight against. A retire
+  // proposal writes no content — preflightProposalPromotion's stamp/lint
+  // machinery is create/update-shaped and has nothing meaningful to check
+  // here; `diff` already shows the body being retired.
   if (
     validation.ok &&
     proposal.status === "pending" &&
+    !isRetireProposal(proposal) &&
     (options.config !== undefined || options.stashDir === undefined)
   ) {
     try {
@@ -363,6 +370,28 @@ export interface BulkAdjudicateResult {
   results: Array<
     ProposalAcceptResult | ProposalRejectResult | { id: string; ref: string; source: string; dryRun: true }
   >;
+  /**
+   * S4: `action: "accept"` only — pending proposals from this generator that
+   * matched every other filter (`--max-diff-lines`, `--older-than`) but were
+   * skipped because they carry `retirement.continuityRisk`, never bulk
+   * accepted (only acceptable by id). Always 0 for `action: "reject"`.
+   */
+  skippedForContinuityRisk: number;
+}
+
+/** The retired file's current line count for `--max-diff-lines` (S6); unresolvable is never size-filtered here — the real accept/reject attempt fails cleanly on a genuinely stale target. */
+function retiredTargetLineCount(
+  stashDir: string,
+  config: AkmConfig,
+  proposal: Proposal,
+  queueTarget?: ResolvedWriteTarget,
+): number {
+  try {
+    const existing = diffProposal(stashDir, config, proposal.id, { queueTarget }).existing;
+    return existing === null ? 0 : existing.split("\n").length;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -374,11 +403,20 @@ export interface BulkAdjudicateResult {
  */
 export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): Promise<BulkAdjudicateResult> {
   const config = options.config ?? loadConfig();
-  const { stashDir } = resolveProposalQueue(options.stashDir, options.queue, config);
-  const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+  const { stashDir, target: queueTarget } = resolveProposalQueue(options.stashDir, options.queue, config);
+  // Every filter EXCEPT the continuityRisk exclusion below — matched against
+  // separately so its own count (S4) can be reported apart from an ordinary
+  // --max-diff-lines/--older-than miss.
+  const matched = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
     if (options.maxDiffLines !== undefined) {
-      const lines = proposalContent(p).split("\n").length;
+      // S6: a retire proposal's own payload is empty (it deletes its
+      // target) — proposalContent() would always read as 1 line, so
+      // --max-diff-lines could never filter one out. Count the retired
+      // file's own current line count instead.
+      const lines = isRetireProposal(p)
+        ? retiredTargetLineCount(stashDir, config, p, queueTarget)
+        : proposalContent(p).split("\n").length;
       if (lines > options.maxDiffLines) return false;
     }
     if (options.olderThanMs !== undefined) {
@@ -387,6 +425,14 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
     }
     return true;
   });
+  // Item 1 (continuity check, alpha.9 plan §5.4, rule R3): a retire proposal
+  // the check flagged is never bulk-accepted, by generator or any other
+  // sweep — only a person accepting it by id can. Bulk reject is unaffected:
+  // declining a risky proposal is never the unsafe direction.
+  const isContinuityExcluded = (p: Proposal): boolean =>
+    options.action === "accept" && Boolean(p.retirement?.continuityRisk);
+  const skippedForContinuityRisk = matched.filter(isContinuityExcluded).length;
+  const pending = matched.filter((p) => !isContinuityExcluded(p));
   const results: BulkAdjudicateResult["results"] = [];
   for (const proposal of pending) {
     if (options.dryRun) {
@@ -401,5 +447,5 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
       );
     }
   }
-  return { count: results.length, results };
+  return { count: results.length, results, skippedForContinuityRisk };
 }

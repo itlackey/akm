@@ -16,6 +16,7 @@ import {
   AUTOMATED_PROPOSAL_SOURCES,
   archiveProposal,
   createProposal as createProposalImpl,
+  createRetireProposal,
   diffProposal,
   expireStaleProposals,
   getProposal,
@@ -154,6 +155,26 @@ describe("createProposal / listProposals / getProposal", () => {
     expect(events.events.length).toBe(1);
     expect(events.events[0]?.ref).toBe(durableRef(stash, "lesson", "rg-over-grep"));
     expect((events.events[0]?.metadata as Record<string, unknown> | undefined)?.proposalId).toBe(created.id);
+  });
+
+  test("akmProposalList --generator filters by source (S4), matching accept/reject --generator", () => {
+    const stash = makeStashDir();
+    createProposal(stash, { ref: "lessons/from-reflect", source: "reflect", payload: { content: VALID_LESSON } });
+    createProposal(stash, { ref: "lessons/from-distill", source: "distill", payload: { content: VALID_LESSON } });
+
+    const reflectOnly = akmProposalList({ stashDir: stash, generator: "reflect" });
+    expect(reflectOnly.totalCount).toBe(1);
+    expect(reflectOnly.proposals[0]?.source).toBe("reflect");
+
+    const distillOnly = akmProposalList({ stashDir: stash, generator: "distill" });
+    expect(distillOnly.totalCount).toBe(1);
+    expect(distillOnly.proposals[0]?.source).toBe("distill");
+
+    const unfiltered = akmProposalList({ stashDir: stash });
+    expect(unfiltered.totalCount).toBe(2);
+
+    const noMatch = akmProposalList({ stashDir: stash, generator: "consolidate-pair" });
+    expect(noMatch.totalCount).toBe(0);
   });
 
   test.each([
@@ -323,6 +344,40 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
   test("an opaque colon concept that is not a retired AKM type remains valid identity syntax", () => {
     const stash = makeStashDir();
     expect(listProposals(stash, { ref: "stash//external:record" })).toEqual([]);
+  });
+});
+
+describe("resolveProposalId skips retire proposals by ref (second review round, should-fix 7)", () => {
+  test("by-ref resolution skips a pending retire proposal and finds the reflect edit underneath it", () => {
+    const stash = makeStashDir();
+    fs.writeFileSync(path.join(stash, "lessons", "dup-target.md"), VALID_LESSON, "utf8");
+    const edit = createProposal(stash, {
+      ref: "lessons/dup-target",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    // Minted after `edit`, so by creation time alone it is the "newest
+    // pending" match for the ref — accepting by ref would archive the asset
+    // instead of applying the reflect edit underneath it.
+    createRetireProposal(stash, {
+      ref: "lessons/dup-target",
+      source: "consolidate-pair",
+      target: { source: "stash", root: stash },
+      retirement: {
+        retiredRef: "lessons/dup-target",
+        successorRef: "lessons/dup-elsewhere",
+        cosine: 0.99,
+        judgeLabel: "duplicate",
+        judgeReason: "test",
+        retiredContentHash: "a".repeat(64),
+        successorContentHash: "b".repeat(64),
+        reason: "duplicate",
+      },
+    });
+
+    const resolved = resolveProposalId(stash, "lessons/dup-target");
+    expect(resolved.id).toBe(edit.id);
+    expect(resolved.source).toBe("reflect");
   });
 });
 
@@ -965,6 +1020,46 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     expect(result.expired).toBe(0);
     expect(result.retentionDays).toBe(0);
     expect(listProposals(stash, { status: "pending" }).length).toBe(1);
+  });
+
+  test("never expires a pending retire proposal, however old (second review round, should-fix 8)", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 30 } as AkmConfig;
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    createProposal(
+      stash,
+      { ref: "lessons/expire-old-a", source: "reflect", payload: { content: VALID_LESSON } },
+      { now: () => NOW - 60 * DAY },
+    );
+    fs.writeFileSync(path.join(stash, "lessons", "retire-target.md"), VALID_LESSON, "utf8");
+    createRetireProposal(
+      stash,
+      {
+        ref: "lessons/retire-target",
+        source: "consolidate-pair",
+        target: { source: "stash", root: stash },
+        retirement: {
+          retiredRef: "lessons/retire-target",
+          successorRef: "lessons/expire-fresh-elsewhere",
+          cosine: 0.99,
+          judgeLabel: "duplicate",
+          judgeReason: "test",
+          retiredContentHash: "a".repeat(64),
+          successorContentHash: "b".repeat(64),
+          reason: "duplicate",
+        },
+      },
+      { now: () => NOW - 60 * DAY },
+    );
+
+    const result = expireStaleProposals(stash, config, { now: () => NOW });
+    expect(result.checked).toBe(2); // both pending proposals were examined
+    expect(result.expired).toBe(1); // only the reflect proposal — the retire proposal is exempt
+    const stillPending = listProposals(stash, { status: "pending" })
+      .map((p) => p.ref)
+      .sort();
+    expect(stillPending).toEqual([durableRef(stash, "lesson", "retire-target")]);
   });
 });
 

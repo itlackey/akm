@@ -120,6 +120,20 @@ describe("loadRetrievalScope", () => {
     ]);
   });
 
+  test("a consolidate-pair ledger row does not mark its ref processed (Blocker 1, second review round)", () => {
+    const stash = storage.stashDir;
+    // The pair pass judges material against its NEIGHBOURS, not on its own
+    // merits — its own attempt is not usage evidence the fallback lanes or
+    // promotion retries should be starved by, unlike every other source.
+    recordAttempt(stash, "memories/paired-proposed", "consolidate-pair", "proposed", Date.now());
+    recordAttempt(stash, "memories/paired-no-action", "consolidate-pair", "judged_no_action", Date.now());
+    recordAttempt(stash, "memories/reflected", "reflect", "accepted", Date.now());
+
+    const scope = loadRetrievalScope({}, stash);
+
+    expect([...(scope?.processed ?? [])].sort()).toEqual(["memories/reflected"]);
+  });
+
   test("a read-only load with no state.db yet reads an empty history and creates nothing", () => {
     expect(fs.existsSync(getStateDbPath())).toBe(false);
     const scope = loadRetrievalScope({ readOnly: true }, storage.stashDir);
@@ -173,7 +187,6 @@ function proactiveConfig(stashDir: string): AkmConfig {
           processes: {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             proactiveMaintenance: { enabled: true, dueDays: 30, maxPerRun: 10 },
           },

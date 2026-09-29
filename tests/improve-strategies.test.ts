@@ -84,6 +84,46 @@ describe("resolveImproveStrategy", () => {
       resolveImproveStrategy("does-not-exist", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
     ).toThrow(ConfigError);
   });
+
+  test("names the retirement when a task or config still selects graph-refresh (0.9.17-alpha.9)", () => {
+    expect(() =>
+      resolveImproveStrategy("graph-refresh", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
+    ).toThrow(/graph-refresh.*retired/i);
+  });
+
+  test("graph-refresh is refused even when a leftover improve.strategies override exists — never silently resolved as a custom strategy", () => {
+    // A leftover `improve.strategies["graph-refresh"]` override is a partial
+    // patch of the deleted built-in (e.g. just `processes.graphExtraction`),
+    // not a full strategy definition. Resolving it as a new custom strategy
+    // would silently merge it onto `default` and run every process `default`
+    // enables — a full, unplanned improve pass the operator never asked for.
+    expect(() =>
+      resolveImproveStrategy("graph-refresh", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
+      }),
+    ).toThrow(/graph-refresh.*retired/i);
+  });
+
+  test("the retirement message names the leftover override so `akm migrate apply` is the obvious next step", () => {
+    expect(() =>
+      resolveImproveStrategy("graph-refresh", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
+      }),
+    ).toThrow(/leftover.*akm migrate apply/i);
+  });
+
+  test("the retirement message omits the leftover-override sentence when no override exists", () => {
+    try {
+      resolveImproveStrategy("graph-refresh", { configVersion: "0.9.0", semanticSearchMode: "auto" });
+      throw new Error("expected resolveImproveStrategy to throw");
+    } catch (err) {
+      expect(String(err)).not.toMatch(/leftover/i);
+    }
+  });
 });
 
 // WIKI (R12): reflect's excludeRefPrefixes filter keeps raw wiki-ingest
@@ -168,7 +208,6 @@ describe("resolveImprovePlan", () => {
       "consolidate",
       "distill",
       "extract",
-      "graphExtraction",
       "memoryInference",
       "proactiveMaintenance",
       "reflect",
@@ -197,7 +236,6 @@ describe("resolveImprovePlan", () => {
               distill: { enabled: true },
               consolidate: { enabled: true },
               memoryInference: { enabled: true },
-              graphExtraction: { enabled: true },
               extract: { enabled: true, triage: { enabled: true } },
               validation: { enabled: true },
             },
@@ -206,15 +244,7 @@ describe("resolveImprovePlan", () => {
       },
     };
     const plan = resolveImprovePlan("all", config);
-    for (const name of [
-      "reflect",
-      "distill",
-      "consolidate",
-      "memoryInference",
-      "graphExtraction",
-      "extract",
-      "validation",
-    ] as const) {
+    for (const name of ["reflect", "distill", "consolidate", "memoryInference", "extract", "validation"] as const) {
       expect(plan.processes[name].runner?.engine).toBe("default");
     }
     expect(Object.isFrozen(plan.processes.extract.config.triage)).toBe(true);
@@ -396,14 +426,7 @@ describe("resolveImprovePlan", () => {
       },
     } as AkmConfig);
 
-    for (const name of [
-      "reflect",
-      "distill",
-      "consolidate",
-      "memoryInference",
-      "graphExtraction",
-      "validation",
-    ] as const) {
+    for (const name of ["reflect", "distill", "consolidate", "memoryInference", "validation"] as const) {
       expect(plan.processes[name].enabled).toBe(false);
       expect(plan.processes[name].runner).toBeNull();
       expect(plan.strategy.config.processes?.[name]?.enabled).toBe(false);
@@ -412,7 +435,7 @@ describe("resolveImprovePlan", () => {
 
     const disabledNames: string[] = plan.engineUnavailable.map((item) => item.process).sort();
     expect(disabledNames).toEqual(
-      (["consolidate", "distill", "graphExtraction", "memoryInference", "reflect", "validation"] as string[]).sort(),
+      (["consolidate", "distill", "memoryInference", "reflect", "validation"] as string[]).sort(),
     );
     for (const item of plan.engineUnavailable) {
       expect(item.configKey).toBe(`improve.strategies.default.processes.${item.process}.engine`);
@@ -504,7 +527,7 @@ describe("resolveImprovePlan", () => {
 
     expect(Object.values(plan.processes).some((process) => process.enabled)).toBe(false);
     const disabledNames = plan.engineUnavailable.map((item) => item.process).sort();
-    expect(disabledNames).toEqual(["consolidate", "distill", "graphExtraction", "reflect", "validation"]);
+    expect(disabledNames).toEqual(["consolidate", "distill", "reflect", "validation"]);
     for (const item of plan.engineUnavailable) {
       expect(item.reason).toContain('engine "private"');
       expect(item.reason).toContain("PRIVATE_ALL_957_ALLOW_TOKEN");
@@ -566,7 +589,6 @@ describe("projectResolvedProcessRouting (#947)", () => {
       "distill",
       "consolidate",
       "memoryInference",
-      "graphExtraction",
       "extract",
       "validation",
       "triage",

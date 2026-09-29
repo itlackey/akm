@@ -3,8 +3,8 @@
  *
  * Locks:
  *   - `isLlmFeatureEnabled` honours per-feature defaults: currently
- *     `memory_inference` and `graph_extraction` default to enabled while
- *     other stable keys default to disabled unless explicitly `true`.
+ *     `memory_inference` defaults to enabled while other stable keys default
+ *     to disabled unless explicitly `true`.
  *   - `tryLlmFeature` returns the fallback on disablement, on any thrown
  *     error, and on hard-timeout — and never lets `fn`'s exception bubble.
  *   - The fallback may be a value or a thunk; the thunk is only invoked on
@@ -22,8 +22,6 @@ type FeatureKey =
   | "memory_consolidation"
   | "distill"
   | "memory_inference"
-  | "graph_extraction"
-  | "metadata_enhance"
   | "lesson_quality_gate"
   | "proposal_quality_gate";
 
@@ -44,17 +42,6 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
         break;
       case "memory_inference":
         cfg.index = { ...(cfg.index ?? {}), memory: { ...(cfg.index?.memory ?? {}), enabled: val } };
-        break;
-      case "graph_extraction":
-        cfg.index = {
-          ...(cfg.index ?? {}),
-          graph: { ...(cfg.index?.graph ?? {}), enabled: val },
-        };
-        break;
-      case "metadata_enhance":
-        // Cast: IndexConfig's per-pass object catchall means TS cannot
-        // re-verify a spread-rebuilt reserved-section literal.
-        cfg.index = { ...(cfg.index ?? {}), metadataEnhance: { enabled: val } } as AkmConfig["index"];
         break;
       case "lesson_quality_gate":
         processes.distill = { ...(processes.distill ?? {}), qualityGate: { enabled: val } };
@@ -81,22 +68,14 @@ function improveEnabled(config: AkmConfig, key: FeatureKey): boolean | undefined
 
 describe("isLlmFeatureEnabled", () => {
   test("returns false when no llm config is present", () => {
-    expect(isLlmFeatureEnabled(undefined, "metadata_enhance")).toBe(false);
-    expect(isLlmFeatureEnabled({} as AkmConfig, "metadata_enhance")).toBe(false);
+    expect(isLlmFeatureEnabled(undefined, "memory_inference")).toBe(false);
   });
 
   test("returns feature defaults when the process block is missing", () => {
     const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp" };
     // 0.8.0 unified `feedback_distillation` into the `distill` gate (default true).
     expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
-    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
     expect(resolveProcessEnabled("distill", {})).toBe(false);
-    expect(isLlmFeatureEnabled(cfg, "metadata_enhance")).toBe(false);
-  });
-
-  test("returns true when graph_extraction key is absent (default-true)", () => {
-    const cfg = configWith({});
-    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
   });
 
   test("returns true only on literal boolean true", () => {
@@ -112,7 +91,7 @@ describe("tryLlmFeature", () => {
     let called = false;
     const events: unknown[] = [];
     const result = await tryLlmFeature(
-      "metadata_enhance",
+      "memory_consolidation",
       configWith({}),
       async () => {
         called = true;
@@ -123,7 +102,7 @@ describe("tryLlmFeature", () => {
     );
     expect(result).toBe("fallback");
     expect(called).toBe(false);
-    expect(events).toEqual([{ feature: "metadata_enhance", reason: "disabled" }]);
+    expect(events).toEqual([{ feature: "memory_consolidation", reason: "disabled" }]);
   });
 
   test("invokes a thunk fallback only on the fallback path", async () => {
@@ -144,8 +123,8 @@ describe("tryLlmFeature", () => {
   test("returns the fallback on a synchronous throw", async () => {
     const events: { reason: string; error?: Error }[] = [];
     const result = await tryLlmFeature(
-      "metadata_enhance",
-      configWith({ metadata_enhance: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       () => {
         throw new Error("boom");
       },
@@ -160,8 +139,8 @@ describe("tryLlmFeature", () => {
 
   test("returns the fallback on an async rejection", async () => {
     const result = await tryLlmFeature(
-      "graph_extraction",
-      configWith({ graph_extraction: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       async () => {
         throw new Error("kaboom");
       },
@@ -243,8 +222,8 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
   // prematurely expire fast calls.
   const events: { reason: string }[] = [];
   const result = await tryLlmFeature(
-    "graph_extraction",
-    configWith({ graph_extraction: true }),
+    "memory_inference",
+    configWith({ memory_inference: true }),
     () => new Promise<string>((resolve) => setTimeout(() => resolve("fast"), 10)),
     "should-not-be-returned",
     { onFallback: (e) => events.push({ reason: e.reason }) },
@@ -256,8 +235,8 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
 
 test("explicit timeoutMs null disables the wrapper timer instead of selecting the default", async () => {
   const result = await tryLlmFeature(
-    "graph_extraction",
-    configWith({ graph_extraction: true }),
+    "memory_inference",
+    configWith({ memory_inference: true }),
     () => new Promise<string>((resolve) => setTimeout(() => resolve("completed"), 20)),
     "fallback",
     { timeoutMs: null },
@@ -268,11 +247,11 @@ test("explicit timeoutMs null disables the wrapper timer instead of selecting th
 // ── #284 GAP-LOW: parametrise over the stable feature keys ─────────────────
 //
 // Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`
-// — we restrict this parametrised sweep to the 4 keys that are
+// — we restrict this parametrised sweep to the 3 keys that are
 // definitely actually-implemented and used by the current code.
-const STABLE_FEATURE_KEYS = ["distill", "memory_inference", "graph_extraction", "metadata_enhance"] as const;
+const STABLE_FEATURE_KEYS = ["distill", "memory_inference"] as const;
 // 0.8.0: distill unified gate defaults to true (matches the built-in `default` profile).
-const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "graph_extraction", "distill"]);
+const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "distill"]);
 
 describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)", () => {
   for (const key of STABLE_FEATURE_KEYS) {

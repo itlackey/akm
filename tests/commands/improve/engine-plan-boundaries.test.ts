@@ -26,7 +26,6 @@ function disabledProcesses(overrides: Record<string, unknown> = {}): ImproveProf
     distill: { enabled: false },
     consolidate: { enabled: false },
     memoryInference: { enabled: false },
-    graphExtraction: { enabled: false },
     extract: { enabled: false },
     validation: { enabled: false },
     triage: { enabled: false },
@@ -298,74 +297,6 @@ describe("improve engine-plan boundaries", () => {
     }
   });
 
-  test("improve graph extraction passes process-owned includeTypes, batchSize, topN, and maxChunksPerAsset", async () => {
-    const stash = makeStashDir();
-    try {
-      const config: AkmConfig = {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        bundles: { stash: { path: stash.dir, writable: true } },
-        defaultBundle: "stash",
-        engines: { graph: llm("graph-model") },
-        index: {
-          graph: { graphExtractionIncludeTypes: ["knowledge"], graphExtractionBatchSize: 99 },
-        },
-        improve: {
-          strategies: {
-            graph: {
-              processes: disabledProcesses({
-                graphExtraction: {
-                  enabled: true,
-                  engine: "graph",
-                  fullScan: true,
-                  includeTypes: ["memory"],
-                  batchSize: 2,
-                  topN: 7,
-                  maxChunksPerAsset: 3,
-                },
-              }),
-            },
-          },
-        },
-      };
-      const plan = resolveImprovePlan("graph", config, { repairValidationFailures: false });
-      let seenOptions: Record<string, unknown> | undefined;
-      await runImproveMaintenancePasses({
-        options: {
-          config,
-          stashDir: stash.dir,
-          graphExtractionFn: async (ctx) => {
-            seenOptions = ctx.options as unknown as Record<string, unknown>;
-            return {
-              considered: 0,
-              extracted: 0,
-              totalEntities: 0,
-              totalRelations: 0,
-              written: false,
-              quality: {
-                consideredFiles: 0,
-                extractedFiles: 0,
-                entityCount: 0,
-                relationCount: 0,
-                extractionCoverage: 0,
-                density: 0,
-              },
-            };
-          },
-        },
-        primaryStashDir: stash.dir,
-        actionableRefs: [],
-        memoryRefsForInference: new Set(),
-        allWarnings: [],
-        improveProfile: plan.strategy.config,
-        resolvedPlan: plan,
-      });
-      expect(seenOptions).toMatchObject({ includeTypes: ["memory"], batchSize: 2, topN: 7, maxChunksPerAsset: 3 });
-    } finally {
-      stash.cleanup();
-    }
-  });
-
   test("post-loop maintenance is a no-op when the run budget is already exhausted", async () => {
     const stash = makeStashDir();
     try {
@@ -392,7 +323,7 @@ describe("improve engine-plan boundaries", () => {
         resolvedPlan: plan,
       });
 
-      expect(result).toEqual({ memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 });
+      expect(result).toEqual({ memoryInferenceDurationMs: 0 });
     } finally {
       stash.cleanup();
     }

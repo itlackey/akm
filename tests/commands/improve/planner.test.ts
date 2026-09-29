@@ -70,7 +70,6 @@ describe("selectEffectiveImproveRefs", () => {
       },
       stageConfig: {
         extract: { enabled: false, reason: "disabled" },
-        graphExtraction: { enabled: false, reason: "disabled" },
         memoryInference: { enabled: false, reason: "disabled" },
       },
       triage: { enabled: false, configuredMode: "queue", mode: "queue", maxAcceptsPerRun: 0 },
@@ -115,7 +114,6 @@ describe("selectEffectiveImproveRefs", () => {
       },
       stageConfig: {
         extract: { enabled: false, reason: "disabled" },
-        graphExtraction: { enabled: false, reason: "disabled" },
         memoryInference: { enabled: false, reason: "disabled" },
       },
       triage: { enabled: false, configuredMode: "queue", mode: "queue", maxAcceptsPerRun: 0 },

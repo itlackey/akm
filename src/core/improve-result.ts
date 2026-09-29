@@ -47,6 +47,9 @@ const COMMON_FIELDS = [
   "deadUrlCoverage",
   "reflectsWithErrorContext",
   "memoryInference",
+  // 0.9.17-alpha.9: no longer written (the LLM entity-graph extraction that
+  // wrote these was retired), kept readable for the same reason as
+  // `evalCasesWritten` above.
   "graphExtraction",
   "memoryInferenceDurationMs",
   "graphExtractionDurationMs",
@@ -131,10 +134,7 @@ function validateConsolidationPlan(value: unknown): void {
     ]),
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
-  requireExactFields(
-    value.configured,
-    new Set(["enabled", "minPoolSize", "limit", "maxChunkSize", "incrementalSince"]),
-  );
+  requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
   }
@@ -142,9 +142,6 @@ function validateConsolidationPlan(value: unknown): void {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
       fail(`plan.consolidation.configured.${field} must be a number`);
     }
-  }
-  if (value.configured.incrementalSince !== undefined && typeof value.configured.incrementalSince !== "string") {
-    fail("plan.consolidation.configured.incrementalSince must be a string");
   }
   if (!isRecord(value.effective)) fail("plan.consolidation.effective must be an object");
   requireExactFields(value.effective, new Set(["enabled", "minPoolSize", "limit", "chunkSize"]));
@@ -213,7 +210,17 @@ function validateProcessRoutingRows(value: unknown): void {
     );
     if (
       typeof row.process !== "string" ||
-      !(canonicalNames.includes(row.process) || row.process === "triage.judgment")
+      !(
+        canonicalNames.includes(row.process) ||
+        row.process === "triage.judgment" ||
+        // 0.9.17-alpha.9: "graphExtraction" is no longer a process a fresh
+        // plan can route (the LLM entity-graph extraction it named was
+        // retired), but every pre-alpha.9 run recorded one here — kept
+        // readable, same as `stageNames`' "graph-extraction" above and
+        // `graphExtraction` in COMMON_FIELDS, so a historical run still
+        // decodes for `akm health` instead of failing this row outright.
+        row.process === "graphExtraction"
+      )
     ) {
       fail("plan.processes.process is invalid");
     }
@@ -392,6 +399,9 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 
+  // "graph-extraction" is no longer a stage a fresh plan can name — retired
+  // 0.9.17-alpha.9 — but stays here so a historical envelope that captured a
+  // dry-run plan before the retirement still decodes.
   const stageNames = new Set(["consolidation", "extract", "graph-extraction", "memory-inference"]);
   if (!Array.isArray(value.stages)) fail("plan.stages must be an array");
   for (const stage of value.stages) {

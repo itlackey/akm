@@ -30,7 +30,6 @@ function isolatedProcesses(judgment: unknown): Record<string, unknown> {
     distill: { enabled: false },
     consolidate: { enabled: false },
     memoryInference: { enabled: false },
-    graphExtraction: { enabled: false },
     extract: { enabled: false },
     validation: { enabled: false },
     proactiveMaintenance: { enabled: false },

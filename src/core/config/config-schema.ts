@@ -67,7 +67,6 @@ export {
   ConsolidateProcessConfigSchema,
   DistillProcessConfigSchema,
   ExtractProcessConfigSchema,
-  GraphExtractionProcessConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,
   MemoryInferenceProcessConfigSchema,
@@ -267,6 +266,13 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
   const defaultStrategy = config.defaults?.improveStrategy;
   if (
     defaultStrategy &&
+    // graph-refresh is exempt from this eager, config-load-time check: unlike
+    // a plain typo, it is a specific, known retirement, and refusing it here
+    // would fail every command's config load (including `akm migrate apply`,
+    // the one that fixes this). `resolveImproveStrategy`
+    // (src/commands/improve/improve-strategies.ts) refuses it lazily, at
+    // improve-invocation time, with the same message either way.
+    defaultStrategy !== "graph-refresh" &&
     !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
     !config.improve?.strategies?.[defaultStrategy]
   ) {

@@ -32,7 +32,6 @@ export interface ImproveRunSummary {
   memorySummary: ImproveHealthMetrics["memorySummary"];
   consolidation: ImproveHealthMetrics["consolidation"];
   memoryInference: ImproveHealthMetrics["memoryInference"];
-  graphExtraction: ImproveHealthMetrics["graphExtraction"];
   orphansPurged: number;
   lintFixed: number;
   lintFlagged: number;

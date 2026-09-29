@@ -104,7 +104,7 @@ with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rathe
 than a silent fallback. It returns a compact view suitable for capability
 discovery:
 
-- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `related`, `links`
+- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `links`
 
 ## Exit Codes and Error Envelope
 
@@ -195,8 +195,8 @@ akm setup
 The setup wizard configures AKM in two steps:
 
 **Step 1 — Small model connection** (for background processing)
-Configures the OpenAI-compatible endpoint and model used for `akm index`
-metadata enhancement and `akm remember --enrich`. Supports Ollama,
+Configures the OpenAI-compatible endpoint and model used for `akm improve`
+and `akm remember --enrich`. Supports Ollama,
 OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
 
 **Step 2 — Agent connection** (for agentic commands)
@@ -300,10 +300,8 @@ invokes `akm index` directly should pass `--skip-if-locked` so it steps
 aside instead of piling up behind a longer rebuild (the shipped
 `index-refresh` task does this).
 
-`akm index` always rebuilds the search index and keeps metadata in the index.
-When a selected named LLM engine (`defaults.llmEngine` or an indexing-pass
-override) is configured and the per-pass gate allows it, metadata
-enhancement runs during indexing. In text mode, the default CLI UI shows a
+`akm index` always rebuilds the search index and keeps metadata in the
+index, generated deterministically. In text mode, the default CLI UI shows a
 spinner with processed-versus-total source counts; structured output modes
 (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 
@@ -389,7 +387,7 @@ Primary result fields:
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
 The `improve` section includes counts for planned refs, reflect/distill actions,
-memory-prune actions, memory-inference writes, graph-extraction refreshes,
+memory-prune actions, memory-inference writes,
 session-extraction outcomes (`sessionsScanned`, `sessionsExtracted`, `proposalsCreated`),
 dead-URL detections, and skip reasons observed in the selected time window.
 
@@ -431,13 +429,6 @@ purpose" from "broken"), `warn` when every session in the window was skipped
 for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 `locked_concurrent`) — naming the reason and, when recorded, the engine — and
 `pass` otherwise, with per-outcome counts.
-
-The indexed entity graph (entities/relations extracted from bundle assets) has
-no dedicated inspection command; its summary counts surface as an info-level
-metric in `akm health`. Graph data is automatically re-extracted on the first
-`akm improve` cycle after a `DB_VERSION` upgrade. The graph backs `akm show`'s
-`related` list; it does not affect search ranking. Curate's support refs come
-from declared links (`akm show`'s `links`), not from this graph.
 
 ### search
 
@@ -703,8 +694,7 @@ workflow and task targets name), `incoming` (the assets that name it), and
 kind is `{ "total": n, "refs": [...] }` with at most 10 refs; `total` counts
 them all. The field is omitted when nothing links either way. Links are read
 from frontmatter and parsed structure at index time, with no model; they do
-not affect search ranking. `related` is separate: the LLM entity graph's
-shared-entity neighbours.
+not affect search ranking.
 
 Opaque fragment shows and `--context lead` keep `ref` as the canonical parent
 identity and add
@@ -2528,7 +2518,7 @@ clock, or session-log changes.
 
 `plan.processes` (#947) is the resolved process -> engine -> model routing
 table: one row per improve process (`reflect`, `distill`, `consolidate`,
-`memoryInference`, `graphExtraction`, `extract`, `validation`, `triage`,
+`memoryInference`, `extract`, `validation`, `triage`,
 `proactiveMaintenance`), plus a `triage.judgment` row when the strategy
 configures a judgment engine. Each row carries `enabled`, the resolved
 `engine`/`model` (llm-backed processes only) and `engineKind`, this process's
@@ -2583,7 +2573,7 @@ field on the result (`result_json` in `improve_runs`, and in the
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
 `reasoningTokens`, and `totalDurationMs`. `noCalls` lists every LLM-backed
 process (`reflect`, `distill`, `consolidate`, `memoryInference`,
-`graphExtraction`, `extract`, `validation` — not `triage`/`proactiveMaintenance`,
+`extract`, `validation` — not `triage`/`proactiveMaintenance`,
 which never make an attributable LLM call themselves) the active strategy
 enabled but that ended the run with zero calls, each with a `reason` drawn
 from the existing skip-reason vocabulary: `"engine_unavailable"` (also in
@@ -2721,6 +2711,7 @@ akm proposal list
 akm proposal list --queue team-bundle
 akm proposal list --status pending|accepted|rejected|reverted
 akm proposal list --ref skills/deploy
+akm proposal list --generator consolidate-pair
 ```
 
 | Flag | Description |
@@ -2729,6 +2720,12 @@ akm proposal list --ref skills/deploy
 | `--status` | Filter by `pending`, `accepted`, `rejected`, or `reverted` |
 | `--ref` | Filter by asset ref. A qualified ref preserves bundle identity; a short ref matches that concept in the selected queue |
 | `--type` | Reserved type filter |
+| `--generator <name>` | Filter by generator/source (e.g. `reflect`, `distill`, `consolidate-pair`) — the same value `accept`/`reject --generator` take |
+
+Each retire proposal's `retirement.continuityRisk`, when present, also shows
+in the default listing (`⚠ continuity-risk` inline) and in `proposal show`'s
+text output (the specific failing/unverified queries) — see
+[Retirement continuity](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retirement-continuity).
 
 Each proposal record carries an optional `confidence` field (0..1) emitted by
 reflect/propose runs. It is recorded for triage and ranking only — there is no

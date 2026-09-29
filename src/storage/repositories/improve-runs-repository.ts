@@ -54,7 +54,7 @@ export interface ImproveRunMetrics {
   plannedCount: number;
   /** Number of action results emitted (one per processed ref/op). */
   actionsCount: number;
-  /** Action modes that imply a write (reflect/distill/memory-inference/graph-extraction succeeded). */
+  /** Action modes that imply a write (reflect/distill/memory-inference succeeded). */
   acceptedCount: number;
   /** Genuine value-rejections: a change was produced then rejected by a content guard. */
   rejectedCount: number;

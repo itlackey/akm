@@ -107,7 +107,6 @@ export const INTERESTING_DELTA_PATHS = [
   "improve.memoryInference.written",
   "improve.memoryInference.yieldRate",
   "improve.memoryInference.skippedNoFacts",
-  "improve.graphExtraction.failures",
   "improve.autoAccept.promoted",
   "improve.autoAccept.validationFailed",
   "improve.coverage.acceptedProposals",

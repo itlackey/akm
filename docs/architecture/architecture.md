@@ -351,7 +351,7 @@ state, while `logs.db` stores task/run log lines.
 ## Utility Scoring
 
 Utility is feedback-driven and rebuilt from `usage_events`. It orders
-improve's salience and graph-extraction work; search ranking does not read it.
+improve's salience work; search ranking does not read it.
 
 - usage history is preserved across schema resets and full rebuilds
 - detached events are re-linked to fresh entry ids by ref
@@ -455,10 +455,9 @@ Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
 - Each public export is either a pure function (`chatCompletion`,
-  `enhanceMetadata`, `splitMemoryIntoAtomicFacts`,
-  `resolveIndexPassExecution`, `resolveIndexPassRunner`,
-  `parseJsonResponse`, …) or a factory that returns a one-shot client tied to
-  the symbolic runner/config the caller passes in.
+  `splitMemoryIntoAtomicFacts`, `resolveIndexPassExecution`,
+  `resolveIndexPassRunner`, `parseJsonResponse`, …) or a factory that returns
+  a one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The only module-level singleton is the local embedder
   pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
@@ -538,8 +537,7 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
-| `src/indexer/db/` | `graph-db`, `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
-| `src/indexer/graph/` | graph related-files/extraction — the graph phase |
+| `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
 | `src/indexer/search/` | `db-search`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, dir-staleness, metadata — LLM/metadata passes |
 | `src/indexer/usage/` | usage-events |
@@ -559,7 +557,6 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
 | `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |
-| `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
 | `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded SDK runner selected by an SDK `RunnerSpec` |

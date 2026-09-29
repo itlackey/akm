@@ -272,10 +272,10 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
 });
 
 describe("improve envelope: per-phase wall-clock durations are emitted at the top level", () => {
-  test("memoryInferenceDurationMs and graphExtractionDurationMs surface on the result envelope when the passes run", async () => {
+  test("memoryInferenceDurationMs surfaces on the result envelope when the pass runs", async () => {
     // The `health.ts#summarizeImproveRuns` `wallTime.byPhase` aggregator (and
-    // the older `metrics.{memoryInference,graphExtraction}.durationMs`
-    // rollups) all read these fields directly off the top of the envelope.
+    // the older `metrics.memoryInference.durationMs` rollup) reads this
+    // field directly off the top of the envelope.
     // Until the 2026-05-26 follow-up they were captured locally in
     // improve.ts and only emitted on the `improve_completed` event — never
     // on the persisted result envelope — so every byPhase median came back
@@ -289,8 +289,6 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
       "utf8",
     );
     await indexStash(stash);
-    // graph_extraction defaults enabled when the feature key is absent
-    // (see tests/llm-feature-gate.test.ts) — no explicit config opt-in.
     appendEvent({
       eventType: "feedback",
       ref: durableRef("skills/byphase-fixture"),
@@ -327,11 +325,10 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
         },
       }),
       distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
-      // Inject memory inference + graph extraction passes that simulate
-      // taking measurable wall-clock time. The improve loop wraps these
-      // calls with Date.now() bookends, so the envelope MUST end up with
-      // a non-zero `memoryInferenceDurationMs` / `graphExtractionDurationMs`
-      // at the top level.
+      // Inject a memory inference pass that simulates taking measurable
+      // wall-clock time. The improve loop wraps this call with Date.now()
+      // bookends, so the envelope MUST end up with a non-zero
+      // `memoryInferenceDurationMs` at the top level.
       memoryInferenceFn: async () => {
         await new Promise((r) => setTimeout(r, 5));
         return {
@@ -354,46 +351,12 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           writtenPaths: [],
         };
       },
-      graphExtractionFn: async () => {
-        await new Promise((r) => setTimeout(r, 5));
-        return {
-          schemaVersion: 1 as const,
-          considered: 0,
-          extracted: 0,
-          totalEntities: 0,
-          totalRelations: 0,
-          written: false,
-          quality: {
-            consideredFiles: 0,
-            extractedFiles: 0,
-            emptyFiles: 0,
-            failedFiles: 0,
-            extractionCoverage: 0,
-            density: 0,
-            entityCount: 0,
-            relationCount: 0,
-            genericEntityRatio: 0,
-            lowConfidenceRatio: 0,
-          },
-          files: [],
-          telemetry: {
-            failureCount: 0,
-            failuresByReason: {},
-            cacheHits: 0,
-            cacheMisses: 0,
-            truncationCount: 0,
-            retryAttempts: 0,
-          },
-        };
-      },
     });
 
-    // Top-level emission contract — both fields land on the envelope and
-    // carry a strictly-positive duration. The aggregator filters by `> 0`,
+    // Top-level emission contract — the field lands on the envelope and
+    // carries a strictly-positive duration. The aggregator filters by `> 0`,
     // so a zero would silently drop the sample.
     expect(typeof result.memoryInferenceDurationMs).toBe("number");
     expect(result.memoryInferenceDurationMs ?? 0).toBeGreaterThan(0);
-    expect(typeof result.graphExtractionDurationMs).toBe("number");
-    expect(result.graphExtractionDurationMs ?? 0).toBeGreaterThan(0);
   });
 });

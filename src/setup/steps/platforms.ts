@@ -68,9 +68,9 @@ export function printCapabilitySummary(smallModelSkipped: boolean, agentConfigur
   lines.push("  ✓ akm search, akm curate, akm show, akm index, akm remember — always available");
 
   if (!smallModelSkipped) {
-    lines.push("  ✓ index metadata enhancement, akm improve, akm remember --enrich — small model configured");
+    lines.push("  ✓ akm improve, akm remember --enrich — small model configured");
   } else {
-    lines.push("  ✗ index metadata enhancement, akm improve, akm remember --enrich — run `akm setup` to enable");
+    lines.push("  ✗ akm improve, akm remember --enrich — run `akm setup` to enable");
   }
 
   if (agentConfigured) {

@@ -411,14 +411,6 @@ export function formatIndexPlain(r: Record<string, unknown>): string {
     out += `\nWarnings (${warnings.length}):`;
     for (const message of warnings) out += `\n  - ${String(message)}`;
   }
-  const notices = Array.isArray(indexResult.notices) ? indexResult.notices : [];
-  for (const notice of notices) {
-    const severity = notice.severity === "info" ? "info" : "warning";
-    const field = typeof notice.field === "string" ? ` field=${notice.field}` : "";
-    out +=
-      `\n  notice[${severity}] ${notice.code} adapter=${notice.adapter}${field}` +
-      (notice.message ? `: ${notice.message}` : "");
-  }
   const verification = indexResult.verification;
   if (verification?.ok === false && verification.message) {
     out += `\nVerification: ${String(verification.message)}`;

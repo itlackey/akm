@@ -70,6 +70,25 @@ describe("triage improve-process config schema", () => {
     );
   });
 
+  // 0.9.17-alpha.9: graphExtraction is a genuinely retired process name (the
+  // LLM entity-graph extraction it ran is gone), not a typo — unlike an
+  // unrecognized name, it must not fail config loading even when enabled.
+  test("an enabled processes.graphExtraction is tolerated, not rejected like an unknown process", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        reflect: { enabled: true },
+        graphExtraction: { enabled: true, fullScan: true },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Kept in memory as an ordinary unknown key — nothing reads it any more.
+    expect((result.data.processes as Record<string, unknown> | undefined)?.graphExtraction).toEqual({
+      enabled: true,
+      fullScan: true,
+    });
+  });
+
   test("triage may select an agent engine while missing engines are rejected", () => {
     const base = {
       configVersion: "0.9.0",

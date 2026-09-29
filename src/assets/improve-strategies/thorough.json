@@ -18,9 +18,6 @@
     "memoryInference": {
       "enabled": true
     },
-    "graphExtraction": {
-      "enabled": true
-    },
     "extract": {
       "enabled": false,
       "triage": {

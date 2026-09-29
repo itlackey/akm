@@ -72,11 +72,25 @@ export function shapeProposalProducerOutput(
 
 export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (detail === "brief") {
-    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
+    // `proposal list`'s default detail level IS "brief" (no `--detail` flag
+    // given projects here, not "normal") — `retirement` itself is not
+    // projected until "normal", so a flagged retire proposal's risk would
+    // otherwise be invisible by default. A minimal boolean marker, not the
+    // full risk object, keeps brief's shape small while still letting a
+    // reviewer see it without an extra flag.
+    const retirement = entry.retirement as Record<string, unknown> | undefined;
+    return {
+      ...pickFields(entry, ["id", "ref", "status", "source", "createdAt"]),
+      ...(retirement?.continuityRisk ? { continuityRisk: true } : {}),
+    };
   }
   if (detail === "normal") {
     // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
     // so they are projected at `normal` for `akm proposal list/show` when present.
+    // `retirement` (alpha.9) is the same kind of field for a consolidate
+    // `retire` proposal: without it, "list/show" carries no reason a reviewer
+    // could act on (its `payload.content` is empty by design — a retire
+    // proposal deletes, it does not write).
     return pickFields(entry, [
       "id",
       "ref",
@@ -88,6 +102,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
       "confidence",
       "gateDecision",
       "review",
+      "retirement",
     ]);
   }
   // full: project everything including the payload.
@@ -103,6 +118,10 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "gateDecision",
     "payload",
     "review",
+    "retirement",
+    "retiredArchive",
+    "promotionSource",
+    "promotionSourceHash",
   ]);
 }
 
@@ -417,7 +436,6 @@ export function shapeShowOutput(
       "workflowParameters",
       "steps",
       "keys",
-      "related",
       "links",
       ...FRAGMENT_PROVENANCE_FIELDS,
       ...FRAGMENT_CONTEXT_FIELDS,
@@ -441,7 +459,6 @@ export function shapeShowOutput(
       "run",
       "origin",
       "keys",
-      "related",
       "links",
       ...FRAGMENT_PROVENANCE_FIELDS,
       ...FRAGMENT_CONTEXT_FIELDS,
@@ -472,7 +489,6 @@ export function shapeShowOutput(
     "cwd",
     "activeRun",
     "keys",
-    "related",
     "links",
     ...FRAGMENT_PROVENANCE_FIELDS,
     ...FRAGMENT_CONTEXT_FIELDS,

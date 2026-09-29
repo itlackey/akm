@@ -7,11 +7,11 @@
  * `runImproveMaintenancePasses` / its `withIndexWriterLease` callback (R31
  * decomposition, testability requirement).
  *
- * Each pass is driven directly with injected `memoryInferenceFn` /
- * `graphExtractionFn` seams — no LLM, no real index.db — and its returned
- * result object is asserted instead of the old shared closure state. The
- * #584/#585 db-handle and borrowed-connection contracts keep their own
- * integration suite (`improve-db-locking.test.ts`).
+ * Each pass is driven directly with an injected `memoryInferenceFn` seam —
+ * no LLM, no real index.db — and its returned result object is asserted
+ * instead of the old shared closure state. The #584/#585 db-handle and
+ * borrowed-connection contracts keep their own integration suite
+ * (`improve-db-locking.test.ts`).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -19,13 +19,11 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   type MaintenanceCtx,
-  runGraphExtractionMaintenancePass,
   runMemoryInferenceMaintenancePass,
   runRetentionPurgePass,
 } from "../../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
-import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
 import { insertEventStrict } from "../../../../src/storage/repositories/events-repository";
@@ -52,12 +50,6 @@ function inferenceResult(overrides: Partial<MemoryInferenceResult> = {}): Memory
   return { processed: 0, writtenFacts: 0, skippedNoFacts: 0, splitParents: 0, ...overrides } as MemoryInferenceResult;
 }
 
-function graphResult(): GraphExtractionResult {
-  return {
-    quality: { extractedFiles: 1, entityCount: 2, relationCount: 3 },
-  } as unknown as GraphExtractionResult;
-}
-
 function makeCtx(stashDir: string, overrides: Partial<MaintenanceCtx> = {}): MaintenanceCtx {
   return {
     config: {} as AkmConfig,
@@ -65,9 +57,6 @@ function makeCtx(stashDir: string, overrides: Partial<MaintenanceCtx> = {}): Mai
     primaryStashDir: stashDir,
     memoryInferenceFn: () => {
       throw new Error("memoryInferenceFn not expected in this scenario");
-    },
-    graphExtractionFn: () => {
-      throw new Error("graphExtractionFn not expected in this scenario");
     },
     ...overrides,
   };
@@ -132,104 +121,6 @@ describe("runMemoryInferenceMaintenancePass", () => {
     expect(out.memoryInference).toBeUndefined();
     expect(out.action).toBeUndefined();
     expect(out.warnings).toEqual(["memory inference failed: inference exploded"]);
-  });
-});
-
-describe("runGraphExtractionMaintenancePass", () => {
-  const baseArgs = {
-    actionableRefs: [],
-    memoryRefsForInference: new Set<string>(),
-  };
-
-  test("profile-disabled gate skips without invoking the seam", async () => {
-    const stash = freshStash();
-    const ctx = makeCtx(stash, {
-      improveProfile: { processes: { graphExtraction: { enabled: false } } } as MaintenanceCtx["improveProfile"],
-    });
-
-    const out = await runGraphExtractionMaintenancePass(ctx, { current: fakeDb }, baseArgs);
-
-    expect(out.graphExtraction).toBeUndefined();
-    expect(out.action).toBeUndefined();
-    expect(out.warnings).toEqual([]);
-  });
-
-  test("feature-gate off (no resolvedPlan) skips without invoking the seam", async () => {
-    const stash = freshStash();
-    // No resolvedPlan → the gate falls back to `index.graph.enabled` (default
-    // ON — gate on the code, not comments); disable it explicitly.
-    const ctx = makeCtx(stash, { config: { index: { graph: { enabled: false } } } as AkmConfig });
-
-    const out = await runGraphExtractionMaintenancePass(ctx, { current: fakeDb }, baseArgs);
-
-    expect(out.graphExtraction).toBeUndefined();
-    expect(out.warnings).toEqual([]);
-  });
-
-  test("index.graph.enabled: false skips the pass under a resolved improve plan too", async () => {
-    const stash = freshStash();
-    // A strategy that enables graph extraction resolves a plan; the index
-    // switch still turns the stage off (makeCtx's seam throws if called).
-    const ctx = makeCtx(stash, {
-      config: { index: { graph: { enabled: false } } } as AkmConfig,
-      resolvedPlan: {
-        processes: { graphExtraction: { runner: null }, memoryInference: { runner: null } },
-      } as unknown as MaintenanceCtx["resolvedPlan"],
-    });
-
-    const out = await runGraphExtractionMaintenancePass(ctx, { current: fakeDb }, baseArgs);
-
-    expect(out.graphExtraction).toBeUndefined();
-    expect(out.warnings).toEqual([]);
-  });
-
-  // D9: the post-consolidation reindex this pass used to run
-  // (`consolidationRan && !reindexedAfterInference` → `reindexWithIndexDbReleased`)
-  // is deleted along with the seam it called — consolidation's only executed op
-  // (promote) writes a proposal row to state.db, never a stash file, so the
-  // reindex had no precondition it could ever satisfy. This is a deletion of
-  // coverage for deleted code, not a weakening of coverage for code that remains.
-
-  test("profile knobs (fullScan/topN/batchSize/includeTypes) reach the extraction options", async () => {
-    const stash = freshStash();
-    let received: { candidatePaths?: Set<string>; includeTypes?: string[]; batchSize?: number; topN?: number } = {};
-    const ctx = makeCtx(stash, {
-      improveProfile: {
-        processes: {
-          graphExtraction: { fullScan: true, topN: 7, batchSize: 3, includeTypes: ["memory"] },
-        },
-      } as MaintenanceCtx["improveProfile"],
-      resolvedPlan: {
-        processes: { graphExtraction: { runner: null }, memoryInference: { runner: null } },
-      } as unknown as MaintenanceCtx["resolvedPlan"],
-      graphExtractionFn: (args) => {
-        received = (args as { options: typeof received }).options;
-        return Promise.resolve(graphResult());
-      },
-    });
-
-    await runGraphExtractionMaintenancePass(ctx, { current: fakeDb }, baseArgs);
-
-    // fullScan → candidatePaths stays undefined (extractor processes all files).
-    expect(received.candidatePaths).toBeUndefined();
-    expect(received.includeTypes).toEqual(["memory"]);
-    expect(received.batchSize).toBe(3);
-    expect(received.topN).toBe(7);
-  });
-
-  test("a seam failure is converted to the exact legacy warning", async () => {
-    const stash = freshStash();
-    const ctx = makeCtx(stash, {
-      resolvedPlan: {
-        processes: { graphExtraction: { runner: null }, memoryInference: { runner: null } },
-      } as unknown as MaintenanceCtx["resolvedPlan"],
-      graphExtractionFn: () => Promise.reject(new Error("graph exploded")),
-    });
-
-    const out = await runGraphExtractionMaintenancePass(ctx, { current: fakeDb }, baseArgs);
-
-    expect(out.graphExtraction).toBeUndefined();
-    expect(out.warnings).toEqual(["graph extraction failed: graph exploded"]);
   });
 });
 

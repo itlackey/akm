@@ -6,6 +6,340 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.9] - 2026-09-29
+
+`akm improve` now forgets, reversibly and under review. A consolidation pair
+pass compares each new or changed memory, flat knowledge file or lesson with
+its nearest neighbours; where an LLM judge calls a pair duplicate, subsumed or
+superseding, it mints a retire proposal that a person reviews (`akm proposal
+list --generator consolidate-pair`). Accepting one archives the older or
+contained copy, and `akm proposal revert` restores it exactly; an accepted
+promotion now retires its source memory, so promotion no longer leaves a
+duplicate. A continuity check flags a retirement whose survivor does not rank
+where the retired asset did for its own past searches, and a flagged proposal
+is never bulk-accepted. Archived files are purged 30 days after retirement,
+only when git holds them unmodified. The per-run forgetting-safety lane, LLM
+metadata enrichment and LLM entity-graph extraction are removed: each measured
+no benefit. Decide pending retire proposals before downgrading to
+0.9.17-alpha.8.
+
+### Added
+
+- **Consolidate pair pass: duplicate, subsumed and superseding memories are
+  now retired, review-gated.** A second pass inside `akmConsolidate`,
+  alongside the existing promote pass. It walks memory-tier assets (a
+  memory, base or `.derived`; a flat `knowledge/` asset; or a lesson) in the
+  retrieval scope that are new to the pass or whose body has changed since
+  their last full attempt — tracked by content hash, not a time window, so
+  an initiator the nightly cap or a pending-proposal collision leaves out
+  stays eligible rather than being marked settled, and the pass's own
+  ledger rows are never retrieval-scope evidence for the other improve
+  lanes — takes each one's nearest neighbours by stored vector (fetching 20,
+  keeping the first 5 that clear every filter; same bundle, memory tier
+  only — structured knowledge in subfolders is excluded), and judges every
+  pair at cosine >= `T_pair` (0.93) with one LLM call using the calibrated
+  relation prompt (`src/assets/prompts/consolidate-pair.md`, six labels:
+  `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap`,
+  `unrelated`). An initiator with no prior attempt is held to a higher
+  `T_pair` >= 0.95, unless it is new material (git first-added within the
+  last 7 days), which judges at the ordinary 0.93. "Older"/"newer" for the
+  judge's own A/B labelling comes from one `git log` per run over the
+  bundle (first-add time, following renames so a moved or renamed file
+  keeps its original date), not frontmatter or file mtime — mtime is only
+  the fallback for a file git does not know, or a bundle with no `.git` at
+  all. At most 300 pairs are judged a night, admitted a whole initiator at
+  a time rather than by flat cosine rank: new-or-changed initiators first,
+  then the existing backlog by its own best cosine, each admitted only if
+  every one of its candidate pairs fits in what remains of the 300 — so an
+  initiator blocked on another pending decision never spends a slot doing
+  nothing, and a smaller initiator further down still fits when a larger
+  one ahead of it does not. `duplicate`, `subsumed` and `supersedes` mint a
+  reviewed `retire` proposal for the losing side (owner-calibrated
+  precision 20/22 = 0.91 [0.72, 0.97] against a second-rater baseline of
+  0.17 for `supersedes` alone); `contradicts` is counted but stays a human
+  decision, and `overlap`/`unrelated` get no proposal. Guards: never a
+  `captureMode: hot` memory, never a `.derived` memory whose parent still
+  exists, never a pair where either side already has a pending retire
+  proposal (as the retired ref or its successor), and never retiring or
+  reusing as a successor an asset already spent earlier in the same run.
+  (`src/commands/improve/consolidate/pair-pass.ts`,
+  `src/commands/improve/retrieval-scope.ts`,
+  `src/storage/repositories/improve-ledger-repository.ts`,
+  `src/assets/prompts/consolidate-pair.md`)
+- **Retire proposals.** A pair-pass retire proposal mints under its own
+  source, `consolidate-pair` — kept apart from the promote pass's
+  `consolidate` proposals, so a bulk `accept`/`reject --generator
+  consolidate` never sweeps a retirement, and the reverse; a bare `akm
+  proposal accept <ref>` never resolves to one either (it matches the
+  newest non-retire proposal for the ref, if any — a retire is reached by
+  its own proposal id, or the bulk `--generator consolidate-pair` form),
+  and retention expiry never drops a pending one for age alone. A pair the owner
+  rejected or reverted is not proposed again while both sides are unchanged. Its primary
+  change deletes its target instead of writing content. Accepting one first
+  confirms the decision is still fresh — the successor still exists, and
+  both sides' recorded body hashes still match their current files, not
+  just the retired side's, so a decision a later accept elsewhere made
+  stale (an A->B/B->C chain, or A->B/B->A both minted) is refused cleanly
+  rather than partially applied — then archives the asset (and its
+  `.derived` twin, if one exists) through a generalized
+  `archiveCleanupCandidate` (now usable on any memory, knowledge or lesson
+  file, not only `.derived` memories): the same
+  `.akm/memory-cleanup/archive/` encoding memory cleanup already used,
+  never the dead `.akm/archive/`. A `supersedes` judgement first writes the
+  `supersededBy` edge on the older asset, then archives it. Triage never
+  auto-accepts a retire proposal, whatever `applyMode` says — it waits for
+  a direct `akm proposal accept`, reviewed the same way as any other
+  proposal (`akm proposal list`, `show`, `diff`, bulk `accept --generator
+  consolidate-pair`; `--max-diff-lines` counts a retire by its target's own
+  line count). `accept` is crash-safe: it records its full intent —
+  `backupContent` and which file is about to move — durably before moving
+  anything, so a crash partway through, including between a primary and its
+  `.derived` twin, resumes and finishes from what was recorded rather than
+  leaving an asset stranded or the decision unrecorded. `revert` needs no
+  intent of its own — it resumes from what `accept` already recorded, and
+  refuses instead of overwriting a path that was reused by an unrelated file
+  since (its current content no longer matching what was retired). `revert`
+  restores the archived file(s) byte-for-byte from the bytes recorded at
+  accept, even a file that had no trailing newline — YAML comments, key
+  order and any human-written edge all survive the round trip. A ref to a retired asset keeps resolving to its tombstone
+  (`isArchivedRelPath`) — fixed along the way: that resolver assumed only
+  memories are ever archived, so an xref to a retired knowledge or lesson
+  asset was wrongly reported `missing-ref` by `akm lint` until now. Pending
+  retire proposals must be accepted or rejected before downgrading to
+  0.9.17-alpha.8 or earlier — that release predates the retire shape
+  entirely and exits 70 on one in `show`/`diff`/`drain`, and drain's own
+  nightly pre-pass failing on the first one it meets stops that run's
+  auto-promotion for the whole stash. Downgrading also revives the
+  new-material starvation this same branch fixed forward-only: 0.9.17-alpha.8
+  counts a pair-pass ledger row as retrieval-scope evidence again, so its own
+  nightly attempts crowd new material back out of every other improve lane —
+  measured, two nights left only 341 of 2,183 new-only assets still in scope
+  once read under alpha.8
+  (`docs/architecture/persisted-data-compat.md`).
+  (`src/commands/proposal/repository.ts`,
+  `src/commands/improve/memory/memory-improve.ts`,
+  `src/commands/lint/base-linter.ts`)
+- **A promotion retires its source memory (O1).** When `akm proposal accept`
+  promotes a consolidate `promote` proposal — by a person or by triage
+  auto-promotion — it now archives the source memory (and its `.derived`
+  twin) through the same retire-archive path, tombstoned `reason: promoted`,
+  provided the source's body still matches the hash recorded when the
+  promotion was minted; an edit since then leaves the source alone (a
+  proposal minted before this hash existed is never archived, for the same
+  reason). A promotion no longer leaves a memory/knowledge duplicate behind.
+  Best-effort: a failure to archive the source only warns; the promotion
+  itself is not undone. (`src/commands/improve/consolidate.ts`,
+  `src/commands/proposal/repository.ts`)
+- **Retirement continuity check (rule R3).** Before the pair pass mints a
+  `retire` proposal, it replays up to five of the retired asset's own past
+  `search`/`curate` queries through akm's own search, in-process — the
+  ranking a user actually gets, no LLM. For every query where the retired
+  asset ranked in the top 10, the successor must too; compared directly,
+  since search itself returns at most the top 10 hits. A failing
+  query never blocks the mint — the
+  proposal's `retirement.continuityRisk` records the failing query count
+  and, per failing query, the retired asset's rank and the successor's
+  (`null` when the successor did not rank in the top 10 at all). A proposal
+  carrying `continuityRisk` is excluded from every bulk accept path (`accept
+  --generator …`, with or without `--yes`) but not from bulk reject —
+  declining a flagged proposal is always the safe direction; a person can
+  always accept one by id. An asset with no recorded queries is not checked
+  at all. A query that never ran (the search call threw) or that fell back
+  to keyword-only ranking (an unreachable embedding endpoint, most often)
+  is never silently trusted or silently dropped either: it counts as
+  "unverified" and, on its own, is enough to flag `continuityRisk` — an
+  endpoint outage reads as "risk unknown," never as "no risk found," for
+  every proposal checked while it stays down, not just the first. The
+  first fallback in a pair-pass run forces every later query in that same
+  run to skip the semantic attempt entirely, so a dead endpoint costs one
+  failed attempt total, not one per remaining query. Two fixes against false
+  flags, measured on a real night-1 admission (300 pairs, 6 flags, 3
+  spurious): replayed queries are the same cleaned set the retrieval
+  regression gate uses (`loadRetrievalQueries`) — stash-README boilerplate,
+  harness/tool envelopes, pastes over 2,000 characters, and near-duplicate
+  queries (equal once whitespace is collapsed) are dropped before replay,
+  not just capped at five raw entries; and the check does not run at all
+  when the retired and successor bodies are content-identical once
+  whitespace is collapsed — search's own content-dedupe already hides the
+  successor behind the retired asset for every such query, so a "successor
+  missing" finding would not be a real risk.
+  (`src/commands/improve/consolidate/continuity-check.ts`,
+  `src/commands/proposal/proposal-types.ts`,
+  `src/commands/proposal/proposal.ts`)
+- **Continuity-risk visibility, and a `--generator` filter for `proposal
+  list`.** A retire proposal carrying `retirement.continuityRisk` now
+  shows `⚠ continuity-risk` inline in the default `akm proposal list`
+  output (and `--format text`), not just in `proposal show`. `proposal
+  show`'s text output now lists the actual failing query text and rank per
+  query, not just a count, and separately reports `unverifiedQueries` when
+  the risk is (also, or only) an unverified query rather than a rank
+  failure. `akm proposal accept --generator … --dry-run` (and a real bulk
+  run) now reports `skippedForContinuityRisk`, the count of otherwise
+  matching proposals excluded specifically for this reason, apart from an
+  ordinary `--max-diff-lines`/`--older-than` miss. `akm proposal list` gains
+  a `--generator <name>` filter, the same value `accept`/`reject
+  --generator` already take, so the (potentially large) backlog of one
+  generator's retire proposals can be reviewed as its own list.
+  (`src/commands/proposal/proposal.ts`, `src/commands/proposal/proposal-cli.ts`,
+  `src/output/text/proposal-format.ts`, `src/output/shapes/helpers.ts`)
+- **Archive purge sweep.** Deterministic, no LLM, run once at the very start
+  of every `akm improve` invocation, ahead of index bootstrap and triage.
+  For a git-backed bundle, deletes the archived asset file(s) of a
+  retirement — never its `cleanup.md` tombstone — once `retiredAt` is more
+  than 30 days old (`RETIRE_GRACE_DAYS`) AND every file under that
+  retirement's archive directory is git-tracked, clean (`git ls-files` plus
+  `git status --porcelain -uall`), and verifiable (`git ls-files -v`: a
+  file marked `assume-unchanged` or `skip-worktree` hides its own edits
+  from `git status`, so it is never trusted as clean either) — each checked
+  once per sweep; git history keeps the bytes. `.git` presence alone is not
+  enough: `proposal accept` only commits for a `kind: "git"` write target,
+  and improve's own auto-sync stages only the paths its own run wrote, so a
+  filesystem-kind bundle can carry archived retirements that were never
+  committed — the tracked/clean/verifiable check is what keeps the sweep
+  from deleting the only surviving copy of those. A directory with even one
+  untracked, modified, or unverifiable file (tombstone included) is left
+  whole for a later sweep — and so is the ENTIRE archive for that sweep if
+  the underlying `git status` or `git ls-files` call itself fails (a broken
+  submodule, for instance, can fail `git status` while `git ls-files`
+  still succeeds): an empty result from a failed check is never treated as
+  "nothing to protect", and the sweep warns once rather than silently
+  purging nothing. A memory-cleanup family-prune archive carries no
+  `retiredAt`, so this sweep never touches that older archive class. Every
+  deleted file is journaled individually, so the end-of-run auto-sync
+  commits the removal the same way it commits the archive move itself.
+  (`src/commands/improve/memory/memory-improve.ts`,
+  `src/sources/providers/git-stash.ts`, `src/commands/improve/improve.ts`)
+- **`akm health`'s `memory-cleanup-archive` advisory now covers every
+  bundle**, not just one with no `.git` at all. A bundle with no `.git` of
+  its own keeps every retirement's archived bytes forever (there is no
+  history to fall back on, so the purge sweep never runs there), and its
+  size and file count are reported as before. A git-backed bundle can ALSO
+  carry archived bytes the purge sweep will never remove — `.git` presence
+  alone never proved a retirement was committed — so this now runs the same
+  tracked/clean/verifiable check the purge sweep itself uses and reports
+  how many files and bytes of the archive cannot currently be purged
+  (untracked, modified, or unverifiable), alongside the total. Silent
+  whenever there is nothing to say: the archive is empty or absent, or (for
+  a git-backed bundle) every byte in it is purgeable once it ages out.
+  (`src/commands/health/archive-usage.ts`, `src/commands/health/data-dir-usage.ts`)
+
+### Removed
+
+- **LLM metadata enrichment (`index.metadataEnhance`) is retired.** On 49
+  stratified queries, with every eligible candidate enriched (1,968
+  entries): search nDCG@10 moved −0.0092 [−0.0324, +0.0165], curate P@5
+  +0.000 [−0.037, +0.045], and long prompts lost −0.054 [−0.093, −0.012]. A
+  Doc2Query-- filter made it worse (P@5 −0.020 [−0.045, −0.004]). The pass
+  replaced authored descriptions on 89% of the entries it rewrote, and a
+  full pass costs about 27 B70-hours (RS-D, owner ruling 2026-09-28). It was
+  already off by default and off in the maintainer's config. The LLM call
+  (`src/llm/metadata-enhance.ts`), its `akm index` dispatch, and the
+  `metadata_enhance` feature-gate key are gone; the deterministic metadata
+  pass, `quality: "generated"`, and memory inference are unaffected. A
+  config that still sets `index.metadataEnhance` loads, named once by the
+  same unknown-config-key path every other retired key uses: kept in
+  memory, round-trips through ordinary writes, and is dropped only by
+  `akm migrate apply`. The pass's `llm_enrichment_cache` rows (the default
+  `cache_variant`; graph and memory inference use their own named variants)
+  are deleted on the next writable open of `index.db`. An index built while
+  enrichment was on keeps its entries' LLM-written descriptions on
+  incremental runs — nothing rewrites an unchanged row; run
+  `akm index --full` once to replace them with the deterministic ones.
+  (`src/indexer/indexer.ts`, `src/llm/feature-gate.ts`,
+  `src/core/config/config.ts`, `src/core/config/schema/index-config.ts`,
+  `src/storage/repositories/index-schema.ts`)
+- **The LLM entity-graph extraction pass.** `akm improve`'s per-file
+  entity/relation extraction, its persisted tables (`graph_meta`,
+  `graph_files`, `graph_file_entities`, `graph_file_relations`), and `akm
+  show`'s `related` list are gone. On the navigation eval, vector kNN beat
+  the LLM `related` list by 0.157 P@5 [0.051, 0.260]; the ranking boost it
+  once fed was already removed in 0.9.17-alpha.4. Declared links (#935,
+  alpha.8) are the only navigation surface `akm show` has now, and curate's
+  support refs already came from them, not the graph. index.db is a
+  regenerable cache, so the graph tables are dropped unconditionally on the
+  next writable open — nothing migrates or backs them up.
+- **The `graph-refresh` improve strategy** and the `akm-graph-refresh-weekly`
+  task template are deleted. Naming `graph-refresh` via `--strategy` or a task
+  now fails with a message naming the retirement, unconditionally — even when
+  `improve.strategies["graph-refresh"]` still has a leftover override block
+  from customizing the built-in (the message names it; `akm migrate apply`
+  drops it). `defaults.improveStrategy: "graph-refresh"` still loads config
+  successfully — the refusal happens lazily, when the strategy is actually
+  resolved, not at every command's config load.
+- **Retired config keys:** `index.graph.*` and every strategy's
+  `processes.graphExtraction.*`. An old config that still sets them keeps
+  loading and the keys are unread, but `index.graph` is now also named once
+  by the unknown-config-key warning (it previously validated silently
+  against the generic per-pass catchall) and, like any other retired key,
+  is dropped only by `akm migrate apply` — not by an ordinary config write.
+- **`akm health` drops every graph metric** — the KPI card, summary-table
+  rows, per-run duration/entity/relation columns, and the
+  `improve.graphExtraction.failures` window-compare delta. `--window-compare`
+  and `--group-by run` still count every run, including a pre-alpha.9 one:
+  its stored `graphExtraction`/`graphExtractionDurationMs` result fields and
+  its `graph-extraction` `plan.stages` / `graphExtraction` `plan.processes`
+  entries still decode, read-only, same as any other retired field (AGENTS.md
+  "Reading persisted data") — they are just no longer rendered. The
+  `improve_completed` event's `graphExtractionExtractedFiles`,
+  `graphExtractionDurationMs`, `graphCoverage`, `graphDensity`, and
+  `graphEntities` metadata fields are no longer emitted.
+- **The per-run forgetting-safety lane.** `scoreSalience`'s stash-wide
+  salience-rank comparison, `applyForgettingSafety`, and the
+  `improve_salience_rank_change` event are gone. It was a one-time WS-1
+  cutover guard from the June 2026 ranking-formula change that had kept
+  running on every improve run since; the last 30 days of events
+  (2026-08-30 to 2026-09-29: 47 `improve_salience_rank_change` events, 5
+  refs flagged across 4 runs — 09-05, 09-08 x2, 09-19, 09-28) showed no
+  marginal pick over the signal-delta lane and the retrieval scope: 4 of
+  the 5 flagged refs were also picked that same run by signal-delta
+  (adjacent event ids/timestamps, 2–26 minutes after the rank-change
+  event), and the 5th (`workflows/create-github-issues-from-spec`, flagged
+  09-05) has no `reflect_invoked` or `distill_invoked` event in the
+  retained history, but that run's `improve_runs.plannedRefs` shows it,
+  too, was planned under `signal-delta` — just not reflected (a
+  dispatch/budget limit that run, not a lane-exclusive pick). All 5
+  flagged refs were signal-delta picks; zero were forgetting-safety-only.
+  It also protected
+  `asset_salience.rank_score`, which only improve itself ever read — a rank
+  drop could not hide anything from search. `buildRankChangeReport` (its
+  comparator) is also gone: the new retirement continuity check (see
+  Added) compares ranks directly instead, and nothing else called it.
+  `forgetting-safety` stays a valid `eligibilitySource`/event-type
+  value so old proposals and events still decode, but nothing assigns or
+  emits it any more. (`src/commands/improve/preparation.ts`,
+  `src/commands/improve/salience.ts`, `src/core/events.ts`,
+  `src/storage/repositories/salience-repository.ts`)
+- **`improve.strategies.<name>.processes.consolidate.incrementalSince` and
+  `.neighborsPerChanged`.** The consolidate pair pass is now the candidate
+  generator, narrowing per initiator through the improve ledger rather than
+  a global time window; neither key was set anywhere in the owner's config.
+  `narrowToIncrementalCandidates` goes with them, along with its
+  now-orphaned `parseSinceToIsoLenient` helper. A config that still sets
+  either key keeps loading under the retired-key contract: named once as
+  unknown, it survives an ordinary config write, and only `akm migrate
+  apply` drops it. (`src/core/config/schema/improve-processes.ts`,
+  `src/commands/improve/consolidate.ts`, `src/core/time.ts`,
+  `docs/reference/configuration.md`)
+
+### Fixed
+
+- **Stale "advisory merge/delete/contradict" documentation.** Consolidation
+  stopped executing its merge/delete/contradict operations at `e82eec811`
+  (2026-07, #732; they had run in production until then, not "never
+  executed" as a couple of doc comments and `improve-workflow.md` claimed),
+  and 0.9.17-alpha.1 (`f4ebd763a`) dropped them from the prompt and schema,
+  which have offered `promote` only since. But `docs/architecture/
+  improvement.md`, `STABILITY.md` and `docs/architecture/internals/
+  improve-workflow.md` still described them as advisory planned output.
+  Corrected, and `improve-workflow.md` gains a section documenting the pair
+  pass, retire proposals and O1. Also corrected: the `default` strategy's
+  "advisory consolidation" description, two comments that still credited a
+  `beliefState` ranking boost alpha.4 removed (`memory-belief.ts`,
+  `knowledge.ts`), and D27's stale `archiveMemory` naming in the
+  architecture decision history. Deleted the unused
+  `src/assets/prompts/contradiction-judge.md` (no reader since
+  `e82eec811`).
+
 ## [0.9.17-alpha.8] - 2026-09-28
 
 `akm index` now records the links a bundle already declares (`xrefs`,

@@ -11,9 +11,8 @@ import { akmShowUnified } from "../../src/commands/read/show";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { akmIndex } from "../../src/indexer/indexer";
-import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
+import { openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -44,7 +43,6 @@ beforeEach(async () => {
   });
   writeIndexFixture();
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  installGraphFixture();
   const state = openStateDatabase();
   state.prepare("DELETE FROM usage_events").run();
   state.close();
@@ -80,13 +78,6 @@ function writeIndexFixture(): void {
   writeAsset(
     storage.stashDir,
     "knowledge",
-    "graph-target",
-    "description: graphneedle graph-target operational guide\nquality: curated\ntags: [graph-target]\nsearchHints: [graph-target]",
-    "Graph target body.",
-  );
-  writeAsset(
-    storage.stashDir,
-    "knowledge",
     "plain-target",
     "description: plainneedle operational guide",
     "Plain target body.",
@@ -107,30 +98,6 @@ function writeIndexFixture(): void {
     "inferred: true\nsource: memories/team-only\ndescription: team-direct-child-needle",
     "Team-only derived body.",
   );
-}
-
-function installGraphFixture(): void {
-  const db = openExistingDatabase(getDbPath());
-  try {
-    replaceStoredGraph(db, {
-      generatedAt: "2026-07-22T00:00:00.000Z",
-      stashRoot: storage.stashDir,
-      files: [
-        {
-          path: path.join(storage.stashDir, "knowledge", "graph-target.md"),
-          type: "knowledge",
-          bodyHash: "graph-body-hash",
-          extractionRunId: "graph-run-1",
-          entities: ["graphneedle", "graph", "target", "graph-target"],
-          relations: [],
-        },
-      ],
-      entities: ["graphneedle", "graph", "target", "graph-target"],
-      relations: [],
-    });
-  } finally {
-    closeDatabase(db);
-  }
 }
 
 function usageRows(): UsageRow[] {
@@ -177,14 +144,12 @@ describe("downstream value attribution", () => {
     expect(JSON.stringify({ direct, surface })).not.toContain("downstreamAttribution");
   });
 
-  test("a stored graph adds no attribution: graph files record control usage metadata", async () => {
-    const graph = await akmSearch({ query: "graphneedle", limit: 10 });
-    expect(graph.hits.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/graph-target");
-    expect(metadataFor("graphneedle", "stash//knowledge/graph-target")).toEqual({
+  test("an asset outside memory-inference exposure records control usage metadata", async () => {
+    const plain = await akmSearch({ query: "plainneedle", limit: 10 });
+    expect(plain.hits.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/plain-target");
+    expect(metadataFor("plainneedle", "stash//knowledge/plain-target")).toEqual({
       downstreamAttribution: { version: 1, control: true },
     });
-    expect(JSON.stringify(graph)).not.toContain("graph-body-hash");
-    expect(JSON.stringify(graph)).not.toContain("graph-run-1");
   });
 
   test("brief search output does not attribute stripped derived surface content", async () => {

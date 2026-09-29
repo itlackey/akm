@@ -27,7 +27,6 @@ function makeRun(overrides: Partial<ImproveRunSummary> = {}): ImproveRunSummary 
     memorySummary: base.memorySummary,
     consolidation: base.consolidation,
     memoryInference: base.memoryInference,
-    graphExtraction: base.graphExtraction,
     orphansPurged: 0,
     lintFixed: 0,
     lintFlagged: 0,
@@ -51,7 +50,6 @@ describe("renderRunsDetailMd", () => {
       "distill_q/llm-fail/judge/validator/cfg/skip",
       "cons_proc/promo/merge/del",
       "mem_cons/written/skip",
-      "graph_f/e/r",
       "orphans",
       "lint_f/fl",
       "result_status",
@@ -79,12 +77,10 @@ describe("renderRunsDetailMd", () => {
         },
         memoryPrune: 1,
         memoryInference: 1,
-        graphExtraction: 1,
         error: 0,
       },
       consolidation: { ...zeroImprove().consolidation, processed: 5, promoted: 2, merged: 1, deleted: 0 },
       memoryInference: { ...zeroImprove().memoryInference, considered: 7, written: 3, skippedNoFacts: 4 },
-      graphExtraction: { ...zeroImprove().graphExtraction, extractedFiles: 2, entities: 10, relations: 6 },
       orphansPurged: 1,
       lintFixed: 2,
       lintFlagged: 0,
@@ -93,14 +89,13 @@ describe("renderRunsDetailMd", () => {
     const lines = out.split("\n");
     expect(lines[0]).toContain("ts");
     expect(lines[0]).toContain("lint_f/fl");
-    // actions total = 2+1+0+3 + 4+0+1+0+2 + 1+1+1+0 = 16
+    // actions total = 2+1+0+3 + 4+0+1+0+2 + 1+1+0 = 15
     const data = lines[1];
     expect(data).toContain("2026-07-03T00:00:00.000Z");
     expect(data).toContain("2/1/0/3"); // reflect
     expect(data).toContain("4/0/1/0/0/2"); // distill
     expect(data).toContain("5/2/1/0"); // consolidation
     expect(data).toContain("7/3/4"); // mem inference
-    expect(data).toContain("2/10/6"); // graph
     // padded columns keep the header/data aligned to equal visual width
     expect(lines[0]!.length).toBe(lines[1]!.length);
   });

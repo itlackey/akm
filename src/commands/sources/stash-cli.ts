@@ -97,12 +97,12 @@ export const indexCommand = defineCommand({
     await runWithJsonErrors(async () => {
       if (getHyphenatedBoolean(args, "enrich") || getParsedInvocation().getFlagValue("--enrich") !== undefined) {
         throw new UsageError(
-          "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
+          "`akm index --enrich` has been removed. Metadata enrichment during indexing is retired; it never runs.",
         );
       }
       if (getHyphenatedBoolean(args, "re-enrich") || getParsedInvocation().getFlagValue("--re-enrich") !== undefined) {
         throw new UsageError(
-          "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
+          "`akm index --re-enrich` has been removed. Metadata enrichment during indexing is retired; there is nothing to re-enrich.",
         );
       }
       // #956: opt-in, non-blocking rebuild lock — never gates a human-typed

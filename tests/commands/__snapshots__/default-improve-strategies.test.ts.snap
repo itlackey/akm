@@ -3,7 +3,7 @@
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: default 1`] = `
 {
   "config": {
-    "description": "Standard improve pass — reflect, distill, advisory consolidation, graph extraction, and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
+    "description": "Standard improve pass — reflect, distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -24,9 +24,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "enabled": true,
           "minScore": 2,
         },
-      },
-      "graphExtraction": {
-        "enabled": true,
       },
       "memoryInference": {
         "enabled": true,
@@ -70,7 +67,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: quick 1`] = `
 {
   "config": {
-    "description": "Reflect-only pass — no extract, distill, consolidate, memoryInference, or graphExtraction.",
+    "description": "Reflect-only pass — no extract, distill, consolidate, or memoryInference.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -91,9 +88,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "enabled": true,
           "minScore": 2,
         },
-      },
-      "graphExtraction": {
-        "enabled": false,
       },
       "memoryInference": {
         "enabled": false,
@@ -159,9 +153,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "minScore": 2,
         },
       },
-      "graphExtraction": {
-        "enabled": true,
-      },
       "memoryInference": {
         "enabled": true,
       },
@@ -206,74 +197,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 }
 `;
 
-exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: graph-refresh 1`] = `
-{
-  "config": {
-    "description": "Full-corpus graph extraction pass — rebuilds graph relationships across all stash files. Disables all other sub-processes. Use via \`akm improve --strategy graph-refresh\` or the embedded \`graph-refresh-weekly\` task.",
-    "processes": {
-      "consolidate": {
-        "allowedTypes": [
-          "memory",
-        ],
-        "enabled": false,
-      },
-      "distill": {
-        "allowedTypes": [
-          "memory",
-        ],
-        "enabled": false,
-        "requirePlannedRefs": true,
-      },
-      "extract": {
-        "enabled": false,
-        "triage": {
-          "enabled": true,
-          "minScore": 2,
-        },
-      },
-      "graphExtraction": {
-        "enabled": true,
-        "fullScan": true,
-      },
-      "memoryInference": {
-        "enabled": false,
-      },
-      "proactiveMaintenance": {
-        "dueDays": 30,
-        "enabled": false,
-        "maxPerRun": 15,
-      },
-      "reflect": {
-        "allowedTypes": [
-          "agent",
-          "command",
-          "knowledge",
-          "lesson",
-          "memory",
-          "skill",
-          "workflow",
-        ],
-        "enabled": false,
-        "limit": 25,
-      },
-      "triage": {
-        "applyMode": "queue",
-        "enabled": false,
-        "policy": "personal-stash",
-      },
-      "validation": {
-        "enabled": false,
-      },
-    },
-    "sync": {
-      "enabled": true,
-      "push": true,
-    },
-  },
-  "name": "graph-refresh",
-}
-`;
-
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: consolidate 1`] = `
 {
   "config": {
@@ -299,9 +222,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "enabled": true,
           "minScore": 2,
         },
-      },
-      "graphExtraction": {
-        "enabled": false,
       },
       "memoryInference": {
         "enabled": false,
@@ -369,9 +289,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "minScore": 2,
         },
       },
-      "graphExtraction": {
-        "enabled": false,
-      },
       "memoryInference": {
         "enabled": false,
       },
@@ -419,7 +336,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: reflect-distill 1`] = `
 {
   "config": {
-    "description": "Reflect + distill pass — reflect, distill, memoryInference, and proposal triage (promote); proactiveMaintenance/consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+    "description": "Reflect + distill pass — reflect, distill, memoryInference, and proposal triage (promote); proactiveMaintenance/consolidate/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -442,9 +359,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "enabled": true,
           "minScore": 2,
         },
-      },
-      "graphExtraction": {
-        "enabled": false,
       },
       "memoryInference": {
         "enabled": true,
@@ -493,7 +407,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: proactive-maintenance 1`] = `
 {
   "config": {
-    "description": "Opt-in proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+    "description": "Opt-in proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -514,9 +428,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "enabled": true,
           "minScore": 2,
         },
-      },
-      "graphExtraction": {
-        "enabled": false,
       },
       "memoryInference": {
         "enabled": false,

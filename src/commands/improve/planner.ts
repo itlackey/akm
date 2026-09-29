@@ -110,7 +110,6 @@ export interface ImprovePlanProjectionInput {
   consolidation: ImproveExecutionPlan["consolidation"];
   stageConfig: {
     extract: { enabled: boolean; reason: string };
-    graphExtraction: { enabled: boolean; reason: string };
     memoryInference: { enabled: boolean; reason: string };
   };
   triage: ImproveExecutionPlan["triage"];
@@ -172,11 +171,6 @@ export function buildImproveExecutionPlan(input: ImprovePlanProjectionInput): Im
         name: "extract",
         wouldRun: input.stageConfig.extract.enabled,
         reason: input.stageConfig.extract.reason,
-      },
-      {
-        name: "graph-extraction",
-        wouldRun: input.stageConfig.graphExtraction.enabled,
-        reason: input.stageConfig.graphExtraction.reason,
       },
       {
         name: "memory-inference",

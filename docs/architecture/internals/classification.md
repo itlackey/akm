@@ -135,7 +135,7 @@ The `quality` field marks how an item was produced. Four values are well-known:
 | --- | --- |
 | `"generated"` | Heuristically indexed; included in default search |
 | `"curated"` | Human-authored; included in default search |
-| `"enriched"` | LLM enrichment pass has run for this item; included in default search |
+| `"enriched"` | Retired LLM enrichment pass (0.9.17-alpha.9) ran for this item; included in default search |
 | `"proposed"` | Pending review; excluded from default search, opt-in via `--include-proposed` |
 
 Unknown string values warn once at runtime and remain searchable.

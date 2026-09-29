@@ -52,19 +52,6 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
     if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
   }
-  const related =
-    typeof r.related === "object" && r.related !== null ? (r.related as Record<string, unknown>) : undefined;
-  const relatedHits = related && Array.isArray(related.hits) ? (related.hits as Array<Record<string, unknown>>) : [];
-  if (related) {
-    lines.push("");
-    lines.push(`related: ${String(related.total ?? relatedHits.length)}`);
-    for (const hit of relatedHits) {
-      lines.push(`  - ${String(hit.type ?? "?")}: ${formatRelatedLabel(hit)}`);
-      const shared = Array.isArray(hit.sharedEntities) ? (hit.sharedEntities as unknown[]).map(String) : [];
-      if (shared.length > 0) lines.push(`    shared: ${shared.join(", ")}`);
-      lines.push(`    relationCount: ${String(hit.relationCount ?? 0)}`);
-    }
-  }
   const links = typeof r.links === "object" && r.links !== null ? (r.links as Record<string, unknown>) : undefined;
   if (links) {
     lines.push("");
@@ -109,11 +96,4 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
   appendShowDirectives(lines, r);
 
   return lines.length > 0 ? lines.join("\n") : null;
-}
-
-function formatRelatedLabel(hit: Record<string, unknown>): string {
-  const ref = typeof hit.ref === "string" ? hit.ref : undefined;
-  if (ref) return ref;
-  const pathValue = typeof hit.path === "string" ? hit.path : "?";
-  return pathValue.split("/").pop() ?? pathValue;
 }

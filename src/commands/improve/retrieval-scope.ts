@@ -8,8 +8,8 @@
  *
  * Fresh feedback and an explicit `--scope <ref>` are usage evidence of their
  * own, so the signal-delta and scope lanes need no check. The fallback lanes
- * (proactive maintenance, high salience, forgetting safety) and consolidation
- * pick assets without such evidence, so they pick only inside this scope.
+ * (proactive maintenance, high salience) and consolidation pick assets
+ * without such evidence, so they pick only inside this scope.
  */
 
 import fs from "node:fs";
@@ -18,7 +18,7 @@ import { warn } from "../../core/warn";
 import { listUsedEntryRefs, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";
 import { listProposalRefSources } from "../../storage/repositories/proposals-repository";
-import { type LedgerAccess, readLedgerDb, stripBundle } from "./ledger";
+import { type LedgerAccess, PAIR_PASS_LEDGER_SOURCE, readLedgerDb, stripBundle } from "./ledger";
 
 /**
  * Ledger and proposal sources that bring material in. Every other source is an
@@ -57,7 +57,20 @@ export function loadRetrievalScope(
         if (conceptId.endsWith(".derived")) used.add(conceptId.slice(0, -".derived".length));
       }
       if (!stashDir) return;
-      for (const row of [...listImproveLedgerRows(db, stashDir), ...listProposalRefSources(db, stashDir)]) {
+      // Blocker 1 (second review round): a pair-pass ledger row must NOT mark
+      // an asset "processed" — unlike every other stage, the pair pass judges
+      // material against its NEIGHBOURS, not on its own merits, so its own
+      // attempt is not usage evidence the fallback lanes (proactive,
+      // high-salience) or promotion retries should be starved by. Left in
+      // the ledger for the pair pass's OWN eligibility
+      // (selectInitiators reads content_hash directly, never this scope).
+      // Proposal rows are untouched: a MINTED retire proposal is real
+      // evidence something happened to the asset.
+      for (const row of listImproveLedgerRows(db, stashDir)) {
+        if (row.source === PAIR_PASS_LEDGER_SOURCE) continue;
+        if (!CAPTURE_SOURCES.has(row.source)) processed.add(stripBundle(row.ref));
+      }
+      for (const row of listProposalRefSources(db, stashDir)) {
         if (!CAPTURE_SOURCES.has(row.source)) processed.add(stripBundle(row.ref));
       }
     });

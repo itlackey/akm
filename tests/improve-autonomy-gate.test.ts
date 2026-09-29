@@ -30,7 +30,6 @@ const DEFAULT_STRATEGY = {
     distill: { enabled: true },
     consolidate: { enabled: true, allowedTypes: ["memory"] },
     memoryInference: { enabled: true },
-    graphExtraction: { enabled: true },
     validation: { enabled: true },
     triage: { enabled: true, applyMode: "promote" as const, policy: "personal-stash" },
   },
@@ -60,7 +59,6 @@ describe("applyAutonomyGate with autonomy OFF", () => {
 
     expect(config.processes?.reflect?.enabled).toBe(true);
     expect(config.processes?.distill?.enabled).toBe(true);
-    expect(config.processes?.graphExtraction?.enabled).toBe(true);
     expect(config.processes?.validation?.enabled).toBe(true);
     // sync.push is deliberately outside this gate.
     expect(config.sync?.push).toBe(true);

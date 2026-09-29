@@ -1,1 +1,0 @@
-You extract a knowledge graph from developer notes. Return ONLY valid JSON — no prose, no markdown fences, no preamble.

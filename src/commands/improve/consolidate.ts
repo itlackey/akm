@@ -5,12 +5,19 @@
 /**
  * `akm consolidate` — show the model the memory pool in chunks of similar
  * memories and queue a knowledge proposal for each memory it says should be
- * promoted. Promotion is the only operation: it emits a reviewable proposal and
- * never touches the memory. Memories the improve ledger judged recently and
+ * promoted. Promotion emits a reviewable proposal and never touches the
+ * memory directly; accepting it later retires the source memory (O1, in
+ * `proposal/repository.ts`). Memories the improve ledger judged recently and
  * that have not changed since are not judged again.
  *
- * Accounting invariant: `processed == promoted + judgedNoAction +
- * Σ(skipReasons) + failedChunkMemories`.
+ * Accounting invariant (the promote pass only): `processed == promoted +
+ * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
+ *
+ * A second pass, the pair pass (`consolidate/pair-pass.ts`, alpha.9), runs
+ * alongside this one and keeps its own separate counters (`pairPass` on the
+ * result) — it judges near-duplicate and superseding pairs across the wider
+ * memory tier and mints `retire` proposals; see that module's own doc
+ * comment.
  */
 
 import fs from "node:fs";
@@ -25,7 +32,6 @@ import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
-import { parseSinceToIsoLenient } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { deriveInstallations } from "../../indexer/installations";
@@ -40,8 +46,7 @@ import {
   openExistingDatabase,
   openReadonlyExistingDatabase,
 } from "../../storage/repositories/index-connection";
-import { findEntryIdByRef, getAllEntries, getEntryById } from "../../storage/repositories/index-entries-repository";
-import { getNeighborsByEntryId } from "../../storage/repositories/index-vec-repository";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { listProposals, listProposalsReadOnly, type ProposalsContext, proposalContent } from "../proposal/repository";
 import {
   hasHotCaptureMode,
@@ -49,6 +54,7 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
@@ -125,17 +131,10 @@ export interface AkmConsolidateOptions {
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
   llmRunner?: LlmRunner | null;
   onNotices?: NoticeSink;
-  /**
-   * Consider only memories modified after this ISO time plus their nearest
-   * indexed neighbours; falls back to the full pool when the index cannot answer.
-   */
-  incrementalSince?: string;
   /** Chunk size cap (1–50). */
   maxChunkSize?: number;
-  /** Memories processed per pass, after incremental narrowing. */
+  /** Memories processed per pass. */
   limit?: number;
-  /** Neighbours per changed memory in incremental mode (default 5). */
-  neighborsPerChanged?: number;
   /** Stamped on every proposal (default `consolidate-<startMs>`). */
   sourceRun?: string;
   proposalsCtx?: ProposalsContext;
@@ -152,7 +151,8 @@ export interface AkmConsolidateOptions {
 
 /**
  * Structured-output schema for a plan. Promote-only: merge/delete/contradict
- * were advisory, never executed, and cost thousands of completion tokens.
+ * were removed in 0.9.17-alpha.1 (`e82eec811`) after running in production —
+ * they cost thousands of completion tokens.
  */
 export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -573,15 +573,6 @@ export function inspectConsolidationPool(
     isInRetrievalScope(retrievalScope, conceptIdFromTypeName("memory", memory.name), memory.filePath),
   );
   const outsideRetrievalScope = beforeScope - memories.length;
-  if (opts.incrementalSince && memories.length > 0) {
-    memories = narrowToIncrementalCandidates(
-      memories,
-      opts.incrementalSince,
-      warnings,
-      opts.neighborsPerChanged,
-      readOnly,
-    );
-  }
   const dedupPoolSize = memories.length;
   if (opts.limit === undefined && memories.length > 150) {
     warnings.push(
@@ -852,6 +843,12 @@ async function consolidate(
     );
   }
   const target = opts.target ?? stashDir;
+  // The pair pass (alpha.9) has its own initiator/candidate selection (it
+  // sees .derived memories, flat knowledge and lessons, not just the
+  // promote pool above), so it runs regardless of whether the promote pool
+  // is empty — every return path below carries its result.
+  const pairPassBundleId = resolveConsolidationSourceOwner(opts, stashDir)?.bundleId;
+  const pairPass = await runConsolidatePairPass(opts, config, stashDir, pairPassBundleId, warnings);
   if (memories.length === 0) {
     return makeConsolidateResult({
       dryRun: opts.dryRun ?? false,
@@ -859,6 +856,7 @@ async function consolidate(
       warnings,
       durationMs: Date.now() - startMs,
       prefilteredAlreadyPromoted,
+      pairPass,
     });
   }
   const acc: ConsolidateAccounting = {
@@ -887,7 +885,7 @@ async function consolidate(
     prefilteredAlreadyPromoted,
     durationMs: Date.now() - startMs,
   });
-  if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true });
+  if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true, pairPass });
   warn(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
   const ctx: PromoteContext = {
     config,
@@ -920,6 +918,7 @@ async function consolidate(
     ...summary(),
     promoted: ctx.promoted,
     failedPromotions: ctx.promotionFailures.count,
+    pairPass,
     perfTelemetry: {
       dedupPoolSize: pool.dedupPoolSize,
       llmPoolSize: plan.llmPoolSize,
@@ -1022,6 +1021,12 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
   } catch (e) {
     return skip("promote_read_failed", `Promote: could not read ${op.ref}: ${String(e)}`);
   }
+  // O1 hash nit: the RAW body, before sanitization — accept re-reads the
+  // source with a plain fs.readFileSync and never re-sanitizes, so hashing
+  // anything else here would compare two different representations of the
+  // same unedited memory and report a false "changed since mint" (measured:
+  // 3 of 767 real memories sanitize to different bytes than their raw body).
+  const sourceRawBodyHash = contentHash(memoryContent, "body");
   const sanitized = sanitizeMergedContent(memoryContent);
   if (!sanitized.ok) {
     return skip(
@@ -1098,6 +1103,14 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       // The ledger keys the attempt by the source memory.
       attemptedRefs: [op.ref],
+      // O1 (alpha.9): on accept, promoteProposal retires this source memory
+      // (and its .derived twin) so promotion no longer leaves a duplicate.
+      promotionSource: op.ref,
+      // B3: recorded so accept can refuse to archive a source that was
+      // edited after this promotion was queued — the RAW body hash (see
+      // sourceRawBodyHash's own comment above), not `bodyHash`, which is the
+      // sanitized-for-knowledge representation accept never re-derives.
+      promotionSourceHash: sourceRawBodyHash,
     });
     ctx.promoted.push(proposal.id);
     ctx.promotedSourceRefs.add(op.ref);
@@ -1105,56 +1118,6 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     ctx.promotionFailures.count++;
     skip("promote_create_failed", `Promote: createProposal failed for ${op.ref}: ${String(e)}`);
   }
-}
-
-/**
- * {changed} ∪ {top-k indexed neighbours of each changed memory}, within the
- * pool: nothing changed → []; everything changed or no index → the full pool.
- */
-export function narrowToIncrementalCandidates(
-  memories: MemoryEntry[],
-  since: string,
-  warnings: string[],
-  neighborsPerChanged = 5,
-  readOnly = false,
-): MemoryEntry[] {
-  // Lenient: a garbage `since` passes through and selects nothing.
-  const sinceIso = parseSinceToIsoLenient(since);
-  const changed = memories.filter((m) => {
-    try {
-      return fs.statSync(m.filePath).mtime.toISOString() > sinceIso;
-    } catch {
-      return true; // never silently drop a memory we cannot stat
-    }
-  });
-  if (changed.length === 0) return [];
-  if (changed.length === memories.length) return memories;
-  const inPool = new Set(memories.map((m) => m.name));
-  const keep = new Set(changed.map((m) => m.name));
-  let db: ReturnType<typeof openExistingDatabase> | undefined;
-  try {
-    db = readOnly ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
-    if (!db) return memories;
-    for (const m of changed) {
-      const id = findEntryIdByRef(db, conceptIdFromTypeName("memory", m.name));
-      if (id === undefined) continue;
-      for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged + 1)) {
-        if (hit.id === id) continue;
-        const name = getEntryById(db, hit.id)?.entry.name;
-        if (name && inPool.has(name)) keep.add(name);
-      }
-    }
-  } catch {
-    warnings.push("Incremental consolidation: index unavailable — processing full pool.");
-    return memories;
-  } finally {
-    if (db) closeDatabase(db);
-  }
-  const candidates = memories.filter((m) => keep.has(m.name));
-  warnings.push(
-    `Incremental consolidation: ${changed.length} changed + neighbours → ${candidates.length}/${memories.length} memories considered (since ${since}${sinceIso !== since ? ` = ${sinceIso}` : ""}).`,
-  );
-  return candidates;
 }
 
 /** The target bundle's eligible memories from the index, else walked from disk. */

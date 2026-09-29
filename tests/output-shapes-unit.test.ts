@@ -706,6 +706,67 @@ describe("shapeProposal* — proposal commands", () => {
     expect((out.payload as Record<string, unknown>).content).toBe("BODY");
   });
 
+  // alpha.9: a consolidate retire proposal's payload.content is empty by
+  // design (it deletes, it does not write) — `retirement` is the field a
+  // reviewer needs instead, so it must survive shaping at normal AND full,
+  // the same way confidence/gateDecision already do.
+  const retireProposal: Record<string, unknown> = {
+    ...fullProposal,
+    source: "consolidate-pair",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      cosine: 0.94,
+      judgeLabel: "duplicate",
+      judgeReason: "same durable facts",
+      retiredContentHash: "a".repeat(64),
+      successorContentHash: "b".repeat(64),
+      reason: "duplicate",
+    },
+    retiredArchive: { dirs: [".akm/memory-cleanup/archive/x"] },
+    promotionSource: "memories/some-source",
+    promotionSourceHash: "c".repeat(64),
+  };
+
+  test("shapeProposalEntry normal keeps retirement; drops retiredArchive/promotionSource(Hash)", () => {
+    const out = shapeProposalEntry(retireProposal, "normal");
+    expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
+    expect(out).not.toHaveProperty("retiredArchive");
+    expect(out).not.toHaveProperty("promotionSource");
+    expect(out).not.toHaveProperty("promotionSourceHash");
+  });
+
+  test("shapeProposalEntry full keeps retirement, retiredArchive and promotionSource(Hash)", () => {
+    const out = shapeProposalEntry(retireProposal, "full");
+    expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
+    expect(out.retiredArchive).toEqual(retireProposal.retiredArchive as Record<string, unknown>);
+    expect(out.promotionSource).toBe("memories/some-source");
+    expect(out.promotionSourceHash).toBe("c".repeat(64));
+  });
+
+  test("shapeProposalEntry brief drops retirement — brief is id/ref/status/source/createdAt only", () => {
+    const out = shapeProposalEntry(retireProposal, "brief");
+    expect(out).not.toHaveProperty("retirement");
+    expect(out).not.toHaveProperty("continuityRisk"); // this fixture is not flagged
+  });
+
+  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal (round 3)", () => {
+    // `proposal list`'s DEFAULT detail level is "brief" (no --detail flag
+    // given projects here) — retirement itself is not restored until
+    // "normal", so without this marker a flagged proposal would be
+    // indistinguishable from a clean one in the default listing.
+    const flagged: Record<string, unknown> = {
+      ...retireProposal,
+      retirement: {
+        ...(retireProposal.retirement as Record<string, unknown>),
+        continuityRisk: { failingQueries: 1, ranks: [{ query: "q", retiredRank: 1, successorRank: null }] },
+      },
+    };
+    const out = shapeProposalEntry(flagged, "brief");
+    expect(out.continuityRisk).toBe(true);
+    expect(out).not.toHaveProperty("retirement"); // still brief otherwise — no other retirement field leaks through
+  });
+
   test("shapeProposalListOutput shapes nested proposals + carries totalCount", () => {
     const result = { schemaVersion: 1, totalCount: 2, proposals: [fullProposal, fullProposal] };
     const brief = shapeProposalListOutput(result, "brief");

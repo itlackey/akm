@@ -37,7 +37,6 @@ import {
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import { getFilePathsByBundle, renameEntriesBundleId } from "../storage/repositories/index-entries-repository";
-import { renameLlmCacheAssetRefs } from "../storage/repositories/index-llm-cache-repository";
 import { countProposalsForBundleRename, renameProposalsBundleRef } from "../storage/repositories/proposals-repository";
 import {
   countTaskHistoryTargetRefs,
@@ -317,18 +316,13 @@ export async function renameBundle(
   await renameLockEntry(oldId, newId);
 
   // Index: bundle_id/item_ref on every entry row (see index-entries-repository's
-  // renameEntriesBundleId docstring for why no FTS/vector rebuild is needed),
-  // and the metadata-enrichment LLM cache keyed by the same canonical
-  // item_ref — in the SAME write, so a rename can never land between the two
-  // and leave the cache stranded under the old prefix (the next `akm index`'s
-  // clearStaleCacheEntries would then delete it, forcing a full re-enrich).
+  // renameEntriesBundleId docstring for why no FTS/vector rebuild is needed).
   const readIndexDb = openReadonlyExistingDatabase(getDbPath());
   if (readIndexDb) {
     closeDatabase(readIndexDb);
     const writeIndexDb = openIndexDatabase(getDbPath());
     try {
       renameEntriesBundleId(writeIndexDb, oldId, newId);
-      renameLlmCacheAssetRefs(writeIndexDb, oldId, newId);
     } finally {
       closeDatabase(writeIndexDb);
     }

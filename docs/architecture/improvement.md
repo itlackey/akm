@@ -64,8 +64,13 @@ everything else routes through `akm proposal accept`.
    retrieval scope below, then runs whichever processes the selected strategy
    enables against each one.
 4. Reflect and distill each emit at most one proposal per asset per run;
-   consolidate emits proposals for memory `promote` operations and returns
-   `merge`/`delete`/`contradict` operations as advisory (non-writing) output.
+   consolidate runs two passes alongside each other — the promote pass emits
+   a proposal turning a memory into knowledge (and, once accepted, retires
+   the source memory), and the pair pass judges near-duplicate and
+   superseding pairs in the memory tier and emits a reviewed `retire`
+   proposal for the `duplicate`/`subsumed`/`supersedes` classes; `overlap`,
+   `unrelated` and `contradicts` are recorded as `judged_no_action` with no
+   proposal.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
@@ -101,7 +106,7 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `memory-focus`, `graph-refresh`,
+set: `default`, `quick`, `thorough`, `memory-focus`,
 `frequent`, `consolidate`, `catchup`, `reflect-distill`, and
 `proactive-maintenance` (`src/assets/improve-strategies/*.json`). Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
@@ -120,8 +125,8 @@ that "off" rather than defaulting to on.
 
 Improve reworks only what gets read (#986). Fresh feedback and an explicit
 `--scope <ref>` are usage evidence of their own. Every other pick — the
-proactive-maintenance, high-salience and forgetting-safety lanes, and the
-memories consolidation judges — must be in the retrieval scope
+proactive-maintenance and high-salience lanes, and the memories consolidation
+judges — must be in the retrieval scope
 (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
@@ -161,6 +166,54 @@ query grades, which puts 3 of 60 rewrites in the "lower" bucket by noise
 alone. The threshold for building it was fixed before judging: a lower bound of
 at least 10%.
 
+### Retirement continuity
+
+Before the consolidate pair pass mints a `retire` proposal (rule R3,
+`src/commands/improve/consolidate/continuity-check.ts`), it replays up to five
+of the retired asset's own past `search`/`curate` queries
+(`loadRetrievalQueries`, the same cleaned set `../retrieval-gate.ts` replays
+for the retrieval regression gate — boilerplate, harness/tool envelopes,
+pastes and near-duplicates dropped before replay, S3a) through akm's own
+search, in-process — the ranking a user actually gets, no LLM. For every
+query where the retired asset ranked in the top 10, the successor must too
+(N2: compared directly — search itself returns at most the top 10 hits, so
+"ranked" and "absent from those hits" are the only two states there are, no
+generic rank-change-report abstraction needed). An asset with no recorded
+queries is not checked at all, and neither is a pair whose two bodies are
+content-identical once whitespace is collapsed (S3b) — search's own
+content-dedupe already hides the successor behind the retired asset for
+every such query, so a "successor missing" finding there would not be a
+real risk.
+
+A failing pair still mints — the check flags, it never blocks — but the
+proposal carries `continuityRisk` in its retirement metadata: the failing
+query count and the rank pairs, visible in `akm proposal show`/`list`. A
+flagged proposal is excluded from every bulk accept path (`accept
+--generator …`, with or without `--yes`); a person can still accept it by id.
+Bulk *reject* is unaffected, since declining a flagged proposal is always the
+safe direction.
+
+A query that never ran (the search call threw) or that fell back to
+keyword-only ranking instead of the real one (`mode: "fts-fallback"` — most
+often a down or unreachable embedding endpoint) is "unverified": it is never
+compared for rank at all, and on its own it is enough to set
+`continuityRisk` (`unverifiedQueries` alongside the usual `ranks`), so an
+endpoint outage reads as "risk unknown," never as the silent "no risk
+found" a search that quietly used a degraded ranking would otherwise
+produce. Once any query in a pair-pass run falls back, every later query in
+that same run skips the semantic attempt entirely and goes straight to
+keyword-only — a dead endpoint costs one failed attempt for the whole run,
+not one per remaining query.
+
+This check replaces the old per-run forgetting-safety lane (a one-time WS-1
+cutover guard that compared improve's own salience ranking before and after
+each run). The 30-day event window showed it made no pick the signal-delta
+lane or the retrieval scope would not also have made, and it protected
+`asset_salience.rank_score`, which only improve itself ever read — a rank drop
+could not hide anything from search. `forgetting-safety` stays a valid
+`eligibilitySource`/event-type value so old proposals and events still decode,
+but nothing assigns or emits it any more.
+
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
@@ -197,8 +250,8 @@ unbounded, `totalCeiling` is omitted.
 ### The autonomy gate
 
 `akm improve` runs by default and is review-first: reflect, distill, extract
-candidates, validation, proactive-maintenance selection, and graph extraction
-are proposal-only and never write assets directly regardless of this gate.
+candidates, validation, and proactive-maintenance selection are proposal-only
+and never write assets directly regardless of this gate.
 Three specific lanes *would* mutate assets without review and are downgraded
 unless `experimental.improveAutonomy` is explicitly set to `true`:
 
@@ -211,8 +264,10 @@ unless `experimental.improveAutonomy` is explicitly set to `true`:
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
 `akm health`'s improve skip-reason summary. Consolidation stays enabled with
-autonomy off, because its merge/delete/contradict operations are advisory and
-promotion only ever emits a reviewable proposal. An absent `experimental`
+autonomy off: both its passes only ever emit a reviewable proposal, and a
+pair-pass `retire` proposal is never auto-accepted by `triage`
+`applyMode: "promote"` regardless of this gate — it always waits for
+`akm proposal accept`. An absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off —
 autonomy is never inferred. `akm proposal drain --promote` is a second,
 explicit promote surface independent of this gate.
@@ -239,6 +294,34 @@ the final on-disk state is what lands — a path written and then reverted or
 purged produces no commit at all. The run reports its journal as
 `writtenPaths` on the improve result. Callers that supply no explicit path list
 (`akm sync`, `akm push`) keep the managed-pathspec fallback in `saveGitStash`.
+
+### Archive purge
+
+A retirement's archived bytes (`.akm/memory-cleanup/archive/<stamp>-<ref>/`)
+are not deleted at accept time — only the tombstone (`cleanup.md`) resolves
+the ref going forward. `purgeGracedArchive`
+(`src/commands/improve/memory/memory-improve.ts`) sweeps them later: run once
+at the very start of every `akm improve` invocation, deterministic, no LLM,
+before index bootstrap or triage. For a git-backed bundle, it deletes the
+archived asset file(s) — never `cleanup.md` — of every retirement whose
+tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`) AND
+whose archive directory is entirely git-tracked and clean (`git ls-files`
+plus `git status --porcelain -uall`, both checked once per sweep, not once
+per directory). `.git` presence alone does not guarantee a retirement was
+ever committed: `akm proposal accept` only commits for a `kind: "git"` write
+target (`commitWriteTargetBoundary` in `src/core/write-source.ts`), and `akm
+improve`'s own auto-sync only stages the paths that same run wrote — a
+standalone `akm proposal accept` call, or any accept on a `kind:
+"filesystem"` source that merely happens to have a `.git` directory on disk,
+can leave archived bytes sitting on disk with no commit behind them at all.
+A directory with even one untracked or modified file (the tombstone
+included) is left whole for a later sweep, so the purge only ever removes
+bytes git can already recover. Every deleted path is journaled individually,
+so the end-of-run auto-sync commits the removal the same way it commits the
+archive move itself. A bundle with no `.git` of its own has no history to
+fall back on, so its archive is left untouched — `akm health` reports its
+size and file count instead (`memory-cleanup-archive` advisory,
+`src/commands/health/archive-usage.ts`).
 
 ### Session extraction
 

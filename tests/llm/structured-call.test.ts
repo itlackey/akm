@@ -4,7 +4,7 @@
  * `callStructured` centralizes the replicated
  *   `tryLlmFeature -> chatCompletion -> classify(context/html/other) ->
  *    parse/validate -> fallback/telemetry`
- * scaffold shared by memory-infer / metadata-enhance / graph-extract.
+ * scaffold used by memory-infer.
  *
  * These tests pin the seam CONTRACT by injecting a fake chat (so no real
  * network call happens) and asserting the observable wiring:
@@ -174,7 +174,7 @@ describe("callStructured contract", () => {
     const boom = new Error("ungated propagation");
     const onErrorCalls: LlmErrorClass[] = [];
     const promise = callStructured<string>({
-      feature: "metadata_enhance",
+      feature: "memory_inference",
       akmConfig: undefined, // UNGATED: run directly, propagate errors
       runner: runner(),
       messages: MESSAGES,
@@ -434,7 +434,7 @@ describe("callStructured contract", () => {
     await withEnv({ AKM_STRUCTURED_SECRET: secret }, async () => {
       try {
         await callStructured<string>({
-          feature: "metadata_enhance",
+          feature: "memory_inference",
           runner: runner(PROFILE, { credential: { names: ["AKM_STRUCTURED_SECRET"], required: true } }),
           messages: [{ role: "user", content: "redact failures" }],
           request: {

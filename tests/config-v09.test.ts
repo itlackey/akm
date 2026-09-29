@@ -9,10 +9,13 @@ import type { AkmConfig } from "../src/core/config/config";
 import {
   bundlesToSourceEntries,
   loadUserConfig,
+  mutateConfig,
   normalizeConfigFile,
   resetConfigCache,
   resolveConfiguredSources,
   saveConfig,
+  unknownConfigKeyPaths,
+  updateConfig,
 } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
 import { configSet } from "../src/core/config/config-walker";
@@ -275,6 +278,69 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).not.toThrow();
   });
 
+  test("item 3: incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
+    const consolidatePath = ["improve", "strategies", "default", "processes", "consolidate"];
+    writeConfig({
+      configVersion: "0.9.0",
+      improve: {
+        strategies: {
+          default: { processes: { consolidate: { incrementalSince: "24h", neighborsPerChanged: 3, limit: 5 } } },
+        },
+      },
+    });
+
+    // One warning apiece, no error — and not hidden by a catchall (unlike
+    // index.<passName> — consolidate is a plain .passthrough() object, so the
+    // generic unknown-key sweep sees straight through to these two fixed
+    // field names). Load and warning-capture happen in the SAME call:
+    // loadUserConfig() caches, so a second call would silently skip the warn.
+    let config!: ReturnType<typeof loadUserConfig>;
+    const warnings = captureWarnings(() => {
+      expect(() => {
+        config = loadUserConfig();
+      }).not.toThrow();
+    });
+    const unknown = unknownConfigKeyPaths(config as unknown as Record<string, unknown>).map((p) => p.join("."));
+    expect(unknown).toContain([...consolidatePath, "incrementalSince"].join("."));
+    expect(unknown).toContain([...consolidatePath, "neighborsPerChanged"].join("."));
+    const keyWarnings = warnings.filter((w) => /unknown config key/i.test(w));
+    expect(keyWarnings).toHaveLength(2);
+    expect(
+      keyWarnings.some((w) => w.includes('"improve.strategies.default.processes.consolidate.incrementalSince"')),
+    ).toBe(true);
+    expect(
+      keyWarnings.some((w) => w.includes('"improve.strategies.default.processes.consolidate.neighborsPerChanged"')),
+    ).toBe(true);
+
+    // Survives an ordinary config write: updateConfig reads the current file
+    // (retired keys and all), merges an unrelated change, and writes it back.
+    updateConfig({ improve: { strategies: { default: { processes: { consolidate: { limit: 7 } } } } } });
+    const afterWrite = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    const consolidateOnDisk = afterWrite.improve.strategies.default.processes.consolidate;
+    expect(consolidateOnDisk.incrementalSince).toBe("24h");
+    expect(consolidateOnDisk.neighborsPerChanged).toBe(3);
+    expect(consolidateOnDisk.limit).toBe(7);
+
+    // Only `akm migrate apply` drops it. Preview alone changes nothing on disk.
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview.changed).toBe(true);
+    expect(
+      preview.keys.some((k) => k === "improve") ||
+        preview.keys.includes("improve.strategies.default.processes.consolidate.incrementalSince"),
+    ).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve.strategies.default.processes.consolidate
+        .incrementalSince,
+    ).toBe("24h");
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const afterApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve.strategies.default.processes
+      .consolidate;
+    expect(afterApply.incrementalSince).toBeUndefined();
+    expect(afterApply.neighborsPerChanged).toBeUndefined();
+    expect(afterApply.limit).toBe(7); // the still-valid key is untouched
+  });
+
   test("rejects an improve process that selects a missing or incompatible engine", () => {
     writeConfig({
       configVersion: "0.9.0",
@@ -368,6 +434,34 @@ describe("0.9 config contract", () => {
     expect(validateConfigShape({ configVersion: "0.9.0", index: { stalenessDetection: { enabled: true } } }).ok).toBe(
       true,
     );
+  });
+
+  test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      index: { metadataEnhance: { enabled: true }, defaults: { engine: "index" } },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().index?.defaults?.engine).toBe("index");
+    });
+    const named = warnings.filter((w) => w.includes("index.metadataEnhance"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("dropped by `akm migrate apply`");
+
+    // An unrelated ordinary write (`akm config set`, the adapter-detection
+    // persist `akm index` does) is not the cleanup path — it must not
+    // silently strip the retired key.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    const afterOrdinaryWrite = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(afterOrdinaryWrite.index.metadataEnhance).toEqual({ enabled: true });
+    expect(afterOrdinaryWrite.archiveRetentionDays).toBe(30);
+
+    // Only an explicit `akm migrate apply` removes it.
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const afterMigrateApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(afterMigrateApply.index.metadataEnhance).toBeUndefined();
+    expect(afterMigrateApply.index.defaults).toEqual({ engine: "index" });
   });
 
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {

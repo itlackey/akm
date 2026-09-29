@@ -23,7 +23,6 @@ const BUILTIN_STRATEGIES = [
   "default",
   "quick",
   "thorough",
-  "graph-refresh",
   "consolidate",
   "catchup",
   "reflect-distill",
@@ -108,7 +107,6 @@ describe("default improve strategies (#552)", () => {
     expect(p.processes?.reflect?.enabled).toBe(false);
     expect(p.processes?.distill?.enabled).toBe(false);
     expect(p.processes?.memoryInference?.enabled).toBe(false);
-    expect(p.processes?.graphExtraction?.enabled).toBe(false);
     expect(p.processes?.extract?.enabled).toBe(false);
     expect(p.processes?.triage?.enabled).toBe(false);
     expect(p.sync?.push).toBe(true);
@@ -130,7 +128,6 @@ describe("default improve strategies (#552)", () => {
     expect(p.processes?.reflect?.enabled).toBe(false);
     expect(p.processes?.distill?.enabled).toBe(false);
     expect(p.processes?.memoryInference?.enabled).toBe(false);
-    expect(p.processes?.graphExtraction?.enabled).toBe(false);
     expect(p.processes?.extract?.enabled).toBe(false);
     expect(p.sync?.push).toBe(true);
   });

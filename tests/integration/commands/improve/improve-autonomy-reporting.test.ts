@@ -23,7 +23,6 @@ const config = {
           distill: { enabled: false },
           consolidate: { enabled: false, contradictionDetection: { enabled: true } },
           memoryInference: { enabled: false },
-          graphExtraction: { enabled: false },
           extract: { enabled: false },
           validation: { enabled: false },
           triage: { enabled: false },
@@ -100,7 +99,6 @@ describe("review-first improve autonomy reporting", () => {
       runImprovePostLoopStageFn: (async () => ({
         allWarnings: [],
         memoryInferenceDurationMs: 0,
-        graphExtractionDurationMs: 0,
       })) as never,
     });
 

@@ -189,7 +189,6 @@ function renderExecSummary(vm: HealthReportViewModel): string {
   const trendRows = [
     trendLi("Decision quality", vm.trend.decisionQuality),
     trendLi("Output volume", vm.trend.outputVolume),
-    trendLi("Failures", vm.trend.failures),
     trendLi("Latency", vm.trend.latency),
   ].join("");
 
@@ -214,7 +213,6 @@ function renderExecSummary(vm: HealthReportViewModel): string {
           `<abbr title="Candidates reviewed but intentionally left unchanged on this run.">${vm.latest.judgedNoAction}</abbr>`,
         ),
         li("MI written", String(vm.latest.miWritten)),
-        li("Graph entities/relations", `${vm.latest.geEntities} / ${vm.latest.geRelations}`),
       ].join("")
     : '<li><span class="k">No runs in window</span><span class="v">—</span></li>';
 
@@ -275,7 +273,7 @@ function renderExecSummary(vm: HealthReportViewModel): string {
       </div>
     </div>
     <div class="overall">Overall trend: <b>${esc(vm.trend.overall)}</b> ${overallEmoji}
-      &nbsp;·&nbsp; based on decision quality, output volume, failures, and latency ${
+      &nbsp;·&nbsp; based on decision quality, output volume, and latency ${
         vm.comparisonMode === "custom" ? "across the selected windows" : "vs the prior window"
       }.</div>`.trim();
 }
@@ -308,12 +306,6 @@ function renderKpiCards(vm: HealthReportViewModel): string {
     kpiCard("neutral", "Median Duration", `${vm.medianDurMin}m`, `p95 = ${vm.p95DurMin}m`),
     kpiCard("blue", "Total Promoted", num(vm.consolidation.promoted), `avg ${vm.avgPromoted} / run`),
     kpiCard("blue", "MI Written", num(vm.miWritten), `${vm.miYieldRate} yield rate`),
-    kpiCard(
-      "purple",
-      "Graph Entities",
-      num(vm.graphExtraction.entities),
-      `+${num(vm.graphExtraction.relations)} relations`,
-    ),
     kpiCard(
       "neutral",
       "Stash Derived",

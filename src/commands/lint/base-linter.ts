@@ -220,12 +220,14 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
   for (const root of stashRoots) {
     if (resolveRefPathInStash(relPath, refType, refName, root) !== null) return true;
   }
-  // #884: a memory pruned by `analyzeMemoryCleanup` was ARCHIVED, not deleted —
-  // its bytes and identity live on under `.akm/memory-cleanup/archive`. Inbound
-  // belief edges to it are satisfied, not dangling, so resolve the tombstone
-  // rather than reporting `missing-ref`. Checked only after every live location
-  // misses: a tombstone must never shadow a real file, and the scan then costs
-  // one directory read per root instead of one per ref.
+  // #884: an asset `analyzeMemoryCleanup` pruned, or (alpha.9) a consolidate
+  // pair-pass `retire` proposal or a promotion's source memory retired, was
+  // ARCHIVED, not deleted — its bytes and identity live on under
+  // `.akm/memory-cleanup/archive`. Inbound refs to it are satisfied, not
+  // dangling, so resolve the tombstone rather than reporting `missing-ref`.
+  // Checked only after every live location misses: a tombstone must never
+  // shadow a real file, and the scan then costs one directory read per root
+  // instead of one per ref.
   //
   // Existence ONLY. `resolveRefPathInStash` deliberately does NOT consult the
   // archive: it hands back a path callers MUTATE (SPEC-5 `--supersedes`
@@ -248,12 +250,19 @@ function refPathCandidates(refType: string, typeDir: string, refName: string): s
 }
 
 /**
- * True when `(refType, refName)` names a memory that prune archived in any
- * root. Mirrors `resolveRefPathInStash`'s candidate set so a ref that resolved
- * through the `.derived.md` child (#882) still resolves once archived.
+ * True when `(refType, refName)` names an asset the cleanup archive holds a
+ * tombstone for, in any root. Mirrors `resolveRefPathInStash`'s candidate set
+ * so a memory ref that resolved through the `.derived.md` child (#882) still
+ * resolves once archived.
+ *
+ * Originally memory-only (#884: only `.derived` memories were ever pruned).
+ * 0.9.17-alpha.9 generalized `archiveCleanupCandidate` to any memory,
+ * knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
+ * accepted promotion's source memory), so this must check every type, not
+ * just `memory` — otherwise an xref to a retired knowledge or lesson asset
+ * reports `missing-ref` even though it resolves fine through the tombstone.
  */
 function memoryArchiveHasRef(refType: string, refName: string, stashRoots: string[]): boolean {
-  if (refType !== "memory") return false; // only memories are ever archived
   const typeDir = stashDirFor(refType);
   if (typeDir === undefined) return false;
   const candidates = refPathCandidates(refType, typeDir, refName);

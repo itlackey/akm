@@ -315,8 +315,7 @@ export function isContextExceededResponse(status: number, body: string): boolean
  * Resolve the effective in-flight request window for `RemoteEmbedder.embedBatch`.
  * Default (unset `embedding.concurrency`): 1 for a loopback endpoint, 2 for a
  * remote one, via the shared `defaultConcurrencyForEndpoint`
- * (`src/core/loopback.ts`), the same lowest-common-denominator rule
- * `getDefaultLlmConcurrency` (`src/indexer/indexer.ts`) uses.
+ * (`src/core/loopback.ts`).
  *
  * `embedding.concurrency` (#954) overrides this default in
  * either direction, bounded 1-16 at the config schema — added after field

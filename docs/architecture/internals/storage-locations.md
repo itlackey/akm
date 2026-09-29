@@ -118,8 +118,10 @@ Opened by:
   derived tables, and a one-time rebuild of the FTS table from `entries` when
   it still carries the layout-23 content copies. Crossing to layout 26
   derives `asset_links` from the stored `document_json`. `embeddings`,
-  `utility_scores*`, `graph_*`, and `llm_enrichment_cache` are never dropped
-  to cross a layout change. A newer layout is refused, naming the upgrade.
+  `utility_scores*`, and `llm_enrichment_cache` are never dropped to cross a
+  layout change. The one exception is the LLM entity graph (`graph_meta`,
+  `graph_files`, `graph_file_*`), retired in 0.9.17-alpha.9: those tables are
+  dropped unconditionally. A newer layout is refused, naming the upgrade.
 - `openExistingDatabase()` / `openReadonlyExistingDatabase()` — no schema
   mutation; serve an older layout as-is (named once on stderr) and refuse a
   newer one (`INDEX_SCHEMA_INCOMPATIBLE`, "Upgrade akm to use this index.").
@@ -127,8 +129,8 @@ Opened by:
 **Retention:** `index.db` is a regenerable derived cache. The one
 from-scratch rebuild is on-disk corruption (`SQLITE_CORRUPT`, #865): the file
 is deleted and rebuilt. An `entries` table older than layout 21 (no
-`item_ref`) has its entries-keyed tables recreated; graph data and the LLM
-enrichment cache are kept. This path never modifies `state.db`.
+`item_ref`) has its entries-keyed tables recreated; the LLM enrichment
+cache is kept. This path never modifies `state.db`.
 `clearStaleCacheEntries()` removes orphaned LLM cache rows. `akm index`
 VACUUMs the file at the end of a run after a layout migration (the writable
 opener sets `index_meta.vacuumPending`) and whenever more than half its pages
@@ -218,7 +220,8 @@ Derived from the entry's `document_json` (`src/indexer/links/declared-links.ts`)
 and replaced in the same transaction as its `entries` upsert; deletes remove
 the rows before the parent. Whether a target exists is a join on
 `entries.item_ref` at read time; a memory target whose own entry is gone
-resolves to its `.derived` child. Separate from the LLM graph (`graph_*`) tables.
+resolves to its `.derived` child. The `graph_*`-tabled LLM entity graph this
+superseded was retired in 0.9.17-alpha.9.
 
 #### Table: `embeddings`
 
@@ -261,8 +264,8 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 
 | Column | Type | Notes |
 |---|---|---|
-| `asset_ref` | TEXT NOT NULL | Absolute file path or `entryKey:passId` |
-| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Graph extraction uses an extractor-specific variant; other passes currently use the empty-string default. |
+| `asset_ref` | TEXT NOT NULL | Absolute file path |
+| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Memory inference uses a version-tagged variant (`memory-inference-v2`). |
 | `body_hash` | TEXT NOT NULL | SHA-256 hex digest of file body |
 | `result_json` | TEXT NOT NULL | Serialized LLM enrichment result |
 | `updated_at` | INTEGER NOT NULL | Unix ms timestamp |
@@ -273,7 +276,7 @@ Cache miss on body change or cache-variant change. Stale rows removed by
 `clearStaleCacheEntries()`. The cache can also be bypassed by internal forced
 re-enrichment callers.
 
-**What is cached:** metadata enhancement results, graph extraction (entities + relations), memory inference results.
+**What is cached:** memory inference results.
 
 #### Table: `utility_scores`
 
@@ -628,7 +631,6 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Legacy consolidation journal; current advisory consolidation does not read or write it. | Dead residue (itlackey/akm#889); reported by `akm migrate status`, removed by `akm migrate apply` |
-| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-bundle graph metadata plus per-file entities and relations extracted from assets via LLM. `graph_files` is keyed by `(stash_root, file_path, body_hash)` with `(stash_root, file_path)` unique; it has no `entries.id` foreign key. Every considered file persists `status` and `reason`. `graph_file_entities` and `graph_file_relations` carry the same three-column owner key and cascade from `graph_files`; they store normalized and display-form entity values. `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. `graph_meta` also stores the latest graph telemetry: model, prompt version, batch size, cache hits/misses, truncation count, and failure count. Its counts are derived from the stored rows on every write: stored files, files with entity rows, distinct case-folded entities, and distinct case-folded relations. Indexes include `idx_graph_files_path`, `idx_graph_files_stash_order`, `idx_graph_file_entities_entity_norm(stash_root, entity_norm)`, and `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction; regenerated on the next `akm index`/`akm improve` since `index.db` is a fully rebuildable cache |
 
 ---
 
@@ -846,7 +848,6 @@ not affect ranking, salience, real-query labels, or GRR.
 | 8 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
 | 9 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
 | 10 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
-| 11 | `$DATA/index.db` (`graph_*` tables) | SQLite | Knowledge graph data — there is no `graph.json` file; see the `graph_*` table row above |
 | 12 | `$DATA/state.db` (`proposals` table) | SQLite | Proposal queue; archival is a `status` change, not a separate directory |
 | 19 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Markdown | Legacy consolidation backups; no longer created |
 | 20 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Markdown | Belief-state archived memories |

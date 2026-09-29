@@ -39,7 +39,6 @@ import { loadConfig, saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
@@ -117,24 +116,6 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
   };
 }
 
-const stubGraphExtractionResult: GraphExtractionResult = {
-  considered: 0,
-  extracted: 0,
-  totalEntities: 0,
-  totalRelations: 0,
-  written: false,
-  quality: {
-    consideredFiles: 0,
-    extractedFiles: 0,
-    entityCount: 0,
-    relationCount: 0,
-    extractionCoverage: 0,
-    density: 0,
-  },
-  telemetry: { cacheHits: 0, cacheMisses: 0, truncationCount: 0, failureCount: 0, retryAttempts: 0 },
-  warnings: [],
-};
-
 describe("#584: index.db handle is closed before reindexFn runs", () => {
   // R78: memory inference's writes used to trigger a FULL reindex through
   // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
@@ -142,7 +123,7 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
   // write handle on the same index.db WAL file, so the #584 discipline (close
   // the maintenance handle first, reopen a fresh one after, even on failure)
   // still applies — just around the incremental call instead of `reindexFn`.
-  test("maintenance handle is closed during the post-inference index update and a fresh handle is used afterwards", async () => {
+  test("maintenance handle is closed during the post-inference index update", async () => {
     const stash = storage.stashDir;
     writeMemory(stash, "alpha");
     await indexStash(stash);
@@ -154,8 +135,6 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
 
     let capturedInferenceDb: Database | undefined;
     let reindexCalls = 0;
-    let handleOpenDuringGraphExtraction: boolean | undefined;
-    let graphDb: Database | undefined;
 
     const result = await akmImprove({
       stashDir: stash,
@@ -199,13 +178,6 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
       reindexFn: async () => {
         reindexCalls += 1;
       },
-      // Graph extraction runs after the incremental index and receives the
-      // maintenance handle — it must be a fresh, usable handle.
-      graphExtractionFn: async (ctx) => {
-        graphDb = ctx.db;
-        handleOpenDuringGraphExtraction = isHandleOpen(ctx.db);
-        return stubGraphExtractionResult;
-      },
     });
 
     expect(result.ok).toBe(true);
@@ -215,10 +187,17 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     // by the time indexWrittenAssets ran — it opens its own write handle on
     // the same WAL file and a still-open sibling caused SQLITE_BUSY (#584).
     expect(isHandleOpen(capturedInferenceDb)).toBe(false);
-    expect(handleOpenDuringGraphExtraction).toBe(true);
-    // The post-index handle is a NEW connection, not the closed original.
-    expect(graphDb).toBeDefined();
-    expect(graphDb).not.toBe(capturedInferenceDb);
+    // The reopened handle (dbCell.current) must be fresh and usable for
+    // whatever runs next in the same maintenance sequence
+    // (runProposalHygienePass, then runOrphanStateGcPass(ctx, dbCell) —
+    // loop-stages.ts). Graph extraction used to be the pipeline stage
+    // exercising this same post-reopen handle and asserted directly on it
+    // (`handleOpenDuringGraphExtraction`/`graphDb`); retired in
+    // 0.9.17-alpha.9 along with that assertion. runOrphanStateGcPass returns
+    // early with this exact warning when `dbCell.current` is falsy — its
+    // absence here is the fresh-handle proof now.
+    const resultWarnings = (result as unknown as { warnings?: string[] }).warnings ?? [];
+    expect(resultWarnings).not.toContain("orphan state GC skipped: no index.db handle available");
 
     // The derived file is indexed without a full reindex.
     const checkDb = openIndexDatabase(getDbPath());

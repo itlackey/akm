@@ -17,11 +17,10 @@
  * silently drop `apiKey` (or any other field) while threading a config from
  * `loadConfig()`'s effective view down to the HTTP client.
  *
- * Grep-based, like `tests/contracts/canonical-index-generation-boundary.test.ts`
- * and `scripts/lint-secret-resolver-boundary.ts`: comments and string/template
- * literals are stripped before matching so prose mentioning `RemoteEmbedder`
- * cannot trip it, and the class's own declaration (`export class RemoteEmbedder`)
- * is not a construction site.
+ * Grep-based, like `scripts/lint-secret-resolver-boundary.ts`: comments and
+ * string/template literals are stripped before matching so prose mentioning
+ * `RemoteEmbedder` cannot trip it, and the class's own declaration
+ * (`export class RemoteEmbedder`) is not a construction site.
  */
 
 import { describe, expect, test } from "bun:test";

@@ -400,24 +400,11 @@ Flags:
 
 ## Graph A/B harness
 
-Phase 5 ships `bin/akm-eval-graph-ablation` (roadmap R5). Drives a single-source
-two-sandbox ablation: builds two copies of the stash, runs the same suite
-against each with graph extraction on vs. off, and reports per-metric deltas.
-
-```sh
-scripts/akm-eval/bin/akm-eval-graph-ablation \
-  --suite improve-smoke \
-  --stash /path/to/stash \
-  --akm /path/to/akm \
-  --seeds 1 \
-  --improve-args "--dry-run"
-```
-
-How the off side is gated: the harness plants `<sandbox-stash>/.akm/config.json`
-— the path the sandboxed `akm` actually resolves config from (`AKM_CONFIG_DIR`,
-set by `createSandbox()`) — with `index.graph.enabled: false` set. That's the
-one gate `isProcessEnabled("index", "graph_extraction", config)`
-(`src/llm/feature-gate.ts`) reads.
+Retired in 0.9.17-alpha.9: `bin/akm-eval-graph-ablation` drove a single-source
+two-sandbox ablation comparing graph extraction on vs. off, but the LLM graph
+it ablated is gone (see the CHANGELOG's 0.9.17-alpha.9 entry). The entry
+point now refuses immediately with a one-line message and a non-zero exit;
+`src/graph-ablation.ts` is kept, unreachable, as a historical reference.
 
 Reports (per side; median + range when `--seeds > 1`):
 
@@ -606,7 +593,7 @@ scripts/akm-eval/
     akm-eval-compare       dispatches to src/compare.ts
     akm-eval-trend         dispatches to src/trend.ts
     akm-eval-collect       dispatches to src/collect.ts
-    akm-eval-graph-ablation dispatches to src/graph-ablation.ts (Phase 5, R5)
+    akm-eval-graph-ablation retired 0.9.17-alpha.9 — refuses immediately (see below)
     akm-eval-replay        dispatches to src/replay.ts (Phase 6)
     akm-eval-recombine-analyze dispatches to the read-only cluster analyzer
     akm-eval-attribution-rollup dispatches to the read-only attribution report

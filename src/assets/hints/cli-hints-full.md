@@ -245,10 +245,9 @@ akm improve --no-push                         # commit but skip push for this ru
 akm improve --sync                            # force sync even on strategies that disable it
 ```
 
-Strategy sync defaults: `catchup`, `consolidate`, `default`,
-`graph-refresh`, `quick`, and `thorough` auto-commit + push;
-`proactive-maintenance` and `reflect-distill` skip sync entirely. Override
-with `--sync` / `--no-sync` flags.
+Strategy sync defaults: `catchup`, `consolidate`, `default`, `quick`, and
+`thorough` auto-commit + push; `proactive-maintenance` and `reflect-distill`
+skip sync entirely. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm bundle add` opts a remote git bundle into push-on-sync:
 
@@ -308,8 +307,8 @@ akm bundle create                                      # Initialize working bund
 akm setup                                     # Interactive wizard: bundle + LLM/embedding + agent + registry config
 akm setup --dir ~/custom-bundle                # Run the wizard against a custom bundle path
 akm setup --yes                               # Non-interactive, accepts all defaults
-akm index                                     # Rebuild search index (metadata enrichment when configured)
-akm index --full                              # Full reindex (metadata enrichment when configured)
+akm index                                     # Rebuild search index
+akm index --full                              # Full reindex
 akm bundle list                                      # List all sources
 akm lint                                      # Structural lint over the bundle; exits 0 regardless of findings
 akm lint --fix                                # Auto-fix Tier 1 issues
@@ -399,7 +398,7 @@ akm agent --model sonnet --prompt "..."         # Model override (aliases or exa
 ```sh
 akm info                                       # Capabilities, bundle dir, index stats, semantic-search status
 akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
-akm health --report                            # Adds accept-rate and graph-coverage metrics
+akm health --report                            # Adds accept-rate metrics
 akm log                                        # Append-only event stream (mutations, feedback, indexing)
 akm log --ref <ref>                            # One asset's event trail
 akm log --since @offset:<id>                   # Durable row-id cursor — poll this to follow the stream

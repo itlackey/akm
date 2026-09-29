@@ -98,7 +98,7 @@ describe("config schema drift pins", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, unknown>;
     const index = props.index as { properties?: Record<string, unknown> };
-    expect(Object.keys(index.properties ?? {})).toContain("metadataEnhance");
+    expect(Object.keys(index.properties ?? {})).not.toContain("metadataEnhance");
     expect(Object.keys(index.properties ?? {})).not.toContain("stalenessDetection");
     expect(Object.keys(index.properties ?? {})).not.toContain("indexBodyOpening");
     const search = props.search as { properties?: Record<string, unknown> };

@@ -23,7 +23,7 @@ import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { decodeImproveResult } from "../../../../src/core/improve-result";
-import type { AkmDistillResult, AkmReflectResult, ImproveEligibleRef } from "../../../../src/core/improve-types";
+import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { getDbPath, getStashLocksDir } from "../../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
@@ -66,7 +66,6 @@ function plannerConfig(args?: {
             distill: { enabled: false },
             consolidate: { enabled: false, ...(args?.consolidate ?? {}) },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false, ...(args?.extract ?? {}) },
             validation: { enabled: false },
             triage: { enabled: false, applyMode: "queue", ...(args?.triage ?? {}) },
@@ -100,27 +99,6 @@ function seedReplayRank(ref: string, rankScore: number, encodingSource?: "conten
       rankScore,
       ...(encodingSource ? { encodingSource } : {}),
     });
-  } finally {
-    db.close();
-  }
-}
-
-function seedRankRows(rows: ReadonlyArray<{ ref: string; rankScore: number }>): void {
-  const db = openStateDatabase();
-  try {
-    db.exec("BEGIN");
-    for (const row of rows) {
-      upsertAssetSalience(db, row.ref, {
-        encoding: row.rankScore,
-        outcome: 0,
-        retrieval: 0,
-        rankScore: row.rankScore,
-      });
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
   } finally {
     db.close();
   }
@@ -409,7 +387,6 @@ describe("#800 effective dry-run planner", () => {
                 distill: { enabled: false },
                 consolidate: { enabled: true, engine: "consolidate-engine-a" },
                 memoryInference: { enabled: false },
-                graphExtraction: { enabled: false },
                 extract: { enabled: false },
                 validation: { enabled: false },
                 triage: { enabled: false },
@@ -451,7 +428,6 @@ describe("#800 effective dry-run planner", () => {
       "distill",
       "consolidate",
       "memoryInference",
-      "graphExtraction",
       "extract",
       "validation",
       "triage",
@@ -612,182 +588,6 @@ describe("#800 effective dry-run planner", () => {
     expect(noSignalEvents).toHaveLength(1);
     expect(noSignalEvents[0]?.metadata?.count).toBe(1);
     expect(infoLines.filter((line) => line.includes("blocked by reflect signal-delta"))).toHaveLength(1);
-  });
-
-  test("stash-wide forgetting state cannot escape a type-scoped current plan in dry or live accounting", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 600 } });
-    saveConfig(config);
-    const plannedRefs: ImproveEligibleRef[] = [];
-    const storedRows: Array<{ ref: string; rankScore: number }> = [{ ref: "stash//memories/outside", rankScore: 0.01 }];
-    for (let index = 0; index < 501; index += 1) {
-      const name = `forgetting-scope-${String(index).padStart(3, "0")}`;
-      const filePath = path.join(stashDir, "skills", name, "SKILL.md");
-      writeSkill(stashDir, name, `Current-plan skill ${index}.`);
-      plannedRefs.push({
-        ref: `skills/${name}`,
-        itemRef: `stash//skills/${name}`,
-        reason: "scope-type",
-        filePath,
-      });
-      storedRows.push({ ref: `stash//skills/${name}`, rankScore: 0 });
-    }
-    writeMemory(stashDir, "outside");
-    seedRankRows(storedRows);
-    const reflectFn = mock(async () => {
-      throw new Error("--limit 0 dispatched a ref");
-    });
-    const commonOptions = {
-      scope: "skill",
-      stashDir,
-      config,
-      limit: 0,
-      ensureIndexFn: async () => false,
-      collectEligibleRefsFn: (async () => ({
-        plannedRefs: plannedRefs.map((entry) => ({ ...entry })),
-        memorySummary: { eligible: 0, derived: 0 },
-        strategyFilteredRefs: [],
-      })) as never,
-      reflectFn,
-    };
-
-    const dry = await akmImprove({ ...commonOptions, dryRun: true });
-    const live = await akmImprove(commonOptions);
-
-    for (const result of [dry, live]) {
-      expect(result.plan?.candidates).toEqual({ rawInScope: 501, selected: 501, effective: 0 });
-      expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(0);
-      expect(result.plan?.gates.find((gate) => gate.name === "limit")?.removed).toBe(501);
-      expect(result.plannedRefs).toEqual([]);
-      expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual([]);
-    }
-    expect(reflectFn).not.toHaveBeenCalled();
-  });
-
-  test("a current-plan forgetting candidate is admitted with its exact file and item provenance", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 501 } });
-    saveConfig(config);
-    const plannedRefs: ImproveEligibleRef[] = [];
-    const storedRows: Array<{ ref: string; rankScore: number }> = [];
-    for (let index = 0; index < 501; index += 1) {
-      const name = `forgetting-active-${String(index).padStart(3, "0")}`;
-      const filePath = path.join(stashDir, "skills", name, "SKILL.md");
-      writeSkill(stashDir, name, `Active skill ${index}.`);
-      plannedRefs.push({
-        ref: `skills/${name}`,
-        itemRef: `stash//skills/${name}`,
-        reason: "scope-type",
-        filePath,
-      });
-      storedRows.push({ ref: `stash//skills/${name}`, rankScore: 0 });
-    }
-    const quietName = "zz-forgetting-current";
-    const quietPath = path.join(stashDir, "skills", quietName, "SKILL.md");
-    writeSkill(stashDir, quietName, "A quiet current-plan skill.");
-    const quiet = {
-      ref: `skills/${quietName}`,
-      itemRef: `stash//skills/${quietName}`,
-      reason: "scope-type" as const,
-      filePath: quietPath,
-    };
-    plannedRefs.push(quiet);
-    storedRows.unshift({ ref: quiet.itemRef, rankScore: 0.01 });
-    seedRankRows(storedRows);
-
-    const commonOptions = {
-      scope: "skill",
-      stashDir,
-      config,
-      limit: 600,
-      ensureIndexFn: async () => false,
-      collectEligibleRefsFn: (async () => ({
-        plannedRefs: plannedRefs.map((entry) => ({ ...entry })),
-        memorySummary: { eligible: 0, derived: 0 },
-        strategyFilteredRefs: [],
-      })) as never,
-    };
-    const dry = await akmImprove({ ...commonOptions, dryRun: true });
-    const live = await akmImprove({
-      ...commonOptions,
-      reflectFn: async ({ ref }: { ref?: string }) => ({
-        schemaVersion: 2,
-        ok: false,
-        reason: "no_change",
-        error: "stable",
-        ref: ref ?? "",
-        engine: "test",
-        exitCode: 0,
-      }),
-    });
-
-    for (const result of [dry, live]) {
-      const admitted = result.plannedRefs.find((entry) => entry.ref === quiet.ref);
-      expect(admitted).toEqual({ ...quiet, eligibilitySource: "forgetting-safety" });
-      expect(result.plan?.effectiveRefs.find((entry) => entry.ref === quiet.ref)?.lane).toBe("forgetting-safety");
-      expect(result.plan?.candidates).toEqual({ rawInScope: 502, selected: 502, effective: 502 });
-      expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
-    }
-    expect(live.distillSkipped?.byReason["no new signal since last proposal"] ?? 0).toBe(0);
-    expect(
-      readEvents({ type: "improve_skipped" }).events.filter((event) => event.metadata?.reason === "no_new_signal"),
-    ).toEqual([]);
-  });
-
-  test("a current-plan forgetting candidate deleted after validation is charged to the disk gate", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 501 } });
-    saveConfig(config);
-    const plannedRefs: ImproveEligibleRef[] = [];
-    const storedRows: Array<{ ref: string; rankScore: number }> = [];
-    for (let index = 0; index < 501; index += 1) {
-      const name = `forgetting-disk-${String(index).padStart(3, "0")}`;
-      const filePath = path.join(stashDir, "skills", name, "SKILL.md");
-      writeSkill(stashDir, name, `Disk control skill ${index}.`);
-      plannedRefs.push({
-        ref: `skills/${name}`,
-        itemRef: `stash//skills/${name}`,
-        reason: "scope-type",
-        filePath,
-      });
-      storedRows.push({ ref: `stash//skills/${name}`, rankScore: 0 });
-    }
-    const quietName = "zz-forgetting-disk-race";
-    const quietPath = path.join(stashDir, "skills", quietName, "SKILL.md");
-    writeSkill(stashDir, quietName, "Deleted after structural validation.");
-    let filePathReads = 0;
-    const quiet: ImproveEligibleRef = {
-      ref: `skills/${quietName}`,
-      itemRef: `stash//skills/${quietName}`,
-      reason: "scope-type",
-      get filePath() {
-        filePathReads += 1;
-        if (filePathReads >= 4) fs.rmSync(quietPath, { force: true });
-        return quietPath;
-      },
-    };
-    plannedRefs.push(quiet);
-    storedRows.unshift({ ref: quiet.itemRef!, rankScore: 0.01 });
-    seedRankRows(storedRows);
-
-    const result = await akmImprove({
-      scope: "skill",
-      stashDir,
-      config,
-      dryRun: true,
-      limit: 0,
-      collectEligibleRefsFn: (async () => ({
-        plannedRefs,
-        memorySummary: { eligible: 0, derived: 0 },
-        strategyFilteredRefs: [],
-      })) as never,
-    });
-
-    expect(result.plan?.candidates).toEqual({ rawInScope: 502, selected: 501, effective: 0 });
-    expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(0);
-    expect(result.plan?.gates.find((gate) => gate.name === "disk")?.removed).toBe(1);
-    expect(result.plan?.gates.find((gate) => gate.name === "limit")?.removed).toBe(501);
-    expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual([]);
   });
 
   test("dry and live cleanup prune the same ref-scoped derived memory before the disk gate", async () => {

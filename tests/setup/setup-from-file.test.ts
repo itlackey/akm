@@ -204,7 +204,7 @@ describe("loadSetupConfigFromFile", () => {
 
 /**
  * In-process CLI runner. Pins the supplied env for the duration of the call via
- * the allowlisted withEnv helper and resets the embedder/graph singletons.
+ * the allowlisted withEnv helper and resets the embedder singletons.
  * runCliCapture resets the config and output-mode singletons itself.
  */
 async function runCli(argv: string[], env: Record<string, string | undefined> = {}) {

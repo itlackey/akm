@@ -199,7 +199,6 @@ the set of types the code actually emits at HEAD (verified against every
 | `extract_triaged` | The pre-LLM extract triage gate evaluated at least one session | `evaluated`, `passed`, `triagedOut`, `sourceRun` (aggregated) |
 | `schema_repair_invoked` | The schema-repair pass inside `akm improve` (`runSchemaRepairPass`) attempts to patch missing frontmatter on an asset that failed schema validation. **There is no `akm lint --repair` flag** — `lint` has `--fix`/`--auto-fix`, unrelated to this event | `ref`, outcome |
 | `proactive_selected` | The proactive-maintenance selector runs (once per `akm improve` run) | `count`, `dueTotal`, `neverReflected` (aggregated) |
-| `improve_salience_rank_change` | Bundle-wide rank-change report, from the second improve run onward | `stashSize`, `totalChanged`, `forgettingCandidates`, `topDrops` |
 | `events_purged` | Old events deleted by improve maintenance (90-day default retention) | `purgedCount`, `retentionDays` |
 | `improve_runs_purged` | Old `improve_runs` rows deleted by improve maintenance (same retention window as events) | `purgedCount`, `retentionDays` |
 | `state_db_vacuumed` | state.db was VACUUMed after the retention purge because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
