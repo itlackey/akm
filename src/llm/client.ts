@@ -182,10 +182,9 @@ function retryBackoffMs(): number {
  * narrating about a document) does not get misclassified as a provider
  * context-limit error (#496).
  *
- * Canonical home: `graph-extract.ts` re-exports this so the index-pass
- * graph extractor and the retry classifier (`isRetryable`) share one
- * definition — retrying a context overflow cannot shrink the input, so it
- * must never be retried.
+ * Canonical home: `structured-call.ts`'s failure classifier and the retry
+ * classifier (`isRetryable`) here share one definition — retrying a context
+ * overflow cannot shrink the input, so it must never be retried.
  */
 export function isContextSizeError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -203,11 +202,9 @@ export function isContextSizeError(message: string): boolean {
 /**
  * Codes describing a failure to reach or get a usable response from the
  * provider transport itself, as opposed to a malformed-but-received response
- * (`parse_error`) or a request-shape rejection (`rate_limited`). Shared by
- * {@link isRetryable} (which additionally requires evidence the failure is
- * transient) and the batch graph-extraction storm guard in `graph-extract.ts`
- * (which treats any of these as "the provider is down, stop retrying
- * per-asset") so the two classifications cannot drift apart.
+ * (`parse_error`) or a request-shape rejection (`rate_limited`). Used by
+ * {@link isRetryable}, which additionally requires evidence the failure is
+ * transient.
  */
 export function isTransportFailure(err: LlmCallError): boolean {
   return err.code === "provider_error" || err.code === "network_error" || err.code === "provider_html_error";

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Embedded task registry — asserts the 5 bundled `core/` templates and the 5
+ * Embedded task registry — asserts the 5 bundled `core/` templates and the 4
  * bundled `improve/` templates are present with the exact ids and default
  * schedules, and that they are read from the bundled assets dir (not any
  * user stash).
@@ -34,13 +34,12 @@ const EXPECTED = [
   { id: "akm-improve-consolidate", category: "improve", schedule: "20 */4 * * *", enabled: true },
   { id: "akm-improve-nightly", category: "improve", schedule: "15 2 * * *", enabled: true },
   { id: "akm-improve-catchup", category: "improve", schedule: "0 4 * * *", enabled: false },
-  { id: "akm-graph-refresh-weekly", category: "improve", schedule: "10 3 * * 0", enabled: true },
 ] as const;
 
 describe("embedded task registry", () => {
-  test("enumerates all 10 templates", () => {
+  test("enumerates all 9 templates", () => {
     const tasks = listEmbeddedTasks();
-    expect(tasks.length).toBe(10);
+    expect(tasks.length).toBe(9);
   });
 
   test("each template has the exact id, default schedule, and enablement", () => {
@@ -58,7 +57,7 @@ describe("embedded task registry", () => {
 
   test("every improve/ template guards against overlapping runs", () => {
     const improveTasks = listEmbeddedTasks().filter((t) => t.label.startsWith("improve/"));
-    expect(improveTasks.length).toBe(5);
+    expect(improveTasks.length).toBe(4);
     for (const task of improveTasks) expect(task.command).toContain("--skip-if-locked");
   });
 
@@ -69,7 +68,7 @@ describe("embedded task registry", () => {
     const scheduledImproveTasks = listEmbeddedTasks().filter(
       (t) => t.label === "core/improve" || t.label.startsWith("improve/"),
     );
-    expect(scheduledImproveTasks.length).toBe(6);
+    expect(scheduledImproveTasks.length).toBe(5);
     for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-engines");
   });
 

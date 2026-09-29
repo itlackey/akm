@@ -12,13 +12,14 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 
 // ── Improve profile / process ──────────────────────────────────────────────
 //
-// WI-9.6 (§4.2/§10.2): each of the 9 improve processes (reflect, distill,
-// consolidate, memoryInference, graphExtraction, extract, validation, triage,
-// proactiveMaintenance) gets its OWN schema below — a shared base (engine,
-// model, llm, enabled, timeoutMs) extended with only the fields meaningful on
-// that process — replacing the prior single ImproveProcessConfigSchema reused
-// via `.optional()` for all 9 keys (which accepted, and silently ignored, any
-// field on any process). Field→process assignment is derived from each
+// WI-9.6 (§4.2/§10.2): each of the improve processes (reflect, distill,
+// consolidate, memoryInference, extract, validation, triage,
+// proactiveMaintenance — graphExtraction had one too, until the LLM
+// entity-graph it ran was retired in 0.9.17-alpha.9) gets its OWN schema
+// below — a shared base (engine, model, llm, enabled, timeoutMs) extended
+// with only the fields meaningful on that process — replacing the prior
+// single ImproveProcessConfigSchema reused via `.optional()` for all of them
+// (which accepted, and silently ignored, any field on any process). Field→process assignment is derived from each
 // field's original "only meaningful on X" doc comment, cross-checked against
 // its actual runtime consumers and the built-in strategy assets
 // (src/assets/improve-strategies/*.json).
@@ -205,30 +206,6 @@ const MEMORY_INFERENCE_PROCESS_FIELDS = {
   cls: clsField,
 };
 
-/**
- * GraphExtraction process fields: one strategy's graph extraction scope and
- * batching. `includeTypes` and `batchSize` override `index.graph`'s
- * `graphExtractionIncludeTypes` and `graphExtractionBatchSize`; unset, the
- * pass reads those.
- */
-const GRAPH_EXTRACTION_PROCESS_FIELDS = {
-  // #624 P2: when set, rank eligible files by utility_scores DESC and process
-  // only the top-N per run (incremental high-signal-first sweep). Unset =
-  // process all eligible (current behavior).
-  topN: positiveInt.optional(),
-  includeTypes: z.array(z.string().min(1)).min(1).optional(),
-  batchSize: positiveInt.optional(),
-  // Full-corpus scan. When true, graph extraction runs on ALL stash files
-  // instead of only files touched by actionable refs in the current run.
-  // Used by the `graph-refresh` built-in profile / a scheduled weekly task.
-  fullScan: z.boolean().optional(),
-  // R12b + R20: cap on chunks processed per asset. A body chunked beyond this
-  // is truncated to the first N chunks instead of paying for unbounded
-  // per-asset LLM calls; the coverage loss is recorded as truncatedChunks.
-  // Absent = default 8 (src/llm/graph-extract.ts DEFAULT_MAX_CHUNKS_PER_ASSET).
-  maxChunksPerAsset: positiveInt.optional(),
-};
-
 const EXTRACT_PROCESS_FIELDS = {
   defaultSince: z.string().min(1).optional(),
   maxTotalChars: positiveInt.optional(),
@@ -292,7 +269,6 @@ export const ImproveProcessConfigSchema = z
     ...DISTILL_PROCESS_FIELDS,
     ...CONSOLIDATE_PROCESS_FIELDS,
     ...MEMORY_INFERENCE_PROCESS_FIELDS,
-    ...GRAPH_EXTRACTION_PROCESS_FIELDS,
     ...EXTRACT_PROCESS_FIELDS,
     ...TRIAGE_PROCESS_FIELDS,
     ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS,
@@ -321,11 +297,6 @@ export const MemoryInferenceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...MEMORY_INFERENCE_PROCESS_FIELDS })
   .passthrough();
 
-/** `processes.graphExtraction` — narrow per-process schema (WI-9.6). */
-export const GraphExtractionProcessConfigSchema = z
-  .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...GRAPH_EXTRACTION_PROCESS_FIELDS })
-  .passthrough();
-
 /** `processes.extract` — narrow per-process schema (WI-9.6). */
 export const ExtractProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...EXTRACT_PROCESS_FIELDS })
@@ -344,13 +315,21 @@ export const ProactiveMaintenanceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS })
   .passthrough();
 
+/**
+ * Process names that once had a dedicated schema and are now gone. Setting
+ * one, even with `enabled: true`, is tolerated rather than rejected by the
+ * "unknown enabled process" check below — an old config must keep loading
+ * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
+ * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
+ */
+const RETIRED_PROCESS_NAMES = new Set(["graphExtraction"]);
+
 const ImproveProfileProcessesSchema = z
   .object({
     reflect: ReflectProcessConfigSchema.optional(),
     distill: DistillProcessConfigSchema.optional(),
     consolidate: ConsolidateProcessConfigSchema.optional(),
     memoryInference: MemoryInferenceProcessConfigSchema.optional(),
-    graphExtraction: GraphExtractionProcessConfigSchema.optional(),
     extract: ExtractProcessConfigSchema.optional(),
     validation: ValidationProcessConfigSchema.optional(),
     triage: TriageProcessConfigSchema.optional(),
@@ -375,6 +354,7 @@ const ImproveProfileProcessesSchema = z
     for (const [name, process] of Object.entries(val as Record<string, unknown>)) {
       if (
         !(name in IMPROVE_PROCESS_ENGINE_CAPABILITIES) &&
+        !RETIRED_PROCESS_NAMES.has(name) &&
         process !== null &&
         typeof process === "object" &&
         (process as { enabled?: unknown }).enabled === true

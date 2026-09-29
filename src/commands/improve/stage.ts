@@ -4,10 +4,9 @@
 
 /**
  * The one path every improve stage (reflect, distill, consolidate, extract,
- * triage, memory inference, graph extraction) runs through: pick the stage's
- * runner, call the model, judge what it produced, mint the proposal, and
- * attribute the usage. A stage keeps only its prompt, its parse shape and its
- * target rule.
+ * triage, memory inference) runs through: pick the stage's runner, call the
+ * model, judge what it produced, mint the proposal, and attribute the usage.
+ * A stage keeps only its prompt, its parse shape and its target rule.
  */
 
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
@@ -142,7 +141,6 @@ const STAGE_LABELS = {
   consolidate: "consolidate",
   extract: "session-extraction",
   memoryInference: "memory-inference",
-  graphExtraction: "graph-extraction",
   validation: "validation",
 } as const;
 

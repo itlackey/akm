@@ -95,7 +95,7 @@ explicit empty snapshot without creating or migrating it. The plan reports the
 ordinary base cap as `limits.effective`, the separate additive replay budget as
 `limits.additiveReplayAllowance`, and their finite sum as
 `limits.totalCeiling`. It also reports proactive-maintenance due statistics,
-consolidation pool gates and chunk estimate, extract/graph/memory-inference
+consolidation pool gates and chunk estimate, extract/memory-inference
 stage decisions, and proposal-triage mode and caps. The plan has
 `mode: "estimate"` and `dispatch: false`; producing it does not acquire the
 improve lock, invoke an LLM, create state, or write proposals, events, assets,

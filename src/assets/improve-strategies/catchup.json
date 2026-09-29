@@ -16,9 +16,6 @@
     "memoryInference": {
       "enabled": false
     },
-    "graphExtraction": {
-      "enabled": false
-    },
     "extract": {
       "enabled": false
     },

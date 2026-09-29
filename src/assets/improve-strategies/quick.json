@@ -1,5 +1,5 @@
 {
-  "description": "Reflect-only pass — no extract, distill, consolidate, memoryInference, or graphExtraction.",
+  "description": "Reflect-only pass — no extract, distill, consolidate, or memoryInference.",
   "processes": {
     "reflect": {
       "enabled": true,
@@ -9,7 +9,6 @@
     "distill": { "enabled": false },
     "consolidate": { "enabled": false },
     "memoryInference": { "enabled": false },
-    "graphExtraction": { "enabled": false },
     "triage": { "enabled": false },
     "validation": { "enabled": false },
     "proactiveMaintenance": { "enabled": false }

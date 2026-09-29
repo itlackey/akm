@@ -16,8 +16,8 @@
  * This is NOT a general reindex. It upserts exactly the files the caller just
  * wrote: frontmatter/metadata via the shared matcher pipeline, the canonical
  * row with its transactionally owned FTS projection, and vectors for changed
- * entry IDs when semantic search is enabled. Graph extraction, `builtAt`,
- * and the per-dir walk cache remain full-index responsibilities.
+ * entry IDs when semantic search is enabled. `builtAt` and the per-dir walk
+ * cache remain full-index responsibilities.
  */
 
 import fs from "node:fs";

@@ -244,7 +244,7 @@ describe("index.db layout 23 → 24", () => {
     expect(warnings.some((line) => line.includes("older layout") && line.includes("akm index"))).toBe(true);
   });
 
-  test("the writable open migrates in place: FTS rebuilt once, nothing else dropped", () => {
+  test("the writable open migrates in place: FTS rebuilt once, the retired graph tables dropped, nothing else touched", () => {
     const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
@@ -278,12 +278,13 @@ describe("index.db layout 23 → 24", () => {
       );
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
 
-      // Graph and utility rows untouched; the salvage table is retired. Of
-      // the two seeded llm_enrichment_cache rows, the default-cache_variant
-      // one is metadata-enhance's shape (retired 0.9.17-alpha.9) and is
-      // dropped on this writable open; the memory-inference-v2 row survives.
-      expect(count(db, "graph_files")).toBe(1);
-      expect(count(db, "graph_file_entities")).toBe(1);
+      // Utility rows untouched; the salvage table is retired, and so is the
+      // LLM entity graph — its tables are dropped on the writable open
+      // (0.9.17-alpha.9). Of the two seeded llm_enrichment_cache rows, the
+      // default-cache_variant one is metadata-enhance's shape (retired
+      // 0.9.17-alpha.9) and is dropped too; the memory-inference-v2 row survives.
+      expect(tableNames(db)).not.toContain("graph_files");
+      expect(tableNames(db)).not.toContain("graph_file_entities");
       expect(db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all()).toEqual([
         {
           asset_ref: path.join(storage.stashDir, "knowledge", "alpha-deploy.md"),

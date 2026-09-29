@@ -39,7 +39,6 @@ import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
-import { listRelatedPathsForFile } from "../../indexer/graph/graph-related";
 import { lookupBundleRef, lookupBundleRefWithResolution } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { projectMarkdownFragmentContent } from "../../indexer/passes/metadata";
@@ -479,18 +478,6 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    related: (() => {
-      try {
-        return withIndexDb((db) => {
-          const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
-          return { total: related.length, hits: related };
-        });
-      } catch (err) {
-        rethrowIfTestIsolationError(err);
-        rethrowIfDataDirUnreadable(err);
-        return { total: 0, hits: [] };
-      }
-    })(),
     ...showLinks(indexedEntry.itemRef, displayDefaultBundle),
   };
 

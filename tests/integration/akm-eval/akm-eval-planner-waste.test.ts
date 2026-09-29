@@ -528,7 +528,7 @@ describe("runPlannerWasteCase", () => {
         ref: "lessons/a",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
-      { mode: "graph-extraction", ref: "memories/b", result: { ok: true, outcome: "queued" } },
+      { mode: "memory-inference", ref: "memories/b", result: { ok: true, outcome: "queued" } },
     ]);
     const result = await runPlannerWasteCase(makeCase(), makeCtx(stash));
     expect(result.passed).toBe(true);
@@ -552,7 +552,7 @@ describe("runPlannerWasteCase", () => {
         ref: "lessons/b",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
-      { mode: "graph-extraction", ref: "memories/c", result: { ok: true, outcome: "queued" } },
+      { mode: "memory-inference", ref: "memories/c", result: { ok: true, outcome: "queued" } },
       { mode: "reflect", ref: "memories/d", result: { ok: true, outcome: "queued" } },
     ]);
     const result = await runPlannerWasteCase(
@@ -580,7 +580,7 @@ describe("runPlannerWasteCase", () => {
     });
     for (let i = 0; i < 99; i++) {
       actions.push({
-        mode: "graph-extraction",
+        mode: "memory-inference",
         ref: `memories/${i}`,
         result: { ok: true, outcome: "queued" },
       });

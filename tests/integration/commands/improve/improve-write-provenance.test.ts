@@ -62,7 +62,6 @@ const config = {
             "distill",
             "consolidate",
             "memoryInference",
-            "graphExtraction",
             "extract",
             "validation",
             "triage",
@@ -184,7 +183,6 @@ async function runImprove(
     runImprovePostLoopStageFn: (async () => ({
       allWarnings: [],
       memoryInferenceDurationMs: 0,
-      graphExtractionDurationMs: 0,
     })) as never,
   });
 }

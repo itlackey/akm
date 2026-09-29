@@ -70,8 +70,7 @@ or maintain alternate result collections.
 Each derived population keeps its own cursor, so a change to one pass's
 inputs re-runs only that pass: `entries.content_hash` for entries and their
 FTS rows (written in the same transaction), `embeddings.model` for vectors,
-and `graph_files` (root, path, body hash; plus prompt version and model in
-the cache variant) for the entity graph.
+and `llm_enrichment_cache` (file path + body hash) for memory inference.
 
 ## Locks
 
@@ -377,12 +376,8 @@ this is a purpose summary:
 | `utility_scores` | recomputed utility boost state (global) |
 | `index_meta` | schema/version/runtime metadata |
 | `index_dir_state` | incremental-indexing cache (per-directory hash + mtime) |
-| `llm_enrichment_cache` | cached graph-extraction/memory-inference results |
+| `llm_enrichment_cache` | cached memory-inference results |
 | `registry_index_cache` | cached registry index JSON (replaces flat cache files) |
-| `graph_meta` | per-bundle knowledge-graph telemetry (model, prompt version, cache hits) |
-| `graph_files` | per-file graph-extraction status |
-| `graph_file_entities` | extracted entities per file |
-| `graph_file_relations` | extracted entity relations per file |
 
 `usage_events` (search/show/feedback telemetry) and workflow runtime state
 both live in `state.db`, not `index.db`, so rebuildable search state remains
@@ -391,10 +386,9 @@ separate from durable runtime state.
 ## Schema Versioning
 
 `index.db` is derived state, rebuildable from sources by `akm index`, but it
-holds work that is expensive to redo (embeddings, the LLM enrichment cache,
-the entity graph), so a layout change is applied in place rather than by
-discarding the index. `index_meta.version` (currently 24) is a layout marker,
-not a gate:
+holds work that is expensive to redo (embeddings, the LLM enrichment cache),
+so a layout change is applied in place rather than by discarding the index.
+`index_meta.version` (currently 24) is a layout marker, not a gate:
 
 - `ensureSchema()` (`src/storage/repositories/index-schema.ts`), run by the
   writable opener, is additive: `CREATE ... IF NOT EXISTS`, `ALTER TABLE ...
@@ -402,13 +396,16 @@ not a gate:
   `index_dir_state.row_count`/`index_variant`), and a one-time rebuild of
   both FTS tables from `entries` / `entry_fragments` when they still carry
   the layout-23 content copies (seconds at 24k entries). It never drops
-  `embeddings`, `utility_scores*`, `graph_*`, or `llm_enrichment_cache`. An
-  index without `entry_fragments` (layout 22 and older) also has its
-  per-directory cursor cleared so the next run re-reads every source and
-  fills the fragments; entry ids, and therefore embeddings, stay put.
+  `embeddings`, `utility_scores*`, or `llm_enrichment_cache`. The one
+  exception is the LLM entity graph (`graph_meta`, `graph_files`,
+  `graph_file_*`), retired in 0.9.17-alpha.9: those tables are dropped
+  unconditionally. An index without `entry_fragments` (layout 22 and
+  older) also has its per-directory cursor cleared so the next run
+  re-reads every source and fills the fragments; entry ids, and therefore
+  embeddings, stay put.
 - An `entries` table older than layout 21 (no `item_ref`) cannot be keyed by
   this release: its entries-keyed tables are recreated and re-walked, keeping
-  graph data and the LLM enrichment cache.
+  the LLM enrichment cache.
 - Read-only and existing-database openers never refuse over the marker: an
   older layout is served as-is (readers handle both FTS layouts and a missing
   `embeddings.model`), a newer one likewise, each named once on stderr.

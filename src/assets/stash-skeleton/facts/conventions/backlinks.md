@@ -8,11 +8,11 @@ updated: 2026-09-28
 
 <!--
   SOFT guidance only — advice, not a contract. Back-linking here is a RETRIEVAL
-  mechanism, not decoration: `xrefs:` frontmatter folds into the search index;
-  the entity/relation graph is extracted from BODY prose (memory + knowledge),
-  never from frontmatter. Over-linking degrades ranking, so these rules are
-  deliberately conservative. (LLM-wiki bundles carry their own xref system in
-  their pages' frontmatter — this convention is for in-stash assets.)
+  mechanism, not decoration: `xrefs:` frontmatter folds into the search index
+  and is stored as a declared link `akm show` lists on both assets.
+  Over-linking degrades ranking, so these rules are deliberately conservative.
+  (LLM-wiki bundles carry their own xref system in their pages' frontmatter —
+  this convention is for in-stash assets.)
 -->
 
 # Back-linking conventions
@@ -21,9 +21,8 @@ Cross-references are how knowledge compounds instead of being re-derived every
 session. In AKM they are also **indexed**: the strings in an asset's `xrefs:`
 frontmatter fold into its search-hint text and are stored as links that
 `akm show` lists on both assets (with `supersededBy:`, `contradictedBy:` and a
-`.derived` memory's parent), and knowledge/memory bodies feed an LLM-extracted
-entity/relation graph that boosts ranking. So links are a retrieval
-lever — which means both too few and too many hurt.
+`.derived` memory's parent). So links are a retrieval lever — which means both
+too few and too many hurt.
 
 ```yaml
 ---
@@ -48,10 +47,8 @@ xrefs:
 - **Associative xrefs are discretionary — real relationships only.** Add one when
   you already know a genuine load-bearing connection. Do **not** hit a link
   quota by pointing at the topically-nearest sibling — a plausible-but-wrong
-  xref makes this asset a false search match for the other topic, and a wrong
-  relationship asserted in prose poisons the entity graph. A relationship you
-  want the graph to learn must be named in the body (e.g. open with "Corrects
-  knowledge/auth/oauth-refresh-races").
+  xref makes this asset a false search match for the other topic and a false
+  declared link on both assets' `akm show` output.
 - **Cap total xrefs at ~5 (a heuristic, not a measured threshold).** Each xref
   folds its ref tokens into THIS asset's search hints — past a handful, the
   asset matches queries about several other topics and its own ranking signal
@@ -80,19 +77,20 @@ prose is indexed in the lowest-weight `content` field, so
 `description:`/`when_to_use:` remain the primary orientation channel. Then
 open the body with a plain title plus a one-line
 orientation naming what it is, its scope/domain, and its key entities in
-canonical spelling (`Postgres`, `OAuth`, `TLS`, `Acme`) — the entity/relation
-graph is extracted from body prose, and readers land here from `akm show`.
-Keep the canonical-spelling list in `facts/conventions/domains` so agents don't
-fragment `postgres` / `postgresql` / `pg`.
+canonical spelling (`Postgres`, `OAuth`, `TLS`, `Acme`) — consistent spelling
+keeps search matches from fragmenting across variants, and readers land here
+from `akm show`. Keep the canonical-spelling list in `facts/conventions/domains`
+so agents don't fragment `postgres` / `postgresql` / `pg`.
 
 ## Hubs are optional, not per-namespace obligations
 
 A hub (a `knowledge/` overview page that xrefs the key assets in a domain) is
 worth authoring for a **few genuinely high-traffic domains**. Do **not**
 mandate a hub per namespace and do not edit a hub on every write: that is O(n)
-maintenance, a concurrent-write contention point, and it flattens the multi-hop
-graph into a namespace-wide star. Let the FTS index be the catalog; spend the
-effort on per-asset self-situating headers instead.
+maintenance, a concurrent-write contention point, and it flattens every linked
+asset's declared links into a namespace-wide star centered on the hub. Let the
+FTS index be the catalog; spend the effort on per-asset self-situating headers
+instead.
 
 ## Keep assets atomic
 

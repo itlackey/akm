@@ -47,6 +47,9 @@ const COMMON_FIELDS = [
   "deadUrlCoverage",
   "reflectsWithErrorContext",
   "memoryInference",
+  // 0.9.17-alpha.9: no longer written (the LLM entity-graph extraction that
+  // wrote these was retired), kept readable for the same reason as
+  // `evalCasesWritten` above.
   "graphExtraction",
   "memoryInferenceDurationMs",
   "graphExtractionDurationMs",
@@ -392,6 +395,9 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 
+  // "graph-extraction" is no longer a stage a fresh plan can name — retired
+  // 0.9.17-alpha.9 — but stays here so a historical envelope that captured a
+  // dry-run plan before the retirement still decodes.
   const stageNames = new Set(["consolidation", "extract", "graph-extraction", "memory-inference"]);
   if (!Array.isArray(value.stages)) fail("plan.stages must be an array");
   for (const stage of value.stages) {

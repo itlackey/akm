@@ -7,19 +7,18 @@ import type { Database } from "../../storage/database";
 import type { SearchSource } from "../search/search-source";
 
 /**
- * Parameter object shared by the three indexer pass functions
- * (`runMemoryInferencePass`, `runGraphExtractionPass`,
- * `runStalenessDetectionPass`).
+ * Parameter object for the indexer pass functions (`runMemoryInferencePass`;
+ * the sibling `runGraphExtractionPass` and `runStalenessDetectionPass` this
+ * was shared with were later retired).
  *
  * WS10 (parameter-object consolidation): these passes previously cloned the
  * same leading positional signature (`config, sources, signal?, db?`). Collapsing
  * it into one value object is TYPE-ONLY — the runtime values threaded through are
  * identical; no branch, order, or lifecycle change.
  *
- * The memory-inference and graph-extraction passes additionally accept a
- * `reEnrich` flag, an `onProgress` callback (whose event shape differs per
- * pass), and a per-pass `options` bag. Those are modelled by extending this
- * base type via the generic parameters below.
+ * The memory-inference pass additionally accepts a `reEnrich` flag, an
+ * `onProgress` callback, and a per-pass `options` bag. Those are modelled by
+ * extending this base type via the generic parameters below.
  */
 export interface PassContext {
   config: AkmConfig;
@@ -30,7 +29,7 @@ export interface PassContext {
 
 /**
  * {@link PassContext} extended with the enrichment / progress / options fields
- * shared by the memory-inference and graph-extraction passes.
+ * the memory-inference pass needs.
  *
  * @typeParam TProgress - the per-pass progress event shape.
  * @typeParam TOptions  - the per-pass options bag.

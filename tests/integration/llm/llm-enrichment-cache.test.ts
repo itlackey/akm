@@ -8,8 +8,8 @@
  *   (c) --re-enrich bypasses the cache even when the body is unchanged.
  *   (d) clearStaleCacheEntries removes entries for assets no longer in the index.
  *
- * Graph extraction is controlled via a local Bun HTTP server — no module mocking,
- * no global state pollution between test files.
+ * The stub LLM endpoint is a local Bun HTTP server — no module mocking, no
+ * global state pollution between test files.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -20,20 +20,24 @@ import type { SearchSource } from "../../../src/indexer/search/search-source";
 import type { Database } from "../../../src/storage/database";
 import { type Cleanup, makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "../../_helpers/sandbox";
 
-// ── Local LLM server (graph extraction) ──────────────────────────────────────
-// A real HTTP server on a random port stands in for the LLM endpoint.
-// This avoids mock.module("../src/llm/client") which leaks into other test
-// files (e.g. tests/llm.test.ts) when Bun shares workers across files.
+// ── Local LLM server (stub endpoint) ──────────────────────────────────────────
+// A real HTTP server on a random port stands in for the LLM endpoint so
+// `configWithLlm()` can point a real engine at it. This avoids
+// mock.module("../src/llm/client") which leaks into other test files (e.g.
+// tests/llm.test.ts) when Bun shares workers across files. The memory-inference
+// tests below never actually reach it — they inject `compressMemoryToDerivedMemory`
+// directly (see `memoryInferenceOptions()`) — so this stub only needs to answer
+// with well-formed JSON, never anything content-specific.
 
-let graphExtractCallCount = 0;
-let graphExtractor: (body: string) => { entities: string[]; relations: { from: string; to: string; type?: string }[] } =
+let llmCallCount = 0;
+let llmResponder: (body: string) => { entities: string[]; relations: { from: string; to: string; type?: string }[] } =
   () => ({ entities: [], relations: [] });
 
 const llmServer = Bun.serve({
   port: 0, // OS picks an available port
   fetch(_req) {
-    graphExtractCallCount++;
-    const result = graphExtractor("");
+    llmCallCount++;
+    const result = llmResponder("");
     return new Response(
       JSON.stringify({
         choices: [{ message: { content: JSON.stringify(result) } }],
@@ -54,7 +58,6 @@ let memoryCompressor: (body: string) =>
     }
   | undefined = () => undefined;
 
-const { runGraphExtractionPass } = await import("../../../src/indexer/graph/graph-extraction");
 const { runMemoryInferencePass: runMemoryInferencePassImpl } = await import(
   "../../../src/indexer/passes/memory-inference"
 );
@@ -63,7 +66,6 @@ const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry, clearStaleCacheE
 );
 const { openIndexDatabase, closeDatabase } = await import("../../../src/storage/repositories/index-connection");
 const { upsertEntry } = await import("../../../src/storage/repositories/index-entries-repository");
-const { loadStoredGraphSnapshot } = await import("../../../src/indexer/db/graph-db");
 const { deriveEntryProvenance } = await import("../../../src/indexer/installations");
 
 function memoryInferenceOptions() {
@@ -130,7 +132,7 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf8");
 
-  // Schema v2: seed an entries row so replaceStoredGraph can resolve entry_id.
+  // Schema v2: seed an entries row so downstream code that resolves entry_id can find this file.
   if (db) {
     const typeDir = rel.split("/")[0] ?? "";
     const type = typeDir === "memories" ? "memory" : typeDir === "knowledge" ? "knowledge" : typeDir;
@@ -173,9 +175,9 @@ beforeEach(() => {
   tmpDbPath = path.join(tmpStash, "test.db");
   db = openIndexDatabase(tmpDbPath);
 
-  graphExtractCallCount = 0;
+  llmCallCount = 0;
   memoryCompressCallCount = 0;
-  graphExtractor = () => ({ entities: [], relations: [] });
+  llmResponder = () => ({ entities: [], relations: [] });
   memoryCompressor = () => undefined;
 });
 
@@ -295,90 +297,6 @@ describe("clearStaleCacheEntries", () => {
       }
     ).cnt;
     expect(aliveCount).toBe(1);
-  });
-});
-
-// ── Graph extraction cache ────────────────────────────────────────────────────
-
-describe("runGraphExtractionPass — cache hit skips LLM call", () => {
-  test("(a) cache hit: unchanged body does not call the LLM extractor", async () => {
-    writeFile("memories/m1.md", {}, "Body about ServiceA and ServiceB.");
-    graphExtractor = () => ({ entities: ["ServiceA", "ServiceB"], relations: [] });
-
-    // First run: LLM is called and result is cached.
-    const first = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
-    expect(first.written).toBe(true);
-    expect(graphExtractCallCount).toBe(1);
-
-    const callsAfterFirst = graphExtractCallCount;
-
-    // Second run with same db and same file body: should be a cache hit.
-    const second = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
-    expect(second.written).toBe(true);
-    // LLM must NOT have been called again — it should serve from cache.
-    expect(graphExtractCallCount).toBe(callsAfterFirst);
-
-    // The cache table should have one entry.
-    const cacheCount = (db.prepare("SELECT COUNT(*) AS cnt FROM llm_enrichment_cache").get() as { cnt: number }).cnt;
-    expect(cacheCount).toBeGreaterThan(0);
-  });
-
-  test("(b) changed body hash triggers a new LLM call and updates the cache", async () => {
-    const filePath = writeFile("memories/m1.md", {}, "Original body about ServiceA.");
-    graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
-
-    // First run.
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
-    expect(graphExtractCallCount).toBe(1);
-
-    // Mutate the file body.
-    fs.writeFileSync(filePath, "---\n---\n\nCompletely new body about ServiceB.\n", "utf8");
-    graphExtractor = () => ({ entities: ["ServiceB"], relations: [] });
-
-    // Second run: body changed → cache miss → new LLM call.
-    const second = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
-    expect(graphExtractCallCount).toBe(2);
-    expect(second.written).toBe(true);
-    // The graph should now contain the new entity.
-    const graph = loadStoredGraphSnapshot(tmpStash, db) as { files: Array<{ entities: string[] }> };
-    expect(graph.files[0]?.entities).toContain("ServiceB");
-  });
-
-  test("(c) --re-enrich bypasses the cache even when body is unchanged", async () => {
-    writeFile("memories/m1.md", {}, "Body about ServiceA.");
-    graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
-
-    // First run fills the cache.
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
-    expect(graphExtractCallCount).toBe(1);
-
-    // Second run with reEnrich=true must call LLM again.
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: true });
-    expect(graphExtractCallCount).toBe(2);
-  });
-
-  test("(d) graph cache is versioned by extractor settings such as model", async () => {
-    writeFile("memories/m1.md", {}, "Body about ServiceA.");
-    graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
-
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
-    expect(graphExtractCallCount).toBe(1);
-
-    await runGraphExtractionPass({
-      config: configWithLlm({
-        engines: {
-          test: {
-            kind: "llm",
-            endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-            model: "different-model",
-          },
-        },
-      }),
-      sources: sources(),
-      db,
-      reEnrich: false,
-    });
-    expect(graphExtractCallCount).toBe(2);
   });
 });
 

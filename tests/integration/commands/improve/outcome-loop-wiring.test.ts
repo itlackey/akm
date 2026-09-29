@@ -98,7 +98,6 @@ const minimalConfig = (): import("../../../../src/core/config/config").AkmConfig
           processes: {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             proactiveMaintenance: { enabled: true, maxPerRun: 10 },
           },

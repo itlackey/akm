@@ -907,6 +907,11 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.defaults?.improveStrategy).toBe("my-custom-strategy");
   });
 
+  test("defaults.improveStrategy: graph-refresh names the 0.9.17-alpha.9 retirement", () => {
+    writeCurrentConfig({ defaults: { improveStrategy: "graph-refresh" } });
+    expect(() => loadConfig()).toThrow(/graph-refresh.*retired/i);
+  });
+
   test("ignores legacy features.improve instead of failing config load", () => {
     writeCurrentConfig({
       features: {

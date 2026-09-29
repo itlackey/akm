@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# akm-eval-graph-ablation — Phase 5 entry point.
+# akm-eval-graph-ablation — retired entry point.
 #
-# Drives the graph A/B ablation: indexes + improves the same source stash
-# twice in two parallel sandboxes (graph extraction on / off), runs the
-# retrieval cases against each, and computes per-metric deltas. Mirrors
-# bin/akm-eval-run; thin shell wrapper around src/graph-ablation.ts.
+# Drove a graph A/B ablation (indexes + improves the same source stash twice,
+# graph extraction on / off, and compares retrieval). The LLM graph it
+# ablated was retired in 0.9.17-alpha.9, so the comparison this harness made
+# is no longer possible. src/graph-ablation.ts is kept, unreachable, as a
+# historical reference; this entry point refuses instead of running it.
 
 set -euo pipefail
 
-dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../_lib.sh
-source "$dir/../_lib.sh"
-
-require_bun
-
-exec bun run "$dir/../src/graph-ablation.ts" "$@"
+echo "akm-eval-graph-ablation: the LLM graph was retired in 0.9.17-alpha.9; there is nothing left to ablate." >&2
+exit 1

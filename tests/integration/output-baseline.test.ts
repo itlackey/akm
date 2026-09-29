@@ -4,7 +4,6 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { seedStoredGraph } from "../_helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -122,119 +121,6 @@ afterEach(() => {
 });
 
 describe("output baseline", () => {
-  test("show full JSON can include related graph neighbors", () => {
-    const stashDir = makeTempDir("akm-output-stash-");
-    const envDirs = envDirsForStash(stashDir);
-    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
-    writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
-    seedStoredGraph(
-      {
-        generatedAt: "2026-05-01T00:00:00.000Z",
-        stashRoot: stashDir,
-        files: [
-          {
-            path: path.join(stashDir, "knowledge", "guide.md"),
-            type: "knowledge",
-            entities: ["Guide", "Deploy"],
-            relations: [{ from: "Guide", to: "Deploy" }],
-          },
-          {
-            path: path.join(stashDir, "memories", "incident.md"),
-            type: "memory",
-            entities: ["Guide"],
-            relations: [{ from: "Guide", to: "Incident" }],
-          },
-        ],
-      },
-      path.join(envDirs.xdgData, "akm", "index.db"),
-    );
-
-    const output = runCli(
-      stashDir,
-      ["show", "knowledge/guide.md", "--format=json", "--detail=full"],
-      undefined,
-      envDirs,
-    );
-    const json = JSON.parse(output) as Record<string, unknown>;
-
-    expect(json.related).toBeTruthy();
-  });
-
-  test("show full JSON includes empty related object when no graph neighbors exist", () => {
-    const stashDir = makeTempDir("akm-output-stash-");
-    const envDirs = envDirsForStash(stashDir);
-    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
-    seedStoredGraph(
-      {
-        generatedAt: "2026-05-01T00:00:00.000Z",
-        stashRoot: stashDir,
-        files: [
-          {
-            path: path.join(stashDir, "knowledge", "guide.md"),
-            type: "knowledge",
-            entities: ["Guide"],
-            relations: [],
-          },
-        ],
-      },
-      path.join(envDirs.xdgData, "akm", "index.db"),
-    );
-
-    const output = runCli(
-      stashDir,
-      ["show", "knowledge/guide.md", "--format=json", "--detail=full"],
-      undefined,
-      envDirs,
-    );
-    const json = JSON.parse(output) as { related?: { total?: number; hits?: unknown[] } };
-
-    expect(json.related).toEqual({ total: 0, hits: [] });
-  });
-
-  test("show text output uses compact related labels", () => {
-    const stashDir = makeTempDir("akm-output-stash-");
-    const envDirs = envDirsForStash(stashDir);
-    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
-    writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
-    seedStoredGraph(
-      {
-        generatedAt: "2026-05-01T00:00:00.000Z",
-        stashRoot: stashDir,
-        files: [
-          {
-            path: path.join(stashDir, "knowledge", "guide.md"),
-            type: "knowledge",
-            entities: ["Guide", "Deploy"],
-            relations: [{ from: "Guide", to: "Deploy" }],
-          },
-          {
-            path: path.join(stashDir, "memories", "incident.md"),
-            type: "memory",
-            entities: ["Guide"],
-            relations: [{ from: "Guide", to: "Incident" }],
-          },
-        ],
-      },
-      path.join(envDirs.xdgData, "akm", "index.db"),
-    );
-
-    const output = runCli(
-      stashDir,
-      ["show", "knowledge/guide.md", "--format=text", "--detail=full"],
-      undefined,
-      envDirs,
-    );
-
-    expect(output).toContain("related: 1");
-    // listRelatedPathsForFile populates `ref` from the canonical durable identity
-    // (entries.concept_id / the item_ref tail), and formatRelatedLabel prefers it
-    // over basename. Output is the conceptId ref form (`memories/incident`)
-    // instead of `incident.md`.
-    expect(output).toContain("  - memory: memories/incident");
-    expect(output).toContain("    shared: Guide");
-    expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));
-  });
-
   test("show prints declared links in JSON, agent shape and text", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     const envDirs = envDirsForStash(stashDir);

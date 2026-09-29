@@ -47,7 +47,7 @@ export interface WithLlmCacheHooks {
  *                          already hashed the body (e.g. to reuse it elsewhere)
  *                          should pass this to avoid the redundant work.
  * @param cacheVariant  - Namespace token for the cache row so different passes'
- *                        rows do not collide (e.g. memory-inference vs graph).
+ *                        rows do not collide (e.g. memory-inference vs metadata-enhance).
  * @param hooks         - Optional event sink for telemetry (see {@link WithLlmCacheHooks}).
  */
 export async function withLlmCache<T>(

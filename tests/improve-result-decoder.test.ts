@@ -48,7 +48,6 @@ describe("decodeImproveResult", () => {
       { process: "distill", enabled: false, notices: [] },
       { process: "consolidate", enabled: false, notices: [] },
       { process: "memoryInference", enabled: false, notices: [] },
-      { process: "graphExtraction", enabled: false, notices: [] },
       { process: "extract", enabled: false, notices: [] },
       { process: "validation", enabled: false, notices: [] },
       { process: "triage", enabled: false, notices: [] },
@@ -80,7 +79,6 @@ describe("decodeImproveResult", () => {
     stages: [
       { name: "consolidation", wouldRun: true, reason: "all gates pass" },
       { name: "extract", wouldRun: false, reason: "disabled" },
-      { name: "graph-extraction", wouldRun: false, reason: "disabled" },
       { name: "memory-inference", wouldRun: false, reason: "disabled" },
     ],
     triage: {

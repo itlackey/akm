@@ -12,19 +12,6 @@ import { warnOnce } from "../../warn";
 import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
-//
-// WI-9.6c: `graphExtractionIncludeTypes` is no longer validated against a
-// hardcoded allowlist (the prior GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED,
-// which included a stale `wiki` entry and was already missing `fact` from the
-// runtime consumer's own list — the schema-level allowlist had drifted from
-// reality). Accept-any until Chunk 2 sources a real type list from adapter
-// metadata: the field is now an array of arbitrary non-empty strings.
-// Runtime consumers already handle unknown/unsupported type strings
-// gracefully — src/indexer/graph/graph-extraction.ts's
-// `SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES` set (and `collectEligibleFiles`)
-// silently skips any type it doesn't recognize (no placement entry ⇒ zero
-// eligible files for that type; no crash). This is a permissive-direction
-// behavior change: configs with a previously-rejected type string now parse.
 
 const INDEX_PASS_RETIRED_KEYS = new Set([
   "endpoint",
@@ -69,9 +56,6 @@ export const IndexPassConfigSchema = z.preprocess(
       timeoutMs: z.union([positiveInt, z.null()]).optional(),
       enabled: z.boolean().optional(),
       llm: LlmInvocationOverridesSchema.optional(),
-      graphExtractionBatchSize: positiveInt.optional(),
-      // Accept-any until Chunk 2 (WI-9.6c) — no longer enum-restricted.
-      graphExtractionIncludeTypes: z.array(z.string().min(1)).nonempty().optional(),
     })
     .passthrough(),
 );
@@ -88,22 +72,19 @@ const IndexDefaultsSchema = z
 type IndexConfigOutput = {
   [key: string]: unknown;
   defaults?: z.infer<typeof IndexDefaultsSchema>;
-  graph?: z.infer<typeof IndexPassConfigSchema>;
   memory?: z.infer<typeof IndexPassConfigSchema>;
 };
 
 /**
  * Index config is a union of reserved feature sections and per-pass entries.
- * Passthrough so per-pass entries (keyed by arbitrary pass names like `graph`,
- * `memory`) can live next to the reserved keys.
+ * Passthrough so per-pass entries (keyed by arbitrary pass names like
+ * `memory`, or a retired one like `graph`) can live next to the reserved keys.
  * The outer preprocess emits the legacy parser's actionable error messages
  * for the two most common type-shape mistakes:
  *   - An array at the `index` block.
  *   - A non-object at `index.<passName>`.
- * Inner field validation (graphExtractionIncludeTypes shape, invocation
- * overrides, provider-key rejection) is delegated to {@link IndexPassConfigSchema}.
- * `graphExtractionIncludeTypes` accepts arbitrary non-empty strings
- * (WI-9.6c — no hardcoded type allowlist; accept-any until Chunk 2).
+ * Inner field validation (invocation overrides, provider-key rejection) is
+ * delegated to {@link IndexPassConfigSchema}.
  */
 const IndexConfigRuntimeSchema = z.preprocess(
   (raw, ctx) => {

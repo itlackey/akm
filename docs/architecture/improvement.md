@@ -101,7 +101,7 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `memory-focus`, `graph-refresh`,
+set: `default`, `quick`, `thorough`, `memory-focus`,
 `frequent`, `consolidate`, `catchup`, `reflect-distill`, and
 `proactive-maintenance` (`src/assets/improve-strategies/*.json`). Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
@@ -197,8 +197,8 @@ unbounded, `totalCeiling` is omitted.
 ### The autonomy gate
 
 `akm improve` runs by default and is review-first: reflect, distill, extract
-candidates, validation, proactive-maintenance selection, and graph extraction
-are proposal-only and never write assets directly regardless of this gate.
+candidates, validation, and proactive-maintenance selection are proposal-only
+and never write assets directly regardless of this gate.
 Three specific lanes *would* mutate assets without review and are downgraded
 unless `experimental.improveAutonomy` is explicitly set to `true`:
 

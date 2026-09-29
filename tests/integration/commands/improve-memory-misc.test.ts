@@ -610,99 +610,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
   });
 });
 
-// ── O-3 / #376 — reindex between consolidate and graph extraction ─────────────
-
-describe("O-3: reindex triggered after consolidation before graph extraction (#376)", () => {
-  test("reindexFn is called after consolidation ran and before graph extraction", async () => {
-    const stashDir = makeTempDir("akm-o3-reindex-");
-    writeMemory(stashDir, "auth-guide", { description: "Auth guide" }, "Auth guide content.");
-    await buildIndex(stashDir);
-
-    const reindexCallOrder: string[] = [];
-
-    // Track reindex calls
-    const reindexFn = async ({ stashDir: _s }: { stashDir: string }) => {
-      reindexCallOrder.push("reindex");
-      return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
-    };
-
-    // Track graph extraction calls
-    let graphExtractionCalled = false;
-    const graphExtractionFn = async () => {
-      graphExtractionCalled = true;
-      reindexCallOrder.push("graphExtraction");
-      return {
-        considered: 0,
-        extracted: 0,
-        totalEntities: 0,
-        totalRelations: 0,
-        written: false,
-        quality: {
-          consideredFiles: 0,
-          extractedFiles: 0,
-          entityCount: 0,
-          relationCount: 0,
-          extractionCoverage: 0,
-          density: 0,
-        },
-        warnings: [],
-      } satisfies import("../../../src/indexer/graph/graph-extraction").GraphExtractionResult;
-    };
-
-    // Run with consolidation enabled to trigger the D9 reindex path
-    await akmImprove({
-      scope: "memory",
-      stashDir,
-      config: {
-        semanticSearchMode: "off",
-        engines: {
-          default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
-        },
-        improve: {
-          strategies: {
-            default: {
-              processes: {
-                consolidate: { enabled: true },
-                graphExtraction: { enabled: true },
-                memoryInference: { enabled: false },
-              },
-            },
-          },
-        },
-        defaults: { llmEngine: "default" },
-      },
-      ensureIndexFn: async () => false,
-      reindexFn,
-      graphExtractionFn,
-      reflectFn: async ({ ref }) => ({
-        schemaVersion: 2,
-        ok: true,
-        proposal: makeProposal(ref ?? "memories/auth-guide"),
-        ref: ref ?? "",
-        engine: "test",
-        durationMs: 1,
-      }),
-      distillFn: async ({ ref }) => ({
-        schemaVersion: 1,
-        ok: true,
-        outcome: "queued" as const,
-        inputRef: ref,
-        proposalRef: `lessons/${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-      }),
-    });
-
-    // O-3: if consolidation ran, reindex must happen before graph extraction
-    if (graphExtractionCalled && reindexCallOrder.includes("reindex")) {
-      const reindexIdx = reindexCallOrder.indexOf("reindex");
-      const graphIdx = reindexCallOrder.indexOf("graphExtraction");
-      // Reindex must come before graphExtraction (when consolidation ran)
-      expect(reindexIdx).toBeLessThan(graphIdx);
-    }
-    // At minimum, either reindex was called or graph extraction ran
-    expect(reindexCallOrder.length).toBeGreaterThan(0);
-  });
-});
-
 // ── zero-signal stash: no eligible refs ───────────────────────────────────────
 
 describe("zero-signal stash: 0 eligible refs when stash has no feedback or retrievals", () => {
@@ -727,7 +634,6 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
             default: {
               processes: {
                 memoryInference: { enabled: false },
-                graphExtraction: { enabled: false },
                 // Keep this explicit so the test pins the zero-SIGNAL gate,
                 // independent of strategy defaults.
                 proactiveMaintenance: { enabled: false },

@@ -63,7 +63,6 @@ function triageEnabledConfig(enabled: boolean): AkmConfig {
             distill: { enabled: false },
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             validation: { enabled: false },
             triage: { enabled, applyMode: "queue", maxAcceptsPerRun: 25 },
@@ -209,7 +208,6 @@ describe("akm improve — triage pre-pass", () => {
         runImprovePostLoopStageFn: (async () => ({
           allWarnings: [],
           memoryInferenceDurationMs: 0,
-          graphExtractionDurationMs: 0,
         })) as never,
       });
 

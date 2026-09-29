@@ -173,7 +173,6 @@ function proactiveConfig(stashDir: string): AkmConfig {
           processes: {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             proactiveMaintenance: { enabled: true, dueDays: 30, maxPerRun: 10 },
           },

@@ -4,7 +4,7 @@
  * `callStructured` centralizes the replicated
  *   `tryLlmFeature -> chatCompletion -> classify(context/html/other) ->
  *    parse/validate -> fallback/telemetry`
- * scaffold shared by memory-infer / graph-extract.
+ * scaffold used by memory-infer.
  *
  * These tests pin the seam CONTRACT by injecting a fake chat (so no real
  * network call happens) and asserting the observable wiring:

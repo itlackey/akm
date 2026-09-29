@@ -11,12 +11,14 @@
  * for columns added after a table first shipped, drops of retired derived
  * tables and columns, and one in-place rebuild of the (derived, cheap) FTS
  * table when its layout is older than this release's. It never drops
- * `entries`, `embeddings`, `utility_scores`, the extracted graph
- * (`graph_meta`, `graph_files`, `graph_file_*`), or `llm_enrichment_cache`
- * to cross a version boundary; the only from-scratch
- * rebuild is the SQLITE_CORRUPT path in `index-connection.ts`. A layout newer
- * than this release's is refused, naming the upgrade
- * ({@link newerIndexLayoutError}).
+ * `entries`, `embeddings`, `utility_scores`, or `llm_enrichment_cache` to
+ * cross a version boundary; the only from-scratch rebuild is the
+ * SQLITE_CORRUPT path in `index-connection.ts`. A layout newer than this
+ * release's is refused, naming the upgrade ({@link newerIndexLayoutError}).
+ * The one exception is the LLM entity graph (`graph_meta`, `graph_files`,
+ * `graph_file_*`), retired in 0.9.17-alpha.9: those tables are dropped
+ * unconditionally below (index.db is a regenerable cache, and declared links
+ * — `asset_links` — now back `akm show`'s related list).
  */
 
 import { createRequire } from "node:module";
@@ -44,12 +46,6 @@ import { getMeta, setMeta } from "./index-meta-repository";
 export const DB_VERSION = CANONICAL_INDEX_DB_VERSION;
 /** `index_meta` key set when the writable opener migrated the layout; cleared once `akm index` VACUUMs. */
 export const VACUUM_PENDING_META = "vacuumPending";
-/**
- * The value written to `graph_meta.schema_version`, a NOT NULL column in every
- * released layout. Releases up to 0.9.17-alpha.5 write 4 and nothing ever
- * compares it; the index layout version gates the graph tables' shape.
- */
-export const GRAPH_SCHEMA_VERSION = 4;
 
 /** The layout that added declared links (`asset_links`, #935). */
 const DECLARED_LINKS_LAYOUT = 26;
@@ -91,90 +87,6 @@ const REGISTRY_INDEX_CACHE_DDL = `
   CREATE INDEX IF NOT EXISTS idx_registry_cache_fetched
     ON registry_index_cache(fetched_at);
 `;
-
-/**
- * Create the graph-extraction tables (`graph_meta`/`graph_files`/`graph_file_entities`/
- * `graph_file_relations`).
- *
- * graph_files is self-keyed on (stash_root, file_path, body_hash) and is not
- * tied to entries.id (#624-P1): re-upserting an entries row never disturbs the
- * extracted graph, and a content change yields a distinct key. A UNIQUE index
- * on (stash_root, file_path) still enforces one graph_files row per path.
- */
-function ensureGraphTables(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS graph_meta (
-      stash_root          TEXT PRIMARY KEY,
-      schema_version      INTEGER NOT NULL,
-      generated_at        TEXT NOT NULL,
-      considered_files    INTEGER NOT NULL DEFAULT 0,
-      extracted_files     INTEGER NOT NULL DEFAULT 0,
-      entity_count        INTEGER NOT NULL DEFAULT 0,
-      relation_count      INTEGER NOT NULL DEFAULT 0,
-      extraction_coverage REAL NOT NULL DEFAULT 0,
-      density             REAL NOT NULL DEFAULT 0,
-      extractor_id        TEXT,
-      extraction_run_id   TEXT,
-      model               TEXT,
-      prompt_version      TEXT,
-      batch_size          INTEGER,
-      cache_hits          INTEGER NOT NULL DEFAULT 0,
-      cache_misses        INTEGER NOT NULL DEFAULT 0,
-      truncation_count    INTEGER NOT NULL DEFAULT 0,
-      failure_count       INTEGER NOT NULL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS graph_files (
-      stash_root        TEXT NOT NULL,
-      file_path         TEXT NOT NULL,
-      file_order        INTEGER NOT NULL,
-      file_type         TEXT NOT NULL,
-      body_hash         TEXT NOT NULL,
-      confidence        REAL,
-      status            TEXT NOT NULL DEFAULT 'extracted',
-      reason            TEXT,
-      extraction_run_id TEXT,
-      PRIMARY KEY (stash_root, file_path, body_hash)
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_files_path
-      ON graph_files(stash_root, file_path);
-
-    CREATE INDEX IF NOT EXISTS idx_graph_files_stash_order
-      ON graph_files(stash_root, file_order);
-
-    CREATE TABLE IF NOT EXISTS graph_file_entities (
-      stash_root   TEXT NOT NULL,
-      file_path    TEXT NOT NULL,
-      body_hash    TEXT NOT NULL,
-      entity_order INTEGER NOT NULL,
-      entity_norm  TEXT NOT NULL,
-      entity       TEXT NOT NULL,
-      PRIMARY KEY (stash_root, file_path, body_hash, entity_order),
-      FOREIGN KEY (stash_root, file_path, body_hash)
-        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity_norm
-      ON graph_file_entities(stash_root, entity_norm);
-
-    CREATE TABLE IF NOT EXISTS graph_file_relations (
-      stash_root     TEXT NOT NULL,
-      file_path      TEXT NOT NULL,
-      body_hash      TEXT NOT NULL,
-      relation_order INTEGER NOT NULL,
-      from_entity_norm TEXT NOT NULL,
-      from_entity    TEXT NOT NULL,
-      to_entity_norm TEXT NOT NULL,
-      to_entity      TEXT NOT NULL,
-      relation_type  TEXT,
-      confidence     REAL,
-      PRIMARY KEY (stash_root, file_path, body_hash, relation_order),
-      FOREIGN KEY (stash_root, file_path, body_hash)
-        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
-    );
-  `);
-}
 
 /**
  * An `entries` table missing a required column cannot be read or written by
@@ -342,6 +254,17 @@ export function ensureSchema(db: Database): void {
   db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
   db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
 
+  // The LLM entity graph, retired in 0.9.17-alpha.9: declared links
+  // (`asset_links`) now back `akm show`'s related list and curate's support
+  // refs (#935), and the navigation eval measured vector kNN beating the
+  // graph's `related` list by 0.157 P@5. Unconditional, like the drops
+  // above — an older release's `CREATE TABLE IF NOT EXISTS` recreates these
+  // (empty) if it ever opens this index.
+  db.exec("DROP TABLE IF EXISTS graph_meta");
+  db.exec("DROP TABLE IF EXISTS graph_files");
+  db.exec("DROP TABLE IF EXISTS graph_file_entities");
+  db.exec("DROP TABLE IF EXISTS graph_file_relations");
+
   // One float32 BLOB per entry, searched by an exact scan
   // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
   // (`deriveSemanticProviderFingerprint`); the embedding pass re-embeds only
@@ -396,8 +319,8 @@ export function ensureSchema(db: Database): void {
   ensureColumn(db, "index_dir_state", "index_variant", "TEXT");
 
   // LLM enrichment result cache, keyed by a stable asset_ref string (the
-  // absolute file path for the graph and memory-inference passes) plus the
-  // body hash the result was produced for.
+  // absolute file path of the memory-inference pass) plus the body hash the
+  // result was produced for.
   db.exec(`
     CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
       asset_ref     TEXT NOT NULL,
@@ -412,13 +335,15 @@ export function ensureSchema(db: Database): void {
        ON llm_enrichment_cache(updated_at);
   `);
   // Metadata-enhance retired (RS-D, 0.9.17-alpha.9): its rows were the only
-  // ones keyed by the default empty cache_variant (graph uses an
-  // extractor-specific variant, memory inference `memory-inference-v2`), so
-  // this is safe to run unconditionally on every writable open. The table
+  // ones keyed by the default empty cache_variant (memory inference writes
+  // `memory-inference-v2`), so this is safe to run unconditionally on every
+  // writable open. The table
   // itself stays — memory inference still reads it.
   db.exec("DELETE FROM llm_enrichment_cache WHERE cache_variant = ''");
 
-  ensureGraphTables(db);
+  // The graph-extraction cache variant is retired along with the tables
+  // above; its rows would otherwise sit unread forever.
+  db.exec("DELETE FROM llm_enrichment_cache WHERE cache_variant LIKE 'graph-extraction:%'");
 
   dropVecMirror(db);
   // Meta keys only the sqlite-vec mirror read.

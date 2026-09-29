@@ -21,8 +21,8 @@
  * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
  * harness (tests/_helpers/cli.ts). The CLI-driving tests (#191, #192, #194)
  * allocate fresh isolated HOME/XDG/stash dirs per test and run the CLI
- * in-process; each runCli call re-pins that env + resets the config/embedder/
- * graph caches so back-to-back invocations re-read the test's tempdirs,
+ * in-process; each runCli call re-pins that env + resets the config/embedder
+ * caches so back-to-back invocations re-read the test's tempdirs,
  * restoring env in finally. The #193 tests never spawned the CLI — they
  * exercise openIndexDatabase via dynamic import and are unchanged.
  */

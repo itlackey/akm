@@ -67,7 +67,7 @@ describe("resolveIndexPassExecution", () => {
       index: { defaults: { engine: "index" } },
     };
 
-    const resolved = resolveIndexPassExecution("graph", config);
+    const resolved = resolveIndexPassExecution("memory", config);
 
     expect(resolved.runner?.connection.model).toBe("exact-index-model");
     expect(resolved.runner?.connection).not.toHaveProperty("effort");
@@ -84,7 +84,7 @@ describe("resolveIndexPassExecution", () => {
   test("returns undefined when no index engine is configured", () => {
     const config: AkmConfig = { semanticSearchMode: "auto" };
     expect(resolveIndexPassExecution("enrichment", config).runner).toBeUndefined();
-    expect(resolveIndexPassExecution("graph", config).runner).toBeUndefined();
+    expect(resolveIndexPassExecution("memory", config).runner).toBeUndefined();
   });
 
   test("returns the index default engine for any pass", () => {
@@ -95,7 +95,6 @@ describe("resolveIndexPassExecution", () => {
     };
     expect(resolvedConnection("enrichment", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
     expect(resolvedConnection("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
-    expect(resolvedConnection("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
   test("keeps a required credential symbolic until the resolved request dispatches", () => {
@@ -150,27 +149,13 @@ describe("resolveIndexPassExecution", () => {
       expect(resolvedConnection("enrichment", config)).toEqual({ ...PRIMARY, timeoutMs: 600_000 });
     });
 
-    test("graph pass uses index.graph.engine when set", () => {
-      const config: AkmConfig = {
-        semanticSearchMode: "auto",
-        engines: {
-          primary: { kind: "llm", ...PRIMARY },
-          ministral: { kind: "llm", ...MINISTRAL },
-        },
-        index: { defaults: { engine: "primary" }, graph: { engine: "ministral" } },
-      };
-      expect(resolvedConnection("graph", config)).toEqual({ ...MINISTRAL, timeoutMs: 600_000 });
-      // Memory pass still falls through to default — no override for memory.
-      expect(resolvedConnection("memory", config)).toEqual({ ...PRIMARY, timeoutMs: 600_000 });
-    });
-
     test("rejects a missing per-pass engine instead of silently using the default", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
         engines: { primary: { kind: "llm", ...PRIMARY } },
-        index: { defaults: { engine: "primary" }, graph: { engine: "missing" } },
+        index: { defaults: { engine: "primary" }, memory: { engine: "missing" } },
       };
-      expect(() => resolveIndexPassExecution("graph", config)).toThrow(/missing/i);
+      expect(() => resolveIndexPassExecution("memory", config)).toThrow(/missing/i);
     });
 
     test("a non-LLM engine on a pass degrades to no runner (with a warning) instead of aborting the whole index run", () => {
@@ -181,13 +166,13 @@ describe("resolveIndexPassExecution", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
         engines: { wrong: { kind: "agent", platform: "pi" } },
-        index: { defaults: { engine: "primary" }, graph: { engine: "wrong" } },
+        index: { defaults: { engine: "primary" }, memory: { engine: "wrong" } },
       };
-      expect(() => resolveIndexPassExecution("graph", config)).not.toThrow();
-      const resolved = resolveIndexPassExecution("graph", config);
+      expect(() => resolveIndexPassExecution("memory", config)).not.toThrow();
+      const resolved = resolveIndexPassExecution("memory", config);
       expect(resolved.runner).toBeUndefined();
       expect(resolved.notices).toEqual([]);
-      expect(seen.some((args) => args.some((a) => String(a).includes("graph")))).toBe(true);
+      expect(seen.some((args) => args.some((a) => String(a).includes("memory")))).toBe(true);
     });
 
     test("index.<pass>.enabled === false opts the pass out", () => {
@@ -207,11 +192,10 @@ describe("resolveIndexPassExecution", () => {
       index: {
         defaults: { engine: "index" },
         enrichment: { enabled: false },
-        graph: { enabled: true },
+        memory: { enabled: true },
       },
     };
     expect(resolveIndexPassExecution("enrichment", config).runner).toBeUndefined();
-    expect(resolvedConnection("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
     expect(resolvedConnection("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
@@ -226,7 +210,7 @@ describe("resolveIndexPassExecution", () => {
       model: "override",
       timeoutMs: 600_000,
     });
-    expect(resolvedConnection("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolvedConnection("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
   test("projects pass-over-default model, merged inference, and timeout onto the symbolic runner", () => {
@@ -276,13 +260,12 @@ describe("resolveIndexPassExecution", () => {
         strategies: {
           default: {
             engine: "improve",
-            processes: { memoryInference: { enabled: true }, graphExtraction: { enabled: true } },
+            processes: { memoryInference: { enabled: true } },
           },
         },
       },
     };
     expect(resolveIndexPassExecution("memory", config).runner).toBeUndefined();
-    expect(resolveIndexPassExecution("graph", config).runner).toBeUndefined();
   });
 });
 
@@ -292,30 +275,18 @@ describe("config loader: `index` block parsing", () => {
       configVersion: "0.9.0",
       engines: {
         primary: { kind: "llm", ...SAMPLE_LLM },
-        graph: { kind: "llm", ...SAMPLE_LLM, model: "graph-model" },
+        secondary: { kind: "llm", ...SAMPLE_LLM, model: "secondary-model" },
       },
       index: {
         defaults: { engine: "primary" },
         enrichment: { enabled: false },
-        graph: { engine: "graph" },
+        memory: { engine: "secondary" },
       },
     });
     const config = loadUserConfig();
     expect(config.index?.defaults?.engine).toBe("primary");
     expect((config.index?.enrichment as Record<string, unknown> | undefined)?.enabled).toBe(false);
-    expect(config.index?.graph?.engine).toBe("graph");
-  });
-
-  test("loads graphExtractionIncludeTypes for graph pass", async () => {
-    writeUserConfig({
-      configVersion: "0.9.0",
-      index: {
-        graph: { graphExtractionIncludeTypes: ["memory", "command"] },
-      },
-    });
-    const config = loadUserConfig();
-    const { getIndexPassConfig } = await import("../src/core/config/config");
-    expect(getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes).toEqual(["memory", "command"]);
+    expect(config.index?.memory?.engine).toBe("secondary");
   });
 
   test("warns and drops per-pass provider configuration instead of failing config load (duplicate provider path)", () => {
@@ -402,23 +373,6 @@ describe("config loader: `index` block parsing", () => {
     } finally {
       _setWarnSinkForTests(undefined);
     }
-  });
-
-  test("accepts arbitrary graphExtractionIncludeTypes values (WI-9.6c: accept-any until Chunk 2)", () => {
-    // The hardcoded type allowlist (GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED) was
-    // deleted — it had already drifted from the runtime consumer's own
-    // supported-type set (stale `wiki` entry, missing `fact`). The field is
-    // now an array of arbitrary non-empty strings; an unrecognized type is
-    // handled gracefully at runtime (silently yields zero eligible files for
-    // that type — see src/indexer/graph/graph-extraction.ts's
-    // SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES / collectEligibleFiles), not
-    // rejected at config-load time.
-    writeUserConfig({
-      configVersion: "0.9.0",
-      index: { graph: { graphExtractionIncludeTypes: ["memory", "bogus-type"] } },
-    });
-    const config = loadUserConfig();
-    expect(config.index?.graph?.graphExtractionIncludeTypes).toEqual(["memory", "bogus-type"]);
   });
 
   test("rejects array-shaped `index` block", () => {

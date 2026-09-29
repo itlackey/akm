@@ -129,7 +129,6 @@ const minimalConfig = () =>
           processes: {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             proactiveMaintenance: { enabled: true, maxPerRun: 10 },
           },
@@ -658,7 +657,6 @@ function configWithSalience(
           processes: {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             // Default OFF so only the lane under test can rescue zero-feedback
             // refs, unless a test explicitly opts proactive back in.
@@ -801,7 +799,6 @@ describe("#608 high-salience admission gate", () => {
               processes: {
                 consolidate: { enabled: false },
                 memoryInference: { enabled: false },
-                graphExtraction: { enabled: false },
                 extract: { enabled: false },
                 proactiveMaintenance: { enabled: false },
               },
@@ -857,7 +854,6 @@ describe("#608 high-salience admission gate", () => {
               processes: {
                 consolidate: { enabled: false },
                 memoryInference: { enabled: false },
-                graphExtraction: { enabled: false },
                 extract: { enabled: false },
                 proactiveMaintenance: { enabled: false },
               },

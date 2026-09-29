@@ -117,8 +117,7 @@ export function upsertLlmCacheEntry(
  * `entries` table. Should be called during the cleanup phase of each index
  * run to prevent the cache from growing unboundedly as assets are removed.
  *
- * Cache refs are absolute file paths (graph extraction and memory
- * inference).
+ * Cache refs are absolute file paths (memory inference).
  */
 export function clearStaleCacheEntries(db: Database): void {
   db.exec(`

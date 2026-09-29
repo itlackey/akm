@@ -529,10 +529,6 @@ function deleteRelatedRows(
   // disables this cleanup and runs it only after its index.db transaction
   // commits; standalone delete callers retain the immediate behavior.
   if (options.cleanupUsageEvents !== false) deleteUsageEventsByEntryIds(numericIds);
-
-  // graph_files is keyed by its own stash_root/file_path/body_hash identity,
-  // so deleting an entry row intentionally leaves extracted graph data intact,
-  // and with it the graph_meta counts the graph writer derives from those rows.
 }
 
 export function deleteUsageEventsByEntryIds(entryIds: number[]): void {

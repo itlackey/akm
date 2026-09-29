@@ -45,7 +45,6 @@ function makeEngineConfig(): AkmConfig {
             distill: { enabled: true, engine: "openai-judge" },
             consolidate: { enabled: false },
             memoryInference: { enabled: true },
-            graphExtraction: { enabled: false },
           },
         },
       },
@@ -81,8 +80,16 @@ describe("isProcessEnabled", () => {
 
   test("reflects the configured enabled flag on improve processes", () => {
     const config = makeEngineConfig();
-    expect(isProcessEnabled("index", "graphExtraction", config)).toBe(true);
-    const off: AkmConfig = { ...config, index: { graph: { enabled: false } } };
-    expect(isProcessEnabled("index", "graphExtraction", off)).toBe(false);
+    expect(isProcessEnabled("index", "memoryInference", config)).toBe(true);
+    const off: AkmConfig = { ...config, index: { memory: { enabled: false } } };
+    expect(isProcessEnabled("index", "memoryInference", off)).toBe(false);
+  });
+
+  // 0.9.17-alpha.9: the LLM entity-graph extraction pass this once gated is
+  // retired — graphExtraction/graph_extraction are no longer recognized names.
+  test("graphExtraction is no longer a recognized isProcessEnabled process name (retired 0.9.17-alpha.9)", () => {
+    const config = makeEngineConfig();
+    expect(isProcessEnabled("index", "graphExtraction", config)).toBe(false);
+    expect(isProcessEnabled("index", "graph_extraction", config)).toBe(false);
   });
 });

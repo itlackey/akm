@@ -387,7 +387,7 @@ Primary result fields:
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
 The `improve` section includes counts for planned refs, reflect/distill actions,
-memory-prune actions, memory-inference writes, graph-extraction refreshes,
+memory-prune actions, memory-inference writes,
 session-extraction outcomes (`sessionsScanned`, `sessionsExtracted`, `proposalsCreated`),
 dead-URL detections, and skip reasons observed in the selected time window.
 
@@ -429,13 +429,6 @@ purpose" from "broken"), `warn` when every session in the window was skipped
 for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 `locked_concurrent`) — naming the reason and, when recorded, the engine — and
 `pass` otherwise, with per-outcome counts.
-
-The indexed entity graph (entities/relations extracted from bundle assets) has
-no dedicated inspection command; its summary counts surface as an info-level
-metric in `akm health`. Graph data is automatically re-extracted on the first
-`akm improve` cycle after a `DB_VERSION` upgrade. The graph backs `akm show`'s
-`related` list; it does not affect search ranking. Curate's support refs come
-from declared links (`akm show`'s `links`), not from this graph.
 
 ### search
 
@@ -701,8 +694,7 @@ workflow and task targets name), `incoming` (the assets that name it), and
 kind is `{ "total": n, "refs": [...] }` with at most 10 refs; `total` counts
 them all. The field is omitted when nothing links either way. Links are read
 from frontmatter and parsed structure at index time, with no model; they do
-not affect search ranking. `related` is separate: the LLM entity graph's
-shared-entity neighbours.
+not affect search ranking.
 
 Opaque fragment shows and `--context lead` keep `ref` as the canonical parent
 identity and add
@@ -2526,7 +2518,7 @@ clock, or session-log changes.
 
 `plan.processes` (#947) is the resolved process -> engine -> model routing
 table: one row per improve process (`reflect`, `distill`, `consolidate`,
-`memoryInference`, `graphExtraction`, `extract`, `validation`, `triage`,
+`memoryInference`, `extract`, `validation`, `triage`,
 `proactiveMaintenance`), plus a `triage.judgment` row when the strategy
 configures a judgment engine. Each row carries `enabled`, the resolved
 `engine`/`model` (llm-backed processes only) and `engineKind`, this process's
@@ -2581,7 +2573,7 @@ field on the result (`result_json` in `improve_runs`, and in the
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
 `reasoningTokens`, and `totalDurationMs`. `noCalls` lists every LLM-backed
 process (`reflect`, `distill`, `consolidate`, `memoryInference`,
-`graphExtraction`, `extract`, `validation` — not `triage`/`proactiveMaintenance`,
+`extract`, `validation` — not `triage`/`proactiveMaintenance`,
 which never make an attributable LLM call themselves) the active strategy
 enabled but that ended the run with zero calls, each with a `reason` drawn
 from the existing skip-reason vocabulary: `"engine_unavailable"` (also in

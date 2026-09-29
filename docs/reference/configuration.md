@@ -314,7 +314,7 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
         "engine": "fast",
         "processes": {
           "reflect": { "llm": { "temperature": 0.2 } },
-          "graphExtraction": { "model": "qwen3-small" }
+          "memoryInference": { "model": "qwen3-small" }
         }
       }
     }
@@ -326,13 +326,6 @@ LLM-only improve processes require an LLM engine; an explicit invalid or
 incompatible engine never falls back to another engine. Built-in strategies
 are complete presets. User-defined strategies inherit omitted fields from the
 built-in `default` strategy before applying their own overrides.
-
-Graph extraction also reads `index.graph`. Its `engine`, `model`, `timeoutMs`
-and `llm` apply over the strategy-wide values, and `processes.graphExtraction`
-overrides them. `processes.graphExtraction.batchSize` and `includeTypes` win
-over `index.graph.graphExtractionBatchSize` and `graphExtractionIncludeTypes`;
-with neither set, the batch size is 4 and the types are `memory` and
-`knowledge`.
 
 `processes.triage.judgment` explicitly controls the optional judgment tier.
 Use `true` to enable it, `false` to disable it, or an object with `enabled`,
@@ -848,7 +841,11 @@ profile identities.
 config that still sets it is simply ignored — it still loads, unvalidated
 and without warning.
 
-`index.graph.lazyGraphExtraction` is retired in 0.9.17: `akm show` and
-`akm curate` no longer extract or queue graph work, and graph extraction runs
-only in `akm improve`. A config that still sets it loads; the key is named
-once as unknown, and `akm migrate apply` removes it.
+`index.graph.*` and every strategy's `processes.graphExtraction.*` are retired
+in 0.9.17-alpha.9: the LLM entity graph they configured is gone —
+`akm show`'s links come from declared links instead (see `## Strategies`
+above). A config that still sets them loads; each key is named once as
+unknown, and `akm migrate apply` removes it. The built-in `graph-refresh`
+strategy is retired the same way, but differently: naming it via `--strategy`,
+`defaults.improveStrategy`, or a task fails with a message pointing at the
+retirement, matching how any other unknown strategy name fails.

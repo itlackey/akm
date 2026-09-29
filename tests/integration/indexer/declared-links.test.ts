@@ -24,7 +24,6 @@ import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
-import { insertGraphEntities } from "../../_helpers/graph-store";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -137,14 +136,6 @@ describe("declared links", () => {
       "stash//workflows/release uses commands/cut-release -> stash//commands/cut-release",
     ]);
 
-    // The LLM entity graph is a separate model: indexing writes nothing to it.
-    const db = openIndexDatabase(getDbPath());
-    try {
-      expect(db.prepare("SELECT COUNT(*) AS n FROM graph_files").get()).toEqual({ n: 0 });
-    } finally {
-      closeDatabase(db);
-    }
-
     // `akm info` reports links per kind with the unresolved count.
     expect(assembleInfo().indexStats.links).toEqual({
       cites: { total: 1, unresolved: 0 },
@@ -156,7 +147,7 @@ describe("declared links", () => {
     });
   });
 
-  test("akm show lists outgoing, incoming and unresolved links grouped by kind; related is unchanged", async () => {
+  test("akm show lists outgoing, incoming and unresolved links grouped by kind", async () => {
     writeStash();
     await akmIndex({ stashDir: storage.stashDir });
 
@@ -168,7 +159,6 @@ describe("declared links", () => {
       },
       unresolved: { xref: { total: 1, refs: ["memories/release-checklist"] } },
     });
-    expect(citer.related).toEqual({ total: 0, hits: [] });
 
     const target = await akmShowUnified({ ref: "memories/deploy-window-moved" });
     expect(target.links).toEqual({
@@ -214,7 +204,7 @@ describe("declared links", () => {
     expect(links.some((line) => line.startsWith("stash//tasks/nightly-release"))).toBe(false);
   });
 
-  test("curate's support refs are the item's declared links, outgoing first, never the LLM related list", async () => {
+  test("curate's support refs are the item's declared links, outgoing first", async () => {
     write(
       "knowledge/zeppelin-rollout.md",
       "---\ndescription: Zeppelin rollout plan\nxrefs:\n  - memories/hangar-incident\n  - knowledge/mooring-runbook\n---\n\n# Plan\n",
@@ -225,23 +215,13 @@ describe("declared links", () => {
       "memories/crew-notes.md",
       "---\ndescription: Crew notes\nxrefs:\n  - knowledge/zeppelin-rollout\n---\n\nN.\n",
     );
+    // An unrelated distractor doc: absent, corpus-relative scoring reorders the
+    // "both" assertion below (crew-notes outscores mooring-runbook).
     write("knowledge/balloon-basics.md", "---\ndescription: Balloon basics\n---\n\n# Basics\n");
     await akmIndex({ stashDir: storage.stashDir });
-    // The LLM entity graph relates the plan to balloon-basics; support refs no longer come from it.
-    const db = openIndexDatabase(getDbPath());
-    try {
-      const ids = db
-        .prepare("SELECT id, file_path FROM entries WHERE concept_id IN (?, ?) ORDER BY concept_id")
-        .all("knowledge/balloon-basics", "knowledge/zeppelin-rollout") as Array<{ id: number; file_path: string }>;
-      for (const row of ids)
-        insertGraphEntities(db, row.id, storage.stashDir, row.file_path, ["Zeppelin"], "knowledge");
-    } finally {
-      closeDatabase(db);
-    }
 
     const [plan] = (await akmCurate({ query: "zeppelin rollout plan", limit: 1 })).items;
     expect(plan && "ref" in plan ? plan.ref : undefined).toBe("knowledge/zeppelin-rollout");
-    expect((await akmShowUnified({ ref: "knowledge/zeppelin-rollout" })).related?.total).toBe(1);
     expect(plan && "supportRefs" in plan ? plan.supportRefs : undefined).toEqual([
       { ref: "memories/hangar-incident", type: "memory", reason: "Declared link (xref) from this asset." },
       { ref: "knowledge/mooring-runbook", type: "knowledge", reason: "Declared link (xref) from this asset." },

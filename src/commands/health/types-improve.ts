@@ -51,7 +51,6 @@ export interface ImproveHealthMetrics {
     };
     memoryPrune: number;
     memoryInference: number;
-    graphExtraction: number;
     error: number;
   };
   autoAccept: {
@@ -83,13 +82,6 @@ export interface ImproveHealthMetrics {
     skippedNoFacts: number;
     /** `written / freshAttempts`, 4dp; 0 when `freshAttempts` is 0. */
     yieldRate: number;
-    durationMs: number;
-  };
-  graphExtraction: {
-    extractedFiles: number;
-    entities: number;
-    relations: number;
-    failures: number;
     durationMs: number;
   };
   /** Wall time of the window's improve runs (nearest-rank percentiles). */

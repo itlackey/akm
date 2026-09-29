@@ -9,8 +9,10 @@
  * readers serve what is there, and the writable opener (`ensureSchema`,
  * `index-schema.ts`) brings it up to date in place — added and dropped
  * columns, retired tables dropped, a one-time full-text rebuild — without
- * touching embeddings, utility scores, graph rows, or the LLM enrichment
- * cache. A newer layout is refused, naming the upgrade.
+ * touching embeddings, utility scores, or the LLM enrichment cache (the one
+ * exception is the LLM entity graph, unconditionally dropped since its
+ * retirement in 0.9.17-alpha.9). A newer layout is refused, naming the
+ * upgrade.
  */
 
 // 26: declared links (#935) live in `asset_links`, one row per link, owned by

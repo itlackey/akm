@@ -91,7 +91,6 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
       },
       memoryPrune: 0,
       memoryInference: 0,
-      graphExtraction: 0,
       error: 0,
     },
     autoAccept: { promoted: 0, validationFailed: 0 },
@@ -108,7 +107,6 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
       durationMs: 0,
     },
     memoryInference: { considered: 0, freshAttempts: 0, written: 0, skippedNoFacts: 0, yieldRate: 0, durationMs: 0 },
-    graphExtraction: { extractedFiles: 0, entities: 0, relations: 0, failures: 0, durationMs: 0 },
     wallTime: { medianMs: 0, p95Ms: 0 },
     coverage: { acceptedProposals: 0, distinctRefs: 0 },
   };
@@ -167,9 +165,6 @@ function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unkno
       break;
     case "memory-inference":
       metrics.actions.memoryInference += 1;
-      break;
-    case "graph-extraction":
-      metrics.actions.graphExtraction += 1;
       break;
     case "error":
       metrics.actions.error += 1;
@@ -235,20 +230,6 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   }
   metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
 
-  const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
-  if (graphExtraction) {
-    const ge = metrics.graphExtraction;
-    // This run's counts, like entities and relations. `quality` describes the
-    // whole stored graph after the run; summing it would count each stored file
-    // once per run in the window.
-    ge.extractedFiles += toFiniteNumber(graphExtraction.extracted);
-    ge.entities += toFiniteNumber(graphExtraction.totalEntities);
-    ge.relations += toFiniteNumber(graphExtraction.totalRelations);
-    const telemetry = graphExtraction.telemetry as Record<string, unknown> | undefined;
-    ge.failures += toFiniteNumber(telemetry?.failureCount);
-  }
-  metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
-
   return metrics;
 }
 
@@ -280,7 +261,6 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   }
   dst.actions.memoryPrune += src.actions.memoryPrune;
   dst.actions.memoryInference += src.actions.memoryInference;
-  dst.actions.graphExtraction += src.actions.graphExtraction;
   dst.actions.error += src.actions.error;
   dst.autoAccept.promoted += src.autoAccept.promoted;
   dst.autoAccept.validationFailed += src.autoAccept.validationFailed;
@@ -298,11 +278,6 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.memoryInference.written += src.memoryInference.written;
   dst.memoryInference.skippedNoFacts += src.memoryInference.skippedNoFacts;
   dst.memoryInference.durationMs += src.memoryInference.durationMs;
-  dst.graphExtraction.extractedFiles += src.graphExtraction.extractedFiles;
-  dst.graphExtraction.entities += src.graphExtraction.entities;
-  dst.graphExtraction.relations += src.graphExtraction.relations;
-  dst.graphExtraction.failures += src.graphExtraction.failures;
-  dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
 }
 
 function compareImproveRunRecency(a: ImproveRunSummaryRow, b: ImproveRunSummaryRow): number {
@@ -395,7 +370,6 @@ export function projectImproveRunSummary(
     memorySummary: perRow.memorySummary,
     consolidation: perRow.consolidation,
     memoryInference: perRow.memoryInference,
-    graphExtraction: perRow.graphExtraction,
     orphansPurged: toFiniteNumber(result.orphansPurged),
     lintFixed: lintSummary ? toFiniteNumber(lintSummary.fixed) : 0,
     lintFlagged: lintSummary ? toFiniteNumber(lintSummary.flagged) : 0,

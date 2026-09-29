@@ -120,9 +120,6 @@ function makeCtx(overrides: Partial<MaintenanceCtx> = {}): MaintenanceCtx {
     memoryInferenceFn: () => {
       throw new Error("memoryInferenceFn not expected in this scenario");
     },
-    graphExtractionFn: () => {
-      throw new Error("graphExtractionFn not expected in this scenario");
-    },
     ...overrides,
   };
 }

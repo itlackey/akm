@@ -10,7 +10,6 @@ import type {
 } from "../commands/improve/improve-strategies";
 import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { LoweringNotice } from "../execution/resolved-request";
-import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import type { AgentFailureReason } from "../integrations/agent/spawn";
@@ -216,7 +215,7 @@ export interface ImproveExecutionPlan {
     estimatedChunks: number;
   };
   stages: Array<{
-    name: "consolidation" | "extract" | "graph-extraction" | "memory-inference";
+    name: "consolidation" | "extract" | "memory-inference";
     wouldRun: boolean;
     reason: string;
   }>;
@@ -248,7 +247,6 @@ export type ImproveActionMode =
   | "distill-skipped"
   | "memory-prune"
   | "memory-inference"
-  | "graph-extraction"
   | "error";
 
 /** Coarse audit bucket an {@link ImproveActionMode} contributes to. */
@@ -284,7 +282,6 @@ export function classifyImproveAction(mode: ImproveActionMode): ImproveActionCla
     case "reflect":
     case "distill":
     case "memory-inference":
-    case "graph-extraction":
       return "accepted";
     case "reflect-cooldown":
     case "reflect-skipped":
@@ -698,7 +695,6 @@ export interface ImproveActionResult {
     | AkmReflectResult
     | AkmDistillResult
     | MemoryInferenceResult
-    | GraphExtractionResult
     | { ok: true; pruned: boolean; reason: MemoryPruneCandidate["reason"] }
     | { ok: true; reason: string }
     | { ok: false; error: string };
@@ -891,7 +887,14 @@ export interface AkmImproveResult {
   /** Number of reflect calls that had at least one error in the rolling window at call time. */
   reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
+  /**
+   * Retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction that
+   * wrote it. Kept, loosely typed, only so this type still matches a
+   * historical `improve_runs` envelope an older release wrote —
+   * `decodeImproveResult` still accepts the field (AGENTS.md "Reading
+   * persisted data"). Nothing constructs or reads it any more.
+   */
+  graphExtraction?: Record<string, unknown>;
   /**
    * Wall-clock duration of the memory-inference pass (ms). Surfaced at the
    * top level (not inside `memoryInference`) because both
@@ -901,10 +904,8 @@ export interface AkmImproveResult {
    */
   memoryInferenceDurationMs?: number;
   /**
-   * Wall-clock duration of the graph-extraction pass (ms). Same surfacing
-   * convention as `memoryInferenceDurationMs` — top-level so the
-   * `wallTime.byPhase.graphExtraction` aggregator in health.ts picks it up.
-   * Omitted entirely when the pass did not run.
+   * Retired in 0.9.17-alpha.9 with `graphExtraction` above — same read-compat
+   * reason, nothing writes it any more.
    */
   graphExtractionDurationMs?: number;
   /**

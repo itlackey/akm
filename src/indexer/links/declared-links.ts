@@ -7,9 +7,10 @@
  * own frontmatter and parsed structure, derived with no model from the
  * document the indexer persists.
  *
- * They are a separate graph from the LLM entity graph (`graph_*`): their nodes
- * are asset refs, not free-text entities, and each link belongs to the entry
- * that declares it, so it is written and replaced with that entry
+ * Their nodes are asset refs, not free-text entities extracted by a model (the
+ * `graph_*`-tabled LLM entity graph this superseded was retired in
+ * 0.9.17-alpha.9), and each link belongs to the entry that declares it, so it
+ * is written and replaced with that entry
  * (`asset_links`, `index-links-repository.ts`). Nothing here reads a file or
  * the index: a target is resolved to a `[bundle//]conceptId` from the token
  * alone, and whether that target exists is a join at read time, so a target

@@ -40,7 +40,7 @@ export interface LlmUsageRecord {
   stage?: string;
   /** Named engine selected before dispatch. */
   engine?: string;
-  /** Owning process, e.g. `reflect` or `graphExtraction`. */
+  /** Owning process, e.g. `reflect` or `distill`. */
   process?: string;
   /** Whether this HTTP attempt completed successfully or terminated with an error. */
   outcome: "success" | "error";

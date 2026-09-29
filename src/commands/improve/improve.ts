@@ -721,7 +721,6 @@ function buildResultExecutionPlan(
   const belowMinPending =
     pendingMemories !== undefined && inferenceMinPending !== undefined && pendingMemories < inferenceMinPending;
   const memoryInferenceEnabled = resolvedPlan.processes.memoryInference.enabled && !belowMinPending;
-  const graphExtractionEnabled = resolvedPlan.processes.graphExtraction.enabled && run.primaryStashDir !== undefined;
   // Per-process routing, plus how many effective refs each ref-scoped process would act on (#947).
   const processes = projectResolvedProcessRouting(resolvedPlan).map((row) => {
     const eligibleRefs = eligibleRefCount(preparation.loopRefs, row.process, resolvedPlan.strategy.config);
@@ -765,16 +764,6 @@ function buildResultExecutionPlan(
     },
     stageConfig: {
       extract: { enabled: preparation.planning.extract.wouldRun, reason: preparation.planning.extract.reason },
-      graphExtraction: {
-        enabled: graphExtractionEnabled,
-        reason: !resolvedPlan.processes.graphExtraction.enabled
-          ? "disabled"
-          : graphExtractionEnabled
-            ? improveProfile.processes?.graphExtraction?.fullScan === true
-              ? "enabled for a full-corpus scan"
-              : "enabled for refs touched by this run"
-            : "enabled but no primary source is available",
-      },
       memoryInference: {
         enabled: memoryInferenceEnabled,
         reason: !resolvedPlan.processes.memoryInference.enabled
@@ -1027,7 +1016,7 @@ async function runImproveStageSequence(
     resolvedPlan,
   });
 
-  let postLoop: ImprovePostLoopResult = { allWarnings: [], memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
+  let postLoop: ImprovePostLoopResult = { allWarnings: [], memoryInferenceDurationMs: 0 };
   const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
   if (budgetAbortController.signal.aborted || (remainingBudget !== undefined && remainingBudget <= 0)) {
     info("[improve] post-loop maintenance skipped (wall-clock budget exhausted)");
@@ -1068,9 +1057,8 @@ function finalizeImproveResult(args: {
   const { options, startMs, resolvedPlan } = run;
   const { memoryCleanupPlan, strategyFilteredRefs } = collected;
   const consolidation = preparation.consolidation;
-  const { memoryInference, graphExtraction, allWarnings, deadUrls, deadUrlCoverage, orphansPurged, proposalsExpired } =
-    postLoop;
-  const { memoryInferenceDurationMs, graphExtractionDurationMs } = postLoop;
+  const { memoryInference, allWarnings, deadUrls, deadUrlCoverage, orphansPurged, proposalsExpired } = postLoop;
+  const { memoryInferenceDurationMs } = postLoop;
   // The per-ref distill-skipped rows fold into a bounded aggregate before persistence (C1).
   const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
   // This run's LLM accounting (#944): llm_usage rows carry no run id, so the
@@ -1090,7 +1078,6 @@ function finalizeImproveResult(args: {
     consolidation,
     ...(preparation.extract ?? []).flatMap((extract) => [extract, ...(extract.sessions ?? [])]),
     memoryInference,
-    graphExtraction,
     triageDrain,
   ]);
   const applied = preparation.appliedCleanup;
@@ -1144,11 +1131,9 @@ function finalizeImproveResult(args: {
     ...(deadUrlCoverage !== undefined ? { deadUrlCoverage } : {}),
     ...(reflectsWithErrorContext > 0 ? { reflectsWithErrorContext } : {}),
     ...(memoryInference ? { memoryInference } : {}),
-    ...(graphExtraction ? { graphExtraction } : {}),
     // Top-level phase durations feed health's wall-time buckets; a phase that
     // did not run is omitted, not zero.
     ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
-    ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
     ...(ensureIndexDurationMs !== undefined ? { ensureIndexDurationMs } : {}),
     ...(orphansPurged !== undefined ? { orphansPurged } : {}),
     ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
@@ -1173,7 +1158,6 @@ function finalizeImproveResult(args: {
     result,
     {
       memoryInferenceDurationMs,
-      graphExtractionDurationMs,
       totalDurationMs: Date.now() - startMs,
       warningCount: allWarnings.length,
       orphansPurged: orphansPurged ?? 0,
@@ -1203,7 +1187,6 @@ const ACTION_COUNTER: Record<ImproveActionMode, string> = {
   "distill-skipped": "distillSkippedActions",
   "memory-prune": "memoryPruneActions",
   "memory-inference": "memoryInferenceActions",
-  "graph-extraction": "graphExtractionActions",
   error: "errorActions",
   "reflect-failed": "reflectFailedActions",
   "reflect-cooldown": "reflectCooldownActions",
@@ -1215,7 +1198,6 @@ function emitImproveCompletedEvent(
   result: AkmImproveResult,
   durations: {
     memoryInferenceDurationMs: number;
-    graphExtractionDurationMs: number;
     totalDurationMs: number;
     warningCount: number;
     orphansPurged: number;
@@ -1235,7 +1217,6 @@ function emitImproveCompletedEvent(
   counts.distillSkippedActions = (counts.distillSkippedActions ?? 0) + distillSkippedTotal;
   classCounts.skipped += distillSkippedTotal;
   const cleanup = result.memoryCleanup;
-  const quality = result.graphExtraction?.quality;
   appendEvent(
     {
       eventType: "improve_completed",
@@ -1269,21 +1250,12 @@ function emitImproveCompletedEvent(
         consolidationDurationMs: result.consolidation?.durationMs ?? 0,
         memoryInferenceWrites: result.memoryInference?.writtenFacts ?? 0,
         memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
-        graphExtractionExtractedFiles: quality?.extractedFiles ?? 0,
-        graphExtractionDurationMs: durations.graphExtractionDurationMs,
         proactiveSelected: result.proactiveMaintenance?.selected ?? 0,
         proactiveDueTotal: result.proactiveMaintenance?.dueTotal ?? 0,
         proactiveNeverReflected: result.proactiveMaintenance?.neverReflected ?? 0,
         durationMs: durations.totalDurationMs,
         warningCount: durations.warningCount,
         orphansPurged: durations.orphansPurged,
-        ...(quality
-          ? {
-              graphCoverage: quality.extractionCoverage,
-              graphDensity: quality.density,
-              graphEntities: quality.entityCount,
-            }
-          : {}),
       },
     },
     eventsCtx,

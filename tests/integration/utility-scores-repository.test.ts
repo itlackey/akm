@@ -1,8 +1,7 @@
 /**
  * `utility_scores` repository: batch reads, and rows surviving a reopen of
  * the index (the CREATE TABLE IF NOT EXISTS schema path). The scores feed
- * improve's salience and graph-extraction ordering; search ranking does not
- * read them.
+ * improve's salience work; search ranking does not read them.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

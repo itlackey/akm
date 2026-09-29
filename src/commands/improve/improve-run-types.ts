@@ -17,7 +17,6 @@ import type {
 } from "../../core/improve-types";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import type { EnsureIndexOptions } from "../../indexer/ensure-index";
-import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { saveGitStash } from "../../sources/providers/git";
@@ -73,7 +72,6 @@ export interface AkmImproveOptions {
   reflectFn?: ReflectFn;
   distillFn?: DistillFn;
   memoryInferenceFn?: typeof runMemoryInferencePass;
-  graphExtractionFn?: typeof runGraphExtractionPass;
   extractCandidateCountFn?: typeof countNewExtractCandidates;
   /** Session-log harnesses for both the `minNewSessions` gate and the extract pass. */
   extractHarnesses?: SessionLogHarness[];
@@ -131,20 +129,16 @@ export interface ImprovePostLoopResult {
   /** Present whenever the URL check ran, even with no dead links. */
   deadUrlCoverage?: DeadUrlCoverage;
   memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
   maintenanceActions?: ImproveActionResult[];
   memoryInferenceDurationMs: number;
-  graphExtractionDurationMs: number;
   orphansPurged?: number;
   proposalsExpired?: number;
 }
 
 export interface ImproveMaintenanceResult {
   memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
   actions?: ImproveActionResult[];
   memoryInferenceDurationMs: number;
-  graphExtractionDurationMs: number;
   orphansPurged?: number;
   proposalsExpired?: number;
 }

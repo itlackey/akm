@@ -100,6 +100,7 @@ import {
   normalizeConfigFile,
   parseAndValidateConfigText,
   resetConfigCache,
+  updateConfig,
 } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -795,7 +796,7 @@ describe("previous-release corpus — retired index.graph.lazyGraphExtraction ke
     resetConfigCache();
   });
 
-  test("a 0.9.17-alpha.5 config that sets it still loads; the key is named once and kept", () => {
+  test("a 0.9.17-alpha.5 config that sets it still loads; alpha.9 retiring the whole pass supersedes the old per-field warning, sub-fields stay kept in memory", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -812,10 +813,109 @@ describe("previous-release corpus — retired index.graph.lazyGraphExtraction ke
 
     const config = loadConfig();
 
-    expect(warnings.filter((w) => w.includes("lazyGraphExtraction"))).toHaveLength(1);
+    // 0.9.17-alpha.9 retires the whole `index.graph` pass (see the describe
+    // block below), not just these two alpha.5-era sub-fields. The unknown-
+    // key walk now stops at `index.graph` itself, so the coarser whole-key
+    // warning supersedes the old per-field "lazyGraphExtraction" message —
+    // one warning, not two.
+    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes("lazyGraphExtraction"))).toHaveLength(0);
     const graph = config.index?.graph as Record<string, unknown> | undefined;
     expect(graph?.graphExtractionBatchSize).toBe(2);
     expect(graph?.lazyGraphExtraction).toBe(true);
+  });
+});
+
+describe("previous-release corpus — retired index.graph key (whole pass, 0.9.17-alpha.9)", () => {
+  beforeEach(() => {
+    resetConfigCache();
+    _resetWarnOnceForTests();
+  });
+
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+  });
+
+  test("a config that still sets index.graph loads with exactly one warning naming it", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true } },
+      }),
+    );
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+
+    const config = loadConfig();
+
+    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
+    expect((config.index?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+  });
+
+  test("index.graph survives an unrelated ordinary config write", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true } },
+      }),
+    );
+
+    // A value that clearly differs from the schema default, so the write is
+    // not pruned away as a no-op change (unlike e.g. semanticSearchMode:
+    // "off", which equals the default and would disappear again — #972).
+    updateConfig({ bundles: { extra: { path: "/tmp/extra-bundle" } } });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const index = raw.index as Record<string, unknown> | undefined;
+    expect((index?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+    expect((raw.bundles as Record<string, unknown> | undefined)?.extra).toEqual({ path: "/tmp/extra-bundle" });
+  });
+
+  test("only `akm migrate apply` drops index.graph from config.json", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true } },
+      }),
+    );
+
+    // `akm migrate status` (apply: false) reports the change without writing.
+    const status = normalizeConfigFile(configPath, { apply: false });
+    expect(status.applied).toBe(false);
+    expect(status.keys).toContain("index");
+    const stillThere = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const stillIndex = stillThere.index as Record<string, unknown> | undefined;
+    expect((stillIndex?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+
+    // `akm migrate apply` (apply: true) writes the drop.
+    const result = normalizeConfigFile(configPath, { apply: true });
+    expect(result.applied).toBe(true);
+    expect(result.keys).toContain("index");
+
+    const after = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const afterIndex = after.index as Record<string, unknown> | undefined;
+    expect(afterIndex?.graph).toBeUndefined();
+
+    resetConfigCache();
+    _resetWarnOnceForTests();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    loadConfig();
+    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(0);
   });
 });
 

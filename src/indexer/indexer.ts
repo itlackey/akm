@@ -19,10 +19,10 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
  * Index consistency.
  *
- * AKM keeps four derived populations per stash in index.db: the `entries`
- * rows (metadata + `document_json`), the FTS5 index over them, the embedding
- * vectors, and the LLM entity graph. Each pass keeps its own cursor, so a
- * change to one pass's inputs re-runs only that pass:
+ * AKM keeps three derived populations per stash in index.db: the `entries`
+ * rows (metadata + `document_json`), the FTS5 index over them, and the
+ * embedding vectors. Each pass keeps its own cursor, so a change to one
+ * pass's inputs re-runs only that pass:
  *
  *   - entries / FTS: `entries.content_hash` per file plus the per-directory
  *     walk fingerprint (`index_dir_state`); the FTS rows are written in the
@@ -30,7 +30,6 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
  *   - embeddings: `embeddings.model` per row; a row whose search text changed
  *     is deleted by `upsertEntry`, a row whose model differs from the
  *     configured one is re-embedded by the next pass.
- *   - graph: `graph_files` keyed by (root, path, body hash) with a queue.
  *
  * A full run (`--full`) re-drains every directory through the same
  * diff-persist path as an incremental one — `entries.id` is preserved on
@@ -74,7 +73,6 @@ import { upsertUtilityScore } from "../storage/repositories/index-utility-reposi
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
-import { deleteStoredGraph } from "./db/graph-db";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import {
@@ -265,8 +263,8 @@ function parseStoredSourceOwners(raw: string | undefined): IndexSourceOwner[] {
 }
 
 /**
- * Sources removed (or moved) since the last complete run. Their entries and
- * graph rows are purged by {@link applyRemovedSources} once the walk completes.
+ * Sources removed (or moved) since the last complete run. Their entries are
+ * purged by {@link applyRemovedSources} once the walk completes.
  */
 function findRemovedSources(db: Database, sources: readonly SearchSource[]): RemovedIndexSource[] {
   const currentByBundle = new Map(sourceOwners(sources).map((owner) => [owner.bundleId, owner]));
@@ -284,10 +282,8 @@ function applyRemovedSources(
   isIncremental: boolean,
 ): void {
   const owners = sourceOwners(sources);
-  const currentRoots = new Set(owners.map((owner) => owner.sourceRoot));
   for (const removed of removedSources) {
     if (removed.removeBundleEntries) deleteEntriesByBundle(db, removed.bundleId);
-    if (!currentRoots.has(removed.sourceRoot)) deleteStoredGraph(db, removed.sourceRoot);
   }
   // A full run re-drains every configured source, so any other bundle's rows
   // are stale even when no stored owner names them.

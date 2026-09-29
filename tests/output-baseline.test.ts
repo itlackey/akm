@@ -137,7 +137,6 @@ describe("output baseline", () => {
       "parameters",
       "path",
       "ref",
-      "related",
       "template",
       "type",
     ]);

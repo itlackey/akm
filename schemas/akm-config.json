@@ -392,18 +392,6 @@
               }
             },
             "additionalProperties": true
-          },
-          "graphExtractionBatchSize": {
-            "type": "integer",
-            "exclusiveMinimum": 0
-          },
-          "graphExtractionIncludeTypes": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            },
-            "minItems": 1
           }
         },
         "additionalProperties": true
@@ -1067,89 +1055,6 @@
                           }
                         },
                         "additionalProperties": true
-                      }
-                    },
-                    "additionalProperties": true
-                  },
-                  "graphExtraction": {
-                    "type": "object",
-                    "properties": {
-                      "engine": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "enabled": {
-                        "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "topN": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "includeTypes": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "minItems": 1
-                      },
-                      "batchSize": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "fullScan": {
-                        "type": "boolean"
-                      },
-                      "maxChunksPerAsset": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": true
@@ -2044,18 +1949,6 @@
                   }
                 },
                 "additionalProperties": true
-              },
-              "graphExtractionBatchSize": {
-                "type": "integer",
-                "exclusiveMinimum": 0
-              },
-              "graphExtractionIncludeTypes": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "minItems": 1
               }
             },
             "additionalProperties": true
@@ -2719,89 +2612,6 @@
                               }
                             },
                             "additionalProperties": true
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "graphExtraction": {
-                        "type": "object",
-                        "properties": {
-                          "engine": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "topN": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "includeTypes": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "minItems": 1
-                          },
-                          "batchSize": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "fullScan": {
-                            "type": "boolean"
-                          },
-                          "maxChunksPerAsset": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": true
@@ -3596,29 +3406,6 @@
           "type": "integer",
           "minimum": 0
         },
-        "topN": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "includeTypes": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "minItems": 1
-        },
-        "batchSize": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "fullScan": {
-          "type": "boolean"
-        },
-        "maxChunksPerAsset": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
         "defaultSince": {
           "type": "string",
           "minLength": 1
@@ -4188,89 +3975,6 @@
                     }
                   },
                   "additionalProperties": true
-                }
-              },
-              "additionalProperties": true
-            },
-            "graphExtraction": {
-              "type": "object",
-              "properties": {
-                "engine": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "enabled": {
-                  "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "topN": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "includeTypes": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "minItems": 1
-                },
-                "batchSize": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "fullScan": {
-                  "type": "boolean"
-                },
-                "maxChunksPerAsset": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": true

@@ -487,10 +487,6 @@ export interface ShowResponse extends FragmentProvenance {
    * Populated by the `env-file` renderer; never set for any other type.
    */
   keys?: string[];
-  related?: {
-    total: number;
-    hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
-  };
   /**
    * Declared links (#935), grouped by kind (`xref`, `superseded_by`, `uses`, …):
    * what this asset names (`outgoing`), what names it (`incoming`), and the

@@ -44,7 +44,7 @@ const xdgConfig = cliXdgConfig;
 
 /**
  * In-process CLI runner. Pins the AKM env (stash + any extra vars) for the
- * duration of the call and resets the embedder/graph singletons so the run
+ * duration of the call and resets the embedder singletons so the run
  * reads the pinned env.
  */
 async function runCli(

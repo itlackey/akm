@@ -1,5 +1,5 @@
 {
-  "description": "Standard improve pass — reflect, distill, advisory consolidation, graph extraction, and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
+  "description": "Standard improve pass — reflect, distill, advisory consolidation, and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
   "processes": {
     "reflect": {
       "enabled": true,
@@ -9,7 +9,6 @@
     "distill": { "enabled": true, "allowedTypes": ["memory"], "requirePlannedRefs": true },
     "consolidate": { "enabled": true, "allowedTypes": ["memory"] },
     "memoryInference": { "enabled": true },
-    "graphExtraction": { "enabled": true },
     "extract": { "enabled": false, "triage": { "enabled": true, "minScore": 2 } },
     "validation": { "enabled": true },
     "proactiveMaintenance": { "enabled": false, "dueDays": 30, "maxPerRun": 15 },

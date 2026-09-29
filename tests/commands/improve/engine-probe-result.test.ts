@@ -70,7 +70,6 @@ function noopStageSeams(config: AkmConfig, stashDir: string) {
     runImprovePostLoopStageFn: (async () => ({
       allWarnings: [],
       memoryInferenceDurationMs: 0,
-      graphExtractionDurationMs: 0,
     })) as never,
   };
 }
@@ -88,7 +87,6 @@ function cheapConfig(): AkmConfig {
             distill: { enabled: false },
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             validation: { enabled: false },
             triage: { enabled: false },

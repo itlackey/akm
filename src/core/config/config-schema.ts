@@ -67,7 +67,6 @@ export {
   ConsolidateProcessConfigSchema,
   DistillProcessConfigSchema,
   ExtractProcessConfigSchema,
-  GraphExtractionProcessConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,
   MemoryInferenceProcessConfigSchema,
@@ -273,7 +272,13 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["defaults", "improveStrategy"],
-      message: "improveStrategy does not name a built-in or configured strategy",
+      message:
+        // A specific, actionable message for the one built-in name retired
+        // often enough to be worth naming, rather than the generic "does not
+        // name a strategy" (mirrors the akm graph retired-command hint).
+        defaultStrategy === "graph-refresh"
+          ? 'improveStrategy "graph-refresh" was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it ran — choose a different strategy.'
+          : "improveStrategy does not name a built-in or configured strategy",
     });
   }
   for (const [strategyName, strategy] of Object.entries(config.improve?.strategies ?? {})) {

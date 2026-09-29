@@ -555,10 +555,9 @@ describe("stash parity", () => {
 });
 
 // `graph` was removed entirely in the 0.9 CLI overhaul (docs/migration/
-// v0.8-to-v0.9.md) — the extraction engine survives only via
-// `improve --strategy graph-refresh`, whose Node/Bun runtime-boundary
-// behavior is exercised by the existing "tasks parity" and "index" coverage.
-// No replacement parity test is needed.
+// v0.8-to-v0.9.md), and the LLM entity-graph extraction engine it inspected
+// was itself retired in 0.9.17-alpha.9 (with the `graph-refresh` strategy
+// that used to run it). No replacement parity test is needed.
 
 // ── import (local file) ───────────────────────────────────────────────────────
 

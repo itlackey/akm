@@ -5,7 +5,6 @@
 /** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
 
 import fs from "node:fs";
-import path from "node:path";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
@@ -16,16 +15,13 @@ import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
-import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { deriveWritableBundleIds } from "../../indexer/installations";
 import {
   collectPendingMemories,
   type MemoryInferenceResult,
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { isProcessEnabled } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
@@ -53,7 +49,7 @@ import { readFreelistInfo, STATE_DB_VACUUMED_EVENT, vacuumIfReclaimable } from "
 import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
-import { findAssetFilePath, isDistillCandidateRef } from "./eligibility";
+import { isDistillCandidateRef } from "./eligibility";
 import type {
   AkmImproveOptions,
   ImproveLoopResult,
@@ -437,10 +433,8 @@ export async function runImprovePostLoopStage(args: {
     deadUrls,
     ...(deadUrlCoverage ? { deadUrlCoverage } : {}),
     ...(maintenance.memoryInference ? { memoryInference: maintenance.memoryInference } : {}),
-    ...(maintenance.graphExtraction ? { graphExtraction: maintenance.graphExtraction } : {}),
     ...(maintenance.actions && maintenance.actions.length > 0 ? { maintenanceActions: maintenance.actions } : {}),
     memoryInferenceDurationMs: maintenance.memoryInferenceDurationMs,
-    graphExtractionDurationMs: maintenance.graphExtractionDurationMs,
     orphansPurged: maintenance.orphansPurged,
     proposalsExpired: maintenance.proposalsExpired,
   };
@@ -463,13 +457,12 @@ export interface MaintenanceCtx {
   improveProfile?: ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
   memoryInferenceFn: typeof runMemoryInferencePass;
-  graphExtractionFn: typeof runGraphExtractionPass;
 }
 
 /**
- * Memory inference → index what it wrote → graph extraction → proposal hygiene
- * (orphan purge, expiration) → orphan-state GC → retention purges. Warnings go
- * to `allWarnings`.
+ * Memory inference → index what it wrote → proposal hygiene (orphan purge,
+ * expiration) → orphan-state GC → retention purges. Warnings go to
+ * `allWarnings`.
  */
 export async function runImproveMaintenancePasses(args: {
   options: AkmImproveOptions;
@@ -483,7 +476,7 @@ export async function runImproveMaintenancePasses(args: {
   resolvedPlan?: ResolvedImprovePlan;
 }): Promise<ImproveMaintenanceResult> {
   const { options, primaryStashDir, allWarnings, budgetSignal, eventsCtx } = args;
-  if (!primaryStashDir || budgetSignal?.aborted) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
+  if (!primaryStashDir || budgetSignal?.aborted) return { memoryInferenceDurationMs: 0 };
   const config = options.config ?? loadConfig();
   const ctx: MaintenanceCtx = {
     config,
@@ -494,7 +487,6 @@ export async function runImproveMaintenancePasses(args: {
     improveProfile: args.improveProfile,
     resolvedPlan: args.resolvedPlan,
     memoryInferenceFn: options.memoryInferenceFn ?? runMemoryInferencePass,
-    graphExtractionFn: options.graphExtractionFn ?? runGraphExtractionPass,
   };
   const openIndexDb = () => openIndexDatabase(getDbPath());
   const dbCell: IndexDbCell = {};
@@ -524,10 +516,6 @@ export async function runImproveMaintenancePasses(args: {
       }
     }
 
-    const graph = await runGraphExtractionMaintenancePass(ctx, dbCell, args);
-    if (graph.action) actions.push(graph.action);
-    allWarnings.push(...graph.warnings);
-
     const hygiene = runProposalHygienePass(ctx);
     allWarnings.push(...hygiene.warnings);
     allWarnings.push(...runOrphanStateGcPass(ctx, dbCell).warnings);
@@ -535,10 +523,8 @@ export async function runImproveMaintenancePasses(args: {
 
     return {
       ...(inference.memoryInference ? { memoryInference: inference.memoryInference } : {}),
-      ...(graph.graphExtraction ? { graphExtraction: graph.graphExtraction } : {}),
       ...(actions.length > 0 ? { actions } : {}),
       memoryInferenceDurationMs: inference.durationMs,
-      graphExtractionDurationMs: graph.durationMs,
       orphansPurged: hygiene.orphansPurged,
       proposalsExpired: hygiene.proposalsExpired,
     };
@@ -626,87 +612,6 @@ export async function runMemoryInferenceMaintenancePass(
     durationMs: pass.durationMs,
     // Sentinel refs (`<domain>/_<marker>`) label maintenance events; never parsed as assets.
     action: { ref: "memories/_inference", mode: "memory-inference", result: memoryInference },
-    warnings: pass.warnings,
-  };
-}
-
-/**
- * Graph extraction over the files this run touched, or the whole corpus when
- * the profile sets `graphExtraction.fullScan` (the `graph-refresh` strategy).
- * With nothing touched the pass still runs and extracts nothing.
- */
-export async function runGraphExtractionMaintenancePass(
-  ctx: MaintenanceCtx,
-  dbCell: IndexDbCell,
-  args: { actionableRefs: ImproveEligibleRef[]; memoryRefsForInference: Set<string> },
-): Promise<{
-  graphExtraction?: GraphExtractionResult;
-  durationMs: number;
-  action?: ImproveActionResult;
-  warnings: string[];
-}> {
-  const { config, sources, primaryStashDir, resolvedPlan } = ctx;
-  const settings = ctx.improveProfile?.processes?.graphExtraction;
-  if (settings?.enabled === false) {
-    info("[improve] graph extraction skipped (disabled by improve profile)");
-    return { durationMs: 0, warnings: [] };
-  }
-  if (sources.length === 0) return { durationMs: 0, warnings: [] };
-  // `index.graph.enabled: false` turns graph extraction off everywhere,
-  // whatever the strategy enables.
-  if (!isProcessEnabled("index", "graph_extraction", config)) {
-    info("[improve] graph extraction skipped (index.graph.enabled is false)");
-    return { durationMs: 0, warnings: [] };
-  }
-  const fullScan = settings?.fullScan === true;
-  info(`[improve] graph extraction starting${fullScan ? " (full-corpus scan)" : ""}`);
-  const pass = await timedLlmPass("graph extraction", async () => {
-    let candidatePaths: Set<string> | undefined;
-    if (!fullScan) {
-      candidatePaths = new Set<string>();
-      const touched = new Set([...args.actionableRefs.map((r) => r.ref), ...args.memoryRefsForInference]);
-      if (primaryStashDir && touched.size > 0) {
-        const writableBundleIds = deriveWritableBundleIds(resolveSourceEntries(primaryStashDir));
-        const resolved = await Promise.all(
-          [...touched].map((ref) => findAssetFilePath(ref, primaryStashDir, writableBundleIds).catch(() => null)),
-        );
-        for (const p of resolved) if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
-      }
-    }
-    return attributeStage(resolvedPlan, "graphExtraction", () =>
-      ctx.graphExtractionFn({
-        config,
-        ...(resolvedPlan ? { llmRunner: resolvedPlan.processes.graphExtraction.runner } : {}),
-        sources,
-        signal: ctx.budgetSignal,
-        db: dbCell.current,
-        reEnrich: false,
-        onProgress: (event) => {
-          const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
-          info(
-            `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
-          );
-        },
-        options: {
-          candidatePaths,
-          // Only what the strategy sets: the pass falls back to index.graph, then its defaults (GR-D15).
-          ...(settings?.includeTypes ? { includeTypes: settings.includeTypes } : {}),
-          ...(settings?.batchSize != null ? { batchSize: settings.batchSize } : {}),
-          ...(settings?.topN != null ? { topN: settings.topN } : {}),
-          ...(settings?.maxChunksPerAsset != null ? { maxChunksPerAsset: settings.maxChunksPerAsset } : {}),
-        },
-      }),
-    );
-  });
-  const graphExtraction = pass.result;
-  if (!graphExtraction) return { durationMs: pass.durationMs, warnings: pass.warnings };
-  info(
-    `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
-  );
-  return {
-    graphExtraction,
-    durationMs: pass.durationMs,
-    action: { ref: "graph/_artifact", mode: "graph-extraction", result: graphExtraction },
     warnings: pass.warnings,
   };
 }

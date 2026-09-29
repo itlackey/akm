@@ -84,6 +84,22 @@ describe("resolveImproveStrategy", () => {
       resolveImproveStrategy("does-not-exist", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
     ).toThrow(ConfigError);
   });
+
+  test("names the retirement when a task or config still selects graph-refresh (0.9.17-alpha.9)", () => {
+    expect(() =>
+      resolveImproveStrategy("graph-refresh", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
+    ).toThrow(/graph-refresh.*retired/i);
+  });
+
+  test("a user-defined custom strategy literally named graph-refresh still resolves (not shadowed by the retirement)", () => {
+    const selected = resolveImproveStrategy("graph-refresh", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
+    });
+    expect(selected.name).toBe("graph-refresh");
+    expect(selected.config.processes?.reflect?.enabled).toBe(true);
+  });
 });
 
 // WIKI (R12): reflect's excludeRefPrefixes filter keeps raw wiki-ingest
@@ -168,7 +184,6 @@ describe("resolveImprovePlan", () => {
       "consolidate",
       "distill",
       "extract",
-      "graphExtraction",
       "memoryInference",
       "proactiveMaintenance",
       "reflect",
@@ -197,7 +212,6 @@ describe("resolveImprovePlan", () => {
               distill: { enabled: true },
               consolidate: { enabled: true },
               memoryInference: { enabled: true },
-              graphExtraction: { enabled: true },
               extract: { enabled: true, triage: { enabled: true } },
               validation: { enabled: true },
             },
@@ -206,15 +220,7 @@ describe("resolveImprovePlan", () => {
       },
     };
     const plan = resolveImprovePlan("all", config);
-    for (const name of [
-      "reflect",
-      "distill",
-      "consolidate",
-      "memoryInference",
-      "graphExtraction",
-      "extract",
-      "validation",
-    ] as const) {
+    for (const name of ["reflect", "distill", "consolidate", "memoryInference", "extract", "validation"] as const) {
       expect(plan.processes[name].runner?.engine).toBe("default");
     }
     expect(Object.isFrozen(plan.processes.extract.config.triage)).toBe(true);
@@ -396,14 +402,7 @@ describe("resolveImprovePlan", () => {
       },
     } as AkmConfig);
 
-    for (const name of [
-      "reflect",
-      "distill",
-      "consolidate",
-      "memoryInference",
-      "graphExtraction",
-      "validation",
-    ] as const) {
+    for (const name of ["reflect", "distill", "consolidate", "memoryInference", "validation"] as const) {
       expect(plan.processes[name].enabled).toBe(false);
       expect(plan.processes[name].runner).toBeNull();
       expect(plan.strategy.config.processes?.[name]?.enabled).toBe(false);
@@ -412,7 +411,7 @@ describe("resolveImprovePlan", () => {
 
     const disabledNames: string[] = plan.engineUnavailable.map((item) => item.process).sort();
     expect(disabledNames).toEqual(
-      (["consolidate", "distill", "graphExtraction", "memoryInference", "reflect", "validation"] as string[]).sort(),
+      (["consolidate", "distill", "memoryInference", "reflect", "validation"] as string[]).sort(),
     );
     for (const item of plan.engineUnavailable) {
       expect(item.configKey).toBe(`improve.strategies.default.processes.${item.process}.engine`);
@@ -504,7 +503,7 @@ describe("resolveImprovePlan", () => {
 
     expect(Object.values(plan.processes).some((process) => process.enabled)).toBe(false);
     const disabledNames = plan.engineUnavailable.map((item) => item.process).sort();
-    expect(disabledNames).toEqual(["consolidate", "distill", "graphExtraction", "reflect", "validation"]);
+    expect(disabledNames).toEqual(["consolidate", "distill", "reflect", "validation"]);
     for (const item of plan.engineUnavailable) {
       expect(item.reason).toContain('engine "private"');
       expect(item.reason).toContain("PRIVATE_ALL_957_ALLOW_TOKEN");
@@ -566,7 +565,6 @@ describe("projectResolvedProcessRouting (#947)", () => {
       "distill",
       "consolidate",
       "memoryInference",
-      "graphExtraction",
       "extract",
       "validation",
       "triage",

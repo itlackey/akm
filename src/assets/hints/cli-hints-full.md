@@ -245,10 +245,9 @@ akm improve --no-push                         # commit but skip push for this ru
 akm improve --sync                            # force sync even on strategies that disable it
 ```
 
-Strategy sync defaults: `catchup`, `consolidate`, `default`,
-`graph-refresh`, `quick`, and `thorough` auto-commit + push;
-`proactive-maintenance` and `reflect-distill` skip sync entirely. Override
-with `--sync` / `--no-sync` flags.
+Strategy sync defaults: `catchup`, `consolidate`, `default`, `quick`, and
+`thorough` auto-commit + push; `proactive-maintenance` and `reflect-distill`
+skip sync entirely. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm bundle add` opts a remote git bundle into push-on-sync:
 
@@ -399,7 +398,7 @@ akm agent --model sonnet --prompt "..."         # Model override (aliases or exa
 ```sh
 akm info                                       # Capabilities, bundle dir, index stats, semantic-search status
 akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
-akm health --report                            # Adds accept-rate and graph-coverage metrics
+akm health --report                            # Adds accept-rate metrics
 akm log                                        # Append-only event stream (mutations, feedback, indexing)
 akm log --ref <ref>                            # One asset's event trail
 akm log --since @offset:<id>                   # Durable row-id cursor — poll this to follow the stream
