@@ -1036,6 +1036,26 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      // Consolidate is irrelevant to this test and must be disabled: with a
+      // single memory in the pool, its alpha.9 pair pass finds zero
+      // candidates but (S1, post-review) still records a ledger row for the
+      // initiator — any non-capture-source ledger row marks the ref
+      // "processed" (retrieval-scope.ts), which would drop "memories/deploy"
+      // out of scope before distill's own signal-delta gate runs and change
+      // its skip reason out from under this assertion.
+      config: withImproveAutonomy(
+        withTestImproveLlm({
+          semanticSearchMode: "off",
+          bundles: { stash: { path: stashDir, writable: true } },
+          defaultBundle: "stash",
+          defaultWriteTarget: "stash",
+          improve: {
+            strategies: {
+              default: { processes: { extract: { enabled: false }, consolidate: { enabled: false } } },
+            },
+          },
+        }),
+      ),
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
