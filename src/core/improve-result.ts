@@ -216,7 +216,17 @@ function validateProcessRoutingRows(value: unknown): void {
     );
     if (
       typeof row.process !== "string" ||
-      !(canonicalNames.includes(row.process) || row.process === "triage.judgment")
+      !(
+        canonicalNames.includes(row.process) ||
+        row.process === "triage.judgment" ||
+        // 0.9.17-alpha.9: "graphExtraction" is no longer a process a fresh
+        // plan can route (the LLM entity-graph extraction it named was
+        // retired), but every pre-alpha.9 run recorded one here — kept
+        // readable, same as `stageNames`' "graph-extraction" above and
+        // `graphExtraction` in COMMON_FIELDS, so a historical run still
+        // decodes for `akm health` instead of failing this row outright.
+        row.process === "graphExtraction"
+      )
     ) {
       fail("plan.processes.process is invalid");
     }
