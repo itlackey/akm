@@ -133,10 +133,24 @@ describe("akm help / akm hints against a config akm 0.9 cannot load", () => {
     expect(stdout).toContain("AGENT LOOP");
   });
 
-  test("a command that DOES need config still reports the config error", async () => {
-    // Sanity check the fix is scoped to help/hints, not a blanket bypass.
-    const { code, stderr } = await runCliCapture(["search", "anything"]);
-    expect(code).toBe(78);
+  // a10-info follow-up: `akm info`'s startup config read (src/cli.ts) was
+  // briefly made best-effort for EVERY command, not just `info` — which
+  // silently let ordinary commands run against a broken config instead of
+  // refusing at startup (some then failed later with a misleading error,
+  // some just ran; `health`/`index`/`config set`/`feedback` still failed,
+  // but only after already taking a lock, opening a database read-write, or
+  // making a network call). This pins that startup refuses BEFORE any of
+  // that: the same `search` sanity check as above, plus two more commands
+  // with no config dependency of their own in their body (so a regression
+  // that reintroduces the blanket bypass would make these two exit 0/2
+  // instead, while `search`'s own `loadConfig()` call would still mask it).
+  test.each([
+    "search anything",
+    "proposal list",
+    "health",
+  ])("a command that does not special-case config still reports the config error at startup: akm %s", async (command) => {
+    const { code, stderr } = await runCliCapture(command.split(" "));
+    expect(code, stderr).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.code).toBe("INVALID_CONFIG_FILE");
   });

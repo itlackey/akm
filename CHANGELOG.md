@@ -10,37 +10,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`akm info` could refuse or hang instead of reporting.** It now behaves
   like a help command: always exit 0 and print a report, in every format
-  (`json`/`text`/`yaml`) and with `--quiet`, whatever else is happening.
-  An invalid or unreadable `config.json` used to abort the command outright
-  (exit 78); `assembleInfo` now degrades that to a new top-level
-  `configError` field, falling back to the same defaults a fresh install
-  reports (the CLI's own startup config read, which resolves `--format`/
-  `--detail` defaults before any command runs, is now best-effort for every
-  command, not special-cased for `info` — an invalid config there was
-  already supposed to fail the command that actually needs it, e.g.
-  `search`, and still does). A fresh install with no bundle directory yet
-  used to throw `STASH_DIR_NOT_FOUND`; `bundleDir` now reports the
-  platform-default location instead, and a bundle that IS configured but
-  doesn't resolve reports the real reason in a new `bundleDirError` field
-  rather than silently falling back. Reading index.db opened a writable,
-  schema-touching connection with no time bound worth the name (the shared
-  30s `busy_timeout`), so a concurrent `akm index`/`akm improve` writer
-  under the DELETE/TRUNCATE journal mode a network filesystem (or
-  `AKM_SQLITE_JOURNAL_MODE`) can select could make `info` wait the full 30s
-  before settling at exit 0 with unexplained zeros — a newer or corrupt
-  index layout already degraded to the same silent zeros, just without a
-  reason. `info` now opens index.db read-only (it never changes the
-  index's schema or journal mode, though SQLite may still create/touch its
-  `-wal`/`-shm` sidecar files as any reader does) with a ~1.5s bound, and
-  reports the reason (locked, a newer layout, or corrupt) in a new
-  `indexStats.unavailable` field. An older index layout is still served as
-  before: as-is, without migrating. Two more paths that could still throw
-  past all of the above — `getDataDir()` refusing to guess under a leaked
-  `NODE_ENV=test` with no data-dir override, or `HOME` being unset
-  entirely — are now caught by `infoCommand` itself, which falls back to a
-  minimal report (`schemaVersion`, `version`, `error`, plus whatever else is
-  cheap and safe) rather than exiting non-zero. `akm info` also now warns
-  and continues on an unrecognized flag instead of exiting 2, the same
+  (`json`/`text`/`yaml`) and with `--quiet`, whatever else is happening —
+  every other command is unaffected, and still refuses at startup (exit 78,
+  before any side effect) against the same broken config.
+  An invalid or unreadable `config.json` used to abort `info` outright at
+  startup; `assembleInfo` now degrades that to a new top-level `configError`
+  field, falling back to the same defaults a fresh install reports. The
+  CLI's own startup config read (which resolves `--format`/`--detail`
+  defaults before any command runs) is best-effort ONLY for `info` — every
+  other command reads it exactly as before, an unwrapped `loadConfig()` that
+  throws and stops the command before its body ever runs, so `search`,
+  `health`, `proposal list`, and everything else keep refusing up front with
+  no side effect (a lock taken, a database opened read-write, a network
+  call). A fresh install with no bundle directory yet used to throw
+  `STASH_DIR_NOT_FOUND`; `bundleDir` now reports
+  the platform-default location instead, and a bundle that IS configured
+  but doesn't resolve (or whose platform-default fallback ALSO can't
+  resolve, e.g. `HOME` unset) reports the real reason in a new
+  `bundleDirError` field rather than silently falling back with none.
+  Reading index.db opened a writable, schema-touching connection with no
+  time bound worth the name (the shared 30s `busy_timeout`), so a
+  concurrent `akm index`/`akm improve` writer under the DELETE/TRUNCATE
+  journal mode a network filesystem (or `AKM_SQLITE_JOURNAL_MODE`) can
+  select could make `info` wait the full 30s before settling at exit 0 with
+  unexplained zeros — a newer or corrupt index layout already degraded to
+  the same silent zeros, just without a reason. `info` now opens index.db
+  read-only (it never changes the index's schema or journal mode, though
+  SQLite may still create/touch its `-wal`/`-shm` sidecar files as any
+  reader does) with a ~1.5s bound, and reports the reason (locked, a newer
+  layout, or corrupt) in a new `indexStats.unavailable` field. An older
+  index layout is still served as before: as-is, without migrating. Every
+  path resolver `assembleInfo` calls (data/config/cache/state directory,
+  bundle directory) now degrades individually — `getDataDir()` refusing to
+  guess under a leaked `NODE_ENV=test` with no data-dir override is one real
+  example — so one failing lookup no longer blanks fields that resolved
+  fine; `infoCommand` itself still wraps the whole call as a final backstop
+  (a minimal report: `schemaVersion`, `version`, `error`, plus whatever else
+  is cheap and safe) for anything left over. `akm info` also now warns and
+  continues on an unrecognized flag instead of exiting 2, the same
   tolerance `akm help` already had.
 
 ## [0.9.17-alpha.9] - 2026-09-29

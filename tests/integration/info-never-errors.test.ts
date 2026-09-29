@@ -29,6 +29,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { formatInfoPlain } from "../../src/output/text/command-format";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -186,7 +187,7 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
     }
   });
 
-  test("HOME entirely unset (nothing resolvable) still exits 0 with a minimal report", async () => {
+  test("HOME entirely unset (nothing resolvable) still exits 0 with the full report, not just the minimal fallback", async () => {
     const result = await spawnAkm(["info", "--format", "json"], {
       HOME: undefined,
       XDG_CONFIG_HOME: undefined,
@@ -198,17 +199,82 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
       AKM_DATA_DIR: undefined,
       AKM_CACHE_DIR: undefined,
       AKM_STATE_DIR: undefined,
+      // This test's own process runs under `bun test`, which sets BUN_TEST
+      // (inherited by spawnAkm's child otherwise) — clearing it isolates
+      // "HOME unset" from the SEPARATE NODE_ENV=test/TEST_ISOLATION_MISSING
+      // scenario covered above, so getDataDir()/getCacheDir()/getStateDir()
+      // exercise their real "homeless" fallback here, not that guard.
+      BUN_TEST: undefined,
+      NODE_ENV: undefined,
     });
     expect(result.code, result.stderr).toBe(0);
     expect(result.elapsedMs).toBeLessThan(MAX_MS);
     const parsed = JSON.parse(result.stdout);
-    // infoCommand's own try/catch (stash-cli.ts): assembleInfo() itself
-    // threw (resolveStashDir AND its getDefaultStashDir() fallback both need
-    // HOME), so this is the minimal last-resort report, not the full shape.
     expect(parsed.ok).toBe(true);
-    expect(parsed.version).toBeTruthy();
-    expect(typeof parsed.error).toBe("string");
-    expect(parsed.error.length).toBeGreaterThan(0);
+    // getDataDir()/getCacheDir()/getStateDir() each fall back to a
+    // uid-scoped tmpdir without HOME (core/paths.ts's own "homeless"
+    // fallback) — only bundleDir/configDir have no such fallback, so
+    // assembleInfo()'s own per-section guards (not infoCommand's backstop)
+    // handle this: a blank path with a reason attached, not a throw.
+    expect(parsed.bundleDir).toBe("");
+    expect(typeof parsed.bundleDirError).toBe("string");
+    expect(parsed.bundleDirError.length).toBeGreaterThan(0);
+    expect(parsed.configDir).toBe("");
+    expect(typeof parsed.configError).toBe("string");
+    expect(parsed.dataDir.length).toBeGreaterThan(0);
+    expect(parsed.cacheDir.length).toBeGreaterThan(0);
+    expect(parsed.stateDir.length).toBeGreaterThan(0);
+    // The rest of the report is unaffected — this is NOT the minimal
+    // last-resort shape infoCommand's own try/catch (stash-cli.ts) would
+    // produce if assembleInfo() itself still threw.
+    expect(parsed.error).toBeUndefined();
+    expect(Array.isArray(parsed.registries)).toBe(true);
+    expect(parsed.registries.length).toBeGreaterThan(0);
+  });
+});
+
+describe("akm info --format text renders the degrade fields too (a10-info)", () => {
+  test("bundleDirError renders in --format text, not just JSON", async () => {
+    const home = sandboxHome();
+    const cfg = sandboxXdgConfigHome(home.cleanup);
+    const cache = sandboxXdgCacheHome(cfg.cleanup);
+    const cleanup = sandboxXdgDataHome(cache.cleanup).cleanup;
+    try {
+      const configPath = path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json");
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          bundles: { main: { path: "/nonexistent/definitely-not-here" } },
+          defaultBundle: "main",
+        }),
+      );
+      const { code, stdout, stderr } = await runCliCapture(["info", "--format", "text"]);
+      expect(code, stderr).toBe(0);
+      expect(stdout).toContain("bundleDirError: ");
+      expect(stdout).toContain("/nonexistent/definitely-not-here");
+    } finally {
+      cleanup();
+    }
+  });
+
+  // The whole-report fallback (infoCommand's own try/catch, stash-cli.ts) is
+  // no longer reachable via a realistic environment on this platform — the
+  // per-section guards above (bundleDir, dataDir/cacheDir/stateDir's own
+  // "homeless" fallbacks) close off every repro this suite can construct.
+  // Tested directly instead: formatInfoPlain must still render that shape's
+  // `error` field legibly if it's ever hit some other way (a future
+  // resolver that throws with no per-section guard of its own).
+  test("the whole-report fallback's `error` field renders in --format text", () => {
+    const text = formatInfoPlain({
+      schemaVersion: 1,
+      version: "0.0.0-test",
+      error: "something unresolvable happened",
+      assetTypes: ["skill"],
+      searchModes: ["fts"],
+    });
+    expect(text).toContain("error: something unresolvable happened");
   });
 });
 

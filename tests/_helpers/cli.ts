@@ -59,7 +59,7 @@
  */
 
 import { renderUsage, runCommand } from "citty";
-import { main, normalizeCittyCliError, shouldBypassConfigStartup } from "../../src/cli";
+import { isInfoCommand, main, normalizeCittyCliError, shouldBypassConfigStartup } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
@@ -258,15 +258,20 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       let initFailed = false;
       try {
         // Mirrors src/cli.ts's own startup resolution: off the bypass
-        // allowlist, the config read for output-mode defaults is best-effort
-        // (never throws) rather than a hard bypass/no-bypass split — see that
-        // file's matching comment for why.
+        // allowlist, every command reads config here exactly as it always
+        // has (throws on invalid config.json) EXCEPT `info`, whose read is
+        // best-effort — see that file's matching comment for why the
+        // scoping matters.
         let outputDefaults = DEFAULT_CONFIG.output ?? {};
         if (!shouldBypassConfigStartup(argv)) {
-          try {
+          if (isInfoCommand(argv)) {
+            try {
+              outputDefaults = loadConfig().output ?? {};
+            } catch {
+              outputDefaults = DEFAULT_CONFIG.output ?? {};
+            }
+          } else {
             outputDefaults = loadConfig().output ?? {};
-          } catch {
-            outputDefaults = DEFAULT_CONFIG.output ?? {};
           }
         }
         initOutputMode(argv, outputDefaults);

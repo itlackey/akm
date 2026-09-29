@@ -321,7 +321,7 @@ Returns a JSON object with:
 | `bundleDir` | Primary bundle directory — same resolution `akm bundle list` uses. Falls back to the platform-default location when no bundle resolves. |
 | `defaultBundle` | Name of the primary bundle from config, or `null` when none is configured |
 | `configError` | Present only when `config.json` exists but could not be loaded (parse or schema failure); every config-derived field falls back to the same defaults a fresh install reports |
-| `bundleDirError` | Present only when a bundle IS configured (an env override or `bundles.*` in config) but its path doesn't resolve — absent for the ordinary "no bundle created yet" state, where `bundleDir` needs no explanation |
+| `bundleDirError` | Present when a bundle IS configured (an env override or `bundles.*` in config) but its path doesn't resolve, OR when the platform-default fallback itself can't resolve (e.g. `HOME` unset) — absent for the ordinary "no bundle created yet" state, where `bundleDir` needs no explanation |
 | `dataDir` | Resolved data directory (`getDataDir()`) |
 | `configDir` | Resolved config directory (`getConfigDir()`) |
 | `cacheDir` | Resolved cache directory (`getCacheDir()`) |

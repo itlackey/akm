@@ -73,7 +73,18 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     if (!(err instanceof ConfigError) || err.code !== "STASH_DIR_NOT_FOUND") {
       bundleDirError = err instanceof Error ? err.message : String(err);
     }
-    stashDir = getDefaultStashDir();
+    // The fallback itself resolves purely from `HOME` (or its platform
+    // equivalent) and can throw the exact same way `resolveStashDir()` can
+    // (e.g. HOME entirely unset) — guarded so a blank `bundleDir` (never a
+    // throw) still always carries a reason, reusing the one above when the
+    // outer catch already set it (a configured-but-broken path takes
+    // precedence over restating "and the default isn't resolvable either").
+    try {
+      stashDir = getDefaultStashDir();
+    } catch (fallbackErr) {
+      stashDir = "";
+      bundleDirError ??= fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+    }
   }
   const defaultBundle = config.defaultBundle ?? null;
 
