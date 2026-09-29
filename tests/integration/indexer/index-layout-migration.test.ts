@@ -38,7 +38,7 @@ import {
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
-import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { deleteMeta, getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { VACUUM_PENDING_META } from "../../../src/storage/repositories/index-schema";
 import { getEmbeddingCount, searchVec } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -536,6 +536,114 @@ describe("index.db at the current layout still carrying the retired utility_scor
       expect(getMeta(db, VACUUM_PENDING_META)).toBeUndefined();
     } finally {
       closeDatabase(db);
+    }
+  });
+});
+
+describe("index.db at the current layout still carrying the retired LLM entity graph", () => {
+  let storage: IsolatedAkmStorage;
+  let dbPath = "";
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    dbPath = path.join(storage.root, "layout-current-graph.db");
+    // An index already at this release's layout that still has the LLM
+    // entity-graph tables from before 0.9.17-alpha.9 retired them — the
+    // reclaim (index-schema.ts) is unconditional-on-version, gated only on
+    // `graph_files` existing, unlike a version-gated layout migration.
+    const db = openDatabase(dbPath);
+    try {
+      db.exec("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+      db.prepare("INSERT INTO index_meta (key, value) VALUES ('version', ?)").run(String(CANONICAL_INDEX_DB_VERSION));
+      db.exec(`
+        CREATE TABLE graph_meta (
+          stash_root TEXT PRIMARY KEY, files INTEGER NOT NULL, entities INTEGER NOT NULL, relations INTEGER NOT NULL
+        );
+        CREATE TABLE graph_files (
+          stash_root TEXT NOT NULL, file_path TEXT NOT NULL, body_hash TEXT NOT NULL,
+          PRIMARY KEY (stash_root, file_path, body_hash)
+        );
+        CREATE TABLE graph_file_entities (
+          stash_root TEXT NOT NULL, file_path TEXT NOT NULL, body_hash TEXT NOT NULL, entity_norm TEXT NOT NULL,
+          PRIMARY KEY (stash_root, file_path, body_hash, entity_norm)
+        );
+        CREATE TABLE graph_file_relations (
+          stash_root TEXT NOT NULL, file_path TEXT NOT NULL, body_hash TEXT NOT NULL, relation TEXT NOT NULL,
+          PRIMARY KEY (stash_root, file_path, body_hash, relation)
+        );
+        -- The lazy graph-extraction queue (index.graph.lazyGraphExtraction):
+        -- dropped unconditionally alongside the other pre-v23 retired tables,
+        -- not gated on graph_files like the four tables above — covered here
+        -- anyway since a real pre-alpha.9 index could carry both.
+        CREATE TABLE graph_extraction_queue (
+          stash_root TEXT NOT NULL, file_path TEXT NOT NULL, PRIMARY KEY (stash_root, file_path)
+        );
+        CREATE TABLE llm_enrichment_cache (
+          asset_ref TEXT NOT NULL, cache_variant TEXT NOT NULL, body_hash TEXT NOT NULL, result_json TEXT NOT NULL,
+          updated_at INTEGER NOT NULL, PRIMARY KEY (asset_ref, cache_variant)
+        );
+      `);
+      db.prepare("INSERT INTO graph_meta VALUES ('team', 1, 2, 1)").run();
+      db.prepare("INSERT INTO graph_files VALUES ('team', 'knowledge/a.md', 'bh')").run();
+      db.prepare("INSERT INTO graph_file_entities VALUES ('team', 'knowledge/a.md', 'bh', 'guardian')").run();
+      db.prepare("INSERT INTO graph_file_relations VALUES ('team', 'knowledge/a.md', 'bh', 'guardian->ally')").run();
+      db.prepare("INSERT INTO graph_extraction_queue VALUES ('team', 'knowledge/b.md')").run();
+      db.prepare(
+        "INSERT INTO llm_enrichment_cache VALUES ('stash//knowledge/a', 'graph-extraction:v1', 'bh', '{}', 1)",
+      ).run();
+      db.prepare(
+        "INSERT INTO llm_enrichment_cache VALUES ('stash//memories/m', 'memory-inference', 'bh', '{}', 1)",
+      ).run();
+    } finally {
+      db.close();
+    }
+  });
+
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  test("a writable open drops all four graph tables and only the graph-extraction cache variant, keeps the layout, and flags VACUUM once", () => {
+    const db = openIndexDatabase(dbPath);
+    try {
+      const names = tableNames(db);
+      expect(names).not.toContain("graph_meta");
+      expect(names).not.toContain("graph_files");
+      expect(names).not.toContain("graph_file_entities");
+      expect(names).not.toContain("graph_file_relations");
+      expect(names).not.toContain("graph_extraction_queue");
+      const cacheRows = db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all() as Array<{
+        asset_ref: string;
+        cache_variant: string;
+      }>;
+      // The graph-extraction row is gone; a differently-variant row (memory
+      // inference, still live) survives untouched.
+      expect(cacheRows).toEqual([{ asset_ref: "stash//memories/m", cache_variant: "memory-inference" }]);
+      // Retiring tables already at the current version must not look like a
+      // version migration, but this reclaim frees real space (~68MB on a
+      // representative index) and is flagged for VACUUM anyway.
+      expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+      expect(getMeta(db, VACUUM_PENDING_META)).toBe("1");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("the VACUUM flag is set once — not re-set on the next open once the graph tables are already gone", () => {
+    const first = openIndexDatabase(dbPath);
+    expect(getMeta(first, VACUUM_PENDING_META)).toBe("1");
+    // `vacuumIndexDb` (indexer.ts) consumes the flag by deleting it after it
+    // actually VACUUMs — simulate that one-time consumption.
+    deleteMeta(first, VACUUM_PENDING_META);
+    closeDatabase(first);
+
+    const second = openIndexDatabase(dbPath);
+    try {
+      // graph_files is already gone, so the reclaim block is skipped
+      // entirely this time — the flag must not come back.
+      expect(getMeta(second, VACUUM_PENDING_META)).toBeUndefined();
+    } finally {
+      closeDatabase(second);
     }
   });
 });

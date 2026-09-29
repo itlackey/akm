@@ -187,6 +187,17 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     // by the time indexWrittenAssets ran — it opens its own write handle on
     // the same WAL file and a still-open sibling caused SQLITE_BUSY (#584).
     expect(isHandleOpen(capturedInferenceDb)).toBe(false);
+    // The reopened handle (dbCell.current) must be fresh and usable for
+    // whatever runs next in the same maintenance sequence
+    // (runProposalHygienePass, then runOrphanStateGcPass(ctx, dbCell) —
+    // loop-stages.ts). Graph extraction used to be the pipeline stage
+    // exercising this same post-reopen handle and asserted directly on it
+    // (`handleOpenDuringGraphExtraction`/`graphDb`); retired in
+    // 0.9.17-alpha.9 along with that assertion. runOrphanStateGcPass returns
+    // early with this exact warning when `dbCell.current` is falsy — its
+    // absence here is the fresh-handle proof now.
+    const resultWarnings = (result as unknown as { warnings?: string[] }).warnings ?? [];
+    expect(resultWarnings).not.toContain("orphan state GC skipped: no index.db handle available");
 
     // The derived file is indexed without a full reindex.
     const checkDb = openIndexDatabase(getDbPath());

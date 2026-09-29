@@ -18,7 +18,8 @@
  * The one exception is the LLM entity graph (`graph_meta`, `graph_files`,
  * `graph_file_*`), retired in 0.9.17-alpha.9: those tables are dropped
  * unconditionally below (index.db is a regenerable cache, and declared links
- * — `asset_links` — now back `akm show`'s related list).
+ * — `asset_links` — now back `akm show`'s `links` field, which replaced the
+ * graph's `related` list).
  */
 
 import { createRequire } from "node:module";
@@ -93,9 +94,10 @@ const REGISTRY_INDEX_CACHE_DDL = `
  * this release (the last such change was v20→v21, which removed the
  * transitional `entry_key`/`dir_path`/... columns and made `item_ref` the
  * key). Recreate only the tables keyed by `entries.id` — their ids are about
- * to be re-minted, so the rows would dangle anyway. Graph rows (keyed by
- * path) and the LLM enrichment cache (keyed by ref) are kept. The next index
- * run re-walks every source.
+ * to be re-minted, so the rows would dangle anyway. The LLM enrichment cache
+ * (keyed by ref) is kept. The LLM entity-graph tables are unconditionally
+ * dropped elsewhere in this file regardless of this recreation (retired
+ * 0.9.17-alpha.9), not kept. The next index run re-walks every source.
  */
 function ensureEntriesLayout(db: Database): void {
   if (!tableExists(db, "entries")) return;
@@ -103,8 +105,8 @@ function ensureEntriesLayout(db: Database): void {
   if (missing.length === 0) return;
   warn(
     `Index database entries table predates the ${missing.join(", ")} column${missing.length === 1 ? "" : "s"} — ` +
-      "recreating the entries-keyed tables (entries, full-text, embeddings, utility scores); graph data and the " +
-      "LLM enrichment cache are kept. The next index run re-walks every source.",
+      "recreating the entries-keyed tables (entries, full-text, embeddings, utility scores); the " +
+      "LLM enrichment cache is kept. The next index run re-walks every source.",
   );
   db.transaction(() => {
     for (const table of [
@@ -180,7 +182,7 @@ function ensureFtsLayout(db: Database): void {
   if (entryCount > 0) {
     warn(
       `Rebuilding the full-text index for ${entryCount} entr${entryCount === 1 ? "y" : "ies"} ` +
-        "(embeddings, utility scores, graph data and the LLM enrichment cache are kept).",
+        "(embeddings, utility scores, and the LLM enrichment cache are kept).",
     );
   }
   db.transaction(() => {
@@ -255,15 +257,24 @@ export function ensureSchema(db: Database): void {
   db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
 
   // The LLM entity graph, retired in 0.9.17-alpha.9: declared links
-  // (`asset_links`) now back `akm show`'s related list and curate's support
-  // refs (#935), and the navigation eval measured vector kNN beating the
-  // graph's `related` list by 0.157 P@5. Unconditional, like the drops
-  // above — an older release's `CREATE TABLE IF NOT EXISTS` recreates these
-  // (empty) if it ever opens this index.
-  db.exec("DROP TABLE IF EXISTS graph_meta");
-  db.exec("DROP TABLE IF EXISTS graph_files");
-  db.exec("DROP TABLE IF EXISTS graph_file_entities");
-  db.exec("DROP TABLE IF EXISTS graph_file_relations");
+  // (`asset_links`) now back `akm show`'s `links` field (which replaced the
+  // graph's `related` list) and curate's support refs (#935), and the
+  // navigation eval measured vector kNN beating the graph's `related` list
+  // by 0.157 P@5. `graph_files` stands in for the whole set — all four
+  // tables are only ever created and dropped together. Gated on it (rather
+  // than the unconditional `DROP TABLE IF EXISTS` pattern used above) so
+  // this reclaim runs once: after the first writable open drops these
+  // tables, every later open finds `graph_files` already gone and skips the
+  // no-op DROPs and the repeat VACUUM flag below. An older release's
+  // `CREATE TABLE IF NOT EXISTS` still recreates them (empty) if it ever
+  // opens this index again — a later open here would then drop them again.
+  const hadGraphTables = tableExists(db, "graph_files");
+  if (hadGraphTables) {
+    db.exec("DROP TABLE IF EXISTS graph_meta");
+    db.exec("DROP TABLE IF EXISTS graph_files");
+    db.exec("DROP TABLE IF EXISTS graph_file_entities");
+    db.exec("DROP TABLE IF EXISTS graph_file_relations");
+  }
 
   // One float32 BLOB per entry, searched by an exact scan
   // (index-vec-repository.ts). `model` is the provider fingerprint the vector was generated under
@@ -342,8 +353,17 @@ export function ensureSchema(db: Database): void {
   db.exec("DELETE FROM llm_enrichment_cache WHERE cache_variant = ''");
 
   // The graph-extraction cache variant is retired along with the tables
-  // above; its rows would otherwise sit unread forever.
-  db.exec("DELETE FROM llm_enrichment_cache WHERE cache_variant LIKE 'graph-extraction:%'");
+  // above; its rows would otherwise sit unread forever. Gated the same way,
+  // on the same one-time flag, so a rerun does not re-scan the cache table
+  // for rows that are already gone.
+  if (hadGraphTables) {
+    db.exec("DELETE FROM llm_enrichment_cache WHERE cache_variant LIKE 'graph-extraction:%'");
+    // The drops and delete above freed real space (measured ~68MB on a
+    // representative index): flag it the same way a version-gated layout
+    // migration does, since this reclaim is unconditional-on-version but
+    // still one-time-per-index (guarded by hadGraphTables above).
+    setMeta(db, VACUUM_PENDING_META, "1");
+  }
 
   dropVecMirror(db);
   // Meta keys only the sqlite-vec mirror read.
