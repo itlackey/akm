@@ -747,6 +747,24 @@ describe("shapeProposal* — proposal commands", () => {
   test("shapeProposalEntry brief drops retirement — brief is id/ref/status/source/createdAt only", () => {
     const out = shapeProposalEntry(retireProposal, "brief");
     expect(out).not.toHaveProperty("retirement");
+    expect(out).not.toHaveProperty("continuityRisk"); // this fixture is not flagged
+  });
+
+  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal (round 3)", () => {
+    // `proposal list`'s DEFAULT detail level is "brief" (no --detail flag
+    // given projects here) — retirement itself is not restored until
+    // "normal", so without this marker a flagged proposal would be
+    // indistinguishable from a clean one in the default listing.
+    const flagged: Record<string, unknown> = {
+      ...retireProposal,
+      retirement: {
+        ...(retireProposal.retirement as Record<string, unknown>),
+        continuityRisk: { failingQueries: 1, ranks: [{ query: "q", retiredRank: 1, successorRank: null }] },
+      },
+    };
+    const out = shapeProposalEntry(flagged, "brief");
+    expect(out.continuityRisk).toBe(true);
+    expect(out).not.toHaveProperty("retirement"); // still brief otherwise — no other retirement field leaks through
   });
 
   test("shapeProposalListOutput shapes nested proposals + carries totalCount", () => {

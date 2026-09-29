@@ -26,7 +26,7 @@ import {
   type ProposalRejectResult,
 } from "../src/commands/proposal/proposal";
 import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";
-import { shapeProposalEntry } from "../src/output/shapes/helpers";
+import { shapeProposalEntry, shapeProposalListOutput } from "../src/output/shapes/helpers";
 import { formatProposalListPlain, formatProposalShowPlain } from "../src/output/text/helpers";
 
 // ── Setup ─────────────────────────────────────────────────────────────────
@@ -364,6 +364,22 @@ describe("proposal show / list expose retirement.continuityRisk (S4)", () => {
 
   test("formatProposalListPlain marks a flagged retire proposal inline, and omits it for a clean one (S4)", () => {
     const out = formatProposalListPlain({ totalCount: 2, proposals: [flagged, clean] });
+    const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
+    const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
+    expect(flaggedLine).toContain("continuity-risk");
+    expect(cleanLine).not.toContain("continuity-risk");
+  });
+
+  test("the marker survives `akm proposal list`'s DEFAULT (brief) shape, not just a hand-built fixture (round 3)", () => {
+    // The test above feeds formatProposalListPlain a raw fixture with
+    // `retirement` already attached, as if shaped at "normal" — but
+    // `proposal list` with no --detail flag shapes at "brief", which drops
+    // `retirement` entirely. Round through the REAL shape function first,
+    // at the REAL default detail level, to prove the marker still reaches
+    // the formatter when nothing else does.
+    const shaped = shapeProposalListOutput({ totalCount: 2, proposals: [flagged, clean] }, "brief");
+    expect((shaped.proposals as Record<string, unknown>[])[0]).not.toHaveProperty("retirement");
+    const out = formatProposalListPlain(shaped);
     const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
     const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
     expect(flaggedLine).toContain("continuity-risk");

@@ -285,6 +285,51 @@ describe("checkRetirementContinuity", () => {
       // fts-fallback/unverified one; "query one" (call 2) is the verified failure.
       expect(risk?.ranks[0]?.query).toBe("query one");
     });
+
+    test("a second proposal checked while the endpoint is still down is ALSO unverified, not just the first (round 3)", async () => {
+      recordQuery("memories/old-note", "query one");
+      recordQuery("memories/beta-old", "query two");
+      // Mirrors createContinuitySearch's OWN forcedKeywordOnly bookkeeping —
+      // this proves checkRetirementContinuity correctly CONSUMES the flag
+      // from whatever `search` it is given; the "createContinuitySearch"
+      // describe block below proves the real implementation PRODUCES it.
+      let keywordOnly = false;
+      const sharedSearch = async (): Promise<ContinuitySearchResult> => {
+        const forcedKeywordOnly = keywordOnly;
+        if (!keywordOnly) {
+          keywordOnly = true;
+          return { hits: [{ ref: "stash//memories/old-note" }], mode: "fts-fallback" };
+        }
+        return { hits: [{ ref: "stash//memories/beta-old" }], mode: "keyword", forcedKeywordOnly };
+      };
+
+      const first = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
+        ledgerAccess: {},
+        search: sharedSearch,
+      });
+      const second = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/beta-old",
+        successorRef: "memories/beta-new",
+        retiredRaw: "beta old content",
+        successorRaw: "beta new content",
+        ledgerAccess: {},
+        search: sharedSearch,
+      });
+
+      expect(first?.unverifiedQueries).toBe(1);
+      // The endpoint is STILL down for this second, independent proposal —
+      // its query must not read as verified just because THIS call's own
+      // mode came back "keyword" rather than "fts-fallback".
+      expect(second?.unverifiedQueries).toBe(1);
+    });
   });
 
   describe("S3a: replays the SAME cleaned queries the retrieval regression gate uses", () => {
@@ -444,14 +489,20 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
 
     const first = await search("deploy");
     expect(first.mode).toBe("fts-fallback");
+    expect(first.forcedKeywordOnly).toBeFalsy(); // THIS call is the one that discovered the fallback
     expect(embedCalls).toBe(1);
 
     const second = await search("deploy");
     expect(second.mode).toBe("keyword"); // forced semanticSearchMode: "off" — not another fallback
+    // Round-3 review (S2): `mode: "keyword"` alone reads as a clean, verified
+    // query — but the endpoint is presumed still down, so this call must
+    // still identify itself as degraded, not just the very first one.
+    expect(second.forcedKeywordOnly).toBe(true);
     expect(embedCalls).toBe(1); // the embedder was never called again
 
     const third = await search("deploy");
     expect(third.mode).toBe("keyword");
+    expect(third.forcedKeywordOnly).toBe(true);
     expect(embedCalls).toBe(1);
   });
 
@@ -480,5 +531,9 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
     const second = await search("deploy");
     expect(first.mode).toBe("keyword");
     expect(second.mode).toBe("keyword");
+    // A bundle genuinely configured semanticSearchMode: "off" is not
+    // "forced" into anything — this IS the real, intended ranking.
+    expect(first.forcedKeywordOnly).toBeFalsy();
+    expect(second.forcedKeywordOnly).toBeFalsy();
   });
 });

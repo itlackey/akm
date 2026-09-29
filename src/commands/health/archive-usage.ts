@@ -6,20 +6,33 @@
  * `memory-cleanup-archive` advisory for `akm health` (item 4, 0.9.17-alpha.9
  * plan §5.4/§8 step 8).
  *
- * The purge sweep only ever runs on a git-backed bundle (git history is what
- * makes deleting the archived bytes recoverable — D27). A bundle with no
- * `.git` of its own keeps every retirement's archived bytes forever, so its
- * size and file count are reported here instead — nothing more; there is no
- * purge command for a bundle this check fires on.
+ * Reports the archive's size and file count for every bundle, git-backed or
+ * not. A bundle with no `.git` of its own keeps every retirement's archived
+ * bytes forever (the purge sweep never runs there at all), so that alone is
+ * reported. A git-backed bundle can ALSO have bytes the purge sweep will
+ * never remove: `.git` presence alone does not prove a retirement was ever
+ * committed (`proposal accept` only commits for a `kind: "git"` write
+ * target, and a `kind: "filesystem"` bundle that merely happens to have a
+ * `.git` directory never gets one) — those bytes sit there indefinitely,
+ * however old they get, with nothing else to say so. This checks the SAME
+ * git state `purgeGracedArchive` checks (tracked, clean, verifiable) and
+ * reports how much of the archive fails it.
  *
- * Silent whenever there is nothing to say: the bundle is git-backed (the
- * purge sweep already covers it), or the archive does not exist or is empty.
+ * Silent whenever there is nothing to say: the archive does not exist or is
+ * empty, or (for a git-backed bundle) every byte in it is purgeable once it
+ * ages out.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
-import { isGitBackedStash } from "../../sources/providers/git-stash";
+import { toPosix } from "../../core/common";
+import {
+  isGitBackedStash,
+  tryListGitChangedPaths,
+  tryListGitTrackedPaths,
+  tryListGitUnverifiablePaths,
+} from "../../sources/providers/git-stash";
 import { MAX_WALK_ENTRIES, sizeOfPath } from "./data-dir-usage";
 import type { HealthCheckResult } from "./types";
 
@@ -28,23 +41,69 @@ import type { HealthCheckResult } from "./types";
  * nothing to report.
  */
 export function collectArchiveUsageAdvisory(stashDir: string): HealthCheckResult | undefined {
-  if (isGitBackedStash(stashDir)) return undefined; // the purge sweep already covers it
   const archiveRoot = path.join(stashDir, MEMORY_ARCHIVE_REL);
   if (!fs.existsSync(archiveRoot)) return undefined;
-  // N2: the same size/count walker `data-dir-usage.ts` uses, not a duplicate
-  // — an archive dir is bounded by the same "don't let a pathological tree
-  // hang a health check" concern that walker's entry budget already covers.
-  const usage = sizeOfPath(archiveRoot, { remaining: MAX_WALK_ENTRIES });
+
+  if (!isGitBackedStash(stashDir)) {
+    const usage = sizeOfPath(archiveRoot, { remaining: MAX_WALK_ENTRIES });
+    if (usage.files === 0) return undefined;
+    const lowerBound = usage.truncated ? ` (a lower bound — the walk stopped after ${MAX_WALK_ENTRIES} entries)` : "";
+    return {
+      name: "memory-cleanup-archive",
+      kind: "deterministic",
+      status: "pass",
+      confidence: "high",
+      message:
+        `${usage.files} archived file(s), ${usage.bytes} byte(s)${lowerBound} in .akm/memory-cleanup/archive — ` +
+        "this bundle has no git history, so the purge sweep leaves it untouched.",
+      evidence: { files: usage.files, bytes: usage.bytes, truncated: usage.truncated },
+    };
+  }
+
+  // Git-backed: the SAME three checks purgeGracedArchive runs (B1, G10) —
+  // computed once here, not per file, and reused via `onFile` below instead
+  // of a second walk of the same tree.
+  const dirtyQuery = tryListGitChangedPaths(stashDir);
+  const trackedQuery = tryListGitTrackedPaths(stashDir, MEMORY_ARCHIVE_REL);
+  const unverifiableQuery = tryListGitUnverifiablePaths(stashDir, MEMORY_ARCHIVE_REL);
+  // A failed git check here fails the same way purgeGracedArchive's own
+  // sweep would: nothing in the archive can be proven purgeable, so every
+  // byte counts as unpurgeable rather than guessing.
+  const gitStateKnown = dirtyQuery.ok && trackedQuery.ok && unverifiableQuery.ok;
+  const dirty = new Set(dirtyQuery.paths);
+  const tracked = new Set(trackedQuery.paths);
+  const unverifiable = new Set(unverifiableQuery.paths);
+
+  let unpurgeableFiles = 0;
+  let unpurgeableBytes = 0;
+  const usage = sizeOfPath(archiveRoot, { remaining: MAX_WALK_ENTRIES }, (filePath, bytes) => {
+    const key = toPosix(path.relative(stashDir, filePath));
+    const safe = gitStateKnown && tracked.has(key) && !dirty.has(key) && !unverifiable.has(key);
+    if (!safe) {
+      unpurgeableFiles++;
+      unpurgeableBytes += bytes;
+    }
+  });
   if (usage.files === 0) return undefined;
+  if (unpurgeableFiles === 0) return undefined; // everything here is purgeable once it ages out — nothing to say
+
   const lowerBound = usage.truncated ? ` (a lower bound — the walk stopped after ${MAX_WALK_ENTRIES} entries)` : "";
   return {
     name: "memory-cleanup-archive",
     kind: "deterministic",
-    status: "pass",
+    status: "warn",
     confidence: "high",
     message:
-      `${usage.files} archived file(s), ${usage.bytes} byte(s)${lowerBound} in .akm/memory-cleanup/archive — ` +
-      "this bundle has no git history, so the purge sweep leaves it untouched.",
-    evidence: { files: usage.files, bytes: usage.bytes, truncated: usage.truncated },
+      `${usage.files} archived file(s), ${usage.bytes} byte(s)${lowerBound} in .akm/memory-cleanup/archive; ` +
+      `${unpurgeableFiles} file(s), ${unpurgeableBytes} byte(s) of that cannot be purged (untracked, modified, ` +
+      "or unverifiable in git) — commit them so the purge sweep can remove them once they age out.",
+    evidence: {
+      files: usage.files,
+      bytes: usage.bytes,
+      truncated: usage.truncated,
+      unpurgeableFiles,
+      unpurgeableBytes,
+      gitStateKnown,
+    },
   };
 }

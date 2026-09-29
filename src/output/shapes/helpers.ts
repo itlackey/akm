@@ -72,7 +72,17 @@ export function shapeProposalProducerOutput(
 
 export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (detail === "brief") {
-    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
+    // `proposal list`'s default detail level IS "brief" (no `--detail` flag
+    // given projects here, not "normal") — `retirement` itself is not
+    // projected until "normal", so a flagged retire proposal's risk would
+    // otherwise be invisible by default. A minimal boolean marker, not the
+    // full risk object, keeps brief's shape small while still letting a
+    // reviewer see it without an extra flag.
+    const retirement = entry.retirement as Record<string, unknown> | undefined;
+    return {
+      ...pickFields(entry, ["id", "ref", "status", "source", "createdAt"]),
+      ...(retirement?.continuityRisk ? { continuityRisk: true } : {}),
+    };
   }
   if (detail === "normal") {
     // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
