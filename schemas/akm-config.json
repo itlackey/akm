@@ -975,13 +975,6 @@
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string"
-                      },
-                      "neighborsPerChanged": {
-                        "type": "integer",
-                        "minimum": 1
-                      },
                       "p90ChunkSecondsDefault": {
                         "type": "number",
                         "exclusiveMinimum": 0
@@ -2636,13 +2629,6 @@
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string"
-                          },
-                          "neighborsPerChanged": {
-                            "type": "integer",
-                            "minimum": 1
-                          },
                           "p90ChunkSecondsDefault": {
                             "type": "number",
                             "exclusiveMinimum": 0
@@ -3585,13 +3571,6 @@
           "minimum": 1,
           "maximum": 50
         },
-        "incrementalSince": {
-          "type": "string"
-        },
-        "neighborsPerChanged": {
-          "type": "integer",
-          "minimum": 1
-        },
         "p90ChunkSecondsDefault": {
           "type": "number",
           "exclusiveMinimum": 0
@@ -4104,13 +4083,6 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
-                },
-                "incrementalSince": {
-                  "type": "string"
-                },
-                "neighborsPerChanged": {
-                  "type": "integer",
-                  "minimum": 1
                 },
                 "p90ChunkSecondsDefault": {
                   "type": "number",
