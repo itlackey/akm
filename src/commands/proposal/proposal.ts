@@ -370,6 +370,21 @@ export interface BulkAdjudicateResult {
   >;
 }
 
+/** The retired file's current line count for `--max-diff-lines` (S6); unresolvable is never size-filtered here — the real accept/reject attempt fails cleanly on a genuinely stale target. */
+function retiredTargetLineCount(
+  stashDir: string,
+  config: AkmConfig,
+  proposal: Proposal,
+  queueTarget?: ResolvedWriteTarget,
+): number {
+  try {
+    const existing = diffProposal(stashDir, config, proposal.id, { queueTarget }).existing;
+    return existing === null ? 0 : existing.split("\n").length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Bulk accept/reject every pending proposal from one generator, applying the
  * shared `--max-diff-lines` / `--older-than` filters. Consolidates the two
@@ -379,11 +394,17 @@ export interface BulkAdjudicateResult {
  */
 export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): Promise<BulkAdjudicateResult> {
   const config = options.config ?? loadConfig();
-  const { stashDir } = resolveProposalQueue(options.stashDir, options.queue, config);
+  const { stashDir, target: queueTarget } = resolveProposalQueue(options.stashDir, options.queue, config);
   const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
     if (options.maxDiffLines !== undefined) {
-      const lines = proposalContent(p).split("\n").length;
+      // S6: a retire proposal's own payload is empty (it deletes its
+      // target) — proposalContent() would always read as 1 line, so
+      // --max-diff-lines could never filter one out. Count the retired
+      // file's own current line count instead.
+      const lines = isRetireProposal(p)
+        ? retiredTargetLineCount(stashDir, config, p, queueTarget)
+        : proposalContent(p).split("\n").length;
       if (lines > options.maxDiffLines) return false;
     }
     if (options.olderThanMs !== undefined) {
