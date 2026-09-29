@@ -30,19 +30,21 @@ function launcherFixture(root: string): { launcher: string; readyFile: string; s
   const signalFile = path.join(root, "signal.json");
   fs.mkdirSync(dist, { recursive: true });
   fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
-  // A fake child entry: announces it is alive (readyFile), then records the
-  // FIRST signal it receives and its own view of the launcher pid (proving
+  // A fake child entry: registers its handler, then announces it is alive
+  // (readyFile). Announcing first let the test signal a child with no handler
+  // yet, which the forwarded SIGTERM then killed outright. The handler records
+  // the FIRST signal it receives and its own view of the launcher pid (proving
   // AKM_LAUNCHER_PID reached it) before exiting 0. Never resolves on its own
   // otherwise, so it stays alive until signaled or killed.
   fs.writeFileSync(
     path.join(dist, "cli.js"),
     [
       'import fs from "node:fs";',
-      `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
       'process.once("SIGTERM", () => {',
       `  fs.writeFileSync(${JSON.stringify(signalFile)}, JSON.stringify({ signal: "SIGTERM", launcherPid: process.env.AKM_LAUNCHER_PID }));`,
       "  process.exit(0);",
       "});",
+      `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
       "await new Promise(() => {});",
     ].join("\n"),
   );
@@ -128,7 +130,6 @@ describe("launcher signal forwarding (#956)", () => {
         path.join(dist, "cli.js"),
         [
           'import fs from "node:fs";',
-          `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
           'process.once("SIGINT", () => {',
           `  fs.writeFileSync(${JSON.stringify(startedFile)}, "1");`,
           "  setTimeout(() => {",
@@ -136,6 +137,7 @@ describe("launcher signal forwarding (#956)", () => {
           "    process.exit(0);",
           "  }, 300);",
           "});",
+          `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
           "await new Promise(() => {});",
         ].join("\n"),
       );

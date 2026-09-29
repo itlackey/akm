@@ -12,8 +12,7 @@ import { fileURLToPath } from "node:url";
 // go up only after spawn() (below) returned; a scheduler preemption right
 // after that syscall was enough for a signal to arrive with no listener yet,
 // and the runtime's default (process-terminating) disposition killed the
-// launcher outright, never reaching the child at all (flaky
-// tests/integration/launcher-signal-forwarding.test.ts). `child` starts
+// launcher outright, never reaching the child at all. `child` starts
 // unset: a signal that arrives before it exists is queued and flushed the
 // moment it does; if this process ends up never spawning one (the
 // direct-import branch below), the queued signal is re-raised against

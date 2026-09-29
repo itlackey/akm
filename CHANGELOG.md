@@ -131,14 +131,19 @@ the launchers no longer lose a signal that arrives before their child starts.
   SIGTERM/SIGINT/SIGHUP forwarding listeners only after spawning the child;
   under load, a signal could arrive in that window and fall through to the
   runtime's default (process-terminating) disposition, killing the launcher
-  before the child ever saw it (`tests/integration/launcher-signal-forwarding.test.ts`,
-  intermittent). The listeners now go up before anything else runs, with a
-  small queue for a signal that arrives before the child exists.
+  before the child ever saw it. The listeners now go up before anything else
+  runs, with a small queue for a signal that arrives before the child exists.
 - **`scripts/node-runtime/akm-migrate` carried the same pre-spawn signal
   race** as `scripts/node-runtime/akm` above, for the same reason (listeners
   registered only after `spawn()`), with no test covering it. Fixed the same
   way, and added `tests/integration/akm-migrate-signal-forwarding.test.ts`
-  (modelled on `launcher-signal-forwarding.test.ts`) to cover it.
+  (modelled on `launcher-signal-forwarding.test.ts`) for its forwarding.
+- **The launcher signal tests failed intermittently because of their own
+  fixture.** The fake child wrote its ready file before it registered its
+  signal handler, so a forwarded signal could reach it in between and kill it,
+  and the launcher then reported that signal. Each fixture now registers its
+  handler first. The launcher's pre-spawn window above could not cause this:
+  the tests signal only after the child is running.
 
 ## [0.9.17-alpha.7] - 2026-09-28
 
