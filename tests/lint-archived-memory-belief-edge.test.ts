@@ -22,6 +22,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { contentHash } from "../src/commands/improve/content-hash";
 import { analyzeMemoryCleanup, applyMemoryCleanup } from "../src/commands/improve/memory/memory-improve";
 import { akmLint } from "../src/commands/lint";
 import { akmProposalAccept } from "../src/commands/proposal/proposal";
@@ -185,19 +186,22 @@ describe("a retire proposal's archived KNOWLEDGE asset also resolves through the
   test("an xrefs edge to a retired knowledge asset is not reported as missing-ref", async () => {
     const stashDir = storage.stashDir;
     fs.mkdirSync(path.join(stashDir, "knowledge"), { recursive: true });
-    fs.writeFileSync(
-      path.join(stashDir, "knowledge", "old-guide.md"),
-      "---\ndescription: an older guide, superseded by a newer one\n---\n\nOld content.\n",
-    );
+    const oldGuideContent = "---\ndescription: an older guide, superseded by a newer one\n---\n\nOld content.\n";
+    fs.writeFileSync(path.join(stashDir, "knowledge", "old-guide.md"), oldGuideContent);
+    const newGuideContent = "---\ndescription: the newer guide\n---\n\nNew content.\n";
+    fs.writeFileSync(path.join(stashDir, "knowledge", "new-guide.md"), newGuideContent);
     writeMemory(stashDir, "holder", "description: holds the edge\nxrefs:\n  - knowledge/old-guide\n");
 
     const before = await akmLint({ dir: stashDir, config: makeConfig(stashDir) });
     expect(before.flagged.filter((f) => f.issue === "missing-ref")).toEqual([]);
 
     const config = makeConfig(stashDir);
+    // B2 (post-review): accept verifies both sides' recorded body hashes
+    // against the current files, so the fixture uses the REAL hashes of the
+    // files actually on disk rather than placeholder bytes.
     const proposal = createRetireProposal(stashDir, {
       ref: "knowledge/old-guide",
-      source: "consolidate",
+      source: "consolidate-pair",
       target: { source: "stash", root: stashDir },
       retirement: {
         retiredRef: "knowledge/old-guide",
@@ -205,8 +209,8 @@ describe("a retire proposal's archived KNOWLEDGE asset also resolves through the
         cosine: 0.96,
         judgeLabel: "duplicate",
         judgeReason: "Same durable facts as the newer guide.",
-        retiredContentHash: "a".repeat(64),
-        successorContentHash: "b".repeat(64),
+        retiredContentHash: contentHash(oldGuideContent, "body"),
+        successorContentHash: contentHash(newGuideContent, "body"),
         reason: "duplicate",
       },
     });

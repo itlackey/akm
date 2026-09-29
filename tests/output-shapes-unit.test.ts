@@ -712,7 +712,7 @@ describe("shapeProposal* — proposal commands", () => {
   // the same way confidence/gateDecision already do.
   const retireProposal: Record<string, unknown> = {
     ...fullProposal,
-    source: "consolidate",
+    source: "consolidate-pair",
     retirement: {
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
@@ -725,20 +725,23 @@ describe("shapeProposal* — proposal commands", () => {
     },
     retiredArchive: { dirs: [".akm/memory-cleanup/archive/x"] },
     promotionSource: "memories/some-source",
+    promotionSourceHash: "c".repeat(64),
   };
 
-  test("shapeProposalEntry normal keeps retirement; drops retiredArchive/promotionSource", () => {
+  test("shapeProposalEntry normal keeps retirement; drops retiredArchive/promotionSource(Hash)", () => {
     const out = shapeProposalEntry(retireProposal, "normal");
     expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
     expect(out).not.toHaveProperty("retiredArchive");
     expect(out).not.toHaveProperty("promotionSource");
+    expect(out).not.toHaveProperty("promotionSourceHash");
   });
 
-  test("shapeProposalEntry full keeps retirement, retiredArchive and promotionSource", () => {
+  test("shapeProposalEntry full keeps retirement, retiredArchive and promotionSource(Hash)", () => {
     const out = shapeProposalEntry(retireProposal, "full");
     expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
     expect(out.retiredArchive).toEqual(retireProposal.retiredArchive as Record<string, unknown>);
     expect(out.promotionSource).toBe("memories/some-source");
+    expect(out.promotionSourceHash).toBe("c".repeat(64));
   });
 
   test("shapeProposalEntry brief drops retirement — brief is id/ref/status/source/createdAt only", () => {

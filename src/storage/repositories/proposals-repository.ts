@@ -206,6 +206,9 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
   if (Object.hasOwn(meta, "promotionSource") && typeof meta.promotionSource !== "string") {
     invalidPresentField("promotionSource");
   }
+  if (Object.hasOwn(meta, "promotionSourceHash") && typeof meta.promotionSourceHash !== "string") {
+    invalidPresentField("promotionSourceHash");
+  }
   if (Object.hasOwn(meta, "retirement")) {
     const retirement = meta.retirement as Record<string, unknown> | null;
     if (
@@ -326,6 +329,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
       ? { eligibilitySource: meta.eligibilitySource as Proposal["eligibilitySource"] }
       : {}),
     ...(typeof meta.promotionSource === "string" ? { promotionSource: meta.promotionSource } : {}),
+    ...(typeof meta.promotionSourceHash === "string" ? { promotionSourceHash: meta.promotionSourceHash } : {}),
     ...(meta.retirement !== undefined ? { retirement: meta.retirement as Proposal["retirement"] } : {}),
     ...(meta.retiredArchive !== undefined ? { retiredArchive: meta.retiredArchive as Proposal["retiredArchive"] } : {}),
   };
@@ -383,6 +387,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.acceptedTarget !== undefined) metaObj.acceptedTarget = proposal.acceptedTarget;
   if (proposal.eligibilitySource !== undefined) metaObj.eligibilitySource = proposal.eligibilitySource;
   if (proposal.promotionSource !== undefined) metaObj.promotionSource = proposal.promotionSource;
+  if (proposal.promotionSourceHash !== undefined) metaObj.promotionSourceHash = proposal.promotionSourceHash;
   if (proposal.retirement !== undefined) metaObj.retirement = proposal.retirement;
   if (proposal.retiredArchive !== undefined) metaObj.retiredArchive = proposal.retiredArchive;
   validatePresentMetadata(metaObj);

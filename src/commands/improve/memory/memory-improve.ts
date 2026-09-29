@@ -610,7 +610,15 @@ function resolvePreviousBeliefState(
 /**
  * Move `filePath` into the recoverable cleanup archive
  * (`.akm/memory-cleanup/archive/<stamp>-<ref>/`) with a `cleanup.md`
- * tombstone, journaling both ends so the run's sync commits the move.
+ * tombstone, journaling both ends (`recordWrittenPath`) so a LATER sync
+ * commits the move — `akm sync`, or the batched auto-sync an `akm improve`
+ * run does at its own end (`docs/architecture/improvement.md`, "Auto-sync").
+ * This call does not itself commit anything: a standalone `akm proposal
+ * accept` (the only way a retire proposal is ever accepted — triage never
+ * auto-accepts one) leaves the move journaled but uncommitted until
+ * something later reads that journal, unless the write target's `kind` is
+ * `"git"`, in which case the caller's own `commitWriteTargetBoundary` commits
+ * (and maybe pushes) immediately as part of the SAME accept.
  *
  * Generalized in alpha.9 to cover any memory, knowledge or lesson file in a
  * writable bundle — not only `.derived` memories — so `akm proposal accept`

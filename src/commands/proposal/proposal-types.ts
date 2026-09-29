@@ -35,6 +35,8 @@ export const PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
+  /** The consolidate pair pass's own retire proposals (alpha.9, S6) — kept apart from `consolidate`'s promotions so a bulk `accept --generator consolidate` never sweeps a retirement, and the reverse. */
+  "consolidate-pair",
   "extract",
   "improve",
   "feedback",
@@ -50,6 +52,7 @@ export const AUTOMATED_PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
+  "consolidate-pair",
   "extract",
   "improve",
   "schema-repair",
@@ -195,6 +198,15 @@ export interface Proposal {
    * behind — whether a person accepts it or triage auto-promotion does.
    */
   promotionSource?: string;
+  /**
+   * Body content hash (`contentHash(_, "body")`) of `promotionSource` at
+   * mint time (alpha.9, B3). Accept re-reads the source and only archives it
+   * when the hash still matches — an edit made after the promotion was
+   * queued survives, not silently discarded into the archive. Absent on a
+   * proposal minted before this field existed; those never archive their
+   * source (no hash to verify freshness against).
+   */
+  promotionSourceHash?: string;
 }
 
 /** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */

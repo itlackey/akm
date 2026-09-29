@@ -111,6 +111,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "retirement",
     "retiredArchive",
     "promotionSource",
+    "promotionSourceHash",
   ]);
 }
 

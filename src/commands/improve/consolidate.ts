@@ -160,7 +160,8 @@ export interface AkmConsolidateOptions {
 
 /**
  * Structured-output schema for a plan. Promote-only: merge/delete/contradict
- * were advisory, never executed, and cost thousands of completion tokens.
+ * were removed in 0.9.17-alpha.1 (`e82eec811`) after running in production —
+ * they cost thousands of completion tokens.
  */
 export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -1117,6 +1118,11 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       // O1 (alpha.9): on accept, promoteProposal retires this source memory
       // (and its .derived twin) so promotion no longer leaves a duplicate.
       promotionSource: op.ref,
+      // B3: recorded so accept can refuse to archive a source that was
+      // edited after this promotion was queued — bodyHash is this same
+      // memoryContent's body hash, already computed above for the
+      // knowledge-dedup check.
+      promotionSourceHash: bodyHash,
     });
     ctx.promoted.push(proposal.id);
     ctx.promotedSourceRefs.add(op.ref);

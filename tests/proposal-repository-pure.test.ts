@@ -246,21 +246,23 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(decoded.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
   });
 
-  test("retiredArchive and promotionSource round-trip", () => {
+  test("retiredArchive, promotionSource and promotionSourceHash round-trip", () => {
     const proposal = proposalRowToProposal({
       ...terminalRow,
       metadata_json: JSON.stringify({
         retiredArchive: { dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"] },
         promotionSource: "team//memories/promoted-source",
+        promotionSourceHash: "c".repeat(64),
       }),
     });
     expect(proposal.retiredArchive).toEqual({
       dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"],
     });
     expect(proposal.promotionSource).toBe("team//memories/promoted-source");
+    expect(proposal.promotionSourceHash).toBe("c".repeat(64));
   });
 
-  test("a malformed retirement or retiredArchive is rejected, not tolerated", () => {
+  test("a malformed retirement, retiredArchive or promotionSourceHash is rejected, not tolerated", () => {
     expect(() =>
       proposalRowToProposal({
         ...terminalRow,
@@ -276,6 +278,9 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(() =>
       proposalRowToProposal({ ...terminalRow, metadata_json: JSON.stringify({ promotionSource: 7 }) }),
     ).toThrow(/promotionSource/i);
+    expect(() =>
+      proposalRowToProposal({ ...terminalRow, metadata_json: JSON.stringify({ promotionSourceHash: 7 }) }),
+    ).toThrow(/promotionSourceHash/i);
   });
 
   test("write path: pending status still requires the full envelope (write path not weakened)", () => {
