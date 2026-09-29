@@ -9,20 +9,31 @@
  * `getNeighborsByEntryId`), a fake judge via the `chat` test seam
  * (`CallStructuredRequest["chat"]`, "transport override for tests"), and the
  * real proposal/ledger repositories.
+ *
+ * None of the `IsolatedAkmStorage` sandboxes below has a `.git` directory, so
+ * `loadGitFirstAddedMap` always returns `undefined` for them and every
+ * asset's "created" date falls back to its file mtime (B1) — tests that need
+ * a specific older/newer ordering set mtimes explicitly with `dateAsset`,
+ * since frontmatter `createdAt` is no longer read for this at all. The final
+ * describe block below is the one exception: it drives `loadGitFirstAddedMap`
+ * against a real, disposable git repo to pin a real regression.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { AkmConsolidateOptions } from "../../../../src/commands/improve/consolidate";
 import {
   BACKFILL_FLOOR,
+  NEW_MATERIAL_DAYS,
   type PairJudgeChat,
   runConsolidatePairPass,
   selectCandidates,
   selectInitiators,
   T_PAIR,
 } from "../../../../src/commands/improve/consolidate/pair-pass";
+import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { getProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -57,12 +68,19 @@ function vecAtAngle(deg: number): number[] {
   return [Math.cos(r), Math.sin(r), 0, 0];
 }
 const angleForCosine = (cosine: number): number => (Math.acos(cosine) * 180) / Math.PI;
+const MS_PER_DAY = 86_400_000;
 
 function writeAsset(relPath: string, frontmatter: string, body = "Body text.\n"): string {
   const filePath = path.join(storage.stashDir, relPath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `---\n${frontmatter}\n---\n${body}`, "utf8");
   return filePath;
+}
+
+/** Sets a file's mtime (B1: "created" falls back to mtime with no git) — `daysAgo` may be fractional. */
+function dateAsset(filePath: string, daysAgo: number): void {
+  const at = new Date(Date.now() - daysAgo * MS_PER_DAY);
+  fs.utimesSync(filePath, at, at);
 }
 
 /** Index one asset + its embedding, matching how the real indexer would (bundleId "stash"). */
@@ -114,8 +132,9 @@ function fixedChat(verdict: {
 }
 
 describe("selectInitiators / selectCandidates — threshold math against a real index", () => {
-  test("a backlog initiator (never attempted) needs >= BACKFILL_FLOOR (0.95); T_PAIR (0.93) alone is not enough", () => {
+  test("a backlog initiator (never attempted, not new material) needs >= BACKFILL_FLOOR (0.95); T_PAIR (0.93) alone is not enough", () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old note");
+    dateAsset(oldPath, NEW_MATERIAL_DAYS + 1); // outside the new-material window, so backlog really uses BACKFILL_FLOOR
     writeAsset("memories/mid-note.md", "description: just under the backfill floor");
     writeAsset("memories/close-note.md", "description: past the backfill floor");
     const db = openIndexDatabase(getDbPath());
@@ -147,9 +166,11 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
       [{ ref: "memories/old-note", type: "memory", name: "old-note", filePath: oldPath, entryId: oldId }],
       opts,
       storage.stashDir,
+      undefined,
     );
     expect(initiators).toHaveLength(1);
     expect(initiators[0]?.backlog).toBe(true);
+    expect(initiators[0]?.newMaterial).toBe(false);
 
     const db2 = openIndexDatabase(getDbPath());
     let candidates: ReturnType<typeof selectCandidates>;
@@ -161,20 +182,58 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     expect(candidates.map((c) => c.other.name)).toEqual(["close-note"]);
   });
 
-  test("an initiator with a prior (now-stale) ledger attempt uses the lower T_PAIR (0.93) floor", () => {
+  test("a backlog initiator git/mtime-dated within NEW_MATERIAL_DAYS is new material: T_PAIR (0.93) is enough, not just BACKFILL_FLOOR", () => {
+    const newPath = writeAsset("memories/new-note.md", "description: new note"); // fresh mtime — within the window
+    writeAsset("memories/mid-note.md", "description: between T_PAIR and BACKFILL_FLOOR");
+    const db = openIndexDatabase(getDbPath());
+    let newId: number;
+    try {
+      newId = indexAsset(db, "memory", "new-note", newPath, 0);
+      indexAsset(
+        db,
+        "memory",
+        "mid-note",
+        path.join(storage.stashDir, "memories/mid-note.md"),
+        angleForCosine(T_PAIR + 0.01),
+      );
+    } finally {
+      closeDatabase(db);
+    }
+
+    const opts = baseOpts();
+    const { initiators } = selectInitiators(
+      [{ ref: "memories/new-note", type: "memory", name: "new-note", filePath: newPath, entryId: newId }],
+      opts,
+      storage.stashDir,
+      undefined,
+    );
+    expect(initiators[0]?.backlog).toBe(true);
+    expect(initiators[0]?.newMaterial).toBe(true);
+    const db2 = openIndexDatabase(getDbPath());
+    let candidates: ReturnType<typeof selectCandidates>;
+    try {
+      candidates = selectCandidates(db2, initiators, "stash");
+    } finally {
+      closeDatabase(db2);
+    }
+    expect(candidates.map((c) => c.other.name)).toEqual(["mid-note"]);
+  });
+
+  test("an initiator with a prior attempt whose content has since changed uses the lower T_PAIR (0.93) floor", () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old note");
     const midPath = writeAsset("memories/mid-note.md", "description: between T_PAIR and BACKFILL_FLOOR");
-    // Seed a ledger row attempted BEFORE the file's mtime, so isLedgerBlocked's
-    // content-change signal lifts it (not a backlog initiator any more).
-    const past = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    // Seed a ledger row recording a DIFFERENT content hash than the file's
+    // current body — S1: eligibility (and hence "not backlog") is decided by
+    // that mismatch, not by a time window.
     const stateDb = openStateDatabase();
     try {
       recordImproveLedger(stateDb, {
         stashDir: storage.stashDir,
         ref: "memories/old-note",
         source: "consolidate-pair",
-        outcome: "judged_no_action_stable",
-        at: past,
+        outcome: "judged_no_action",
+        at: new Date(Date.now() - 10 * MS_PER_DAY).toISOString(),
+        contentHash: "hash-before-the-edit",
       });
       // A ledger row alone puts the ref outside the retrieval scope (isInRetrievalScope
       // treats any non-capture ledger row as "already processed" — it needs a fresh
@@ -204,8 +263,10 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
       [{ ref: "memories/old-note", type: "memory", name: "old-note", filePath: oldPath, entryId: oldId }],
       opts,
       storage.stashDir,
+      undefined,
     );
-    expect(initiators[0]?.backlog).toBe(false);
+    expect(initiators).toHaveLength(1); // eligible: the row's hash no longer matches
+    expect(initiators[0]?.backlog).toBe(false); // it DID have a prior row
     const db2 = openIndexDatabase(getDbPath());
     let candidates: ReturnType<typeof selectCandidates>;
     try {
@@ -216,12 +277,97 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     // 0.94 clears T_PAIR (0.93) even though it misses BACKFILL_FLOOR (0.95).
     expect(candidates.map((c) => c.other.name)).toEqual(["mid-note"]);
   });
+
+  test("an initiator with a prior attempt whose content is UNCHANGED is not eligible (S1: no timer, content only)", () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: old note");
+    const raw = fs.readFileSync(oldPath, "utf8");
+    const stateDb = openStateDatabase();
+    try {
+      recordImproveLedger(stateDb, {
+        stashDir: storage.stashDir,
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        outcome: "judged_no_action",
+        at: new Date(Date.now() - 10 * MS_PER_DAY).toISOString(),
+        contentHash: contentHash(raw, "body"),
+      });
+      insertUsageEvent(stateDb, { event_type: "search", entry_ref: "stash//memories/old-note", source: "user" });
+    } finally {
+      stateDb.close();
+    }
+    const db = openIndexDatabase(getDbPath());
+    let oldId: number;
+    try {
+      oldId = indexAsset(db, "memory", "old-note", oldPath, 0);
+    } finally {
+      closeDatabase(db);
+    }
+    const { initiators } = selectInitiators(
+      [{ ref: "memories/old-note", type: "memory", name: "old-note", filePath: oldPath, entryId: oldId }],
+      baseOpts(),
+      storage.stashDir,
+      undefined,
+    );
+    expect(initiators).toHaveLength(0);
+  });
+
+  test("S2: fetches 20 raw neighbours and keeps the first 5 that pass every filter, not just the raw top 5", () => {
+    const initiatorPath = writeAsset("memories/initiator.md", "description: initiator");
+    dateAsset(initiatorPath, 60);
+    const db = openIndexDatabase(getDbPath());
+    let initiatorId: number;
+    try {
+      initiatorId = indexAsset(db, "memory", "initiator", initiatorPath, 0);
+      // The 3 NEAREST neighbours all fail the bundle filter — a different
+      // bundleId, same index — so with the old k=5 raw fetch, only 2 raw
+      // slots would ever reach a same-bundle candidate.
+      for (let i = 0; i < 3; i++) {
+        const noisePath = writeAsset(`memories/noise-${i}.md`, `description: noise ${i}`);
+        const entry: IndexDocument = { type: "memory", name: `noise-${i}`, description: `noise ${i}` };
+        const id = upsertEntry(db, noisePath, entry, {
+          bundleId: "other-bundle",
+          componentId: "other-bundle",
+          adapterId: "akm",
+          conceptId: `memories/noise-${i}`,
+          itemRef: `other-bundle//memories/noise-${i}`,
+        });
+        upsertEmbedding(db, id, vecAtAngle(1 + i)); // closer than every real candidate below
+      }
+      // 5 real same-bundle candidates, all comfortably above BACKFILL_FLOOR
+      // (tiny angle steps keep every one of them there), but FARTHER than
+      // the 3 noise hits above (so they only surface once the fetch window
+      // is wide enough to look past the noise).
+      for (let i = 0; i < 5; i++) {
+        const realPath = writeAsset(`memories/real-${i}.md`, `description: real ${i}`);
+        indexAsset(db, "memory", `real-${i}`, realPath, angleForCosine(BACKFILL_FLOOR + 0.03) + i * 0.2);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+    const { initiators } = selectInitiators(
+      [{ ref: "memories/initiator", type: "memory", name: "initiator", filePath: initiatorPath, entryId: initiatorId }],
+      baseOpts(),
+      storage.stashDir,
+      undefined,
+    );
+    const db2 = openIndexDatabase(getDbPath());
+    let candidates: ReturnType<typeof selectCandidates>;
+    try {
+      candidates = selectCandidates(db2, initiators, "stash");
+    } finally {
+      closeDatabase(db2);
+    }
+    expect(candidates).toHaveLength(5); // all 5 real candidates, none of the cross-bundle noise
+    expect(candidates.every((c) => c.other.name.startsWith("real-"))).toBe(true);
+  });
 });
 
 describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   test("duplicate: mints a retire proposal for the older side, with the full retirement metadata", async () => {
-    const oldPath = writeAsset("memories/old-note.md", "description: old\ncreatedAt: 2026-01-01T00:00:00.000Z");
-    writeAsset("memories/new-note.md", "description: new\ncreatedAt: 2026-06-01T00:00:00.000Z");
+    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new");
+    dateAsset(newPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "old-note", oldPath, 0);
@@ -229,7 +375,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         db,
         "memory",
         "new-note",
-        path.join(storage.stashDir, "memories/new-note.md"),
+        newPath,
         angleForCosine(BACKFILL_FLOOR + 0.02) /* clearly above BACKFILL_FLOOR */,
       );
     } finally {
@@ -248,7 +394,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/old-note");
     expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
-    expect(proposal.source).toBe("consolidate");
+    // S6: its own generator, kept apart from the promote pass's "consolidate" proposals.
+    expect(proposal.source).toBe("consolidate-pair");
     expect(proposal.retirement).toMatchObject({
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
@@ -262,19 +409,25 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     try {
       const row = getImproveLedgerRow(stateDb, storage.stashDir, "memories/old-note", "consolidate-pair");
       expect(row?.outcome).toBe("proposed");
+      expect(row?.nextEligibleAt).toBeNull();
+      expect(typeof row?.contentHash).toBe("string");
     } finally {
       stateDb.close();
     }
   });
 
-  test("never mints two retire proposals for the same asset in one run, even when it loses two different pairs", async () => {
+  test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (B2 chain guard)", async () => {
     // A is the nearest neighbour of both B and C, and all three are mutually
     // close enough to pair up — three candidate pairs total: {A,B}, {B,C},
     // {A,C}. A "duplicate" judge on every pair would naively retire A twice
-    // (once via each of its two pairs) without the in-run dedup guard.
-    const aPath = writeAsset("memories/a-note.md", "description: a\ncreatedAt: 2026-01-01T00:00:00.000Z");
-    const bPath = writeAsset("memories/b-note.md", "description: b\ncreatedAt: 2026-02-01T00:00:00.000Z");
-    const cPath = writeAsset("memories/c-note.md", "description: c\ncreatedAt: 2026-03-01T00:00:00.000Z");
+    // (once via each of its two pairs), and would retire B into C right
+    // after A was retired into B, forming an A->B->C chain in one run.
+    const aPath = writeAsset("memories/a-note.md", "description: a");
+    dateAsset(aPath, 80);
+    const bPath = writeAsset("memories/b-note.md", "description: b");
+    dateAsset(bPath, 60);
+    const cPath = writeAsset("memories/c-note.md", "description: c");
+    dateAsset(cPath, 40);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "a-note", aPath, 0);
@@ -290,21 +443,29 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
 
     expect(result.labelCounts.duplicate).toBe(3); // all three pairs were judged
-    expect(result.retired).toHaveLength(2); // but only two distinct assets were actually retired
+    // Pair {A,B} (highest cosine, judged first) retires A, keeping B — and
+    // spends B as a successor for this run. Pair {B,C} would retire B
+    // (older of the two) into C, but B was already spent, so it is skipped.
+    // Pair {A,C} would retire A again, also already spent.
+    expect(result.retired).toHaveLength(1);
     const retiredRefs = result.retired.map((id) => getProposal(storage.stashDir, id).ref).sort();
-    expect(retiredRefs).toEqual(["stash//memories/a-note", "stash//memories/b-note"]);
+    expect(retiredRefs).toEqual(["stash//memories/a-note"]);
+    expect(fs.existsSync(bPath)).toBe(true);
+    expect(fs.existsSync(cPath)).toBe(true);
     // No two pending proposals target the same ref.
     const refs = listProposals(storage.stashDir).map((p) => p.ref);
     expect(new Set(refs).size).toBe(refs.length);
   });
 
   test("contradicts: counted, no proposal, no belief write", async () => {
-    const oldPath = writeAsset("memories/claim-a.md", "description: claim a\ncreatedAt: 2026-01-01T00:00:00.000Z");
-    writeAsset("memories/claim-b.md", "description: claim b\ncreatedAt: 2026-06-01T00:00:00.000Z");
+    const oldPath = writeAsset("memories/claim-a.md", "description: claim a");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/claim-b.md", "description: claim b");
+    dateAsset(newPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "claim-a", oldPath, 0);
-      indexAsset(db, "memory", "claim-b", path.join(storage.stashDir, "memories/claim-b.md"), angleForCosine(0.96));
+      indexAsset(db, "memory", "claim-b", newPath, angleForCosine(0.96));
     } finally {
       closeDatabase(db);
     }
@@ -315,7 +476,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
 
     expect(result.labelCounts.contradicts).toBeGreaterThanOrEqual(1);
-    expect(result.contradictionsFound).toBe(result.labelCounts.contradicts);
     expect(result.retired).toHaveLength(0);
     expect(listProposals(storage.stashDir)).toHaveLength(0);
     const claimAContent = fs.readFileSync(oldPath, "utf8");
@@ -324,21 +484,20 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   });
 
   test("subsumed: retires the side the judge names redundant", async () => {
-    const smallPath = writeAsset("memories/small-note.md", "description: small\ncreatedAt: 2026-01-01T00:00:00.000Z");
-    writeAsset(
-      "memories/big-note.md",
-      "description: big, contains everything small has plus more\ncreatedAt: 2026-06-01T00:00:00.000Z",
-    );
+    const smallPath = writeAsset("memories/small-note.md", "description: small");
+    dateAsset(smallPath, 60);
+    const bigPath = writeAsset("memories/big-note.md", "description: big, contains everything small has plus more");
+    dateAsset(bigPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "small-note", smallPath, 0);
-      indexAsset(db, "memory", "big-note", path.join(storage.stashDir, "memories/big-note.md"), angleForCosine(0.96));
+      indexAsset(db, "memory", "big-note", bigPath, angleForCosine(0.96));
     } finally {
       closeDatabase(db);
     }
 
     const warnings: string[] = [];
-    // redundant: "A" — A is the older side by createdAt (small-note).
+    // redundant: "A" — A is the older side by created date (small-note).
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: fixedChat({ relation: "subsumed", redundant: "A" }),
     });
@@ -349,21 +508,14 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   });
 
   test("never retires a captureMode: hot memory — the pair is left alone", async () => {
-    const hotPath = writeAsset(
-      "memories/hot-note.md",
-      "description: hot\ncaptureMode: hot\ncreatedAt: 2026-01-01T00:00:00.000Z",
-    );
-    writeAsset("memories/plain-note.md", "description: plain\ncreatedAt: 2026-06-01T00:00:00.000Z");
+    const hotPath = writeAsset("memories/hot-note.md", "description: hot\ncaptureMode: hot");
+    dateAsset(hotPath, 60);
+    const plainPath = writeAsset("memories/plain-note.md", "description: plain");
+    dateAsset(plainPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "hot-note", hotPath, 0);
-      indexAsset(
-        db,
-        "memory",
-        "plain-note",
-        path.join(storage.stashDir, "memories/plain-note.md"),
-        angleForCosine(0.96),
-      );
+      indexAsset(db, "memory", "plain-note", plainPath, angleForCosine(0.96));
     } finally {
       closeDatabase(db);
     }
@@ -381,19 +533,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     writeAsset("memories/parent.md", "description: parent memory");
     const derivedPath = writeAsset(
       "memories/parent.derived.md",
-      "inferred: true\nsource: memories/parent\ndescription: derived\ncreatedAt: 2026-01-01T00:00:00.000Z",
+      "inferred: true\nsource: memories/parent\ndescription: derived",
     );
-    writeAsset("memories/other-note.md", "description: another note\ncreatedAt: 2026-06-01T00:00:00.000Z");
+    dateAsset(derivedPath, 60);
+    const otherPath = writeAsset("memories/other-note.md", "description: another note");
+    dateAsset(otherPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "parent.derived", derivedPath, 0);
-      indexAsset(
-        db,
-        "memory",
-        "other-note",
-        path.join(storage.stashDir, "memories/other-note.md"),
-        angleForCosine(0.96),
-      );
+      indexAsset(db, "memory", "other-note", otherPath, angleForCosine(0.96));
     } finally {
       closeDatabase(db);
     }
@@ -405,13 +553,40 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.retired).toHaveLength(0);
   });
 
-  test("skips a pair when either side already has a pending retire proposal", async () => {
+  test("never retires a SUBFOLDER .derived memory whose parent still exists (S3: no doubled subfolder segment)", async () => {
+    writeAsset("memories/sub/foo.md", "description: parent memory in a subfolder");
+    const derivedPath = writeAsset(
+      "memories/sub/foo.derived.md",
+      "inferred: true\nsource: memories/sub/foo\ndescription: derived",
+    );
+    dateAsset(derivedPath, 60);
+    const otherPath = writeAsset("memories/other-note.md", "description: another note");
+    dateAsset(otherPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "sub/foo.derived", derivedPath, 0);
+      indexAsset(db, "memory", "other-note", otherPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+    });
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("skips a pair when either side already has a pending retire proposal, as the retired ref OR its successor (B2)", async () => {
     const { createRetireProposal } = await import("../../../../src/commands/proposal/repository");
-    const oldPath = writeAsset("memories/old-note.md", "description: old\ncreatedAt: 2026-01-01T00:00:00.000Z");
-    writeAsset("memories/new-note.md", "description: new\ncreatedAt: 2026-06-01T00:00:00.000Z");
+    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new");
+    dateAsset(newPath, 1);
+    writeAsset("memories/someone-else.md", "description: someone else, unrelated");
     createRetireProposal(storage.stashDir, {
       ref: "memories/old-note",
-      source: "consolidate",
+      source: "consolidate-pair",
       target: { source: "stash", root: storage.stashDir },
       retirement: {
         retiredRef: "memories/old-note",
@@ -428,7 +603,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "old-note", oldPath, 0);
-      indexAsset(db, "memory", "new-note", path.join(storage.stashDir, "memories/new-note.md"), angleForCosine(0.96));
+      indexAsset(db, "memory", "new-note", newPath, angleForCosine(0.96));
     } finally {
       closeDatabase(db);
     }
@@ -445,11 +620,22 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.pairsJudged).toBe(0);
     // The pre-existing proposal is still the only one.
     expect(listProposals(storage.stashDir)).toHaveLength(1);
+    // S1: neither initiator got all of its candidates judged (both were
+    // skipped by the pending-proposal filter), so neither gets a ledger row.
+    const stateDb = openStateDatabase();
+    try {
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/old-note", "consolidate-pair")).toBeUndefined();
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/new-note", "consolidate-pair")).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
   });
 
   test("a dry run judges pairs and previews retirements without minting proposals or writing the ledger", async () => {
-    const oldPath = writeAsset("memories/old-note.md", "description: old\ncreatedAt: 2026-01-01T00:00:00.000Z");
-    writeAsset("memories/new-note.md", "description: new\ncreatedAt: 2026-06-01T00:00:00.000Z");
+    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new");
+    dateAsset(newPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "old-note", oldPath, 0);
@@ -457,7 +643,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         db,
         "memory",
         "new-note",
-        path.join(storage.stashDir, "memories/new-note.md"),
+        newPath,
         angleForCosine(BACKFILL_FLOOR + 0.02) /* clearly above BACKFILL_FLOOR */,
       );
     } finally {
@@ -478,4 +664,180 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       stateDb.close();
     }
   });
+
+  test("an initiator with no candidates still gets a ledger row (S1), so it is not rescanned every night", async () => {
+    const lonelyPath = writeAsset("memories/lonely.md", "description: lonely");
+    const farPath = writeAsset("memories/far.md", "description: far");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "lonely", lonelyPath, 0);
+      indexAsset(db, "memory", "far", farPath, 40); // cosine ~0.77: never a candidate at either threshold
+    } finally {
+      closeDatabase(db);
+    }
+    let chatCalls = 0;
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => {
+        chatCalls++;
+        return JSON.stringify({ relation: "unrelated", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls).toBe(0); // no candidates at all — nothing to judge
+    expect(result.initiators).toBe(2);
+    const stateDb = openStateDatabase();
+    try {
+      const lonelyRow = getImproveLedgerRow(stateDb, storage.stashDir, "memories/lonely", "consolidate-pair");
+      expect(lonelyRow?.outcome).toBe("judged_no_action");
+      expect(typeof lonelyRow?.contentHash).toBe("string");
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/far", "consolidate-pair")?.outcome).toBe(
+        "judged_no_action",
+      );
+    } finally {
+      stateDb.close();
+    }
+
+    // Seed the retrieval-scope signal a ledger row requires, then run again unchanged: no candidates, still no judge call.
+    const stateDb2 = openStateDatabase();
+    try {
+      insertUsageEvent(stateDb2, { event_type: "search", entry_ref: "stash//memories/lonely", source: "user" });
+    } finally {
+      stateDb2.close();
+    }
+    const result2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => {
+        chatCalls++;
+        return JSON.stringify({ relation: "unrelated", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(result2.initiators).toBe(0); // unchanged content: not eligible again
+    expect(chatCalls).toBe(0);
+  });
+
+  test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (S1: no timer)", async () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new");
+    dateAsset(newPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "old-note", oldPath, 0);
+      indexAsset(db, "memory", "new-note", newPath, angleForCosine(BACKFILL_FLOOR + 0.02));
+    } finally {
+      closeDatabase(db);
+    }
+    const warnings: string[] = [];
+    const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+    });
+    expect(r1.retired).toHaveLength(1);
+    const { akmProposalReject } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    await akmProposalReject({
+      stashDir: storage.stashDir,
+      id: r1.retired[0]!,
+      reason: "owner says keep both",
+      config: makeConfig(storage.stashDir),
+    });
+    // Re-index (the rejected proposal never touched old-note's own file or its embedding).
+    let chatCalls = 0;
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => {
+        chatCalls++;
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls).toBe(0); // old-note's content never changed since it was judged — not eligible again
+    expect(r2.retired).toHaveLength(0);
+  });
+
+  test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
+    // Three assets close enough to pair, but MAX_PAIRS_PER_RUN is patched
+    // (via a throwaway db read) is impractical here — instead this proves
+    // the underlying mechanism directly: an initiator whose candidate did
+    // NOT make it into `judgeable` (skipped by the pending-proposal filter,
+    // the same "left something out" shape a cap-cut produces) gets no row,
+    // matching the "cap-cut initiators get no row" contract via the SAME
+    // totalByInitiator/attemptedByInitiator check runConsolidatePairPass
+    // uses for both cases.
+    const { createRetireProposal } = await import("../../../../src/commands/proposal/repository");
+    const aPath = writeAsset("memories/a-note.md", "description: a");
+    const bPath = writeAsset("memories/b-note.md", "description: b");
+    writeAsset("memories/elsewhere.md", "description: elsewhere");
+    createRetireProposal(storage.stashDir, {
+      ref: "memories/b-note",
+      source: "consolidate-pair",
+      target: { source: "stash", root: storage.stashDir },
+      retirement: {
+        retiredRef: "memories/b-note",
+        successorRef: "memories/elsewhere",
+        cosine: 0.99,
+        judgeLabel: "duplicate",
+        judgeReason: "already queued",
+        retiredContentHash: "a".repeat(64),
+        successorContentHash: "b".repeat(64),
+        reason: "duplicate",
+      },
+    });
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "a-note", aPath, 0);
+      indexAsset(db, "memory", "b-note", bPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+    const warnings: string[] = [];
+    await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "unrelated", redundant: null }),
+    });
+    const stateDb = openStateDatabase();
+    try {
+      // a-note's only candidate (b-note) was skipped (b-note has a pending
+      // proposal) — a-note is not "fully judged" and gets no row.
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/a-note", "consolidate-pair")).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
+  });
+});
+
+describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () => {
+  // Found by the post-review real-data measurement, not by any hand-sized
+  // fixture: `spawnSync`'s default maxBuffer is 1 MB, and the owner's real
+  // bundle alone prints ~1.8 MB from this exact git log command — enough to
+  // silently overflow it. Overflow looks identical to "git failed" (a
+  // non-zero/null status), so every asset's "created" date would have
+  // quietly fallen back to mtime, with no warning anywhere. This fixture
+  // manufactures >1 MB of output the cheap way (many long, content-less
+  // filenames in one commit) rather than needing real history.
+  test("a git log output over 1 MB (spawnSync's default maxBuffer) is still read in full, not silently dropped", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "akm-gitmap-bigrepo-"));
+    try {
+      const { execFileSync } = await import("node:child_process");
+      execFileSync("git", ["init", "--quiet"], { cwd: repo });
+      execFileSync("git", ["config", "user.email", "t@t.com"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+      // ~208 bytes/name x 6000 files ≈ 1.25 MB of `--name-only` output —
+      // comfortably over the 1 MB default, without needing real content or history.
+      const names: string[] = [];
+      for (let i = 0; i < 6000; i++) {
+        const name = `m${"x".repeat(200)}${String(i).padStart(5, "0")}.md`;
+        fs.writeFileSync(path.join(repo, name), "x");
+        names.push(name);
+      }
+      execFileSync("git", ["add", "-A"], { cwd: repo });
+      execFileSync("git", ["commit", "--quiet", "-m", "bulk"], { cwd: repo });
+
+      const { loadGitFirstAddedMap } = await import("../../../../src/commands/improve/consolidate/pair-pass");
+      const map = loadGitFirstAddedMap(repo);
+      expect(map).toBeDefined();
+      expect(map?.size).toBe(6000);
+      // Every single one of the 6000 names actually resolved, not just "some".
+      expect(names.every((n) => map?.has(n))).toBe(true);
+      const aName = names[0]!;
+      expect(map?.get(aName)).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

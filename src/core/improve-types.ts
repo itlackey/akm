@@ -463,15 +463,14 @@ export interface ConsolidatePairPassResult {
   initiators: number;
   /** Of `initiators`, those with no prior pair-pass ledger attempt (judged at `BACKFILL_FLOOR`). */
   initiatorsBacklog: number;
-  /** Candidate pairs after neighbour lookup, threshold and `MAX_PAIRS_PER_RUN`; 0 when no initiators. */
+  /** Candidate pairs after neighbour lookup and threshold, before `MAX_PAIRS_PER_RUN`; 0 when no initiators. */
   pairsConsidered?: number;
-  /** Pairs actually sent to the judge (excludes pairs skipped for an existing pending retire proposal). */
+  /** Pairs actually sent to the judge (excludes pairs skipped for the run cap or an existing pending retire proposal). */
   pairsJudged: number;
+  /** Contradictions stay human: `labelCounts.contradicts`, not a separate count, is what the brief's MEASURE step reports. */
   labelCounts: Record<ConsolidatePairJudgeLabel, number>;
   /** Retire proposal ids minted this run (or, in a dry run, `retiredRef -> successorRef` preview strings). */
   retired: string[];
-  /** `labelCounts.contradicts`, called out per the brief: contradictions stay human. */
-  contradictionsFound: number;
   /** Judge calls that failed or returned an unparseable verdict. */
   failedJudgments: number;
 }

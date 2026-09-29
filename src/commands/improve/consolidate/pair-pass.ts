@@ -4,17 +4,28 @@
 
 /**
  * The consolidate pair pass (0.9.17-alpha.9 plan §5.2, brief §A): runs
- * alongside the promote pass inside `akmConsolidate`, over new and changed
- * memory-tier assets. Judges each near-duplicate/superseding pair with the
- * calibrated relation prompt and mints a reviewed `retire` proposal for the
- * `duplicate` / `subsumed` / `supersedes` classes — never merges, never
- * writes belief edges for `contradicts`, and is never auto-accepted by
+ * alongside the existing promote pass inside `akmConsolidate`, over new and
+ * changed memory-tier assets. Judges each near-duplicate/superseding pair
+ * with the calibrated relation prompt and mints a reviewed `retire` proposal
+ * for the `duplicate` / `subsumed` / `supersedes` classes — never merges,
+ * never writes belief edges for `contradicts`, and is never auto-accepted by
  * triage (`drain.ts`).
  *
  * Calibration (owner grades, 2026-09-28; see the plan's "Human calibration,
  * O5" section): the combined retire class (duplicate ∪ subsumed ∪
  * supersedes) is 20/22 = 0.91 precision against the owner. `T_PAIR` is 0.93,
  * not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).
+ *
+ * Initiator eligibility and dating (post-review, alpha.9): "created" is the
+ * asset's git first-add time (one `git log` per run, {@link loadGitFirstAddedMap}),
+ * not frontmatter or mtime — mtime is only the fallback for a file git does
+ * not know. An initiator is eligible when it has no prior `consolidate-pair`
+ * ledger row, or its current body hash differs from the row's recorded one;
+ * that row is written only once ALL of the initiator's own candidates were
+ * judged this run (a run capped mid-way through its candidates leaves it
+ * without a row, so the next run picks it back up) — see
+ * {@link selectInitiators} and the ledger-write step in
+ * {@link runConsolidatePairPass}.
  */
 
 import fs from "node:fs";
@@ -30,6 +41,7 @@ import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
 import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
+import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
 import {
   closeDatabase,
@@ -38,26 +50,35 @@ import {
 } from "../../../storage/repositories/index-connection";
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
 import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
-import type { RetirementMetadata, RetireReason } from "../../proposal/proposal-types";
+import { isRetireProposal, type RetirementMetadata, type RetireReason } from "../../proposal/proposal-types";
 import { createRetireProposal, listProposalsReadOnly } from "../../proposal/repository";
 import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
-import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt, stripBundle } from "../ledger";
+import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage, type LlmRunner } from "../stage";
 
-/** Nearest neighbours considered per initiator (`getNeighborsByEntryId`'s `k`). */
+export { PAIR_PASS_LEDGER_SOURCE };
+
+/** Neighbours fetched per initiator before filtering (S2: wide enough that self/twin/bundle/tier misses rarely starve the kept 5 below). */
+export const PAIR_NEIGHBOR_FETCH_K = 20;
+/** Passing candidates kept per initiator, nearest-cosine-first. */
 export const PAIR_NEIGHBOR_K = 5;
 /** Calibrated floor (R1): the 0.90–0.93 band alone graded 3/4 against the owner. */
 export const T_PAIR = 0.93;
 /** O2: the existing backlog (an initiator with no prior pair-pass attempt) goes >= 0.95 first. */
 export const BACKFILL_FLOOR = 0.95;
+/**
+ * An initiator git first-added within this many days judges at `T_PAIR` even
+ * with no prior ledger row: new material earns the same scrutiny as an edit,
+ * not the higher bar reserved for working through the pre-existing backlog.
+ */
+export const NEW_MATERIAL_DAYS = 7;
 /** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
 /** Body characters sent to the judge per side (plan §4.3: bodies were truncated at this length for calibration). */
 const PAIR_BODY_TRUNCATE_CHARS = 2500;
-/** Ledger `source` for pair-pass attempts — distinguishable from the promote pass's own `consolidate` rows. */
-export const PAIR_PASS_LEDGER_SOURCE = "consolidate-pair";
+const MS_PER_DAY = 86_400_000;
 
 const RELATION_LABELS = ["duplicate", "subsumed", "supersedes", "contradicts", "overlap", "unrelated"] as const;
 
@@ -172,9 +193,79 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   return assets;
 }
 
+// ── B1: created/updated dates from git, not frontmatter/mtime ──────────────
+
+/** A path relative to `stashDir`, POSIX-separated — how `git log --name-only` spells it. */
+function repoRelativeKey(stashDir: string, filePath: string): string {
+  return path.relative(stashDir, filePath).replace(/\\/g, "/");
+}
+
+/**
+ * Every tracked path's first-add time (unix ms), from one `git log` over the
+ * whole bundle (~1.8s measured against the owner's real bundle) — never
+ * shelled out per pair or per initiator. `undefined` when `stashDir` is not
+ * itself a git root (no `.git` directly inside it): every asset then falls
+ * back to mtime in {@link createdMsOf}, one fallback code path instead of a
+ * second git-aware one for a bundle nested inside a larger repo.
+ */
+export function loadGitFirstAddedMap(stashDir: string): ReadonlyMap<string, number> | undefined {
+  if (!fs.existsSync(path.join(stashDir, ".git"))) return undefined;
+  let result: ReturnType<typeof runGit>;
+  try {
+    result = runGit(["log", "--diff-filter=A", "--no-renames", "--name-only", "--format=@%ct"], {
+      cwd: stashDir,
+      // spawnSync's default maxBuffer (1 MB) is too small for a bundle with
+      // real history — the owner's real bundle alone prints ~1.8 MB here
+      // (migration-tool.ts's own git subprocess call uses the same 16 MB
+      // figure). Silently exceeding it looks identical to "git failed" from
+      // the caller's side (status stays non-zero), so every date would have
+      // quietly fallen back to mtime with no error at all.
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    return undefined;
+  }
+  if (result.status !== 0 || typeof result.stdout !== "string") return undefined;
+  const map = new Map<string, number>();
+  let currentMs: number | undefined;
+  for (const line of result.stdout.split("\n")) {
+    if (line.startsWith("@")) {
+      const sec = Number(line.slice(1));
+      currentMs = Number.isFinite(sec) ? sec * 1000 : undefined;
+      continue;
+    }
+    const rel = line.trim();
+    if (!rel || currentMs === undefined) continue;
+    // `git log` lists newest-first; overwriting on every occurrence keeps
+    // whichever commit is processed LAST for this path — the oldest one,
+    // i.e. the true first add (also correct for a delete + re-add).
+    map.set(rel, currentMs);
+  }
+  return map;
+}
+
+/** Created instant (ms): git first-add when known, else file mtime (B1) — the one fallback both dating and the S1 new-material check use. */
+function createdMsOf(
+  asset: PairAsset,
+  gitFirstAdded: ReadonlyMap<string, number> | undefined,
+  stashDir: string,
+): number {
+  const known = gitFirstAdded?.get(repoRelativeKey(stashDir, asset.filePath));
+  if (known !== undefined) return known;
+  try {
+    return fs.statSync(asset.filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 export interface Initiator extends PairAsset {
-  /** No prior `consolidate-pair` ledger attempt: the backlog, judged at `BACKFILL_FLOOR`. */
+  /** No prior `consolidate-pair` ledger row: judged at `BACKFILL_FLOOR` unless `newMaterial`. */
   backlog: boolean;
+  /** Git first-added (or, git-unknown, mtime-dated) within `NEW_MATERIAL_DAYS` (S1). */
+  newMaterial: boolean;
+  /** This run's own read of the asset's current body hash — the ledger-write step reuses it, never re-reading the file. */
+  bodyHash: string;
 }
 
 export interface PairCandidate {
@@ -189,40 +280,63 @@ function pairKey(a: string, b: string): string {
 }
 
 /**
- * Initiators (plan §5.2 step 1): the pool, in the retrieval scope, changed
- * since their last pair-pass ledger attempt or never attempted.
+ * Initiators (plan §5.2 step 1, S1 post-review): the pool, in the retrieval
+ * scope, and content-eligible — no prior `consolidate-pair` ledger row, or a
+ * row whose recorded body hash differs from the asset's current one. A row's
+ * `next_eligible_at` is never consulted (the pair pass's own source carries
+ * no timer at all — see `windowDays` in improve-ledger-repository.ts):
+ * eligibility here is purely a function of content, matching the brief's "no
+ * row, or changed" rule and the ledger-write step this run finishes with.
  */
 export function selectInitiators(
   pool: PairAsset[],
   opts: AkmConsolidateOptions,
   stashDir: string,
+  gitFirstAdded: ReadonlyMap<string, number> | undefined,
 ): { initiators: Initiator[] } {
   const retrievalScope = loadRetrievalScope({ proposalsCtx: opts.proposalsCtx }, stashDir);
   const ledger = loadLedgerSnapshot({ proposalsCtx: opts.proposalsCtx }, stashDir, [PAIR_PASS_LEDGER_SOURCE]);
-  const nowIso = new Date().toISOString();
+  const nowMs = (opts.proposalsCtx?.now ?? Date.now)();
   const initiators: Initiator[] = [];
   for (const asset of pool) {
     if (!isInRetrievalScope(retrievalScope, asset.ref, asset.filePath)) continue;
-    const row = ledger.get(ledgerKey(PAIR_PASS_LEDGER_SOURCE, asset.ref));
-    let changedAt: string | undefined;
+    const row = ledger.get(`${PAIR_PASS_LEDGER_SOURCE}\0${asset.ref}`);
+    let raw: string;
     try {
-      changedAt = fs.statSync(asset.filePath).mtime.toISOString();
+      raw = fs.readFileSync(asset.filePath, "utf8");
     } catch {
-      changedAt = undefined;
+      continue; // unreadable: selectCandidates/judgeOne would skip it anyway
     }
-    if (row && isLedgerBlocked(row, nowIso, changedAt)) continue;
-    initiators.push({ ...asset, backlog: row === undefined });
+    const bodyHash = contentHash(raw, "body");
+    if (row && row.contentHash === bodyHash) continue; // unchanged since the last full attempt: not eligible
+    const createdMs = createdMsOf(asset, gitFirstAdded, stashDir);
+    const newMaterial = nowMs - createdMs <= NEW_MATERIAL_DAYS * MS_PER_DAY;
+    initiators.push({ ...asset, backlog: row === undefined, newMaterial, bodyHash });
   }
   return { initiators };
 }
 
-/** Candidates (plan §5.2 step 2): each initiator's k nearest neighbours, filtered and thresholded. */
+/**
+ * Candidates (plan §5.2 step 2, S1/S2 post-review): each initiator's nearest
+ * neighbours, filtered and thresholded — the FULL set, sorted by cosine
+ * descending, uncapped. `runConsolidatePairPass` applies `MAX_PAIRS_PER_RUN`
+ * (needing the uncapped per-initiator totals to tell a cap-cut initiator
+ * apart from a fully-judged one). S2: fetches `PAIR_NEIGHBOR_FETCH_K` (20)
+ * raw neighbours and keeps the first `PAIR_NEIGHBOR_K` (5) that clear every
+ * filter, so a few self/twin/bundle/tier misses in the raw top-5 no longer
+ * starve an initiator down to zero real candidates.
+ */
 export function selectCandidates(db: Database, initiators: Initiator[], bundleId: string): PairCandidate[] {
   const candidates: PairCandidate[] = [];
   const seenPairs = new Set<string>();
   for (const initiator of initiators) {
-    const floor = initiator.backlog ? Math.max(T_PAIR, BACKFILL_FLOOR) : T_PAIR;
-    for (const hit of getNeighborsByEntryId(db, initiator.entryId, PAIR_NEIGHBOR_K)) {
+    // S1: a changed-content or new-material initiator judges at T_PAIR; the
+    // rest of the backlog (no row, not recently git-added) needs the higher
+    // BACKFILL_FLOOR.
+    const floor = initiator.backlog && !initiator.newMaterial ? BACKFILL_FLOOR : T_PAIR;
+    let kept = 0;
+    for (const hit of getNeighborsByEntryId(db, initiator.entryId, PAIR_NEIGHBOR_FETCH_K)) {
+      if (kept >= PAIR_NEIGHBOR_K) break;
       if (hit.id === initiator.entryId) continue;
       const entry = getEntryById(db, hit.id);
       if (!entry || entry.bundleId !== bundleId) continue;
@@ -244,10 +358,11 @@ export function selectCandidates(db: Database, initiators: Initiator[], bundleId
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
       candidates.push({ initiator, other, cosine });
+      kept++;
     }
   }
   candidates.sort((a, b) => b.cosine - a.cosine);
-  return candidates.slice(0, MAX_PAIRS_PER_RUN);
+  return candidates;
 }
 
 /** @internal exported for unit tests. */
@@ -259,15 +374,11 @@ export interface PairSide {
   updatedIso: string;
 }
 
-function mtimeIsoOf(filePath: string): string {
-  try {
-    return new Date(fs.statSync(filePath).mtimeMs).toISOString();
-  } catch {
-    return new Date(0).toISOString();
-  }
-}
-
-function loadSide(asset: PairAsset): PairSide | undefined {
+function loadSide(
+  asset: PairAsset,
+  gitFirstAdded: ReadonlyMap<string, number> | undefined,
+  stashDir: string,
+): PairSide | undefined {
   let raw: string;
   try {
     raw = fs.readFileSync(asset.filePath, "utf8");
@@ -280,14 +391,17 @@ function loadSide(asset: PairAsset): PairSide | undefined {
   } catch {
     frontmatter = {};
   }
-  const mtime = mtimeIsoOf(asset.filePath);
+  // B1: created is the git first-add time (mtime only when git does not know
+  // the file, or the bundle has none) — frontmatter createdAt/created is not
+  // consulted; too few real assets carry it to be a reliable ordering.
+  // Updated stays frontmatter `updated` when present, else falls back to created.
+  const createdIso = new Date(createdMsOf(asset, gitFirstAdded, stashDir)).toISOString();
   return {
     asset,
     frontmatter,
     raw,
-    // Frontmatter date fields akm already records, else file mtime — never shells out to git per pair (the brief).
-    createdIso: asNonEmptyString(frontmatter.createdAt) ?? asNonEmptyString(frontmatter.created) ?? mtime,
-    updatedIso: asNonEmptyString(frontmatter.updated) ?? asNonEmptyString(frontmatter.updatedAt) ?? mtime,
+    createdIso,
+    updatedIso: asNonEmptyString(frontmatter.updated) ?? createdIso,
   };
 }
 
@@ -363,20 +477,20 @@ interface PairPassContext {
   config: AkmConfig;
   stashDir: string;
   llmRunner: LlmRunner;
+  gitFirstAdded: ReadonlyMap<string, number> | undefined;
   labelCounts: Record<ConsolidatePairJudgeLabel, number>;
   perInitiatorProposed: Set<string>;
-  perInitiatorJudged: Set<string>;
   retired: string[];
   warnings: string[];
   chat?: PairJudgeChat;
   /**
    * ConceptIds (stripped of bundle) already given a retire decision earlier
    * in THIS run — by an earlier pair, not a prior run (`pendingRetireRefs`
-   * covers that). One initiator can appear in more than one candidate pair
-   * (e.g. it is the nearest neighbour of two others); without this, two
-   * pairs judged concurrently could each decide to retire the same asset
-   * and mint two proposals for it. Checked and updated synchronously
-   * (no `await` in between), so it is race-safe under `concurrentMap`.
+   * covers that) — as EITHER the retired side or the successor (B2's
+   * same-run chain guard: a just-used successor cannot itself be retired
+   * later in this run, and an already-retired asset cannot be re-used as a
+   * successor). Checked and updated synchronously (no `await` in between),
+   * so it is race-safe under `concurrentMap`.
    */
   retiredThisRun: Set<string>;
 }
@@ -387,10 +501,9 @@ interface PairPassContext {
  * pushed to `warnings`, never lost silently and never aborting the run.
  */
 async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise<{ failed: boolean }> {
-  const initiatorSide = loadSide(candidate.initiator);
-  const otherSide = loadSide(candidate.other);
+  const initiatorSide = loadSide(candidate.initiator, ctx.gitFirstAdded, ctx.stashDir);
+  const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
   if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
-  ctx.perInitiatorJudged.add(candidate.initiator.ref);
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
   const outcome = await callStage({
@@ -425,19 +538,22 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
   }
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
-    const parentPath = path.join(
-      path.dirname(retired.asset.filePath),
-      `${retired.asset.name.slice(0, -DERIVED_SUFFIX.length)}.md`,
-    );
+    // S3: derive the parent path from the FULL file path, not from name +
+    // dirname — for a subfolder memory (e.g. memories/sub/foo.derived) the
+    // name already carries "sub/", so joining dirname(filePath) (which ALSO
+    // ends in "sub") with it used to double the subfolder segment.
+    const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
     if (fs.existsSync(parentPath)) return { failed: false }; // never retire a .derived memory whose parent still exists
   }
-  // One initiator can be the nearest neighbour of more than one other pair;
-  // an earlier pair in this same run may have already decided to retire
-  // this exact asset. Synchronous check-then-add — safe under concurrentMap
-  // (no await between them, so no other worker can interleave).
+  // B2: an asset retired (or already spent as a successor) earlier in this
+  // run cannot be retired or reused as a successor again — the same-run half
+  // of the chain guard (the accept-time hash/existence check is the other,
+  // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
-  if (ctx.retiredThisRun.has(retiredKey)) return { failed: false };
+  const successorKey = stripBundle(successor.asset.ref);
+  if (ctx.retiredThisRun.has(retiredKey) || ctx.retiredThisRun.has(successorKey)) return { failed: false };
   ctx.retiredThisRun.add(retiredKey);
+  ctx.retiredThisRun.add(successorKey);
 
   const reason = tombstoneReason(verdict.relation);
   const retirement: RetirementMetadata = {
@@ -460,7 +576,10 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
       ctx.stashDir,
       {
         ref: retired.asset.ref,
-        source: "consolidate",
+        // S6: its own generator, kept apart from the promote pass's
+        // "consolidate" proposals — `accept --generator consolidate` (bulk
+        // promotion review) never sweeps a retire proposal, and the reverse.
+        source: "consolidate-pair",
         sourceRun: ctx.opts.sourceRun,
         ...(ctx.opts.writeTarget
           ? { target: { source: ctx.opts.writeTarget.source.name, root: ctx.opts.writeTarget.source.path } }
@@ -511,7 +630,6 @@ export async function runConsolidatePairPass(
     pairsJudged: 0,
     labelCounts: emptyLabelCounts(),
     retired: [],
-    contradictionsFound: 0,
     failedJudgments: 0,
   };
   const llmRunner = opts.llmRunner ?? undefined;
@@ -519,12 +637,14 @@ export async function runConsolidatePairPass(
 
   let initiators: Initiator[];
   let candidates: PairCandidate[];
+  let gitFirstAdded: ReadonlyMap<string, number> | undefined;
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {
     db = opts.dryRun ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
     if (!db) return empty;
+    gitFirstAdded = loadGitFirstAddedMap(stashDir);
     const pool = loadPairPassPool(db, bundleId);
-    initiators = selectInitiators(pool, opts, stashDir).initiators;
+    initiators = selectInitiators(pool, opts, stashDir, gitFirstAdded).initiators;
     candidates = selectCandidates(db, initiators, bundleId);
   } catch (error) {
     warnings.push(
@@ -535,62 +655,79 @@ export async function runConsolidatePairPass(
     if (db) closeDatabase(db);
   }
   const initiatorsBacklog = initiators.filter((i) => i.backlog).length;
-  if (candidates.length === 0) {
-    return { ...empty, initiators: initiators.length, initiatorsBacklog, pairsConsidered: 0 };
-  }
+  const capped = candidates.slice(0, MAX_PAIRS_PER_RUN);
 
-  // Never judge a pair when either side already has a pending retire proposal.
-  // Proposal refs are bundle-qualified ("stash//memories/x"); pair-pass asset
-  // refs are not — compare on the stripped conceptId, as retrieval scope does.
+  // Never judge a pair when either side already has a pending retire
+  // proposal, as the retired ref OR its successor (B2 widens this from the
+  // retired ref alone): an asset spoken for by one pending decision cannot
+  // also be judged as part of another until that decision resolves.
   const pendingRetireRefs = new Set<string>();
   try {
     for (const p of listProposalsReadOnly(stashDir, { status: "pending" })) {
-      if (p.source === "consolidate" && p.changes[0]?.op === "delete") pendingRetireRefs.add(stripBundle(p.ref));
+      if (!isRetireProposal(p)) continue;
+      pendingRetireRefs.add(stripBundle(p.ref));
+      if (p.retirement?.successorRef) pendingRetireRefs.add(stripBundle(p.retirement.successorRef));
     }
   } catch {
     // Best-effort de-dup only; a failed read never blocks judging.
   }
-  const judgeable = candidates.filter(
+  const judgeable = capped.filter(
     (c) => !pendingRetireRefs.has(stripBundle(c.initiator.ref)) && !pendingRetireRefs.has(stripBundle(c.other.ref)),
   );
-  if (judgeable.length === 0) {
-    return { ...empty, initiators: initiators.length, initiatorsBacklog, pairsConsidered: candidates.length };
-  }
-  // The promote pass validates opts.llmRunner's credentials once, but only
-  // when it has memories to dispatch — the pair pass can still have work
-  // when that pool is empty, so it validates independently before its first
-  // real dispatch. A test-injected chat seam bypasses the transport entirely
-  // and needs no credential.
-  if (!seams.chat) assertRunnerCredentials(llmRunner);
 
   const ctx: PairPassContext = {
     opts,
     config,
     stashDir,
     llmRunner,
+    gitFirstAdded,
     labelCounts: emptyLabelCounts(),
     perInitiatorProposed: new Set(),
-    perInitiatorJudged: new Set(),
     retired: [],
     warnings,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
   };
-  const results = await concurrentMap(
-    judgeable,
-    (candidate) => judgeOne(ctx, candidate),
-    llmRunner.connection.concurrency ?? 1,
-    { signal: opts.signal },
-  );
-  const failedJudgments = results.filter((r) => r?.failed === true).length;
 
+  let failedJudgments = 0;
+  if (judgeable.length > 0) {
+    // The promote pass validates opts.llmRunner's credentials once, but only
+    // when it has memories to dispatch — the pair pass can still have work
+    // when that pool is empty, so it validates independently before its
+    // first real dispatch. A test-injected chat seam bypasses the transport
+    // entirely and needs no credential.
+    if (!seams.chat) assertRunnerCredentials(llmRunner);
+    const results = await concurrentMap(
+      judgeable,
+      (candidate) => judgeOne(ctx, candidate),
+      llmRunner.connection.concurrency ?? 1,
+      { signal: opts.signal },
+    );
+    failedJudgments = results.filter((r) => r?.failed === true).length;
+  }
+
+  // S1: a ledger row is written for an initiator only once ALL of its OWN
+  // candidates (before MAX_PAIRS_PER_RUN capping or the pending-proposal
+  // skip above) were actually judged this run — including an initiator with
+  // zero candidates, which trivially satisfies "all of them". One left out
+  // by the cap or a pending-proposal collision gets no row at all, so the
+  // next run reconsiders it rather than treating it as settled.
   if (!opts.dryRun) {
-    const ledgerInputs = [...ctx.perInitiatorJudged].map((ref) => ({
-      stashDir,
-      ref,
-      source: PAIR_PASS_LEDGER_SOURCE,
-      outcome: ctx.perInitiatorProposed.has(ref) ? ("proposed" as const) : ("judged_no_action_stable" as const),
-    }));
+    const totalByInitiator = new Map<string, number>();
+    for (const c of candidates) totalByInitiator.set(c.initiator.ref, (totalByInitiator.get(c.initiator.ref) ?? 0) + 1);
+    const attemptedByInitiator = new Map<string, number>();
+    for (const c of judgeable) {
+      attemptedByInitiator.set(c.initiator.ref, (attemptedByInitiator.get(c.initiator.ref) ?? 0) + 1);
+    }
+    const ledgerInputs = initiators
+      .filter((i) => (attemptedByInitiator.get(i.ref) ?? 0) === (totalByInitiator.get(i.ref) ?? 0))
+      .map((i) => ({
+        stashDir,
+        ref: i.ref,
+        source: PAIR_PASS_LEDGER_SOURCE,
+        outcome: ctx.perInitiatorProposed.has(i.ref) ? ("proposed" as const) : ("judged_no_action" as const),
+        contentHash: i.bodyHash,
+      }));
     recordLedgerAttempt({ proposalsCtx: opts.proposalsCtx }, ledgerInputs);
   }
 
@@ -601,7 +738,6 @@ export async function runConsolidatePairPass(
     pairsJudged: judgeable.length,
     labelCounts: ctx.labelCounts,
     retired: ctx.retired,
-    contradictionsFound: ctx.labelCounts.contradicts,
     failedJudgments,
   };
 }
