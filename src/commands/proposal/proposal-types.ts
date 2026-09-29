@@ -138,6 +138,28 @@ export interface RetirementMetadata {
   successorContentHash: string;
   /** Tombstone-vocabulary reason (`judgeLabel` translated: supersedes -> superseded). */
   reason: Exclude<RetireReason, "promoted">;
+  /**
+   * Set at mint by the retirement continuity check (alpha.9 plan §5.4, rule
+   * R3) when the retired asset ranked top 10 for one of its own past queries
+   * but the successor did not. The proposal still mints — a person can still
+   * accept it by id — but it is excluded from every bulk accept path.
+   */
+  continuityRisk?: RetirementContinuityRisk;
+}
+
+/** One query where the retired asset ranked top 10 but the successor did not. */
+export interface ContinuityRiskRank {
+  query: string;
+  retiredRank: number;
+  /** `null`: the successor did not rank in the top 10 at all for this query. */
+  successorRank: number | null;
+}
+
+/** The retirement continuity check's failure report (see {@link RetirementMetadata.continuityRisk}). */
+export interface RetirementContinuityRisk {
+  /** Of the replayed queries, how many the successor failed to also rank top 10 for. */
+  failingQueries: number;
+  ranks: ContinuityRiskRank[];
 }
 
 /**

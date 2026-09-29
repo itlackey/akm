@@ -397,6 +397,11 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
   const { stashDir, target: queueTarget } = resolveProposalQueue(options.stashDir, options.queue, config);
   const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
+    // Item 1 (continuity check, alpha.9 plan §5.4, rule R3): a retire
+    // proposal the check flagged is never bulk-accepted, by generator or any
+    // other sweep — only a person accepting it by id can. Bulk reject is
+    // unaffected: declining a risky proposal is never the unsafe direction.
+    if (options.action === "accept" && p.retirement?.continuityRisk) return false;
     if (options.maxDiffLines !== undefined) {
       // S6: a retire proposal's own payload is empty (it deletes its
       // target) — proposalContent() would always read as 1 line, so

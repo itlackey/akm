@@ -927,6 +927,63 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(getProposal(storage.stashDir, retireProposal.id).status).toBe("accepted");
   });
 
+  test("item 1: a continuityRisk proposal is skipped by bulk accept, but a person can still accept it by id", async () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const config = makeConfig(storage.stashDir);
+    const riskyProposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+        continuityRisk: { failingQueries: 1, ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }] },
+      }),
+    });
+
+    const sweep = await bulkAdjudicateProposals({
+      stashDir: storage.stashDir,
+      config,
+      action: "accept",
+      generator: "consolidate-pair",
+    });
+    expect(sweep.count).toBe(0); // flagged: never swept, whatever the generator
+    expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("pending");
+
+    // A person can still accept it directly, by id.
+    const accepted = await akmProposalAccept({ stashDir: storage.stashDir, id: riskyProposal.id, config });
+    expect(accepted.proposal.status).toBe("accepted");
+  });
+
+  test("item 1: bulk REJECT is unaffected by continuityRisk — declining a flagged proposal is always safe", async () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const config = makeConfig(storage.stashDir);
+    const riskyProposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+        continuityRisk: { failingQueries: 1, ranks: [{ query: "q", retiredRank: 1, successorRank: null }] },
+      }),
+    });
+
+    const rejectSweep = await bulkAdjudicateProposals({
+      stashDir: storage.stashDir,
+      config,
+      action: "reject",
+      generator: "consolidate-pair",
+      reason: "bulk reject sweep",
+    });
+    expect(rejectSweep.count).toBe(1);
+    expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("rejected");
+  });
+
   test("S6: --max-diff-lines counts a retire proposal by its target's own current line count, not its empty payload", async () => {
     const bigPath = writeAsset(
       "memories/big-note.md",

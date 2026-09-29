@@ -58,6 +58,7 @@ import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage, type LlmRunner } from "../stage";
+import { type ContinuitySearch, checkRetirementContinuity } from "./continuity-check";
 
 export { PAIR_PASS_LEDGER_SOURCE };
 
@@ -536,6 +537,8 @@ interface PairPassContext {
   retired: string[];
   warnings: string[];
   chat?: PairJudgeChat;
+  /** Test seam for the continuity check's search call (item 1). Production callers omit it. */
+  continuitySearch?: ContinuitySearch;
   /**
    * {@link rejectedPairKey} of every rejected `consolidate-pair` retirement
    * on record (item 0), so a pair the owner already declined is never
@@ -633,6 +636,22 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   ctx.retiredThisRun.add(successorKey);
 
   const reason = tombstoneReason(verdict.relation);
+  if (ctx.opts.dryRun) {
+    ctx.retired.push(`${retired.asset.ref} -> ${successor.asset.ref}`);
+    ctx.perInitiatorProposed.add(candidate.initiator.ref);
+    return { failed: false };
+  }
+  // Continuity check (plan §5.4, rule R3): replay the retired asset's own
+  // past queries and flag, but do not block, a pair where the successor
+  // would not have shown up where the retired asset did.
+  const continuityRisk = await checkRetirementContinuity({
+    stashDir: ctx.stashDir,
+    config: ctx.config,
+    retiredRef: retired.asset.ref,
+    successorRef: successor.asset.ref,
+    ledgerAccess: { proposalsCtx: ctx.opts.proposalsCtx },
+    ...(ctx.continuitySearch ? { search: ctx.continuitySearch } : {}),
+  });
   const retirement: RetirementMetadata = {
     retiredRef: retired.asset.ref,
     successorRef: successor.asset.ref,
@@ -642,12 +661,8 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     retiredContentHash: retiredHash,
     successorContentHash: successorHash,
     reason,
+    ...(continuityRisk ? { continuityRisk } : {}),
   };
-  if (ctx.opts.dryRun) {
-    ctx.retired.push(`${retired.asset.ref} -> ${successor.asset.ref}`);
-    ctx.perInitiatorProposed.add(candidate.initiator.ref);
-    return { failed: false };
-  }
   try {
     const proposal = createRetireProposal(
       ctx.stashDir,
@@ -702,8 +717,8 @@ export async function runConsolidatePairPass(
   stashDir: string,
   bundleId: string | undefined,
   warnings: string[],
-  /** Test seam: a transport override for the judge call. Production callers omit it. */
-  seams: { chat?: PairJudgeChat } = {},
+  /** Test seams: a transport override for the judge call, and for the continuity check's search call. Production callers omit both. */
+  seams: { chat?: PairJudgeChat; continuitySearch?: ContinuitySearch } = {},
 ): Promise<ConsolidatePairPassResult> {
   const empty: ConsolidatePairPassResult = {
     initiators: 0,
@@ -823,6 +838,7 @@ export async function runConsolidatePairPass(
     rejectedPairKeys,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
+    ...(seams.continuitySearch ? { continuitySearch: seams.continuitySearch } : {}),
   };
 
   let failedJudgments = 0;

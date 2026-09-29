@@ -145,6 +145,14 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
     lines.push(`retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`);
     lines.push(`retire.reason: ${String(retirement.judgeReason)}`);
+    // Item 1 (continuity check): flagged, but still minted — never swept by a
+    // bulk accept, only acceptable by id, so a reviewer must see it here.
+    const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
+    if (continuityRisk) {
+      lines.push(
+        `retire.continuityRisk: ${String(continuityRisk.failingQueries)} of the retired asset's own quer${continuityRisk.failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10 — excluded from bulk accept`,
+      );
+    }
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {

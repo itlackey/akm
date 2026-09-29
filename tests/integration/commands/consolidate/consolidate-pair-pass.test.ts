@@ -403,6 +403,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       reason: "duplicate",
     });
     expect(proposal.retirement?.cosine).toBeGreaterThan(0.96);
+    // Item 1: no recorded query for old-note means no continuity check ran.
+    expect(proposal.retirement?.continuityRisk).toBeUndefined();
 
     // Ledger: consolidate-pair source, distinguishable from the promote pass's own "consolidate" rows.
     const stateDb = openStateDatabase();
@@ -414,6 +416,50 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     } finally {
       stateDb.close();
     }
+  });
+
+  test("item 1: a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new");
+    dateAsset(newPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "old-note", oldPath, 0);
+      indexAsset(db, "memory", "new-note", newPath, angleForCosine(BACKFILL_FLOOR + 0.02));
+    } finally {
+      closeDatabase(db);
+    }
+    // A past user query that returned old-note — the continuity check's own
+    // input (listRetrievalQueries). Without this, there is nothing to replay
+    // and no check runs at all (see the plain "duplicate" test above, which
+    // records no queries and mints with no continuityRisk field).
+    const stateDb = openStateDatabase();
+    try {
+      insertUsageEvent(stateDb, {
+        event_type: "search",
+        entry_ref: "stash//memories/old-note",
+        query: "how do I do X",
+        source: "user",
+      });
+    } finally {
+      stateDb.close();
+    }
+
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      // old-note ranks #1 for its own past query; new-note never shows up —
+      // a real continuity failure.
+      continuitySearch: async () => [{ ref: "stash//memories/old-note" }],
+    });
+
+    expect(result.retired).toHaveLength(1); // flagged, but still minted — never blocked
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.retirement?.continuityRisk).toEqual({
+      failingQueries: 1,
+      ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }],
+    });
   });
 
   test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (B2 chain guard)", async () => {
