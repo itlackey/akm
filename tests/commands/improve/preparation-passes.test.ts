@@ -74,6 +74,7 @@ function snapshot(overrides: {
         nextEligibleAt: nextEligibleAt(source, outcome, at),
         proposalId: null,
         detail: null,
+        contentHash: null,
       });
     }
   }

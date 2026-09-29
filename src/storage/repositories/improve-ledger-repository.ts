@@ -34,7 +34,6 @@ export const IMPROVE_LEDGER_OUTCOMES = [
   "unchanged",
   "failed",
   "judged_no_action",
-  "judged_no_action_stable",
 ] as const;
 
 export type ImproveLedgerOutcome = (typeof IMPROVE_LEDGER_OUTCOMES)[number];
@@ -52,6 +51,13 @@ export interface ImproveLedgerRow {
   proposalId: string | null;
   /** Short free-text reason (judge verdict, review reason, skip reason). */
   detail: string | null;
+  /**
+   * Body content hash (`contentHash(_, "body")`) of the attempted ref at
+   * `lastAttemptAt`, when the source's eligibility is content-driven rather
+   * than time-driven (alpha.9: the consolidate pair pass — see
+   * {@link PAIR_PASS_LEDGER_SOURCE}). `null` for every other source.
+   */
+  contentHash: string | null;
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -70,16 +76,18 @@ export const LEDGER_DEFAULT_REJECTION_WINDOW_DAYS = 7;
 export const LEDGER_EXPIRED_GRACE_DAYS = 1;
 /** Revisit cadence for a ref the stage looked at and had nothing to do (or is still pending). */
 export const LEDGER_REVISIT_CADENCE_DAYS = 7;
+
 /**
- * Effectively-unbounded window for `judged_no_action_stable` (the consolidate
- * pair pass's "nothing to do" outcome): only a content change lifts it
- * ({@link isLedgerBlocked}'s signal path), never time alone. A real "no
- * expiry" value would make {@link nextEligibleAt} return `null`, which
- * `isLedgerBlocked` treats as "never blocked" (see its first line) — the
- * opposite of what a stable no-action row needs. A century-scale day count
- * keeps the same signal-lift codepath instead of adding a second one.
+ * The consolidate pair pass's own ledger source (alpha.9): kept apart from
+ * the promote pass's `consolidate` rows so the two candidate-selection
+ * cadences never collide on the same `(stash, ref, source)` key. Its
+ * eligibility is entirely content-driven (`content_hash` above, compared by
+ * `selectInitiators` in `src/commands/improve/consolidate/pair-pass.ts`) —
+ * {@link windowDays} below gives it no `next_eligible_at` timer at all, so a
+ * row never "expires" on its own; only a content change makes the ref
+ * eligible again.
  */
-export const LEDGER_STABLE_REVISIT_DAYS = 36_500;
+export const PAIR_PASS_LEDGER_SOURCE = "consolidate-pair";
 
 /**
  * Outcomes whose window a fresh signal on the asset (new feedback, a content
@@ -93,6 +101,11 @@ export const LEDGER_HARD_OUTCOMES: ReadonlySet<ImproveLedgerOutcome> = new Set<I
 ]);
 
 function windowDays(source: string, outcome: ImproveLedgerOutcome): number | null {
+  // The pair pass's own eligibility never reads next_eligible_at (it compares
+  // content_hash instead — selectInitiators in pair-pass.ts) — recording a
+  // window here would be a number nothing enforces, so every row it writes
+  // stays "eligible now" regardless of outcome.
+  if (source === PAIR_PASS_LEDGER_SOURCE) return null;
   switch (outcome) {
     case "rejected":
     case "quality_rejected":
@@ -104,8 +117,6 @@ function windowDays(source: string, outcome: ImproveLedgerOutcome): number | nul
     case "proposed":
     case "review_needed":
       return LEDGER_REVISIT_CADENCE_DAYS;
-    case "judged_no_action_stable":
-      return LEDGER_STABLE_REVISIT_DAYS;
     case "accepted":
     case "failed":
       return null;
@@ -145,6 +156,7 @@ interface LedgerSqlRow {
   next_eligible_at: string | null;
   proposal_id: string | null;
   detail: string | null;
+  content_hash: string | null;
 }
 
 function toRow(row: LedgerSqlRow): ImproveLedgerRow {
@@ -158,6 +170,7 @@ function toRow(row: LedgerSqlRow): ImproveLedgerRow {
     nextEligibleAt: row.next_eligible_at,
     proposalId: row.proposal_id,
     detail: row.detail,
+    contentHash: row.content_hash,
   };
 }
 
@@ -177,6 +190,8 @@ export interface RecordImproveLedgerInput {
   at: string;
   proposalId?: string;
   detail?: string;
+  /** Body content hash at this attempt (the pair pass's own eligibility signal). */
+  contentHash?: string;
 }
 
 /** Record an attempt on `(stashDir, ref, source)`: upsert the row and its cadence. */
@@ -190,17 +205,19 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
     nextEligibleAt: nextEligibleAt(input.source, input.outcome, input.at),
     proposalId: input.proposalId ?? null,
     detail: trimDetail(input.detail),
+    contentHash: input.contentHash ?? null,
   };
   db.prepare(
     `INSERT INTO improve_ledger
-       (stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       (stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(stash_dir, ref, source) DO UPDATE SET
        last_attempt_at  = excluded.last_attempt_at,
        outcome          = excluded.outcome,
        next_eligible_at = excluded.next_eligible_at,
        proposal_id      = excluded.proposal_id,
-       detail           = excluded.detail`,
+       detail           = excluded.detail,
+       content_hash     = excluded.content_hash`,
   ).run(
     row.stashDir,
     row.ref,
@@ -210,6 +227,7 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
     row.nextEligibleAt,
     row.proposalId,
     row.detail,
+    row.contentHash,
   );
   return row;
 }
@@ -268,7 +286,7 @@ export function getImproveLedgerRow(
 ): ImproveLedgerRow | undefined {
   const row = db
     .prepare(
-      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail
+      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash
        FROM improve_ledger WHERE stash_dir = ? AND ref = ? AND source = ?`,
     )
     .get(stashDir, ref, source) as LedgerSqlRow | undefined;
@@ -280,7 +298,7 @@ export function listImproveLedgerRows(db: Database, stashDir: string, sources?: 
   const sourceFilter = sources && sources.length > 0 ? ` AND source IN (${sources.map(() => "?").join(", ")})` : "";
   const rows = db
     .prepare(
-      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail
+      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash
        FROM improve_ledger WHERE stash_dir = ?${sourceFilter} ORDER BY ref ASC, source ASC`,
     )
     .all(stashDir, ...(sources && sources.length > 0 ? sources : [])) as LedgerSqlRow[];

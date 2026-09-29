@@ -56,14 +56,18 @@ describe("nextEligibleAt — the one cadence function", () => {
     expect(nextEligibleAt("reflect", "rejected", "not-a-date")).toBeNull();
   });
 
-  test("judged_no_action_stable (the consolidate pair pass) outlasts the 7-day revisit cadence", () => {
-    // #A9 pair pass: unlike judged_no_action, this outcome must not become
-    // eligible again just because 7 (or even 365) days passed — only a
-    // content-change signal may lift it (isLedgerBlocked, below).
-    expect(nextEligibleAt("consolidate-pair", "judged_no_action_stable", T0)).toBe(plusDays(T0, 36_500));
-    expect(nextEligibleAt("consolidate-pair", "judged_no_action_stable", T0)).not.toBe(
-      nextEligibleAt("consolidate", "judged_no_action", T0),
-    );
+  test("the consolidate pair pass's own source carries no timer, for any outcome", () => {
+    // S1 (post-review): the pair pass's eligibility is entirely
+    // content-driven (selectInitiators compares content_hash, never reads
+    // next_eligible_at) — every row it writes is "eligible now" regardless
+    // of outcome, unlike every other source's outcome-driven cadence.
+    for (const outcome of ["proposed", "judged_no_action", "accepted", "rejected", "failed"] as const) {
+      expect(nextEligibleAt("consolidate-pair", outcome, T0)).toBeNull();
+    }
+    // The promote pass's own "consolidate" source keeps its ordinary 7-day
+    // revisit cadence for judged_no_action — only the pair pass's distinct
+    // "consolidate-pair" source is exempted.
+    expect(nextEligibleAt("consolidate", "judged_no_action", T0)).toBe(plusDays(T0, 7));
   });
 });
 
@@ -77,6 +81,7 @@ describe("isLedgerBlocked", () => {
     nextEligibleAt: nextEligibleAt("reflect", outcome, at),
     proposalId: null,
     detail: null,
+    contentHash: null,
   });
 
   test("a missing row or an elapsed window never blocks", () => {
@@ -96,23 +101,24 @@ describe("isLedgerBlocked", () => {
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1), plusDays(T0, -1))).toBe(true);
   });
 
-  test("judged_no_action_stable stays blocked well past the old 7-day window, and only a content signal lifts it", () => {
-    const stableRow = {
+  test("a consolidate-pair row is never blocked, whatever its outcome — nextEligibleAt is always null for that source", () => {
+    const pairRow = (outcome: "proposed" | "judged_no_action") => ({
       stashDir: "/s",
       ref: "memories/a",
       source: "consolidate-pair",
       lastAttemptAt: T0,
-      outcome: "judged_no_action_stable" as const,
-      nextEligibleAt: nextEligibleAt("consolidate-pair", "judged_no_action_stable", T0),
+      outcome,
+      nextEligibleAt: nextEligibleAt("consolidate-pair", outcome, T0),
       proposalId: null,
       detail: null,
-    };
-    // Past the OLD judged_no_action window, still blocked: no time-based expiry.
-    expect(isLedgerBlocked(stableRow, plusDays(T0, 30))).toBe(true);
-    // A content change after the attempt lifts it, same as any other soft outcome.
-    expect(isLedgerBlocked(stableRow, plusDays(T0, 30), plusDays(T0, 1))).toBe(false);
-    // An older signal does not.
-    expect(isLedgerBlocked(stableRow, plusDays(T0, 30), plusDays(T0, -1))).toBe(true);
+      contentHash: "deadbeef",
+    });
+    // Not even a long time later — this source's eligibility is decided by
+    // comparing content_hash directly (selectInitiators), never by this
+    // function; isLedgerBlocked returning false here is just confirmation
+    // that nextEligibleAt never gives it a window to be blocked by.
+    expect(isLedgerBlocked(pairRow("judged_no_action"), plusDays(T0, 1))).toBe(false);
+    expect(isLedgerBlocked(pairRow("proposed"), plusDays(T0, 30))).toBe(false);
   });
 });
 
@@ -158,6 +164,42 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         detail: "not novel",
       });
       expect(getImproveLedgerRow(db, "/s", "personal//lessons/foo", "distill")).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("content_hash round-trips through recordImproveLedger and is preserved by a decision update (migration 029)", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/a",
+        source: "consolidate-pair",
+        outcome: "judged_no_action",
+        at: T0,
+        contentHash: "hash-v1",
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+        contentHash: "hash-v1",
+        nextEligibleAt: null,
+      });
+      // A later attempt (a content change) overwrites it.
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/a",
+        source: "consolidate-pair",
+        outcome: "proposed",
+        at: plusDays(T0, 1),
+        contentHash: "hash-v2",
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+        contentHash: "hash-v2",
+        outcome: "proposed",
+      });
+      // A row for a source that never sets contentHash decodes it as null, not undefined/missing.
+      recordImproveLedger(db, { stashDir: "/s", ref: "skills/x", source: "reflect", outcome: "proposed", at: T0 });
+      expect(getImproveLedgerRow(db, "/s", "skills/x", "reflect")?.contentHash).toBeNull();
     } finally {
       db.close();
     }

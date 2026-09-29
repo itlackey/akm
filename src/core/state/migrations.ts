@@ -52,6 +52,7 @@ export const STATE_MIGRATION_SAFETY_BY_ID: Readonly<Record<string, StateMigratio
   "026-proposals-strip-legacy-fragment-refs": "data-preserving-rebuild",
   "027-extract-sessions-seen-harness-rename": "data-preserving-rebuild",
   "028-improve-ledger": "historical-destructive",
+  "029-improve-ledger-content-hash": "additive",
 });
 
 export const STATE_MIGRATIONS: readonly Migration[] = [
@@ -1307,6 +1308,21 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS consolidation_judged;
       DROP TABLE IF EXISTS improve_cycle_metrics;
       DROP TABLE IF EXISTS canary_queries;
+    `,
+  },
+
+  // ── Migration 029 — improve_ledger.content_hash ───────────────────────────
+  //
+  // The consolidate pair pass (alpha.9) selects initiators by content change,
+  // not a time window: no row means eligible, a row whose content_hash
+  // differs from the asset's current body means eligible, otherwise not
+  // (src/commands/improve/consolidate/pair-pass.ts, selectInitiators). Every
+  // other source still uses next_eligible_at; this column is additional, not
+  // a replacement.
+  {
+    id: "029-improve-ledger-content-hash",
+    up: `
+      ALTER TABLE improve_ledger ADD COLUMN content_hash TEXT DEFAULT NULL;
     `,
   },
 ];
