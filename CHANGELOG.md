@@ -195,16 +195,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **A rejected consolidate-pair retirement could be re-proposed.** The pair
-  pass's re-eligibility check is hash-based per initiator, not per pair: an
-  initiator with no ledger row — because one of its OTHER candidates was
-  dropped or failed this run, not because this pair changed — became
-  eligible again in full, regenerating every one of its candidate pairs,
-  including one the owner had already reviewed and rejected with neither
-  side changed since. Before minting, a pair is now skipped when a rejected
-  `consolidate-pair` proposal already exists for the same retired/successor
-  refs and the same two content hashes, and counted as a settled no-action
-  so the initiator's row still gets written this run.
+- **A rejected (or reverted) consolidate-pair retirement could be
+  re-proposed.** The pair pass's re-eligibility check is hash-based per
+  initiator, not per pair: an initiator with no ledger row — because one of
+  its OTHER candidates was dropped or failed this run, not because this pair
+  changed — became eligible again in full, regenerating every one of its
+  candidate pairs, including one the owner had already reviewed and rejected
+  (or accepted, then undone with `akm proposal revert`) with neither side
+  changed since. Before the judge is even called, a pair is now skipped —
+  both orientations checked, since it is the judge that decides which side
+  is "retired" — when a rejected or reverted `consolidate-pair` proposal
+  already exists for the same retired/successor refs and the same two
+  content hashes, and counted as a settled no-action so the initiator's row
+  still gets written this run, at no LLM cost.
   (`src/commands/improve/consolidate/pair-pass.ts`)
 - **Stale "advisory merge/delete/contradict" documentation.** Consolidation
   removed its merge/delete/contradict operations in 0.9.17-alpha.1 at

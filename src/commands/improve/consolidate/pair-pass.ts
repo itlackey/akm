@@ -540,8 +540,9 @@ interface PairPassContext {
   /** Test seam for the continuity check's search call (item 1). Production callers omit it. */
   continuitySearch?: ContinuitySearch;
   /**
-   * {@link rejectedPairKey} of every rejected `consolidate-pair` retirement
-   * on record (item 0), so a pair the owner already declined is never
+   * {@link rejectedPairKey} of every rejected OR reverted `consolidate-pair`
+   * retirement on record (item 0, S1), so a pair the owner already declined
+   * — by rejecting it, or by accepting then reverting it — is never
    * re-proposed just because its initiator's OWN ledger row went missing (a
    * sibling candidate dropped or failed this run — see the ledger-write step
    * in {@link runConsolidatePairPass}).
@@ -568,6 +569,22 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const initiatorSide = loadSide(candidate.initiator, ctx.gitFirstAdded, ctx.stashDir);
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
   if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
+
+  // Item 0 / S1: this exact pair (same two refs, same two content hashes,
+  // EITHER orientation) was already judged and rejected OR reverted. Checked
+  // HERE, before the judge call, not after — the judge (not yet run) is what
+  // decides which side would be "retired" this time, so both orientations
+  // are checked against the current content hashes rather than waiting for
+  // a verdict to pick one. A settled pair therefore costs no LLM call.
+  const initiatorHash = contentHash(initiatorSide.raw, "body");
+  const otherHash = contentHash(otherSide.raw, "body");
+  if (
+    ctx.rejectedPairKeys.has(rejectedPairKey(initiatorSide.asset.ref, otherSide.asset.ref, initiatorHash, otherHash)) ||
+    ctx.rejectedPairKeys.has(rejectedPairKey(otherSide.asset.ref, initiatorSide.asset.ref, otherHash, initiatorHash))
+  ) {
+    return { failed: false };
+  }
+
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
   const outcome = await callStage({
@@ -611,15 +628,6 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   }
   const retiredHash = contentHash(retired.raw, "body");
   const successorHash = contentHash(successor.raw, "body");
-  // Item 0: this exact pair (same two refs, same two content hashes) was
-  // already judged and rejected. A re-selected initiator's OWN ledger row can
-  // go missing without this pair having changed at all — a sibling candidate
-  // dropped or failed this run (must-fix 1) — so re-eligibility here must not
-  // re-litigate a settled rejection. Counted as a no-action, same as the
-  // guards above, so the initiator's row still gets written this run.
-  if (ctx.rejectedPairKeys.has(rejectedPairKey(retired.asset.ref, successor.asset.ref, retiredHash, successorHash))) {
-    return { failed: false };
-  }
   // B2: an asset retired (or already spent as a successor) earlier in this
   // run cannot be retired or reused as a successor again — the same-run half
   // of the chain guard (the accept-time hash/existence check is the other,
@@ -769,21 +777,27 @@ export async function runConsolidatePairPass(
   const isPendingBlocked = (c: PairCandidate): boolean =>
     pendingRetireRefs.has(stripBundle(c.initiator.ref)) || pendingRetireRefs.has(stripBundle(c.other.ref));
 
-  // Item 0: every rejected consolidate-pair retirement on record, keyed by
-  // its exact ref pair and both content hashes — read once per run, the same
-  // shape as pendingRetireRefs above.
+  // Item 0 / S1: every rejected OR reverted consolidate-pair retirement on
+  // record, keyed by its exact ref pair and both content hashes — read once
+  // per run, the same shape as pendingRetireRefs above. `reverted` is
+  // included alongside `rejected`: a person undoing an accept via `akm
+  // proposal revert` is the same "no, not this" signal as a reject — without
+  // it, the next run would re-mint the identical retirement, and a bulk
+  // accept could re-apply a decision the person just undid.
   const rejectedPairKeys = new Set<string>();
   try {
-    for (const p of listProposalsReadOnly(stashDir, { status: "rejected", includeArchive: true })) {
-      if (!isRetireProposal(p) || !p.retirement) continue;
-      rejectedPairKeys.add(
-        rejectedPairKey(
-          p.retirement.retiredRef,
-          p.retirement.successorRef,
-          p.retirement.retiredContentHash,
-          p.retirement.successorContentHash,
-        ),
-      );
+    for (const status of ["rejected", "reverted"] as const) {
+      for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true })) {
+        if (!isRetireProposal(p) || !p.retirement) continue;
+        rejectedPairKeys.add(
+          rejectedPairKey(
+            p.retirement.retiredRef,
+            p.retirement.successorRef,
+            p.retirement.retiredContentHash,
+            p.retirement.successorContentHash,
+          ),
+        );
+      }
     }
   } catch {
     // Best-effort de-dup only; a failed read never blocks judging.

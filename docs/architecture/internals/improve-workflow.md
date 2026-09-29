@@ -335,11 +335,14 @@ duplicate, subsumed and superseding retirement, review-gated.
 
    Because that "no row" case regenerates ALL of an initiator's candidate
    pairs next run — including ones already decided — a pair the owner
-   already rejected is never re-minted while both sides are unchanged: before
-   minting, the same ref pair and the same two content hashes are checked
-   against every rejected `consolidate-pair` proposal on record, and a match
-   is counted as a settled no-action (so the initiator's row still gets
-   written this run) rather than sent back through the judge.
+   already declined (rejected, or accepted then reverted) is never re-minted
+   while both sides are unchanged: before the judge is ever called, the same
+   ref pair and the same two content hashes (checked in both orientations,
+   since it is the judge — not yet run — that would decide which side is
+   "retired") are checked against every rejected or reverted
+   `consolidate-pair` proposal on record, and a match is counted as a settled
+   no-action (so the initiator's row still gets written this run) at no LLM
+   cost at all.
 
 **Retire proposals (`akm proposal accept`/`revert`):** minted under their own
 source, `consolidate-pair` — kept apart from the promote pass's

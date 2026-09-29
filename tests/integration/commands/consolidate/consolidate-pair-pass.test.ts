@@ -920,18 +920,23 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
 
     // Run 2: nothing about I or Y changed. I is re-selected (still no row),
-    // regenerating BOTH pairs. The (I,Y) pair is judged again (item 0's fix
-    // is a mint-time guard, not a selection-time skip) but must NOT mint a
-    // second time. The (I,Z) pair succeeds this time and mints normally —
+    // regenerating BOTH pairs. S1: the (I,Y) pair is now skipped BEFORE the
+    // judge call (both orientations of its ref pair + content hashes match
+    // the rejected record), so it costs no LLM call at all and must NOT mint
+    // a second time. The (I,Z) pair still succeeds and mints normally —
     // proving the fix does not block unrelated pairs sharing the initiator.
     let chatCalls2 = 0;
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: async () => {
+      chat: async (_connection, messages) => {
         chatCalls2++;
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/y-note")) {
+          throw new Error("(I,Y) must not reach the judge — it was already rejected, unchanged (S1)");
+        }
         return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
       },
     });
-    expect(chatCalls2).toBe(2); // both pairs judged again — the guard is at mint time, not selection time
+    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
     expect(r2.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
 
@@ -957,6 +962,98 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     await akmProposalAccept({ stashDir: storage.stashDir, id: r2.retired[0]!, config: makeConfig(storage.stashDir) });
     expect(fs.existsSync(iPath)).toBe(false); // I (older) archived; Z (newer) survives
     expect(fs.existsSync(zPath)).toBe(true);
+  });
+
+  test("S1: a reverted pair (accepted, then undone) stays settled too — not just a rejected one", async () => {
+    // Same I/Y/Z shape as item 0's test above: I claims both (I,Y) and
+    // (I,Z); Y and Z sit on opposite sides of I so (Y,Z) itself never pairs.
+    const iPath = writeAsset("memories/i-note.md", "description: i");
+    dateAsset(iPath, 1);
+    const yPath = writeAsset("memories/y-note.md", "description: y");
+    const zPath = writeAsset("memories/z-note.md", "description: z");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "i-note", iPath, 0);
+      indexAsset(db, "memory", "y-note", yPath, angleForCosine(0.95));
+      indexAsset(db, "memory", "z-note", zPath, -angleForCosine(0.94));
+    } finally {
+      closeDatabase(db);
+    }
+
+    // Run 1: (I,Y) mints and is ACCEPTED then REVERTED — the owner's other
+    // way of saying "no, not this" besides an outright reject. (I,Z)'s judge
+    // call fails, so I gets no ledger row at all (should-fix 3), forcing a
+    // full re-selection of I (and both its pairs) next run.
+    const warnings: string[] = [];
+    const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(r1.retired).toHaveLength(1);
+    const revertedId = r1.retired[0]!;
+    expect(getProposal(storage.stashDir, revertedId).retirement?.successorRef).toBe("memories/y-note");
+
+    const { akmProposalAccept, akmProposalRevert } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    await akmProposalAccept({ stashDir: storage.stashDir, id: revertedId, config: makeConfig(storage.stashDir) });
+    expect(fs.existsSync(iPath)).toBe(false); // I (older) archived; Y (newer, the successor) survives
+    await akmProposalRevert({ stashDir: storage.stashDir, id: revertedId, config: makeConfig(storage.stashDir) });
+    expect(fs.existsSync(iPath)).toBe(true); // restored, exact pre-retire bytes
+    // Revert's restore-write resets iPath's mtime to "now" — reapply the
+    // same age used at setup so (I,Z)'s older/newer ordering (and so which
+    // side judge-time "duplicate" retires) stays exactly as before, the same
+    // way run 1 saw it.
+    dateAsset(iPath, 1);
+
+    // The archive/restore round trip invalidates I's embedding row (its
+    // entry survives with the same id, but the write path that restores the
+    // file also drops the now-possibly-stale vector) — a real `akm improve`
+    // run re-embeds it during index bootstrap, ahead of consolidate; this
+    // test drives the pair pass directly, so it does that one step by hand.
+    const dbReindex = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(dbReindex, "memory", "i-note", iPath, 0);
+    } finally {
+      closeDatabase(dbReindex);
+    }
+
+    const stateDbAfterRun1 = openStateDatabase();
+    try {
+      expect(
+        getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
+      ).toBeUndefined();
+      insertUsageEvent(stateDbAfterRun1, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
+    } finally {
+      stateDbAfterRun1.close();
+    }
+
+    // Run 2: I is re-selected, regenerating both pairs. (I,Y) must be
+    // skipped BEFORE the judge — reverted, unchanged since, counts the same
+    // as a rejected pair (S1).
+    let chatCalls2 = 0;
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        chatCalls2++;
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/y-note")) {
+          throw new Error("(I,Y) must not reach the judge — it was already reverted, unchanged (S1)");
+        }
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
+    expect(r2.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
+
+    // Exactly one proposal ever existed for Y, and it stays reverted — not re-minted.
+    const allForY = listProposals(storage.stashDir, { includeArchive: true }).filter(
+      (p) => p.retirement?.successorRef === "memories/y-note",
+    );
+    expect(allForY).toHaveLength(1);
+    expect(allForY[0]!.status).toBe("reverted");
   });
 
   test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
