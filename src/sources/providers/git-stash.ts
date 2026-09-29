@@ -103,6 +103,44 @@ export function tryListGitUnverifiablePaths(repoDir: string, pathspec?: string):
   return { paths, ok: true };
 }
 
+/** {@link checkGitPathSafety}'s result. */
+export interface GitPathSafetyResult {
+  /** `false` when any of the three underlying git queries failed — a caller must treat this as "nothing is provably safe", never as an empty-but-trustworthy result. */
+  ok: boolean;
+  /** `repoRelativePath` is tracked at HEAD/index, not dirty/staged/untracked, and not assume-unchanged/skip-worktree. Always `false` when `ok` is `false`. */
+  isSafe(repoRelativePath: string): boolean;
+}
+
+/**
+ * The three-part git cleanliness check shared by the archive purge sweep
+ * (`purgeGracedArchive` in `commands/improve/memory/memory-improve.ts`) and
+ * the `memory-cleanup-archive` health advisory (`collectArchiveUsageAdvisory`
+ * in `commands/health/archive-usage.ts`): a path is safe to treat as
+ * committed only if it is tracked ({@link tryListGitTrackedPaths}), not dirty
+ * ({@link tryListGitChangedPaths}), and not assume-unchanged/skip-worktree
+ * ({@link tryListGitUnverifiablePaths} — those hide their own edits from
+ * `git status`, so an unverifiable file is never trusted as clean either).
+ *
+ * Each of the three git calls can fail independently (a broken submodule, or
+ * git missing from `PATH`); `ok` is `false` if any one does, and `isSafe`
+ * then returns `false` for every path rather than guessing — callers that
+ * need to short-circuit before doing other work still check `ok` themselves.
+ */
+export function checkGitPathSafety(repoDir: string, pathspec?: string): GitPathSafetyResult {
+  const dirtyQuery = tryListGitChangedPaths(repoDir);
+  const trackedQuery = tryListGitTrackedPaths(repoDir, pathspec);
+  const unverifiableQuery = tryListGitUnverifiablePaths(repoDir, pathspec);
+  const ok = dirtyQuery.ok && trackedQuery.ok && unverifiableQuery.ok;
+  const dirty = new Set(dirtyQuery.paths);
+  const tracked = new Set(trackedQuery.paths);
+  const unverifiable = new Set(unverifiableQuery.paths);
+  return {
+    ok,
+    isSafe: (repoRelativePath) =>
+      ok && tracked.has(repoRelativePath) && !dirty.has(repoRelativePath) && !unverifiable.has(repoRelativePath),
+  };
+}
+
 export interface SaveGitStashResult {
   committed: boolean;
   pushed: boolean;
