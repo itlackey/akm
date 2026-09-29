@@ -808,6 +808,111 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(r3.retired).toHaveLength(1); // content changed since the last attempt: judged again, and re-proposed
   });
 
+  test("item 0: a rejected pair stays rejected even when a sibling verdict drops the initiator's own ledger row", async () => {
+    // I is the initiator both Y and Z pair against — indexed first, so it
+    // claims both pairs (same "claims every pair it's nearest to" setup as
+    // the B2 chain-guard test above). Y and Z sit on OPPOSITE sides of I
+    // (angles of opposite sign) so they are not each other's neighbour too —
+    // only (I,Y) and (I,Z) clear T_PAIR, never (Y,Z) — keeping I the sole
+    // initiator of both pairs in both runs below. I is dated inside
+    // NEW_MATERIAL_DAYS so both runs judge at T_PAIR, not the higher
+    // BACKFILL_FLOOR, regardless of I's own backlog status.
+    const iPath = writeAsset("memories/i-note.md", "description: i");
+    dateAsset(iPath, 1);
+    const yPath = writeAsset("memories/y-note.md", "description: y");
+    const zPath = writeAsset("memories/z-note.md", "description: z");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "i-note", iPath, 0);
+      indexAsset(db, "memory", "y-note", yPath, angleForCosine(0.95)); // judged first (higher cosine)
+      indexAsset(db, "memory", "z-note", zPath, -angleForCosine(0.94)); // opposite side: cosine(Y,Z) well under T_PAIR
+    } finally {
+      closeDatabase(db);
+    }
+
+    // Run 1: the (I,Y) pair judges cleanly and mints a retire proposal; the
+    // (I,Z) pair's judge call fails — a dropped verdict unrelated to Y. I is
+    // the initiator of BOTH, so should-fix 3's rule (a row only once ALL of
+    // an initiator's own candidates succeeded) leaves I with no row at all,
+    // even though the Y pair minted fine.
+    const warnings: string[] = [];
+    const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(r1.retired).toHaveLength(1);
+    const rejectedId = r1.retired[0]!;
+    expect(getProposal(storage.stashDir, rejectedId).retirement?.successorRef).toBe("memories/y-note");
+
+    const stateDbAfterRun1 = openStateDatabase();
+    try {
+      // I had a genuine "duplicate" verdict on Y AND a dropped one on Z —
+      // should-fix 3 means no row at all, so I is reconsidered next run.
+      expect(
+        getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
+      ).toBeUndefined();
+      // Minting (even a proposal later rejected) marks i-note "processed" in
+      // the retrieval scope (Blocker 1's exemption covers only the pair
+      // pass's OWN ledger source, not the proposal it wrote) — seed a search
+      // so scope isn't what keeps run 2 from reconsidering it, the same
+      // reason the "unchanged content" test above seeds one.
+      insertUsageEvent(stateDbAfterRun1, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
+    } finally {
+      stateDbAfterRun1.close();
+    }
+
+    const { akmProposalReject, akmProposalAccept } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    await akmProposalReject({
+      stashDir: storage.stashDir,
+      id: rejectedId,
+      reason: "owner says keep both",
+      config: makeConfig(storage.stashDir),
+    });
+
+    // Run 2: nothing about I or Y changed. I is re-selected (still no row),
+    // regenerating BOTH pairs. The (I,Y) pair is judged again (item 0's fix
+    // is a mint-time guard, not a selection-time skip) but must NOT mint a
+    // second time. The (I,Z) pair succeeds this time and mints normally —
+    // proving the fix does not block unrelated pairs sharing the initiator.
+    let chatCalls2 = 0;
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => {
+        chatCalls2++;
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls2).toBe(2); // both pairs judged again — the guard is at mint time, not selection time
+    expect(r2.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
+
+    // The rejected pair is still exactly one proposal, still rejected.
+    const allForY = listProposals(storage.stashDir, { includeArchive: true }).filter(
+      (p) => p.retirement?.successorRef === "memories/y-note",
+    );
+    expect(allForY).toHaveLength(1);
+    expect(allForY[0]!.status).toBe("rejected");
+    expect(fs.existsSync(yPath)).toBe(true); // never touched — only accepting a retire proposal moves a file
+
+    // I now has a row: every one of its candidates resolved cleanly this run.
+    const stateDbAfterRun2 = openStateDatabase();
+    try {
+      const row = getImproveLedgerRow(stateDbAfterRun2, storage.stashDir, "memories/i-note", "consolidate-pair");
+      expect(row?.outcome).toBe("proposed");
+    } finally {
+      stateDbAfterRun2.close();
+    }
+
+    // Accept the Z proposal (the "accept one pair" half of the scenario) and
+    // confirm it behaves like any other retire accept.
+    await akmProposalAccept({ stashDir: storage.stashDir, id: r2.retired[0]!, config: makeConfig(storage.stashDir) });
+    expect(fs.existsSync(iPath)).toBe(false); // I (older) archived; Z (newer) survives
+    expect(fs.existsSync(zPath)).toBe(true);
+  });
+
   test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
     // Three assets close enough to pair, but MAX_PAIRS_PER_RUN is patched
     // (via a throwaway db read) is impractical here — instead this proves

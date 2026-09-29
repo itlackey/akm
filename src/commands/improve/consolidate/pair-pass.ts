@@ -322,6 +322,17 @@ function pairKey(a: string, b: string): string {
 }
 
 /**
+ * A rejected retirement's dedup key (item 0): the exact ref pair plus both
+ * content hashes at judge time, so a re-selected initiator (its own ledger
+ * row missing because a sibling candidate was dropped or failed, not because
+ * this pair changed) does not get this same, already-rejected pair re-judged
+ * into a new proposal.
+ */
+function rejectedPairKey(retiredRef: string, successorRef: string, retiredHash: string, successorHash: string): string {
+  return [retiredRef, successorRef, retiredHash, successorHash].join("\u0000");
+}
+
+/**
  * Initiators (plan §5.2 step 1, S1 post-review): the pool, in the retrieval
  * scope, and content-eligible — no prior `consolidate-pair` ledger row, or a
  * row whose recorded body hash differs from the asset's current one. A row's
@@ -526,6 +537,14 @@ interface PairPassContext {
   warnings: string[];
   chat?: PairJudgeChat;
   /**
+   * {@link rejectedPairKey} of every rejected `consolidate-pair` retirement
+   * on record (item 0), so a pair the owner already declined is never
+   * re-proposed just because its initiator's OWN ledger row went missing (a
+   * sibling candidate dropped or failed this run — see the ledger-write step
+   * in {@link runConsolidatePairPass}).
+   */
+  rejectedPairKeys: ReadonlySet<string>;
+  /**
    * ConceptIds (stripped of bundle) already given a retire decision earlier
    * in THIS run — by an earlier pair, not a prior run (`pendingRetireRefs`
    * covers that) — as EITHER the retired side or the successor (B2's
@@ -587,6 +606,17 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
     if (fs.existsSync(parentPath)) return { failed: false }; // never retire a .derived memory whose parent still exists
   }
+  const retiredHash = contentHash(retired.raw, "body");
+  const successorHash = contentHash(successor.raw, "body");
+  // Item 0: this exact pair (same two refs, same two content hashes) was
+  // already judged and rejected. A re-selected initiator's OWN ledger row can
+  // go missing without this pair having changed at all — a sibling candidate
+  // dropped or failed this run (must-fix 1) — so re-eligibility here must not
+  // re-litigate a settled rejection. Counted as a no-action, same as the
+  // guards above, so the initiator's row still gets written this run.
+  if (ctx.rejectedPairKeys.has(rejectedPairKey(retired.asset.ref, successor.asset.ref, retiredHash, successorHash))) {
+    return { failed: false };
+  }
   // B2: an asset retired (or already spent as a successor) earlier in this
   // run cannot be retired or reused as a successor again — the same-run half
   // of the chain guard (the accept-time hash/existence check is the other,
@@ -609,8 +639,8 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     cosine: candidate.cosine,
     judgeLabel: verdict.relation,
     judgeReason: verdict.reason,
-    retiredContentHash: contentHash(retired.raw, "body"),
-    successorContentHash: contentHash(successor.raw, "body"),
+    retiredContentHash: retiredHash,
+    successorContentHash: successorHash,
     reason,
   };
   if (ctx.opts.dryRun) {
@@ -724,6 +754,26 @@ export async function runConsolidatePairPass(
   const isPendingBlocked = (c: PairCandidate): boolean =>
     pendingRetireRefs.has(stripBundle(c.initiator.ref)) || pendingRetireRefs.has(stripBundle(c.other.ref));
 
+  // Item 0: every rejected consolidate-pair retirement on record, keyed by
+  // its exact ref pair and both content hashes — read once per run, the same
+  // shape as pendingRetireRefs above.
+  const rejectedPairKeys = new Set<string>();
+  try {
+    for (const p of listProposalsReadOnly(stashDir, { status: "rejected", includeArchive: true })) {
+      if (!isRetireProposal(p) || !p.retirement) continue;
+      rejectedPairKeys.add(
+        rejectedPairKey(
+          p.retirement.retiredRef,
+          p.retirement.successorRef,
+          p.retirement.retiredContentHash,
+          p.retirement.successorContentHash,
+        ),
+      );
+    }
+  } catch {
+    // Best-effort de-dup only; a failed read never blocks judging.
+  }
+
   // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
   // individual pairs — the old flat "top 300 candidates by cosine" cap let a
   // pending-blocked pair spend a budget slot doing nothing, and left
@@ -770,6 +820,7 @@ export async function runConsolidatePairPass(
     perInitiatorProposed: new Set(),
     retired: [],
     warnings,
+    rejectedPairKeys,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
   };
