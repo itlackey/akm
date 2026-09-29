@@ -26,6 +26,7 @@ import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
+import type { MemoryPruneCandidate } from "../../core/improve-types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -58,6 +59,8 @@ import {
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import { pkgVersion } from "../../version";
 import { contentHash } from "../improve/content-hash";
+import { removeSupersededEdge, writeSupersededEdge } from "../improve/memory/memory-belief";
+import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
 import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
@@ -66,6 +69,7 @@ import {
   type EligibilitySource,
   EXPIRED_GATE_REASON,
   isAutomatedProposalSource,
+  isRetireProposal,
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
@@ -73,6 +77,7 @@ import {
   type ProposalPayload,
   type ProposalSource,
   type ProposalStatus,
+  type RetirementMetadata,
   STALE_TARGET_GATE_REASON,
 } from "./proposal-types";
 import {
@@ -166,6 +171,12 @@ export interface CreateProposalInput {
   confidence?: number;
   /** The eligibility lane that selected the source asset. */
   eligibilitySource?: EligibilitySource;
+  /**
+   * A consolidate PROMOTION proposal's source memory ref (alpha.9, O1): set
+   * by `emitPromotionProposal`. On accept, the source (and its `.derived`
+   * twin) is retired through the same archive path a `retire` proposal uses.
+   */
+  promotionSource?: string;
 }
 
 function nowIso(ctx?: ProposalsContext): string {
@@ -421,6 +432,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
           : {}),
         ...(confidence !== undefined ? { confidence } : {}),
         ...(input.eligibilitySource !== undefined ? { eligibilitySource: input.eligibilitySource } : {}),
+        ...(input.promotionSource !== undefined ? { promotionSource: input.promotionSource } : {}),
       };
       upsertProposal(db, proposal, stashDir);
       for (const ref of input.attemptedRefs ?? [normalizedRef]) {
@@ -433,6 +445,103 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
           proposalId: proposal.id,
         });
       }
+      return proposal;
+    }),
+  );
+}
+
+export interface CreateRetireProposalInput {
+  /** The ref of the asset being retired — becomes the proposal's own ref. */
+  ref: string;
+  /** One of {@link PROPOSAL_SOURCES}; the consolidate pair pass always uses `"consolidate"`. */
+  source: ProposalSource | string;
+  sourceRun?: string;
+  target?: { source: string; root: string };
+  /** The pair judge's confidence in [0, 1]; anything else is dropped. */
+  confidence?: number;
+  retirement: RetirementMetadata;
+}
+
+/**
+ * Mint a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): its
+ * primary `FileChange` deletes `ref`'s own file rather than writing new
+ * content, so this does not reuse {@link createProposal} (which always
+ * builds a create/update change and enforces content/description rules that
+ * do not apply to a delete). `ref` must already exist on disk — retiring a
+ * phantom is a caller bug, refused rather than silently accepted.
+ *
+ * Deliberately does NOT record an `improve_ledger` "proposed" row: the pair
+ * pass keys its own ledger cadence per initiator under a distinct source
+ * (`consolidate-pair`), which may differ from the proposal's own `ref` (the
+ * initiator and the retired side are not always the same asset — see
+ * `runConsolidatePairPass`). Auto-recording here under `input.source`
+ * (`"consolidate"`) would collide with the promote pass's own ledger
+ * namespace for the same ref.
+ */
+export function createRetireProposal(
+  stashDir: string,
+  input: CreateRetireProposalInput,
+  ctx?: ProposalsContext,
+): Proposal {
+  if (!isValidProposalSource(input.source)) {
+    warn(
+      `[proposal] Unknown source "${input.source}" for a retire proposal. Expected one of: ${PROPOSAL_SOURCES.join(", ")}.`,
+    );
+  }
+  let parsedRef: AssetRef;
+  try {
+    parsedRef = parseRefInput(input.ref);
+  } catch (err) {
+    throw new UsageError(
+      `Invalid retire proposal ref "${input.ref}": ${err instanceof Error ? err.message : String(err)}`,
+      "INVALID_PROPOSAL",
+    );
+  }
+  const typeDir = stashDirFor(parsedRef.type);
+  if (!typeDir) {
+    throw new UsageError(
+      `Unknown asset type "${parsedRef.type}" in retire proposal ref "${input.ref}". Known types: ${[...placementTypes()].sort().join(", ")}.`,
+      "INVALID_PROPOSAL",
+    );
+  }
+  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
+  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
+  const targetRoot = path.resolve(proposalTarget.root);
+  const targetAbs = assetPathForName(parsedRef.type, path.join(targetRoot, typeDir), parsedRef.name);
+  if (!fs.existsSync(targetAbs)) {
+    throw new UsageError(`Retire proposal target "${input.ref}" does not exist at ${targetAbs}.`, "INVALID_PROPOSAL");
+  }
+  const targetRelPath = path.relative(targetRoot, targetAbs);
+  const beforeContent = fs.readFileSync(targetAbs, "utf8");
+  const changes: FileChange[] = [{ path: targetRelPath, op: "delete" }];
+  const proposedTarget = { source: proposalTarget.source, root: targetRoot };
+  const confidence =
+    typeof input.confidence === "number" &&
+    Number.isFinite(input.confidence) &&
+    input.confidence >= 0 &&
+    input.confidence <= 1
+      ? input.confidence
+      : undefined;
+  return withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const created = nowIso(ctx);
+      const proposal: Proposal = {
+        id: (ctx?.randomUUID ?? randomUUID)(),
+        ref: normalizedRef,
+        status: "pending",
+        source: input.source,
+        ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
+        createdAt: created,
+        updatedAt: created,
+        payload: { content: "" },
+        changes,
+        proposedTarget,
+        beforeHash: contentHash(beforeContent),
+        beforeHashNormalized: contentHash(beforeContent, "normalized"),
+        ...(confidence !== undefined ? { confidence } : {}),
+        retirement: input.retirement,
+      };
+      upsertProposal(db, proposal, stashDir);
       return proposal;
     }),
   );
@@ -1229,6 +1338,54 @@ function requireAcceptedTarget(proposal: Proposal): NonNullable<Proposal["accept
   return proposal.acceptedTarget;
 }
 
+/**
+ * O1 (alpha.9): an accepted consolidate PROMOTION retires its source memory
+ * (and its `.derived` twin), so promotion no longer leaves a memory/
+ * knowledge duplicate behind. Runs whether a person accepted the promotion
+ * or triage auto-promotion did — this is called from inside
+ * `promoteProposalWithLease`'s ordinary accept path, below the drain/CLI
+ * layer, so both routes hit it the same way. Best-effort: a failure here
+ * only warns — the promotion itself already succeeded and is not undone —
+ * and a source already gone (raced with something else, or never existed)
+ * is silently skipped, not an error.
+ */
+function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Proposal): void {
+  if (!accepted.promotionSource) return;
+  try {
+    const sourceRef = parseRefInput(accepted.promotionSource);
+    const typeDir = stashDirFor(sourceRef.type);
+    if (!typeDir) return;
+    const sourcePath = assetPathForName(sourceRef.type, path.join(mutationTarget.source.path, typeDir), sourceRef.name);
+    if (!fs.existsSync(sourcePath)) return;
+    const candidate: MemoryPruneCandidate = {
+      ref: accepted.promotionSource,
+      reason: "promoted",
+      proposalId: accepted.id,
+      successorRefs: [accepted.ref],
+    };
+    const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, sourcePath);
+    const paths = [
+      sourcePath,
+      path.join(mutationTarget.source.path, record.archivedPath),
+      path.join(mutationTarget.source.path, record.auditPath),
+    ];
+    const twin = derivedTwinPath(sourcePath, sourceRef.type);
+    if (twin) {
+      const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
+      paths.push(
+        twin,
+        path.join(mutationTarget.source.path, twinRecord.archivedPath),
+        path.join(mutationTarget.source.path, twinRecord.auditPath),
+      );
+    }
+    commitWriteTargetBoundary(mutationTarget, `Retire promoted source ${accepted.promotionSource}`, { paths });
+  } catch (error) {
+    warn(
+      `[proposal] O1: failed to retire promotion source ${accepted.promotionSource} for ${accepted.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function promoteProposalWithLease(
   stashDir: string,
   config: AkmConfig,
@@ -1242,6 +1399,7 @@ async function promoteProposalWithLease(
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
   const proposal = getProposal(stashDir, id, ctx);
+  if (isRetireProposal(proposal)) return retireProposalWithLease(stashDir, config, proposal, options, ctx);
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   if (proposal.status === "accepted") {
     // Accepting again is a no-op, provided the published bytes are still there.
@@ -1290,6 +1448,163 @@ async function promoteProposalWithLease(
     ctx,
   );
   await indexWrittenProposalAsset(mutationTarget, assetPath);
+  if (accepted.status === "accepted" && accepted.source === "consolidate")
+    retirePromotionSource(mutationTarget, accepted);
+  return { proposal: accepted, assetPath, ref: accepted.ref };
+}
+
+/**
+ * Accept a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): no
+ * new content is written. The target is moved into the recoverable cleanup
+ * archive (`archiveCleanupCandidate`, taking its `.derived` twin along), and
+ * a `supersedes` judgement first writes the supersede edge on the retired
+ * (older) side so the archived copy preserves it. A target already gone
+ * (raced with something else) fails cleanly with a `UsageError`, the same
+ * clean-error idiom every other staleness check in this file uses — never an
+ * unhandled throw.
+ */
+async function retireProposalWithLease(
+  stashDir: string,
+  config: AkmConfig,
+  proposal: Proposal,
+  options: {
+    target?: string;
+    queueTarget?: ResolvedWriteTarget;
+    eventMetadata?: Record<string, unknown>;
+    gateDecision?: GateDecisionInput;
+  },
+  ctx?: ProposalsContext,
+): Promise<PromoteResult> {
+  const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
+  const ref = parseRefInput(proposal.ref);
+  if (proposal.status === "accepted") {
+    // Accepting again is a no-op, provided the target is still gone (retired) and its archive is still there.
+    const recorded = requireAcceptedTarget(proposal);
+    const assetPath = acceptedAssetPath(proposal, target, ref);
+    const archive = proposal.retiredArchive;
+    const archivedStill = archive?.dirs.every((dir) => fs.existsSync(path.join(target.source.path, dir))) === true;
+    if (fs.existsSync(assetPath) || !archivedStill) {
+      throw new UsageError(
+        `Accepted retire proposal ${proposal.id} no longer matches its archive.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    return { proposal, assetPath: recorded.path, ref: proposal.ref };
+  }
+  if (proposal.status !== "pending") {
+    throw new UsageError(
+      `Proposal ${proposal.id} is not pending (current status: ${proposal.status}). Only pending proposals can be accepted.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const assetPath = resolveAssetFilePathSafe(target.source, ref);
+  if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
+  if (!fs.existsSync(assetPath)) {
+    throw new UsageError(
+      `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists — it may already have been retired, promoted away, or removed by another proposal.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const currentBytes = fs.readFileSync(assetPath);
+  const fresh =
+    proposal.beforeHash === undefined ||
+    contentHash(currentBytes) === proposal.beforeHash ||
+    (proposal.beforeHashNormalized !== undefined &&
+      contentHash(currentBytes, "normalized") === proposal.beforeHashNormalized);
+  if (!fresh) {
+    throw new UsageError(
+      `Retire proposal target changed after proposal ${proposal.id} was created; refusing to retire newer content.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  assertAkmAssetWrite(target.source);
+  const mutationTarget = prepareWriteTargetForMutation(target);
+  const retirement = proposal.retirement;
+  const successorRef = retirement?.successorRef;
+  if (retirement?.judgeLabel === "supersedes" && successorRef) {
+    try {
+      writeSupersededEdge(assetPath, successorRef);
+    } catch (error) {
+      warn(
+        `[proposal] failed to write the supersede edge for ${proposal.id} (continuing with the retire): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  const originalHash = contentHash(currentBytes);
+  const candidate: MemoryPruneCandidate = {
+    ref: proposal.ref,
+    reason: retirement?.reason ?? "duplicate",
+    proposalId: proposal.id,
+    ...(successorRef ? { successorRefs: [successorRef] } : {}),
+  };
+  const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, assetPath);
+  const archiveDirs = [path.dirname(record.auditPath)];
+  const paths = [
+    assetPath,
+    path.join(mutationTarget.source.path, record.archivedPath),
+    path.join(mutationTarget.source.path, record.auditPath),
+  ];
+  const twin = derivedTwinPath(assetPath, ref.type);
+  if (twin) {
+    const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
+    archiveDirs.push(path.dirname(twinRecord.auditPath));
+    paths.push(
+      twin,
+      path.join(mutationTarget.source.path, twinRecord.archivedPath),
+      path.join(mutationTarget.source.path, twinRecord.auditPath),
+    );
+  }
+  commitWriteTargetBoundary(mutationTarget, `Retire ${proposal.ref}`, { paths });
+  const decidedAt = nowIso(ctx);
+  const accepted = withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const current = requireProposal(db, stashDir, proposal.id);
+      if (current.status === "accepted") return current;
+      if (current.status !== "pending") {
+        throw new Error(`Proposal ${proposal.id} changed status during acceptance (${current.status}).`);
+      }
+      const next: Proposal = {
+        ...proposal,
+        status: "accepted",
+        updatedAt: decidedAt,
+        review: { outcome: "accepted", decidedAt },
+        acceptedTarget: {
+          source: mutationTarget.source.name,
+          root: mutationTarget.source.path,
+          path: assetPath,
+          contentHash: originalHash,
+        },
+        retiredArchive: { dirs: archiveDirs },
+        ...(options.gateDecision
+          ? { gateDecision: { ...options.gateDecision, decidedAt: options.gateDecision.decidedAt ?? decidedAt } }
+          : {}),
+      };
+      upsertProposal(db, next, stashDir);
+      recordImproveLedgerDecision(db, {
+        proposalId: next.id,
+        stashDir,
+        ref: next.ref,
+        source: next.source,
+        outcome: "accepted",
+        at: decidedAt,
+      });
+      insertEventOnce(db, {
+        eventType: "promoted",
+        ts: decidedAt,
+        ref: next.ref,
+        metadata: {
+          proposalId: next.id,
+          source: next.source,
+          ...(next.sourceRun !== undefined ? { sourceRun: next.sourceRun } : {}),
+          assetPath,
+          retired: true,
+          ...(options.eventMetadata ? options.eventMetadata : {}),
+        },
+        idempotencyKey: `${next.id}:promoted`,
+      });
+      return next;
+    }),
+  );
   return { proposal: accepted, assetPath, ref: accepted.ref };
 }
 
@@ -1314,6 +1629,145 @@ export async function revertProposal(
   return withAssetMutationLease("proposal-revert", () => revertProposalWithLease(stashDir, config, id, options, ctx));
 }
 
+/**
+ * Revert an accepted `retire` proposal (0.9.17-alpha.9): move the archived
+ * file(s) — the retired asset, and its `.derived` twin when one was archived
+ * alongside it — back to where they lived, drop the timestamped archive
+ * dir(s), and undo any supersede edge accept wrote. Each archive dir is
+ * located from `retiredArchive.dirs` (set at accept time) and its own
+ * `cleanup.md` tombstone names the exact paths to restore — no re-scan of
+ * every tombstone in the archive.
+ */
+async function unretireProposalWithLease(
+  stashDir: string,
+  config: AkmConfig,
+  proposal: Proposal,
+  options: { target?: string; queueTarget?: ResolvedWriteTarget },
+  ctx?: ProposalsContext,
+): Promise<RevertResult> {
+  const ref = parseRefInput(proposal.ref);
+  if (!stashDirFor(ref.type)) {
+    throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
+  }
+  if (proposal.status !== "accepted" && proposal.status !== "reverted") {
+    throw new UsageError(
+      `only accepted proposals can be reverted (proposal ${proposal.id} status: ${proposal.status})`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const recorded = requireAcceptedTarget(proposal);
+  const boundTarget = resolveRecordedProposalTarget(config, proposal.id, recorded, options.target);
+  const assetPath = acceptedAssetPath(proposal, boundTarget, ref);
+  if (proposal.status === "reverted") {
+    return { proposal, assetPath, ref: proposal.ref };
+  }
+  const archive = proposal.retiredArchive;
+  if (!archive || archive.dirs.length === 0) {
+    throw new UsageError(
+      `no archive recorded for this retire proposal (id: ${proposal.id})`,
+      "MISSING_REQUIRED_ARGUMENT",
+      "A retire proposal's archive is recorded at accept time; a proposal missing it cannot be reverted through this path.",
+    );
+  }
+  const target = prepareWriteTargetForMutation(boundTarget);
+  const restoredPaths: string[] = [];
+  let primaryOriginalAbs: string | undefined;
+  for (const dirRel of archive.dirs) {
+    const dirAbs = path.join(target.source.path, dirRel);
+    const auditPath = path.join(dirAbs, "cleanup.md");
+    let tombstoneData: Record<string, unknown>;
+    try {
+      tombstoneData = parseFrontmatter(fs.readFileSync(auditPath, "utf8")).data;
+    } catch (error) {
+      throw new UsageError(
+        `Archive for proposal ${proposal.id} is missing its tombstone (${dirRel}); cannot revert: ${error instanceof Error ? error.message : String(error)}`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const originalRel = typeof tombstoneData.originalPath === "string" ? tombstoneData.originalPath : undefined;
+    const archivedRel = typeof tombstoneData.archivedPath === "string" ? tombstoneData.archivedPath : undefined;
+    if (!originalRel || !archivedRel) {
+      throw new UsageError(
+        `Archive tombstone for proposal ${proposal.id} (${dirRel}) is malformed.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const originalAbs = path.join(target.source.path, originalRel);
+    const archivedAbs = path.join(target.source.path, archivedRel);
+    if (fs.existsSync(originalAbs)) {
+      throw new UsageError(
+        `Cannot revert proposal ${proposal.id}: ${originalRel} already exists (created since retirement); refusing to overwrite it.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    if (!fs.existsSync(archivedAbs)) {
+      throw new UsageError(
+        `Cannot revert proposal ${proposal.id}: archived copy ${archivedRel} is missing.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    fs.mkdirSync(path.dirname(originalAbs), { recursive: true });
+    fs.renameSync(archivedAbs, originalAbs);
+    recordWrittenPath(archivedAbs);
+    recordWrittenPath(originalAbs);
+    restoredPaths.push(originalAbs, archivedAbs, auditPath);
+    fs.rmSync(dirAbs, { recursive: true, force: true });
+    if (path.resolve(originalAbs) === path.resolve(assetPath)) primaryOriginalAbs = originalAbs;
+  }
+  const retirement = proposal.retirement;
+  if (retirement?.judgeLabel === "supersedes" && retirement.successorRef && primaryOriginalAbs) {
+    try {
+      removeSupersededEdge(primaryOriginalAbs, retirement.successorRef);
+    } catch (error) {
+      warn(
+        `[proposal] failed to remove the supersede edge while reverting ${proposal.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: restoredPaths });
+  const decidedAt = nowIso(ctx);
+  const reverted = withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const current = requireProposal(db, stashDir, proposal.id);
+      if (current.status === "reverted") return current;
+      const next: Proposal = {
+        ...current,
+        status: "reverted",
+        updatedAt: decidedAt,
+        review: { outcome: "rejected", reason: "reverted: archived asset restored", decidedAt },
+      };
+      upsertProposal(db, next, stashDir);
+      recordImproveLedgerDecision(db, {
+        proposalId: next.id,
+        stashDir,
+        ref: next.ref,
+        source: next.source,
+        outcome: "rejected",
+        at: decidedAt,
+        detail: "reverted",
+      });
+      insertEventOnce(db, {
+        eventType: "proposal_reverted",
+        ts: decidedAt,
+        ref: next.ref,
+        metadata: { proposalId: next.id, source: next.source, assetPath },
+        idempotencyKey: `${next.id}:reverted`,
+      });
+      return next;
+    }),
+  );
+  try {
+    if (!(await indexWrittenAssets(target.source.path, restoredPaths, { bundleId: target.source.name }))) {
+      warn(`[proposals] ${restoredPaths.join(", ")} were restored but not indexed; run \`akm index\`.`);
+    }
+  } catch (error) {
+    warn(
+      `[proposals] restored paths were not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
+    );
+  }
+  return { proposal: reverted, assetPath, ref: proposal.ref };
+}
+
 async function revertProposalWithLease(
   stashDir: string,
   config: AkmConfig,
@@ -1322,6 +1776,7 @@ async function revertProposalWithLease(
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
   const proposal = getProposal(stashDir, id, ctx);
+  if (isRetireProposal(proposal)) return unretireProposalWithLease(stashDir, config, proposal, options, ctx);
   const ref = parseRefInput(proposal.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
@@ -1383,7 +1838,11 @@ export function diffProposal(
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   const targetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
   const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;
-  const proposed = proposalContent(proposal);
+  // A retire proposal's primary change deletes its target rather than
+  // writing content: "proposed" is empty and the diff shows the whole body
+  // being removed, reusing the ordinary unified-diff formatter instead of
+  // proposalContent() (which has nothing to read for a delete).
+  const proposed = isRetireProposal(proposal) ? "" : proposalContent(proposal);
   return {
     existing,
     proposed,

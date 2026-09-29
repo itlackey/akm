@@ -117,22 +117,34 @@ flowchart TD
 
         subgraph PHASE_A["Phase A — Plan generation (chunked)"]
             CON_E[split into configured chunks] --> CON_F[For each chunk:\nchatCompletion with frozen consolidate connection]
-            CON_F --> CON_G[parse and validate ops:\nmerge / delete / promote / contradict]
+            CON_F --> CON_G[parse and validate ops:\npromote only]
             CON_G --> CON_H{2+ consecutive failures?} -- yes --> CON_ABORT[push warning, break]
             CON_H -- no --> CON_F
         end
 
         CON_ABORT --> CON_MERGE
-        CON_G --> CON_MERGE[mergePlans: deduplicate ops\nmerge wins over delete]
+        CON_G --> CON_MERGE[mergePlans: one promotion per\nsource memory, last chunk wins]
         CON_MERGE --> CON_DRY{dryRun?} -- yes --> CON_DRYRESULT([return planned ops, no writes])
         CON_DRY -- no --> PHASE_B
 
-        subgraph PHASE_B["Phase B — Advisory result and proposal emission"]
-            PHASE_B_A[Keep merge / delete / contradict\nas advisory planned operations]
-            PHASE_B_A --> PHASE_B_PRO[For each promote op:\nidempotency check and emitProposal\nsource: consolidate]
+        subgraph PHASE_B["Phase B — Proposal emission"]
+            PHASE_B_PRO[For each promote op:\nidempotency check and emitProposal\nsource: consolidate]
         end
 
-        PHASE_B_PRO --> CON_DONE[return ConsolidateResult]
+        PHASE_B_PRO --> CON_DONE
+
+        subgraph PAIR_PASS["Pair pass (alpha.9), alongside Phase A/B"]
+            PAIR_INIT[Initiators: changed-or-new memory,\nflat knowledge or lesson, in retrieval scope]
+            PAIR_INIT --> PAIR_CAND[Candidates: k=5 nearest by stored vector,\nsame bundle + memory tier, cosine >= T_pair]
+            PAIR_CAND --> PAIR_JUDGE[One LLM call per pair:\nconsolidate-pair.md, 6-label schema]
+            PAIR_JUDGE --> PAIR_OUT{judge label}
+            PAIR_OUT -- duplicate / subsumed / supersedes --> PAIR_PROPOSE[emitProposal: retire,\nsource: consolidate]
+            PAIR_OUT -- overlap / unrelated / contradicts --> PAIR_NOACTION[judged_no_action\nno 7-day timer — content change only]
+        end
+
+        PAIR_PROPOSE --> CON_DONE
+        PAIR_NOACTION --> CON_DONE
+        CON_DONE[return ConsolidateResult]
     end
 
     CONSOLIDATE --> CON_A
@@ -220,24 +232,78 @@ per-asset loop.
 1. Load eligible non-`.derived` memory assets from the SQLite index.
 2. Chunk memories using the selected strategy's configured limit. For each
    chunk, call `chatCompletion` with the frozen consolidate LLM connection and
-   `CONSOLIDATE_SYSTEM_PROMPT`, requesting a JSON plan of `merge` / `delete` /
-   `promote` / `contradict` operations.
+   `CONSOLIDATE_SYSTEM_PROMPT`, requesting a JSON plan of `promote`
+   operations (the only op the schema offers; `merge`/`delete`/`contradict`
+   were retired in 0.9.17-alpha.1 — they cost thousands of completion tokens
+   and were never executed).
 3. Parse and validate each op, then use `mergePlans` to deduplicate conflicts
    across chunks.
 
-**Phase B — Advisory result and proposal emission:**
+**Phase B — Proposal emission:**
 
-1. Return merge, delete, and contradict operations as advisory planned work;
-   consolidation does not mutate memory assets.
-2. For each promote op, perform idempotency checks and emit a reviewable
+1. For each promote op, perform idempotency checks and emit a reviewable
    proposal with `source: "consolidate"`.
-3. Advance the consolidation watermark only when every chunk completed, no
-   advisory operation remains unapplied, and every promotion proposal was
-   emitted or deterministically deduplicated.
+2. Advance the consolidation watermark only when every chunk completed and
+   every promotion proposal was emitted or deterministically deduplicated.
 
 **What it writes:**
 - A durable row in the `proposals` table in `state.db` for each emitted
   `promote` op, partitioned by bundle path.
+
+**Promotion retires its source (O1, alpha.9):** when an `akm proposal accept`
+promotes a consolidate `promote` proposal — by a person or by triage
+auto-promotion — it archives the source memory, and its `.derived` twin if
+one exists, through the same path the pair pass uses below
+(`archiveCleanupCandidate`, reason `promoted`, `successorRefs` the new
+knowledge ref). A promotion no longer leaves a memory/knowledge duplicate
+behind. This runs inside `promoteProposal`, not inside `akmConsolidate`
+itself; a failure to archive the source only warns, it does not undo the
+promotion.
+
+### consolidate pair pass (alpha.9)
+
+A second pass inside `akmConsolidate`, alongside Phase A/B above, over the
+same enabled gate. It replaces nothing the promote pass does; it adds
+duplicate, subsumed and superseding retirement, review-gated.
+
+1. **Initiators:** memory (base or `.derived`), flat `knowledge/` or lesson
+   assets in the primary writable bundle, in the retrieval scope, changed
+   since their last pair-pass ledger attempt (ledger source
+   `consolidate-pair`, kept apart from the promote pass's `consolidate` rows)
+   or never attempted.
+2. **Candidates:** each initiator's 5 nearest neighbours by stored vector
+   (`getNeighborsByEntryId`), same bundle, memory tier only (structured
+   knowledge in subfolders is excluded), minus its own `.derived` twin or
+   parent, at cosine >= `T_PAIR` (0.93; an initiator with no prior pair-pass
+   attempt needs >= `BACKFILL_FLOOR`, 0.95 — the one-time backlog is judged
+   at the more conservative bar). At most `MAX_PAIRS_PER_RUN` (300) pairs a
+   run, highest cosine first, each unordered pair judged once.
+3. **Judge:** one LLM call per pair (`src/assets/prompts/consolidate-pair.md`,
+   the calibrated relation prompt, unchanged) through the consolidate
+   process's own engine and concurrency, labelling the pair one of
+   `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap` or
+   `unrelated`.
+4. **Outcome:** `duplicate`, `subsumed` and `supersedes` mint one `retire`
+   proposal (source `consolidate`) for the side that does not survive —
+   never a `captureMode: hot` memory, never a `.derived` memory whose parent
+   still exists, never across bundles, never when either side already has a
+   pending retire proposal. `contradicts`, `overlap` and `unrelated` are
+   recorded `judged_no_action` with no proposal; `contradicts` is counted in
+   the run report and stays a human decision.
+5. **Ledger:** a pair-pass `judged_no_action` records outcome
+   `judged_no_action_stable`, which carries no 7-day revisit timer — only a
+   content change on the initiator makes it eligible again.
+
+**Retire proposals (`akm proposal accept`/`revert`):** accepting one moves
+the retired asset (and its `.derived` twin) into the existing
+`.akm/memory-cleanup/archive/` through the generalized
+`archiveCleanupCandidate`, the one retirement encoding (D27) — never
+`.akm/archive/`. A `supersedes` proposal first writes the supersede edge on
+the older asset (`writeSupersededEdge`), then archives it. `akm proposal
+revert` moves the archived files back and drops any supersede edge it wrote.
+Triage never auto-accepts a `retire` proposal, whatever `applyMode` says —
+review reuses `akm proposal list --queue consolidate` / `show` / `diff` /
+bulk `accept --generator consolidate`.
 
 ### improve-owned maintenance
 

@@ -388,9 +388,10 @@ review-first config correctly shows `queue`.
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
 | `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
 
-Consolidation remains enabled with autonomy off because merge, delete, and
-contradiction operations are advisory; promotion only emits a reviewable
-proposal.
+Consolidation remains enabled with autonomy off: both its passes (promotion,
+and the pair pass's duplicate/subsumed/supersedes judging) only ever emit a
+reviewable proposal, and a pair-pass `retire` proposal is never auto-accepted
+by `triage` `applyMode: "promote"` regardless of this gate.
 
 Because the gate is applied before the LLM preflight, a review-first workspace
 also needs fewer engines configured: a strategy whose only model-backed process

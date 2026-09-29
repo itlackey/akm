@@ -55,6 +55,16 @@ describe("nextEligibleAt — the one cadence function", () => {
     expect(nextEligibleAt("reflect", "failed", T0)).toBeNull();
     expect(nextEligibleAt("reflect", "rejected", "not-a-date")).toBeNull();
   });
+
+  test("judged_no_action_stable (the consolidate pair pass) outlasts the 7-day revisit cadence", () => {
+    // #A9 pair pass: unlike judged_no_action, this outcome must not become
+    // eligible again just because 7 (or even 365) days passed — only a
+    // content-change signal may lift it (isLedgerBlocked, below).
+    expect(nextEligibleAt("consolidate-pair", "judged_no_action_stable", T0)).toBe(plusDays(T0, 36_500));
+    expect(nextEligibleAt("consolidate-pair", "judged_no_action_stable", T0)).not.toBe(
+      nextEligibleAt("consolidate", "judged_no_action", T0),
+    );
+  });
 });
 
 describe("isLedgerBlocked", () => {
@@ -84,6 +94,25 @@ describe("isLedgerBlocked", () => {
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1))).toBe(true);
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1), plusDays(T0, 0.5))).toBe(false);
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1), plusDays(T0, -1))).toBe(true);
+  });
+
+  test("judged_no_action_stable stays blocked well past the old 7-day window, and only a content signal lifts it", () => {
+    const stableRow = {
+      stashDir: "/s",
+      ref: "memories/a",
+      source: "consolidate-pair",
+      lastAttemptAt: T0,
+      outcome: "judged_no_action_stable" as const,
+      nextEligibleAt: nextEligibleAt("consolidate-pair", "judged_no_action_stable", T0),
+      proposalId: null,
+      detail: null,
+    };
+    // Past the OLD judged_no_action window, still blocked: no time-based expiry.
+    expect(isLedgerBlocked(stableRow, plusDays(T0, 30))).toBe(true);
+    // A content change after the attempt lifts it, same as any other soft outcome.
+    expect(isLedgerBlocked(stableRow, plusDays(T0, 30), plusDays(T0, 1))).toBe(false);
+    // An older signal does not.
+    expect(isLedgerBlocked(stableRow, plusDays(T0, 30), plusDays(T0, -1))).toBe(true);
   });
 });
 

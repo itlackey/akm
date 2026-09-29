@@ -19,6 +19,7 @@ import { loadConfig } from "../../core/config/config";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { isRetireProposal } from "./proposal-types";
 import {
   diffProposal,
   listProposals,
@@ -126,10 +127,14 @@ export function akmProposalShow(options: ProposalShowOptions): ProposalShowResul
   const proposal = resolveProposalId(stash, options.id);
   let validation = validateProposal(proposal);
   // An explicit stashDir without config is an in-process storage test seam; it
-  // has no authenticated write-target context to preflight against.
+  // has no authenticated write-target context to preflight against. A retire
+  // proposal writes no content — preflightProposalPromotion's stamp/lint
+  // machinery is create/update-shaped and has nothing meaningful to check
+  // here; `diff` already shows the body being retired.
   if (
     validation.ok &&
     proposal.status === "pending" &&
+    !isRetireProposal(proposal) &&
     (options.config !== undefined || options.stashDir === undefined)
   ) {
     try {

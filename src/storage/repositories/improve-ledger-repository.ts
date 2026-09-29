@@ -34,6 +34,7 @@ export const IMPROVE_LEDGER_OUTCOMES = [
   "unchanged",
   "failed",
   "judged_no_action",
+  "judged_no_action_stable",
 ] as const;
 
 export type ImproveLedgerOutcome = (typeof IMPROVE_LEDGER_OUTCOMES)[number];
@@ -69,6 +70,16 @@ export const LEDGER_DEFAULT_REJECTION_WINDOW_DAYS = 7;
 export const LEDGER_EXPIRED_GRACE_DAYS = 1;
 /** Revisit cadence for a ref the stage looked at and had nothing to do (or is still pending). */
 export const LEDGER_REVISIT_CADENCE_DAYS = 7;
+/**
+ * Effectively-unbounded window for `judged_no_action_stable` (the consolidate
+ * pair pass's "nothing to do" outcome): only a content change lifts it
+ * ({@link isLedgerBlocked}'s signal path), never time alone. A real "no
+ * expiry" value would make {@link nextEligibleAt} return `null`, which
+ * `isLedgerBlocked` treats as "never blocked" (see its first line) — the
+ * opposite of what a stable no-action row needs. A century-scale day count
+ * keeps the same signal-lift codepath instead of adding a second one.
+ */
+export const LEDGER_STABLE_REVISIT_DAYS = 36_500;
 
 /**
  * Outcomes whose window a fresh signal on the asset (new feedback, a content
@@ -93,6 +104,8 @@ function windowDays(source: string, outcome: ImproveLedgerOutcome): number | nul
     case "proposed":
     case "review_needed":
       return LEDGER_REVISIT_CADENCE_DAYS;
+    case "judged_no_action_stable":
+      return LEDGER_STABLE_REVISIT_DAYS;
     case "accepted":
     case "failed":
       return null;

@@ -21,13 +21,24 @@ import { assertNever } from "./assert";
 // ImproveMemoryCleanupResult needs these shapes, so they live here rather
 // than being imported UP from the command module that consumes this file.
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
+/**
+ * Retire-proposal-caused archive reasons (0.9.17-alpha.9): the consolidate
+ * pair pass's `duplicate` / `subsumed` / `supersedes-translated-to-superseded`
+ * judgements, and O1's `promoted` (a promotion retiring its source memory).
+ */
+export type RetireArchiveReason = "duplicate" | "subsumed" | "superseded" | "promoted";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
 
 export interface MemoryPruneCandidate {
   ref: string;
-  parentRef: string;
-  reason: MemoryPruneReason;
+  /** Absent for a retire-proposal-caused archive (alpha.9): it has no `.derived` family to key by. */
+  parentRef?: string;
+  reason: MemoryPruneReason | RetireArchiveReason;
   survivorRef?: string;
+  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  proposalId?: string;
+  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  successorRefs?: string[];
 }
 
 export interface MemoryConsolidationCandidate {
@@ -96,8 +107,8 @@ export interface DeadUrlCoverage {
 
 export interface ArchivedMemoryCleanupRecord {
   ref: string;
-  parentRef: string;
-  reason: MemoryPruneReason;
+  parentRef?: string;
+  reason: MemoryPruneReason | RetireArchiveReason;
   beliefState: "archived";
   previousBeliefState: Exclude<MemoryBeliefState, "archived">;
   survivorRef?: string;
@@ -105,6 +116,17 @@ export interface ArchivedMemoryCleanupRecord {
   archivedPath: string;
   auditPath: string;
   archivedAt: string;
+  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  proposalId?: string;
+  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  successorRefs?: string[];
+  /**
+   * Retire-proposal path only (alpha.9): same instant as `archivedAt`, named
+   * per the plan so the (later) purge sweep can key its 30-day grace off one
+   * stable field name without caring whether an archive came from memory
+   * cleanup or a retire proposal.
+   */
+  retiredAt?: string;
 }
 
 export interface ImproveEligibleRef {

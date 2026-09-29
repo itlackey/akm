@@ -38,7 +38,7 @@ import {
 } from "../../integrations/agent/runner-dispatch";
 import { errMessage, noticeSet } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { STALE_TARGET_GATE_REASON } from "./proposal-types";
+import { isRetireProposal, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
   listProposals,
   listProposalsReadOnly,
@@ -417,6 +417,12 @@ export async function drainProposals(
   const accepts: Array<{ id: string; reason: string }> = [];
   const empties: string[] = [];
   for (const proposal of pending) {
+    // A consolidate pair-pass `retire` proposal is never auto-decided here,
+    // whatever `applyMode` says (alpha.9 brief §A "Review"; spec §25.6):
+    // untouched, still pending, waiting for a direct `akm proposal accept`.
+    // Checked before isEmptyDiff, which reads proposalContent() and has
+    // nothing meaningful to read on a delete-primary change anyway.
+    if (isRetireProposal(proposal)) continue;
     const decision = proposal.gateDecision;
     // Another gate's rejection stands; a human-review deferral from the distill
     // quality gate is left for that human.
