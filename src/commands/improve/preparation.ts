@@ -145,13 +145,7 @@ export function pickDefined<T extends object, K extends keyof T>(
   return out;
 }
 
-export const CONSOLIDATION_CONFIG_KEYS = [
-  "enabled",
-  "minPoolSize",
-  "limit",
-  "maxChunkSize",
-  "incrementalSince",
-] as const;
+export const CONSOLIDATION_CONFIG_KEYS = ["enabled", "minPoolSize", "limit", "maxChunkSize"] as const;
 
 /** Emit an aggregate `improve_skipped` row (never one per ref). */
 export function recordImproveSkip(
@@ -207,8 +201,6 @@ function planConsolidationPass(args: {
           writeTarget: options.writeTarget,
           target: options.target,
           limit: processConfig?.limit,
-          incrementalSince: processConfig?.incrementalSince,
-          neighborsPerChanged: processConfig?.neighborsPerChanged,
           maxChunkSize: processConfig?.maxChunkSize,
         },
         primaryStashDir,
@@ -310,8 +302,6 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
         existingKnowledgeBodyHashes,
         sourceRun: `consolidate-${Date.now()}`,
         limit: processConfig?.limit,
-        incrementalSince: processConfig?.incrementalSince,
-        neighborsPerChanged: processConfig?.neighborsPerChanged,
         maxChunkSize: processConfig?.maxChunkSize,
         signal: args.budgetSignal,
         p90ChunkSecondsDefault: processConfig?.p90ChunkSecondsDefault,

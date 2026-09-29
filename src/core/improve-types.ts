@@ -223,7 +223,6 @@ export interface ImproveExecutionPlan {
       minPoolSize?: number;
       limit?: number;
       maxChunkSize?: number;
-      incrementalSince?: string;
     };
     effective: { enabled: boolean; minPoolSize: number; limit?: number; chunkSize: number };
     poolSize: number;
@@ -482,13 +481,13 @@ export interface ConsolidatePairPassResult {
  */
 export interface ConsolidatePerfTelemetry {
   /**
-   * Pool size BEFORE incremental/limit narrowing.
+   * Pool size BEFORE limit narrowing.
    * Measures the raw candidate set loaded from disk this run.
    */
   dedupPoolSize?: number;
   /**
-   * Pool size AFTER incremental and limit filtering — the memories actually
-   * sent to the LLM for a fresh judgment.
+   * Pool size AFTER limit filtering — the memories actually sent to the LLM
+   * for a fresh judgment.
    */
   llmPoolSize?: number;
   /**

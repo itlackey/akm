@@ -131,10 +131,7 @@ function validateConsolidationPlan(value: unknown): void {
     ]),
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
-  requireExactFields(
-    value.configured,
-    new Set(["enabled", "minPoolSize", "limit", "maxChunkSize", "incrementalSince"]),
-  );
+  requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
   }
@@ -142,9 +139,6 @@ function validateConsolidationPlan(value: unknown): void {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
       fail(`plan.consolidation.configured.${field} must be a number`);
     }
-  }
-  if (value.configured.incrementalSince !== undefined && typeof value.configured.incrementalSince !== "string") {
-    fail("plan.consolidation.configured.incrementalSince must be a string");
   }
   if (!isRecord(value.effective)) fail("plan.consolidation.effective must be an object");
   requireExactFields(value.effective, new Set(["enabled", "minPoolSize", "limit", "chunkSize"]));
