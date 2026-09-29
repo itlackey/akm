@@ -23,6 +23,7 @@ import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
 import { walkMarkdownFiles } from "../../../indexer/walk/walker";
+import { isGitBackedStash } from "../../../sources/providers/git-stash";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -697,6 +698,116 @@ export function archiveCleanupCandidate(
       ? { successorRefs: candidate.successorRefs }
       : {}),
   };
+}
+
+/**
+ * How long a retirement's archived bytes stay on disk after `retiredAt`
+ * before the purge sweep deletes them. Git history keeps the bytes (D27;
+ * plan §5.4 "Purge").
+ */
+export const RETIRE_GRACE_DAYS = 30;
+
+const RETIRE_GRACE_MS = RETIRE_GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+/** The one file every archive dir keeps forever — never deleted by the purge sweep. */
+const TOMBSTONE_FILENAME = "cleanup.md";
+
+export interface ArchivePurgeResult {
+  /** Archive directories whose bytes were purged this run. */
+  purgedDirs: number;
+  /** Individual files deleted (a retirement may archive more than one, e.g. a `.derived` twin). */
+  purgedFiles: number;
+}
+
+const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFiles: 0 };
+
+/**
+ * The purge sweep (0.9.17-alpha.9 plan §5.4, §8 step 8): deterministic, no
+ * LLM, run once at improve-run start. Deletes the archived asset bytes —
+ * never `cleanup.md` — of every retirement whose tombstone `retiredAt` is
+ * more than {@link RETIRE_GRACE_DAYS} old. Git history keeps the bytes
+ * (D27); the tombstone, and ref resolution through it
+ * (`core/asset/memory-archive.ts`), are unaffected — only the tombstone's
+ * own `originalPath` file(s) are removed.
+ *
+ * Git-backed bundles only: a bundle with no `.git` of its own has no history
+ * to fall back on, so its archive is left untouched (`akm health` reports
+ * its size instead — see `health/archive-usage.ts`). Every deleted path is
+ * journaled (`recordWrittenPath`) so the end-of-run sync commits the
+ * removal, the same way it commits the archive move itself (#652).
+ *
+ * A memory-cleanup family-prune archive (not a retire proposal's) carries no
+ * `retiredAt` in its tombstone at all, so it is never a candidate here —
+ * this sweep only ever touches retirements, never that older archive class.
+ */
+export function purgeGracedArchive(stashDir: string, now: Date = new Date()): ArchivePurgeResult {
+  if (!isGitBackedStash(stashDir)) return EMPTY_ARCHIVE_PURGE_RESULT;
+  const archiveRoot = path.join(stashDir, MEMORY_ARCHIVE_REL);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(archiveRoot);
+  } catch {
+    return EMPTY_ARCHIVE_PURGE_RESULT; // no archive yet
+  }
+  const cutoffMs = now.getTime() - RETIRE_GRACE_MS;
+  let purgedDirs = 0;
+  let purgedFiles = 0;
+  for (const name of entries) {
+    const dir = path.join(archiveRoot, name);
+    let data: Record<string, unknown>;
+    try {
+      data = parseFrontmatter(fs.readFileSync(path.join(dir, TOMBSTONE_FILENAME), "utf8")).data;
+    } catch {
+      continue; // not a tombstone dir, or unreadable — never guess
+    }
+    const retiredAt = data.retiredAt;
+    if (typeof retiredAt !== "string") continue; // family-prune archive, not a retirement — out of scope
+    const retiredMs = Date.parse(retiredAt);
+    if (!Number.isFinite(retiredMs) || retiredMs >= cutoffMs) continue; // "more than" the grace period — exactly at it is not enough
+    let children: string[];
+    try {
+      children = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    let purgedAnyInThisDir = false;
+    for (const child of children) {
+      if (child === TOMBSTONE_FILENAME) continue;
+      const childPath = path.join(dir, child);
+      // The archived original path may be nested (e.g. `memories/sub/foo.md`
+      // under this dir) — the journal (like git) tracks FILES, so every leaf
+      // under childPath is recorded individually, not the directory itself.
+      const filesUnderChild = listFilesRecursive(childPath);
+      try {
+        fs.rmSync(childPath, { recursive: true, force: true });
+        for (const filePath of filesUnderChild) recordWrittenPath(filePath);
+        purgedFiles += filesUnderChild.length;
+        purgedAnyInThisDir = purgedAnyInThisDir || filesUnderChild.length > 0;
+      } catch {
+        // Best-effort: a locked or already-gone entry is skipped, not fatal to the run.
+      }
+    }
+    if (purgedAnyInThisDir) purgedDirs++;
+  }
+  return { purgedDirs, purgedFiles };
+}
+
+/** Every file under `target` (itself included if it's a file), for individual journaling before a recursive delete. */
+function listFilesRecursive(target: string): string[] {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return [];
+  }
+  if (!stat.isDirectory()) return stat.isFile() ? [target] : [];
+  let children: string[];
+  try {
+    children = fs.readdirSync(target);
+  } catch {
+    return [];
+  }
+  return children.flatMap((child) => listFilesRecursive(path.join(target, child)));
 }
 
 function persistBeliefStateTransition(filePath: string, transition: MemoryBeliefStateTransition): void {

@@ -26,6 +26,7 @@ import { getAllEntries } from "../storage/repositories/index-entries-repository"
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { getStateDbFreelistInfo, runStateDbQuickCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
+import { collectArchiveUsageAdvisory } from "./health/archive-usage";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -399,6 +400,17 @@ function gatherAncillaryAdvisories(
   try {
     const typeDirMismatch = detectTypeDirectoryDisagreements(options.stashDir ?? resolveStashDir());
     if (typeDirMismatch) advisories.push(typeDirMismatch);
+  } catch {
+    // Non-fatal.
+  }
+
+  // Item 4 (alpha.9 plan §5.4/§8 step 8): a bundle with no git history of its
+  // own never gets the purge sweep, so its memory-cleanup archive only ever
+  // grows — report its size and file count instead. Best-effort — an
+  // unreadable archive must not abort the health report.
+  try {
+    const archiveUsage = collectArchiveUsageAdvisory(options.stashDir ?? resolveStashDir());
+    if (archiveUsage) advisories.push(archiveUsage);
   } catch {
     // Non-fatal.
   }

@@ -82,7 +82,12 @@ import { buildImproveUsageReport } from "./improve-usage-report";
 import { lastAttemptByRef, loadLedgerSnapshot } from "./ledger";
 import { improveLockPath, releaseImproveLock, tryAcquireImproveLock } from "./locks";
 import { runImproveLoopStage, runImprovePostLoopStage } from "./loop-stages";
-import { analyzeMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
+import {
+  analyzeMemoryCleanup,
+  type MemoryCleanupPlan,
+  purgeGracedArchive,
+  RETIRE_GRACE_DAYS,
+} from "./memory/memory-improve";
 import { buildImproveExecutionPlan } from "./planner";
 import { CONSOLIDATION_CONFIG_KEYS, pickDefined, recordImproveSkip, runImprovePreparationStage } from "./preparation";
 import { DEFAULT_DUE_DAYS, filterProactiveDue } from "./proactive-maintenance";
@@ -261,6 +266,23 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       initialGitPaths =
         syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
       journal = beginWriteProvenance();
+
+      // Step 8 (alpha.9 plan §5.4): the purge sweep. Deterministic, no LLM,
+      // and first — before anything else this run might touch the archive
+      // for. Git-backed bundles only; a bundle with no git history of its
+      // own is left untouched (akm health reports its size instead).
+      if (setup.primaryStashDir) {
+        try {
+          const purge = purgeGracedArchive(setup.primaryStashDir);
+          if (purge.purgedFiles > 0) {
+            info(
+              `[improve] archive purge: ${purge.purgedFiles} file(s) across ${purge.purgedDirs} retirement(s) past the ${RETIRE_GRACE_DAYS}d grace period removed`,
+            );
+          }
+        } catch (err) {
+          preEnsureCleanupWarnings.push(`archive purge failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
 
       // The index is made current BEFORE triage (R6): triage promotes into the
       // stash, and a reindex after it would always find fresh work.
