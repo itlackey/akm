@@ -45,6 +45,7 @@ import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { UsageError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
+import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -89,6 +90,35 @@ function retirement(
     reason: "duplicate",
     ...overrides,
   };
+}
+
+function archiveRootOf(): string {
+  return path.join(storage.stashDir, ".akm", "memory-cleanup", "archive");
+}
+
+/**
+ * Reads every archive dir's tombstone (the same `cleanup.md` frontmatter
+ * `unretireProposalWithLease` itself reads) to find the one whose recorded
+ * `originalPath` is `originalRel` — used to simulate a revert crash by
+ * performing exactly the rename the real revert path would perform for one
+ * archive dir, without touching the others.
+ */
+function findArchiveEntry(originalRel: string): { dirAbs: string; originalAbs: string; archivedAbs: string } {
+  const root = archiveRootOf();
+  for (const name of fs.readdirSync(root)) {
+    const dirAbs = path.join(root, name);
+    const auditPath = path.join(dirAbs, "cleanup.md");
+    if (!fs.existsSync(auditPath)) continue;
+    const data = parseFrontmatter(fs.readFileSync(auditPath, "utf8")).data;
+    if (data.originalPath === originalRel) {
+      return {
+        dirAbs,
+        originalAbs: path.join(storage.stashDir, String(data.originalPath)),
+        archivedAbs: path.join(storage.stashDir, String(data.archivedPath)),
+      };
+    }
+  }
+  throw new Error(`no archive entry found for ${originalRel}`);
 }
 
 describe("createRetireProposal — mint", () => {
@@ -261,34 +291,117 @@ describe("akm proposal accept on a retire proposal", () => {
     expect(second.proposal.status).toBe("accepted");
   });
 
-  test("S5 crash recovery: a target already archived under THIS proposal's own id finishes the accept instead of refusing it as stale", async () => {
-    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
-    const newPath = writeAsset("memories/new-note.md", "description: a new note");
-    const config = makeConfig(storage.stashDir);
-    const proposal = createRetireProposal(storage.stashDir, {
-      ref: "memories/old-note",
-      source: "consolidate-pair",
-      retirement: retirement({
-        retiredPath: oldPath,
-        retiredRef: "memories/old-note",
-        successorPath: newPath,
-        successorRef: "memories/new-note",
-      }),
-    });
-    // Simulate the crash window: the archive move (exactly what accept's own
-    // internals do) already happened, but nothing ever recorded the
-    // decision — the proposal is still "pending".
-    archiveCleanupCandidate(
-      storage.stashDir,
-      { ref: "memories/old-note", reason: "duplicate", proposalId: proposal.id, successorRefs: ["memories/new-note"] },
-      oldPath,
-    );
-    expect(fs.existsSync(oldPath)).toBe(false);
-    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+  describe("S5 crash recovery (second review round: intent-based, resume-safe)", () => {
+    test("intent recorded but no file moved yet — accept resumes from it and finishes", async () => {
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: oldPath,
+          retiredRef: "memories/old-note",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      const backupContent = fs.readFileSync(oldPath, "utf8");
+      // Simulate the crash: phase 1 (record intent) finished, phase 2 (move) never started.
+      const db = openStateDatabase();
+      try {
+        upsertProposal(
+          db,
+          { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } },
+          storage.stashDir,
+        );
+      } finally {
+        db.close();
+      }
+      expect(fs.existsSync(oldPath)).toBe(true); // nothing moved yet
+      expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
 
-    const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
-    expect(result.proposal.status).toBe("accepted");
-    expect(result.proposal.retiredArchive?.dirs).toHaveLength(1);
+      const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("accepted");
+      expect(fs.existsSync(oldPath)).toBe(false);
+      expect(result.proposal.retiredArchive?.dirs).toHaveLength(1);
+      expect(result.proposal.backupContent).toBe(backupContent);
+    });
+
+    test("primary already archived under this proposal's own id, twin not yet — accept resumes and finishes both", async () => {
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+      const twinPath = writeAsset(
+        "memories/old-note.derived.md",
+        "inferred: true\nsource: memories/old-note\ndescription: derived",
+      );
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: oldPath,
+          retiredRef: "memories/old-note",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      const backupContent = fs.readFileSync(oldPath, "utf8");
+      const db = openStateDatabase();
+      try {
+        upsertProposal(
+          db,
+          { ...proposal, retireAcceptIntent: { assetPath: oldPath, twinPath, backupContent } },
+          storage.stashDir,
+        );
+      } finally {
+        db.close();
+      }
+      // Simulate phase 2 partially done: primary archived under this
+      // proposal's id (exactly what accept's own internals do), twin
+      // untouched at its original location.
+      archiveCleanupCandidate(
+        storage.stashDir,
+        {
+          ref: "memories/old-note",
+          reason: "duplicate",
+          proposalId: proposal.id,
+          successorRefs: ["memories/new-note"],
+        },
+        oldPath,
+      );
+      expect(fs.existsSync(oldPath)).toBe(false);
+      expect(fs.existsSync(twinPath)).toBe(true);
+      expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+
+      const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("accepted");
+      expect(fs.existsSync(twinPath)).toBe(false);
+      expect(result.proposal.retiredArchive?.dirs).toHaveLength(2);
+      // Recovered from the recorded intent, never guessed from the archived copy.
+      expect(result.proposal.backupContent).toBe(backupContent);
+    });
+
+    test("a target gone with no recorded intent still refuses cleanly (not our own crash)", async () => {
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: oldPath,
+          retiredRef: "memories/old-note",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      fs.rmSync(oldPath); // something else removed it — no intent was ever recorded
+      await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toBeInstanceOf(
+        UsageError,
+      );
+      expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    });
   });
 
   describe("B2: accept-time freshness — both sides, not just the retired one", () => {
@@ -537,6 +650,47 @@ describe("akm proposal revert on a retire proposal", () => {
     // All-or-nothing: the PRIMARY was never moved back either, and both archive dirs are untouched.
     expect(fs.existsSync(parentPath)).toBe(false);
     expect(fs.readdirSync(archiveRoot)).toHaveLength(2);
+  });
+
+  describe("S5 crash recovery on revert (second review round: resume-safe, P4)", () => {
+    test("primary already moved back, twin still archived — revert resumes and finishes both", async () => {
+      const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const twinPath = writeAsset(
+        "memories/parent.derived.md",
+        "inferred: true\nsource: memories/parent\ndescription: derived child",
+      );
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/parent",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: parentPath,
+          retiredRef: "memories/parent",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(fs.existsSync(parentPath)).toBe(false);
+      expect(fs.existsSync(twinPath)).toBe(false);
+
+      // Simulate a crash mid-revert: the primary's rename back already
+      // succeeded (an earlier, interrupted revert attempt of our own), the
+      // twin's archived copy is untouched, and the DB write never happened —
+      // status is still "accepted".
+      const primaryEntry = findArchiveEntry("memories/parent.md");
+      fs.renameSync(primaryEntry.archivedAbs, primaryEntry.originalAbs);
+      expect(fs.existsSync(parentPath)).toBe(true);
+      expect(fs.existsSync(twinPath)).toBe(false);
+      expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
+
+      const result = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("reverted");
+      expect(fs.existsSync(parentPath)).toBe(true); // not re-moved, not an error
+      expect(fs.existsSync(twinPath)).toBe(true); // the one still-pending move completes
+      expect(fs.existsSync(archiveRootOf()) ? fs.readdirSync(archiveRootOf()) : []).toEqual([]);
+    });
   });
 });
 

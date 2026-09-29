@@ -77,6 +77,7 @@ import {
   type ProposalPayload,
   type ProposalSource,
   type ProposalStatus,
+  type RetireAcceptIntent,
   type RetirementMetadata,
   STALE_TARGET_GATE_REASON,
 } from "./proposal-types";
@@ -620,9 +621,15 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
     if (exact) return exact;
     if (idOrRef.includes(":") || idOrRef.includes("/")) {
       const wantRef = filterRefIdentity(idOrRef);
+      // Should-fix 7: by-ref resolution never picks a retire proposal — the
+      // newest pending proposal for a ref could be a `consolidate-pair`
+      // retirement rather than the reflect/distill edit a person typed the
+      // ref to accept, and accepting it archives the asset instead. A retire
+      // is reached by its own proposal id, or by the explicit generator
+      // `consolidate-pair` (bulk accept/reject).
       const newest = (status?: string): Proposal | undefined =>
         listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
-          .filter((p) => proposalMatchesRef(p.ref, wantRef))
+          .filter((p) => proposalMatchesRef(p.ref, wantRef) && !isRetireProposal(p))
           .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
       const found = newest("pending") ?? newest();
       if (found) return found;
@@ -794,6 +801,13 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   const nowMs = (ctx?.now ?? Date.now)();
   const pending = listProposals(stashDir, { status: "pending" }, ctx);
   for (const p of pending) {
+    // Should-fix 8: a retire proposal never expires by age. B2's accept-time
+    // hash check already refuses it once it goes stale, and the
+    // one-pending-retire-per-asset rule (pair-pass.ts's pendingRetireRefs)
+    // bounds how many can queue up — retention expiry would instead
+    // permanently drop a still-fresh pair nobody has reviewed yet, with no
+    // way back short of the pair pass finding it again from scratch.
+    if (isRetireProposal(p)) continue;
     const createdMs = new Date(p.createdAt).getTime();
     if (!Number.isFinite(createdMs) || nowMs - createdMs < retentionDays * MS_PER_DAY) continue;
     try {
@@ -1478,13 +1492,10 @@ async function promoteProposalWithLease(
 }
 
 /**
- * S5 crash recovery: every archive dir a tombstone under
- * `.akm/memory-cleanup/archive/` claims for `proposalId` — the primary
- * asset's, and its `.derived` twin's if one was archived alongside it. Used
- * only when a retire accept's target is already gone: a tombstone carrying
- * THIS proposal's id means an earlier attempt already moved the file(s) and
- * crashed before recording the decision, as opposed to the target having
- * genuinely been removed by something else (no matching tombstone).
+ * Every archive dir a tombstone under `.akm/memory-cleanup/archive/` claims
+ * for `proposalId` — the primary asset's, and its `.derived` twin's if one
+ * was archived alongside it. Used to detect what a resumed retire accept
+ * (should-fix 5) has already moved.
  */
 function findRetireArchiveDirsByProposalId(stashRoot: string, proposalId: string): string[] | undefined {
   const archiveRoot = path.join(stashRoot, ".akm", "memory-cleanup", "archive");
@@ -1507,13 +1518,53 @@ function findRetireArchiveDirsByProposalId(stashRoot: string, proposalId: string
   return dirs.length > 0 ? dirs : undefined;
 }
 
+/** The absolute original paths a set of archive dirs' own tombstones claim — for resume detection. */
+function alreadyArchivedOriginalPaths(stashRoot: string, dirs: string[]): Set<string> {
+  const paths = new Set<string>();
+  for (const dirRel of dirs) {
+    try {
+      const data = parseFrontmatter(fs.readFileSync(path.join(stashRoot, dirRel, "cleanup.md"), "utf8")).data;
+      if (typeof data.originalPath === "string") paths.add(path.resolve(stashRoot, data.originalPath));
+    } catch {
+      // An unreadable tombstone just is not counted "already done" — the move below re-attempts that file.
+    }
+  }
+  return paths;
+}
+
+/**
+ * Should-fix 5: record a retire accept's intent — `backupContent` and which
+ * files (asset, `.derived` twin) are about to move — on the still-pending
+ * proposal BEFORE any file is moved. A crash after this point resumes from
+ * exactly this record instead of re-deriving `backupContent` from whatever
+ * is on disk afterward, or from the archived copy, which for a `supersedes`
+ * judgement already carries the edge the accept itself is about to write.
+ */
+function recordRetireAcceptIntent(
+  stashDir: string,
+  proposalId: string,
+  intent: RetireAcceptIntent,
+  ctx?: ProposalsContext,
+): Proposal {
+  return withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const current = requireProposal(db, stashDir, proposalId);
+      if (current.retireAcceptIntent) return current;
+      const next: Proposal = { ...current, retireAcceptIntent: intent };
+      upsertProposal(db, next, stashDir);
+      return next;
+    }),
+  );
+}
+
 /**
  * Persist a retire's "accepted" decision — the row, its ledger decision and
- * its event — shared by the normal accept path and S5's crash-recovery path
- * (which never touches the filesystem: the move already happened). Mirrors
- * the accept branch of {@link persistProposalDecision}, kept separate since a
- * retire's accepted-shape fields (`retiredArchive`, no published `content`)
- * do not fit that function's create/update-shaped `decision` union.
+ * its event — the one finalize step a fresh accept and one resumed after a
+ * crash (should-fix 5) share: by the time either calls it, every file move
+ * is already confirmed done. Mirrors the accept branch of
+ * {@link persistProposalDecision}, kept separate since a retire's
+ * accepted-shape fields (`retiredArchive`, no published `content`) do not
+ * fit that function's create/update-shaped `decision` union.
  */
 function persistRetireAcceptance(
   stashDir: string,
@@ -1524,7 +1575,7 @@ function persistRetireAcceptance(
     assetPath: string;
     contentHash: string;
     archiveDirs: string[];
-    backupContent?: string;
+    backupContent: string;
     gateDecision?: GateDecisionInput;
     eventMetadata?: Record<string, unknown>;
   },
@@ -1540,6 +1591,7 @@ function persistRetireAcceptance(
       }
       const next: Proposal = {
         ...proposal,
+        retireAcceptIntent: undefined, // finalized — the intent only matters while still pending
         status: "accepted",
         updatedAt: decidedAt,
         review: { outcome: "accepted", decidedAt },
@@ -1550,7 +1602,7 @@ function persistRetireAcceptance(
           contentHash: info.contentHash,
         },
         retiredArchive: { dirs: info.archiveDirs },
-        ...(info.backupContent !== undefined ? { backupContent: info.backupContent } : {}),
+        backupContent: info.backupContent,
         ...(info.gateDecision
           ? { gateDecision: { ...info.gateDecision, decidedAt: info.gateDecision.decidedAt ?? decidedAt } }
           : {}),
@@ -1585,15 +1637,18 @@ function persistRetireAcceptance(
 
 /**
  * Accept a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): no
- * new content is written. The target is moved into the recoverable cleanup
- * archive (`archiveCleanupCandidate`, taking its `.derived` twin along), and
- * a `supersedes` judgement first writes the supersede edge on the retired
- * (older) side so the archived copy preserves it. A target already gone
- * (raced with something else) fails cleanly with a `UsageError`, the same
+ * new content is written. Should-fix 5 (second review round) makes this a
+ * three-phase, resume-safe sequence: (1) record intent — `backupContent`
+ * and the exact files about to move — on the still-pending proposal; (2)
+ * move each file into the recoverable cleanup archive
+ * (`archiveCleanupCandidate`), skipping any the tombstone scan shows a prior,
+ * crashed attempt already moved; (3) finalize via
+ * {@link persistRetireAcceptance}. A `supersedes` judgement writes the
+ * supersede edge on the retired (older) side before phase 2, so the archived
+ * copy preserves it. A target already gone with no recorded intent (raced
+ * with something else) fails cleanly with a `UsageError`, the same
  * clean-error idiom every other staleness check in this file uses — never an
- * unhandled throw — UNLESS (S5) a tombstone under THIS proposal's id shows
- * the move already happened and only the decision was never recorded, in
- * which case accept completes idempotently instead of refusing.
+ * unhandled throw.
  */
 async function retireProposalWithLease(
   stashDir: string,
@@ -1631,75 +1686,31 @@ async function retireProposalWithLease(
   }
   const assetPath = resolveAssetFilePathSafe(target.source, ref);
   if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
-  if (!fs.existsSync(assetPath)) {
-    // S5: a crash between the archive move and the DB write leaves the
-    // target gone with the proposal still "pending" — recognize OUR OWN
-    // tombstone (by proposalId) and finish recording the decision instead
-    // of refusing. A target missing for any other reason has no such
-    // tombstone and still refuses cleanly, exactly as before.
-    const recoveredDirs = findRetireArchiveDirsByProposalId(target.source.path, proposal.id);
-    if (recoveredDirs) {
-      const primaryDir = recoveredDirs.find((dirRel) => {
-        try {
-          const data = parseFrontmatter(
-            fs.readFileSync(path.join(target.source.path, dirRel, "cleanup.md"), "utf8"),
-          ).data;
-          return (
-            typeof data.originalPath === "string" &&
-            path.resolve(target.source.path, data.originalPath) === path.resolve(assetPath)
-          );
-        } catch {
-          return false;
-        }
-      });
-      // Best-effort only — acceptedTarget.contentHash is audit metadata,
-      // never compared against anything on the retire path (see
-      // requireAcceptedTarget's callers). Read from the archived copy since
-      // the original bytes are gone; falls back to an empty-string hash if
-      // even that cannot be read.
-      let recoveredHash = contentHash("");
-      try {
-        const data = parseFrontmatter(
-          fs.readFileSync(path.join(target.source.path, primaryDir ?? recoveredDirs[0]!, "cleanup.md"), "utf8"),
-        ).data;
-        if (typeof data.archivedPath === "string") {
-          recoveredHash = contentHash(fs.readFileSync(path.join(target.source.path, data.archivedPath)));
-        }
-      } catch {
-        // best-effort
-      }
-      const accepted = persistRetireAcceptance(
-        stashDir,
-        proposal,
-        {
-          targetName: target.source.name,
-          targetRoot: target.source.path,
-          assetPath,
-          contentHash: recoveredHash,
-          archiveDirs: recoveredDirs,
-          ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
-          ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
-        },
-        ctx,
+
+  let working = proposal;
+  let intent = proposal.retireAcceptIntent;
+  if (!intent) {
+    // Fresh accept — no recorded intent yet, so the target must still be there.
+    if (!fs.existsSync(assetPath)) {
+      throw new UsageError(
+        `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists — it may already have been retired, promoted away, or removed by another proposal.`,
+        "INVALID_FLAG_VALUE",
       );
-      return { proposal: accepted, assetPath, ref: accepted.ref };
     }
-    throw new UsageError(
-      `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists — it may already have been retired, promoted away, or removed by another proposal.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const currentBytes = fs.readFileSync(assetPath);
-  const retirement = proposal.retirement;
-  // B2: refuse a stale retire as a clean error — the successor must still
-  // exist, and BOTH sides' recorded body hashes must still match their
-  // current files. A retire decision was judged against BOTH bodies, so
-  // either one moving under it — the retired side edited, or the successor
-  // edited, archived (by an accepted `supersedes`/`subsumed` proposal
-  // targeting IT) or gone — makes the decision stale, not just an edit to
-  // the retired side. This is the durable half of the chain guard (the
-  // same-run half is `retiredThisRun` in pair-pass.ts).
-  if (retirement) {
+    const currentBytes = fs.readFileSync(assetPath);
+    const retirement = proposal.retirement;
+    if (!retirement) {
+      // createRetireProposal always sets this — a row without one is corrupt, not merely stale.
+      throw new Error(`Retire proposal ${proposal.id} has no retirement metadata.`);
+    }
+    // B2: refuse a stale retire as a clean error — the successor must still
+    // exist, and BOTH sides' recorded body hashes must still match their
+    // current files. A retire decision was judged against BOTH bodies, so
+    // either one moving under it — the retired side edited, or the successor
+    // edited, archived (by an accepted `supersedes`/`subsumed` proposal
+    // targeting IT) or gone — makes the decision stale, not just an edit to
+    // the retired side. This is the durable half of the chain guard (the
+    // same-run half is `retiredThisRun` in pair-pass.ts).
     const successorPath = resolveAssetFilePathSafe(target.source, parseRefInput(retirement.successorRef));
     const successorBytes = successorPath && fs.existsSync(successorPath) ? fs.readFileSync(successorPath) : undefined;
     const retiredFresh = contentHash(currentBytes, "body") === retirement.retiredContentHash;
@@ -1713,78 +1724,86 @@ async function retireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
+    assertAkmAssetWrite(target.source);
+    if (retirement.judgeLabel === "supersedes") {
+      try {
+        writeSupersededEdge(assetPath, retirement.successorRef);
+      } catch (error) {
+        warn(
+          `[proposal] failed to write the supersede edge for ${proposal.id} (continuing with the retire): ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    const twin = derivedTwinPath(assetPath, ref.type);
+    intent = { assetPath, ...(twin ? { twinPath: twin } : {}), backupContent: currentBytes.toString("utf8") };
+    // Phase 1: record intent BEFORE any move.
+    working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
   } else {
-    // Defensive fallback: createRetireProposal always sets `retirement`, so
-    // a real proposal never reaches here — kept only for a hypothetical row
-    // that predates it, using the original mint-time raw-byte check.
-    const fresh =
-      proposal.beforeHash === undefined ||
-      contentHash(currentBytes) === proposal.beforeHash ||
-      (proposal.beforeHashNormalized !== undefined &&
-        contentHash(currentBytes, "normalized") === proposal.beforeHashNormalized);
-    if (!fresh) {
-      throw new UsageError(
-        `Retire proposal target changed after proposal ${proposal.id} was created; refusing to retire newer content.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
+    assertAkmAssetWrite(target.source);
   }
-  assertAkmAssetWrite(target.source);
+
+  // Phase 2: move, idempotently — a resumed call skips whichever file a
+  // tombstone under this proposal's own id already claims.
   const mutationTarget = prepareWriteTargetForMutation(target);
-  const successorRef = retirement?.successorRef;
-  if (retirement?.judgeLabel === "supersedes" && successorRef) {
-    try {
-      writeSupersededEdge(assetPath, successorRef);
-    } catch (error) {
-      warn(
-        `[proposal] failed to write the supersede edge for ${proposal.id} (continuing with the retire): ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  const originalHash = contentHash(currentBytes);
+  const already = findRetireArchiveDirsByProposalId(mutationTarget.source.path, proposal.id) ?? [];
+  const alreadyDone = alreadyArchivedOriginalPaths(mutationTarget.source.path, already);
+  const archiveDirs = [...already];
+  const paths: string[] = [];
   const candidate: MemoryPruneCandidate = {
     ref: proposal.ref,
-    reason: retirement?.reason ?? "duplicate",
+    reason: working.retirement?.reason ?? "duplicate",
     proposalId: proposal.id,
-    ...(successorRef ? { successorRefs: [successorRef] } : {}),
+    ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
   };
-  const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, assetPath);
-  const archiveDirs = [path.dirname(record.auditPath)];
-  const paths = [
-    assetPath,
-    path.join(mutationTarget.source.path, record.archivedPath),
-    path.join(mutationTarget.source.path, record.auditPath),
-  ];
-  const twin = derivedTwinPath(assetPath, ref.type);
-  if (twin) {
-    const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
+  if (!alreadyDone.has(path.resolve(intent.assetPath)) && fs.existsSync(intent.assetPath)) {
+    const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, intent.assetPath);
+    archiveDirs.push(path.dirname(record.auditPath));
+    paths.push(
+      intent.assetPath,
+      path.join(mutationTarget.source.path, record.archivedPath),
+      path.join(mutationTarget.source.path, record.auditPath),
+    );
+  }
+  if (intent.twinPath && !alreadyDone.has(path.resolve(intent.twinPath)) && fs.existsSync(intent.twinPath)) {
+    const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, intent.twinPath);
     archiveDirs.push(path.dirname(twinRecord.auditPath));
     paths.push(
-      twin,
+      intent.twinPath,
       path.join(mutationTarget.source.path, twinRecord.archivedPath),
       path.join(mutationTarget.source.path, twinRecord.auditPath),
     );
   }
-  commitWriteTargetBoundary(mutationTarget, `Retire ${proposal.ref}`, { paths });
+  if (paths.length > 0) commitWriteTargetBoundary(mutationTarget, `Retire ${proposal.ref}`, { paths });
+
+  if (archiveDirs.length === 0) {
+    // Recorded intent, but neither file is at its original location NOR
+    // archived under this proposal's id: something else removed the target
+    // between intent and move. Refuse cleanly rather than finalize on
+    // nothing.
+    throw new UsageError(
+      `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists and was not archived by this proposal — refusing to accept.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+
+  // Phase 3: finalize — always from the recorded intent's own backupContent,
+  // never a hash guessed from the archived copy.
   const accepted = persistRetireAcceptance(
     stashDir,
-    proposal,
+    working,
     {
       targetName: mutationTarget.source.name,
       targetRoot: mutationTarget.source.path,
-      assetPath,
-      contentHash: originalHash,
+      assetPath: intent.assetPath,
+      contentHash: contentHash(intent.backupContent),
       archiveDirs,
-      // S4: the ORIGINAL bytes, read before writeSupersededEdge (if any)
-      // touched the file — revert restores exactly these, byte-exact,
-      // instead of re-deriving "undo the edge" from the archived copy.
-      backupContent: currentBytes.toString("utf8"),
+      backupContent: intent.backupContent,
       ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
       ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
     },
     ctx,
   );
-  return { proposal: accepted, assetPath, ref: accepted.ref };
+  return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref };
 }
 
 export interface RevertResult {
@@ -1811,15 +1830,25 @@ export async function revertProposal(
 /**
  * Revert an accepted `retire` proposal (0.9.17-alpha.9): move the archived
  * file(s) — the retired asset, and its `.derived` twin when one was archived
- * alongside it — back to where they lived, drop the timestamped archive
- * dir(s), then (S4) overwrite the primary with the exact pre-retire bytes
- * `backupContent` recorded at accept — byte-exact, so it also undoes any
- * supersede edge accept wrote without touching one a person had already
- * written. Each archive dir is located from `retiredArchive.dirs` (set at
- * accept time) and its own `cleanup.md` tombstone names the exact paths to
- * restore — no re-scan of every tombstone in the archive. (S5) Every dir is
- * validated — tombstone present, destination free, archived copy present —
- * before any of them are moved.
+ * alongside it — back to where they lived, then overwrite the primary with
+ * the exact pre-retire bytes `backupContent` recorded at accept (S4) —
+ * byte-exact, so it also undoes any supersede edge accept wrote without
+ * touching one a person had already written, and without appending a
+ * trailing newline the original never had. Each archive dir is located from
+ * `retiredArchive.dirs` (set at accept time) and its own `cleanup.md`
+ * tombstone names the exact paths to restore — no re-scan of every
+ * tombstone in the archive.
+ *
+ * Should-fix 5 (second review round): every archive dir is resolved and
+ * validated before any of them are moved, AND that validation tells "not
+ * yet moved" apart from "already moved by an earlier, crashed attempt of
+ * our own" (original present, archived copy gone) rather than treating the
+ * latter as a conflict — so a retry of a crashed revert resumes instead of
+ * erroring on its own prior work. The archive dirs (tombstones) are removed
+ * only after the "reverted" decision is durably recorded, not interleaved
+ * with the moves — a crash between moving a file and recording the
+ * decision used to delete that file's tombstone first, leaving an
+ * "accepted" proposal a retry could neither finish nor re-validate.
  */
 async function unretireProposalWithLease(
   stashDir: string,
@@ -1853,17 +1882,13 @@ async function unretireProposalWithLease(
     );
   }
   const target = prepareWriteTargetForMutation(boundTarget);
-  // S5: resolve and validate EVERY archive dir — tombstone present and
-  // well-formed, destination free, archived copy present — before moving
-  // anything. Two dirs (the primary asset and its `.derived` twin) used to
-  // be validated and moved one at a time, so a second dir failing its own
-  // check after the first had already been renamed back left a partial
-  // revert with no way to retry cleanly.
   interface PendingRestore {
     dirAbs: string;
     auditPath: string;
     originalAbs: string;
     archivedAbs: string;
+    /** Already moved back by an earlier, crashed attempt of our own — resume, do not re-move or error. */
+    alreadyDone: boolean;
   }
   const pending: PendingRestore[] = [];
   for (const dirRel of archive.dirs) {
@@ -1888,43 +1913,46 @@ async function unretireProposalWithLease(
     }
     const originalAbs = path.join(target.source.path, originalRel);
     const archivedAbs = path.join(target.source.path, archivedRel);
-    if (fs.existsSync(originalAbs)) {
+    const originalExists = fs.existsSync(originalAbs);
+    const archivedExists = fs.existsSync(archivedAbs);
+    if (originalExists && archivedExists) {
       throw new UsageError(
         `Cannot revert proposal ${proposal.id}: ${originalRel} already exists (created since retirement); refusing to overwrite it.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    if (!fs.existsSync(archivedAbs)) {
+    if (!originalExists && !archivedExists) {
       throw new UsageError(
         `Cannot revert proposal ${proposal.id}: archived copy ${archivedRel} is missing.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs });
+    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, alreadyDone: originalExists });
   }
   const restoredPaths: string[] = [];
   let primaryOriginalAbs: string | undefined;
   for (const p of pending) {
-    fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
-    fs.renameSync(p.archivedAbs, p.originalAbs);
-    recordWrittenPath(p.archivedAbs);
-    recordWrittenPath(p.originalAbs);
+    if (!p.alreadyDone) {
+      fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
+      fs.renameSync(p.archivedAbs, p.originalAbs);
+      recordWrittenPath(p.archivedAbs);
+      recordWrittenPath(p.originalAbs);
+    }
     restoredPaths.push(p.originalAbs, p.archivedAbs, p.auditPath);
-    fs.rmSync(p.dirAbs, { recursive: true, force: true });
     if (path.resolve(p.originalAbs) === path.resolve(assetPath)) primaryOriginalAbs = p.originalAbs;
   }
-  // S4: overwrite the primary with the EXACT pre-retire bytes recorded at
-  // accept (`backupContent`) — byte-exact, so YAML comments, key order and a
-  // pre-existing human `supersededBy` edge all survive the round trip. The
-  // archived copy just moved back may carry a `supersededBy` edge THIS
+  // S4 / nit: overwrite the primary with the EXACT pre-retire bytes recorded
+  // at accept (`backupContent`) — no appended trailing newline either, so
+  // YAML comments, key order, a pre-existing human `supersededBy` edge, and
+  // even the exact absence of a final newline all survive the round trip.
+  // The archived copy just moved back may carry a `supersededBy` edge THIS
   // accept wrote (a `supersedes` judgement); restoring the recorded original
   // bytes already removes exactly that edge, so no separate
   // removeSupersededEdge mutation runs here — one that could not tell "the
   // edge accept wrote" from "an edge a person had already written" apart,
   // and would delete either.
   if (primaryOriginalAbs && proposal.backupContent !== undefined) {
-    const content = proposal.backupContent.endsWith("\n") ? proposal.backupContent : `${proposal.backupContent}\n`;
-    writeProposalAssetFile(primaryOriginalAbs, content);
+    writeProposalAssetFile(primaryOriginalAbs, proposal.backupContent);
   }
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: restoredPaths });
   const decidedAt = nowIso(ctx);
@@ -1958,6 +1986,12 @@ async function unretireProposalWithLease(
       return next;
     }),
   );
+  // Only now — after the decision is durably recorded — remove the archive
+  // dirs (tombstones). See the function doc comment for why this ordering
+  // matters.
+  for (const p of pending) {
+    fs.rmSync(p.dirAbs, { recursive: true, force: true });
+  }
   try {
     if (!(await indexWrittenAssets(target.source.path, restoredPaths, { bundleId: target.source.name }))) {
       warn(`[proposals] ${restoredPaths.join(", ")} were restored but not indexed; run \`akm index\`.`);

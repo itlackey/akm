@@ -150,6 +150,21 @@ export interface RetiredArchiveRecord {
   dirs: string[];
 }
 
+/**
+ * A retire accept's durable intent (should-fix 5), recorded on the still-
+ * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
+ * as `backupContent` and which files are about to be archived (the twin's
+ * path specifically, since once it is actually moved `derivedTwinPath` can
+ * no longer find it at its original location to tell a crash recovery "yes,
+ * there was one"). A crashed accept resumes from this record instead of
+ * re-deriving it from whatever the archive happens to contain.
+ */
+export interface RetireAcceptIntent {
+  assetPath: string;
+  twinPath?: string;
+  backupContent: string;
+}
+
 export interface Proposal {
   id: string;
   /** `[bundle//]conceptId` of the asset it creates or updates. */
@@ -207,6 +222,14 @@ export interface Proposal {
    * source (no hash to verify freshness against).
    */
   promotionSourceHash?: string;
+  /**
+   * A pending retire proposal's recorded accept intent (should-fix 5), set
+   * right before the first file move and cleared once accept finishes.
+   * Still present means a prior accept attempt crashed after recording it
+   * but before finishing — the next accept resumes from it idempotently
+   * rather than re-deriving `backupContent` from whatever is on disk now.
+   */
+  retireAcceptIntent?: RetireAcceptIntent;
 }
 
 /** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */

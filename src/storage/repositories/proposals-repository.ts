@@ -241,6 +241,19 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
       invalidPresentField("retiredArchive");
     }
   }
+  if (Object.hasOwn(meta, "retireAcceptIntent")) {
+    const intent = meta.retireAcceptIntent as Record<string, unknown> | null;
+    if (
+      typeof intent !== "object" ||
+      intent === null ||
+      typeof intent.assetPath !== "string" ||
+      intent.assetPath.length === 0 ||
+      (intent.twinPath !== undefined && typeof intent.twinPath !== "string") ||
+      typeof intent.backupContent !== "string"
+    ) {
+      invalidPresentField("retireAcceptIntent");
+    }
+  }
 }
 
 /**
@@ -332,6 +345,9 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(typeof meta.promotionSourceHash === "string" ? { promotionSourceHash: meta.promotionSourceHash } : {}),
     ...(meta.retirement !== undefined ? { retirement: meta.retirement as Proposal["retirement"] } : {}),
     ...(meta.retiredArchive !== undefined ? { retiredArchive: meta.retiredArchive as Proposal["retiredArchive"] } : {}),
+    ...(meta.retireAcceptIntent !== undefined
+      ? { retireAcceptIntent: meta.retireAcceptIntent as Proposal["retireAcceptIntent"] }
+      : {}),
   };
 }
 
@@ -390,6 +406,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.promotionSourceHash !== undefined) metaObj.promotionSourceHash = proposal.promotionSourceHash;
   if (proposal.retirement !== undefined) metaObj.retirement = proposal.retirement;
   if (proposal.retiredArchive !== undefined) metaObj.retiredArchive = proposal.retiredArchive;
+  if (proposal.retireAcceptIntent !== undefined) metaObj.retireAcceptIntent = proposal.retireAcceptIntent;
   validatePresentMetadata(metaObj);
 
   return {
