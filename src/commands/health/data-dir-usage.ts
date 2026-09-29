@@ -86,8 +86,16 @@ export interface WalkResult {
  * dir walk, but a smaller/larger budget is fine for a different tree.
  * Shared with the `archive-usage` advisory (N2) — the same "don't let a
  * pathological tree hang a health check" concern applies to both.
+ *
+ * `onFile`, when given, is called once per leaf file (path, bytes) as the
+ * walk visits it — `archive-usage` uses this to classify each file's git
+ * state without a second, separate walk of the same tree.
  */
-export function sizeOfPath(root: string, budget: { remaining: number }): WalkResult {
+export function sizeOfPath(
+  root: string,
+  budget: { remaining: number },
+  onFile?: (filePath: string, bytes: number) => void,
+): WalkResult {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(root);
@@ -95,7 +103,10 @@ export function sizeOfPath(root: string, budget: { remaining: number }): WalkRes
     return { bytes: 0, files: 0, truncated: false };
   }
   if (stat.isSymbolicLink()) return { bytes: 0, files: 0, truncated: false };
-  if (!stat.isDirectory()) return { bytes: stat.size, files: 1, truncated: false };
+  if (!stat.isDirectory()) {
+    onFile?.(root, stat.size);
+    return { bytes: stat.size, files: 1, truncated: false };
+  }
 
   let entries: fs.Dirent[];
   try {
@@ -113,7 +124,7 @@ export function sizeOfPath(root: string, budget: { remaining: number }): WalkRes
       break;
     }
     budget.remaining--;
-    const sub = sizeOfPath(path.join(root, entry.name), budget);
+    const sub = sizeOfPath(path.join(root, entry.name), budget, onFile);
     bytes += sub.bytes;
     files += sub.files;
     if (sub.truncated) truncated = true;
