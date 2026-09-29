@@ -419,9 +419,11 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   });
 
   test("item 1: a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
-    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    // Distinct bodies (S3b gives an identical pair no check at all — this
+    // test is about the rank-based flag, so the two sides must differ).
+    const oldPath = writeAsset("memories/old-note.md", "description: old", "Old body text.\n");
     dateAsset(oldPath, 60);
-    const newPath = writeAsset("memories/new-note.md", "description: new");
+    const newPath = writeAsset("memories/new-note.md", "description: new", "New body text.\n");
     dateAsset(newPath, 1);
     const db = openIndexDatabase(getDbPath());
     try {

@@ -74,6 +74,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       search: async () => {
         searchCalls++;
@@ -91,6 +93,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       search: fixedRanking(["memories/old-note", "memories/new-note"]),
     });
@@ -104,6 +108,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       // Neither side shows up — the retired asset itself isn't top 10, so a
       // missing successor is not a continuity risk here.
@@ -119,6 +125,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       search: fixedRanking(["memories/old-note", "memories/unrelated"]), // successor nowhere in the results
     });
@@ -136,6 +144,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       // old-note at #1, 9 fillers fill out the top 10, new-note at #11 (past CONTINUITY_TOP_N).
       search: fixedRanking(["memories/old-note", ...others, "memories/new-note"]),
@@ -154,6 +164,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       search: async () => {
         call++;
@@ -177,6 +189,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       search: async () => {
         searchCalls++;
@@ -196,6 +210,8 @@ describe("checkRetirementContinuity", () => {
       config: {} as never,
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
+      retiredRaw: "old body content",
+      successorRaw: "new body content",
       ledgerAccess: {},
       search: async () => {
         call++;
@@ -217,6 +233,8 @@ describe("checkRetirementContinuity", () => {
         config: {} as never,
         retiredRef: "memories/old-note",
         successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
         ledgerAccess: {},
         search: async () => {
           throw new Error("endpoint unreachable");
@@ -235,6 +253,8 @@ describe("checkRetirementContinuity", () => {
         config: {} as never,
         retiredRef: "memories/old-note",
         successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
         ledgerAccess: {},
         search: fixedRanking(["memories/old-note"], "fts-fallback"),
       });
@@ -250,6 +270,8 @@ describe("checkRetirementContinuity", () => {
         config: {} as never,
         retiredRef: "memories/old-note",
         successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
         ledgerAccess: {},
         search: async () => {
           call++;
@@ -262,6 +284,121 @@ describe("checkRetirementContinuity", () => {
       // Most-recent-first replay order: "query two" (call 1) is the
       // fts-fallback/unverified one; "query one" (call 2) is the verified failure.
       expect(risk?.ranks[0]?.query).toBe("query one");
+    });
+  });
+
+  describe("S3a: replays the SAME cleaned queries the retrieval regression gate uses", () => {
+    test("a harness/tool envelope query is dropped before replay, never reaches search", async () => {
+      recordQuery("memories/old-note", "<task-notification>do the thing</task-notification>");
+      recordQuery("memories/old-note", "a real question about X");
+      const seenQueries: string[] = [];
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
+        ledgerAccess: {},
+        search: async (query) => {
+          seenQueries.push(query);
+          return { hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" };
+        },
+      });
+      expect(seenQueries).toEqual(["a real question about X"]);
+      expect(risk?.failingQueries).toBe(1);
+    });
+
+    test("two queries that normalize identical (only whitespace differs) are replayed once, not twice", async () => {
+      recordQuery("memories/old-note", "how do I configure X");
+      recordQuery("memories/old-note", "how   do I configure X  "); // same after whitespace collapse
+      let searchCalls = 0;
+      await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
+        ledgerAccess: {},
+        search: async () => {
+          searchCalls++;
+          return { hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" };
+        },
+      });
+      expect(searchCalls).toBe(1);
+    });
+
+    test("a paste over 2,000 characters is dropped, not replayed as a query", async () => {
+      recordQuery("memories/old-note", "x".repeat(2001));
+      recordQuery("memories/old-note", "a real question about X");
+      const seenQueries: string[] = [];
+      await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "old body content",
+        successorRaw: "new body content",
+        ledgerAccess: {},
+        search: async (query) => {
+          seenQueries.push(query);
+          return { hits: [], mode: "semantic" };
+        },
+      });
+      expect(seenQueries).toEqual(["a real question about X"]);
+    });
+  });
+
+  describe("S3b: identical bodies skip the check entirely — search's own dedupe already hides the successor", () => {
+    test("byte-identical bodies: no check at all, even though the retired asset ranks and the successor would be absent", async () => {
+      recordQuery("memories/old-note", "how do I configure X");
+      let searchCalls = 0;
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "---\ndescription: old\n---\n\nSame body.\n",
+        successorRaw: "---\ndescription: new\n---\n\nSame body.\n",
+        ledgerAccess: {},
+        search: async () => {
+          searchCalls++;
+          return { hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" }; // would otherwise flag
+        },
+      });
+      expect(risk).toBeUndefined();
+      expect(searchCalls).toBe(0); // never even replayed a query
+    });
+
+    test("bodies that normalize identical (only whitespace differs) also skip", async () => {
+      recordQuery("memories/old-note", "how do I configure X");
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "---\ndescription: old\n---\n\nSame   body.\n\n\nMore text.\n",
+        successorRaw: "---\ndescription: new\n---\n\nSame body. More text.\n",
+        ledgerAccess: {},
+        search: async () => ({ hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" }),
+      });
+      expect(risk).toBeUndefined();
+    });
+
+    test("genuinely different bodies still run the check normally", async () => {
+      recordQuery("memories/old-note", "how do I configure X");
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        retiredRaw: "---\ndescription: old\n---\n\nOld body.\n",
+        successorRaw: "---\ndescription: new\n---\n\nCompletely different body.\n",
+        ledgerAccess: {},
+        search: fixedRanking(["memories/old-note"]), // successor absent
+      });
+      expect(risk?.failingQueries).toBe(1);
     });
   });
 });

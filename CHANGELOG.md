@@ -132,7 +132,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   endpoint outage reads as "risk unknown," never as "no risk found." The
   first fallback in a pair-pass run forces every later query in that same
   run to skip the semantic attempt entirely, so a dead endpoint costs one
-  failed attempt total, not one per remaining query.
+  failed attempt total, not one per remaining query. Two fixes against false
+  flags (S3), measured on a real night-1 admission (300 pairs, 6 flags, 3
+  spurious): replayed queries are the same cleaned set the retrieval
+  regression gate uses (`loadRetrievalQueries`) — stash-README boilerplate,
+  harness/tool envelopes, pastes over 2,000 characters, and near-duplicate
+  queries (equal once whitespace is collapsed) are dropped before replay,
+  not just capped at five raw entries; and the check does not run at all
+  when the retired and successor bodies are content-identical once
+  whitespace is collapsed — search's own content-dedupe already hides the
+  successor behind the retired asset for every such query, so a "successor
+  missing" finding would not be a real risk.
   (`src/commands/improve/consolidate/continuity-check.ts`,
   `src/commands/proposal/proposal-types.ts`,
   `src/commands/proposal/proposal.ts`)

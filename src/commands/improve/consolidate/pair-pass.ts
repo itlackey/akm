@@ -662,6 +662,8 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     config: ctx.config,
     retiredRef: retired.asset.ref,
     successorRef: successor.asset.ref,
+    retiredRaw: retired.raw,
+    successorRaw: successor.raw,
     ledgerAccess: { proposalsCtx: ctx.opts.proposalsCtx },
     search: ctx.continuitySearch,
   });

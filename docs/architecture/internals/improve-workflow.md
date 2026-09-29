@@ -385,13 +385,22 @@ unaffected, and a person can always accept one by id.
 
 Before the pair pass mints a `retire` proposal, it replays up to five of the
 retired asset's own past `search`/`curate` queries
-(`listRetrievalQueries`, `src/indexer/usage/usage-events.ts`) through akm's
-own search, in-process — the same ranking a user gets, no LLM
+(`loadRetrievalQueries`, `src/commands/improve/retrieval-gate.ts` — the same
+cleaned set the retrieval regression gate replays: `usableRetrievalQueries`
+drops stash-README boilerplate and harness/tool envelopes
+(`nonTaskInput`), pastes over 2,000 characters, and queries that are
+duplicates once whitespace is collapsed, S3a) through akm's own search,
+in-process — the same ranking a user gets, no LLM
 (`src/commands/improve/consolidate/continuity-check.ts`). For every query
 where the retired asset ranked in the top 10, the successor must rank in the
 top 10 too; positions are compared with `buildRankChangeReport`
 (`src/commands/improve/salience.ts`). No recorded queries means no check and
-no flag.
+no flag — and so does a retired/successor pair whose bodies are
+content-identical once whitespace is collapsed (S3b): search's own
+content-dedupe (`src/indexer/search/db-search.ts`) already hides the
+successor behind the retired asset for every such query, so a "successor
+missing" finding there would not be a real risk, just that dedupe working
+as designed.
 
 A failing query does not block the mint — it flags. The proposal's
 `retirement.continuityRisk` records the failing query count and, per failing

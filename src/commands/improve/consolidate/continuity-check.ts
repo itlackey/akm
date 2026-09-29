@@ -18,10 +18,11 @@
 
 import type { AkmConfig } from "../../../core/config/config";
 import { type SearchLocalInput, searchLocal } from "../../../indexer/search/db-search";
-import { listRetrievalQueries } from "../../../indexer/usage/usage-events";
 import type { SearchExecutionMode } from "../../../sources/types";
 import type { RetirementContinuityRisk } from "../../proposal/proposal-types";
-import { type LedgerAccess, readLedgerDb, stripBundle } from "../ledger";
+import { stripFrontmatterBody } from "../content-hash";
+import { type LedgerAccess, stripBundle } from "../ledger";
+import { loadRetrievalQueries } from "../retrieval-gate";
 import { buildRankChangeReport } from "../salience";
 
 /** At most this many of the retired asset's most recent queries are replayed (plan §5.4, §7). */
@@ -77,13 +78,30 @@ function rankOf(hits: readonly ContinuityHit[], conceptId: string): number | und
   return index === -1 ? undefined : index + 1;
 }
 
+/** Body only, whitespace collapsed — the same shape `db-search.ts`'s own content-dedupe compares (S3b). */
+function normalizedBody(raw: string): string {
+  return stripFrontmatterBody(raw).replace(/\s+/g, " ").trim();
+}
+
 /**
  * Replay `retiredRef`'s own past queries and check that `successorRef` ranks
  * in the top {@link CONTINUITY_TOP_N} for every one where the retired asset
- * did. Returns `undefined` when there is nothing to flag: no recorded
- * queries, or every query ran on the real ranking and either the retired
- * asset never ranked top 10 for it, or the survivor always did too. Never
- * throws.
+ * did. Returns `undefined` when there is nothing to flag: the two bodies are
+ * content-identical, no recorded queries, or every query ran on the real
+ * ranking and either the retired asset never ranked top 10 for it, or the
+ * survivor always did too. Never throws.
+ *
+ * S3: two fixes against false flags measured on a real night-1 admission
+ * (300 pairs, 6 flags, half spurious):
+ *  - queries are the SAME cleaned set `loadRetrievalQueries` replays for the
+ *    retrieval regression gate (`../retrieval-gate.ts`) — stash-README
+ *    boilerplate, harness/tool envelopes, pastes over 2,000 characters, and
+ *    duplicates are dropped before replay, not just capped at 5 raw entries;
+ *  - when the retired and successor bodies normalize identical, the check
+ *    never runs at all: search's own content-dedupe (`db-search.ts`) already
+ *    hides the successor behind the retired asset for every such query, so a
+ *    "successor missing from the top 10" finding here would not be a real
+ *    risk, just that dedupe working as designed.
  *
  * S2: a query that never ran (the search call threw) or ran on the
  * keyword-only fallback (`mode: "fts-fallback"` — the real ranking was
@@ -101,14 +119,21 @@ export async function checkRetirementContinuity(args: {
   /** ConceptId, no bundle prefix (matches {@link RetirementMetadata}'s spelling). */
   retiredRef: string;
   successorRef: string;
+  /** Full file text (frontmatter included — stripped internally) of each side, for the S3b identical-body skip. */
+  retiredRaw: string;
+  successorRaw: string;
   ledgerAccess: LedgerAccess;
   /** Test seam — production callers omit it and get the real search. */
   search?: ContinuitySearch;
 }): Promise<RetirementContinuityRisk | undefined> {
-  const queries = (readLedgerDb(args.ledgerAccess, (db) => listRetrievalQueries(db, args.retiredRef)) ?? []).slice(
-    0,
-    CONTINUITY_MAX_QUERIES,
-  );
+  // S3b: identical bodies — search's own content-dedupe already hides the
+  // successor for every query that would rank the retired asset, so there is
+  // no real risk here to check for.
+  if (normalizedBody(args.retiredRaw) === normalizedBody(args.successorRaw)) return undefined;
+
+  // S3a: the SAME cleaned queries the retrieval regression gate replays —
+  // boilerplate, envelopes, pastes and duplicates dropped before replay.
+  const queries = loadRetrievalQueries(args.ledgerAccess, args.retiredRef).slice(0, CONTINUITY_MAX_QUERIES);
   if (queries.length === 0) return undefined; // no queries recorded: no check, no flag
 
   const search = args.search ?? createContinuitySearch(args.stashDir, args.config);
