@@ -49,6 +49,7 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
@@ -852,6 +853,12 @@ async function consolidate(
     );
   }
   const target = opts.target ?? stashDir;
+  // The pair pass (alpha.9) has its own initiator/candidate selection (it
+  // sees .derived memories, flat knowledge and lessons, not just the
+  // promote pool above), so it runs regardless of whether the promote pool
+  // is empty — every return path below carries its result.
+  const pairPassBundleId = resolveConsolidationSourceOwner(opts, stashDir)?.bundleId;
+  const pairPass = await runConsolidatePairPass(opts, config, stashDir, pairPassBundleId, warnings);
   if (memories.length === 0) {
     return makeConsolidateResult({
       dryRun: opts.dryRun ?? false,
@@ -859,6 +866,7 @@ async function consolidate(
       warnings,
       durationMs: Date.now() - startMs,
       prefilteredAlreadyPromoted,
+      pairPass,
     });
   }
   const acc: ConsolidateAccounting = {
@@ -887,7 +895,7 @@ async function consolidate(
     prefilteredAlreadyPromoted,
     durationMs: Date.now() - startMs,
   });
-  if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true });
+  if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true, pairPass });
   warn(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
   const ctx: PromoteContext = {
     config,
@@ -920,6 +928,7 @@ async function consolidate(
     ...summary(),
     promoted: ctx.promoted,
     failedPromotions: ctx.promotionFailures.count,
+    pairPass,
     perfTelemetry: {
       dedupPoolSize: pool.dedupPoolSize,
       llmPoolSize: plan.llmPoolSize,
@@ -1098,6 +1107,9 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       // The ledger keys the attempt by the source memory.
       attemptedRefs: [op.ref],
+      // O1 (alpha.9): on accept, promoteProposal retires this source memory
+      // (and its .derived twin) so promotion no longer leaves a duplicate.
+      promotionSource: op.ref,
     });
     ctx.promoted.push(proposal.id);
     ctx.promotedSourceRefs.add(op.ref);

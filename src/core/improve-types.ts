@@ -440,6 +440,40 @@ export interface ConsolidateResult {
    * tidy.
    */
   perfTelemetry?: ConsolidatePerfTelemetry;
+  /** The pair pass's own report (alpha.9); absent when consolidate is disabled. */
+  pairPass?: ConsolidatePairPassResult;
+}
+
+/** The consolidate pair pass's six relation labels (plan Appendix A, the calibrated prompt). */
+export type ConsolidatePairJudgeLabel =
+  | "duplicate"
+  | "subsumed"
+  | "supersedes"
+  | "contradicts"
+  | "overlap"
+  | "unrelated";
+
+/**
+ * The pair pass's per-run report (alpha.9): initiators found, pairs judged,
+ * label counts and the retire proposals minted — the fields the brief's
+ * MEASURE step reports (refs and counts only, never asset text).
+ */
+export interface ConsolidatePairPassResult {
+  /** Initiators after retrieval-scope and ledger filtering. */
+  initiators: number;
+  /** Of `initiators`, those with no prior pair-pass ledger attempt (judged at `BACKFILL_FLOOR`). */
+  initiatorsBacklog: number;
+  /** Candidate pairs after neighbour lookup, threshold and `MAX_PAIRS_PER_RUN`; 0 when no initiators. */
+  pairsConsidered?: number;
+  /** Pairs actually sent to the judge (excludes pairs skipped for an existing pending retire proposal). */
+  pairsJudged: number;
+  labelCounts: Record<ConsolidatePairJudgeLabel, number>;
+  /** Retire proposal ids minted this run (or, in a dry run, `retiredRef -> successorRef` preview strings). */
+  retired: string[];
+  /** `labelCounts.contradicts`, called out per the brief: contradictions stay human. */
+  contradictionsFound: number;
+  /** Judge calls that failed or returned an unparseable verdict. */
+  failedJudgments: number;
 }
 
 /**
