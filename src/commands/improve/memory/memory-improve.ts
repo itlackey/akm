@@ -559,22 +559,88 @@ function stronglyConnectedComponents(
   return { components, componentIndexByRef };
 }
 
-function archiveCleanupCandidate(
+/**
+ * The `.derived` twin of a non-derived memory file, if one exists on disk:
+ * `<name>.derived.md` beside it, the naming convention
+ * `indexer/passes/memory-inference.ts`'s `derivedChildPath` writes.
+ * `undefined` for a knowledge or lesson ref (no such twin exists), or for a
+ * memory that is already itself `.derived` (it has no further twin).
+ *
+ * Used by `akm proposal accept` (alpha.9) to take a retired or promoted
+ * memory's derived child along when it archives the memory.
+ */
+export function derivedTwinPath(filePath: string, refType: string): string | undefined {
+  if (refType !== "memory" || filePath.endsWith(`${DERIVED_SUFFIX}.md`)) return undefined;
+  const twin = `${filePath.slice(0, -3)}${DERIVED_SUFFIX}.md`;
+  return fs.existsSync(twin) ? twin : undefined;
+}
+
+/**
+ * True for a retire-proposal-caused archive (alpha.9: the consolidate pair
+ * pass, or O1's promotion retirement) — distinguished from a memory-cleanup
+ * family-prune candidate by carrying a `proposalId`. The two paths differ in
+ * how `previousBeliefState` is derived (below) and in which extra tombstone
+ * fields apply.
+ */
+function isRetireCandidate(candidate: MemoryPruneCandidate): boolean {
+  return candidate.proposalId !== undefined;
+}
+
+/**
+ * The tombstone's `previousBeliefState`. Memory cleanup's own family-prune
+ * candidates keep their original reason-based inference (unchanged, so
+ * existing behavior is not disturbed by this generalization). A
+ * retire-proposal candidate has no such reason vocabulary to infer from, so
+ * it reads the asset's ACTUAL frontmatter `beliefState` instead — more
+ * correct, and available because every retire path already has the file on
+ * disk right before the move.
+ */
+function resolvePreviousBeliefState(
+  candidate: MemoryPruneCandidate,
+  filePath: string,
+): Exclude<MemoryBeliefState, "archived"> {
+  if (!isRetireCandidate(candidate)) return priorBeliefStateForArchive(candidate);
+  try {
+    return resolveBeliefState(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data);
+  } catch {
+    return "active";
+  }
+}
+
+/**
+ * Move `filePath` into the recoverable cleanup archive
+ * (`.akm/memory-cleanup/archive/<stamp>-<ref>/`) with a `cleanup.md`
+ * tombstone, journaling both ends (`recordWrittenPath`) so a LATER sync
+ * commits the move — `akm sync`, or the batched auto-sync an `akm improve`
+ * run does at its own end (`docs/architecture/improvement.md`, "Auto-sync").
+ * This call does not itself commit anything: a standalone `akm proposal
+ * accept` (the only way a retire proposal is ever accepted — triage never
+ * auto-accepts one) leaves the move journaled but uncommitted until
+ * something later reads that journal, unless the write target's `kind` is
+ * `"git"`, in which case the caller's own `commitWriteTargetBoundary` commits
+ * (and maybe pushes) immediately as part of the SAME accept.
+ *
+ * Generalized in alpha.9 to cover any memory, knowledge or lesson file in a
+ * writable bundle — not only `.derived` memories — so `akm proposal accept`
+ * can archive a consolidate pair-pass `retire` proposal's target, or (O1) an
+ * accepted promotion's source memory, through the same one encoding memory
+ * cleanup already used (D27: never two coexisting encodings). A
+ * retire-proposal candidate (one carrying `proposalId`) additionally stamps
+ * `proposalId`, `successorRefs` and `retiredAt` on the tombstone.
+ */
+export function archiveCleanupCandidate(
   stashDir: string,
   candidate: MemoryPruneCandidate,
   filePath: string,
 ): ArchivedMemoryCleanupRecord {
   const archivedAt = new Date().toISOString();
+  const previousBeliefState = resolvePreviousBeliefState(candidate, filePath);
   const originalPath = path.relative(stashDir, filePath).replace(/\\/g, "/");
   const archiveDir = createArchiveDir(stashDir, candidate.ref, archivedAt);
   const archivedPath = path.join(archiveDir, originalPath);
   fs.mkdirSync(path.dirname(archivedPath), { recursive: true });
-  fs.renameSync(filePath, archivedPath);
-  // #652: an archive is a delete + a create. BOTH ends are journaled so the
-  // sync stages the removal of the original alongside the archived copy.
-  recordWrittenPath(filePath);
-  recordWrittenPath(archivedPath);
 
+  const retiring = isRetireCandidate(candidate);
   const archiveRef = path.relative(stashDir, archivedPath).replace(/\\/g, "/");
   const auditPath = path.join(archiveDir, "cleanup.md");
   const auditRef = path.relative(stashDir, auditPath).replace(/\\/g, "/");
@@ -584,30 +650,52 @@ function archiveCleanupCandidate(
       kind: "memory-cleanup-archive",
       archivedAt,
       beliefState: "archived",
-      previousBeliefState: priorBeliefStateForArchive(candidate),
+      previousBeliefState,
       ref: candidate.ref,
-      parentRef: candidate.parentRef,
+      ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
       reason: candidate.reason,
       ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
       originalPath,
       archivedPath: archiveRef,
+      ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
+      ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
+        ? { successorRefs: candidate.successorRefs }
+        : {}),
     },
     "Archived derived memory for recoverable cleanup.\n",
   );
+  // 4c (third review round): write the tombstone BEFORE moving the file — a
+  // crash in between used to leave a file already at archivedPath with no
+  // cleanup.md to explain it (unrecoverable: revert refuses on a missing
+  // tombstone, and nothing else knows this archive dir exists). Reordered,
+  // a crash here instead leaves, at worst, a tombstone describing a move
+  // that has not happened yet, with the file still at its original
+  // location — the ordinary "nothing archived yet" state every caller
+  // already handles.
   fs.writeFileSync(auditPath, auditAsset, "utf8");
   recordWrittenPath(auditPath);
 
+  fs.renameSync(filePath, archivedPath);
+  // #652: an archive is a delete + a create. BOTH ends are journaled so the
+  // sync stages the removal of the original alongside the archived copy.
+  recordWrittenPath(filePath);
+  recordWrittenPath(archivedPath);
+
   return {
     ref: candidate.ref,
-    parentRef: candidate.parentRef,
+    ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
     reason: candidate.reason,
     beliefState: "archived",
-    previousBeliefState: priorBeliefStateForArchive(candidate),
+    previousBeliefState,
     ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
     originalPath,
     archivedPath: archiveRef,
     auditPath: auditRef,
     archivedAt,
+    ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
+    ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
+      ? { successorRefs: candidate.successorRefs }
+      : {}),
   };
 }
 

@@ -684,7 +684,7 @@ logs.db   high-volume purgeable logs
 
 **Why WS-3a was right then and wrong now:** with a single git-backed writable stash, git history was a sufficient recovery path and the TTL archive scan was gold-plating. The bundle-workspace model breaks WS-3a's premise three ways: read-only installed components cannot be edited to mark retirement (the overlay needs workspace-side state), non-git-backed bundles (filesystem/npm/website materializations) have no history at all, and format-independent recovery cannot depend on one VCS. Git history remains an *additional* recovery path.
 
-**Consequence:** one retirement encoding at a time — the bundle-local `archiveMemory` move is a bounded stopgap only until the workspace store lands in the same chunk; there are never two coexisting encodings.
+**Consequence:** one retirement encoding at a time — the bundle-local `archiveCleanupCandidate` move (`.akm/memory-cleanup/archive/`, shared by memory cleanup, consolidate pair-pass retire proposals, and promotion retirement since 0.9.17-alpha.9) is a bounded stopgap until the workspace store lands; there are never two coexisting encodings.
 
 ### D28. The `type:name` ref contract is broken deliberately, once, with a written migration story (added 2026-07-13)
 

@@ -6,7 +6,7 @@
 
 import { repairTruncatedDescription } from "../../../core/text-truncation";
 import { splitFrontmatter } from "../../improve/reflect-noise";
-import type { Proposal, ProposalValidationReport } from "../proposal-types";
+import { isRetireProposal, type Proposal, type ProposalValidationReport } from "../proposal-types";
 import { runProposalValidators } from "./proposal-validators";
 
 export type { ProposalValidationFinding, ProposalValidationReport } from "../proposal-types";
@@ -14,8 +14,15 @@ export type { ProposalValidationFinding, ProposalValidationReport } from "../pro
 /**
  * Validate a proposal before promotion: it must parse and carry a body, and a
  * type with a canonical validator runs it.
+ *
+ * A retire proposal (alpha.9 consolidate pair pass) writes no new content —
+ * it deletes an asset that already passed validation when IT was created —
+ * so the content-quality validators (built for new/updated bodies: a
+ * description, lesson shape, reflect size ratio, …) do not apply and are
+ * skipped entirely rather than misreading the empty body as a defect.
  */
 export function validateProposal(proposal: Proposal): ProposalValidationReport {
+  if (isRetireProposal(proposal)) return { ok: true, findings: [] };
   return runProposalValidators(proposal);
 }
 

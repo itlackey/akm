@@ -55,6 +55,20 @@ describe("nextEligibleAt — the one cadence function", () => {
     expect(nextEligibleAt("reflect", "failed", T0)).toBeNull();
     expect(nextEligibleAt("reflect", "rejected", "not-a-date")).toBeNull();
   });
+
+  test("the consolidate pair pass's own source carries no timer, for any outcome", () => {
+    // S1 (post-review): the pair pass's eligibility is entirely
+    // content-driven (selectInitiators compares content_hash, never reads
+    // next_eligible_at) — every row it writes is "eligible now" regardless
+    // of outcome, unlike every other source's outcome-driven cadence.
+    for (const outcome of ["proposed", "judged_no_action", "accepted", "rejected", "failed"] as const) {
+      expect(nextEligibleAt("consolidate-pair", outcome, T0)).toBeNull();
+    }
+    // The promote pass's own "consolidate" source keeps its ordinary 7-day
+    // revisit cadence for judged_no_action — only the pair pass's distinct
+    // "consolidate-pair" source is exempted.
+    expect(nextEligibleAt("consolidate", "judged_no_action", T0)).toBe(plusDays(T0, 7));
+  });
 });
 
 describe("isLedgerBlocked", () => {
@@ -67,6 +81,7 @@ describe("isLedgerBlocked", () => {
     nextEligibleAt: nextEligibleAt("reflect", outcome, at),
     proposalId: null,
     detail: null,
+    contentHash: null,
   });
 
   test("a missing row or an elapsed window never blocks", () => {
@@ -84,6 +99,26 @@ describe("isLedgerBlocked", () => {
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1))).toBe(true);
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1), plusDays(T0, 0.5))).toBe(false);
     expect(isLedgerBlocked(row("unchanged"), plusDays(T0, 1), plusDays(T0, -1))).toBe(true);
+  });
+
+  test("a consolidate-pair row is never blocked, whatever its outcome — nextEligibleAt is always null for that source", () => {
+    const pairRow = (outcome: "proposed" | "judged_no_action") => ({
+      stashDir: "/s",
+      ref: "memories/a",
+      source: "consolidate-pair",
+      lastAttemptAt: T0,
+      outcome,
+      nextEligibleAt: nextEligibleAt("consolidate-pair", outcome, T0),
+      proposalId: null,
+      detail: null,
+      contentHash: "deadbeef",
+    });
+    // Not even a long time later — this source's eligibility is decided by
+    // comparing content_hash directly (selectInitiators), never by this
+    // function; isLedgerBlocked returning false here is just confirmation
+    // that nextEligibleAt never gives it a window to be blocked by.
+    expect(isLedgerBlocked(pairRow("judged_no_action"), plusDays(T0, 1))).toBe(false);
+    expect(isLedgerBlocked(pairRow("proposed"), plusDays(T0, 30))).toBe(false);
   });
 });
 
@@ -129,6 +164,42 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         detail: "not novel",
       });
       expect(getImproveLedgerRow(db, "/s", "personal//lessons/foo", "distill")).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("content_hash round-trips through recordImproveLedger and is preserved by a decision update (migration 029)", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/a",
+        source: "consolidate-pair",
+        outcome: "judged_no_action",
+        at: T0,
+        contentHash: "hash-v1",
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+        contentHash: "hash-v1",
+        nextEligibleAt: null,
+      });
+      // A later attempt (a content change) overwrites it.
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/a",
+        source: "consolidate-pair",
+        outcome: "proposed",
+        at: plusDays(T0, 1),
+        contentHash: "hash-v2",
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+        contentHash: "hash-v2",
+        outcome: "proposed",
+      });
+      // A row for a source that never sets contentHash decodes it as null, not undefined/missing.
+      recordImproveLedger(db, { stashDir: "/s", ref: "skills/x", source: "reflect", outcome: "proposed", at: T0 });
+      expect(getImproveLedgerRow(db, "/s", "skills/x", "reflect")?.contentHash).toBeNull();
     } finally {
       db.close();
     }
@@ -302,6 +373,40 @@ describe("migration 028 backfills the ledger from proposals rows", () => {
         expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)).toBeNull();
       }
       expect(db.prepare("SELECT COUNT(*) AS n FROM proposals").get()).toEqual({ n: 9 });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("read/list tolerate a pre-029 improve_ledger with no content_hash column (second review round, should-fix 6)", () => {
+  const before029 = STATE_MIGRATIONS.slice(
+    0,
+    STATE_MIGRATIONS.findIndex((migration) => migration.id === "029-improve-ledger-content-hash"),
+  );
+
+  test("getImproveLedgerRow / listImproveLedgerRows degrade to contentHash: null instead of throwing", () => {
+    const file = statePath();
+    const db = openDatabase(file);
+    try {
+      runMigrations(db, before029);
+      // Confirm the fixture really is pre-029: improve_ledger exists, but
+      // content_hash does not.
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'improve_ledger'").get()).toBeTruthy();
+      expect(() => db.prepare("SELECT content_hash FROM improve_ledger").get()).toThrow();
+
+      db.prepare(
+        `INSERT INTO improve_ledger (stash_dir, ref, source, outcome, last_attempt_at)
+         VALUES ('/s', 'memories/a', 'consolidate-pair', 'judged_no_action', ?)`,
+      ).run(T0);
+
+      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+        outcome: "judged_no_action",
+        contentHash: null,
+      });
+      const rows = listImproveLedgerRows(db, "/s");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.contentHash).toBeNull();
     } finally {
       db.close();
     }

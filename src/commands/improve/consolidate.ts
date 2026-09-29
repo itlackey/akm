@@ -5,12 +5,19 @@
 /**
  * `akm consolidate` — show the model the memory pool in chunks of similar
  * memories and queue a knowledge proposal for each memory it says should be
- * promoted. Promotion is the only operation: it emits a reviewable proposal and
- * never touches the memory. Memories the improve ledger judged recently and
+ * promoted. Promotion emits a reviewable proposal and never touches the
+ * memory directly; accepting it later retires the source memory (O1, in
+ * `proposal/repository.ts`). Memories the improve ledger judged recently and
  * that have not changed since are not judged again.
  *
- * Accounting invariant: `processed == promoted + judgedNoAction +
- * Σ(skipReasons) + failedChunkMemories`.
+ * Accounting invariant (the promote pass only): `processed == promoted +
+ * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
+ *
+ * A second pass, the pair pass (`consolidate/pair-pass.ts`, alpha.9), runs
+ * alongside this one and keeps its own separate counters (`pairPass` on the
+ * result) — it judges near-duplicate and superseding pairs across the wider
+ * memory tier and mints `retire` proposals; see that module's own doc
+ * comment.
  */
 
 import fs from "node:fs";
@@ -49,6 +56,7 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
@@ -152,7 +160,8 @@ export interface AkmConsolidateOptions {
 
 /**
  * Structured-output schema for a plan. Promote-only: merge/delete/contradict
- * were advisory, never executed, and cost thousands of completion tokens.
+ * were removed in 0.9.17-alpha.1 (`e82eec811`) after running in production —
+ * they cost thousands of completion tokens.
  */
 export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -852,6 +861,12 @@ async function consolidate(
     );
   }
   const target = opts.target ?? stashDir;
+  // The pair pass (alpha.9) has its own initiator/candidate selection (it
+  // sees .derived memories, flat knowledge and lessons, not just the
+  // promote pool above), so it runs regardless of whether the promote pool
+  // is empty — every return path below carries its result.
+  const pairPassBundleId = resolveConsolidationSourceOwner(opts, stashDir)?.bundleId;
+  const pairPass = await runConsolidatePairPass(opts, config, stashDir, pairPassBundleId, warnings);
   if (memories.length === 0) {
     return makeConsolidateResult({
       dryRun: opts.dryRun ?? false,
@@ -859,6 +874,7 @@ async function consolidate(
       warnings,
       durationMs: Date.now() - startMs,
       prefilteredAlreadyPromoted,
+      pairPass,
     });
   }
   const acc: ConsolidateAccounting = {
@@ -887,7 +903,7 @@ async function consolidate(
     prefilteredAlreadyPromoted,
     durationMs: Date.now() - startMs,
   });
-  if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true });
+  if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true, pairPass });
   warn(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
   const ctx: PromoteContext = {
     config,
@@ -920,6 +936,7 @@ async function consolidate(
     ...summary(),
     promoted: ctx.promoted,
     failedPromotions: ctx.promotionFailures.count,
+    pairPass,
     perfTelemetry: {
       dedupPoolSize: pool.dedupPoolSize,
       llmPoolSize: plan.llmPoolSize,
@@ -1022,6 +1039,12 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
   } catch (e) {
     return skip("promote_read_failed", `Promote: could not read ${op.ref}: ${String(e)}`);
   }
+  // O1 hash nit: the RAW body, before sanitization — accept re-reads the
+  // source with a plain fs.readFileSync and never re-sanitizes, so hashing
+  // anything else here would compare two different representations of the
+  // same unedited memory and report a false "changed since mint" (measured:
+  // 3 of 767 real memories sanitize to different bytes than their raw body).
+  const sourceRawBodyHash = contentHash(memoryContent, "body");
   const sanitized = sanitizeMergedContent(memoryContent);
   if (!sanitized.ok) {
     return skip(
@@ -1098,6 +1121,14 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       // The ledger keys the attempt by the source memory.
       attemptedRefs: [op.ref],
+      // O1 (alpha.9): on accept, promoteProposal retires this source memory
+      // (and its .derived twin) so promotion no longer leaves a duplicate.
+      promotionSource: op.ref,
+      // B3: recorded so accept can refuse to archive a source that was
+      // edited after this promotion was queued — the RAW body hash (see
+      // sourceRawBodyHash's own comment above), not `bodyHash`, which is the
+      // sanitized-for-knowledge representation accept never re-derives.
+      promotionSourceHash: sourceRawBodyHash,
     });
     ctx.promoted.push(proposal.id);
     ctx.promotedSourceRefs.add(op.ref);

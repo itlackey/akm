@@ -35,6 +35,8 @@ export const PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
+  /** The consolidate pair pass's own retire proposals (alpha.9, S6) — kept apart from `consolidate`'s promotions so a bulk `accept --generator consolidate` never sweeps a retirement, and the reverse. */
+  "consolidate-pair",
   "extract",
   "improve",
   "feedback",
@@ -50,6 +52,7 @@ export const AUTOMATED_PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
+  "consolidate-pair",
   "extract",
   "improve",
   "schema-repair",
@@ -109,6 +112,60 @@ export interface ProposalGateDecision {
   decidedAt: string;
 }
 
+/**
+ * A consolidate pair-pass retire proposal's metadata (plan §5.2, alpha.9
+ * brief §A "Proposal"). `ref` is the retired asset (same as `Proposal.ref`);
+ * `reason` is the tombstone vocabulary `archiveCleanupCandidate` writes,
+ * derived from `judgeLabel` (`supersedes` → `superseded`, the other two
+ * labels unchanged).
+ */
+export type RetireReason = "duplicate" | "subsumed" | "superseded" | "promoted";
+
+export interface RetirementMetadata {
+  /** The ref being retired — redundant with `Proposal.ref`, kept explicit for metadata-only readers. */
+  retiredRef: string;
+  /** The ref that survives this pair. */
+  successorRef: string;
+  /** Cosine similarity between the judged pair. */
+  cosine: number;
+  /** The pair judge's raw classification. */
+  judgeLabel: "duplicate" | "subsumed" | "supersedes";
+  /** The judge's own explanation (<=25 words, its `reason` field). */
+  judgeReason: string;
+  /** Body-content hash (`contentHash(_, "body")`) of the retired asset at judge time. */
+  retiredContentHash: string;
+  /** Body-content hash of the successor asset at judge time. */
+  successorContentHash: string;
+  /** Tombstone-vocabulary reason (`judgeLabel` translated: supersedes -> superseded). */
+  reason: Exclude<RetireReason, "promoted">;
+}
+
+/**
+ * Where an archived retire proposal's files ended up (accept-time only, so
+ * `akm proposal revert` can find them without re-scanning every tombstone).
+ * Stash-relative paths, one per archived file (the retired asset, plus its
+ * `.derived` twin when one was archived alongside it).
+ */
+export interface RetiredArchiveRecord {
+  dirs: string[];
+}
+
+/**
+ * A retire accept's durable intent (should-fix 5), recorded on the still-
+ * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
+ * as `backupContent`. A crashed accept resumes from this record instead of
+ * re-deriving it from whatever the archive happens to contain. No `twinPath`
+ * (4d, third review round, dropped as redundant): the twin, if any, is a
+ * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
+ * whether it was already archived by an earlier, crashed attempt is exactly
+ * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
+ * finds — nothing a stored path adds to either.
+ */
+export interface RetireAcceptIntent {
+  assetPath: string;
+  backupContent: string;
+}
+
 export interface Proposal {
   id: string;
   /** `[bundle//]conceptId` of the asset it creates or updates. */
@@ -145,6 +202,40 @@ export interface Proposal {
   /** Exactly where the accepted content went; prevents cross-target revert. */
   acceptedTarget?: { source: string; root: string; path: string; contentHash: string };
   eligibilitySource?: EligibilitySource;
+  /** Consolidate pair-pass retire proposals only (alpha.9): set at mint. */
+  retirement?: RetirementMetadata;
+  /** Set at accept time for a retire proposal; read back by `akm proposal revert`. */
+  retiredArchive?: RetiredArchiveRecord;
+  /**
+   * A consolidate PROMOTION proposal's source memory ref (alpha.9, O1): set
+   * at mint by `emitPromotionProposal`. On accept, `promoteProposal` retires
+   * this memory (and its `.derived` twin) through the same archive path, so
+   * an accepted promotion no longer leaves a memory/knowledge duplicate
+   * behind — whether a person accepts it or triage auto-promotion does.
+   */
+  promotionSource?: string;
+  /**
+   * Body content hash (`contentHash(_, "body")`) of `promotionSource` at
+   * mint time (alpha.9, B3). Accept re-reads the source and only archives it
+   * when the hash still matches — an edit made after the promotion was
+   * queued survives, not silently discarded into the archive. Absent on a
+   * proposal minted before this field existed; those never archive their
+   * source (no hash to verify freshness against).
+   */
+  promotionSourceHash?: string;
+  /**
+   * A pending retire proposal's recorded accept intent (should-fix 5), set
+   * right before the first file move and cleared once accept finishes.
+   * Still present means a prior accept attempt crashed after recording it
+   * but before finishing — the next accept resumes from it idempotently
+   * rather than re-deriving `backupContent` from whatever is on disk now.
+   */
+  retireAcceptIntent?: RetireAcceptIntent;
+}
+
+/** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */
+export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
+  return proposal.changes[0]?.op === "delete";
 }
 
 /** A promote refused because the target changed after mint (STALE, R20) — not a merit judgement. */

@@ -212,6 +212,77 @@ describe("proposal repository — pure helpers (post-split)", () => {
     ).toThrow(/eligibilitySource/i);
   });
 
+  // alpha.9: the consolidate pair pass's retire proposals.
+  test("a retire proposal's delete-op change and retirement metadata round-trip", () => {
+    const retirement = {
+      retiredRef: "team//memories/old-note",
+      successorRef: "team//memories/new-note",
+      cosine: 0.94,
+      judgeLabel: "duplicate" as const,
+      judgeReason: "Same durable facts, B adds nothing.",
+      retiredContentHash: "a".repeat(64),
+      successorContentHash: "b".repeat(64),
+      reason: "duplicate" as const,
+    };
+    const metadata = {
+      changes: [{ path: "memories/old-note.md", op: "delete" }],
+      proposedTarget: { source: "team", root: "/tmp/stash" },
+      retirement,
+      promotionSource: undefined,
+    };
+    const proposal = proposalRowToProposal({
+      ...historicalRow,
+      ref: "team//memories/old-note",
+      content: "",
+      metadata_json: JSON.stringify(metadata),
+    });
+    expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(proposal.retirement).toEqual(retirement);
+
+    // Round-trips back through the write path unchanged.
+    const rowValues = proposalToRowValues(proposal, "/tmp/stash");
+    const decoded = proposalRowToProposal({ ...historicalRow, ...rowValues });
+    expect(decoded.retirement).toEqual(retirement);
+    expect(decoded.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+  });
+
+  test("retiredArchive, promotionSource and promotionSourceHash round-trip", () => {
+    const proposal = proposalRowToProposal({
+      ...terminalRow,
+      metadata_json: JSON.stringify({
+        retiredArchive: { dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"] },
+        promotionSource: "team//memories/promoted-source",
+        promotionSourceHash: "c".repeat(64),
+      }),
+    });
+    expect(proposal.retiredArchive).toEqual({
+      dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"],
+    });
+    expect(proposal.promotionSource).toBe("team//memories/promoted-source");
+    expect(proposal.promotionSourceHash).toBe("c".repeat(64));
+  });
+
+  test("a malformed retirement, retiredArchive or promotionSourceHash is rejected, not tolerated", () => {
+    expect(() =>
+      proposalRowToProposal({
+        ...terminalRow,
+        metadata_json: JSON.stringify({ retirement: { retiredRef: "x" } }),
+      }),
+    ).toThrow(/retirement/i);
+    expect(() =>
+      proposalRowToProposal({
+        ...terminalRow,
+        metadata_json: JSON.stringify({ retiredArchive: { dirs: [] } }),
+      }),
+    ).toThrow(/retiredArchive/i);
+    expect(() =>
+      proposalRowToProposal({ ...terminalRow, metadata_json: JSON.stringify({ promotionSource: 7 }) }),
+    ).toThrow(/promotionSource/i);
+    expect(() =>
+      proposalRowToProposal({ ...terminalRow, metadata_json: JSON.stringify({ promotionSourceHash: 7 }) }),
+    ).toThrow(/promotionSourceHash/i);
+  });
+
   test("write path: pending status still requires the full envelope (write path not weakened)", () => {
     const pendingNoTarget = proposalRowToProposal({
       ...historicalRow,

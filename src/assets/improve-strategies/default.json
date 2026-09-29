@@ -1,5 +1,5 @@
 {
-  "description": "Standard improve pass — reflect, distill, advisory consolidation, and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
+  "description": "Standard improve pass — reflect, distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
   "processes": {
     "reflect": {
       "enabled": true,

@@ -64,8 +64,13 @@ everything else routes through `akm proposal accept`.
    retrieval scope below, then runs whichever processes the selected strategy
    enables against each one.
 4. Reflect and distill each emit at most one proposal per asset per run;
-   consolidate emits proposals for memory `promote` operations and returns
-   `merge`/`delete`/`contradict` operations as advisory (non-writing) output.
+   consolidate runs two passes alongside each other — the promote pass emits
+   a proposal turning a memory into knowledge (and, once accepted, retires
+   the source memory), and the pair pass judges near-duplicate and
+   superseding pairs in the memory tier and emits a reviewed `retire`
+   proposal for the `duplicate`/`subsumed`/`supersedes` classes; `overlap`,
+   `unrelated` and `contradicts` are recorded as `judged_no_action` with no
+   proposal.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
@@ -211,8 +216,10 @@ unless `experimental.improveAutonomy` is explicitly set to `true`:
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
 `akm health`'s improve skip-reason summary. Consolidation stays enabled with
-autonomy off, because its merge/delete/contradict operations are advisory and
-promotion only ever emits a reviewable proposal. An absent `experimental`
+autonomy off: both its passes only ever emit a reviewable proposal, and a
+pair-pass `retire` proposal is never auto-accepted by `triage`
+`applyMode: "promote"` regardless of this gate — it always waits for
+`akm proposal accept`. An absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off —
 autonomy is never inferred. `akm proposal drain --promote` is a second,
 explicit promote surface independent of this gate.
