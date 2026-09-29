@@ -104,7 +104,7 @@ with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rathe
 than a silent fallback. It returns a compact view suitable for capability
 discovery:
 
-- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `related`, `links`
+- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `links`
 
 ## Exit Codes and Error Envelope
 

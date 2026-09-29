@@ -919,6 +919,94 @@ describe("previous-release corpus — retired index.graph key (whole pass, 0.9.1
   });
 });
 
+describe("previous-release corpus — leftover improve.strategies['graph-refresh'] override (0.9.17-alpha.9)", () => {
+  beforeEach(() => {
+    resetConfigCache();
+    _resetWarnOnceForTests();
+  });
+
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+  });
+
+  test("a config with a leftover override for the deleted graph-refresh built-in still loads, unread", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        improve: { strategies: { "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } } } },
+      }),
+    );
+
+    const config = loadConfig();
+
+    // Schema-valid (any name is a legal custom-strategy key) — it loads and
+    // is kept in memory, same as any other config data. It is simply never
+    // resolved: resolveImproveStrategy refuses "graph-refresh" unconditionally.
+    expect((config.improve?.strategies as Record<string, unknown> | undefined)?.["graph-refresh"]).toEqual({
+      processes: { graphExtraction: { mode: "llm" } },
+    });
+  });
+
+  test("only `akm migrate apply` drops the leftover graph-refresh override from config.json", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        improve: { strategies: { "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } } } },
+      }),
+    );
+
+    // `akm migrate status` (apply: false) reports the change without writing.
+    const status = normalizeConfigFile(configPath, { apply: false });
+    expect(status.applied).toBe(false);
+    expect(status.keys).toContain("improve");
+    const stillThere = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const stillImprove = stillThere.improve as Record<string, unknown> | undefined;
+    expect((stillImprove?.strategies as Record<string, unknown> | undefined)?.["graph-refresh"]).toBeDefined();
+
+    // `akm migrate apply` (apply: true) writes the drop.
+    const result = normalizeConfigFile(configPath, { apply: true });
+    expect(result.applied).toBe(true);
+    expect(result.keys).toContain("improve");
+
+    const after = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const afterImprove = after.improve as Record<string, unknown> | undefined;
+    expect((afterImprove?.strategies as Record<string, unknown> | undefined)?.["graph-refresh"]).toBeUndefined();
+  });
+
+  test("a sibling custom strategy in improve.strategies survives the drop untouched", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        improve: {
+          strategies: {
+            "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } },
+            "my-custom-strategy": { processes: { reflect: { enabled: true } } },
+          },
+        },
+      }),
+    );
+
+    normalizeConfigFile(configPath, { apply: true });
+
+    const after = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const afterStrategies = (after.improve as Record<string, unknown> | undefined)?.strategies as
+      | Record<string, unknown>
+      | undefined;
+    expect(afterStrategies?.["graph-refresh"]).toBeUndefined();
+    expect(afterStrategies?.["my-custom-strategy"]).toEqual({ processes: { reflect: { enabled: true } } });
+  });
+});
+
 // ── Downstream consumer: OpenPalm (#880) ────────────────────────────────────
 //
 // OpenPalm is a real, if unofficial, integration point (see #870/#867's

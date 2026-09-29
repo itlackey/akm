@@ -91,14 +91,38 @@ describe("resolveImproveStrategy", () => {
     ).toThrow(/graph-refresh.*retired/i);
   });
 
-  test("a user-defined custom strategy literally named graph-refresh still resolves (not shadowed by the retirement)", () => {
-    const selected = resolveImproveStrategy("graph-refresh", {
-      configVersion: "0.9.0",
-      semanticSearchMode: "auto",
-      improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
-    });
-    expect(selected.name).toBe("graph-refresh");
-    expect(selected.config.processes?.reflect?.enabled).toBe(true);
+  test("graph-refresh is refused even when a leftover improve.strategies override exists — never silently resolved as a custom strategy", () => {
+    // A leftover `improve.strategies["graph-refresh"]` override is a partial
+    // patch of the deleted built-in (e.g. just `processes.graphExtraction`),
+    // not a full strategy definition. Resolving it as a new custom strategy
+    // would silently merge it onto `default` and run every process `default`
+    // enables — a full, unplanned improve pass the operator never asked for.
+    expect(() =>
+      resolveImproveStrategy("graph-refresh", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
+      }),
+    ).toThrow(/graph-refresh.*retired/i);
+  });
+
+  test("the retirement message names the leftover override so `akm migrate apply` is the obvious next step", () => {
+    expect(() =>
+      resolveImproveStrategy("graph-refresh", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
+      }),
+    ).toThrow(/leftover.*akm migrate apply/i);
+  });
+
+  test("the retirement message omits the leftover-override sentence when no override exists", () => {
+    try {
+      resolveImproveStrategy("graph-refresh", { configVersion: "0.9.0", semanticSearchMode: "auto" });
+      throw new Error("expected resolveImproveStrategy to throw");
+    } catch (err) {
+      expect(String(err)).not.toMatch(/leftover/i);
+    }
   });
 });
 

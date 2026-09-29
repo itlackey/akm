@@ -266,19 +266,20 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
   const defaultStrategy = config.defaults?.improveStrategy;
   if (
     defaultStrategy &&
+    // graph-refresh is exempt from this eager, config-load-time check: unlike
+    // a plain typo, it is a specific, known retirement, and refusing it here
+    // would fail every command's config load (including `akm migrate apply`,
+    // the one that fixes this). `resolveImproveStrategy`
+    // (src/commands/improve/improve-strategies.ts) refuses it lazily, at
+    // improve-invocation time, with the same message either way.
+    defaultStrategy !== "graph-refresh" &&
     !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
     !config.improve?.strategies?.[defaultStrategy]
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["defaults", "improveStrategy"],
-      message:
-        // A specific, actionable message for the one built-in name retired
-        // often enough to be worth naming, rather than the generic "does not
-        // name a strategy" (mirrors the akm graph retired-command hint).
-        defaultStrategy === "graph-refresh"
-          ? 'improveStrategy "graph-refresh" was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it ran — choose a different strategy.'
-          : "improveStrategy does not name a built-in or configured strategy",
+      message: "improveStrategy does not name a built-in or configured strategy",
     });
   }
   for (const [strategyName, strategy] of Object.entries(config.improve?.strategies ?? {})) {

@@ -116,16 +116,33 @@ if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))
 export function resolveImproveStrategy(name: string | undefined, config: AkmConfig): SelectedStrategy {
   const selectedName = name ?? config.defaults?.improveStrategy ?? "default";
   const userStrategies = config.improve?.strategies ?? {};
+  // graph-refresh named a specific, common retirement — refuse it
+  // unconditionally, even when `improve.strategies["graph-refresh"]` still
+  // has an override block from when it customized the (now-deleted) built-in
+  // strategy of the same name. That override is a partial patch (e.g. just
+  // `processes.graphExtraction.mode`), not a full strategy definition —
+  // falling through to the generic "resolve as a user strategy" path below
+  // would silently merge it onto `default` and run a full, unplanned improve
+  // pass instead of refusing. `akm migrate apply` drops the leftover block
+  // (src/core/config/config.ts, normalizeConfigFile) since it can never
+  // apply again.
+  if (selectedName === "graph-refresh") {
+    const hasLeftoverOverride = Boolean(userStrategies["graph-refresh"]);
+    throw new ConfigError(
+      `Improve strategy "graph-refresh" was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it ran.` +
+        (hasLeftoverOverride
+          ? ' Your config still has a leftover `improve.strategies["graph-refresh"]` override for it — `akm migrate apply` removes it.'
+          : ""),
+      "UNKNOWN_IMPROVE_STRATEGY",
+      // Override CONFIG_HINTS.UNKNOWN_IMPROVE_STRATEGY (src/core/errors.ts):
+      // its "listed strategy names" phrase does not apply here (this message
+      // names no strategies), and its "define it under improve.strategies"
+      // suggestion is actively wrong — that is exactly the leftover-override
+      // shape this refusal exists to reject, not a way around it.
+      "Choose a different strategy. `graph-refresh` cannot be redefined under `improve.strategies` — it always refuses.",
+    );
+  }
   if (!(selectedName in BUILTIN_STRATEGIES) && !userStrategies[selectedName]) {
-    // graph-refresh named a specific, common retirement — call it out rather
-    // than leaving the operator to guess from the generic "not found" list
-    // (the LLM entity-graph extraction it ran was retired in 0.9.17-alpha.9).
-    if (selectedName === "graph-refresh") {
-      throw new ConfigError(
-        'Improve strategy "graph-refresh" was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it ran.',
-        "UNKNOWN_IMPROVE_STRATEGY",
-      );
-    }
     const valid = [...new Set([...Object.keys(BUILTIN_STRATEGIES), ...Object.keys(userStrategies)])].sort();
     throw new ConfigError(
       `Improve strategy "${selectedName}" not found. Valid strategies: ${valid.join(", ")}.`,

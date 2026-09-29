@@ -846,6 +846,11 @@ in 0.9.17-alpha.9: the LLM entity graph they configured is gone —
 `akm show`'s links come from declared links instead (see `## Strategies`
 above). A config that still sets them loads; each key is named once as
 unknown, and `akm migrate apply` removes it. The built-in `graph-refresh`
-strategy is retired the same way, but differently: naming it via `--strategy`,
-`defaults.improveStrategy`, or a task fails with a message pointing at the
-retirement, matching how any other unknown strategy name fails.
+strategy is retired too, but not the same way as an ordinary unknown name:
+naming it via `--strategy` or a task always fails with a message pointing at
+the retirement, even when `improve.strategies["graph-refresh"]` still has a
+leftover override from customizing the built-in (the message names it;
+`akm migrate apply` drops it — a leftover override is never resolved as a new
+custom strategy, which would silently run a full, unplanned improve pass).
+`defaults.improveStrategy: "graph-refresh"` still loads config successfully;
+the refusal happens lazily, when the strategy is actually resolved.

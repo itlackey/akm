@@ -904,6 +904,17 @@ export function normalizeConfigFile(configPath: string, options: { apply: boolea
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = withSchedulerOnDisk(configWriteBody(localRaw, current, next) as Record<string, unknown>, next);
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
+    // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
+    // legal custom-strategy key), so it never reaches the unknown-key sweep
+    // above. It can only be a leftover override of the deleted graph-refresh
+    // built-in (0.9.17-alpha.9) — resolveImproveStrategy now refuses that
+    // name unconditionally, so the override can never apply again. Drop it
+    // the same way any other retired key is dropped: only by `akm migrate
+    // apply`, never by an ordinary write.
+    const strategies = (body.improve as Record<string, unknown> | undefined)?.strategies as
+      | Record<string, unknown>
+      | undefined;
+    if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
     const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
       .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
       .sort();

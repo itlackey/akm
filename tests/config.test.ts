@@ -907,9 +907,15 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.defaults?.improveStrategy).toBe("my-custom-strategy");
   });
 
-  test("defaults.improveStrategy: graph-refresh names the 0.9.17-alpha.9 retirement", () => {
+  test("defaults.improveStrategy: graph-refresh loads (retirement is refused lazily by resolveImproveStrategy, not eagerly at config load)", () => {
+    // Eagerly refusing this here would fail every command's config load,
+    // including `akm migrate apply` — the one command that would let an
+    // owner fix a stale default. resolveImproveStrategy
+    // (src/commands/improve/improve-strategies.ts) is the one place that
+    // refuses "graph-refresh", at improve-invocation time.
     writeCurrentConfig({ defaults: { improveStrategy: "graph-refresh" } });
-    expect(() => loadConfig()).toThrow(/graph-refresh.*retired/i);
+    const loaded = loadConfig();
+    expect(loaded.defaults?.improveStrategy).toBe("graph-refresh");
   });
 
   test("ignores legacy features.improve instead of failing config load", () => {
