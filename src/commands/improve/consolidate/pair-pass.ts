@@ -39,6 +39,7 @@ import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config
 import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
+import { warnOnce } from "../../../core/warn";
 import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
 import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { runGit } from "../../../sources/providers/git-install";
@@ -200,33 +201,63 @@ function repoRelativeKey(stashDir: string, filePath: string): string {
   return path.relative(stashDir, filePath).replace(/\\/g, "/");
 }
 
+/** 16 MiB — see the buffer-overflow comment inside {@link loadGitFirstAddedMap}. */
+const GIT_LOG_MAX_BUFFER = 16 * 1024 * 1024;
+
 /**
  * Every tracked path's first-add time (unix ms), from one `git log` over the
- * whole bundle (~1.8s measured against the owner's real bundle) — never
- * shelled out per pair or per initiator. `undefined` when `stashDir` is not
- * itself a git root (no `.git` directly inside it): every asset then falls
- * back to mtime in {@link createdMsOf}, one fallback code path instead of a
- * second git-aware one for a bundle nested inside a larger repo.
+ * whole bundle (~2.1s measured against the owner's real bundle) — never
+ * shelled out per pair or per initiator. Follows renames (`-M
+ * --diff-filter=AR`, oldest-first via `--reverse`): a renamed path inherits
+ * its pre-rename first-add time, not the rename's own timestamp — the owner's
+ * 2026-08-24 bulk rename alone re-dated 966 files under `--no-renames`, and
+ * 11% of real candidate pairs flipped which side counted as older. A raised
+ * `diff.renameLimit` keeps a large bulk-rename commit (exactly this
+ * scenario) from silently falling back to detecting no renames at all.
+ * `undefined` when `stashDir` is not itself a git root (no `.git` directly
+ * inside it): every asset then falls back to mtime in {@link createdMsOf},
+ * one fallback code path instead of a second git-aware one for a bundle
+ * nested inside a larger repo.
  */
 export function loadGitFirstAddedMap(stashDir: string): ReadonlyMap<string, number> | undefined {
   if (!fs.existsSync(path.join(stashDir, ".git"))) return undefined;
   let result: ReturnType<typeof runGit>;
   try {
-    result = runGit(["log", "--diff-filter=A", "--no-renames", "--name-only", "--format=@%ct"], {
-      cwd: stashDir,
-      // spawnSync's default maxBuffer (1 MB) is too small for a bundle with
-      // real history — the owner's real bundle alone prints ~1.8 MB here
-      // (migration-tool.ts's own git subprocess call uses the same 16 MB
-      // figure). Silently exceeding it looks identical to "git failed" from
-      // the caller's side (status stays non-zero), so every date would have
-      // quietly fallen back to mtime with no error at all.
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    result = runGit(
+      ["-c", "diff.renameLimit=20000", "log", "--reverse", "-M", "--diff-filter=AR", "--name-status", "--format=@%ct"],
+      {
+        cwd: stashDir,
+        // spawnSync's default maxBuffer (1 MB) is too small for a bundle
+        // with real history — the owner's real bundle alone prints
+        // multiple MB here (migration-tool.ts's own git subprocess call
+        // uses the same 16 MiB figure). Silently exceeding it looks
+        // identical to "git failed" from the caller's side (status stays
+        // non-zero) — checked explicitly below instead of folded into the
+        // same silent fallback as "no .git", since raising the buffer
+        // again is an actual fix and worth telling the operator about.
+        maxBuffer: GIT_LOG_MAX_BUFFER,
+      },
+    );
   } catch {
     return undefined;
   }
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    if (code === "ENOBUFS" || /maxBuffer/i.test(result.error.message ?? "")) {
+      warnOnce(
+        "pair-pass-git-log-maxbuffer",
+        `[consolidate] pair pass: git log for first-add dates in ${stashDir} exceeded its ${GIT_LOG_MAX_BUFFER / (1024 * 1024)} MiB buffer — dates fall back to mtime this run.`,
+      );
+    }
+    return undefined;
+  }
   if (result.status !== 0 || typeof result.stdout !== "string") return undefined;
-  const map = new Map<string, number>();
+  // Oldest-first (--reverse): the FIRST time a path is seen, whether as a
+  // plain add or as a rename's destination, IS its true first-add time — no
+  // backward walk needed. A rename's destination inherits the source's
+  // already-recorded time (or, failing that — the source itself predates
+  // this log's window — this commit's own time).
+  const firstAdd = new Map<string, number>();
   let currentMs: number | undefined;
   for (const line of result.stdout.split("\n")) {
     if (line.startsWith("@")) {
@@ -234,14 +265,25 @@ export function loadGitFirstAddedMap(stashDir: string): ReadonlyMap<string, numb
       currentMs = Number.isFinite(sec) ? sec * 1000 : undefined;
       continue;
     }
-    const rel = line.trim();
-    if (!rel || currentMs === undefined) continue;
-    // `git log` lists newest-first; overwriting on every occurrence keeps
-    // whichever commit is processed LAST for this path — the oldest one,
-    // i.e. the true first add (also correct for a delete + re-add).
-    map.set(rel, currentMs);
+    if (currentMs === undefined) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const status = line.slice(0, tab);
+    if (status === "A") {
+      const p = line.slice(tab + 1).trim();
+      if (p && !firstAdd.has(p)) firstAdd.set(p, currentMs);
+    } else if (status.startsWith("R")) {
+      const rest = line.slice(tab + 1);
+      const tab2 = rest.indexOf("\t");
+      if (tab2 < 0) continue;
+      const oldPath = rest.slice(0, tab2).trim();
+      const newPath = rest.slice(tab2 + 1).trim();
+      if (oldPath && newPath && !firstAdd.has(newPath)) {
+        firstAdd.set(newPath, firstAdd.get(oldPath) ?? currentMs);
+      }
+    }
   }
-  return map;
+  return firstAdd;
 }
 
 /** Created instant (ms): git first-add when known, else file mtime (B1) — the one fallback both dating and the S1 new-material check use. */
@@ -655,7 +697,6 @@ export async function runConsolidatePairPass(
     if (db) closeDatabase(db);
   }
   const initiatorsBacklog = initiators.filter((i) => i.backlog).length;
-  const capped = candidates.slice(0, MAX_PAIRS_PER_RUN);
 
   // Never judge a pair when either side already has a pending retire
   // proposal, as the retired ref OR its successor (B2 widens this from the
@@ -671,9 +712,44 @@ export async function runConsolidatePairPass(
   } catch {
     // Best-effort de-dup only; a failed read never blocks judging.
   }
-  const judgeable = capped.filter(
-    (c) => !pendingRetireRefs.has(stripBundle(c.initiator.ref)) && !pendingRetireRefs.has(stripBundle(c.other.ref)),
-  );
+  const isPendingBlocked = (c: PairCandidate): boolean =>
+    pendingRetireRefs.has(stripBundle(c.initiator.ref)) || pendingRetireRefs.has(stripBundle(c.other.ref));
+
+  // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
+  // individual pairs — the old flat "top 300 candidates by cosine" cap let a
+  // pending-blocked pair spend a budget slot doing nothing, and left
+  // whichever initiators landed past slot 300 partially judged forever (no
+  // row per S1's own rule, so the SAME pairs got re-judged every night with
+  // no way to ever finish; the reviewer's simulation measured 30 nights
+  // making 9,000 calls but completing only 455 distinct pairs). A group with
+  // any pending-blocked pair is skipped before it can spend any budget at
+  // all. New-or-changed initiators (T_PAIR floor) are admitted before ANY
+  // backlog initiator regardless of cosine, then backlog initiators by their
+  // own best cosine — within a tier, a later, smaller group that still fits
+  // is admitted even after an earlier, larger one did not (first-fit), so
+  // the budget is not left idle just because the next-best group overflows
+  // it. Simulated, this drains the real backlog in ~12 nights instead of
+  // never.
+  const byInitiator = new Map<string, PairCandidate[]>();
+  for (const c of candidates) {
+    const list = byInitiator.get(c.initiator.ref);
+    if (list) list.push(c);
+    else byInitiator.set(c.initiator.ref, [c]);
+  }
+  const isNewOrChanged = (i: Initiator): boolean => !i.backlog || i.newMaterial;
+  const groups = [...byInitiator.values()]
+    .filter((group) => !group.some(isPendingBlocked))
+    .sort((a, b) => {
+      const tierA = isNewOrChanged(a[0]!.initiator) ? 0 : 1;
+      const tierB = isNewOrChanged(b[0]!.initiator) ? 0 : 1;
+      if (tierA !== tierB) return tierA - tierB;
+      return b[0]!.cosine - a[0]!.cosine; // candidates is cosine-desc, so group[0] is this initiator's best.
+    });
+  const judgeable: PairCandidate[] = [];
+  for (const group of groups) {
+    if (judgeable.length + group.length > MAX_PAIRS_PER_RUN) continue; // first-fit: a smaller later group may still fit.
+    judgeable.push(...group);
+  }
 
   const ctx: PairPassContext = {
     opts,
@@ -690,6 +766,10 @@ export async function runConsolidatePairPass(
   };
 
   let failedJudgments = 0;
+  // Should-fix 3: an initiator with any failed (or never-sent) judge call
+  // gets no ledger row — a failure attempted nothing conclusive, so writing
+  // one would mean the pair is never retried.
+  const failedInitiators = new Set<string>();
   if (judgeable.length > 0) {
     // The promote pass validates opts.llmRunner's credentials once, but only
     // when it has memories to dispatch — the pair pass can still have work
@@ -703,24 +783,31 @@ export async function runConsolidatePairPass(
       llmRunner.connection.concurrency ?? 1,
       { signal: opts.signal },
     );
-    failedJudgments = results.filter((r) => r?.failed === true).length;
+    results.forEach((r, idx) => {
+      if (r?.failed === true) {
+        failedJudgments++;
+        failedInitiators.add(judgeable[idx]!.initiator.ref);
+      }
+    });
   }
 
   // S1: a ledger row is written for an initiator only once ALL of its OWN
-  // candidates (before MAX_PAIRS_PER_RUN capping or the pending-proposal
-  // skip above) were actually judged this run — including an initiator with
-  // zero candidates, which trivially satisfies "all of them". One left out
-  // by the cap or a pending-proposal collision gets no row at all, so the
-  // next run reconsiders it rather than treating it as settled.
+  // candidates were admitted (whole-initiator admission above makes this a
+  // simple membership check: judgeable either has every one of an
+  // initiator's candidates, or none of them) and none of them failed
+  // (should-fix 3) — including an initiator with zero candidates, which
+  // trivially satisfies both. One left out by the cap or a pending-proposal
+  // collision gets no row at all, so the next run reconsiders it rather
+  // than treating it as settled.
   if (!opts.dryRun) {
-    const totalByInitiator = new Map<string, number>();
-    for (const c of candidates) totalByInitiator.set(c.initiator.ref, (totalByInitiator.get(c.initiator.ref) ?? 0) + 1);
-    const attemptedByInitiator = new Map<string, number>();
-    for (const c of judgeable) {
-      attemptedByInitiator.set(c.initiator.ref, (attemptedByInitiator.get(c.initiator.ref) ?? 0) + 1);
-    }
+    const admittedRefs = new Set(judgeable.map((c) => c.initiator.ref));
     const ledgerInputs = initiators
-      .filter((i) => (attemptedByInitiator.get(i.ref) ?? 0) === (totalByInitiator.get(i.ref) ?? 0))
+      .filter((i) => {
+        const hasCandidates = byInitiator.has(i.ref);
+        if (!hasCandidates) return true;
+        if (!admittedRefs.has(i.ref)) return false;
+        return !failedInitiators.has(i.ref);
+      })
       .map((i) => ({
         stashDir,
         ref: i.ref,

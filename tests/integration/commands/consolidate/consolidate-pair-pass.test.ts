@@ -739,7 +739,22 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       reason: "owner says keep both",
       config: makeConfig(storage.stashDir),
     });
-    // Re-index (the rejected proposal never touched old-note's own file or its embedding).
+
+    // The rejected proposal's OWN row still keeps old-note "processed"
+    // (Blocker 1 exempts only the pair pass's ledger source — a minted
+    // proposal, rejected or not, remains real evidence something happened to
+    // the asset). Seed a retrieval so scope isn't what keeps r2 quiet:
+    // without this, r2 would pass for the same wrong reason Blocker 1 fixed
+    // for the ledger row (a residual scope exclusion), just via the
+    // surviving proposal row instead, and would never actually exercise the
+    // content-hash rule this test is named for.
+    const stateDb = openStateDatabase();
+    try {
+      insertUsageEvent(stateDb, { event_type: "search", entry_ref: "stash//memories/old-note", source: "user" });
+    } finally {
+      stateDb.close();
+    }
+
     let chatCalls = 0;
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async () => {
@@ -749,6 +764,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
     expect(chatCalls).toBe(0); // old-note's content never changed since it was judged — not eligible again
     expect(r2.retired).toHaveLength(0);
+
+    // Prove it really is the hash and not some other residual effect: edit
+    // old-note's own content (it stays in scope via the usage event above)
+    // and the pair becomes eligible again.
+    writeAsset("memories/old-note.md", "description: old", "Body text, edited.\n");
+    const r3 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+    });
+    expect(r3.retired).toHaveLength(1); // content changed since the last attempt: judged again, and re-proposed
   });
 
   test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
@@ -799,6 +823,45 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       stateDb.close();
     }
   });
+
+  test("an initiator whose judge call fails gets no ledger row, so the next run retries it (should-fix 3)", async () => {
+    const aPath = writeAsset("memories/a-note.md", "description: a");
+    const bPath = writeAsset("memories/b-note.md", "description: b");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "a-note", aPath, 0);
+      indexAsset(db, "memory", "b-note", bPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+    const warnings: string[] = [];
+    let chatCalls = 0;
+    await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => {
+        chatCalls++;
+        throw new Error("simulated transport failure");
+      },
+    });
+    expect(chatCalls).toBe(1);
+    const stateDb = openStateDatabase();
+    try {
+      // A failed (unparsed) verdict judged nothing conclusive — no row for
+      // a-note, so it remains eligible rather than being treated as settled.
+      // (b-note is not asserted on here: the pair is deduped onto a-note as
+      // the sole initiator, so b-note has no candidates of its own and gets
+      // an unrelated zero-candidate row — the same shape the cap-cut test
+      // above already works around.)
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/a-note", "consolidate-pair")).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
+
+    // The next run retries the same pair instead of skipping it as judged.
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+    });
+    expect(r2.retired).toHaveLength(1);
+  });
 });
 
 describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () => {
@@ -836,6 +899,39 @@ describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () =
       expect(names.every((n) => map?.has(n))).toBe(true);
       const aName = names[0]!;
       expect(map?.get(aName)).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("a renamed file keeps its original first-add date, not the rename commit's (should-fix 4)", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "akm-gitmap-rename-"));
+    try {
+      const { execFileSync } = await import("node:child_process");
+      execFileSync("git", ["init", "--quiet"], { cwd: repo });
+      execFileSync("git", ["config", "user.email", "t@t.com"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+
+      const firstCommitEpoch = Math.floor(Date.now() / 1000) - 30 * 86_400;
+      fs.writeFileSync(path.join(repo, "old-name.md"), "content\n".repeat(50));
+      execFileSync("git", ["add", "-A"], { cwd: repo });
+      execFileSync("git", ["commit", "--quiet", "-m", "add old-name"], {
+        cwd: repo,
+        env: { ...process.env, GIT_AUTHOR_DATE: `@${firstCommitEpoch}`, GIT_COMMITTER_DATE: `@${firstCommitEpoch}` },
+      });
+
+      // A pure rename (unchanged content) — git detects this as R100, not a delete+add.
+      fs.renameSync(path.join(repo, "old-name.md"), path.join(repo, "new-name.md"));
+      execFileSync("git", ["add", "-A"], { cwd: repo });
+      execFileSync("git", ["commit", "--quiet", "-m", "rename to new-name"], { cwd: repo });
+
+      const { loadGitFirstAddedMap } = await import("../../../../src/commands/improve/consolidate/pair-pass");
+      const map = loadGitFirstAddedMap(repo);
+      expect(map).toBeDefined();
+      // new-name.md inherits old-name.md's original first-add time, not the
+      // (much later) rename commit's own time. The map stores milliseconds
+      // (matching Date.now()/mtimeMs), git's %ct is seconds.
+      expect(map?.get("new-name.md")).toBe(firstCommitEpoch * 1000);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
