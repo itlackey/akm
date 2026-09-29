@@ -116,8 +116,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `retire` proposal, it replays up to five of the retired asset's own past
   `search`/`curate` queries through akm's own search, in-process — the
   ranking a user actually gets, no LLM. For every query where the retired
-  asset ranked in the top 10, the successor must too; ranks are compared
-  with `buildRankChangeReport`. A failing query never blocks the mint — the
+  asset ranked in the top 10, the successor must too; compared directly
+  (N2), since search itself returns at most the top 10 hits. A failing
+  query never blocks the mint — the
   proposal's `retirement.continuityRisk` records the failing query count
   and, per failing query, the retired asset's rank and the successor's
   (`null` when the successor did not rank in the top 10 at all). A proposal
@@ -208,9 +209,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   flagged refs were signal-delta picks; zero were forgetting-safety-only.
   It also protected
   `asset_salience.rank_score`, which only improve itself ever read — a rank
-  drop could not hide anything from search. `buildRankChangeReport`
-  survives as the new retirement continuity check's comparator (see
-  Added); `forgetting-safety` stays a valid `eligibilitySource`/event-type
+  drop could not hide anything from search. `buildRankChangeReport` (its
+  comparator) is also gone (N2): the new retirement continuity check (see
+  Added) compares ranks directly instead, and nothing else called it.
+  `forgetting-safety` stays a valid `eligibilitySource`/event-type
   value so old proposals and events still decode, but nothing assigns or
   emits it any more. (`src/commands/improve/preparation.ts`,
   `src/commands/improve/salience.ts`, `src/core/events.ts`,

@@ -143,42 +143,6 @@ export function isContentEncodingRow(row: AssetSalienceRow): boolean {
 export const SALIENCE_NO_OP_DAMPEN_THRESHOLD = 3;
 export const SALIENCE_NO_OP_DAMPEN_FACTOR = 0.5;
 
-export interface RankChangeEntry {
-  ref: string;
-  oldRank: number;
-  newRank: number;
-  rankDelta: number;
-}
-
-export interface RankChangeReport {
-  /** Refs that were in the old top `oldTopN` and fell below `forgettingThreshold`, biggest drop first. */
-  forgettingCandidates: RankChangeEntry[];
-  allChanges: RankChangeEntry[];
-}
-
-/**
- * Compare 1-indexed rank positions between two rankings, flagging entries
- * that fell from the old top `oldTopN` to below `forgettingThreshold`. Used
- * by the retirement continuity check (`consolidate/continuity-check.ts`) to
- * compare a retired asset's search rank against its successor's.
- */
-export function buildRankChangeReport(
-  oldRanks: Map<string, number>,
-  newRanks: Map<string, number>,
-  oldTopN = 200,
-  forgettingThreshold = 500,
-): RankChangeReport {
-  const allChanges: RankChangeEntry[] = [];
-  for (const [ref, oldRank] of oldRanks) {
-    const newRank = newRanks.get(ref);
-    if (newRank !== undefined) allChanges.push({ ref, oldRank, newRank, rankDelta: newRank - oldRank });
-  }
-  const forgettingCandidates = allChanges
-    .filter((c) => c.oldRank <= oldTopN && c.newRank > forgettingThreshold)
-    .sort((a, b) => b.rankDelta - a.rankDelta);
-  return { forgettingCandidates, allChanges };
-}
-
 /** `ref → last retrieval (ms)` from the index's utility scores; absent means never retrieved. */
 export function getLastUseMsByRef(
   indexDb: IndexDatabase,

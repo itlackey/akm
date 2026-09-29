@@ -10,7 +10,6 @@
  *     [0,1] normalization, rankScore projection.
  *   - state.db persistence: upsertAssetSalience / getAssetSalience round-trip.
  *   - Plasticity helpers: recordNoOp, resetConsecutiveNoOps, getConsecutiveNoOps.
- *   - buildRankChangeReport: forgetting-candidate detection.
  *   - W_ENCODING + W_OUTCOME + W_RETRIEVAL == 1.0.
  *
  * The state.db cases open a real SQLite database (openStateDatabase), which
@@ -23,7 +22,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  buildRankChangeReport,
   computeSalience,
   DEFAULT_ENCODING_SALIENCE,
   DEFAULT_TYPE_ENCODING_WEIGHTS,
@@ -774,81 +772,6 @@ describe("plasticity: recordNoOp / resetConsecutiveNoOps / getConsecutiveNoOps",
       db.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
-});
-
-// ── buildRankChangeReport ─────────────────────────────────────────────────────
-
-describe("buildRankChangeReport — forgetting-safety", () => {
-  test("no forgetting candidates when all top-200 stay in top-500", () => {
-    const oldRanks = new Map([
-      ["skills/a", 1],
-      ["skills/b", 100],
-      ["skills/c", 200],
-    ]);
-    const newRanks = new Map([
-      ["skills/a", 1],
-      ["skills/b", 150],
-      ["skills/c", 499],
-    ]);
-    const report = buildRankChangeReport(oldRanks, newRanks);
-    expect(report.forgettingCandidates).toHaveLength(0);
-    expect(report.allChanges).toHaveLength(3);
-  });
-
-  test("detects old top-200 refs that fall below position 500", () => {
-    const oldRanks = new Map([
-      ["skills/winner", 1],
-      ["lessons/loser", 50],
-      ["memories/neutral", 150],
-    ]);
-    const newRanks = new Map([
-      ["skills/winner", 1],
-      ["lessons/loser", 600], // fell past 500 — forgetting candidate
-      ["memories/neutral", 400],
-    ]);
-    const report = buildRankChangeReport(oldRanks, newRanks);
-    expect(report.forgettingCandidates).toHaveLength(1);
-    expect(report.forgettingCandidates[0]?.ref).toBe("lessons/loser");
-    expect(report.forgettingCandidates[0]?.oldRank).toBe(50);
-    expect(report.forgettingCandidates[0]?.newRank).toBe(600);
-    expect(report.forgettingCandidates[0]?.rankDelta).toBe(550); // 600 - 50
-  });
-
-  test("forgettingCandidates are sorted by rank drop magnitude (largest drop first)", () => {
-    const oldRanks = new Map([
-      ["a", 1],
-      ["b", 2],
-    ]);
-    const newRanks = new Map([
-      ["a", 900], // dropped 899
-      ["b", 600], // dropped 598
-    ]);
-    const report = buildRankChangeReport(oldRanks, newRanks);
-    expect(report.forgettingCandidates[0]?.ref).toBe("a");
-    expect(report.forgettingCandidates[1]?.ref).toBe("b");
-  });
-
-  test("refs beyond the old top-N boundary are NOT flagged as forgetting candidates", () => {
-    // old rank 201 is beyond the default oldTopN=200, so it doesn't qualify.
-    const oldRanks = new Map([["lessons/just-outside", 201]]);
-    const newRanks = new Map([["lessons/just-outside", 999]]);
-    const report = buildRankChangeReport(oldRanks, newRanks);
-    expect(report.forgettingCandidates).toHaveLength(0);
-  });
-
-  test("empty inputs produce empty report", () => {
-    const report = buildRankChangeReport(new Map(), new Map());
-    expect(report.forgettingCandidates).toHaveLength(0);
-    expect(report.allChanges).toHaveLength(0);
-  });
-
-  test("custom oldTopN and forgettingThreshold are respected", () => {
-    const oldRanks = new Map([["x", 5]]);
-    const newRanks = new Map([["x", 51]]);
-    // Default thresholds: 200/500 — no candidate. Custom: 10/50 — flagged.
-    expect(buildRankChangeReport(oldRanks, newRanks).forgettingCandidates).toHaveLength(0);
-    expect(buildRankChangeReport(oldRanks, newRanks, 10, 50).forgettingCandidates).toHaveLength(1);
   });
 });
 

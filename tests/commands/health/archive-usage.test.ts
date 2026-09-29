@@ -59,7 +59,7 @@ describe("collectArchiveUsageAdvisory", () => {
 
     expect(advisory?.name).toBe("memory-cleanup-archive");
     expect(advisory?.status).toBe("pass");
-    expect(advisory?.evidence).toEqual({ files: 3, bytes: 18 });
+    expect(advisory?.evidence).toEqual({ files: 3, bytes: 18, truncated: false });
     expect(advisory?.message).toContain("3 archived file(s)");
   });
 });

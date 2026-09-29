@@ -175,10 +175,11 @@ of the retired asset's own past `search`/`curate` queries
 for the retrieval regression gate — boilerplate, harness/tool envelopes,
 pastes and near-duplicates dropped before replay, S3a) through akm's own
 search, in-process — the ranking a user actually gets, no LLM. For every
-query where the retired asset ranked in the top 10, the successor must too;
-the positions are compared with `buildRankChangeReport`
-(`src/commands/improve/salience.ts`). An asset with no recorded queries is
-not checked at all, and neither is a pair whose two bodies are
+query where the retired asset ranked in the top 10, the successor must too
+(N2: compared directly — search itself returns at most the top 10 hits, so
+"ranked" and "absent from those hits" are the only two states there are, no
+generic rank-change-report abstraction needed). An asset with no recorded
+queries is not checked at all, and neither is a pair whose two bodies are
 content-identical once whitespace is collapsed (S3b) — search's own
 content-dedupe already hides the successor behind the retired asset for
 every such query, so a "successor missing" finding there would not be a

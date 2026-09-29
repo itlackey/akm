@@ -114,9 +114,9 @@ export type EventType =
    * report (plan §WS-1 step 7). No longer emitted — the 30-day event window
    * showed no pick the signal-delta lane or retrieval scope would not also
    * have made, and its purpose moved into the retirement continuity check
-   * (`buildRankChangeReport` in salience.ts, now driven by search rank, not
-   * salience rank). Kept here only so old rows still decode. Metadata was
-   * `{stashSize, totalChanged, forgettingCandidates, topDrops}`.
+   * (`checkRetirementContinuity` in consolidate/continuity-check.ts, now
+   * driven by search rank, not salience rank). Kept here only so old rows
+   * still decode. Metadata was `{stashSize, totalChanged, forgettingCandidates, topDrops}`.
    */
   | "improve_salience_rank_change"
   /**

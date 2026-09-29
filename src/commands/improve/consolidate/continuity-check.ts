@@ -9,8 +9,7 @@
  * ranking a user gets, no LLM — and confirm the successor ranks in the top
  * 10 for every query where the retired asset did. This is the forgetting-
  * safety lane's purpose (§4.6, §5.5), moved from a per-run salience-rank
- * comparison to a per-proposal search-rank replay, reusing
- * {@link buildRankChangeReport} as the comparator.
+ * comparison to a per-proposal search-rank replay.
  *
  * No queries recorded for the retired asset: no check, no risk (nothing to
  * replay, so nothing to compare).
@@ -19,11 +18,10 @@
 import type { AkmConfig } from "../../../core/config/config";
 import { type SearchLocalInput, searchLocal } from "../../../indexer/search/db-search";
 import type { SearchExecutionMode } from "../../../sources/types";
-import type { RetirementContinuityRisk } from "../../proposal/proposal-types";
+import type { ContinuityRiskRank, RetirementContinuityRisk } from "../../proposal/proposal-types";
 import { stripFrontmatterBody } from "../content-hash";
 import { type LedgerAccess, stripBundle } from "../ledger";
 import { loadRetrievalQueries } from "../retrieval-gate";
-import { buildRankChangeReport } from "../salience";
 
 /** At most this many of the retired asset's most recent queries are replayed (plan §5.4, §7). */
 export const CONTINUITY_MAX_QUERIES = 5;
@@ -137,9 +135,11 @@ export async function checkRetirementContinuity(args: {
   if (queries.length === 0) return undefined; // no queries recorded: no check, no flag
 
   const search = args.search ?? createContinuitySearch(args.stashDir, args.config);
-  const oldRanks = new Map<string, number>();
-  const newRanks = new Map<string, number>();
-  const rankByQuery = new Map<string, { retiredRank: number; successorRank: number | null }>();
+  // N2: no rank-change-report abstraction — a query only ever needs "did the
+  // retired asset rank top 10, and if so, did the successor too?", and
+  // `rankOf` (search itself returning at most CONTINUITY_TOP_N hits) already
+  // answers both directly.
+  const ranks: ContinuityRiskRank[] = [];
   let unverifiedQueries = 0;
   for (const query of queries) {
     let hits: readonly ContinuityHit[];
@@ -157,25 +157,12 @@ export async function checkRetirementContinuity(args: {
     const retiredRank = rankOf(hits, args.retiredRef);
     if (retiredRank === undefined) continue; // the retired asset itself did not rank top 10 here — nothing to protect
     const successorRank = rankOf(hits, args.successorRef);
-    oldRanks.set(query, retiredRank);
-    // Absent from the top N: rank it one past the threshold so the comparator's
-    // ">" test below fails it, without inventing a specific missing rank.
-    newRanks.set(query, successorRank ?? CONTINUITY_TOP_N + 1);
-    rankByQuery.set(query, { retiredRank, successorRank: successorRank ?? null });
+    if (successorRank === undefined) ranks.push({ query, retiredRank, successorRank: null });
   }
-  // Every query verified, and the retired asset never ranked top 10 for any
-  // of them: nothing to protect, and nothing left unverified to flag either.
-  if (unverifiedQueries === 0 && oldRanks.size === 0) return undefined;
+  // Every query verified, and either the retired asset never ranked top 10
+  // for any of them, or the survivor always did too: nothing to flag.
+  if (unverifiedQueries === 0 && ranks.length === 0) return undefined;
 
-  const report = buildRankChangeReport(oldRanks, newRanks, CONTINUITY_TOP_N, CONTINUITY_TOP_N);
-  // Every query verified, and the survivor stayed top 10 everywhere the
-  // retired asset did: still nothing to flag.
-  if (unverifiedQueries === 0 && report.forgettingCandidates.length === 0) return undefined;
-
-  const ranks = report.forgettingCandidates.map((c) => {
-    const found = rankByQuery.get(c.ref);
-    return { query: c.ref, retiredRank: found?.retiredRank ?? c.oldRank, successorRank: found?.successorRank ?? null };
-  });
   return {
     failingQueries: ranks.length,
     ranks,

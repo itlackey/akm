@@ -20,35 +20,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { isGitBackedStash } from "../../sources/providers/git-stash";
+import { MAX_WALK_ENTRIES, sizeOfPath } from "./data-dir-usage";
 import type { HealthCheckResult } from "./types";
-
-interface ArchiveUsage {
-  bytes: number;
-  files: number;
-}
-
-/** Best-effort recursive size/count walk; an unreadable entry just does not add to the totals. */
-function walk(target: string): ArchiveUsage {
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(target);
-  } catch {
-    return { bytes: 0, files: 0 };
-  }
-  if (!stat.isDirectory()) return stat.isFile() ? { bytes: stat.size, files: 1 } : { bytes: 0, files: 0 };
-  let children: string[];
-  try {
-    children = fs.readdirSync(target);
-  } catch {
-    return { bytes: 0, files: 0 };
-  }
-  let usage: ArchiveUsage = { bytes: 0, files: 0 };
-  for (const child of children) {
-    const sub = walk(path.join(target, child));
-    usage = { bytes: usage.bytes + sub.bytes, files: usage.files + sub.files };
-  }
-  return usage;
-}
 
 /**
  * Build the `memory-cleanup-archive` advisory, or `undefined` when there is
@@ -58,16 +31,20 @@ export function collectArchiveUsageAdvisory(stashDir: string): HealthCheckResult
   if (isGitBackedStash(stashDir)) return undefined; // the purge sweep already covers it
   const archiveRoot = path.join(stashDir, MEMORY_ARCHIVE_REL);
   if (!fs.existsSync(archiveRoot)) return undefined;
-  const usage = walk(archiveRoot);
+  // N2: the same size/count walker `data-dir-usage.ts` uses, not a duplicate
+  // — an archive dir is bounded by the same "don't let a pathological tree
+  // hang a health check" concern that walker's entry budget already covers.
+  const usage = sizeOfPath(archiveRoot, { remaining: MAX_WALK_ENTRIES });
   if (usage.files === 0) return undefined;
+  const lowerBound = usage.truncated ? ` (a lower bound — the walk stopped after ${MAX_WALK_ENTRIES} entries)` : "";
   return {
     name: "memory-cleanup-archive",
     kind: "deterministic",
     status: "pass",
     confidence: "high",
     message:
-      `${usage.files} archived file(s), ${usage.bytes} byte(s) in .akm/memory-cleanup/archive — ` +
+      `${usage.files} archived file(s), ${usage.bytes} byte(s)${lowerBound} in .akm/memory-cleanup/archive — ` +
       "this bundle has no git history, so the purge sweep leaves it untouched.",
-    evidence: { files: usage.files, bytes: usage.bytes },
+    evidence: { files: usage.files, bytes: usage.bytes, truncated: usage.truncated },
   };
 }

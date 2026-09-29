@@ -397,9 +397,11 @@ duplicates once whitespace is collapsed, S3a) through akm's own search,
 in-process — the same ranking a user gets, no LLM
 (`src/commands/improve/consolidate/continuity-check.ts`). For every query
 where the retired asset ranked in the top 10, the successor must rank in the
-top 10 too; positions are compared with `buildRankChangeReport`
-(`src/commands/improve/salience.ts`). No recorded queries means no check and
-no flag — and so does a retired/successor pair whose bodies are
+top 10 too — compared directly (N2): search itself returns at most the top
+10 hits, so `rankOf` finding the successor among them or not is the whole
+comparison, no generic rank-change-report abstraction needed. No recorded
+queries means no check and no flag — and so does a retired/successor pair
+whose bodies are
 content-identical once whitespace is collapsed (S3b): search's own
 content-dedupe (`src/indexer/search/db-search.ts`) already hides the
 successor behind the retired asset for every such query, so a "successor
@@ -443,10 +445,10 @@ run's `improve_runs.plannedRefs` shows it, too, was planned under
 lane-exclusive pick). All 5 flagged refs were signal-delta picks; zero were
 ever forgetting-safety-only. It also protected `asset_salience.rank_score`,
 which only improve itself ever read. Both the per-run comparison and the
-injection are gone;
-`buildRankChangeReport` survives as the continuity check's comparator, and
-`forgetting-safety` stays a valid `eligibilitySource`/event-type value so old
-proposals and events still decode.
+injection are gone; so is `buildRankChangeReport` itself (N2 — the
+continuity check compares ranks directly, and nothing else called it).
+`forgetting-safety` stays a valid `eligibilitySource`/event-type value so
+old proposals and events still decode.
 
 ### Archive purge sweep (step 8)
 
