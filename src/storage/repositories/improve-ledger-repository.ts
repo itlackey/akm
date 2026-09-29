@@ -278,29 +278,52 @@ export function recordImproveLedgerDecision(db: Database, input: RecordImproveLe
   });
 }
 
+/**
+ * Should-fix 6 (second review round): a read-only or dry-run open never
+ * migrates, so it can land on a state.db from before migration 029 added
+ * `content_hash` — reading it there threw "no such column", which
+ * `loadRetrievalScope`'s own catch then reported as "usage history
+ * unreadable", making the WHOLE scope `undefined` (every asset eligible) on
+ * every read-only/dry-run call against an as-yet-unmigrated database. A
+ * per-connection cache, since a real `Database` handle's schema does not
+ * change mid-lifetime and this is checked on every ledger read.
+ */
+const hasContentHashColumnCache = new WeakMap<Database, boolean>();
+function hasContentHashColumn(db: Database): boolean {
+  const cached = hasContentHashColumnCache.get(db);
+  if (cached !== undefined) return cached;
+  const has = (db.prepare("PRAGMA table_info(improve_ledger)").all() as Array<{ name: string }>).some(
+    (c) => c.name === "content_hash",
+  );
+  hasContentHashColumnCache.set(db, has);
+  return has;
+}
+
 export function getImproveLedgerRow(
   db: Database,
   stashDir: string,
   ref: string,
   source: string,
 ): ImproveLedgerRow | undefined {
+  const withHash = hasContentHashColumn(db);
   const row = db
     .prepare(
-      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash
+      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail${withHash ? ", content_hash" : ""}
        FROM improve_ledger WHERE stash_dir = ? AND ref = ? AND source = ?`,
     )
     .get(stashDir, ref, source) as LedgerSqlRow | undefined;
-  return row ? toRow(row) : undefined;
+  return row ? toRow(withHash ? row : { ...row, content_hash: null }) : undefined;
 }
 
 /** Every row for one stash, optionally narrowed to `sources`. */
 export function listImproveLedgerRows(db: Database, stashDir: string, sources?: readonly string[]): ImproveLedgerRow[] {
+  const withHash = hasContentHashColumn(db);
   const sourceFilter = sources && sources.length > 0 ? ` AND source IN (${sources.map(() => "?").join(", ")})` : "";
   const rows = db
     .prepare(
-      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash
+      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail${withHash ? ", content_hash" : ""}
        FROM improve_ledger WHERE stash_dir = ?${sourceFilter} ORDER BY ref ASC, source ASC`,
     )
     .all(stashDir, ...(sources && sources.length > 0 ? sources : [])) as LedgerSqlRow[];
-  return rows.map(toRow);
+  return rows.map((row) => toRow(withHash ? row : { ...row, content_hash: null }));
 }

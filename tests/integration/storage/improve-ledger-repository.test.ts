@@ -378,3 +378,37 @@ describe("migration 028 backfills the ledger from proposals rows", () => {
     }
   });
 });
+
+describe("read/list tolerate a pre-029 improve_ledger with no content_hash column (second review round, should-fix 6)", () => {
+  const before029 = STATE_MIGRATIONS.slice(
+    0,
+    STATE_MIGRATIONS.findIndex((migration) => migration.id === "029-improve-ledger-content-hash"),
+  );
+
+  test("getImproveLedgerRow / listImproveLedgerRows degrade to contentHash: null instead of throwing", () => {
+    const file = statePath();
+    const db = openDatabase(file);
+    try {
+      runMigrations(db, before029);
+      // Confirm the fixture really is pre-029: improve_ledger exists, but
+      // content_hash does not.
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'improve_ledger'").get()).toBeTruthy();
+      expect(() => db.prepare("SELECT content_hash FROM improve_ledger").get()).toThrow();
+
+      db.prepare(
+        `INSERT INTO improve_ledger (stash_dir, ref, source, outcome, last_attempt_at)
+         VALUES ('/s', 'memories/a', 'consolidate-pair', 'judged_no_action', ?)`,
+      ).run(T0);
+
+      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+        outcome: "judged_no_action",
+        contentHash: null,
+      });
+      const rows = listImproveLedgerRows(db, "/s");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.contentHash).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+});
